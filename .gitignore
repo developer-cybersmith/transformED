@@ -1,44 +1,136 @@
-# Dependencies
-node_modules/
-.pnp
-.pnp.js
+# ============================================================
+# TransformED AI — Root .gitignore
+# Covers the full monorepo (Python API + Next.js Web + shared)
+# ============================================================
 
-# Build outputs
-.next/
-out/
-dist/
-build/
-*.egg-info/
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-
-# Environment
+# ---- Environment & secrets (NEVER commit) ----
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
 
-# Editor
+# ---- OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---- Editor / IDE ----
 .vscode/
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
+*~
+.history/
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Python
-venv/
-.venv/
-*.egg
-
-# Logs
-*.log
+# ---- Node / pnpm ----
+node_modules/
+.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Claude Code local overrides
+# ---- Next.js ----
+apps/web/.next/
+apps/web/out/
+apps/web/.vercel/
+apps/web/*.tsbuildinfo
+apps/web/next-env.d.ts
+
+# ---- TypeScript ----
+*.tsbuildinfo
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+.uv/
+*.egg-info/
+*.egg
+dist/
+build/
+wheels/
+pip-wheel-metadata/
+.installed.cfg
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.manifest
+*.spec
+
+# ---- Python tools ----
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# ---- Test & coverage ----
+.pytest_cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+junit*.xml
+
+# ---- Supabase local ----
+supabase/.branches/
+supabase/.temp/
+supabase/seed.sql
+
+# ---- Redis ----
+dump.rdb
+*.rdb
+
+# ---- Docker ----
+.docker/
+
+# ---- Langfuse (self-hosted local) ----
+langfuse.db
+langfuse-data/
+
+# ---- Build / dist outputs ----
+dist/
+build/
+out/
+
+# ---- Logs ----
+logs/
+*.log
+*.log.*
+
+# ---- Temporary files ----
+*.tmp
+*.temp
+.cache/
+tmp/
+
+# ---- Claude Code local settings ----
 .claude/settings.local.json

@@ -1,0 +1,46 @@
+# ---- Python bytecode ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+.uv/
+
+# ---- Package build ----
+*.egg-info/
+*.egg
+dist/
+build/
+wheels/
+sdist/
+
+# ---- Tools ----
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+
+# ---- Tests ----
+.pytest_cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+junit*.xml
+.hypothesis/
+
+# ---- Eval artifacts (results are gitignored — only golden examples are committed) ----
+tests/evals/results/
+tests/fixtures/eval_pdfs/*.pdf
+
+# ---- Local env ----
+.env
+.env.*
+!.env.example
+
+# ---- Logs ----
+*.log

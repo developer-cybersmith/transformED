@@ -1,0 +1,7 @@
+# ---- TypeScript build output ----
+*.js
+*.d.ts
+*.tsbuildinfo
+dist/
+
+# Keep source .ts files and .json — those are the shared contracts
