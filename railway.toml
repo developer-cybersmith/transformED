@@ -1,0 +1,18 @@
+# Railway configuration for the TransformED AI API service.
+# Worker service is a separate Railway service using the same Dockerfile
+# with startCommand: "python -m arq app.workers.main.WorkerSettings"
+# Web service is a separate Railway service from apps/web.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "apps/api/Dockerfile"
+
+[deploy]
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+numReplicas = 1
+sleepApplication = false
+
+[environments.production.deploy]
+numReplicas = 2

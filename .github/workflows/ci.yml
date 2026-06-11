@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  api:
+    name: API — lint, type-check, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev]" --system
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy app
+
+      - name: Unit tests
+        run: pytest tests/unit -x -q
+        env:
+          SUPABASE_URL: http://localhost:54321
+          SUPABASE_ANON_KEY: test
+          SUPABASE_SERVICE_ROLE_KEY: test
+          SUPABASE_JWT_SECRET: test-secret-at-least-32-chars-long!!
+          REDIS_URL: redis://localhost:6379
+          OPENAI_API_KEY: test
+          ELEVENLABS_API_KEY: test
+          HEYGEN_API_KEY: test
+          LANGFUSE_PUBLIC_KEY: test
+          LANGFUSE_SECRET_KEY: test
+
+  web:
+    name: Web — lint, type-check, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm type-check
+
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: test
+          NEXT_PUBLIC_API_URL: http://localhost:8000

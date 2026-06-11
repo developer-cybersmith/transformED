@@ -1,19 +1,28 @@
 # /new-feature
 
-Creates the standard file scaffolding for a new feature in the transformED platform.
+Scaffold a new feature across the TransformED monorepo.
 
 ## Usage
 `/new-feature <feature-name>`
 
-## What it does
-1. Creates the feature directory under the appropriate app
-2. Scaffolds component, hook, API route, and test files
-3. Adds the feature to the route manifest if applicable
+Example: `/new-feature lesson-bookmarks`
 
-## Template
-When invoked, create the following structure for `<feature-name>`:
-- `apps/web/src/features/<feature-name>/index.ts` — public exports
-- `apps/web/src/features/<feature-name>/<FeatureName>.tsx` — main component
-- `apps/web/src/features/<feature-name>/use<FeatureName>.ts` — data hook
-- `apps/web/src/features/<feature-name>/<feature-name>.test.ts` — unit tests
-- `apps/api/routers/<feature-name>.py` — FastAPI router (if AI/backend feature)
+## What it creates
+
+### Frontend — `apps/web/src/features/<feature-name>/`
+- `index.ts` — public re-exports only
+- `<FeatureName>.tsx` — main React component
+- `use<FeatureName>.ts` — data fetching + state hook
+- `<feature-name>.test.ts` — unit tests (co-located)
+
+### Backend — `apps/api/app/modules/<feature-name>/`
+- `__init__.py`
+- `router.py` — FastAPI APIRouter, registered in `apps/api/app/main.py`
+- `service.py` — business logic; never touches another module's DB tables directly
+- `schemas.py` — Pydantic request/response models
+
+## Rules
+- Module communicates with other modules ONLY through their service layer (PRD Principle 4)
+- No direct LLM/TTS/image calls in service.py — go through `app/providers/`
+- Add the router to `apps/api/app/main.py` under the correct `/api/<name>` prefix
+- If the feature needs AI: create a prompt file in `apps/api/app/modules/<feature-name>/prompts.py`

@@ -1,0 +1,154 @@
+"""
+OpenAI LLM provider implementation.
+
+Responsibilities
+----------------
+- Implements LLMProvider using the ``openai`` async client.
+- Tracks token usage via Langfuse for cost observability.
+- Applies circuit breaker (``openai`` provider key) before every call.
+- Integrates with the cost tracker to accumulate per-lesson spend.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from langfuse import Langfuse
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletion
+
+from app.config import get_settings
+from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.retry import with_retry
+from app.providers.base import LLMProvider
+
+logger = logging.getLogger(__name__)
+
+_PROVIDER_KEY = "openai"
+
+# Approximate cost per 1 000 tokens (USD) — used for cost tracking estimates.
+# Update these when OpenAI changes pricing.
+_COST_PER_1K: dict[str, dict[str, float]] = {
+    "gpt-4o": {"input": 0.005, "output": 0.015},
+    "gpt-4o-mini": {"input": 0.000150, "output": 0.000600},
+}
+
+
+class OpenAILLMProvider(LLMProvider):
+    """Production LLM provider backed by OpenAI."""
+
+    def __init__(self, lesson_id: str | None = None) -> None:
+        settings = get_settings()
+        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self._langfuse = Langfuse(
+            public_key=settings.langfuse_public_key,
+            secret_key=settings.langfuse_secret_key,
+            host=settings.langfuse_host,
+        )
+        self._lesson_id = lesson_id
+
+    @with_retry(max_attempts=3)
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        **kwargs: Any,
+    ) -> str:
+        """Return a plain-text chat completion from OpenAI."""
+        if await is_circuit_open(_PROVIDER_KEY):
+            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+
+        trace = self._langfuse.trace(name="llm.complete", metadata={"model": model, "lesson_id": self._lesson_id})
+        generation = trace.generation(name="openai.chat", model=model, input=messages)
+
+        try:
+            response: ChatCompletion = await self._client.chat.completions.create(
+                model=model,
+                messages=messages,  # type: ignore[arg-type]
+                **kwargs,
+            )
+            content = response.choices[0].message.content or ""
+
+            # Langfuse token tracking
+            if response.usage:
+                generation.end(
+                    output=content,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                    },
+                )
+                await self._maybe_accumulate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+
+            await record_success(_PROVIDER_KEY)
+            return content
+
+        except Exception:
+            await record_failure(_PROVIDER_KEY)
+            raise
+
+    @with_retry(max_attempts=3)
+    async def complete_structured(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        response_format: type,
+        **kwargs: Any,
+    ) -> Any:
+        """Return a structured completion parsed into *response_format* (a Pydantic model)."""
+        if await is_circuit_open(_PROVIDER_KEY):
+            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+
+        trace = self._langfuse.trace(
+            name="llm.complete_structured",
+            metadata={"model": model, "response_format": response_format.__name__, "lesson_id": self._lesson_id},
+        )
+        generation = trace.generation(name="openai.chat.structured", model=model, input=messages)
+
+        try:
+            # Use OpenAI's beta structured-output parse helper
+            response = await self._client.beta.chat.completions.parse(
+                model=model,
+                messages=messages,  # type: ignore[arg-type]
+                response_format=response_format,  # type: ignore[arg-type]
+                **kwargs,
+            )
+            parsed = response.choices[0].message.parsed
+
+            if response.usage:
+                generation.end(
+                    output=str(parsed),
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                    },
+                )
+                await self._maybe_accumulate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+
+            await record_success(_PROVIDER_KEY)
+            return parsed
+
+        except Exception:
+            await record_failure(_PROVIDER_KEY)
+            raise
+
+    async def _maybe_accumulate_cost(self, model: str, input_tokens: int, output_tokens: int) -> None:
+        """Accumulate cost for the current lesson if a lesson_id is set."""
+        if self._lesson_id is None:
+            return
+
+        pricing = _COST_PER_1K.get(model)
+        if pricing is None:
+            logger.warning("No pricing data for model '%s' — cost not tracked", model)
+            return
+
+        cost = (input_tokens / 1000 * pricing["input"]) + (output_tokens / 1000 * pricing["output"])
+
+        from app.core.cost_tracker import accumulate_cost, check_ceiling  # lazy to avoid circular
+
+        total = await accumulate_cost(self._lesson_id, cost)
+        if await check_ceiling(self._lesson_id):
+            raise RuntimeError(
+                f"Lesson {self._lesson_id} exceeded cost ceiling at ${total:.4f} — pipeline aborted"
+            )

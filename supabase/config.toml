@@ -1,0 +1,33 @@
+project_id = "transformed-ai"
+
+[api]
+port = 54321
+schemas = ["public", "extensions"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+port = 54323
+enabled = true
+
+[inbucket]
+port = 54324
+
+[storage]
+file_size_limit = "104857600"
+
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["https://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false

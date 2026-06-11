@@ -1,0 +1,13 @@
+{
+  "name": "@transformed/shared",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    "./types/lesson": "./types/lesson.ts",
+    "./types/ws": "./types/ws.ts",
+    "./schema": "./lesson_package.schema.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

@@ -2,20 +2,36 @@
   "permissions": {
     "allow": [
       "Bash(git *)",
-      "Bash(npm *)",
-      "Bash(npx *)",
       "Bash(pnpm *)",
+      "Bash(npx *)",
+      "Bash(npm *)",
+      "Bash(node *)",
+      "Bash(uv *)",
       "Bash(python *)",
-      "Bash(pip *)",
+      "Bash(python3 *)",
       "Bash(uvicorn *)",
       "Bash(ruff *)",
       "Bash(mypy *)",
       "Bash(pytest *)",
+      "Bash(arq *)",
+      "Bash(supabase *)",
+      "Bash(railway *)",
+      "Bash(stripe *)",
       "Bash(ls *)",
       "Bash(mkdir *)",
       "Bash(cp *)",
-      "Bash(mv *)"
+      "Bash(mv *)",
+      "Bash(cat *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(curl *)"
     ],
-    "deny": []
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Bash(DROP TABLE *)",
+      "Bash(supabase db reset *)"
+    ]
   }
 }
