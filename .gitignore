@@ -72,7 +72,7 @@ build/
 wheels/
 pip-wheel-metadata/
 .installed.cfg
-lib/
+/lib/
 lib64/
 parts/
 sdist/
