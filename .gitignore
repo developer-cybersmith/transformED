@@ -1,82 +1,140 @@
 # ============================================================
-# HIE — Root .gitignore
-# Sub-project gitignores (apps/api, apps/web) handle their
-# own framework-specific patterns. This file covers repo-wide
-# and personal/generated exclusions.
+# TransformED AI — Root .gitignore
+# Covers the full monorepo (Python API + Next.js Web + shared)
 # ============================================================
 
-# ---- Personal dev context (NEVER push) ----
-_bmad/config.user.toml
-_bmad-output/
-docs/dev2-sprint-tracker.md
-docs/dev2-frontend-role.md
-docs/dev1-pydantic-schemas-task.md
-docs/dev3-*.md
-docs/dev4-*.md
-
-# ---- Environment variables ----
+# ---- Environment & secrets (NEVER commit) ----
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+secrets/
+
+
+docs/dev3-assessment-tracker.md 
+## dev3 doc dont commit this 
+
+# ---- OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---- Editor / IDE ----
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.history/
 
 # ---- Node / pnpm ----
 node_modules/
-.pnpm-store/
 .pnp
-.pnp.*
-# npm lockfile should not exist in a pnpm workspace — ignore if created by accident
-package-lock.json
-**/package-lock.json
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Next.js ----
+apps/web/.next/
+apps/web/out/
+apps/web/.vercel/
+apps/web/*.tsbuildinfo
+apps/web/next-env.d.ts
+
+# ---- TypeScript ----
+*.tsbuildinfo
 
 # ---- Python ----
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyd
 *.so
+*.pyd
+.Python
 .venv/
 venv/
 env/
+ENV/
 .uv/
 *.egg-info/
+*.egg
 dist/
 build/
+wheels/
+pip-wheel-metadata/
+.installed.cfg
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.manifest
+*.spec
 
-# ---- Next.js ----
-.next/
-out/
-*.tsbuildinfo
-next-env.d.ts
+# ---- Python tools ----
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
 
-# ---- Build / coverage ----
-/coverage
-htmlcov/
+# ---- Test & coverage ----
 .pytest_cache/
 .coverage
 .coverage.*
+coverage/
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
 junit*.xml
 
-# ---- OS ----
-.DS_Store
-Thumbs.db
-ehthumbs.db
-Desktop.ini
+# ---- Supabase local ----
+supabase/.branches/
+supabase/.temp/
+supabase/seed.sql
 
-# ---- IDE ----
-.idea/
-.vscode/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# ---- Redis ----
+dump.rdb
+*.rdb
+
+# ---- Docker ----
+.docker/
+
+# ---- Langfuse (self-hosted local) ----
+langfuse.db
+langfuse-data/
+
+# ---- Build / dist outputs ----
+dist/
+build/
+out/
 
 # ---- Logs ----
+logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
+*.log.*
+
+# ---- Temporary files ----
+*.tmp
+*.temp
+.cache/
+tmp/
 
 # ---- Claude Code local settings ----
 .claude/settings.local.json

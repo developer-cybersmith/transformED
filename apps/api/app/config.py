@@ -43,8 +43,15 @@ class Settings(BaseSettings):
     # ── Anthropic (Phase 2, optional) ─────────────────────────────────────────
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key — optional, Phase 2 only")
 
-    # ── ElevenLabs ────────────────────────────────────────────────────────────
-    elevenlabs_api_key: str = Field(..., description="ElevenLabs API key for TTS")
+    # ── Google AI (optional — Gemini evaluation in Sprint 1) ──────────────────
+    google_api_key: str | None = Field(default=None, description="Google AI / Vertex AI key — optional, for Gemini model evaluation")
+
+    # ── TTS providers ─────────────────────────────────────────────────────────
+    # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
+    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
+    azure_tts_key: str | None = Field(default=None, description="Azure Cognitive Services TTS key — fallback")
+    azure_tts_region: str = Field(default="centralindia", description="Azure TTS region")
+    elevenlabs_api_key: str | None = Field(default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam")
 
     # ── HeyGen ────────────────────────────────────────────────────────────────
     heygen_api_key: str = Field(..., description="HeyGen API key for avatar clips")
@@ -67,18 +74,25 @@ class Settings(BaseSettings):
         description="Daily per-user AI spend cap in USD",
     )
 
-    # ── LLM model names (PRD §6.4) ───────────────────────────────────────────
+    # ── LLM model names ────────────────────────────────────────────────────────
+    # All model IDs are env-var driven. Never hardcode model strings in business logic.
+    # Status: evaluation sprint planned for Sprint 1, Week 1.
+    # Defaults below are conservative (confirmed working). Swap via env vars to test.
     llm_lesson_planner: str = Field(
         default="gpt-4o",
-        description="Model used by the lesson-planner node",
+        description="Premium model for lesson-planner node. Eval candidates: gpt-4o, claude-3-5-sonnet-20241022, o1-mini.",
     )
     llm_slide_generator: str = Field(
         default="gpt-4o",
-        description="Model used by the slide-generator node",
+        description="Premium model for slide-generator node. Shares eval candidates with llm_lesson_planner.",
     )
     llm_mini: str = Field(
         default="gpt-4o-mini",
-        description="Cheaper model for auxiliary nodes (quiz, jargon, etc.)",
+        description="Economy model for quiz, jargon, complexity, narration, intervention nodes. Eval candidates: gpt-4o-mini, gemini-2.0-flash.",
+    )
+    llm_tutor: str = Field(
+        default="gpt-4o",
+        description="Model for Phase 2 tutor Q&A. Eval candidates: gpt-4o, claude-3-5-sonnet-20241022.",
     )
 
     # ── CES weights (PRD §11) ─────────────────────────────────────────────────
