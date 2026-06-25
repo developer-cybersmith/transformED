@@ -39,25 +39,46 @@ Secondary metrics:
 
 ## Pipeline Node Specification
 
-Nodes execute in strict order. Each node checkpoints to `lesson_jobs.last_node` before returning.
+Nodes execute in two physically separate phases. Each node checkpoints to `lesson_jobs.last_node` before returning.
+
+### Phase A — Book Ingestion (runs once per book, ~2–5 min)
 
 | # | Node | Input | Output | Key Constraint |
 |---|---|---|---|---|
 | 1 | `extract` | PDF bytes | raw text + page map | PyMuPDF; never pass full book to LLM |
 | 2 | `structure` | raw text | chapter/section outline | hierarchical chunking |
 | 3 | `chunk` | outline | semantic chunks (≤800 tokens) | overlap 10% |
-| 4 | `embed` | chunks | vector embeddings stored in Supabase | batch embed; stored for Phase 2 RAG |
-| 5 | `lesson_planner` | outline | lesson plan JSON | GPT-4o; 1 LLM call per section |
-| 6 | `slide_generator` | lesson plan | slide JSON array | max 20 slides/lesson |
-| 7 | `summarise_segment` | chunks | segment summaries | per-segment, not full-book |
-| 8 | `quiz_generator` | summaries | MCQ JSON per segment | 3 questions per segment |
-| 9 | `segment_complexity` | summaries | complexity score per segment | float 0–1 |
-| 10 | `jargon_extractor` | chunks | jargon term list + definitions | deduped across segments |
-| 11 | `intervention_messages` | complexity + jargon | pre-generated intervention strings A/B/C | built once — no GPT at runtime |
-| 12 | `narration_generator` | slide JSON + summaries | narration scripts with timestamp hints | per-slide |
-| 13 | `tts_node` | narration scripts | `.mp3` files + `narration.timestamps` JSON | ElevenLabs or OpenAI TTS |
-| 14 | `image_generator` | slide JSON | slide images (DALL-E or static fallback) | optional; fallback to CSS slides |
-| 15 | `package_builder` | all outputs | `lesson_package.json` + asset manifest | final artifact consumed by player |
+| 4 | `embed` | chunks | vector(1536) stored inline in `chunks.embedding` | Embed at ingestion only — NEVER regenerate stored embeddings |
+
+### Phase B — Chapter Generation (per chapter, student-triggered, ~5–15 min)
+
+**Phase B.1 — Economy nodes (ALL run in parallel, `settings.llm_mini`):**
+
+| # | Node | Input | Output | Key Constraint |
+|---|---|---|---|---|
+| 5 | `summarise_segment` | chunks | segment summaries | MUST complete for ALL segments before Phase B.2 starts |
+| 6 | `quiz_generator` | summaries | MCQ JSON per segment | 3 questions per segment |
+| 7 | `segment_complexity` | summaries | complexity score per segment | float 0–1 |
+| 8 | `jargon_extractor` | chunks | jargon term list + definitions | deduped across segments |
+| 9 | `intervention_msgs` | complexity + jargon | pre-generated intervention strings A/B/C | built once — no GPT at runtime |
+| 10 | `narration_script` | slide JSON + summaries | narration scripts with timestamp hints | per-slide |
+
+**Phase B.2 — Premium nodes (sequential — start only after ALL Phase B.1 complete):**
+
+| # | Node | Input | Output | Key Constraint |
+|---|---|---|---|---|
+| 11 | `lesson_planner` | segment summaries from Phase B.1 | lesson plan JSON | GPT-4o; input is summaries NOT raw chapter text (5× token savings) |
+| 12 | `slide_generator` | lesson plan | slide JSON array | max 20 slides/lesson |
+
+**Phase B.3 — Media nodes:**
+
+| # | Node | Input | Output | Key Constraint |
+|---|---|---|---|---|
+| 13 | `tts_node` | narration scripts | `.mp3` per segment + `narration.timestamps` JSON | Sarvam Bulbul v2 → Azure TTS → Browser Speech (fallback chain) |
+| 14 | `image_generator` | slide content | slide images | GPT Image 1 Mini → Imagen 4 Fast → text-only |
+| 15 | `package_builder` | all Phase B outputs | `lesson_package.json` + asset manifest | final artifact consumed by player |
+
+> **Critical execution constraint:** Phase B.2 CANNOT start until ALL segments complete Phase B.1. `lesson_planner` receives segment summaries — NEVER raw chapter text. Violating this silently causes a 5× cost overrun.
 
 ---
 
@@ -73,10 +94,10 @@ Nodes execute in strict order. Each node checkpoints to `lesson_jobs.last_node` 
 | Retry + circuit breaker | `backend/llm/resilience.py` — `with_retry()`, `CircuitBreaker` |
 | Storage | `backend/storage/lesson_store.py` — Supabase bucket + DB writes |
 | Cost tracking | `backend/pipeline/cost_tracker.py` — tracks token spend per job |
-| DB migrations | `supabase/migrations/` — `lesson_jobs`, `lesson_packages`, `embeddings` tables |
+| DB migrations | `supabase/migrations/` — `lesson_jobs`, `lesson_packages`, `chunks` (inline `embedding vector(1536)`) tables. Note: `embeddings` table was dropped in migration `20260625000000` — embeddings are now inline in `chunks.embedding`. |
 | ARQ job definition | `backend/workers/jobs.py` — `generate_lesson_job` |
 
-**State management:** LangGraph `MemorySaver` (in-memory per invocation). `PostgresSaver` is deferred to Phase 2.
+**State management:** LangGraph `MemorySaver` (in-memory per invocation). `PostgresSaver` is **BANNED** — conflicts with Supabase PgBouncer + asyncpg. Custom `lesson_jobs` checkpointing only.
 
 **Worker queue:** ARQ backed by Redis. Celery is explicitly rejected.
 
@@ -87,10 +108,11 @@ Nodes execute in strict order. Each node checkpoints to `lesson_jobs.last_node` 
 ## Out of Scope (Phase 2)
 
 - RAG tutor Q&A (embeddings are stored in this epic but the retrieval chain is not built)
-- `PostgresSaver` for LangGraph distributed checkpointing
 - Multi-language PDF support
 - PDF > 50 pages
 - Video slide generation
+
+> **Note:** `PostgresSaver` is **permanently BANNED** — not deferred to Phase 2. It conflicts with Supabase PgBouncer + asyncpg. `lesson_jobs` + `MemorySaver` is the final checkpointing solution.
 
 ---
 
@@ -100,7 +122,7 @@ Nodes execute in strict order. Each node checkpoints to `lesson_jobs.last_node` 
 |---|---|
 | Sprint 0 infra (Railway, Supabase, Redis) | Done |
 | Shared API contracts (`lesson_package.json` schema) | Done (Sprint 0) |
-| ElevenLabs / OpenAI TTS API key provisioned | Must be done before Sprint 1 Day 1 |
+| Sarvam AI API key provisioned (primary TTS) | Must be done before Sprint 1 Day 1 |
 | Supabase storage bucket `lesson-assets` created | Must be done before Sprint 1 Day 1 |
 | `lesson_jobs` DB table with `last_node` column | Migration in this epic |
 
@@ -126,7 +148,7 @@ Nodes execute in strict order. Each node checkpoints to `lesson_jobs.last_node` 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | TTS API latency blows 15-min budget | Medium | High | Async parallel TTS calls; cache identical narration text |
-| Image generation cost spikes | Medium | High | DALL-E is optional; CSS fallback enabled by default |
+| Image generation cost spikes | Medium | High | GPT Image 1 Mini → Imagen 4 Fast → text-only fallback. DALL-E 3 is shut down (May 2026). |
 | LLM output fails Pydantic schema | High | Medium | `with_retry()` with structured output; fallback to JSON repair |
 | 50-page PDF exceeds context window | Low | High | Hierarchical chunking enforces ≤800 token input per LLM call |
 | ARQ job loss on Redis restart | Low | High | Redis persistence (AOF) enabled in Railway config |

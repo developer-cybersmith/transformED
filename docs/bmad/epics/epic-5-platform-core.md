@@ -131,7 +131,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 - Pass criteria: P95 upload response < 2s, no pipeline job crashes, Redis memory stable
 
 ### RLS Audit
-- Every table in Supabase audited: `lesson_jobs`, `lesson_packages`, `quiz_responses`, `teachback_responses`, `session_reports`, `learner_dna`, `lesson_access`, `session_events`
+- Every table in Supabase audited: `books`, `chapters`, `chunks`, `lessons`, `lesson_jobs`, `lesson_packages`, `quiz_attempts`, `teachback_attempts`, `learner_dna`, `lesson_access`, `session_events`, `user_consents`
 - Audit checklist in `docs/security/rls-audit.md`
 - No table left with `ENABLE ROW LEVEL SECURITY` = false (except `profiles` for admin reads)
 
@@ -146,10 +146,11 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 
 ### DPDP Act Compliance (India)
 - Privacy policy published at `/privacy`
-- Consent checkbox on signup (stored with timestamp)
-- Learner DNA data retention policy: deleted on account deletion
+- Consent checkbox on signup — stored in `user_consents` audit table: `{ user_id, consent_type, policy_version, consented_at }`. A bare `attention_consent BOOLEAN` on the users table is **insufficient** for DPDP compliance.
+- `consent_type` values: `'attention_capture'`, `'learner_dna'`, `'data_processing'`
+- Learner DNA data retention policy: all `learner_dna` rows deleted on account deletion
 - No raw cognitive/emotional scores returned to frontend (Epic 3 constraint)
-- Data residency: Supabase region set to `ap-south-1` (Mumbai)
+- Data residency: Supabase hosted at `ap-south-1` (Mumbai). **Note:** FastAPI/ARQ is deployed on Railway (no India region) through Sprint 3 — migrate to India-region provider (Fly.io Mumbai, Render Singapore, or AWS ap-south-1) before real students join in Sprint 3.
 
 ---
 
@@ -177,7 +178,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 | Email templates | `backend/notifications/templates/*.html` |
 | Admin panel | `app/(admin)/admin/` (route group with layout auth check) |
 | Landing pages | `app/page.tsx`, `app/pricing/page.tsx`, `app/privacy/page.tsx` |
-| DB migrations | `supabase/migrations/` — `lesson_access`, `profiles` (is_admin), `stripe_events` |
+| DB migrations | `supabase/migrations/` — `lesson_access`, `profiles` (is_admin), `stripe_events`, `user_consents` (DPDP consent audit — Sprint 2) |
 | Runbook | `docs/ops/runbook.md` |
 | RLS audit | `docs/security/rls-audit.md` |
 
@@ -221,7 +222,8 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 - [ ] Failed job visible in admin panel with error message; retry queues new ARQ job
 - [ ] RLS audit completed; checklist signed off; every protected table audited
 - [ ] Load test: 50 concurrent users, P95 < 2s, no crashes — results documented
-- [ ] DPDP consent checkbox on signup with timestamp stored in DB
+- [ ] DPDP consent recorded at signup in `user_consents` table (not just a boolean flag) — consent_type `'data_processing'` row written at signup
+- [ ] DPDP attention consent recorded in `user_consents` with consent_type `'attention_capture'` before MediaPipe activates (Epic 2 integration)
 - [ ] Privacy policy and Terms pages live at `/privacy` and `/terms`
 - [ ] On-call runbook covers all 4 critical failure scenarios
 - [ ] E2E test: sign up → pay → upload → lesson → report, no developer intervention

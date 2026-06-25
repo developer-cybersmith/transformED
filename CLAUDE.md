@@ -1,6 +1,6 @@
 # TransformED AI — Claude Code Project Guide
 
-**PRD version:** 1.0 Final (10 June 2026) — this is the single source of truth.
+**PRD version:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026).
 **Goal:** First paying student completes a full session by end of Week 10.
 
 ---
@@ -18,12 +18,12 @@
 | Cache/Queue/PubSub | **Railway Redis** | |
 | AI orchestration | **LangGraph** (pin exact version — never auto-upgrade) | |
 | LangGraph checkpointing | **Custom lesson_jobs table + MemorySaver** | PostgresSaver BANNED |
-| Primary LLM | **OpenAI GPT-4o + GPT-4o-mini** | Per-task allocation below |
-| Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A only) | |
-| TTS | **ElevenLabs → Azure TTS → Browser Speech** | Fallback chain |
+| Primary LLM | **OpenAI GPT-4o + GPT-4o-mini** (defaults — see model table) | Per-task allocation below |
+| Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A, evaluation candidate) | |
+| TTS | **Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. |
 | Avatar | **HeyGen cached intro/outro (~$0/lesson)** | No live HeyGen per lesson |
-| Image | **DALL-E 3 → stock library → text-only** | Fallback chain |
-| Embeddings | **text-embedding-3-small** (at ingestion, never at query time) | |
+| Image | **GPT Image 1 Mini → Imagen 4 Fast → text-only** | DALL-E 3 DEAD (shut down May 2026). |
+| Embeddings | **text-embedding-3-small** | Chunk content: embed at ingestion only, never regenerate. Phase 2 RAG tutor embeds student questions at query time — this is permitted. |
 | OCR | **Tesseract** (in-container) | Azure Doc Intelligence removed |
 | PDF | **PyMuPDF + pdfplumber** | |
 | Attention | **MediaPipe Face Landmarker WASM** | WebGazer REJECTED |
@@ -34,11 +34,16 @@
 
 ## Per-Task Model Allocation
 
-| Task | Model |
-|------|-------|
-| Lesson planning, slide generation | GPT-4o |
-| Quiz, scoring, complexity, narration, jargon, interventions, Learner DNA | GPT-4o-mini |
-| Tutor Q&A (Phase 2) | GPT-4o or Claude Sonnet |
+> **Model evaluation sprint: Sprint 1, Week 1.** Defaults below are conservative and confirmed working. Final model IDs locked before Sprint 2. **Never hardcode model strings** — always use `settings.llm_*` aliases from `config.py`. Swapping models is an env var change only.
+
+| Task | Default (env var) | Evaluation candidates |
+|------|-------------------|-----------------------|
+| Lesson planning | `gpt-4o` (`LLM_LESSON_PLANNER`) | GPT-4o, Claude 3.5 Sonnet, o1-mini |
+| Slide generation | `gpt-4o` (`LLM_SLIDE_GENERATOR`) | Same as above |
+| Quiz, scoring, complexity, narration, jargon, interventions, Learner DNA | `gpt-4o-mini` (`LLM_MINI`) | GPT-4o-mini, Gemini 2.0 Flash |
+| Tutor Q&A (Phase 2) | `gpt-4o` (`LLM_TUTOR`) | GPT-4o, Claude 3.5 Sonnet |
+
+**Batch API rule:** Never use OpenAI or Google Batch API for pipeline nodes. Batch API has a 24-hour completion window — incompatible with real-time generation. All pipeline LLM calls use the synchronous (real-time) API endpoint.
 
 ## Repo Structure
 
@@ -76,23 +81,48 @@ transformED-corp/
 ## Core Architectural Principles (from PRD §5)
 
 1. **Lesson generation ≠ RAG** — source chapter is known; no retrieval needed for generation
-2. **Process once, reuse everywhere** — embeddings generated at ingestion, never at query time
+2. **Process once, reuse everywhere** — chunk embeddings generated at ingestion, never regenerated for stored content. Phase 2 RAG tutor embeds the student's question at query time — this is intentional and required.
 3. **Modular monolith** — one FastAPI deploy; module names match future microservice names
 4. **One discipline rule** — modules communicate only through service layer, never via direct DB access into another module's tables. Violating PRs are rejected.
 5. **Provider abstraction everywhere** — no direct provider client calls in business logic
 6. **Hierarchical document processing** — process Chapter → Section → Topic. Never full-book single call.
 7. **Observability from commit one** — Langfuse + Sentry + OTel + PostHog wired before feature work
 
-## Content Generation Pipeline (11 nodes, §9)
+## Content Generation Pipeline (§9)
 
+**Phase A — Book Ingestion** (once per book, ~2–5 min):
 ```
-extract → structure → chunk → embed  (ingestion)
-→ lesson_planner → slide_generator → summarise_segment → quiz_generator
-→ segment_complexity → jargon_extractor → intervention_messages
-→ narration_generator → tts_node → image_generator → package_builder
+upload → store_pdf → extract_text → structure_detect → chunk → embed
+```
+
+**Phase B — Chapter Generation** (per chapter, student-triggered, ~5–15 min):
+
+*Phase 1 — Economy nodes (all run in parallel, `settings.llm_mini`):*
+```
+summarise_segment × N   ← ALL must finish before Phase 2 starts
+quiz_generator    × N
+segment_complexity× N
+jargon_extractor  × N
+intervention_msgs × N
+narration_script  × N
+```
+
+*Phase 2 — Premium nodes (sequential, start only after ALL Phase 1 segments complete):*
+```
+lesson_planner   ← input: segment summaries from Phase 1, NOT raw chapter text (5× token savings)
+slide_generator  ← input: lesson outline from lesson_planner
+```
+
+*Phase 3 — Media nodes:*
+```
+tts_node         ← narration scripts → .mp3 per segment
+image_generator  ← slide content → images
+package_builder  ← assembles final JSONB lesson package
 ```
 
 Checkpoint pattern: after each node, write `last_node` + `node_outputs` to `lesson_jobs`. On ARQ retry: read `last_node`, skip completed nodes. Never re-run completed LLM calls.
+
+**Critical constraint:** `lesson_planner` receives segment summaries, not raw chapter text. Phase 1 must fully complete before Phase 2 starts. Violating this silently causes a 5× cost overrun.
 
 ## Tutor State Machine (7 states, §10)
 
@@ -114,13 +144,19 @@ CES = quiz_accuracy×0.35 + teachback_score×0.25 + behavioral×0.20 + head_pose
 ```
 Trigger: CES < 50 for 2 consecutive 5s windows → intervention.
 
+When `teachback_score` is `None` (teach-back skipped — never gated, always allow Skip):
+```
+CES = quiz_accuracy×0.467 + behavioral×0.267 + head_pose×0.160 + blink×0.107
+```
+(Redistribute 0.25 weight proportionally across remaining 4 signals: each new weight = original ÷ 0.75)
+
 ## Failure Modes (§14)
 
 - Exponential backoff: `wait = (2^attempt) + random(0,1)` — 3 attempts critical, 2 optional
 - Retry on: 429, 500, 502, 503, 504. Never retry: 400, 401
 - Circuit breaker: 5 failures/2min → open; 10min → half-open probe (state in Redis)
 - Cost ceiling: $3.00/lesson — downshift to cheapest providers on breach, complete lesson, flag in admin
-- TTS fallback chain: ElevenLabs → Azure TTS → Browser Speech — NEVER hard-fails
+- TTS fallback chain: Sarvam Bulbul v2 → Azure TTS → Browser Speech — NEVER hard-fails
 
 ## Interface Contracts (frozen Week 1, §16)
 
@@ -130,6 +166,10 @@ Four contracts are frozen — changes require PR reviewed by all 4 developers:
 3. Assessment API (OpenAPI auto-generated from FastAPI)
 4. `supabase/migrations/` — never modify applied migrations
 
+Applied and frozen migrations (do not alter):
+- `20260611000000_initial_schema.sql` — initial schema
+- `20260625000000_chunks_inline_embedding.sql` — books table, inline embedding in chunks, lessons.book_id (applied 2026-06-25)
+
 ## Security (§18)
 
 - JWT verified locally (PyJWT + SUPABASE_JWT_SECRET) — never remote call per request
@@ -137,6 +177,8 @@ Four contracts are frozen — changes require PR reviewed by all 4 developers:
 - Raw webcam video NEVER leaves browser — only 5 derived numbers sent
 - Attention capture requires explicit consent (modal + users.attention_consent flag)
 - DPDP Act 2023 compliance — Learner DNA disclaimer required, no clinical claims
+- **DPDP consent gap:** `users.attention_consent` boolean is insufficient — a `user_consents` audit table (columns: user_id, consent_type, policy_version, consented_at) is required before any attention data is collected. Sprint 2 priority.
+- PDF security: parse user-uploaded PDFs in an isolated subprocess — calling `fitz.open()` directly in the main FastAPI process is a security risk with untrusted files
 - Kimi/Qwen deferred — China-hosted data residency risk
 
 ## Development Rules
@@ -150,14 +192,15 @@ Four contracts are frozen — changes require PR reviewed by all 4 developers:
 - Never gate lesson progress on teach-back score in MVP
 - No teach-back timer — creates test anxiety
 - No STT in MVP — typed teach-back only
-- Embeddings at ingestion only — never at query time
+- Chunk embeddings at ingestion only — never regenerate stored chunk embeddings. Phase 2 RAG tutor query-embedding IS allowed (embed the student question at query time).
+- API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1)
 
 ## Build Roadmap (10 weeks, §22)
 
 - **Week 1 (Sprint 0):** Infra setup + shared contracts frozen (THIS SPRINT)
 - **Weeks 2–3 (Sprint 1):** Core pipeline + player skeleton
 - **Weeks 4–5 (Sprint 2):** Full 11-node pipeline + integration → investor demo ready
-- **Weeks 6–7 (Sprint 3):** MediaPipe + CES + full tutor state machine
+- **Weeks 6–7 (Sprint 3):** MediaPipe + CES + full tutor state machine — **prerequisite:** migrate FastAPI/ARQ from Railway to India-region provider before real students join
 - **Weeks 8–9 (Sprint 4):** Load test + calibration + Stripe + hardening
 - **Week 10:** Launch — first paying student
 

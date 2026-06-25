@@ -39,7 +39,7 @@
 | Sprint 0 | 1 | ✅ Done — infra, shared contracts, monorepo |
 | Sprint 1 | 2–3 | Core pipeline + player skeleton |
 | Sprint 2 | 4–5 | Full pipeline + integration → investor demo |
-| Sprint 3 | 6–7 | MediaPipe + CES + full tutor machine |
+| Sprint 3 | 6–7 | MediaPipe + CES + full tutor machine — **prerequisite:** migrate FastAPI/ARQ from Railway to India-region provider before real students join |
 | Sprint 4 | 8–9 | Load test + Stripe + hardening |
 | Launch | 10 | First paying student |
 
@@ -80,7 +80,7 @@ Ask the team lead to invite you to:
 - [ ] Railway — project access (deploy environments)
 - [ ] Supabase — project access (DB + storage)
 - [ ] OpenAI — API key
-- [ ] ElevenLabs — API key
+- [ ] Sarvam AI — API key (primary TTS: Bulbul v2)
 - [ ] Langfuse — self-hosted instance access
 - [ ] Sentry — project access
 
@@ -549,7 +549,7 @@ Queries Langfuse to report per-lesson AI spend. Hard ceiling: **$3.00/lesson**. 
 | **Azure Document Intelligence** | Cross-cloud latency, cost | **Tesseract** (in-container) |
 | **Kimi / Qwen** | China-hosted, DPDP Act data residency risk | OpenAI / Claude |
 | **Direct provider API calls in business logic** | Violates provider abstraction | Use `app/providers/` classes |
-| **Embeddings at query time** | Cost + latency | Only at ingestion |
+| **Regenerating stored chunk embeddings** | Cost + latency; stored embeddings are immutable | Embed chunks at ingestion only. **Exception:** Phase 2 RAG tutor embeds the student's *question* at query time — this is permitted and required. |
 | **Microservices** | Premature ops tax | Modular monolith |
 | **IQ / EQ / SQ terminology** | Legal and credibility liability | "Learner DNA" branding only |
 | **Raw dimension scores shown to students** | Legal risk | Descriptive profile only |
@@ -557,6 +557,12 @@ Queries Langfuse to report per-lesson AI spend. Hard ceiling: **$3.00/lesson**. 
 | **Gating lesson progress on teach-back score** | Churns users before calibration data exists | Always allow "Continue" |
 | **STT / microphone** | Complexity + voice consent surface | Typed teach-back only |
 | **LangGraph auto-upgrade** | Version changes break pipeline silently | Pin exact version |
+
+### Pipeline execution order (third most violated rule)
+
+Phase B.1 economy nodes (`summarise_segment`, `quiz_generator`, `segment_complexity`, `jargon_extractor`, `intervention_msgs`, `narration_script`) run **in parallel** across all segments FIRST. Only after **all** Phase B.1 nodes complete does Phase B.2 start.
+
+`lesson_planner` receives segment **summaries** as input — never raw chapter text. Violating this silently causes a 5× cost overrun.
 
 ### The One Discipline Rule (most violated rule)
 
@@ -600,6 +606,10 @@ These 4 files are **frozen**. Any change requires a PR reviewed by all 4 develop
 | TypeScript lesson types | `packages/shared/types/lesson.ts` | Dev 1 |
 | WebSocket message types | `packages/shared/types/ws.ts` | Dev 4 |
 | DB migrations | `supabase/migrations/` (never edit applied) | Dev 1 |
+
+Two migrations are applied and frozen (do NOT alter):
+- `20260611000000_initial_schema.sql` — initial schema
+- `20260625000000_chunks_inline_embedding.sql` — books table, inline embedding, lessons.book_id (applied 2026-06-25)
 
 If you need to change a contract:
 1. Open a discussion in the team channel first
@@ -716,7 +726,8 @@ A story is **not done** until every box is checked:
 │  MODELS (never hardcode — use settings.*)                            │
 │    Lesson planning, slides: GPT-4o  (settings.llm_lesson_planner)   │
 │    Quiz, scoring, narration: GPT-4o-mini  (settings.llm_mini)       │
-│    Tutor Q&A (Phase 2 only): Claude Sonnet                          │
+│    Tutor Q&A (Phase 2): GPT-4o  (settings.llm_tutor)               │
+│    Model eval sprint: Sprint 1 Wk 1 — defaults above until locked   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 

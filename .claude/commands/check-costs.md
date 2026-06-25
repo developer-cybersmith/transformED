@@ -22,8 +22,8 @@ Queries Langfuse API and the `lesson_jobs` table to report:
 |------|--------|
 | GPT-4o (slides + planning) | $0.40–0.60 |
 | GPT-4o-mini (quiz, scoring, etc.) | $0.03–0.05 |
-| ElevenLabs TTS | $0.20–0.40 |
-| DALL-E 3 | ~$0.60 |
-| **Total typical lesson** | **$1.20–1.65** |
+| Sarvam AI TTS (Bulbul v2) | $0.05–0.20 (confirm Sprint 1) |
+| GPT Image 1 Mini | $0.08–0.20 (confirm Sprint 1) |
+| **Total typical lesson** | **$0.55–1.00** |
 
 If any node is routinely over budget, suggest downgrading to the mini model or enabling the fallback chain.

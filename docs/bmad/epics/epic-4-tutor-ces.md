@@ -130,7 +130,7 @@ Each entry: `{ head_pose: float, blink_rate: float, timestamp: ms }`
 ### Computation
 - Runs in-process in the WebSocket message handler (no separate worker)
 - Reads last 6 signals from Redis (`LRANGE session:{id}:signals 0 5`)
-- Applies CES formula (weights from env vars, formula defined in Epic 3)
+- Applies CES formula (weights from env vars, formula defined in Epic 3); when `teachback_score` is `None` (teach-back not yet submitted for a window), applies redistribution: `quiz×0.467 + behavioral×0.267 + head_pose×0.160 + blink×0.107`
 - Target latency: < 5ms
 - Result emitted as `ces_update` message to client and written to `session_events` table (async, non-blocking)
 
@@ -172,7 +172,7 @@ Each entry: `{ head_pose: float, blink_rate: float, timestamp: ms }`
 - Multi-student session coordination
 - Adaptive pacing (slow down lesson narration based on CES)
 - Voice-based interventions
-- PostgreSQL-backed tutor state persistence (Redis is sufficient for Phase 1)
+- Additional tutor state persistence beyond Redis + `session_events` (Redis is sufficient for Phase 1; any Phase 2 extension must use event-log replay — `PostgresSaver` is permanently BANNED)
 
 ---
 
@@ -185,6 +185,7 @@ Each entry: `{ head_pose: float, blink_rate: float, timestamp: ms }`
 | Epic 1: `intervention_messages` node produces pre-generated strings | Required before full tutor integration |
 | Epic 2: WebSocket client + AttentionMonitor sending signals | Parallel — interface contract agreed Sprint 1 |
 | Epic 3: CES formula weights and `teachback_score` signal | Interface contract agreed Sprint 1 |
+| `user_consents` audit table (Sprint 2) | `attention_signal` handler rejects with code 4003 if `consent_type='attention_capture'` row absent — DPDP compliance |
 
 ---
 
@@ -202,6 +203,8 @@ Each entry: `{ head_pose: float, blink_rate: float, timestamp: ms }`
 - [ ] Redis writes are non-blocking — WebSocket handler does not await signal buffer write
 - [ ] `ces_update` messages emitted to client at 5-second intervals during TEACHING
 - [ ] All intervention messages sourced from `lesson_package.json` — no inline strings, no GPT calls
+- [ ] CES redistributes weights correctly when `teachback_score` is `None` (unit test in `test_ces_compute.py`)
+- [ ] `attention_signal` WebSocket message rejected with code 4003 if `user_consents` lacks `consent_type='attention_capture'` row (DPDP compliance test)
 
 ---
 

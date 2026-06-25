@@ -52,7 +52,7 @@ Secondary metrics:
 | `QuizModal` | `components/player/QuizModal.tsx` | MCQ modal; fires at segment boundaries; submits to `/api/assessment/quiz` |
 | `TeachBackModal` | `components/player/TeachBackModal.tsx` | Free-text teach-back; no timer; submits to `/api/assessment/teachback` |
 | `TutorInterventionCard` | `components/player/TutorInterventionCard.tsx` | Slides in from right; receives intervention messages via WebSocket |
-| `AttentionMonitor` | `components/player/AttentionMonitor.tsx` | MediaPipe FaceMesh WASM; streams head pose + blink signals to WebSocket |
+| `AttentionMonitor` | `components/player/AttentionMonitor.tsx` | MediaPipe FaceMesh WASM; streams head pose + blink signals to WebSocket. **DPDP gate:** checks `user_consents` for `consent_type='attention_capture'` before initializing — shows consent modal if absent. |
 
 ---
 
@@ -137,6 +137,7 @@ While the pipeline runs (Epic 1), the `/upload` page shows a live progress scree
 | Epic 3 assessment API endpoints | Required for quiz + teachback submission |
 | HeyGen API key + avatar video URLs | Must be provisioned before Sprint 2 |
 | MediaPipe WASM bundle size approved (< 3MB gzip) | Verify before Sprint 1 |
+| `user_consents` audit table with `consent_type='attention_capture'` | Sprint 2 prerequisite — DPDP Act 2023 compliance gate for AttentionMonitor |
 
 ---
 
@@ -150,6 +151,7 @@ While the pipeline runs (Epic 1), the `/upload` page shows a live progress scree
 - [ ] TutorInterventionCard renders on receipt of WebSocket intervention message
 - [ ] AvatarOverlay plays HeyGen intro/outro and shows static image during lesson body
 - [ ] AttentionMonitor initializes MediaPipe within 3s; signals reach WebSocket
+- [ ] AttentionMonitor does NOT initialize without `user_consents` row with `consent_type='attention_capture'` — verified by removing consent row and confirming WASM does not load
 - [ ] Upload progress screen shows all pipeline node steps live
 - [ ] `PlayerLoader` has `ssr: false` — no hydration errors in browser console
 - [ ] All routes render without 404 on fresh deploy
