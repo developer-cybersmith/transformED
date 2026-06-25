@@ -3,7 +3,7 @@ import { Sidebar } from "@/components/dashboard/shell/Sidebar";
 import { TopUtilityBar } from "@/components/dashboard/shell/TopUtilityBar";
 
 export const metadata: Metadata = {
-    title: "Upload - TransformED",
+    title: "Upload - HIE",
     description: "Generate interactive lessons from your materials.",
 };
 

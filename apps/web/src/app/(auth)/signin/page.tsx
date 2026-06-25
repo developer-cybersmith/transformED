@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { SignInForm } from "@/components/auth/SignInForm";
 import { BarChart3, Brain, Target, Sparkles } from "lucide-react";
 
@@ -14,9 +15,10 @@ export default function SignInPage() {
 
                 <div className="flex-1 flex flex-col justify-center p-20 relative z-10">
                     <div className="max-w-xl">
-                        <Link href="/" className="inline-block mb-16">
+                        <Link href="/" className="flex items-center gap-2 mb-16">
+                            <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
                             <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-primary-hover)]">
-                                TransformED
+                                HIEIQ<span className="text-[var(--accent-primary)]">.AI</span>
                             </span>
                         </Link>
 
@@ -91,9 +93,10 @@ export default function SignInPage() {
 
                 <div className="w-full max-w-[420px] relative z-10">
                     <div className="lg:hidden mb-10">
-                        <Link href="/" className="inline-block">
+                        <Link href="/" className="flex items-center justify-center gap-2">
+                            <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
                             <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-primary-hover)]">
-                                TransformED
+                                HIEIQ<span className="text-[var(--accent-primary)]">.AI</span>
                             </span>
                         </Link>
                     </div>

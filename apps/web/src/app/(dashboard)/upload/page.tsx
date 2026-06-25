@@ -1,7 +1,7 @@
 import { UploadFlow } from "@/components/dashboard/upload/UploadFlow";
 
 export const metadata = {
-    title: "Upload Material | TransformED",
+    title: "Upload Material | HIE",
 };
 
 export default function UploadPage() {

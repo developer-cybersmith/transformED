@@ -3,8 +3,8 @@ import { Sidebar } from "@/components/dashboard/shell/Sidebar";
 import { TopUtilityBar } from "@/components/dashboard/shell/TopUtilityBar";
 
 export const metadata: Metadata = {
-    title: "Settings - TransformED",
-    description: "Personalize how TransformED guides your learning journey.",
+    title: "Settings - HIE",
+    description: "Personalize how HIE guides your learning journey.",
 };
 
 export default function SettingsLayout({

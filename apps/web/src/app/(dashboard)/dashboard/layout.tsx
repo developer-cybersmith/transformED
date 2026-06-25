@@ -3,7 +3,7 @@ import { Sidebar } from "@/components/dashboard/shell/Sidebar";
 import { TopUtilityBar } from "@/components/dashboard/shell/TopUtilityBar";
 
 export const metadata: Metadata = {
-    title: "Dashboard - TransformED",
+    title: "Dashboard - HIE",
     description: "Your learning operating system.",
 };
 

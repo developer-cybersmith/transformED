@@ -3,7 +3,7 @@ import { Sidebar } from "@/components/dashboard/shell/Sidebar";
 import { TopUtilityBar } from "@/components/dashboard/shell/TopUtilityBar";
 
 export const metadata: Metadata = {
-    title: "Library - TransformED",
+    title: "Library - HIE",
     description: "Access your generated lessons and review past modules.",
 };
 

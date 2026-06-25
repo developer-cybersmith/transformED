@@ -29,7 +29,7 @@ export default function SettingsPage() {
                         Settings
                     </h1>
                     <p className="text-neutral-500 text-lg">
-                        Personalize how TransformED guides your learning journey.
+                        Personalize how HIE guides your learning journey.
                     </p>
                 </motion.div>
             </div>

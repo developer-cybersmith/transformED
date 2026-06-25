@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { LearnerEvolution } from "@/components/auth/LearnerEvolution";
 import { SignUpForm } from "@/components/auth/SignUpForm";
 
@@ -16,9 +17,10 @@ export default function SignUpPage() {
                 <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] pointer-events-none mix-blend-overlay"></div>
 
                 <div className="flex-1 flex flex-col justify-center p-20 relative z-10 w-full max-w-2xl mx-auto">
-                    <Link href="/" className="inline-block mb-12">
+                    <Link href="/" className="flex items-center gap-2 mb-12">
+                        <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
                         <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
-                            TransformED
+                            HIEIQ.AI
                         </span>
                     </Link>
 
@@ -60,9 +62,10 @@ export default function SignUpPage() {
 
                 <div className="w-full max-w-[420px] relative z-10">
                     <div className="lg:hidden mb-10 text-center">
-                        <Link href="/" className="inline-block">
+                        <Link href="/" className="flex items-center justify-center gap-2">
+                            <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
                             <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/80 lg:from-[var(--accent-primary)] lg:to-[var(--accent-primary-hover)] drop-shadow-md lg:drop-shadow-none">
-                                TransformED
+                                HIEIQ.AI
                             </span>
                         </Link>
                     </div>
