@@ -1,5 +1,5 @@
-{
-  "name": "@transformed/shared",
+﻿{
+  "name": "@hie/shared",
   "version": "0.1.0",
   "private": true,
   "exports": {
@@ -11,3 +11,4 @@
     "typescript": "^5.4.5"
   }
 }
+

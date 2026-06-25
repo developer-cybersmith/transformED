@@ -1,151 +1,80 @@
-'use client'
+import Link from "next/link";
+import Image from "next/image";
+import { LearnerEvolution } from "@/components/auth/LearnerEvolution";
+import { SignUpForm } from "@/components/auth/SignUpForm";
 
-import { useState, FormEvent } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
+export default function SignUpPage() {
+    return (
+        <div className="flex h-screen w-full bg-white selection:bg-[var(--accent-primary)]/20 selection:text-[var(--accent-primary)] overflow-hidden">
 
-export default function SignupPage() {
-  const router = useRouter()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+            {/* Left Side: Storytelling (60%) */}
+            <div className="hidden lg:flex w-[60%] flex-col relative bg-neutral-900 text-white">
+                {/* Soft Background Gradients for Dark Mode */}
+                <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-[var(--accent-primary)]/20 blur-[150px] rounded-full pointer-events-none" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[var(--accent-secondary)]/20 blur-[130px] rounded-full pointer-events-none" />
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
+                {/* Ambient Grid overlay */}
+                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] pointer-events-none mix-blend-overlay"></div>
 
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.')
-      return
-    }
+                <div className="flex-1 flex flex-col justify-center p-20 relative z-10 w-full max-w-2xl mx-auto">
+                    <Link href="/" className="flex items-center gap-2 mb-12">
+                        <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
+                        <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
+                            HIEIQ.AI
+                        </span>
+                    </Link>
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
-      return
-    }
+                    <div className="border-l-4 border-[var(--accent-primary)] pl-6 mb-8">
+                        <h1 className="text-4xl md:text-5xl lg:text-5xl font-semibold tracking-tight mb-4 leading-[1.15]">
+                            Stop Consuming.<br />
+                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-secondary)]">Start Becoming.</span>
+                        </h1>
+                        <p className="text-lg text-neutral-400 leading-relaxed max-w-md">
+                            Build the capacity to think independently. Move away from shallow distraction toward deep, guided mastery.
+                        </p>
+                    </div>
 
-    setLoading(true)
+                    {/* Learner Evolution Visualization Component */}
+                    <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--accent-primary)]/10 blur-[50px] rounded-full pointer-events-none" />
+                        <h3 className="text-sm font-semibold tracking-wider text-neutral-300 uppercase mb-6">The Journey</h3>
+                        <LearnerEvolution />
+                    </div>
 
-    try {
-      const supabase = createClient()
-      const { error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/onboarding`,
-        },
-      })
+                    <div className="mt-12 flex items-center gap-6 text-sm text-neutral-400">
+                        <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-full border border-white/5">
+                            <span className="flex items-center justify-center w-4 h-4 rounded-full bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] text-[10px]">✓</span>
+                            Free pathway
+                        </div>
+                        <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-full border border-white/5">
+                            <span className="flex items-center justify-center w-4 h-4 rounded-full bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] text-[10px]">✓</span>
+                            No credit card
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-      if (authError) {
-        setError(authError.message)
-        return
-      }
+            {/* Right Side: Floating Form (40%) */}
+            <div className="w-full lg:w-[40%] flex items-center justify-center p-8 sm:p-12 relative bg-neutral-50 lg:bg-white overflow-y-auto overflow-x-hidden">
+                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.02] pointer-events-none mix-blend-overlay lg:hidden"></div>
+                {/* Soft Background Gradients for Mobile */}
+                <div className="absolute top-0 right-0 w-full h-[50vh] bg-gradient-to-b from-neutral-900 to-transparent lg:hidden pointer-events-none" />
 
-      router.push('/onboarding')
-      router.refresh()
-    } catch {
-      setError('An unexpected error occurred. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
+                <div className="w-full max-w-[420px] relative z-10">
+                    <div className="lg:hidden mb-10 text-center">
+                        <Link href="/" className="flex items-center justify-center gap-2">
+                            <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
+                            <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/80 lg:from-[var(--accent-primary)] lg:to-[var(--accent-primary-hover)] drop-shadow-md lg:drop-shadow-none">
+                                HIEIQ.AI
+                            </span>
+                        </Link>
+                    </div>
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 dark:bg-slate-900">
-      <div className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <Link href="/" className="text-2xl font-bold text-primary-600">
-            TransformED AI
-          </Link>
-          <h1 className="mt-4 text-2xl font-semibold text-slate-900 dark:text-white">
-            Create your account
-          </h1>
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-            Already have an account?{' '}
-            <Link href="/login" className="font-medium text-primary-600 hover:text-primary-700">
-              Sign in
-            </Link>
-          </p>
+                    <SignUpForm />
+
+                </div>
+            </div>
+
         </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-          {error && (
-            <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label
-                htmlFor="email"
-                className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300"
-              >
-                Email address
-              </label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-700 dark:text-white dark:placeholder-slate-500"
-                placeholder="you@example.com"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="password"
-                className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300"
-              >
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-700 dark:text-white dark:placeholder-slate-500"
-                placeholder="At least 8 characters"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="confirm-password"
-                className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300"
-              >
-                Confirm password
-              </label>
-              <input
-                id="confirm-password"
-                type="password"
-                autoComplete="new-password"
-                required
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-700 dark:text-white dark:placeholder-slate-500"
-                placeholder="••••••••"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-lg bg-primary-600 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
-            >
-              {loading ? 'Creating account…' : 'Create account'}
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  )
+    );
 }

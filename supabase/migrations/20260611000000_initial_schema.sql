@@ -1,5 +1,5 @@
--- ============================================================
--- TransformED AI — Sprint 0 Initial Schema
+﻿-- ============================================================
+-- HIE — Sprint 0 Initial Schema
 -- Migration: 20260611000000_initial_schema.sql
 -- Applied: 2026-06-11
 -- WARNING: Migrations are NEVER modified once applied.
@@ -8,15 +8,15 @@
 -- ============================================================
 -- REDIS KEY PATTERNS (documentation only)
 -- ============================================================
--- lesson:{lesson_id}:status          → string  (generating | ready | failed)
--- lesson:{lesson_id}:content         → string  (JSON-serialised lesson package)
--- job:{job_id}:status                → string  (pending | running | completed | failed)
--- job:{job_id}:node_outputs          → hash    (node_name → JSON output)
--- session:{session_id}:events        → list    (serialised session_event payloads)
--- user:{user_id}:dna                 → string  (JSON-serialised learner_dna row)
--- user:{user_id}:onboarding_done     → string  ("1" once onboarding complete)
--- attention:{session_id}:latest      → string  (JSON-serialised most-recent attention_event)
--- embeddings:search:{hash}           → string  (cached vector search results, TTL 300 s)
+-- lesson:{lesson_id}:status          â†’ string  (generating | ready | failed)
+-- lesson:{lesson_id}:content         â†’ string  (JSON-serialised lesson package)
+-- job:{job_id}:status                â†’ string  (pending | running | completed | failed)
+-- job:{job_id}:node_outputs          â†’ hash    (node_name â†’ JSON output)
+-- session:{session_id}:events        â†’ list    (serialised session_event payloads)
+-- user:{user_id}:dna                 â†’ string  (JSON-serialised learner_dna row)
+-- user:{user_id}:onboarding_done     â†’ string  ("1" once onboarding complete)
+-- attention:{session_id}:latest      â†’ string  (JSON-serialised most-recent attention_event)
+-- embeddings:search:{hash}           â†’ string  (cached vector search results, TTL 300 s)
 -- ============================================================
 
 
@@ -317,7 +317,7 @@ CREATE INDEX ON public.embeddings USING hnsw (vector vector_cosine_ops);
 
 
 -- ============================================================
--- ROW LEVEL SECURITY — enable on all tables
+-- ROW LEVEL SECURITY â€” enable on all tables
 -- ============================================================
 
 ALTER TABLE public.users               ENABLE ROW LEVEL SECURITY;
@@ -336,7 +336,7 @@ ALTER TABLE public.attention_events    ENABLE ROW LEVEL SECURITY;
 
 
 -- ============================================================
--- RLS POLICIES — users
+-- RLS POLICIES â€” users
 -- ============================================================
 
 CREATE POLICY "users: select own row"
@@ -358,7 +358,7 @@ CREATE POLICY "users: delete own row"
 
 
 -- ============================================================
--- RLS POLICIES — lessons
+-- RLS POLICIES â€” lessons
 -- ============================================================
 
 CREATE POLICY "lessons: select own"
@@ -380,7 +380,7 @@ CREATE POLICY "lessons: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — lesson_jobs
+-- RLS POLICIES â€” lesson_jobs
 -- (join to lessons to confirm ownership)
 -- ============================================================
 
@@ -426,7 +426,7 @@ CREATE POLICY "lesson_jobs: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — chapters
+-- RLS POLICIES â€” chapters
 -- (join through lessons)
 -- ============================================================
 
@@ -472,8 +472,8 @@ CREATE POLICY "chapters: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — chunks
--- (join through chapters → lessons)
+-- RLS POLICIES â€” chunks
+-- (join through chapters â†’ lessons)
 -- ============================================================
 
 CREATE POLICY "chunks: select own"
@@ -526,8 +526,8 @@ CREATE POLICY "chunks: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — embeddings
--- (join through chunks → chapters → lessons)
+-- RLS POLICIES â€” embeddings
+-- (join through chunks â†’ chapters â†’ lessons)
 -- ============================================================
 
 CREATE POLICY "embeddings: select own"
@@ -584,7 +584,7 @@ CREATE POLICY "embeddings: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — sessions
+-- RLS POLICIES â€” sessions
 -- ============================================================
 
 CREATE POLICY "sessions: select own"
@@ -606,7 +606,7 @@ CREATE POLICY "sessions: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — quiz_attempts
+-- RLS POLICIES â€” quiz_attempts
 -- (join through sessions)
 -- ============================================================
 
@@ -652,7 +652,7 @@ CREATE POLICY "quiz_attempts: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — teachback_attempts
+-- RLS POLICIES â€” teachback_attempts
 -- (join through sessions)
 -- ============================================================
 
@@ -698,7 +698,7 @@ CREATE POLICY "teachback_attempts: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — learner_dna
+-- RLS POLICIES â€” learner_dna
 -- ============================================================
 
 CREATE POLICY "learner_dna: select own"
@@ -720,7 +720,7 @@ CREATE POLICY "learner_dna: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — onboarding_responses
+-- RLS POLICIES â€” onboarding_responses
 -- ============================================================
 
 CREATE POLICY "onboarding_responses: select own"
@@ -742,7 +742,7 @@ CREATE POLICY "onboarding_responses: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — session_events
+-- RLS POLICIES â€” session_events
 -- (join through sessions)
 -- ============================================================
 
@@ -788,7 +788,7 @@ CREATE POLICY "session_events: delete own"
 
 
 -- ============================================================
--- RLS POLICIES — attention_events
+-- RLS POLICIES â€” attention_events
 -- (join through sessions, also gate on attention_consent)
 -- ============================================================
 
@@ -847,3 +847,5 @@ CREATE POLICY "attention_events: delete own"
 -- ============================================================
 -- END OF MIGRATION
 -- ============================================================
+
+

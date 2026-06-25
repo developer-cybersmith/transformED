@@ -139,6 +139,3 @@ tmp/
 
 # ---- Claude Code local settings ----
 .claude/settings.local.json
-
-# ---- Windows crash dumps ----
-*.stackdump

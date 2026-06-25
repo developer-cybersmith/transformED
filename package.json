@@ -1,5 +1,5 @@
-{
-  "name": "transformed-ai",
+﻿{
+  "name": "hie",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -16,3 +16,4 @@
     "typescript": "^5.4.5"
   }
 }
+

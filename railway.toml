@@ -1,4 +1,4 @@
-# Railway configuration for the TransformED AI API service.
+﻿# Railway configuration for the HIE API service.
 # Worker service is a separate Railway service using the same Dockerfile
 # with startCommand: "python -m arq app.workers.main.WorkerSettings"
 # Web service is a separate Railway service from apps/web.
@@ -16,3 +16,4 @@ sleepApplication = false
 
 [environments.production.deploy]
 numReplicas = 2
+

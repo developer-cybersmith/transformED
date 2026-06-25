@@ -1,4 +1,4 @@
-"""
+﻿"""
 ARQ worker entry point.
 
 Run with:
@@ -7,7 +7,7 @@ Run with:
 Or via the Makefile target:
     make worker
 
-NOTE: Celery is BANNED per PRD §24.  This codebase uses ARQ exclusively.
+NOTE: Celery is BANNED per PRD Â§24.  This codebase uses ARQ exclusively.
 
 WorkerSettings is read by the ARQ CLI to configure the worker process.
 All job functions must be async coroutines that accept (ctx, *args, **kwargs).
@@ -38,7 +38,7 @@ async def startup(ctx: dict) -> None:  # type: ignore[type-arg]
     # Initialise Supabase client
     init_supabase(settings)
 
-    logger.info("ARQ worker started — ready to process jobs")
+    logger.info("ARQ worker started â€” ready to process jobs")
     ctx["settings"] = settings
 
 
@@ -75,7 +75,7 @@ class WorkerSettings:
     All class attributes are ARQ worker settings.
     """
 
-    # ── Job registry ──────────────────────────────────────────────────────────
+    # â”€â”€ Job registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     functions = [
         content_pipeline_job,
         # Add future jobs here:
@@ -83,13 +83,13 @@ class WorkerSettings:
         # teachback_evaluation_job,
     ]
 
-    # ── Redis connection ──────────────────────────────────────────────────────
+    # â”€â”€ Redis connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     redis_settings = _build_redis_settings()
 
-    # ── Worker tuning ─────────────────────────────────────────────────────────
+    # â”€â”€ Worker tuning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     max_jobs: int = 5
     """Maximum number of concurrent jobs per worker process.
-    Content pipeline is CPU/IO intensive — keep low to avoid OOM."""
+    Content pipeline is CPU/IO intensive â€” keep low to avoid OOM."""
 
     job_timeout: int = 600
     """Maximum wall-clock seconds a job may run before ARQ kills it (10 min)."""
@@ -101,11 +101,12 @@ class WorkerSettings:
     """Allow failed jobs to be retried (ARQ's built-in retry mechanism)."""
 
     max_tries: int = 3
-    """Maximum retry attempts per job (matches PRD §14 critical node rule)."""
+    """Maximum retry attempts per job (matches PRD Â§14 critical node rule)."""
 
-    # ── Lifecycle hooks ───────────────────────────────────────────────────────
+    # â”€â”€ Lifecycle hooks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     on_startup = startup
     on_shutdown = shutdown
 
-    # ── Queue names ───────────────────────────────────────────────────────────
-    queue_name: str = "transformED:pipeline"
+    # â”€â”€ Queue names â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    queue_name: str = "hie:pipeline"
+
