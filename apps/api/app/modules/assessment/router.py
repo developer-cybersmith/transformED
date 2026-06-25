@@ -20,12 +20,17 @@ router = APIRouter(tags=["assessment"])
 # ── Request / Response models ─────────────────────────────────────────────────
 
 
+class QuizAnswer(BaseModel):
+    question_id: str
+    response_index: int
+    response_time_ms: int = 0
+
+
 class QuizSubmission(BaseModel):
     session_id: str
     lesson_id: str
-    answers: list[dict[str, Any]] = Field(
-        description="List of {question_id, selected_option} objects"
-    )
+    segment_id: str
+    answers: list[QuizAnswer]
 
 
 class QuizResult(BaseModel):
@@ -40,8 +45,8 @@ class QuizResult(BaseModel):
 class TeachbackSubmission(BaseModel):
     session_id: str
     lesson_id: str
-    transcript: str = Field(description="STT transcript of the student's teach-back")
-    duration_seconds: float
+    segment_id: str
+    response_text: str = Field(description="Student's typed teach-back response")
 
 
 class TeachbackResult(BaseModel):
@@ -67,20 +72,22 @@ class SessionReport(BaseModel):
 
 class LearnerDNA(BaseModel):
     user_id: str
-    strengths: list[str]
-    growth_areas: list[str]
-    preferred_learning_style: str | None
-    avg_ces_score: float | None
-    sessions_completed: int
+    badge_labels: list[str]
+    profile_text: str | None
+    session_count: int
+    reassessment_due: bool = False
     last_updated: str | None
 
 
+class OnboardingAnswer(BaseModel):
+    question_id: str
+    dimension: str
+    selected_index: int
+    selected_text: str
+
+
 class OnboardingDiagnosticSubmission(BaseModel):
-    answers: list[dict[str, Any]] = Field(
-        description="Onboarding diagnostic question answers"
-    )
-    subject: str
-    grade_level: str
+    responses: list[OnboardingAnswer]
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -97,7 +104,7 @@ async def submit_quiz(
 ) -> QuizResult:
     """Grade a quiz submission and update the session's CES score.
 
-    TODO (Sprint 2): Delegate to assessment service.
+    TODO (Sprint 1): Delegate to assessment service.
     """
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
 
@@ -111,9 +118,9 @@ async def submit_teachback(
     body: TeachbackSubmission,
     current_user: CurrentUser,
 ) -> TeachbackResult:
-    """Evaluate a teach-back transcript using the LLM rubric.
+    """Evaluate a student's typed teach-back response using the LLM rubric.
 
-    TODO (Sprint 2): Delegate to assessment service.
+    TODO (Sprint 1): Delegate to assessment service.
     """
     raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
 
