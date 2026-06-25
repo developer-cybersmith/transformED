@@ -1,4 +1,4 @@
-﻿[build-system]
+[build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "hie-api"
 version = "0.1.0"
 description = "HIE — Human Intelligence Engine backend API (Sprint 0 skeleton)"
-readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.111.0",
@@ -14,10 +13,10 @@ dependencies = [
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "PyJWT>=2.8.0",
-    “supabase>=2.4.0”,        # uses httpx transport — bypasses PgBouncer
-    “redis[hiredis]>=5.0.4”,
-    “arq>=0.26.0”,
-    “langgraph==1.2.6”,       # PINNED — never auto-upgrade per PRD §24
+    "supabase>=2.4.0",        # uses httpx transport — bypasses PgBouncer
+    "redis[hiredis]>=5.0.4",
+    "arq>=0.26.0",
+    "langgraph==1.2.6",       # PINNED — never auto-upgrade per PRD §24
     "langchain-openai>=0.1.0",
     "openai>=1.40.0",              # beta.chat.completions.parse requires >=1.40.0
     "anthropic>=0.26.0",
@@ -117,6 +116,7 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
+    "ignore::ResourceWarning",
 ]
 
 
