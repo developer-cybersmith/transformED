@@ -11,6 +11,10 @@
 *.key
 secrets/
 
+
+docs/dev3-assessment-tracker.md 
+## dev3 doc dont commit this 
+
 # ---- OS ----
 .DS_Store
 .DS_Store?
@@ -134,3 +138,6 @@ tmp/
 
 # ---- Claude Code local settings ----
 .claude/settings.local.json
+
+# ---- Windows crash dumps ----
+*.stackdump

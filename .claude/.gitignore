@@ -1,2 +1,4 @@
 # Local developer overrides — never commit
 settings.local.json
+# Developer-specific rules — each dev maintains their own locally
+CLAUDE.md
