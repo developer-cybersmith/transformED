@@ -57,16 +57,15 @@ export function UploadFlow() {
             uploadGenerationService.connect();
 
             const unsubscribe = uploadGenerationService.subscribe((event) => {
-                if (event.type === 'status') {
-                    setStatusMessage(event.status);
-                } else if (event.type === 'progress') {
-                    setProgress(event.progress);
-                } else if (event.type === 'completed') {
+                if (event.type === 'generation_progress') {
+                    setStatusMessage(event.payload.message);
+                    setProgress(event.payload.progress);
+                } else if (event.type === 'lesson_ready') {
                     setUploadState('completed');
-                    setLessonId(event.lessonId);
+                    setLessonId(event.payload.lesson_id);
                 } else if (event.type === 'error') {
                     setUploadState('error');
-                    setErrorMessage(event.message);
+                    setErrorMessage(event.payload.message);
                 }
             });
 
@@ -111,7 +110,7 @@ export function UploadFlow() {
                         Drop your course material here
                     </h3>
                     <p className="text-neutral-500 max-w-sm mb-8">
-                        Upload a PDF document. TransformED will automatically structure it, synthesize audio narratives, and generate an interactive journey.
+                        Upload a PDF document. HIE will automatically structure it, synthesize audio narratives, and generate an interactive journey.
                     </p>
                     <div className="px-6 py-3 bg-neutral-900 text-white rounded-full font-medium transition-transform group-hover:-translate-y-1 shadow-md">
                         Browse Files
