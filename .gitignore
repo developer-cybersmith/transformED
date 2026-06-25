@@ -24,6 +24,7 @@ docs/dev3-assessment-tracker.md
 ehthumbs.db
 Thumbs.db
 desktop.ini
+*.stackdump
 
 # ---- Editor / IDE ----
 .vscode/
