@@ -1,8 +1,8 @@
-{
+﻿{
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://transformED-corp/schemas/lesson_package.schema.json",
+  "$id": "https://hieiq.ai/schemas/lesson_package.schema.json",
   "title": "LessonPackage",
-  "description": "JSON Schema for a fully-generated TransformED lesson package stored as JSONB in lessons.content.",
+  "description": "JSON Schema for a fully-generated HIE lesson package stored as JSONB in lessons.content.",
   "type": "object",
   "required": [
     "lesson_id",
@@ -256,3 +256,4 @@
     }
   }
 }
+
