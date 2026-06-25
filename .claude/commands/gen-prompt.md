@@ -1,6 +1,6 @@
-# /gen-prompt
+﻿# /gen-prompt
 
-Generate a versioned LLM prompt for a TransformED pipeline node or feature.
+Generate a versioned LLM prompt for a HIE pipeline node or feature.
 
 ## Usage
 `/gen-prompt <module-name> <prompt-name> <model>`
@@ -24,16 +24,17 @@ def build_user_message(*, <typed_inputs>) -> str:
 
 ## Rules
 - Prompts live INSIDE the module that owns them (`modules/<name>/prompts/`)
-- Every prompt file has a `PROMPT_VERSION` constant — bump it on any change
+- Every prompt file has a `PROMPT_VERSION` constant â€” bump it on any change
 - System prompt in a module-level `SYSTEM` constant
-- User message built by a typed `build_user_message()` function — never string-interpolated inline
-- Model is NOT hardcoded in the prompt file — it comes from `settings.llm_*` env vars
+- User message built by a typed `build_user_message()` function â€” never string-interpolated inline
+- Model is NOT hardcoded in the prompt file â€” it comes from `settings.llm_*` env vars
 - Add a docstring with: purpose, expected input, expected output format, and cost estimate per call
 - For structured outputs (JSON): include the expected JSON schema in the system prompt
 
-## Per-task model reference (PRD §6.4)
+## Per-task model reference (PRD Â§6.4)
 | Task | Model setting |
 |------|--------------|
 | Lesson planning, slide generation | `settings.llm_lesson_planner` (gpt-4o) |
 | Quiz, scoring, complexity, narration, jargon, interventions, Learner DNA | `settings.llm_mini` (gpt-4o-mini) |
 | Tutor Q&A (Phase 2) | `settings.llm_lesson_planner` or Claude Sonnet |
+

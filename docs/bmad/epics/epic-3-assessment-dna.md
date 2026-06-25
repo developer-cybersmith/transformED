@@ -1,18 +1,18 @@
-# Epic 3: Assessment + Analytics + Learner DNA
+﻿# Epic 3: Assessment + Analytics + Learner DNA
 
 | Field | Value |
 |---|---|
 | Epic ID | E-03 |
 | Status | Planned |
 | Owner | Dev 3 |
-| Target Sprints | Sprint 1–3 (Weeks 2–7) |
-| Priority | P1 — required for session report; Learner DNA data collection required before Phase 2 profile display |
+| Target Sprints | Sprint 1â€“3 (Weeks 2â€“7) |
+| Priority | P1 â€” required for session report; Learner DNA data collection required before Phase 2 profile display |
 
 ---
 
 ## Problem Statement
 
-TransformED is not a passive video — it must know how well a student understood the material. Without a scoring layer for quizzes and teach-backs, we cannot produce a session report, cannot compute the CES engagement signal, and cannot offer the differentiated Learner DNA profile that is the platform's primary competitive differentiator. This epic builds the full assessment back-end and the onboarding experience that seeds the learner profile.
+HIE is not a passive video â€” it must know how well a student understood the material. Without a scoring layer for quizzes and teach-backs, we cannot produce a session report, cannot compute the CES engagement signal, and cannot offer the differentiated Learner DNA profile that is the platform's primary competitive differentiator. This epic builds the full assessment back-end and the onboarding experience that seeds the learner profile.
 
 ---
 
@@ -29,7 +29,7 @@ TransformED is not a passive video — it must know how well a student understoo
 - As a **student**, at the end of a lesson I can view a session report with my scores and engagement summary.
 - As a **student**, during onboarding I complete a 20-question assessment and am told my Learner DNA profile name (shown in Phase 2).
 - As a **developer**, teach-back rubric weights are configurable via env vars, not hardcoded.
-- As a **platform operator**, raw cognitive / emotional / self-direction scores are never exposed to students — only the Learner DNA composite label.
+- As a **platform operator**, raw cognitive / emotional / self-direction scores are never exposed to students â€” only the Learner DNA composite label.
 
 ---
 
@@ -78,11 +78,11 @@ Rubric evaluated by GPT-4o-mini with structured output (`response_format: json_o
 Computed by Epic 4 but defined and owned here:
 
 ```
-CES = (quiz_accuracy × 0.35)
-    + (teachback_score × 0.25)
-    + (behavioral_engagement × 0.20)
-    + (head_pose_score × 0.12)
-    + (blink_rate_score × 0.08)
+CES = (quiz_accuracy Ã— 0.35)
+    + (teachback_score Ã— 0.25)
+    + (behavioral_engagement Ã— 0.20)
+    + (head_pose_score Ã— 0.12)
+    + (blink_rate_score Ã— 0.08)
 ```
 
 All weights are env vars. `behavioral_engagement` = inverse of distraction interventions fired / max possible. `head_pose_score` and `blink_rate_score` come from MediaPipe signals (Epic 2 / 4).
@@ -129,8 +129,8 @@ Total: **20 questions**, multiple-choice, completed once at onboarding.
 
 ### Fusion + Profile Generation
 
-1. Score each domain independently (normalized 0–1)
-2. Fusion formula: `dna_composite = cognitive×0.40 + emotional×0.35 + self_direction×0.25`
+1. Score each domain independently (normalized 0â€“1)
+2. Fusion formula: `dna_composite = cognitiveÃ—0.40 + emotionalÃ—0.35 + self_directionÃ—0.25`
 3. Map composite to one of 6 named learner profiles (label list defined in `backend/dna/profiles.py`)
 4. Call GPT-4o-mini with scores + label to generate a 2-paragraph personalized profile narrative
 5. Store `{ user_id, cognitive_score, emotional_score, self_direction_score, dna_label, profile_narrative, completed_at }` in `learner_dna` table
@@ -139,7 +139,7 @@ Total: **20 questions**, multiple-choice, completed once at onboarding.
 
 - Legal disclaimer shown before onboarding: "This is not a clinical assessment. Scores are used only to personalize your learning experience."
 - Raw domain scores (`cognitive_score`, etc.) NEVER returned to frontend
-- Only `dna_label` and `profile_narrative` are user-facing — and only in Phase 2
+- Only `dna_label` and `profile_narrative` are user-facing â€” and only in Phase 2
 - No IQ, EQ, or SQ terminology anywhere in UI or API responses
 
 ---
@@ -156,7 +156,7 @@ Total: **20 questions**, multiple-choice, completed once at onboarding.
 | DNA profile mapping | `backend/dna/profiles.py` |
 | DNA profile generation | `backend/dna/generator.py` (GPT-4o-mini call) |
 | API routers | `backend/routers/assessment.py`, `backend/routers/dna.py` |
-| DB migrations | `supabase/migrations/` — `quiz_responses`, `teachback_responses`, `session_reports`, `learner_dna` |
+| DB migrations | `supabase/migrations/` â€” `quiz_responses`, `teachback_responses`, `session_reports`, `learner_dna` |
 | Frontend onboarding | `app/onboarding/page.tsx` (Epic 2 route, data layer here) |
 
 ---
@@ -207,5 +207,6 @@ Total: **20 questions**, multiple-choice, completed once at onboarding.
 | GPT-4o-mini teach-back latency > 5s frustrates students | Medium | Medium | Show "Evaluating your response..." animation; async scoring possible |
 | GPT-4o-mini returns malformed JSON for rubric | Medium | Medium | Structured output mode + fallback default scores with alert log |
 | DNA profile labels feel stigmatizing | Low | High | UX review of all 6 profile names before Sprint 3 launch |
-| Teach-back prompt injection (student manipulates scores) | Low | Medium | System prompt isolation; score clamped 0–1 server-side |
+| Teach-back prompt injection (student manipulates scores) | Low | Medium | System prompt isolation; score clamped 0â€“1 server-side |
 | DPDP Act compliance gap on sensitive onboarding data | Medium | High | Legal review of disclaimer text + data retention policy in Sprint 3 |
+

@@ -1,6 +1,6 @@
-# TransformED AI — Claude Code Project Guide
+﻿# HIE AI â€” Claude Code Project Guide
 
-**PRD version:** 1.0 Final (10 June 2026) — this is the single source of truth.
+**PRD version:** 1.0 Final (10 June 2026) â€” this is the single source of truth.
 **Goal:** First paying student completes a full session by end of Week 10.
 
 ---
@@ -16,13 +16,13 @@
 | Storage | **Supabase Storage** | S3-compatible + CDN |
 | Auth | **Supabase Auth + PyJWT local verify** | No remote auth call per request |
 | Cache/Queue/PubSub | **Railway Redis** | |
-| AI orchestration | **LangGraph** (pin exact version — never auto-upgrade) | |
+| AI orchestration | **LangGraph** (pin exact version â€” never auto-upgrade) | |
 | LangGraph checkpointing | **Custom lesson_jobs table + MemorySaver** | PostgresSaver BANNED |
 | Primary LLM | **OpenAI GPT-4o + GPT-4o-mini** | Per-task allocation below |
 | Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A only) | |
-| TTS | **ElevenLabs → Azure TTS → Browser Speech** | Fallback chain |
+| TTS | **ElevenLabs â†’ Azure TTS â†’ Browser Speech** | Fallback chain |
 | Avatar | **HeyGen cached intro/outro (~$0/lesson)** | No live HeyGen per lesson |
-| Image | **DALL-E 3 → stock library → text-only** | Fallback chain |
+| Image | **DALL-E 3 â†’ stock library â†’ text-only** | Fallback chain |
 | Embeddings | **text-embedding-3-small** (at ingestion, never at query time) | |
 | OCR | **Tesseract** (in-container) | Azure Doc Intelligence removed |
 | PDF | **PyMuPDF + pdfplumber** | |
@@ -43,60 +43,60 @@
 ## Repo Structure
 
 ```
-transformED-corp/
-├── apps/
-│   ├── api/                    # FastAPI modular monolith
-│   │   └── app/
-│   │       ├── main.py         # App factory
-│   │       ├── config.py       # pydantic-settings (all env vars)
-│   │       ├── dependencies.py # JWT verify, redis, settings deps
-│   │       ├── modules/        # auth | content | media | assessment | analytics | tutor | admin
-│   │       │   └── content/
-│   │       │       └── pipeline/
-│   │       │           └── nodes/  # 11 LangGraph nodes
-│   │       ├── providers/      # LLM | TTS | Image | Avatar (abstract interfaces)
-│   │       ├── core/           # db | redis | retry | circuit_breaker | cost_tracker | websocket
-│   │       └── workers/        # ARQ entry + content_pipeline job
-│   └── web/                    # Next.js 14 App Router
-│       └── src/
-│           ├── app/            # Routes: (auth)/ | (app)/dashboard | /lesson/[id] | /upload
-│           ├── features/       # player | attention | quiz | teachback | tutor | onboarding
-│           ├── lib/            # supabase | websocket | api clients
-│           └── components/ui/
-├── packages/
-│   └── shared/                 # FROZEN Week 1 — unblocks all 4 devs
-│       ├── types/lesson.ts     # LessonPackage TS types
-│       ├── types/ws.ts         # WebSocket discriminated union
-│       └── lesson_package.schema.json
-├── supabase/
-│   └── migrations/             # Never modify applied migrations
-└── .github/workflows/          # CI (lint+test) + deploy to Railway
+hie/
+â”œâ”€â”€ apps/
+â”‚   â”œâ”€â”€ api/                    # FastAPI modular monolith
+â”‚   â”‚   â””â”€â”€ app/
+â”‚   â”‚       â”œâ”€â”€ main.py         # App factory
+â”‚   â”‚       â”œâ”€â”€ config.py       # pydantic-settings (all env vars)
+â”‚   â”‚       â”œâ”€â”€ dependencies.py # JWT verify, redis, settings deps
+â”‚   â”‚       â”œâ”€â”€ modules/        # auth | content | media | assessment | analytics | tutor | admin
+â”‚   â”‚       â”‚   â””â”€â”€ content/
+â”‚   â”‚       â”‚       â””â”€â”€ pipeline/
+â”‚   â”‚       â”‚           â””â”€â”€ nodes/  # 11 LangGraph nodes
+â”‚   â”‚       â”œâ”€â”€ providers/      # LLM | TTS | Image | Avatar (abstract interfaces)
+â”‚   â”‚       â”œâ”€â”€ core/           # db | redis | retry | circuit_breaker | cost_tracker | websocket
+â”‚   â”‚       â””â”€â”€ workers/        # ARQ entry + content_pipeline job
+â”‚   â””â”€â”€ web/                    # Next.js 14 App Router
+â”‚       â””â”€â”€ src/
+â”‚           â”œâ”€â”€ app/            # Routes: (auth)/ | (app)/dashboard | /lesson/[id] | /upload
+â”‚           â”œâ”€â”€ features/       # player | attention | quiz | teachback | tutor | onboarding
+â”‚           â”œâ”€â”€ lib/            # supabase | websocket | api clients
+â”‚           â””â”€â”€ components/ui/
+â”œâ”€â”€ packages/
+â”‚   â””â”€â”€ shared/                 # FROZEN Week 1 â€” unblocks all 4 devs
+â”‚       â”œâ”€â”€ types/lesson.ts     # LessonPackage TS types
+â”‚       â”œâ”€â”€ types/ws.ts         # WebSocket discriminated union
+â”‚       â””â”€â”€ lesson_package.schema.json
+â”œâ”€â”€ supabase/
+â”‚   â””â”€â”€ migrations/             # Never modify applied migrations
+â””â”€â”€ .github/workflows/          # CI (lint+test) + deploy to Railway
 ```
 
-## Core Architectural Principles (from PRD §5)
+## Core Architectural Principles (from PRD Â§5)
 
-1. **Lesson generation ≠ RAG** — source chapter is known; no retrieval needed for generation
-2. **Process once, reuse everywhere** — embeddings generated at ingestion, never at query time
-3. **Modular monolith** — one FastAPI deploy; module names match future microservice names
-4. **One discipline rule** — modules communicate only through service layer, never via direct DB access into another module's tables. Violating PRs are rejected.
-5. **Provider abstraction everywhere** — no direct provider client calls in business logic
-6. **Hierarchical document processing** — process Chapter → Section → Topic. Never full-book single call.
-7. **Observability from commit one** — Langfuse + Sentry + OTel + PostHog wired before feature work
+1. **Lesson generation â‰  RAG** â€” source chapter is known; no retrieval needed for generation
+2. **Process once, reuse everywhere** â€” embeddings generated at ingestion, never at query time
+3. **Modular monolith** â€” one FastAPI deploy; module names match future microservice names
+4. **One discipline rule** â€” modules communicate only through service layer, never via direct DB access into another module's tables. Violating PRs are rejected.
+5. **Provider abstraction everywhere** â€” no direct provider client calls in business logic
+6. **Hierarchical document processing** â€” process Chapter â†’ Section â†’ Topic. Never full-book single call.
+7. **Observability from commit one** â€” Langfuse + Sentry + OTel + PostHog wired before feature work
 
-## Content Generation Pipeline (11 nodes, §9)
+## Content Generation Pipeline (11 nodes, Â§9)
 
 ```
-extract → structure → chunk → embed  (ingestion)
-→ lesson_planner → slide_generator → summarise_segment → quiz_generator
-→ segment_complexity → jargon_extractor → intervention_messages
-→ narration_generator → tts_node → image_generator → package_builder
+extract â†’ structure â†’ chunk â†’ embed  (ingestion)
+â†’ lesson_planner â†’ slide_generator â†’ summarise_segment â†’ quiz_generator
+â†’ segment_complexity â†’ jargon_extractor â†’ intervention_messages
+â†’ narration_generator â†’ tts_node â†’ image_generator â†’ package_builder
 ```
 
 Checkpoint pattern: after each node, write `last_node` + `node_outputs` to `lesson_jobs`. On ARQ retry: read `last_node`, skip completed nodes. Never re-run completed LLM calls.
 
-## Tutor State Machine (7 states, §10)
+## Tutor State Machine (7 states, Â§10)
 
-States: IDLE → TEACHING → INTERVENING / CHECKING_IN → QUIZZING → TEACH_BACK → SESSION_END
+States: IDLE â†’ TEACHING â†’ INTERVENING / CHECKING_IN â†’ QUIZZING â†’ TEACH_BACK â†’ SESSION_END
 
 Guard rules (MUST be enforced):
 - CES monitoring ONLY active in TEACHING state
@@ -107,61 +107,72 @@ Guard rules (MUST be enforced):
 
 Intervention messages are PRE-GENERATED at lesson build time (node 7). No GPT call at intervention time.
 
-## CES Formula (§11 — weights are env vars, tunable post-calibration)
+## CES Formula (Â§11 â€” weights are env vars, tunable post-calibration)
 
 ```
-CES = quiz_accuracy×0.35 + teachback_score×0.25 + behavioral×0.20 + head_pose×0.12 + blink×0.08
+CES = quiz_accuracyÃ—0.35 + teachback_scoreÃ—0.25 + behavioralÃ—0.20 + head_poseÃ—0.12 + blinkÃ—0.08
 ```
-Trigger: CES < 50 for 2 consecutive 5s windows → intervention.
+Trigger: CES < 50 for 2 consecutive 5s windows â†’ intervention.
 
-## Failure Modes (§14)
+## Failure Modes (Â§14)
 
-- Exponential backoff: `wait = (2^attempt) + random(0,1)` — 3 attempts critical, 2 optional
+- Exponential backoff: `wait = (2^attempt) + random(0,1)` â€” 3 attempts critical, 2 optional
 - Retry on: 429, 500, 502, 503, 504. Never retry: 400, 401
-- Circuit breaker: 5 failures/2min → open; 10min → half-open probe (state in Redis)
-- Cost ceiling: $3.00/lesson — downshift to cheapest providers on breach, complete lesson, flag in admin
-- TTS fallback chain: ElevenLabs → Azure TTS → Browser Speech — NEVER hard-fails
+- Circuit breaker: 5 failures/2min â†’ open; 10min â†’ half-open probe (state in Redis)
+- Cost ceiling: $3.00/lesson â€” downshift to cheapest providers on breach, complete lesson, flag in admin
+- TTS fallback chain: ElevenLabs â†’ Azure TTS â†’ Browser Speech â€” NEVER hard-fails
 
-## Interface Contracts (frozen Week 1, §16)
+## Interface Contracts (frozen Week 1, Â§16)
 
-Four contracts are frozen — changes require PR reviewed by all 4 developers:
+Four contracts are frozen â€” changes require PR reviewed by all 4 developers:
 1. `packages/shared/lesson_package.schema.json` + `packages/shared/types/lesson.ts`
-2. `packages/shared/types/ws.ts` — WebSocket discriminated union
+2. `packages/shared/types/ws.ts` â€” WebSocket discriminated union
 3. Assessment API (OpenAPI auto-generated from FastAPI)
-4. `supabase/migrations/` — never modify applied migrations
+4. `supabase/migrations/` â€” never modify applied migrations
 
-## Security (§18)
+## Security (Â§18)
 
-- JWT verified locally (PyJWT + SUPABASE_JWT_SECRET) — never remote call per request
-- RLS on ALL Supabase tables — users read only their own data
-- Raw webcam video NEVER leaves browser — only 5 derived numbers sent
+- JWT verified locally (PyJWT + SUPABASE_JWT_SECRET) â€” never remote call per request
+- RLS on ALL Supabase tables â€” users read only their own data
+- Raw webcam video NEVER leaves browser â€” only 5 derived numbers sent
 - Attention capture requires explicit consent (modal + users.attention_consent flag)
-- DPDP Act 2023 compliance — Learner DNA disclaimer required, no clinical claims
-- Kimi/Qwen deferred — China-hosted data residency risk
+- DPDP Act 2023 compliance â€” Learner DNA disclaimer required, no clinical claims
+- Kimi/Qwen deferred â€” China-hosted data residency risk
+
+## Sprint Tracker Rule
+
+After completing any Dev 2 frontend task — regardless of size — update `docs/dev2-sprint-tracker.md` before the conversation ends:
+
+1. Change the task's status badge from `🔲 NOT STARTED` to `✅ DONE`
+2. Update the Quick Status Dashboard table: increment the **Done** count, decrement **Not Started** for that sprint row
+3. Update the sprint card's progress bar width percentage (`style=”width:X%”`) in the HTML artifact if re-published
+4. If a task is partially done (files created but acceptance criteria not fully met), mark `🔵 IN PROGRESS` and note what remains inline
+
+This rule applies to all work done in this repository on behalf of Developer 2. Do not wait to be asked — the update is part of the definition of done.
 
 ## Development Rules
 
-- No Celery — ARQ only
-- No PostgresSaver — custom lesson_jobs + MemorySaver
-- No direct provider calls in business logic — go through providers/
-- Pin LangGraph version — never auto-upgrade
-- No raw IQ/EQ/SQ claims — branded as "Learner DNA"
-- No clinical scores shown to students — descriptive profile only
+- No Celery â€” ARQ only
+- No PostgresSaver â€” custom lesson_jobs + MemorySaver
+- No direct provider calls in business logic â€” go through providers/
+- Pin LangGraph version â€” never auto-upgrade
+- No raw IQ/EQ/SQ claims â€” branded as "Learner DNA"
+- No clinical scores shown to students â€” descriptive profile only
 - Never gate lesson progress on teach-back score in MVP
-- No teach-back timer — creates test anxiety
-- No STT in MVP — typed teach-back only
-- Embeddings at ingestion only — never at query time
+- No teach-back timer â€” creates test anxiety
+- No STT in MVP â€” typed teach-back only
+- Embeddings at ingestion only â€” never at query time
 
-## Build Roadmap (10 weeks, §22)
+## Build Roadmap (10 weeks, Â§22)
 
 - **Week 1 (Sprint 0):** Infra setup + shared contracts frozen (THIS SPRINT)
-- **Weeks 2–3 (Sprint 1):** Core pipeline + player skeleton
-- **Weeks 4–5 (Sprint 2):** Full 11-node pipeline + integration → investor demo ready
-- **Weeks 6–7 (Sprint 3):** MediaPipe + CES + full tutor state machine
-- **Weeks 8–9 (Sprint 4):** Load test + calibration + Stripe + hardening
-- **Week 10:** Launch — first paying student
+- **Weeks 2â€“3 (Sprint 1):** Core pipeline + player skeleton
+- **Weeks 4â€“5 (Sprint 2):** Full 11-node pipeline + integration â†’ investor demo ready
+- **Weeks 6â€“7 (Sprint 3):** MediaPipe + CES + full tutor state machine
+- **Weeks 8â€“9 (Sprint 4):** Load test + calibration + Stripe + hardening
+- **Week 10:** Launch â€” first paying student
 
-## Team Ownership (§21)
+## Team Ownership (Â§21)
 
 | Dev | Owns |
 |-----|------|
@@ -171,3 +182,4 @@ Four contracts are frozen — changes require PR reviewed by all 4 developers:
 | Dev 4 | WebSocket handlers, JWT middleware, 7-state tutor, Redis buffer, interventions |
 
 Anti-deadlock: after Week 1 schema freeze, each dev mocks the other's interface.
+

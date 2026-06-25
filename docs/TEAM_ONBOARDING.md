@@ -1,6 +1,6 @@
-# TransformED AI — Team Onboarding & BMAD Development Guide
+﻿# HIE â€” Team Onboarding & BMAD Development Guide
 
-> **Who this is for:** Every developer joining the TransformED AI project.
+> **Who this is for:** Every developer joining the HIE project.
 > **Read time:** ~20 minutes. Read it fully before writing a single line of code.
 
 ---
@@ -8,18 +8,18 @@
 ## Table of Contents
 
 1. [Project Overview](#1-project-overview)
-2. [Prerequisites — Install These First](#2-prerequisites)
+2. [Prerequisites â€” Install These First](#2-prerequisites)
 3. [Repository Setup](#3-repository-setup)
 4. [Understanding BMAD](#4-understanding-bmad)
-5. [Your Role — The 4 Dev Personas](#5-your-role)
-6. [The BMAD Workflow for TransformED](#6-bmad-workflow)
+5. [Your Role â€” The 4 Dev Personas](#5-your-role)
+6. [The BMAD Workflow for HIE](#6-bmad-workflow)
 7. [How to Use BMAD Skills in Claude Code](#7-using-bmad-skills)
-8. [Story Lifecycle — Start to Done](#8-story-lifecycle)
+8. [Story Lifecycle â€” Start to Done](#8-story-lifecycle)
 9. [Daily Development Loop](#9-daily-development-loop)
 10. [Sprint Ceremonies](#10-sprint-ceremonies)
 11. [Project-Specific Slash Commands](#11-project-slash-commands)
-12. [Architecture Rules — Must Read](#12-architecture-rules)
-13. [Interface Contracts — The Frozen Files](#13-interface-contracts)
+12. [Architecture Rules â€” Must Read](#12-architecture-rules)
+13. [Interface Contracts â€” The Frozen Files](#13-interface-contracts)
 14. [Anti-Deadlock Rules](#14-anti-deadlock-rules)
 15. [Definition of Done](#15-definition-of-done)
 16. [Quick Reference Cheat Sheet](#16-quick-reference)
@@ -28,7 +28,7 @@
 
 ## 1. Project Overview
 
-**TransformED AI** is an adaptive EdTech SaaS platform that converts any uploaded college PDF into a fully interactive AI-taught lesson — complete with slides, narration, avatar, quizzes, teach-back evaluation, and real-time engagement monitoring.
+**HIE** is an adaptive EdTech SaaS platform that converts any uploaded college PDF into a fully interactive AI-taught lesson â€” complete with slides, narration, avatar, quizzes, teach-back evaluation, and real-time engagement monitoring.
 
 **The single success metric for Phase 1:** One paying student completes a full session without requesting a refund. Everything else is Phase 2.
 
@@ -36,11 +36,11 @@
 
 | Sprint | Weeks | Milestone |
 |--------|-------|-----------|
-| Sprint 0 | 1 | ✅ Done — infra, shared contracts, monorepo |
-| Sprint 1 | 2–3 | Core pipeline + player skeleton |
-| Sprint 2 | 4–5 | Full pipeline + integration → investor demo |
-| Sprint 3 | 6–7 | MediaPipe + CES + full tutor machine |
-| Sprint 4 | 8–9 | Load test + Stripe + hardening |
+| Sprint 0 | 1 | âœ… Done â€” infra, shared contracts, monorepo |
+| Sprint 1 | 2â€“3 | Core pipeline + player skeleton |
+| Sprint 2 | 4â€“5 | Full pipeline + integration â†’ investor demo |
+| Sprint 3 | 6â€“7 | MediaPipe + CES + full tutor machine |
+| Sprint 4 | 8â€“9 | Load test + Stripe + hardening |
 | Launch | 10 | First paying student |
 
 ---
@@ -61,7 +61,7 @@ npm install -g pnpm
 # Python 3.12
 # Download from https://python.org
 
-# uv (Python package manager — replaces pip/venv)
+# uv (Python package manager â€” replaces pip/venv)
 pip install uv
 
 # Supabase CLI
@@ -76,13 +76,13 @@ npm install -g @anthropic-ai/claude-code
 
 ### Accounts You Need Access To
 Ask the team lead to invite you to:
-- [ ] GitHub — `developer-cybersmith/transformED` repo
-- [ ] Railway — project access (deploy environments)
-- [ ] Supabase — project access (DB + storage)
-- [ ] OpenAI — API key
-- [ ] ElevenLabs — API key
-- [ ] Langfuse — self-hosted instance access
-- [ ] Sentry — project access
+- [ ] GitHub â€” `developer-cybersmith/hie` repo
+- [ ] Railway â€” project access (deploy environments)
+- [ ] Supabase â€” project access (DB + storage)
+- [ ] OpenAI â€” API key
+- [ ] ElevenLabs â€” API key
+- [ ] Langfuse â€” self-hosted instance access
+- [ ] Sentry â€” project access
 
 ---
 
@@ -90,12 +90,12 @@ Ask the team lead to invite you to:
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/developer-cybersmith/transformED.git
-cd transformED
+git clone https://github.com/developer-cybersmith/hie.git
+cd hie
 
 # 2. Copy environment file and fill in your keys
 cp .env.example .env
-# Edit .env with your actual API keys — ask team lead for shared keys
+# Edit .env with your actual API keys â€” ask team lead for shared keys
 
 # 3. Install JavaScript dependencies
 pnpm install
@@ -123,7 +123,7 @@ claude  # opens in the current directory
 # Backend runs
 cd apps/api && uvicorn app.main:app --reload
 # Should start on http://localhost:8000
-# Visit http://localhost:8000/health → {"status": "ok"}
+# Visit http://localhost:8000/health â†’ {"status": "ok"}
 
 # Frontend runs
 cd apps/web && pnpm dev
@@ -138,7 +138,7 @@ cd apps/web && pnpm dev
 
 ### Core idea
 
-Instead of just asking Claude to "write some code", BMAD gives Claude a **structured role** (analyst, architect, developer, QA) and a **structured workflow** (story → tasks → implementation → review). This means:
+Instead of just asking Claude to "write some code", BMAD gives Claude a **structured role** (analyst, architect, developer, QA) and a **structured workflow** (story â†’ tasks â†’ implementation â†’ review). This means:
 
 - Claude knows *what phase* it's in and *what to produce*
 - Every developer works from the same story format
@@ -148,10 +148,10 @@ Instead of just asking Claude to "write some code", BMAD gives Claude a **struct
 ### BMAD is installed in this project at:
 
 ```
-.claude/skills/         ← 44 BMAD skills (slash commands in Claude Code)
-_bmad/                  ← BMAD core + BMM module configuration
-_bmad-output/           ← Where BMAD writes planning + implementation artifacts
-docs/bmad/epics/        ← 5 TransformED epics (source of all stories)
+.claude/skills/         â† 44 BMAD skills (slash commands in Claude Code)
+_bmad/                  â† BMAD core + BMM module configuration
+_bmad-output/           â† Where BMAD writes planning + implementation artifacts
+docs/bmad/epics/        â† 5 HIE epics (source of all stories)
 ```
 
 ### The BMM Workflow Phases
@@ -159,10 +159,10 @@ docs/bmad/epics/        ← 5 TransformED epics (source of all stories)
 BMAD uses the **BMM (BMAD Method Module)** which has 4 phases:
 
 ```
-Phase 1: Analysis     → Understand requirements (PRD is our input — already done ✅)
-Phase 2: Plan         → Epics + stories (partially done ✅, continuing in Sprint 1)
-Phase 3: Solutioning  → Architecture decisions (done ✅ — see CLAUDE.md)
-Phase 4: Implementation → Build stories (THIS IS WHERE WE ARE NOW)
+Phase 1: Analysis     â†’ Understand requirements (PRD is our input â€” already done âœ…)
+Phase 2: Plan         â†’ Epics + stories (partially done âœ…, continuing in Sprint 1)
+Phase 3: Solutioning  â†’ Architecture decisions (done âœ… â€” see CLAUDE.md)
+Phase 4: Implementation â†’ Build stories (THIS IS WHERE WE ARE NOW)
 ```
 
 **You are joining at Phase 4.** Your job is to implement stories.
@@ -180,9 +180,9 @@ Phase 4: Implementation → Build stories (THIS IS WHERE WE ARE NOW)
 
 ## 5. Your Role
 
-There are **4 developer roles**. Each role has a specific ownership area and a BMAD agent persona. Know which one you are — it determines which stories you pick up and which files you touch.
+There are **4 developer roles**. Each role has a specific ownership area and a BMAD agent persona. Know which one you are â€” it determines which stories you pick up and which files you touch.
 
-### Dev 1 — Infrastructure + Content Pipeline
+### Dev 1 â€” Infrastructure + Content Pipeline
 
 **BMAD persona:** `/bmad-agent-dev` (focus: backend pipeline)
 
@@ -201,7 +201,7 @@ There are **4 developer roles**. Each role has a specific ownership area and a B
 
 ---
 
-### Dev 2 — Frontend + Lesson Player
+### Dev 2 â€” Frontend + Lesson Player
 
 **BMAD persona:** `/bmad-agent-dev` (focus: React/Next.js)
 
@@ -219,7 +219,7 @@ There are **4 developer roles**. Each role has a specific ownership area and a B
 
 ---
 
-### Dev 3 — Assessment + Analytics + Learner DNA
+### Dev 3 â€” Assessment + Analytics + Learner DNA
 
 **BMAD persona:** `/bmad-agent-dev` (focus: scoring + analytics)
 
@@ -237,7 +237,7 @@ There are **4 developer roles**. Each role has a specific ownership area and a B
 
 ---
 
-### Dev 4 — Tutor Agent + CES + Realtime
+### Dev 4 â€” Tutor Agent + CES + Realtime
 
 **BMAD persona:** `/bmad-agent-dev` (focus: realtime + state machines)
 
@@ -261,20 +261,20 @@ Here is the full flow for how a story gets from the PRD to merged code:
 
 ```
 PRD (source of truth)
-    │
-    ▼
+    â”‚
+    â–¼
 Epic documents (docs/bmad/epics/epic-X-*.md)
-    │  Created by: /bmad-agent-pm or /bmad-create-epics-and-stories
-    ▼
+    â”‚  Created by: /bmad-agent-pm or /bmad-create-epics-and-stories
+    â–¼
 Story files (_bmad-output/implementation-artifacts/stories/S*.md)
-    │  Created by: /bmad-create-story
-    ▼
+    â”‚  Created by: /bmad-create-story
+    â–¼
 Story implementation (code in apps/)
-    │  Driven by: /bmad-dev-story
-    ▼
+    â”‚  Driven by: /bmad-dev-story
+    â–¼
 Code review
-    │  Run by: /bmad-code-review
-    ▼
+    â”‚  Run by: /bmad-code-review
+    â–¼
 Merged to main
 ```
 
@@ -294,12 +294,12 @@ If you need a story created for a new piece of work:
 ### Opening Claude Code
 
 ```bash
-cd /path/to/transformED
+cd /path/to/hie
 claude
 ```
 
 Claude Code will automatically load:
-- `CLAUDE.md` — project rules and architecture constraints
+- `CLAUDE.md` â€” project rules and architecture constraints
 - All 44 BMAD skills from `.claude/skills/`
 - All 6 project-specific commands from `.claude/commands/`
 
@@ -309,7 +309,7 @@ Type these directly in the Claude Code prompt:
 
 | Command | When to use |
 |---------|------------|
-| `/bmad-help` | Not sure what to do next — always start here |
+| `/bmad-help` | Not sure what to do next â€” always start here |
 | `/bmad-agent-dev` | Activate developer agent to implement a story |
 | `/bmad-agent-pm` | Activate PM agent (John) for story creation / backlog work |
 | `/bmad-agent-analyst` | Activate analyst agent (Mary) for requirement questions |
@@ -323,7 +323,7 @@ Type these directly in the Claude Code prompt:
 | `/bmad-retrospective` | Run sprint retrospective |
 | `/bmad-correct-course` | Manage a mid-sprint scope change |
 
-### Project-specific commands (TransformED only)
+### Project-specific commands (HIE only)
 
 | Command | When to use |
 |---------|------------|
@@ -348,11 +348,11 @@ Pick a story with `status: todo` that matches your dev role (D1/D2/D3/D4).
 ### Step 2: Read the story fully
 
 Every story has:
-- **User story** — the "as a X, I want Y" framing
-- **Acceptance criteria** — the checkboxes you must satisfy
-- **Technical notes** — implementation guidance
-- **Tasks** — step-by-step breakdown
-- **Definition of Done** — your exit gate
+- **User story** â€” the "as a X, I want Y" framing
+- **Acceptance criteria** â€” the checkboxes you must satisfy
+- **Technical notes** â€” implementation guidance
+- **Tasks** â€” step-by-step breakdown
+- **Definition of Done** â€” your exit gate
 
 Don't start coding until you understand all acceptance criteria.
 
@@ -405,16 +405,16 @@ git push origin feat/S1-D1-001-pdf-upload
 Morning:
   1. git pull origin main
   2. Open Claude Code: claude
-  3. /bmad-sprint-status  ← see what's in progress
+  3. /bmad-sprint-status  â† see what's in progress
   4. Pick up your next story or continue yesterday's
 
 During the day:
-  5. /bmad-dev-story  ← implement your story
+  5. /bmad-dev-story  â† implement your story
   6. Write tests alongside code
-  7. /bmad-code-review  ← before pushing anything
+  7. /bmad-code-review  â† before pushing anything
 
 End of day:
-  8. Push your branch (even if incomplete — WIP commits are fine)
+  8. Push your branch (even if incomplete â€” WIP commits are fine)
   9. Update the story status in the story file
   10. Note any blockers as a comment in the story file
 ```
@@ -422,7 +422,7 @@ End of day:
 ### If you're blocked
 
 If you're blocked on another dev's interface:
-- **Don't wait.** Mock it. Every dev has a contract they own (see §13).
+- **Don't wait.** Mock it. Every dev has a contract they own (see Â§13).
 - Use the mock/stub pattern in your tests.
 - Leave a `TODO(S1-D4-001): replace with real WebSocket once wired` comment.
 - Flag the blocker in the story file's Dev Agent Record.
@@ -434,7 +434,7 @@ If you're blocked on another dev's interface:
 ### Sprint Planning (Start of sprint, ~2 hours)
 
 ```
-/bmad-agent-pm   ← activate PM agent
+/bmad-agent-pm   â† activate PM agent
 ```
 Then: "Run sprint planning for Sprint [N]. The epics are in `docs/bmad/epics/`."
 
@@ -444,18 +444,18 @@ Output: sprint story files created, sprint status YAML generated.
 
 Post in the team channel:
 ```
-✅ Yesterday: [what story you completed / progressed]
-🔨 Today: [story ID you're working on]
-🚧 Blockers: [any blockers or dependencies needed]
-💰 Cost note: [if you ran evals, what was the per-lesson cost]
+âœ… Yesterday: [what story you completed / progressed]
+ðŸ”¨ Today: [story ID you're working on]
+ðŸš§ Blockers: [any blockers or dependencies needed]
+ðŸ’° Cost note: [if you ran evals, what was the per-lesson cost]
 ```
 
 ### Mid-Sprint AI Review (Day 7, 30 min)
 
 ```
 /bmad-sprint-status
-/run-evals --all   ← check lesson quality
-/check-costs       ← verify within $3.00 ceiling
+/run-evals --all   â† check lesson quality
+/check-costs       â† verify within $3.00 ceiling
 ```
 
 ### Sprint Review (End of sprint, 1 hour)
@@ -478,23 +478,23 @@ Specific AI retro questions:
 
 ## 11. Project Slash Commands
 
-These are TransformED-specific commands (not generic BMAD). They enforce project patterns automatically.
+These are HIE-specific commands (not generic BMAD). They enforce project patterns automatically.
 
 ### `/new-feature <name>`
 
 Creates a feature scaffold in both frontend and backend:
 ```
 apps/web/src/features/<name>/
-  index.ts          ← public exports
-  <Name>.tsx        ← main component
-  use<Name>.ts      ← data hook
-  <name>.test.ts    ← co-located tests
+  index.ts          â† public exports
+  <Name>.tsx        â† main component
+  use<Name>.ts      â† data hook
+  <name>.test.ts    â† co-located tests
 
 apps/api/app/modules/<name>/
   __init__.py
-  router.py         ← FastAPI router
-  service.py        ← business logic
-  schemas.py        ← Pydantic models
+  router.py         â† FastAPI router
+  service.py        â† business logic
+  schemas.py        â† Pydantic models
 ```
 
 ### `/gen-prompt <module> <name> <model>`
@@ -545,7 +545,7 @@ Queries Langfuse to report per-lesson AI spend. Hard ceiling: **$3.00/lesson**. 
 | **Celery** | Wrong model for async I/O | **ARQ** |
 | **PostgresSaver** (LangGraph) | Conflicts with Supabase PgBouncer + asyncpg | Custom `lesson_jobs` table + **MemorySaver** |
 | **Reveal.js** | Click model can't do timeline sync | Custom React audio-timeline state machine |
-| **WebGazer** | Single-signal, ~4° error, unmaintained | **MediaPipe Face Landmarker** (WASM) |
+| **WebGazer** | Single-signal, ~4Â° error, unmaintained | **MediaPipe Face Landmarker** (WASM) |
 | **Azure Document Intelligence** | Cross-cloud latency, cost | **Tesseract** (in-container) |
 | **Kimi / Qwen** | China-hosted, DPDP Act data residency risk | OpenAI / Claude |
 | **Direct provider API calls in business logic** | Violates provider abstraction | Use `app/providers/` classes |
@@ -563,10 +563,10 @@ Queries Langfuse to report per-lesson AI spend. Hard ceiling: **$3.00/lesson**. 
 Modules communicate **only through their service layer**. Never reach into another module's DB tables directly.
 
 ```python
-# ✅ CORRECT
+# âœ… CORRECT
 from app.modules.assessment.service import get_quiz_score
 
-# ❌ WRONG — never do this
+# âŒ WRONG â€” never do this
 from app.core.db import get_supabase
 supabase.table("quiz_attempts").select("*")...  # from inside the tutor module
 ```
@@ -574,11 +574,11 @@ supabase.table("quiz_attempts").select("*")...  # from inside the tutor module
 ### Provider abstraction (second most violated rule)
 
 ```python
-# ✅ CORRECT — in any node or service
+# âœ… CORRECT â€” in any node or service
 from app.providers.llm.openai import OpenAILLMProvider
 result = await OpenAILLMProvider(lesson_id).complete(messages, model)
 
-# ❌ WRONG — direct client call
+# âŒ WRONG â€” direct client call
 from openai import AsyncOpenAI
 client = AsyncOpenAI()
 result = await client.chat.completions.create(...)
@@ -586,7 +586,7 @@ result = await client.chat.completions.create(...)
 
 ### Cost ceiling enforcement
 
-Every provider call must go through `cost_tracker.accumulate_cost(lesson_id, cost)`. If `cost_tracker.check_ceiling(lesson_id)` returns `True`, raise `CostLimitExceeded` — don't silently skip.
+Every provider call must go through `cost_tracker.accumulate_cost(lesson_id, cost)`. If `cost_tracker.check_ceiling(lesson_id)` returns `True`, raise `CostLimitExceeded` â€” don't silently skip.
 
 ---
 
@@ -615,10 +615,10 @@ Sprint 0 froze the contracts. This means **you never wait on another dev**:
 
 | If you need | Mock it with |
 |-------------|-------------|
-| WebSocket messages | `packages/shared/types/ws.ts` — use the discriminated union |
-| Lesson package data | `packages/shared/types/lesson.ts` — create a fixture |
+| WebSocket messages | `packages/shared/types/ws.ts` â€” use the discriminated union |
+| Lesson package data | `packages/shared/types/lesson.ts` â€” create a fixture |
 | Assessment API | The OpenAPI spec (auto-generated from FastAPI) |
-| DB schema | The migration file — run `supabase db reset` locally |
+| DB schema | The migration file â€” run `supabase db reset` locally |
 
 **The anti-deadlock mantra:** *"If it's in the contract, I can build against it today."*
 
@@ -665,59 +665,59 @@ A story is **not done** until every box is checked:
 ## 16. Quick Reference Cheat Sheet
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  TRANSFORMEDED AI — BMAD QUICK REFERENCE                            │
-├─────────────────────────────────────────────────────────────────────┤
-│  START OF DAY                                                        │
-│    git pull origin main                                              │
-│    claude                          ← open Claude Code               │
-│    /bmad-sprint-status             ← what's in progress?            │
-│    /bmad-dev-story                 ← implement your story           │
-├─────────────────────────────────────────────────────────────────────┤
-│  NEED HELP?                                                          │
-│    /bmad-help                      ← always start here              │
-│    /bmad-agent-analyst             ← PRD/requirement questions       │
-│    /bmad-agent-architect           ← architecture decisions          │
-│    /bmad-agent-pm                  ← story creation / backlog        │
-├─────────────────────────────────────────────────────────────────────┤
-│  CREATING THINGS                                                     │
-│    /bmad-create-story              ← new story from epic             │
-│    /new-feature <name>             ← scaffold frontend + backend     │
-│    /gen-prompt <mod> <name> <mdl>  ← versioned LLM prompt           │
-│    /add-pipeline-node <n> <crit>   ← new LangGraph node             │
-│    /add-migration <description>    ← new DB migration                │
-├─────────────────────────────────────────────────────────────────────┤
-│  REVIEWING                                                           │
-│    /bmad-code-review               ← before every PR                 │
-│    /run-evals --all                ← lesson quality check            │
-│    /check-costs                    ← AI spend vs $3.00 ceiling       │
-├─────────────────────────────────────────────────────────────────────┤
-│  BANNED (instant PR rejection)                                       │
-│    Celery / PostgresSaver / Reveal.js / WebGazer                    │
-│    Direct openai.client calls in business logic                      │
-│    Reaching into another module's DB tables                          │
-│    IQ/EQ/SQ terminology / raw dimension scores                       │
-│    Teach-back timer / gating lesson progress on score                │
-├─────────────────────────────────────────────────────────────────────┤
-│  KEY PATHS                                                           │
-│    Backend:     apps/api/app/                                        │
-│    Frontend:    apps/web/src/                                        │
-│    Shared:      packages/shared/types/  ← FROZEN contracts           │
-│    Migrations:  supabase/migrations/    ← never edit applied         │
-│    Epics:       docs/bmad/epics/                                     │
-│    Stories:     _bmad-output/implementation-artifacts/stories/       │
-│    Your rules:  CLAUDE.md                                            │
-├─────────────────────────────────────────────────────────────────────┤
-│  COST LIMITS                                                         │
-│    Per lesson: $3.00 hard ceiling (flag at $2.50)                   │
-│    Per user/day: $10.00                                              │
-│    Infra/month: $60-80                                               │
-├─────────────────────────────────────────────────────────────────────┤
-│  MODELS (never hardcode — use settings.*)                            │
-│    Lesson planning, slides: GPT-4o  (settings.llm_lesson_planner)   │
-│    Quiz, scoring, narration: GPT-4o-mini  (settings.llm_mini)       │
-│    Tutor Q&A (Phase 2 only): Claude Sonnet                          │
-└─────────────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  TRANSFORMEDED AI â€” BMAD QUICK REFERENCE                            â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  START OF DAY                                                        â”‚
+â”‚    git pull origin main                                              â”‚
+â”‚    claude                          â† open Claude Code               â”‚
+â”‚    /bmad-sprint-status             â† what's in progress?            â”‚
+â”‚    /bmad-dev-story                 â† implement your story           â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  NEED HELP?                                                          â”‚
+â”‚    /bmad-help                      â† always start here              â”‚
+â”‚    /bmad-agent-analyst             â† PRD/requirement questions       â”‚
+â”‚    /bmad-agent-architect           â† architecture decisions          â”‚
+â”‚    /bmad-agent-pm                  â† story creation / backlog        â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  CREATING THINGS                                                     â”‚
+â”‚    /bmad-create-story              â† new story from epic             â”‚
+â”‚    /new-feature <name>             â† scaffold frontend + backend     â”‚
+â”‚    /gen-prompt <mod> <name> <mdl>  â† versioned LLM prompt           â”‚
+â”‚    /add-pipeline-node <n> <crit>   â† new LangGraph node             â”‚
+â”‚    /add-migration <description>    â† new DB migration                â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  REVIEWING                                                           â”‚
+â”‚    /bmad-code-review               â† before every PR                 â”‚
+â”‚    /run-evals --all                â† lesson quality check            â”‚
+â”‚    /check-costs                    â† AI spend vs $3.00 ceiling       â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  BANNED (instant PR rejection)                                       â”‚
+â”‚    Celery / PostgresSaver / Reveal.js / WebGazer                    â”‚
+â”‚    Direct openai.client calls in business logic                      â”‚
+â”‚    Reaching into another module's DB tables                          â”‚
+â”‚    IQ/EQ/SQ terminology / raw dimension scores                       â”‚
+â”‚    Teach-back timer / gating lesson progress on score                â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  KEY PATHS                                                           â”‚
+â”‚    Backend:     apps/api/app/                                        â”‚
+â”‚    Frontend:    apps/web/src/                                        â”‚
+â”‚    Shared:      packages/shared/types/  â† FROZEN contracts           â”‚
+â”‚    Migrations:  supabase/migrations/    â† never edit applied         â”‚
+â”‚    Epics:       docs/bmad/epics/                                     â”‚
+â”‚    Stories:     _bmad-output/implementation-artifacts/stories/       â”‚
+â”‚    Your rules:  CLAUDE.md                                            â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  COST LIMITS                                                         â”‚
+â”‚    Per lesson: $3.00 hard ceiling (flag at $2.50)                   â”‚
+â”‚    Per user/day: $10.00                                              â”‚
+â”‚    Infra/month: $60-80                                               â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  MODELS (never hardcode â€” use settings.*)                            â”‚
+â”‚    Lesson planning, slides: GPT-4o  (settings.llm_lesson_planner)   â”‚
+â”‚    Quiz, scoring, narration: GPT-4o-mini  (settings.llm_mini)       â”‚
+â”‚    Tutor Q&A (Phase 2 only): Claude Sonnet                          â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ---
@@ -725,68 +725,69 @@ A story is **not done** until every box is checked:
 ## Appendix: File Structure Reference
 
 ```
-transformED-corp/
-├── CLAUDE.md                    ← READ THIS. Project rules for Claude Code.
-├── .env.example                 ← Copy to .env, fill in keys
-├── .gitignore                   ← Monorepo-wide ignores
-│
-├── .claude/
-│   ├── settings.json            ← Permissions (auto-allowed tools)
-│   ├── skills/                  ← 44 BMAD skills (auto-loaded)
-│   └── commands/                ← 6 project-specific slash commands
-│
-├── _bmad/                       ← BMAD framework files (don't edit)
-│   ├── bmm/                     ← BMM module (1-analysis → 4-implementation)
-│   └── config.toml              ← BMAD config (project name, output dirs)
-│
-├── _bmad-output/
-│   ├── planning-artifacts/      ← Epics, PRD analysis output
-│   └── implementation-artifacts/
-│       └── stories/             ← Story files (S1-D1-001.md etc.)
-│
-├── apps/
-│   ├── api/                     ← FastAPI backend (Python 3.12)
-│   │   ├── app/
-│   │   │   ├── main.py          ← App factory
-│   │   │   ├── config.py        ← All env vars (settings.*)
-│   │   │   ├── dependencies.py  ← JWT verify, Redis, settings deps
-│   │   │   ├── modules/         ← auth|content|media|assessment|analytics|tutor|admin
-│   │   │   │   └── content/pipeline/nodes/  ← 11 LangGraph nodes
-│   │   │   ├── providers/       ← LLM|TTS|Image|Avatar abstractions
-│   │   │   ├── core/            ← db|redis|retry|circuit_breaker|cost_tracker|websocket
-│   │   │   └── workers/         ← ARQ entry + content_pipeline job
-│   │   ├── pyproject.toml       ← Python deps + tool config
-│   │   └── Dockerfile
-│   │
-│   └── web/                     ← Next.js 14 (TypeScript + Tailwind)
-│       └── src/
-│           ├── app/             ← App Router routes
-│           ├── features/        ← player|attention|quiz|teachback|tutor|onboarding
-│           ├── lib/             ← supabase|websocket|api clients
-│           └── components/ui/
-│
-├── packages/
-│   └── shared/                  ← FROZEN — shared contracts
-│       ├── types/lesson.ts      ← LessonPackage TypeScript types
-│       ├── types/ws.ts          ← WebSocket discriminated union
-│       └── lesson_package.schema.json
-│
-├── supabase/
-│   ├── config.toml              ← Local Supabase config
-│   └── migrations/              ← DB schema (never edit applied migrations)
-│
-├── docs/
-│   ├── TEAM_ONBOARDING.md       ← This file
-│   ├── agile-process.md         ← AI-agile process definition
-│   ├── adr/                     ← Architecture Decision Records
-│   └── bmad/
-│       └── epics/               ← 5 TransformED epic documents
-│
-└── .github/workflows/
-    ├── ci.yml                   ← Lint + test on every PR
-    └── deploy.yml               ← Deploy to Railway on main push
+hie/
+â”œâ”€â”€ CLAUDE.md                    â† READ THIS. Project rules for Claude Code.
+â”œâ”€â”€ .env.example                 â† Copy to .env, fill in keys
+â”œâ”€â”€ .gitignore                   â† Monorepo-wide ignores
+â”‚
+â”œâ”€â”€ .claude/
+â”‚   â”œâ”€â”€ settings.json            â† Permissions (auto-allowed tools)
+â”‚   â”œâ”€â”€ skills/                  â† 44 BMAD skills (auto-loaded)
+â”‚   â””â”€â”€ commands/                â† 6 project-specific slash commands
+â”‚
+â”œâ”€â”€ _bmad/                       â† BMAD framework files (don't edit)
+â”‚   â”œâ”€â”€ bmm/                     â† BMM module (1-analysis â†’ 4-implementation)
+â”‚   â””â”€â”€ config.toml              â† BMAD config (project name, output dirs)
+â”‚
+â”œâ”€â”€ _bmad-output/
+â”‚   â”œâ”€â”€ planning-artifacts/      â† Epics, PRD analysis output
+â”‚   â””â”€â”€ implementation-artifacts/
+â”‚       â””â”€â”€ stories/             â† Story files (S1-D1-001.md etc.)
+â”‚
+â”œâ”€â”€ apps/
+â”‚   â”œâ”€â”€ api/                     â† FastAPI backend (Python 3.12)
+â”‚   â”‚   â”œâ”€â”€ app/
+â”‚   â”‚   â”‚   â”œâ”€â”€ main.py          â† App factory
+â”‚   â”‚   â”‚   â”œâ”€â”€ config.py        â† All env vars (settings.*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ dependencies.py  â† JWT verify, Redis, settings deps
+â”‚   â”‚   â”‚   â”œâ”€â”€ modules/         â† auth|content|media|assessment|analytics|tutor|admin
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ content/pipeline/nodes/  â† 11 LangGraph nodes
+â”‚   â”‚   â”‚   â”œâ”€â”€ providers/       â† LLM|TTS|Image|Avatar abstractions
+â”‚   â”‚   â”‚   â”œâ”€â”€ core/            â† db|redis|retry|circuit_breaker|cost_tracker|websocket
+â”‚   â”‚   â”‚   â””â”€â”€ workers/         â† ARQ entry + content_pipeline job
+â”‚   â”‚   â”œâ”€â”€ pyproject.toml       â† Python deps + tool config
+â”‚   â”‚   â””â”€â”€ Dockerfile
+â”‚   â”‚
+â”‚   â””â”€â”€ web/                     â† Next.js 14 (TypeScript + Tailwind)
+â”‚       â””â”€â”€ src/
+â”‚           â”œâ”€â”€ app/             â† App Router routes
+â”‚           â”œâ”€â”€ features/        â† player|attention|quiz|teachback|tutor|onboarding
+â”‚           â”œâ”€â”€ lib/             â† supabase|websocket|api clients
+â”‚           â””â”€â”€ components/ui/
+â”‚
+â”œâ”€â”€ packages/
+â”‚   â””â”€â”€ shared/                  â† FROZEN â€” shared contracts
+â”‚       â”œâ”€â”€ types/lesson.ts      â† LessonPackage TypeScript types
+â”‚       â”œâ”€â”€ types/ws.ts          â† WebSocket discriminated union
+â”‚       â””â”€â”€ lesson_package.schema.json
+â”‚
+â”œâ”€â”€ supabase/
+â”‚   â”œâ”€â”€ config.toml              â† Local Supabase config
+â”‚   â””â”€â”€ migrations/              â† DB schema (never edit applied migrations)
+â”‚
+â”œâ”€â”€ docs/
+â”‚   â”œâ”€â”€ TEAM_ONBOARDING.md       â† This file
+â”‚   â”œâ”€â”€ agile-process.md         â† AI-agile process definition
+â”‚   â”œâ”€â”€ adr/                     â† Architecture Decision Records
+â”‚   â””â”€â”€ bmad/
+â”‚       â””â”€â”€ epics/               â† 5 HIE epic documents
+â”‚
+â””â”€â”€ .github/workflows/
+    â”œâ”€â”€ ci.yml                   â† Lint + test on every PR
+    â””â”€â”€ deploy.yml               â† Deploy to Railway on main push
 ```
 
 ---
 
 *Questions? Ping the team channel first. If it's an architecture question, invoke `/bmad-agent-architect`. If it's a requirements question, invoke `/bmad-agent-analyst`. If you're not sure, `/bmad-help`.*
+

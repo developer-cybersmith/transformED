@@ -1,24 +1,24 @@
-# Epic 5: Platform Core (Auth + Payments + Admin)
+﻿# Epic 5: Platform Core (Auth + Payments + Admin)
 
 | Field | Value |
 |---|---|
 | Epic ID | E-05 |
 | Status | Planned |
 | Owner | All devs (primarily Dev 1 + Dev 4) |
-| Target Sprints | Sprint 2–4 (Weeks 4–9) |
-| Priority | P1 — required for first paying student |
+| Target Sprints | Sprint 2â€“4 (Weeks 4â€“9) |
+| Priority | P1 â€” required for first paying student |
 
 ---
 
 ## Problem Statement
 
-Without auth, payments, and a hardened production environment, TransformED is a demo. A student cannot sign up independently, cannot pay for a lesson, and cannot receive their results without a developer manually assisting. This epic closes that gap — it turns the working prototype into a product that a real student can use end-to-end without any developer involvement.
+Without auth, payments, and a hardened production environment, HIE is a demo. A student cannot sign up independently, cannot pay for a lesson, and cannot receive their results without a developer manually assisting. This epic closes that gap â€” it turns the working prototype into a product that a real student can use end-to-end without any developer involvement.
 
 ---
 
 ## Goal / Success Metric
 
-> **A brand-new user can discover TransformED, sign up, complete Learner DNA onboarding, pay for a lesson, upload a PDF, complete the lesson, and receive their session report — with zero developer intervention and full DPDP Act compliance.**
+> **A brand-new user can discover HIE, sign up, complete Learner DNA onboarding, pay for a lesson, upload a PDF, complete the lesson, and receive their session report â€” with zero developer intervention and full DPDP Act compliance.**
 
 ---
 
@@ -26,7 +26,7 @@ Without auth, payments, and a hardened production environment, TransformED is a 
 
 - As a **prospective student**, I can land on the homepage, understand the product value, and sign up in under 2 minutes.
 - As a **student**, I must complete the Learner DNA onboarding before I can upload my first lesson (platform gate).
-- As a **student**, I can pay for a lesson using a hosted Stripe checkout page — my card details never touch TransformED's servers.
+- As a **student**, I can pay for a lesson using a hosted Stripe checkout page â€” my card details never touch HIE's servers.
 - As a **student**, I receive an email when my lesson is ready and another email with my session report link.
 - As an **admin**, I can view all running and failed pipeline jobs, their costs, and retry a failed job.
 - As an **admin**, I can see all users, their lesson counts, and payment status.
@@ -40,7 +40,7 @@ Without auth, payments, and a hardened production environment, TransformED is a 
 Supabase Auth (email/password + Google OAuth via Supabase provider).
 
 ### Onboarding Gate
-After email verification → redirect to `/onboarding` (Learner DNA 20-question flow, Epic 3).
+After email verification â†’ redirect to `/onboarding` (Learner DNA 20-question flow, Epic 3).
 `learner_dna.completed_at` is `NULL` until onboarding submitted.
 Middleware (`middleware.ts`) checks `learner_dna.completed_at`; any route under `/lesson` or `/upload` redirects to `/onboarding` if NULL.
 
@@ -63,22 +63,22 @@ Middleware (`middleware.ts`) checks `learner_dna.completed_at`; any route under 
 ## Payments
 
 ### Provider
-Stripe Checkout (hosted) — no card data on TransformED servers under any circumstances.
+Stripe Checkout (hosted) â€” no card data on HIE servers under any circumstances.
 
 ### Flow
 
 ```
 Student clicks "Buy Lesson"
-  └─► POST /api/payments/create-checkout-session
-        └─► Stripe creates hosted checkout session
-              └─► Student enters card on stripe.com
-                    ├─► Success → stripe.com redirects to /payment/success?session_id=...
-                    └─► Cancel  → stripe.com redirects to /payment/cancel
+  â””â”€â–º POST /api/payments/create-checkout-session
+        â””â”€â–º Stripe creates hosted checkout session
+              â””â”€â–º Student enters card on stripe.com
+                    â”œâ”€â–º Success â†’ stripe.com redirects to /payment/success?session_id=...
+                    â””â”€â–º Cancel  â†’ stripe.com redirects to /payment/cancel
   
-Stripe webhook → POST /api/payments/webhook
-  └─► Verify Stripe-Signature header (STRIPE_WEBHOOK_SECRET)
-        └─► On checkout.session.completed:
-              └─► Write lesson_access record → unlock upload for user
+Stripe webhook â†’ POST /api/payments/webhook
+  â””â”€â–º Verify Stripe-Signature header (STRIPE_WEBHOOK_SECRET)
+        â””â”€â–º On checkout.session.completed:
+              â””â”€â–º Write lesson_access record â†’ unlock upload for user
 ```
 
 ### Lesson Access Gating
@@ -88,8 +88,8 @@ Stripe webhook → POST /api/payments/webhook
 - RLS: users can only read their own `lesson_access` row
 
 ### Key Constraints
-- Stripe Checkout (hosted) only — no Stripe Elements, no card data on our servers
-- `STRIPE_WEBHOOK_SECRET` validated on every webhook call — unsigned webhooks rejected with 400
+- Stripe Checkout (hosted) only â€” no Stripe Elements, no card data on our servers
+- `STRIPE_WEBHOOK_SECRET` validated on every webhook call â€” unsigned webhooks rejected with 400
 - Idempotency: webhook handler checks if `stripe_session_id` already processed to prevent double-credit
 
 ---
@@ -99,8 +99,8 @@ Stripe webhook → POST /api/payments/webhook
 | Trigger | Template | Sender |
 |---|---|---|
 | Lesson package ready | "Your lesson is ready! [Open Lesson]" | Resend (transactional) |
-| Session report available | "Here's how you did — [View Report]" | Resend (transactional) |
-| (Optional) Welcome email | "Welcome to TransformED" | Resend (transactional) |
+| Session report available | "Here's how you did â€” [View Report]" | Resend (transactional) |
+| (Optional) Welcome email | "Welcome to HIE" | Resend (transactional) |
 
 - Email sending is an ARQ background job (not blocking API response)
 - Templates stored in `backend/notifications/templates/`
@@ -110,7 +110,7 @@ Stripe webhook → POST /api/payments/webhook
 
 ## Admin Panel
 
-Accessible at `/admin` — protected by `is_admin = true` flag in Supabase `profiles` table.
+Accessible at `/admin` â€” protected by `is_admin = true` flag in Supabase `profiles` table.
 
 | Section | Data Shown | Key Actions |
 |---|---|---|
@@ -119,7 +119,7 @@ Accessible at `/admin` — protected by `is_admin = true` flag in Supabase `prof
 | User Management | All users: email, lesson count, DNA completed, credits | Manual credit grant |
 | Failed Jobs | Jobs with `status = 'failed'` and `error_message` | View traceback, retry |
 
-Admin panel is a Next.js route group `(admin)` with a layout that checks `is_admin` server-side. No dedicated admin framework — plain Next.js + Supabase queries.
+Admin panel is a Next.js route group `(admin)` with a layout that checks `is_admin` server-side. No dedicated admin framework â€” plain Next.js + Supabase queries.
 
 ---
 
@@ -168,7 +168,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 
 | Layer | Files / Modules |
 |---|---|
-| Auth middleware | `middleware.ts` — onboarding gate + route protection |
+| Auth middleware | `middleware.ts` â€” onboarding gate + route protection |
 | Auth routes | `app/auth/` |
 | Supabase client | `lib/supabase/client.ts`, `lib/supabase/server.ts` |
 | Payments router | `backend/routers/payments.py` |
@@ -177,7 +177,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 | Email templates | `backend/notifications/templates/*.html` |
 | Admin panel | `app/(admin)/admin/` (route group with layout auth check) |
 | Landing pages | `app/page.tsx`, `app/pricing/page.tsx`, `app/privacy/page.tsx` |
-| DB migrations | `supabase/migrations/` — `lesson_access`, `profiles` (is_admin), `stripe_events` |
+| DB migrations | `supabase/migrations/` â€” `lesson_access`, `profiles` (is_admin), `stripe_events` |
 | Runbook | `docs/ops/runbook.md` |
 | RLS audit | `docs/security/rls-audit.md` |
 
@@ -199,7 +199,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 | Dependency | Status |
 |---|---|
 | Sprint 0 infra + Supabase project | Done |
-| Epics 1–4 functionally complete (pipeline, player, assessment, tutor) | Must be done before E2E test |
+| Epics 1â€“4 functionally complete (pipeline, player, assessment, tutor) | Must be done before E2E test |
 | Stripe account + API keys provisioned | Must be done before Sprint 2 |
 | Resend account + domain verified | Must be done before Sprint 3 |
 | Legal review of DPDP disclaimer + privacy policy | Must be done before Sprint 4 |
@@ -213,18 +213,18 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 - [ ] Google OAuth sign-in works end-to-end
 - [ ] Onboarding gate blocks `/upload` and `/lesson` routes until DNA completed
 - [ ] Stripe Checkout session created and student redirected to Stripe-hosted page
-- [ ] Successful payment → `lesson_credits` incremented → upload unlocked
+- [ ] Successful payment â†’ `lesson_credits` incremented â†’ upload unlocked
 - [ ] Stripe webhook signature validation tested with valid and invalid signatures
 - [ ] Webhook idempotency tested: duplicate `checkout.session.completed` does not double-credit
 - [ ] "Lesson ready" email delivered within 2 minutes of `package_builder` completion
 - [ ] Admin panel shows all job statuses, costs, and users (real data, not mocked)
 - [ ] Failed job visible in admin panel with error message; retry queues new ARQ job
 - [ ] RLS audit completed; checklist signed off; every protected table audited
-- [ ] Load test: 50 concurrent users, P95 < 2s, no crashes — results documented
+- [ ] Load test: 50 concurrent users, P95 < 2s, no crashes â€” results documented
 - [ ] DPDP consent checkbox on signup with timestamp stored in DB
 - [ ] Privacy policy and Terms pages live at `/privacy` and `/terms`
 - [ ] On-call runbook covers all 4 critical failure scenarios
-- [ ] E2E test: sign up → pay → upload → lesson → report, no developer intervention
+- [ ] E2E test: sign up â†’ pay â†’ upload â†’ lesson â†’ report, no developer intervention
 
 ---
 
@@ -238,3 +238,4 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 | DPDP compliance gap discovered post-launch | Low | High | Legal review in Sprint 3; data deletion flow tested before launch |
 | Admin panel accidentally accessible by non-admins | Low | Critical | Server-side `is_admin` check in layout; middleware blocks at edge |
 | Email delivery to spam (cold domain) | Medium | Medium | Domain warm-up via Resend; SPF/DKIM/DMARC configured before Sprint 3 |
+
