@@ -1,11 +1,11 @@
-[build-system]
+﻿[build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "transformED-api"
+name = "hie-api"
 version = "0.1.0"
-description = "TransformED AI — backend API (Sprint 0 skeleton)"
+description = "HIE — Human Intelligence Engine backend API (Sprint 0 skeleton)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,10 +14,10 @@ dependencies = [
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "PyJWT>=2.8.0",
-    "supabase>=2.4.0",        # uses httpx transport — bypasses PgBouncer
+    "supabase>=2.4.0",        # uses httpx transport â€” bypasses PgBouncer
     "redis[hiredis]>=5.0.4",
     "arq>=0.26.0",
-    "langgraph>=0.1.0",       # PINNED — never auto-upgrade per PRD §24
+    "langgraph>=0.1.0",       # PINNED â€” never auto-upgrade per PRD Â§24
     "langchain-openai>=0.1.0",
     "openai>=1.30.0",
     "anthropic>=0.26.0",
@@ -119,3 +119,5 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
 ]
+
+

@@ -1,4 +1,4 @@
-"""
+﻿"""
 FastAPI application factory.
 
 Usage:
@@ -32,7 +32,7 @@ from app.modules.tutor.router import router as tutor_router
 
 logger = logging.getLogger(__name__)
 
-# ── Rate limiter (module-level so middleware can reference it) ────────────────
+# â”€â”€ Rate limiter (module-level so middleware can reference it) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 limiter = Limiter(key_func=get_remote_address, default_limits=["10/second"])
 
 
@@ -41,8 +41,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage startup / shutdown of shared resources."""
     settings = get_settings()
 
-    # ── Startup ───────────────────────────────────────────────────────────────
-    logger.info("Starting TransformED API…")
+    # â”€â”€ Startup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    logger.info("Starting HIE APIâ€¦")
 
     # Redis
     await init_redis(settings.redis_url)
@@ -60,8 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # ── Shutdown ──────────────────────────────────────────────────────────────
-    logger.info("Shutting down TransformED API…")
+    # â”€â”€ Shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    logger.info("Shutting down HIE APIâ€¦")
     await close_redis()
     logger.info("Redis connections closed")
 
@@ -71,15 +71,15 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="TransformED AI API",
-        description="AI-powered EdTech SaaS platform — Sprint 0",
+        title="HIE API",
+        description="Human Intelligence Engine platform â€” Sprint 0",
         version="0.1.0",
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
         lifespan=lifespan,
     )
 
-    # ── Middleware ────────────────────────────────────────────────────────────
+    # â”€â”€ Middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -88,11 +88,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Rate limiting ─────────────────────────────────────────────────────────
+    # â”€â”€ Rate limiting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
-    # ── Module routers ────────────────────────────────────────────────────────
+    # â”€â”€ Module routers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     app.include_router(auth_router,       prefix="/api/auth")
     app.include_router(content_router,    prefix="/api/content")
     app.include_router(media_router,      prefix="/api/media")
@@ -101,10 +101,10 @@ def create_app() -> FastAPI:
     app.include_router(tutor_router,      prefix="/api/tutor")
     app.include_router(admin_router,      prefix="/api/admin")
 
-    # ── WebSocket router ──────────────────────────────────────────────────────
+    # â”€â”€ WebSocket router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     app.include_router(ws_router)
 
-    # ── Health endpoint ───────────────────────────────────────────────────────
+    # â”€â”€ Health endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     @app.get("/health", tags=["ops"], summary="Liveness probe")
     async def health(request: Request) -> dict[str, str]:  # noqa: RUF029
         return {"status": "ok", "version": app.version}
@@ -114,3 +114,4 @@ def create_app() -> FastAPI:
 
 # Module-level app instance consumed by uvicorn
 app = create_app()
+
