@@ -15,11 +15,11 @@ const faqs = [
     },
     {
         q: "Is this actually better than just watching YouTube?",
-        a: "YouTube is passive — you watch, you forget. TransformED makes you engage: answer questions, explain things back, and get tested. Research shows active recall improves retention by 3–5× compared to passive video.",
+        a: "YouTube is passive — you watch, you forget. HIE makes you engage: answer questions, explain things back, and get tested. Research shows active recall improves retention by 3–5× compared to passive video.",
     },
     {
         q: "Can I use this for university textbooks?",
-        a: "That's exactly what it's built for. Dense academic content is where TransformED shines — the AI breaks down complex material into manageable pieces and tests your understanding at each step.",
+        a: "That's exactly what it's built for. Dense academic content is where HIE shines — the AI breaks down complex material into manageable pieces and tests your understanding at each step.",
     },
     {
         q: "Is my data private? What about webcam access?",

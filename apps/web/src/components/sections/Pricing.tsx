@@ -15,7 +15,7 @@ const plans = [
         price: 0,
         yearlyPrice: 0,
         period: "",
-        description: "Explore TransformED with 3 PDFs a month.",
+        description: "Explore HIE with 3 PDFs a month.",
         features: [
             "3 PDF uploads / month",
             "AI tutoring (basic)",

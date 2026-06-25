@@ -28,7 +28,7 @@ const solutions = [
     },
 ];
 
-export default function WhyTransformED() {
+export default function WhyHIE() {
     return (
         <section className="py-20 lg:py-28 bg-[#f8fafc]">
             <div className="max-w-6xl mx-auto px-6 lg:px-8">

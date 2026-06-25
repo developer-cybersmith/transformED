@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 
 const navLinks = [
     { label: "How It Works", href: "#how-it-works" },
@@ -28,19 +29,17 @@ export default function Navbar() {
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.4 }}
             className={`fixed top-0 left-0 right-0 z-50 transition-all duration-200 ${isScrolled
-                    ? "bg-white/90 backdrop-blur-xl border-b border-[#f0f0f0]"
-                    : "bg-transparent"
+                ? "bg-white/90 backdrop-blur-xl border-b border-[#f0f0f0]"
+                : "bg-transparent"
                 }`}
         >
             <nav className="max-w-6xl mx-auto px-6 lg:px-8">
                 <div className="flex items-center justify-between h-16">
                     {/* Logo */}
                     <Link href="/" className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
-                            <span className="text-white font-bold text-xs font-display">T</span>
-                        </div>
-                        <span className="text-[0.95rem] font-semibold text-foreground tracking-tight font-display">
-                            Transform<span className="text-primary">ED</span>
+                        <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
+                        <span className="text-[0.95rem] font-bold text-foreground tracking-tight font-display">
+                            HIEIQ<span className="text-primary">.AI</span>
                         </span>
                     </Link>
 

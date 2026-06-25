@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { LayoutDashboard, Library, UploadCloud, PieChart, Settings, UserCircle } from "lucide-react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 const mainNavItems = [
@@ -25,9 +26,10 @@ export function Sidebar() {
 
             {/* Logo Area */}
             <div className="pt-10 pb-8 px-8 relative z-10 flex items-center justify-between">
-                <Link href="/" className="inline-block group">
+                <Link href="/" className="flex items-center gap-3 inline-block group">
+                    <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg transition-transform duration-300 group-hover:scale-105 object-contain" />
                     <span className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-secondary)] transition-all duration-300">
-                        TransformED
+                        HIE
                     </span>
                 </Link>
             </div>

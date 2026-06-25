@@ -119,7 +119,7 @@ export function SignUpForm() {
         >
             <div className="mb-4 text-center lg:text-left">
                 <h2 className="text-2xl font-semibold tracking-tight text-neutral-900 mb-1">
-                    Join TransformED
+                    Join HIE
                 </h2>
                 <p className="text-neutral-500 text-sm">
                     Begin your journey toward intellectual independence.
@@ -220,7 +220,7 @@ export function SignUpForm() {
             </Button>
 
             <p className="mt-4 text-center text-sm text-neutral-600">
-                Already learning with TransformED?{" "}
+                Already learning with HIE?{" "}
                 <Link
                     href="/signin"
                     className="font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] transition-colors"

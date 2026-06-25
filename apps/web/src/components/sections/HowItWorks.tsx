@@ -15,7 +15,7 @@ const steps = [
         num: "2",
         icon: Brain,
         title: "Cognitive Extraction",
-        desc: "TransformED maps the foundational concepts and underlying frameworks, structurally stripping away the noise.",
+        desc: "HIE maps the foundational concepts and underlying frameworks, structurally stripping away the noise.",
     },
     {
         num: "3",

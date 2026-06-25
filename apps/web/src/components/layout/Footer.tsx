@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { BookOpen, Globe, Briefcase, Code2, Mail } from "lucide-react";
+import Image from "next/image";
 
 const footerSections = [
     {
@@ -36,15 +37,13 @@ export default function Footer() {
                     {/* Brand */}
                     <div className="col-span-2">
                         <Link href="/" className="flex items-center gap-2 mb-3">
-                            <div className="w-6 h-6 rounded-md bg-primary flex items-center justify-center">
-                                <span className="text-white font-bold text-[10px]">T</span>
-                            </div>
-                            <span className="text-sm font-semibold text-foreground font-display">
-                                Transform<span className="text-primary">ED</span>
+                            <Image src="/logo.jpeg" alt="HIE Logo" width={24} height={24} className="rounded-md object-contain" />
+                            <span className="text-sm font-bold text-foreground font-display">
+                                HIEIQ<span className="text-primary">.AI</span>
                             </span>
                         </Link>
                         <p className="text-xs text-text-muted leading-relaxed max-w-[240px]">
-                            AI-powered learning from any PDF. Built for students who want to actually understand the material.
+                            Human Intelligence Engine. Monitor cognitive decline and train your structural critical thinking, IQ, EQ, and SQ.
                         </p>
                     </div>
 
@@ -71,7 +70,7 @@ export default function Footer() {
                 </div>
 
                 <div className="mt-10 pt-6 border-t border-[#f0f0f0] text-xs text-text-muted">
-                    © {new Date().getFullYear()} TransformED. All rights reserved.
+                    © {new Date().getFullYear()} HIE. All rights reserved.
                 </div>
             </div>
         </footer>

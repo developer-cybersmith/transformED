@@ -73,7 +73,7 @@ export default function Hero() {
                                 </h1>
 
                                 <p className="text-[1.1rem] text-text-secondary leading-[1.75] max-w-lg mb-10">
-                                    Modern learners are drowning in content but starving for focus. TransformED is a cognitive engine that detects when you zone out, adapts to your brain, and trains you into a highly self-reliant thinker.
+                                    Human's attention span has been dropping due to modern technological advancements causing cognitive decline. HIE (Human Intelligence Engine) acts as an AI Tutor that monitors your IQ, EQ, SQ, and Critical Thinking to mature your analytical reasoning.
                                 </p>
 
                                 {/* CTA */}

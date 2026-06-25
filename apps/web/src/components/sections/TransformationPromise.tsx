@@ -94,7 +94,7 @@ export default function TransformationPromise() {
                             </div>
                             <div>
                                 <h3 className="text-xl font-bold text-slate-900">Self-Reliant Scholar</h3>
-                                <p className="text-sm text-primary font-bold">The TransformED state</p>
+                                <p className="text-sm text-primary font-bold">The HIE state</p>
                             </div>
                         </div>
 

@@ -1,6 +1,11 @@
+// MOCK DEMO ONLY — DO NOT IMPORT OR EXTEND THIS FILE IN SPRINT 1+
+// Uses MockLesson types (timeline[], slide.content) which are incompatible with the
+// frozen LessonPackage contract (narration.timestamps[], slide.bullets[]).
+// Replace with: PlayerLoader → Player → Zustand player.machine (S1-01 through S1-06).
 "use client";
 
 import { MockLesson, Slide, TimelineEvent, SlideChangeEvent, QuizEvent, TeachbackEvent, InterventionEvent } from "@/mocks/data/lessons";
+import { JargonHover } from "@/components/player/JargonHover";
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Pause, ArrowLeft, Volume2, SkipBack, SkipForward, Mic, CheckCircle, ChevronRight, Zap } from "lucide-react";
@@ -92,22 +97,22 @@ export function InteractivePlayer({ initialLesson }: InteractivePlayerProps) {
         <div className="w-full h-full flex flex-col pt-8">
             {/* Top Bar Navigation */}
             <div className="px-8 flex items-center justify-between z-20">
-                <Link href="/dashboard" className="w-12 h-12 flex items-center justify-center rounded-full bg-neutral-900 border border-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors">
+                <Link href="/dashboard" className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 hover:scale-105 text-neutral-400 hover:text-white transition-all shadow-sm">
                     <ArrowLeft className="w-5 h-5" />
                 </Link>
 
-                <div className="text-center">
-                    <div className="text-xs font-semibold text-[var(--accent-primary)] uppercase tracking-wider mb-1">
+                <div className="text-center bg-black/40 px-8 py-3 rounded-full border border-white/5 shadow-xl backdrop-blur-md">
+                    <div className="text-[10px] font-bold text-[var(--accent-primary)] uppercase tracking-[0.2em] mb-1">
                         {initialLesson.chapterTitle}
                     </div>
-                    <h2 className="text-xl font-semibold text-white">
+                    <h2 className="text-sm font-semibold text-white tracking-wide">
                         {initialLesson.title}
                     </h2>
                 </div>
 
-                <div className="w-12 h-12 flex items-center justify-center rounded-full bg-neutral-900 border border-neutral-800 text-neutral-400">
+                <button className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 hover:scale-105 text-neutral-400 hover:text-white transition-all shadow-sm">
                     <Volume2 className="w-5 h-5" />
-                </div>
+                </button>
             </div>
 
             {/* Center Stage Presentation */}
@@ -132,17 +137,17 @@ export function InteractivePlayer({ initialLesson }: InteractivePlayerProps) {
             </div>
 
             {/* Bottom Audio Controller */}
-            <div className="h-32 px-8 flex flex-col justify-center border-t border-neutral-800/50 bg-neutral-900/50 backdrop-blur-xl z-20 relative">
+            <div className="h-36 px-8 flex flex-col justify-center border-t border-white/5 bg-black/60 shadow-[0_-20px_40px_rgba(0,0,0,0.5)] backdrop-blur-2xl z-20 relative">
 
                 <div className="flex items-center gap-6 max-w-4xl w-full mx-auto">
-                    <span className="text-xs font-medium text-neutral-400 w-12 text-right tabular-nums">
+                    <span className="text-xs font-semibold text-neutral-500 w-12 text-right tabular-nums">
                         {formatTime(currentTime)}
                     </span>
 
                     {/* Scrub Bar */}
-                    <div className="flex-1 h-2 bg-neutral-800 rounded-full cursor-pointer relative group">
+                    <div className="flex-1 h-3 bg-neutral-900 border border-white/5 rounded-full cursor-pointer relative group overflow-hidden shadow-inner">
                         <div
-                            className="absolute top-0 left-0 h-full bg-[var(--accent-primary)] rounded-full transition-all duration-1000 ease-linear"
+                            className="absolute top-0 left-0 h-full bg-gradient-to-r from-[var(--accent-secondary)] to-[var(--accent-primary)] rounded-full transition-all duration-1000 ease-linear shadow-[0_0_15px_var(--accent-primary)]"
                             style={{ width: `${progressPercent}%` }}
                         />
                         {/* Interactive timeline markers for interventions */}
@@ -155,24 +160,29 @@ export function InteractivePlayer({ initialLesson }: InteractivePlayerProps) {
                         ))}
                     </div>
 
-                    <span className="text-xs font-medium text-neutral-500 w-12 tabular-nums">
+                    <span className="text-xs font-semibold text-neutral-600 w-12 tabular-nums">
                         {formatTime(initialLesson.durationSeconds)}
                     </span>
                 </div>
 
-                <div className="flex items-center justify-center gap-6 mt-4">
-                    <button onClick={() => setCurrentTime(Math.max(0, currentTime - 10))} className="text-neutral-500 hover:text-white transition-colors">
+                <div className="flex items-center justify-center gap-8 mt-6">
+                    <button onClick={() => setCurrentTime(Math.max(0, currentTime - 10))} className="p-2 text-neutral-500 hover:text-white hover:-translate-x-1 transition-all">
                         <SkipBack className="w-5 h-5 fill-current" />
                     </button>
 
-                    <button
-                        onClick={togglePlay}
-                        className={`w-14 h-14 flex items-center justify-center rounded-full transition-all duration-300 ${isPlaying ? 'bg-white text-neutral-900 border border-white' : 'bg-[var(--accent-primary)] text-white shadow-[0_4px_20px_-4px_var(--accent-primary)]'}`}
-                    >
-                        {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current ml-1" />}
-                    </button>
+                    <div className="relative">
+                        {!isPlaying && (
+                            <div className="absolute inset-0 bg-[var(--accent-primary)] rounded-full blur-xl opacity-40 animate-pulse pointer-events-none" />
+                        )}
+                        <button
+                            onClick={togglePlay}
+                            className={`relative w-16 h-16 flex items-center justify-center rounded-full transition-all duration-300 hover:scale-[1.03] ${isPlaying ? 'bg-white/10 text-white border border-white/20 hover:bg-white/20 shadow-md' : 'bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] text-white shadow-[0_8px_30px_-5px_var(--accent-primary)]'}`}
+                        >
+                            {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-7 h-7 fill-current ml-1.5" />}
+                        </button>
+                    </div>
 
-                    <button onClick={() => setCurrentTime(Math.min(initialLesson.durationSeconds, currentTime + 10))} className="text-neutral-500 hover:text-white transition-colors">
+                    <button onClick={() => setCurrentTime(Math.min(initialLesson.durationSeconds, currentTime + 10))} className="p-2 text-neutral-500 hover:text-white hover:translate-x-1 transition-all">
                         <SkipForward className="w-5 h-5 fill-current" />
                     </button>
                 </div>
@@ -186,22 +196,23 @@ function SlideLayer({ slide }: { slide: Slide | null }) {
 
     return (
         <motion.div
-            initial={{ opacity: 0, scale: 0.95, filter: "blur(10px)" }}
-            animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-            exit={{ opacity: 0, scale: 1.05, filter: "blur(10px)" }}
-            transition={{ duration: 0.7, ease: "easeOut" }}
+            initial={{ opacity: 0, scale: 0.96, y: 10, filter: "blur(10px)" }}
+            animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
+            exit={{ opacity: 0, scale: 1.02, y: -10, filter: "blur(10px)" }}
+            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
             className="w-full max-w-5xl"
         >
-            <div className="bg-neutral-900/60 backdrop-blur-3xl border border-white/10 rounded-[3rem] p-16 md:p-24 shadow-[0_0_100px_rgba(0,0,0,0.5)] relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[var(--accent-primary)]/10 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/4 pointer-events-none group-hover:bg-[var(--accent-primary)]/20 transition-all duration-1000" />
-                <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-[100px] translate-y-1/2 -translate-x-1/4 pointer-events-none group-hover:bg-emerald-500/20 transition-all duration-1000" />
+            <div className="bg-black/40 backdrop-blur-3xl border border-white/5 rounded-[2.5rem] p-16 md:p-24 shadow-[0_20px_100px_-10px_rgba(0,0,0,0.8)] relative overflow-hidden group">
+                {/* Glow Effects */}
+                <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[var(--accent-primary)]/10 rounded-full blur-[140px] -translate-y-1/2 translate-x-1/3 pointer-events-none group-hover:bg-[var(--accent-primary)]/15 transition-all duration-1000" />
+                <div className="absolute bottom-0 left-0 w-80 h-80 bg-[var(--accent-secondary)]/10 rounded-full blur-[100px] translate-y-1/2 -translate-x-1/4 pointer-events-none group-hover:bg-[var(--accent-secondary)]/15 transition-all duration-1000" />
 
-                <h1 className="text-4xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-br from-white via-white to-neutral-500 mb-8 leading-tight tracking-tight">
+                <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-white mb-8 leading-[1.1] tracking-tight max-w-4xl drop-shadow-md">
                     {slide.title}
                 </h1>
-                <p className="text-xl md:text-3xl text-neutral-300 leading-relaxed max-w-3xl font-medium">
-                    {slide.content}
-                </p>
+                <div className="text-xl md:text-2xl lg:text-3xl text-neutral-300/90 leading-relaxed max-w-4xl font-medium tracking-wide">
+                    <JargonHover text={slide.content} />
+                </div>
             </div>
         </motion.div>
     );

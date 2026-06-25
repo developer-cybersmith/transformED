@@ -16,30 +16,30 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "TransformED — Turn Any PDF into an Immersive AI Learning Experience",
+  title: "HIE — Human Intelligence Engine",
   description:
-    "TransformED uses AI to transform your educational PDFs into interactive, guided lessons with personalized tutoring, quizzes, and teach-back exercises.",
+    "HIE combats cognitive decline and 7-second attention spans by transforming passive learning into an AI Tutor that monitors and prompts to build IQ, EQ, and Critical Thinking.",
   keywords: [
-    "AI learning",
-    "PDF to lessons",
-    "educational AI",
-    "personalized learning",
+    "Human Intelligence Engine",
+    "HIE",
+    "cognitive reasoning",
     "AI tutor",
-    "interactive education",
+    "attention span",
+    "critical thinking",
   ],
   openGraph: {
-    title: "TransformED — AI-Powered Learning from Any PDF",
+    title: "HIE — Human Intelligence Engine",
     description:
-      "Upload any PDF. Get an immersive, AI-guided learning experience with personalized tutoring and interactive lessons.",
+      "A solution to mature analytical reasoning degraded by technological marketing. An AI Tutor that dynamically prompts and evaluates concentration.",
     type: "website",
     locale: "en_US",
-    siteName: "TransformED",
+    siteName: "HIE",
   },
   twitter: {
     card: "summary_large_image",
-    title: "TransformED — AI-Powered Learning from Any PDF",
+    title: "HIE — Human Intelligence Engine",
     description:
-      "Upload any PDF. Get an immersive, AI-guided learning experience.",
+      "Combat cognitive decline. Mature your analytical reasoning with the Human Intelligence Engine.",
   },
 };
 

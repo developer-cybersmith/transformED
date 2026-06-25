@@ -172,7 +172,7 @@ export function SignInForm() {
             </Button>
 
             <p className="mt-8 text-center text-sm text-neutral-600">
-                New to TransformED?{" "}
+                New to HIE?{" "}
                 <Link
                     href="/signup"
                     className="font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] transition-colors"

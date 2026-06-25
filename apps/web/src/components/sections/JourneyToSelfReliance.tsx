@@ -102,7 +102,7 @@ export default function JourneyToSelfReliance() {
                         The Evolution of a Learner
                     </h2>
                     <p className="text-[1.1rem] text-slate-400 leading-[1.75]">
-                        TransformED is temporary by design. Our metric for success is the day you no longer need the AI to understand the textbook.
+                        HIE is temporary by design. Our metric for success is the day you no longer need the AI to understand the textbook.
                     </p>
                 </motion.div>
 

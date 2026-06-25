@@ -114,7 +114,7 @@ export default function Features() {
                         The architecture of self-reliance.
                     </h2>
                     <p className="text-[1.1rem] sm:text-[1.25rem] text-slate-500 leading-[1.6] max-w-2xl">
-                        TransformED does not just reorganize your PDFs. It runs a continuous psychological and cognitive loop designed to rapidly train your focus.
+                        HIE does not just reorganize your PDFs. It acts as an AI Tutor running a continuous cognitive loop designed to rapidly overcome the 7-second attention span and mature your reasoning.
                     </p>
                 </motion.div>
 
