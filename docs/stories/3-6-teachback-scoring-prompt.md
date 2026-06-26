@@ -23,7 +23,7 @@ so that Sprint 1's POST /api/assessment/teachback endpoint has a tested, isolate
 3. TEACHBACK_SYSTEM_PROMPT constant exists and contains rubric weights: 40%, 35%, 25%
 4. System prompt instructs model to use correction="" (empty string, NOT null) when score >= 90
 5. build_teachback_user_prompt(*, topic, key_concepts, response_text) function returns string containing all three inputs
-6. score_teachback() async function signature: (*, topic: str, key_concepts: list[str], response_text: str, lesson_id: str, provider: Any) -> TeachbackScoreResult
+6. score_teachback() async function signature: (*, topic: str, key_concepts: list[str], response_text: str, provider: Any) -> TeachbackScoreResult — ARCHITECTURAL NOTE: lesson_id is NOT in this function's signature. It is passed to OpenAILLMProvider at constructor time; the provider holds it for cost tracking. Callers must construct the provider with lesson_id before calling score_teachback(). (Deliberate design — documented in Dev Notes and tested without lesson_id param.)
 7. score_teachback() calls provider.complete_structured() with model=settings.llm_mini and response_format=TeachbackScoreResult
 8. score_teachback() uses get_settings() from app.config — NEVER hardcodes "gpt-4o-mini"
 9. prompts.py does NOT import openai.AsyncOpenAI anywhere (not even in TYPE_CHECKING block)

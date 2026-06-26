@@ -73,6 +73,9 @@ class SessionReport(BaseModel):
 class LearnerDNA(BaseModel):
     user_id: str
     badge_labels: list[str]
+    # DPDP Act 2023 (Sprint 2): profile_text MUST end with the statutory disclaimer
+    # before this field is returned to the client. Never truncate or omit the disclaimer.
+    # See CLAUDE.md §dev-rules and prompts.py when implementing get_learner_dna().
     profile_text: str | None
     session_count: int
     reassessment_due: bool = False
