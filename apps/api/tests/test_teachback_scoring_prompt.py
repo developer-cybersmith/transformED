@@ -65,6 +65,21 @@ def test_concepts_fields_are_lists() -> None:
     assert isinstance(r.concepts_hit, list)
     assert isinstance(r.concepts_missed, list)
 
+@pytest.mark.unit
+def test_score_boundary_0_is_valid() -> None:
+    r = TeachbackScoreResult(score=0, praise="", correction="Missed everything.", concepts_hit=[], concepts_missed=["concept"])
+    assert r.score == 0
+
+@pytest.mark.unit
+def test_score_boundary_100_is_valid() -> None:
+    r = TeachbackScoreResult(score=100, praise="Excellent!", correction="", concepts_hit=["concept"], concepts_missed=[])
+    assert r.score == 100
+
+@pytest.mark.unit
+def test_model_validator_clears_correction_when_score_gte_90() -> None:
+    r = TeachbackScoreResult(score=92, praise="Great!", correction="This should be cleared.", concepts_hit=["concept"], concepts_missed=[])
+    assert r.correction == "", f"Expected empty string, got {r.correction!r}"
+
 # ---------------------------------------------------------------------------
 # User prompt builder tests
 # ---------------------------------------------------------------------------
@@ -93,7 +108,8 @@ def test_user_prompt_contains_response_text() -> None:
 @pytest.mark.unit
 def test_user_prompt_handles_empty_key_concepts() -> None:
     p = build_teachback_user_prompt(topic="Topic", key_concepts=[], response_text="Response.")
-    assert "Topic" in p  # must not raise
+    assert "Topic" in p
+    assert "(no key concepts specified)" in p
 
 # ---------------------------------------------------------------------------
 # System prompt content tests
@@ -142,12 +158,11 @@ async def test_score_teachback_calls_complete_structured_not_complete() -> None:
             topic="Photosynthesis",
             key_concepts=["chlorophyll"],
             response_text="Plants use sunlight.",
-            lesson_id="lesson-001",
             provider=provider,
         )
 
     provider.complete_structured.assert_called_once()
-    provider.complete.assert_not_called() if hasattr(provider, "complete") else None
+    provider.complete.assert_not_called()
     assert result == expected
 
 @pytest.mark.unit
@@ -161,11 +176,10 @@ async def test_score_teachback_uses_llm_mini_not_hardcoded_string() -> None:
             topic="Topic",
             key_concepts=[],
             response_text="Response.",
-            lesson_id="lesson-002",
             provider=provider,
         )
 
-    call_kwargs = provider.complete_structured.call_args[1]
+    call_kwargs = provider.complete_structured.call_args.kwargs
     assert call_kwargs["model"] == _LLM_MINI, f"Expected {_LLM_MINI!r}, got {call_kwargs['model']!r}"
 
 @pytest.mark.unit
@@ -179,11 +193,10 @@ async def test_score_teachback_passes_response_format() -> None:
             topic="Topic",
             key_concepts=[],
             response_text="Response.",
-            lesson_id="lesson-003",
             provider=provider,
         )
 
-    call_kwargs = provider.complete_structured.call_args[1]
+    call_kwargs = provider.complete_structured.call_args.kwargs
     assert call_kwargs["response_format"] is TeachbackScoreResult
 
 @pytest.mark.unit
@@ -197,11 +210,10 @@ async def test_score_teachback_messages_have_system_and_user_turns() -> None:
             topic="Topic",
             key_concepts=["concept"],
             response_text="My response.",
-            lesson_id="lesson-004",
             provider=provider,
         )
 
-    messages = provider.complete_structured.call_args[1]["messages"]
+    messages = provider.complete_structured.call_args.kwargs["messages"]
     roles = [m["role"] for m in messages]
     assert "system" in roles
     assert "user" in roles

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.config import get_settings
 
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class TeachbackScoreResult(BaseModel):
-    """Structured output from GPT-4o-mini teach-back evaluation."""
+    """Structured output from the teach-back evaluation LLM (settings.llm_mini)."""
 
     score: int = Field(ge=0, le=100, description="Overall score 0-100 (weighted rubric)")
     praise: str = Field(description="Specific, encouraging feedback on what the student did well")
@@ -30,6 +30,12 @@ class TeachbackScoreResult(BaseModel):
     concepts_missed: list[str] = Field(
         description="Key concepts from the segment the student omitted or got wrong"
     )
+
+    @model_validator(mode="after")
+    def _enforce_correction_empty_at_high_score(self) -> "TeachbackScoreResult":
+        if self.score >= 90 and self.correction:
+            self.correction = ""
+        return self
 
 
 TEACHBACK_SYSTEM_PROMPT = """You are an expert learning assessment AI evaluating a student's teach-back response.
@@ -83,18 +89,18 @@ async def score_teachback(
     topic: str,
     key_concepts: list[str],
     response_text: str,
-    lesson_id: str,
     provider: Any,
 ) -> TeachbackScoreResult:
-    """Score a student's typed teach-back response using GPT-4o-mini.
+    """Score a student's typed teach-back response using settings.llm_mini.
 
     Parameters
     ----------
     topic:         Segment topic the student was taught.
     key_concepts:  Key concepts from the lesson plan for this segment.
     response_text: Student's typed explanation (typed input only, no STT).
-    lesson_id:     Lesson ID passed to the provider constructor for cost tracking.
-    provider:      OpenAILLMProvider instance initialised with lesson_id.
+    provider:      OpenAILLMProvider instance already constructed with lesson_id.
+                   Cost tracking is handled by the provider via its lesson_id
+                   constructor argument — pass it there, not here.
     """
     settings = get_settings()
     messages: list[dict[str, str]] = [
