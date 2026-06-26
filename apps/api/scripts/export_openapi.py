@@ -24,7 +24,8 @@ from app.modules.assessment.router import router as assessment_router  # noqa: E
 def build_spec_app() -> FastAPI:
     """Return a minimal FastAPI app containing only the assessment router.
 
-    Prefix matches apps/api/app/main.py:112 — never change without syncing both.
+    Prefix must match the assessment router's mount point in apps/api/app/main.py.
+    Never change without syncing both files.
     """
     mini = FastAPI(
         title="HIE Assessment API",
@@ -39,7 +40,26 @@ def build_spec_app() -> FastAPI:
     return mini
 
 
+def _check_cwd() -> None:
+    """Abort early if not running from apps/api/.
+
+    The default --out path is relative to CWD. Running from the wrong directory
+    silently writes the spec somewhere wrong. We detect this by checking that the
+    expected 'app/' sub-package directory exists in CWD.
+    """
+    expected = pathlib.Path.cwd() / "app" / "main.py"
+    if not expected.is_file():
+        print("ERROR: Run this script from the apps/api/ directory.")
+        print(f"  Current directory : {pathlib.Path.cwd()}")
+        print(f"  Expected to find  : {expected}")
+        print()
+        print("  cd apps/api && python scripts/export_openapi.py")
+        sys.exit(1)
+
+
 def main() -> None:
+    _check_cwd()
+
     parser = argparse.ArgumentParser(
         description="Dump the assessment OpenAPI spec to a JSON file."
     )
