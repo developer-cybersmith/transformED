@@ -8,7 +8,7 @@ import { MockLesson, Slide, TimelineEvent, SlideChangeEvent, QuizEvent, Teachbac
 import { JargonHover } from "@/components/player/JargonHover";
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Pause, ArrowLeft, Volume2, SkipBack, SkipForward, Mic, CheckCircle, ChevronRight, Zap } from "lucide-react";
+import { Play, Pause, ArrowLeft, Volume2, SkipBack, SkipForward, CheckCircle, ChevronRight, Zap, PenLine } from "lucide-react";
 import Link from "next/link";
 
 interface InteractivePlayerProps {
@@ -211,7 +211,7 @@ function SlideLayer({ slide }: { slide: Slide | null }) {
                     {slide.title}
                 </h1>
                 <div className="text-xl md:text-2xl lg:text-3xl text-neutral-300/90 leading-relaxed max-w-4xl font-medium tracking-wide">
-                    <JargonHover text={slide.content} />
+                    <JargonHover text={slide.content} jargon={[]} />
                 </div>
             </div>
         </motion.div>
@@ -278,6 +278,7 @@ function InterventionLayer({ event, onComplete }: { event: TimelineEvent, onComp
 
     if (event.type === 'teachback') {
         const tb = event as TeachbackEvent;
+        const [teachbackText, setTeachbackText] = useState('');
         return (
             <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}
@@ -286,19 +287,34 @@ function InterventionLayer({ event, onComplete }: { event: TimelineEvent, onComp
                 className="w-full max-w-2xl bg-neutral-900 border border-purple-500/50 shadow-[0_0_50px_rgba(168,85,247,0.1)] rounded-[2.5rem] p-12 text-center"
             >
                 <div className="w-16 h-16 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <Mic className="w-8 h-8" />
+                    <PenLine className="w-8 h-8" />
                 </div>
-                <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400 mb-4">Teachback Required</h3>
+                <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400 mb-4">Teach-Back</h3>
                 <h2 className="text-2xl font-semibold text-white mb-8 leading-snug">"{tb.prompt}"</h2>
 
-                <p className="text-neutral-500 mb-8">Speak your answer aloud to reinforce your understanding.</p>
+                <textarea
+                    value={teachbackText}
+                    onChange={(e) => setTeachbackText(e.target.value)}
+                    placeholder="Type your explanation here…"
+                    rows={4}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-2xl px-4 py-3 text-white placeholder-neutral-500 resize-none focus:outline-none focus:border-purple-500/60 mb-6 text-left"
+                />
 
-                <button
-                    onClick={onComplete}
-                    className="w-full py-4 bg-purple-500 hover:bg-purple-600 text-white font-bold rounded-2xl transition-colors shadow-[0_4px_20px_-4px_rgba(168,85,247,0.5)] flex items-center justify-center gap-2"
-                >
-                    <CheckCircle className="w-5 h-5" /> I have explained it
-                </button>
+                <div className="flex gap-3">
+                    <button
+                        onClick={onComplete}
+                        className="flex-1 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-medium rounded-2xl transition-colors"
+                    >
+                        Skip
+                    </button>
+                    <button
+                        onClick={onComplete}
+                        disabled={teachbackText.trim() === ''}
+                        className="flex-1 py-3 bg-purple-500 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-colors shadow-[0_4px_20px_-4px_rgba(168,85,247,0.5)] flex items-center justify-center gap-2"
+                    >
+                        <CheckCircle className="w-5 h-5" /> Submit &amp; Continue
+                    </button>
+                </div>
             </motion.div>
         );
     }
