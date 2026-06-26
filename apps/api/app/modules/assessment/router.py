@@ -105,11 +105,17 @@ async def submit_quiz(
     body: QuizSubmission,
     current_user: CurrentUser,
 ) -> QuizResult:
-    """Grade a quiz submission and update the session's CES score.
-
-    TODO (Sprint 1): Delegate to assessment service.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    """Grade a quiz submission and update the session's CES score."""
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import grade_quiz
+    return await grade_quiz(
+        session_id=body.session_id,
+        lesson_id=body.lesson_id,
+        segment_id=body.segment_id,
+        answers=body.answers,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(

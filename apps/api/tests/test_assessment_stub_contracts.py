@@ -2,7 +2,8 @@
 Unit tests for assessment module stub contracts.
 
 Verifies that:
-- All 5 endpoints exist and return HTTP 501 NOT_IMPLEMENTED
+- The 4 remaining stub endpoints return HTTP 501 NOT_IMPLEMENTED
+  (POST /quiz is implemented in Sprint 1 — see test_quiz_endpoint.py)
 - Pydantic models have exactly the required fields (no banned fields)
 - No STT-related field names (transcript, duration_seconds) exist
 - LearnerDNA response does not expose raw numeric dimension scores
@@ -69,16 +70,6 @@ _ONBOARDING_PAYLOAD = {
 
 
 # ── Endpoint 501 tests ────────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-def test_quiz_endpoint_returns_501() -> None:
-    """POST /api/assessment/quiz must return HTTP 501 NOT_IMPLEMENTED (Sprint 0 stub)."""
-    response = client.post("/api/assessment/quiz", json=_QUIZ_PAYLOAD)
-    assert response.status_code == 501, (
-        f"Expected 501, got {response.status_code}. "
-        "Quiz endpoint must remain a stub until Sprint 1."
-    )
 
 
 @pytest.mark.unit
