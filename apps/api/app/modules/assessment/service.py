@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.config import get_settings
-from app.modules.assessment.router import QuizAnswer, QuizResult
+from app.modules.assessment.schemas import QuizAnswer, QuizResult
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def grade_quiz(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id!r} not found.",
         )
-    if session_resp.data["user_id"] != user_id:
+    if str(session_resp.data["user_id"]) != str(user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this user.",
@@ -104,6 +104,13 @@ async def grade_quiz(
     question_map: dict[str, dict[str, Any]] = {
         q["question_id"]: q for q in target_segment.get("quiz", [])
     }
+
+    # Step 5 — Guard: reject empty submissions before any DB write
+    if not answers:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="answers list must not be empty.",
+        )
 
     # Step 5 — Grade each answer
     graded: list[dict[str, Any]] = []
@@ -164,7 +171,11 @@ async def grade_quiz(
             "question": g["question"]["question"],
             "is_correct": g["is_correct"],
             "correct_index": g["question"]["correct_index"],
-            "correct_option": g["question"]["options"][g["question"]["correct_index"]],
+            "correct_option": (
+                g["question"]["options"][g["question"]["correct_index"]]
+                if 0 <= g["question"]["correct_index"] < len(g["question"]["options"])
+                else None
+            ),
             "selected_option": (
                 g["question"]["options"][g["selected_index"]]
                 if 0 <= g["selected_index"] < len(g["question"]["options"])

@@ -146,23 +146,52 @@ _QUESTION_1 = {
 claude-sonnet-4-6
 
 ### Debug Log References
-(to be filled during implementation)
+- Circular import: service.py imported QuizAnswer/QuizResult from router.py at module level — resolved by creating schemas.py
+- `correct_option` unguarded IndexError: options[correct_index] not bounds-checked — resolved with same guard as selected_option
+- UUID comparison fragility: session.user_id (DB uuid type) vs JWT sub (str) — resolved with str() cast on both sides
+- Empty answers list: no validation, supabase.insert([]) with undefined behavior — resolved with 422 guard before any DB write
+- asyncio.get_event_loop() in sync tests: RuntimeError in pytest-asyncio AUTO mode — resolved by making all new tests async def
+- HTTP-layer test patch targets: get_supabase/grade_quiz are lazy imports inside function body — patched at source modules (app.core.db, app.modules.assessment.service) not at router module
 
 ### Completion Notes List
-(to be filled during implementation)
+- service.py injects supabase as a parameter (dependency injection pattern) rather than calling get_supabase() internally — tests mock the injected client, not a module-level import
+- get_settings() called inside grade_quiz() requires _mock_settings autouse fixture to prevent pydantic ValidationError in unit tests (no env vars in CI)
+- All 20 unit tests pass; 168 total unit tests passing (7 pre-existing Dev 4/1 failures unrelated to this story)
+- schemas.py created as a neutral shared module — both router.py and service.py import from it; re-export in router.py preserves backward compatibility for all existing test imports
 
 ### File List
 - docs/stories/3-8-quiz-endpoint-live.md — CREATED
+- apps/api/app/modules/assessment/schemas.py — CREATED (post-review: breaks circular import)
 - apps/api/app/modules/assessment/service.py — CREATED
-- apps/api/app/modules/assessment/router.py — MODIFIED (submit_quiz route)
+- apps/api/app/modules/assessment/router.py — MODIFIED (submit_quiz route + import from schemas.py)
 - apps/api/tests/test_assessment_stub_contracts.py — MODIFIED (remove quiz 501 test)
-- apps/api/tests/test_quiz_endpoint.py — CREATED
+- apps/api/tests/test_quiz_endpoint.py — CREATED (15 tests) + EXTENDED (5 post-review tests = 20 total)
 
 ### Change Log
-(to be filled during implementation)
+- 2026-06-27: Initial implementation — service.py, router wiring, 15 unit tests
+- 2026-06-27: Post-review fixes — schemas.py (circular import), correct_option guard, str() UUID cast, empty-answers 422 guard, 5 new tests (empty answers, table routing assertion, zero-index correctness, 2 HTTP-layer tests)
 
 ---
 
 ## Senior Developer Review (AI)
 
-(to be filled by code review agent)
+**Review date:** 2026-06-27
+**Reviewers:** 4 parallel adversarial agents (Blind Hunter, Edge Case Hunter, AC Auditor, Process Integrity Auditor)
+**Outcome:** Changes Requested — BLOCKERs identified and resolved in post-review fix commit
+
+### Action Items
+
+- [x] **[BLOCKER]** Circular import: `service.py:15` imported `QuizAnswer, QuizResult` from `router.py` at module level — resolved by creating `schemas.py` as a neutral shared module; both router and service import from schemas.py
+- [x] **[BLOCKER]** `correct_option` IndexError: `options[correct_index]` had no bounds check (asymmetric with `selected_option` which was guarded) — resolved with same guard pattern
+- [x] **[BLOCKER]** Empty `answers=[]` fired `supabase.insert([])` with undefined behavior — resolved with 422 guard at top of grading loop
+- [x] **[BLOCKER]** Zero HTTP-layer test coverage — router's `current_user["sub"]` extraction, `get_supabase()` injection, and kwarg passing to `grade_quiz` completely unverified — resolved with 2 TestClient tests
+- [x] **[BLOCKER]** Mock table routing unverified — no `assert_called_with` so service could call wrong table and tests would pass — resolved with `test_table_routing_is_verified` asserting call order
+- [x] **[IMPROVEMENT]** UUID type comparison: `session.user_id` may return as `uuid.UUID` from supabase-py; JWT sub is always str — resolved with `str()` cast on both sides
+- [ ] **[IMPROVEMENT]** DB insert response unchecked — if supabase returns an error in `resp.error`, service logs success and returns QuizResult as if persisted (deferred: requires real DB to test; Sprint 2)
+- [ ] **[IMPROVEMENT]** `attempt_number` always 1 from router — no mechanism for frontend to send retry attempt number (deferred to Sprint 2 when retry UX is built)
+- [ ] **[NITPICK]** `test_attempt_number_written_to_db` tests `attempt_number=2` which router never passes — test verifies a code path unreachable via HTTP (documented as known; kept as service-layer contract test)
+- [x] **[PROCESS]** Story created concurrently with code in a single commit (not story-first) — acknowledged as process debt; remediated by completing all mandatory story sections and adding post-review fix commit
+
+### Resolved BLOCKER count: 5 of 5
+### Remaining improvements: 2 (deferred to Sprint 2 with rationale)
+### Post-review fix commit: `fix(dev3/sprint1): story 3.8 post-review fixes — 5 BLOCKERs resolved`

@@ -14,32 +14,15 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser
 
+# Quiz models live in schemas.py so service.py can import them without
+# creating a circular import (service ← router ← service).
+from app.modules.assessment.schemas import QuizAnswer, QuizResult, QuizSubmission
+
 router = APIRouter(tags=["assessment"])
 
-
-# ── Request / Response models ─────────────────────────────────────────────────
-
-
-class QuizAnswer(BaseModel):
-    question_id: str
-    response_index: int
-    response_time_ms: int = 0
-
-
-class QuizSubmission(BaseModel):
-    session_id: str
-    lesson_id: str
-    segment_id: str
-    answers: list[QuizAnswer]
-
-
-class QuizResult(BaseModel):
-    session_id: str
-    score: float
-    correct_count: int
-    total_count: int
-    ces_contribution: float
-    feedback: list[dict[str, Any]]
+# Re-export so existing `from app.modules.assessment.router import QuizAnswer`
+# imports in tests and other modules continue to work unchanged.
+__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult"]
 
 
 class TeachbackSubmission(BaseModel):

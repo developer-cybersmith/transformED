@@ -1,15 +1,38 @@
-"""Unit tests for quiz grading service (grade_quiz).
+"""Unit tests for quiz grading service (grade_quiz) and POST /quiz router endpoint.
 
 All tests are @pytest.mark.unit — no real Supabase connection required.
 asyncio.to_thread is shimmed to run synchronously so MagicMock chain works correctly.
+
+Includes both direct service-layer tests (grade_quiz called directly) and an
+HTTP-layer test via TestClient to verify the router wires to the service correctly.
 """
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock
+from fastapi import FastAPI
+from starlette.testclient import TestClient
+from unittest.mock import MagicMock, call, patch
 
-from app.modules.assessment.router import QuizAnswer
+from app.dependencies import get_current_user
+from app.modules.assessment.router import QuizAnswer, router
 from app.modules.assessment.service import grade_quiz
+
+# ── HTTP-layer client (router integration) ────────────────────────────────────
+
+async def _fake_user() -> dict:
+    return {"sub": "user-001", "email": "test@example.com"}
+
+_app = FastAPI()
+_app.dependency_overrides[get_current_user] = _fake_user
+_app.include_router(router, prefix="/api/assessment")
+_client = TestClient(_app, raise_server_exceptions=False)
+
+_VALID_HTTP_PAYLOAD = {
+    "session_id": "sess-001",
+    "lesson_id": "lesson-001",
+    "segment_id": "seg-001",
+    "answers": [{"question_id": "q1", "response_index": 1, "response_time_ms": 1500}],
+}
 
 
 # ── Test data constants ──────────────────────────────────────────────────────
@@ -358,3 +381,124 @@ async def test_raises_422_when_question_id_not_in_segment(mock_to_thread) -> Non
             answers=answers, user_id="user-001", supabase=supabase,
         )
     assert exc_info.value.status_code == 422
+
+
+# ── New tests added by post-review audit (BLOCKER fixes) ─────────────────────
+
+
+@pytest.mark.unit
+async def test_raises_422_when_answers_list_is_empty(mock_to_thread) -> None:
+    """Empty answers list must be rejected with 422 before any DB write."""
+    from fastapi import HTTPException
+    supabase = _build_supabase(session_data=_SESSION_ROW, lesson_data={"content": _LESSON_CONTENT})
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=[], user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 422
+    # Confirm no insert was attempted for empty submission
+    supabase.table.assert_any_call("sessions")
+    insert_calls = [c for c in supabase.table.call_args_list if c == call("quiz_attempts")]
+    assert not insert_calls, "quiz_attempts must not be touched on empty-answers submission"
+
+
+@pytest.mark.unit
+async def test_table_routing_is_verified(mock_to_thread) -> None:
+    """supabase.table() must be called with the correct table names in order.
+
+    Verifies that grade_quiz calls sessions → lessons → quiz_attempts in that order.
+    If service.py reorders queries, this test catches it before mocks silently
+    return wrong data to wrong queries.
+    """
+    supabase = _default_supabase()
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    calls = [c.args[0] for c in supabase.table.call_args_list]
+    assert calls == ["sessions", "lessons", "quiz_attempts"], (
+        f"Expected table call order [sessions, lessons, quiz_attempts], got {calls}"
+    )
+
+
+@pytest.mark.unit
+async def test_correct_index_zero_marks_correct_answer(mock_to_thread) -> None:
+    """response_index=0 with correct_index=0 must produce is_correct=True.
+
+    Guards against a falsy-zero bug: `if ans.response_index` instead of
+    `== correct_index` would incorrectly treat index 0 as False.
+    """
+    question_zero = {
+        "question_id": "q_zero",
+        "type": "mcq",
+        "question": "Which option is first?",
+        "options": ["First", "Second", "Third", "Fourth"],
+        "correct_index": 0,
+        "explanation": "The first option is correct.",
+        "difficulty": "easy",
+    }
+    segment = {"segment_id": "seg-001", "quiz": [question_zero]}
+    lesson_content = {"lesson_id": "lesson-001", "segments": [segment]}
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": lesson_content},
+        insert_data=[],
+    )
+    answers = [QuizAnswer(question_id="q_zero", response_index=0, response_time_ms=500)]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.feedback[0]["is_correct"] is True
+
+
+@pytest.mark.unit
+def test_http_layer_post_quiz_returns_200(monkeypatch) -> None:
+    """HTTP-layer: POST /api/assessment/quiz wires correctly to grade_quiz.
+
+    Patches grade_quiz in the service module (the lazy-import source) and
+    get_supabase in core.db (where the router's lazy import resolves it).
+    Verifies: user_id extracted from JWT sub, all body fields forwarded.
+    """
+    from app.modules.assessment.schemas import QuizResult as _QuizResult
+
+    captured_kwargs: dict = {}
+
+    async def _fake_grade_quiz(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _QuizResult(
+            session_id=kwargs["session_id"],
+            score=100.0,
+            correct_count=1,
+            total_count=1,
+            ces_contribution=0.35,
+            feedback=[],
+        )
+
+    monkeypatch.setattr("app.modules.assessment.service.grade_quiz", _fake_grade_quiz)
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=_VALID_HTTP_PAYLOAD)
+
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    assert captured_kwargs["user_id"] == "user-001", "user_id must be JWT sub"
+    assert captured_kwargs["session_id"] == "sess-001"
+    assert captured_kwargs["segment_id"] == "seg-001"
+    assert captured_kwargs["lesson_id"] == "lesson-001"
+    assert len(captured_kwargs["answers"]) == 1
+    assert captured_kwargs["supabase"] is not None
+
+
+@pytest.mark.unit
+def test_http_layer_post_quiz_returns_404_on_missing_session(monkeypatch) -> None:
+    """HTTP-layer: HTTPException from service propagates with correct status code."""
+    from fastapi import HTTPException
+
+    async def _raise_404(**kwargs):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    monkeypatch.setattr("app.modules.assessment.service.grade_quiz", _raise_404)
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=_VALID_HTTP_PAYLOAD)
+    assert resp.status_code == 404
