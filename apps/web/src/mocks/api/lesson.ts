@@ -1,6 +1,8 @@
 import { randomDelay, delay } from '../utils/delay';
 import { createSuccessResponse, createErrorResponse, ApiResponse } from '../utils/response';
 import { mockLessons, MockLesson } from '../data/lessons';
+import { mockLessonPackage } from '../data/lessonPackage';
+import type { LessonPackage } from '@hie/shared/types/lesson';
 
 export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockLesson>> => {
     // Simulate 800ms - 1500ms latency for fetching large lesson package
@@ -55,6 +57,14 @@ export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockL
     }
 
     return createSuccessResponse(lesson, "Lesson retrieved successfully");
+};
+
+export const getLessonPackageById = async (lessonId: string): Promise<ApiResponse<LessonPackage>> => {
+    await randomDelay(800, 1500);
+    return createSuccessResponse(
+        { ...mockLessonPackage, lesson_id: lessonId },
+        'Lesson package retrieved successfully',
+    );
 };
 
 export const updateLessonProgress = async (lessonId: string, progressPercent: number): Promise<ApiResponse<void>> => {
