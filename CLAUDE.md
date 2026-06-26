@@ -214,3 +214,49 @@ Applied and frozen migrations (do not alter):
 | Dev 4 | WebSocket handlers, JWT middleware, 7-state tutor, Redis buffer, interventions |
 
 Anti-deadlock: after Week 1 schema freeze, each dev mocks the other's interface.
+
+## Sprint Tracker Auto-Update Rule
+
+Whenever you mark any task complete in `docs/dev1-tracker.md` — either because you just implemented it or the user confirms it is done — you MUST immediately, in the same response:
+
+1. Change the task checkbox from `- [ ]` to `- [x]`
+2. Append ` — ✓ YYYY-MM-DD` (today's date) to the task title line
+3. Update the **Quick Status Dashboard** table at the top of the file (increment Done, decrement Not Started or Partial on the correct sprint row, and update Totals)
+4. Update **Last updated** in the header to today's date
+
+Do this without being asked. Never mark a task complete without also updating the dashboard. Never update the dashboard without also updating the header date.
+
+## Sprint Task Branch Rule
+
+**Apply automatically — do not wait to be asked.**
+
+When you begin implementing any sprint task from `docs/dev1-tracker.md`, the very first action before any file edit must be to create a dedicated git branch.
+
+### Branch naming
+
+| Pattern | Example |
+|---------|---------|
+| `sprint{N}/s{N}-{M}-{slug}` | `sprint1/s1-2-pymupdf-extract` |
+| `week10/w10-{M}-{slug}` | `week10/w10-1-prod-deploy` |
+
+- `N` = sprint number (0–4)
+- `M` = task number within the sprint
+- `slug` = 2–4 word lowercase hyphenated summary of the task title (not the full title — just enough to identify it at a glance)
+
+Examples:
+- S1-2 "PyMuPDF text + image + layout extraction node" → `sprint1/s1-2-pymupdf-extract`
+- S1-7 "Semantic chunking" → `sprint1/s1-7-semantic-chunking`
+- S2-7 "`lesson_planner` node" → `sprint2/s2-7-lesson-planner`
+- S0-9 "Langfuse wired globally" → `sprint0/s0-9-langfuse-global`
+
+### Steps (execute in this order, no exceptions)
+
+1. If there are uncommitted changes from a previous task, commit them to the current branch first.
+2. Run: `git checkout main && git checkout -b <branch-name>`
+   - If the branch already exists (resumed session): `git checkout <branch-name>` instead.
+3. Announce the branch in the first line of your response — e.g., `Branch: sprint1/s1-2-pymupdf-extract created.`
+4. Then begin implementation.
+
+### One task, one branch
+
+Every task gets its own branch based on `main`. Never stack a new task on top of the previous task's branch. When a task is marked complete and the next task begins, the next branch is created fresh from `main` at the start of implementation — again, without being asked.
