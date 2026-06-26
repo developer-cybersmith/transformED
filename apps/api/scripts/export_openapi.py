@@ -66,6 +66,7 @@ def main() -> None:
 
     assessment_paths = [p for p in spec.get("paths", {}) if "/assessment/" in p]
     schemas = spec.get("components", {}).get("schemas", {})
+    _HTTP_VERBS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
 
     print(f"DONE: Spec written to {out_path}")
     print(f"  Total paths  : {len(spec.get('paths', {}))}")
@@ -74,7 +75,11 @@ def main() -> None:
     print()
     print("Assessment endpoints:")
     for path in sorted(assessment_paths):
-        methods = ", ".join(spec["paths"][path].keys()).upper()
+        # Filter path-item keys to HTTP verbs only (OpenAPI path items may also
+        # contain 'summary', 'description', 'parameters', 'servers', etc.)
+        methods = ", ".join(
+            k.upper() for k in spec["paths"][path].keys() if k in _HTTP_VERBS
+        )
         print(f"  [{methods}] {path}")
 
 

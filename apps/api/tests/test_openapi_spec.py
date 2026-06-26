@@ -5,6 +5,10 @@ or DB required. All tests are @pytest.mark.unit.
 
 AC coverage:
   AC1 — All 5 assessment paths present
+        NOTE: test checks the 5 frozen paths EXIST, not that ONLY those 5 exist.
+        This is intentional — a 6th endpoint would need a 4-dev PR review by rule
+        (CLAUDE.md §16), not a failing test. If you want strict count enforcement,
+        add: assert len(actual & {p for p in actual if "/assessment/" in p}) == 5
   AC2 — Correct HTTP methods on each path
   AC3 — No banned field: transcript
   AC4 — No banned field: duration_seconds
@@ -33,12 +37,14 @@ EXPECTED_PATHS = {
     f"{ASSESSMENT_PREFIX}/onboarding/submit",
 }
 
+_HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+
 
 @pytest.fixture(scope="module")
 def spec() -> dict:
     """Build a minimal FastAPI app with only the assessment router, return its spec.
 
-    Prefix must match apps/api/app/main.py:112 — keep in sync.
+    Prefix must match apps/api/app/main.py — keep in sync when that file changes.
     """
     mini = FastAPI(title="HIE Assessment API Test", version="0.0.1")
     mini.include_router(assessment_router, prefix=ASSESSMENT_PREFIX)
@@ -55,6 +61,19 @@ def spec_str(spec: dict) -> str:
 def schemas(spec: dict) -> dict:
     """Convenience accessor for spec['components']['schemas']."""
     return spec.get("components", {}).get("schemas", {})
+
+
+def _props(schemas: dict, schema_name: str) -> dict:
+    """Return properties dict for a named schema, asserting the schema exists first.
+
+    Gives a clear error when FastAPI schema naming changes (e.g., after a Pydantic
+    major upgrade) rather than silently returning an empty dict.
+    """
+    assert schema_name in schemas, (
+        f"Schema '{schema_name}' not found in spec components. "
+        f"Available schemas: {sorted(schemas.keys())}"
+    )
+    return schemas[schema_name].get("properties", {})
 
 
 # ── AC1: All 5 paths present ──────────────────────────────────────────────────
@@ -97,6 +116,9 @@ def test_onboarding_submit_endpoint_is_post(spec: dict) -> None:
 
 @pytest.mark.unit
 def test_spec_contains_no_transcript_field(spec_str: str) -> None:
+    # Check for the JSON property key "transcript" — catches any field so named.
+    # Uses quoted form so plain text in descriptions ("the student's transcript")
+    # does not produce a false positive.
     assert '"transcript"' not in spec_str, (
         'Field "transcript" found in spec — implies STT which is banned (CLAUDE.md §dev-rules)'
     )
@@ -106,8 +128,11 @@ def test_spec_contains_no_transcript_field(spec_str: str) -> None:
 
 @pytest.mark.unit
 def test_spec_contains_no_duration_seconds_field(spec_str: str) -> None:
-    assert "duration_seconds" not in spec_str, (
-        '"duration_seconds" found in spec — implies a teach-back timer which is banned (CLAUDE.md §dev-rules)'
+    # Uses quoted form (same as transcript check) so only a JSON property named
+    # "duration_seconds" triggers this — not description text or value strings.
+    assert '"duration_seconds"' not in spec_str, (
+        '"duration_seconds" found as a field name in spec — implies a teach-back timer '
+        'which is banned (CLAUDE.md §dev-rules). Use duration_minutes in SessionReport instead.'
     )
 
 
@@ -115,7 +140,7 @@ def test_spec_contains_no_duration_seconds_field(spec_str: str) -> None:
 
 @pytest.mark.unit
 def test_onboarding_submission_has_responses_field(schemas: dict) -> None:
-    props = schemas.get("OnboardingDiagnosticSubmission", {}).get("properties", {})
+    props = _props(schemas, "OnboardingDiagnosticSubmission")
     assert "responses" in props, (
         "OnboardingDiagnosticSubmission missing 'responses' field — "
         "Dev 2 must use responses[], not subject+grade_level"
@@ -124,7 +149,7 @@ def test_onboarding_submission_has_responses_field(schemas: dict) -> None:
 
 @pytest.mark.unit
 def test_onboarding_submission_has_no_subject_or_grade_level(schemas: dict) -> None:
-    props = schemas.get("OnboardingDiagnosticSubmission", {}).get("properties", {})
+    props = _props(schemas, "OnboardingDiagnosticSubmission")
     assert "subject" not in props, "'subject' found in OnboardingDiagnosticSubmission — old shape, must be removed"
     assert "grade_level" not in props, "'grade_level' found in OnboardingDiagnosticSubmission — old shape, must be removed"
 
@@ -133,7 +158,7 @@ def test_onboarding_submission_has_no_subject_or_grade_level(schemas: dict) -> N
 
 @pytest.mark.unit
 def test_teachback_submission_has_response_text(schemas: dict) -> None:
-    props = schemas.get("TeachbackSubmission", {}).get("properties", {})
+    props = _props(schemas, "TeachbackSubmission")
     assert "response_text" in props, (
         "TeachbackSubmission missing 'response_text' — Dev 2 must send typed text, not a transcript"
     )
@@ -141,7 +166,7 @@ def test_teachback_submission_has_response_text(schemas: dict) -> None:
 
 @pytest.mark.unit
 def test_teachback_submission_has_no_transcript_field(schemas: dict) -> None:
-    props = schemas.get("TeachbackSubmission", {}).get("properties", {})
+    props = _props(schemas, "TeachbackSubmission")
     assert "transcript" not in props, (
         "'transcript' field in TeachbackSubmission — implies STT, which is banned"
     )
@@ -151,7 +176,7 @@ def test_teachback_submission_has_no_transcript_field(schemas: dict) -> None:
 
 @pytest.mark.unit
 def test_learner_dna_has_badge_labels_and_profile_text(schemas: dict) -> None:
-    props = schemas.get("LearnerDNA", {}).get("properties", {})
+    props = _props(schemas, "LearnerDNA")
     assert "badge_labels" in props, "LearnerDNA missing 'badge_labels'"
     assert "profile_text" in props, "LearnerDNA missing 'profile_text'"
 
@@ -162,6 +187,8 @@ def test_learner_dna_has_badge_labels_and_profile_text(schemas: dict) -> None:
 def test_spec_is_valid_json_roundtrip(spec: dict) -> None:
     serialised = json.dumps(spec)
     parsed = json.loads(serialised)
-    assert parsed.get("info", {}).get("title") is not None, "spec missing 'info.title'"
+    assert isinstance(parsed.get("info", {}).get("title"), str) and parsed["info"]["title"], (
+        "spec 'info.title' is missing or not a non-empty string"
+    )
     assert "paths" in parsed, "spec missing 'paths'"
     assert "components" in parsed, "spec missing 'components'"
