@@ -126,7 +126,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 
 
 async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> None:
-    """Forward an attention signal to the tutor state machine.
+    """Forward an attention signal to the tutor state machine and ack the result.
 
     Imported lazily to avoid circular imports between core and modules.
     """
@@ -134,7 +134,11 @@ async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> 
         # Lazy import — tutor module depends on core, not the other way round
         from app.modules.tutor.service import process_attention_signal  # type: ignore[import]
 
-        await process_attention_signal(session_id=session_id, signal=payload)
+        result = await process_attention_signal(session_id=session_id, signal=payload)
+        await manager.send(
+            session_id,
+            {"type": "attention_ack", "payload": {"session_id": session_id, "ces": result.ces}},
+        )
     except ImportError:
         # Tutor service not yet implemented — log and skip gracefully
         logger.debug("Tutor service not available yet — attention signal dropped for session %s", session_id)
