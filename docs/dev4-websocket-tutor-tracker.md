@@ -3,9 +3,9 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-25 (full repo audit — cross-checked every task against live code)
-**Overall status:** 7/36 done · 6 partial · 23 not started
-**Primary blocker:** `apps/api/app/modules/tutor/service.py` does not exist — blocks Sprint 1 tasks 2, 3, 4, 5, 6
+**Last updated:** 2026-06-26 (re-verified against pulled repo — service.py live, pyproject.toml bugs fixed)
+**Overall status:** 13/36 done · 4 partial · 19 not started
+**Sprint 1 deadline:** 2026-06-27 — 4 tasks remain · critical path: WS session wiring + ARQ pub/sub fix
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
 ---
@@ -14,13 +14,13 @@
 
 | Sprint | Period | Tasks | Done | Partial | Not Started |
 |--------|--------|-------|------|---------|-------------|
-| Sprint 0 | Week 1 | 7 | 5 | 1 | 1 |
-| Sprint 1 | Weeks 2–3 | 7 | 1 | 3 | 3 |
+| Sprint 0 | Week 1 | 7 | 6 | 0 | 1 |
+| Sprint 1 | Weeks 2–3 | 7 | 3 | 3 | 1 |
 | Sprint 2 | Weeks 4–5 | 6 | 0 | 0 | 6 |
-| Sprint 3 | Weeks 6–7 | 8 | 1 | 2 | 5 |
+| Sprint 3 | Weeks 6–7 | 8 | 3 | 1 | 4 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **7** | **6** | **23** |
+| **Total** | | **36** | **13** | **4** | **19** |
 
 Update this table each time a task is checked off below.
 
@@ -284,7 +284,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC NOT MET:** Transition never gets triggered
 
 <!-- CHECK:session_state_init -->
-- [ ] **Session state init on lesson start**
+- [x] **Session state init on lesson start**
   - On new WebSocket connection: initialise Redis keys with 24h TTL
     - `tutor_state:{session_id}` = "IDLE"
     - `tutor_distraction_count:{session_id}` = "0"
