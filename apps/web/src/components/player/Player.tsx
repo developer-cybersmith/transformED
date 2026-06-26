@@ -5,6 +5,7 @@ import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { AudioTimeline } from './AudioTimeline';
 import { SlideRenderer } from './SlideRenderer';
+import { PlayerControls } from './PlayerControls';
 
 interface PlayerProps {
   lesson: LessonPackage;
@@ -48,6 +49,8 @@ export default function Player({ lesson }: PlayerProps) {
           </div>
         )}
       </div>
+
+      <PlayerControls />
     </div>
   );
 }
