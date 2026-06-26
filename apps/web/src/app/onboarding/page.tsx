@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
-import { apiClient } from '@/lib/api/client'
+import { api } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
 // Assessment questions — 3 dimensions: Cognitive (8), Emotional (5), Self-Direction (7)
@@ -83,7 +83,7 @@ export default function OnboardingPage() {
         selected_index: answers[q.id] ?? 0,
         selected_text: q.options[answers[q.id] ?? 0],
       }))
-      await apiClient.post('/api/assessment/onboarding/submit', { responses })
+      await api.post('assessment/onboarding/submit', { responses })
       router.push('/dashboard')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed. Please try again.')
