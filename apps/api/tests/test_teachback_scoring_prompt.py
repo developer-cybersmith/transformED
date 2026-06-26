@@ -80,6 +80,16 @@ def test_model_validator_clears_correction_when_score_gte_90() -> None:
     r = TeachbackScoreResult(score=92, praise="Great!", correction="This should be cleared.", concepts_hit=["concept"], concepts_missed=[])
     assert r.correction == "", f"Expected empty string, got {r.correction!r}"
 
+@pytest.mark.unit
+def test_model_validator_clears_correction_at_exact_boundary_90() -> None:
+    r = TeachbackScoreResult(score=90, praise="Excellent!", correction="Should be cleared at boundary.", concepts_hit=["concept"], concepts_missed=[])
+    assert r.correction == "", f"score=90 should clear correction, got {r.correction!r}"
+
+@pytest.mark.unit
+def test_model_validator_retains_correction_below_boundary_89() -> None:
+    r = TeachbackScoreResult(score=89, praise="Good.", correction="Expand on the mechanism.", concepts_hit=["concept"], concepts_missed=["detail"])
+    assert r.correction == "Expand on the mechanism.", f"score=89 must NOT clear correction, got {r.correction!r}"
+
 # ---------------------------------------------------------------------------
 # User prompt builder tests
 # ---------------------------------------------------------------------------
