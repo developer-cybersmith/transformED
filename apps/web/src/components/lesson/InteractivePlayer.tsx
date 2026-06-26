@@ -211,7 +211,7 @@ function SlideLayer({ slide }: { slide: Slide | null }) {
                     {slide.title}
                 </h1>
                 <div className="text-xl md:text-2xl lg:text-3xl text-neutral-300/90 leading-relaxed max-w-4xl font-medium tracking-wide">
-                    <JargonHover text={slide.content} />
+                    <JargonHover text={slide.content} jargon={[]} />
                 </div>
             </div>
         </motion.div>

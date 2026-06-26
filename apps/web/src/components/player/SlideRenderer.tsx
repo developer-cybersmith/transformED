@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import type { Slide, JargonEntry } from '@hie/shared/types/lesson';
 import { JargonHover } from './JargonHover';
 
@@ -54,12 +54,6 @@ interface SlideRendererProps {
 }
 
 export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
-  // S1-06 will change JargonHover's prop to `jargon: JargonEntry[]`; for now convert to Record
-  const jargonDict = useMemo<Record<string, string>>(
-    () => Object.fromEntries(jargon.map(({ term, definition }) => [term, definition])),
-    [jargon],
-  );
-
   return (
     <div
       className={[
@@ -83,7 +77,7 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
           <li key={i} className="flex items-start gap-2.5 text-neutral-300 text-[15px] leading-relaxed">
             <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] shrink-0" aria-hidden />
             <span>
-              <JargonHover text={bullet} dictionary={jargonDict} />
+              <JargonHover text={bullet} jargon={jargon} />
             </span>
           </li>
         ))}
