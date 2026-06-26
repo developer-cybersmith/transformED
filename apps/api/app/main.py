@@ -7,6 +7,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.config import get_settings
+from app.core.langfuse import get_langfuse
 from app.core.redis import close_redis, init_redis
 from app.core.websocket import ws_router
 from app.modules.admin.router import router as admin_router
@@ -48,6 +50,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_redis(settings.redis_url)
     logger.info("Redis connection pool initialised")
 
+    # Langfuse — initialise singleton so the first trace isn't delayed
+    get_langfuse()
+    logger.info("Langfuse host: %s", settings.langfuse_host)
+
     # Sentry (no-op when DSN is absent)
     if settings.sentry_dsn:
         sentry_sdk.init(
@@ -62,8 +68,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # â”€â”€ Shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     logger.info("Shutting down HIE APIâ€¦")
-    await close_redis()
-    logger.info("Redis connections closed")
+    try:
+        await close_redis()
+        logger.info("Redis connections closed")
+    finally:
+        try:
+            await asyncio.to_thread(get_langfuse().flush)
+            logger.info("Langfuse traces flushed")
+        except Exception:
+            logger.warning("Langfuse flush failed — some traces may be lost", exc_info=True)
 
 
 def create_app() -> FastAPI:

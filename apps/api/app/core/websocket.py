@@ -43,6 +43,7 @@ class ConnectionManager:
         """Accept a new WebSocket and register it under *session_id*."""
         await websocket.accept()
         self._connections[session_id].append(websocket)
+        await _init_session_state(session_id)
         logger.info("WS connected: session=%s  total_sessions=%d", session_id, len(self._connections))
 
     def disconnect(self, websocket: WebSocket, session_id: str) -> None:
@@ -108,6 +109,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             if msg_type == "attention_signal":
                 await _handle_attention_signal(session_id, payload)
 
+            elif msg_type == "session_start":
+                await _handle_session_start(session_id)
+
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
 
@@ -122,11 +126,57 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         manager.disconnect(websocket, session_id)
 
 
+# ── Session lifecycle ────────────────────────────────────────────────────────
+
+
+async def _init_session_state(session_id: str) -> None:
+    """Initialise per-session tutor Redis keys when a new WebSocket connects.
+
+    Sets the starting tutor state to ``IDLE``, resets the distraction counter,
+    and clears any stale cooldown / fatigue flags left over from a previous
+    session that reused this ``session_id``.  State/counter carry a 24 h TTL.
+
+    ``get_redis`` is imported lazily inside the function — no module-level
+    imports in this file (avoids the core ↔ tutor circular import).
+
+    Error contract: a Redis failure must never crash the WebSocket
+    ``accept()`` handshake, so the whole body is best-effort and never
+    re-raises.
+    """
+    try:
+        from app.core.redis import get_redis  # type: ignore[import]
+
+        redis = get_redis()
+        await redis.set(f"tutor_state:{session_id}", "IDLE", ex=86400)
+        await redis.set(f"tutor_distraction_count:{session_id}", "0", ex=86400)
+        await redis.delete(f"tutor_cooldown:{session_id}")
+        await redis.delete(f"tutor_fatigue_fired:{session_id}")
+        logger.info("WS session initialised: session=%s", session_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to init session state for %s: %s", session_id, e)
+
+
 # ── Dispatch helpers ───────────────────────────────────────────────────────────
 
 
+async def _handle_session_start(session_id: str) -> None:
+    """Dispatch a ``session_start`` event → IDLE → TEACHING transition.
+
+    Imported lazily to avoid circular imports between core and modules.
+    Mirrors the error contract of ``_handle_attention_signal``: never re-raises.
+    """
+    try:
+        # Lazy import — tutor module depends on core, not the other way round
+        from app.modules.tutor.state_machine.graph import dispatch_event  # type: ignore[import]
+
+        await dispatch_event(session_id, "session_start")
+        logger.info("[tutor:%s] session_start dispatched → TEACHING", session_id)
+    except Exception:
+        logger.exception("session_start dispatch failed for %s", session_id)
+
+
 async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> None:
-    """Forward an attention signal to the tutor state machine.
+    """Forward an attention signal to the tutor state machine and ack the result.
 
     Imported lazily to avoid circular imports between core and modules.
     """
@@ -134,7 +184,11 @@ async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> 
         # Lazy import — tutor module depends on core, not the other way round
         from app.modules.tutor.service import process_attention_signal  # type: ignore[import]
 
-        await process_attention_signal(session_id=session_id, signal=payload)
+        result = await process_attention_signal(session_id=session_id, signal=payload)
+        await manager.send(
+            session_id,
+            {"type": "attention_ack", "payload": {"session_id": session_id, "ces": result.ces}},
+        )
     except ImportError:
         # Tutor service not yet implemented — log and skip gracefully
         logger.debug("Tutor service not available yet — attention signal dropped for session %s", session_id)
