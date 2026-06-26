@@ -27,7 +27,7 @@ import pytest
 # When running from the repo root: adjust accordingly.
 ONBOARDING_FILE = pathlib.Path(
     __file__
-).parent.parent.parent / "web" / "src" / "app" / "(app)" / "onboarding" / "page.tsx"
+).parent.parent.parent / "web" / "src" / "app" / "onboarding" / "page.tsx"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -54,7 +54,7 @@ def test_onboarding_file_exists() -> None:
     """The onboarding page.tsx must exist at the expected path."""
     assert ONBOARDING_FILE.exists(), (
         f"Onboarding page.tsx not found at {ONBOARDING_FILE}. "
-        "Dev 2 must restore the (app)/onboarding route in Sprint 2."
+        "File was moved from (app)/onboarding/ to onboarding/ in Sprint 0 — check the path."
     )
 
 

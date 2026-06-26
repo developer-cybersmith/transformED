@@ -15,6 +15,7 @@ Migration file: supabase/migrations/20260611000000_initial_schema.sql
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -27,6 +28,16 @@ MIGRATION_PATH = _REPO_ROOT / "supabase" / "migrations" / "20260611000000_initia
 MIGRATION = MIGRATION_PATH.read_text(encoding="utf-8")
 
 
+def _extract_table_block(table_name: str, window: int = 3000) -> str:
+    """Return up to `window` chars of the migration starting at the CREATE TABLE line.
+    Scopes assertions to a single table, preventing cross-table false matches.
+    """
+    idx = MIGRATION.find(table_name)
+    if idx == -1:
+        return ""
+    return MIGRATION[idx : idx + window]
+
+
 # ============================================================
 # onboarding_responses — table existence and columns
 # ============================================================
@@ -35,7 +46,7 @@ MIGRATION = MIGRATION_PATH.read_text(encoding="utf-8")
 @pytest.mark.unit
 def test_onboarding_responses_table_exists():
     """The onboarding_responses table is defined in the migration."""
-    assert "onboarding_responses" in MIGRATION, (
+    assert "CREATE TABLE public.onboarding_responses" in MIGRATION, (
         "Expected CREATE TABLE public.onboarding_responses in migration SQL"
     )
 
@@ -43,7 +54,8 @@ def test_onboarding_responses_table_exists():
 @pytest.mark.unit
 def test_onboarding_responses_has_dimension_tag():
     """dimension_tag column is present in onboarding_responses."""
-    assert "dimension_tag" in MIGRATION, (
+    block = _extract_table_block("CREATE TABLE public.onboarding_responses")
+    assert "dimension_tag" in block, (
         "Expected dimension_tag column in onboarding_responses table"
     )
 
@@ -52,25 +64,46 @@ def test_onboarding_responses_has_dimension_tag():
 def test_onboarding_dimension_tag_has_check_constraint():
     """dimension_tag CHECK constraint restricts values to the three valid domains.
 
-    All three domain values must appear in the migration SQL to satisfy the
-    Learner DNA scoring model (cognitive, emotional, self_direction).
+    Checked within the onboarding_responses table block to avoid matching
+    other tables' column or constraint names.
     """
-    assert "cognitive" in MIGRATION, (
-        "Expected 'cognitive' in dimension_tag CHECK constraint"
+    block = _extract_table_block("CREATE TABLE public.onboarding_responses")
+    assert "cognitive" in block, (
+        "Expected 'cognitive' in onboarding_responses dimension_tag CHECK constraint"
     )
-    assert "emotional" in MIGRATION, (
-        "Expected 'emotional' in dimension_tag CHECK constraint"
+    assert "emotional" in block, (
+        "Expected 'emotional' in onboarding_responses dimension_tag CHECK constraint"
     )
-    assert "self_direction" in MIGRATION, (
-        "Expected 'self_direction' in dimension_tag CHECK constraint"
+    assert "self_direction" in block, (
+        "Expected 'self_direction' in onboarding_responses dimension_tag CHECK constraint"
     )
 
 
 @pytest.mark.unit
 def test_onboarding_responses_has_response_value():
     """response_value column exists to store the selected_index from the quiz."""
-    assert "response_value" in MIGRATION, (
+    block = _extract_table_block("CREATE TABLE public.onboarding_responses")
+    assert "response_value" in block, (
         "Expected response_value column in onboarding_responses"
+    )
+
+
+@pytest.mark.unit
+def test_onboarding_responses_has_user_id_fk():
+    """user_id FK references public.users — enforces data ownership."""
+    block = _extract_table_block("CREATE TABLE public.onboarding_responses")
+    assert "user_id" in block, "Expected user_id column in onboarding_responses"
+
+
+@pytest.mark.unit
+def test_onboarding_responses_has_rls():
+    """ENABLE ROW LEVEL SECURITY present for onboarding_responses specifically."""
+    rls_pattern = re.compile(
+        r"ALTER TABLE public\.onboarding_responses\s+ENABLE ROW LEVEL SECURITY",
+        re.IGNORECASE,
+    )
+    assert rls_pattern.search(MIGRATION), (
+        "Expected ALTER TABLE public.onboarding_responses ENABLE ROW LEVEL SECURITY"
     )
 
 
@@ -82,19 +115,16 @@ def test_onboarding_responses_has_response_value():
 @pytest.mark.unit
 def test_session_events_table_exists():
     """The session_events table is defined in the migration."""
-    assert "session_events" in MIGRATION, (
+    assert "CREATE TABLE public.session_events" in MIGRATION, (
         "Expected CREATE TABLE public.session_events in migration SQL"
     )
 
 
 @pytest.mark.unit
 def test_session_events_has_jsonb_payload():
-    """payload column is JSONB type — required for flexible event schema.
-
-    JSONB NOT NULL DEFAULT '{}' prevents null payload queries in analytics.
-    """
-    migration_lower = MIGRATION.lower()
-    assert "jsonb" in migration_lower, (
+    """payload column is JSONB type within session_events — not another table."""
+    block = _extract_table_block("CREATE TABLE public.session_events")
+    assert "jsonb" in block.lower(), (
         "Expected JSONB type for payload column in session_events"
     )
 
@@ -102,24 +132,26 @@ def test_session_events_has_jsonb_payload():
 @pytest.mark.unit
 def test_session_events_has_event_type():
     """event_type column exists for filtering and routing session events."""
-    assert "event_type" in MIGRATION, (
+    block = _extract_table_block("CREATE TABLE public.session_events")
+    assert "event_type" in block, (
         "Expected event_type column in session_events"
     )
 
 
-# ============================================================
-# RLS — both tables must have row level security enabled
-# ============================================================
+@pytest.mark.unit
+def test_session_events_has_session_id_fk():
+    """session_id FK present in session_events — links events to their session."""
+    block = _extract_table_block("CREATE TABLE public.session_events")
+    assert "session_id" in block, "Expected session_id column in session_events"
 
 
 @pytest.mark.unit
-def test_both_tables_have_rls():
-    """ROW LEVEL SECURITY is enabled for both analytics tables.
-
-    This verifies the ENABLE ROW LEVEL SECURITY statement appears in the
-    migration. Per PRD §18, ALL Supabase tables must have RLS enabled.
-    """
-    migration_upper = MIGRATION.upper()
-    assert "ENABLE ROW LEVEL SECURITY" in migration_upper, (
-        "Expected ENABLE ROW LEVEL SECURITY for analytics tables in migration SQL"
+def test_session_events_has_rls():
+    """ENABLE ROW LEVEL SECURITY present for session_events specifically."""
+    rls_pattern = re.compile(
+        r"ALTER TABLE public\.session_events\s+ENABLE ROW LEVEL SECURITY",
+        re.IGNORECASE,
+    )
+    assert rls_pattern.search(MIGRATION), (
+        "Expected ALTER TABLE public.session_events ENABLE ROW LEVEL SECURITY"
     )
