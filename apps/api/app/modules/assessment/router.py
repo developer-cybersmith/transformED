@@ -112,7 +112,7 @@ async def submit_quiz(
 @router.post(
     "/teachback",
     response_model=TeachbackResult,
-    summary="Submit a teach-back transcript for LLM evaluation",
+    summary="Submit a typed teach-back response for LLM evaluation",
 )
 async def submit_teachback(
     body: TeachbackSubmission,
