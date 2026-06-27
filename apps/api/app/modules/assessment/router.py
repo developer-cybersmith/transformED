@@ -7,37 +7,25 @@ learner DNA retrieval, and onboarding diagnostic submission.
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.dependencies import CurrentUser
 
-# Quiz models live in schemas.py so service.py can import them without
-# creating a circular import (service ← router ← service).
-from app.modules.assessment.schemas import QuizAnswer, QuizResult, QuizSubmission
+# All request/response models live in schemas.py so service.py can import them
+# without creating a circular import (service ← router ← service).
+from app.modules.assessment.schemas import (
+    QuizAnswer,
+    QuizResult,
+    QuizSubmission,
+    TeachbackResult,
+    TeachbackSubmission,
+)
 
 router = APIRouter(tags=["assessment"])
 
-# Re-export so existing `from app.modules.assessment.router import QuizAnswer`
-# imports in tests and other modules continue to work unchanged.
-__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult"]
-
-
-class TeachbackSubmission(BaseModel):
-    session_id: str
-    lesson_id: str
-    segment_id: str
-    response_text: str = Field(description="Student's typed teach-back response")
-
-
-class TeachbackResult(BaseModel):
-    session_id: str
-    rubric_scores: dict[str, float]
-    overall_score: float
-    ces_contribution: float
-    feedback: str
+# Re-export for backward compatibility — tests and other modules import from here.
+__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult", "TeachbackSubmission", "TeachbackResult"]
 
 
 class SessionReport(BaseModel):
@@ -110,11 +98,17 @@ async def submit_teachback(
     body: TeachbackSubmission,
     current_user: CurrentUser,
 ) -> TeachbackResult:
-    """Evaluate a student's typed teach-back response using the LLM rubric.
-
-    TODO (Sprint 1): Delegate to assessment service.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    """Evaluate a student's typed teach-back response using the GPT-4o-mini rubric."""
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import grade_teachback
+    return await grade_teachback(
+        session_id=body.session_id,
+        lesson_id=body.lesson_id,
+        segment_id=body.segment_id,
+        response_text=body.response_text,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.get(
