@@ -4,7 +4,7 @@ baseline_commit: ""
 
 # Story 3-9: POST /api/assessment/teachback Endpoint Live
 
-**Status:** ready-for-dev
+**Status:** done
 
 ---
 
