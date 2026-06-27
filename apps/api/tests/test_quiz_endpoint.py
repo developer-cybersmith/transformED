@@ -119,6 +119,7 @@ def _build_supabase(
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = insert_data or []
+    insert_mock.insert.return_value.execute.return_value.error = None  # prevent MagicMock truthy auto-attr
 
     mock.table.side_effect = [session_mock, lesson_mock, insert_mock]
     return mock
@@ -240,6 +241,7 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -270,6 +272,7 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -502,3 +505,147 @@ def test_http_layer_post_quiz_returns_404_on_missing_session(monkeypatch) -> Non
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/quiz", json=_VALID_HTTP_PAYLOAD)
     assert resp.status_code == 404
+
+
+# ── Story 3-8-1 BLOCKER fixes — new tests ────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_ces_contribution_at_partial_accuracy(mock_to_thread, monkeypatch) -> None:
+    """50% accuracy → ces_contribution = 0.5 × ces_weight_quiz × 100 (not 0.5 × weight)."""
+    mock_settings = MagicMock()
+    mock_settings.ces_weight_quiz = 0.35
+    monkeypatch.setattr("app.modules.assessment.service.get_settings", lambda: mock_settings)
+    supabase = _default_supabase()
+    answers = [
+        QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000),  # correct (correct_index=1)
+        QuizAnswer(question_id="q2", response_index=0, response_time_ms=1000),  # wrong (correct_index=2)
+    ]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.ces_contribution == pytest.approx(0.5 * 0.35 * 100)
+
+
+@pytest.mark.unit
+async def test_raises_404_when_lesson_row_absent(mock_to_thread) -> None:
+    """lesson_resp.data is None (entire row missing, not just content) → HTTP 404."""
+    from fastapi import HTTPException
+    supabase = _build_supabase(session_data=_SESSION_ROW, lesson_data=None, insert_data=[])
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.unit
+async def test_db_rows_contain_correct_fields(mock_to_thread) -> None:
+    """Insert rows must contain response_index, is_correct, and segment_id (ACs 8-10)."""
+    captured_rows: list = []
+
+    session_mock = MagicMock()
+    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    lesson_mock = MagicMock()
+    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+
+    def _capture(rows):
+        captured_rows.extend(rows)
+        m = MagicMock()
+        m.execute.return_value.data = []
+        m.execute.return_value.error = None
+        return m
+
+    insert_mock = MagicMock()
+    insert_mock.insert.side_effect = _capture
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert len(captured_rows) == 1
+    assert captured_rows[0]["response_index"] == 1       # AC 8
+    assert captured_rows[0]["is_correct"] is True        # AC 9
+    assert captured_rows[0]["segment_id"] == "seg-001"  # AC 10
+
+
+@pytest.mark.unit
+async def test_feedback_correct_option_none_for_out_of_range_correct_index(mock_to_thread) -> None:
+    """correct_index=99 (beyond options list) → correct_option=None in feedback, no IndexError."""
+    bad_question = {
+        "question_id": "q_bad_ci",
+        "type": "mcq",
+        "question": "Question with bad correct_index?",
+        "options": ["A", "B"],
+        "correct_index": 99,
+        "explanation": "Explanation.",
+        "difficulty": "easy",
+    }
+    segment = {"segment_id": "seg-001", "quiz": [bad_question]}
+    lesson_content = {"lesson_id": "lesson-001", "segments": [segment]}
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": lesson_content},
+        insert_data=[],
+    )
+    answers = [QuizAnswer(question_id="q_bad_ci", response_index=0, response_time_ms=500)]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.feedback[0]["correct_option"] is None
+
+
+@pytest.mark.unit
+async def test_feedback_selected_option_none_for_out_of_range_response_index(mock_to_thread) -> None:
+    """response_index=99 (>=0 but beyond options list) → selected_option=None, no IndexError."""
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": _LESSON_CONTENT},
+        insert_data=[],
+    )
+    answers = [QuizAnswer(question_id="q1", response_index=99, response_time_ms=500)]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.feedback[0]["selected_option"] is None
+
+
+@pytest.mark.unit
+def test_http_layer_authentication_is_enforced() -> None:
+    """No Authorization header → 403; HTTPBearer(auto_error=True) fires before get_settings."""
+    _unauthed_app = FastAPI()
+    _unauthed_app.include_router(router, prefix="/api/assessment")
+    client = TestClient(_unauthed_app, raise_server_exceptions=False)
+    resp = client.post("/api/assessment/quiz", json=_VALID_HTTP_PAYLOAD)
+    assert resp.status_code in {401, 403}
+
+
+@pytest.mark.unit
+async def test_raises_403_when_lesson_id_mismatches_session(mock_to_thread) -> None:
+    """session.lesson_id != request lesson_id → HTTP 403 (IDOR guard)."""
+    from fastapi import HTTPException
+    # _SESSION_ROW has lesson_id="lesson-001"; request sends "ATTACKER-LESSON-ID"
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": _LESSON_CONTENT},
+        insert_data=[],
+    )
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001",
+            lesson_id="ATTACKER-LESSON-ID",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
+        )
+    assert exc_info.value.status_code == 403

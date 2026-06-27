@@ -72,6 +72,12 @@ async def grade_quiz(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this user.",
         )
+    # IDOR guard — session must belong to the requested lesson
+    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Session does not belong to this lesson.",
+        )
 
     # Step 2 — Load lesson JSONB
     lesson_resp = await asyncio.to_thread(
@@ -146,9 +152,14 @@ async def grade_quiz(
         }
         for g in graded
     ]
-    await asyncio.to_thread(
+    insert_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts").insert(rows_to_insert).execute()
     )
+    if getattr(insert_resp, "error", None):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist quiz attempt.",
+        )
     logger.info(
         "quiz_attempts inserted: session=%s segment=%s count=%d",
         session_id,
