@@ -14,32 +14,15 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser
 
+# Quiz models live in schemas.py so service.py can import them without
+# creating a circular import (service ← router ← service).
+from app.modules.assessment.schemas import QuizAnswer, QuizResult, QuizSubmission
+
 router = APIRouter(tags=["assessment"])
 
-
-# ── Request / Response models ─────────────────────────────────────────────────
-
-
-class QuizAnswer(BaseModel):
-    question_id: str
-    response_index: int
-    response_time_ms: int = 0
-
-
-class QuizSubmission(BaseModel):
-    session_id: str
-    lesson_id: str
-    segment_id: str
-    answers: list[QuizAnswer]
-
-
-class QuizResult(BaseModel):
-    session_id: str
-    score: float
-    correct_count: int
-    total_count: int
-    ces_contribution: float
-    feedback: list[dict[str, Any]]
+# Re-export so existing `from app.modules.assessment.router import QuizAnswer`
+# imports in tests and other modules continue to work unchanged.
+__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult"]
 
 
 class TeachbackSubmission(BaseModel):
@@ -105,11 +88,17 @@ async def submit_quiz(
     body: QuizSubmission,
     current_user: CurrentUser,
 ) -> QuizResult:
-    """Grade a quiz submission and update the session's CES score.
-
-    TODO (Sprint 1): Delegate to assessment service.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    """Grade a quiz submission and update the session's CES score."""
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import grade_quiz
+    return await grade_quiz(
+        session_id=body.session_id,
+        lesson_id=body.lesson_id,
+        segment_id=body.segment_id,
+        answers=body.answers,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(
