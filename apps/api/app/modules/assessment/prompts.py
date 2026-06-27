@@ -20,6 +20,9 @@ class TeachbackScoreResult(BaseModel):
     """Structured output from the teach-back evaluation LLM (settings.llm_mini)."""
 
     score: int = Field(ge=0, le=100, description="Overall score 0-100 (weighted rubric)")
+    accuracy_score: int = Field(ge=0, le=100, description="Raw accuracy sub-score 0-100 (before 0.40 weighting)")
+    completeness_score: int = Field(ge=0, le=100, description="Raw completeness sub-score 0-100 (before 0.35 weighting)")
+    clarity_score: int = Field(ge=0, le=100, description="Raw clarity sub-score 0-100 (before 0.25 weighting)")
     praise: str = Field(description="Specific, encouraging feedback on what the student did well")
     correction: str = Field(
         description="Constructive feedback on gaps; empty string '' when score >= 90"
@@ -51,12 +54,15 @@ Score formula:
   where each sub-score is independently assessed on a 0-100 scale.
 
 Return a JSON object with exactly these fields:
-  score          integer 0-100 (weighted rubric total)
-  praise         1-2 sentences of specific, encouraging feedback on what the student did well
-  correction     1-2 sentences of constructive feedback on gaps or inaccuracies;
-                 use an EMPTY STRING "" (not null, not "None") when score >= 90
-  concepts_hit   list of key concepts from the segment that the student demonstrated
-  concepts_missed list of key concepts from the segment that the student omitted or got wrong
+  score              integer 0-100 (weighted rubric total: accuracy*0.40 + completeness*0.35 + clarity*0.25)
+  accuracy_score     integer 0-100 (raw accuracy sub-score before weighting)
+  completeness_score integer 0-100 (raw completeness sub-score before weighting)
+  clarity_score      integer 0-100 (raw clarity sub-score before weighting)
+  praise             1-2 sentences of specific, encouraging feedback on what the student did well
+  correction         1-2 sentences of constructive feedback on gaps or inaccuracies;
+                     use an EMPTY STRING "" (not null, not "None") when score >= 90
+  concepts_hit       list of key concepts from the segment that the student demonstrated
+  concepts_missed    list of key concepts from the segment that the student omitted or got wrong
 
 Guidelines:
 - Be encouraging and constructive; frame gaps as learning opportunities

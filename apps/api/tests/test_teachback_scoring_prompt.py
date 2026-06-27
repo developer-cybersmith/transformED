@@ -31,6 +31,9 @@ def _mock_provider(return_value: TeachbackScoreResult) -> MagicMock:
 def _good_result(**overrides: object) -> TeachbackScoreResult:
     defaults = dict(
         score=75,
+        accuracy_score=80,
+        completeness_score=70,
+        clarity_score=75,
         praise="Good explanation of the main concepts.",
         correction="You could expand on the feedback loop mechanism.",
         concepts_hit=["photosynthesis"],
@@ -45,19 +48,28 @@ def _good_result(**overrides: object) -> TeachbackScoreResult:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit
-def test_model_has_five_fields() -> None:
+def test_model_has_eight_fields() -> None:
     fields = set(TeachbackScoreResult.model_fields.keys())
-    assert fields == {"score", "praise", "correction", "concepts_hit", "concepts_missed"}
+    assert fields == {
+        "score",
+        "accuracy_score",
+        "completeness_score",
+        "clarity_score",
+        "praise",
+        "correction",
+        "concepts_hit",
+        "concepts_missed",
+    }
 
 @pytest.mark.unit
 def test_score_range_rejects_above_100() -> None:
     with pytest.raises(Exception):
-        TeachbackScoreResult(score=101, praise="", correction="", concepts_hit=[], concepts_missed=[])
+        TeachbackScoreResult(score=101, accuracy_score=0, completeness_score=0, clarity_score=0, praise="", correction="", concepts_hit=[], concepts_missed=[])
 
 @pytest.mark.unit
 def test_score_range_rejects_below_0() -> None:
     with pytest.raises(Exception):
-        TeachbackScoreResult(score=-1, praise="", correction="", concepts_hit=[], concepts_missed=[])
+        TeachbackScoreResult(score=-1, accuracy_score=0, completeness_score=0, clarity_score=0, praise="", correction="", concepts_hit=[], concepts_missed=[])
 
 @pytest.mark.unit
 def test_concepts_fields_are_lists() -> None:
@@ -67,27 +79,27 @@ def test_concepts_fields_are_lists() -> None:
 
 @pytest.mark.unit
 def test_score_boundary_0_is_valid() -> None:
-    r = TeachbackScoreResult(score=0, praise="", correction="Missed everything.", concepts_hit=[], concepts_missed=["concept"])
+    r = TeachbackScoreResult(score=0, accuracy_score=0, completeness_score=0, clarity_score=0, praise="", correction="Missed everything.", concepts_hit=[], concepts_missed=["concept"])
     assert r.score == 0
 
 @pytest.mark.unit
 def test_score_boundary_100_is_valid() -> None:
-    r = TeachbackScoreResult(score=100, praise="Excellent!", correction="", concepts_hit=["concept"], concepts_missed=[])
+    r = TeachbackScoreResult(score=100, accuracy_score=100, completeness_score=100, clarity_score=100, praise="Excellent!", correction="", concepts_hit=["concept"], concepts_missed=[])
     assert r.score == 100
 
 @pytest.mark.unit
 def test_model_validator_clears_correction_when_score_gte_90() -> None:
-    r = TeachbackScoreResult(score=92, praise="Great!", correction="This should be cleared.", concepts_hit=["concept"], concepts_missed=[])
+    r = TeachbackScoreResult(score=92, accuracy_score=90, completeness_score=90, clarity_score=95, praise="Great!", correction="This should be cleared.", concepts_hit=["concept"], concepts_missed=[])
     assert r.correction == "", f"Expected empty string, got {r.correction!r}"
 
 @pytest.mark.unit
 def test_model_validator_clears_correction_at_exact_boundary_90() -> None:
-    r = TeachbackScoreResult(score=90, praise="Excellent!", correction="Should be cleared at boundary.", concepts_hit=["concept"], concepts_missed=[])
+    r = TeachbackScoreResult(score=90, accuracy_score=90, completeness_score=90, clarity_score=90, praise="Excellent!", correction="Should be cleared at boundary.", concepts_hit=["concept"], concepts_missed=[])
     assert r.correction == "", f"score=90 should clear correction, got {r.correction!r}"
 
 @pytest.mark.unit
 def test_model_validator_retains_correction_below_boundary_89() -> None:
-    r = TeachbackScoreResult(score=89, praise="Good.", correction="Expand on the mechanism.", concepts_hit=["concept"], concepts_missed=["detail"])
+    r = TeachbackScoreResult(score=89, accuracy_score=85, completeness_score=90, clarity_score=92, praise="Good.", correction="Expand on the mechanism.", concepts_hit=["concept"], concepts_missed=["detail"])
     assert r.correction == "Expand on the mechanism.", f"score=89 must NOT clear correction, got {r.correction!r}"
 
 # ---------------------------------------------------------------------------

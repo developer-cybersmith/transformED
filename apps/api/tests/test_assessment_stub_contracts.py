@@ -2,8 +2,9 @@
 Unit tests for assessment module stub contracts.
 
 Verifies that:
-- The 4 remaining stub endpoints return HTTP 501 NOT_IMPLEMENTED
-  (POST /quiz is implemented in Sprint 1 — see test_quiz_endpoint.py)
+- The 3 remaining stub endpoints (report, dna, onboarding) return HTTP 501 NOT_IMPLEMENTED
+  (POST /quiz implemented Sprint 1 — see test_quiz_endpoint.py)
+  (POST /teachback implemented Sprint 1 — see test_teachback_endpoint.py)
 - Pydantic models have exactly the required fields (no banned fields)
 - No STT-related field names (transcript, duration_seconds) exist
 - LearnerDNA response does not expose raw numeric dimension scores
@@ -73,12 +74,17 @@ _ONBOARDING_PAYLOAD = {
 
 
 @pytest.mark.unit
-def test_teachback_endpoint_returns_501() -> None:
-    """POST /api/assessment/teachback must return HTTP 501 NOT_IMPLEMENTED."""
+def test_teachback_endpoint_is_live_not_501() -> None:
+    """POST /api/assessment/teachback must NOT return 501 (implemented in Sprint 1).
+
+    The endpoint is now live — it delegates to grade_teachback() in service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_teachback_endpoint.py.
+    """
     response = client.post("/api/assessment/teachback", json=_TEACHBACK_PAYLOAD)
-    assert response.status_code == 501, (
-        f"Expected 501, got {response.status_code}. "
-        "Teach-back endpoint must remain a stub until Sprint 1."
+    assert response.status_code != 501, (
+        f"Teachback endpoint returned 501 — implementation is missing. "
+        "Sprint 1 requires this endpoint to be live."
     )
 
 

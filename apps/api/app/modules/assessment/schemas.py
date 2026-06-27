@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class QuizAnswer(BaseModel):
@@ -31,3 +31,22 @@ class QuizResult(BaseModel):
     total_count: int
     ces_contribution: float
     feedback: list[dict[str, Any]]
+
+
+# ── Teachback schemas ──────────────────────────────────────────────────────────
+# Frozen contract (Sprint 1) — shape changes require 4-dev PR review.
+# NO transcript field (STT banned). NO duration_seconds field (implies timer).
+
+class TeachbackSubmission(BaseModel):
+    session_id: str
+    lesson_id: str
+    segment_id: str
+    response_text: str = Field(description="Student's typed teach-back response")
+
+
+class TeachbackResult(BaseModel):
+    session_id: str
+    rubric_scores: dict[str, float]  # {"accuracy": float, "completeness": float, "clarity": float}
+    overall_score: float
+    ces_contribution: float
+    feedback: str  # praise only (score >= 90) or praise + "\n\n" + correction (score < 90)
