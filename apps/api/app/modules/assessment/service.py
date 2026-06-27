@@ -118,17 +118,14 @@ async def grade_quiz(
             detail="answers list must not be empty.",
         )
 
-    # Step 5 — Grade each answer
+    # Step 6 — Grade each answer
     graded: list[dict[str, Any]] = []
     for ans in answers:
         question = question_map.get(ans.question_id)
         if question is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"question_id {ans.question_id!r} not found in segment "
-                    f"{segment_id!r}. Valid IDs: {list(question_map.keys())}."
-                ),
+                detail=f"question_id {ans.question_id!r} not found in segment {segment_id!r}.",
             )
         graded.append(
             {
@@ -139,7 +136,7 @@ async def grade_quiz(
             }
         )
 
-    # Step 6 — Bulk insert to quiz_attempts
+    # Step 7 — Bulk insert to quiz_attempts
     rows_to_insert = [
         {
             "session_id": session_id,
@@ -167,15 +164,21 @@ async def grade_quiz(
         len(rows_to_insert),
     )
 
-    # Step 7 — Compute aggregate metrics
+    # Step 8 — Compute aggregate metrics
     correct_count = sum(1 for g in graded if g["is_correct"])
     total_count = len(graded)
     quiz_accuracy: float = correct_count / total_count if total_count > 0 else 0.0
 
     settings = get_settings()
+    # CES SCALE CONTRACT (communicate to Dev 4):
+    # ces_contribution is on the 0-100 POINT scale where ces_weight_quiz (0.35)
+    # represents the MAXIMUM POINT contribution (35 pts). Dev 4's ces.py must SUM
+    # component contributions directly — do NOT multiply by 100 again.
+    # Formula: CES = quiz_contrib + teachback_contrib + behavioral_contrib + ... (each 0-max_pts)
+    # Trigger threshold: CES < 50 (checked on the 0-100 summed scale).
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
 
-    # Step 8 — Build per-question feedback
+    # Step 9 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
         {
             "question_id": g["question"]["question_id"],
