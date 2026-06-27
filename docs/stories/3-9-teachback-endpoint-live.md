@@ -1,5 +1,5 @@
 ---
-baseline_commit: ""
+baseline_commit: "50e7a6d3ed33b9b4aa95dabceefad5c188444c87"
 ---
 
 # Story 3-9: POST /api/assessment/teachback Endpoint Live
