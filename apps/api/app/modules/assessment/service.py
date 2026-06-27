@@ -51,8 +51,9 @@ async def grade_quiz(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user.
-        HTTPException 422: A submitted question_id is not in the segment quiz.
+        HTTPException 403: Session belongs to a different user, or session.lesson_id != lesson_id (IDOR guard).
+        HTTPException 422: answers is empty, or a submitted question_id is not in the segment quiz.
+        HTTPException 500: quiz_attempts insert returns a truthy error.
     """
     # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
@@ -71,6 +72,12 @@ async def grade_quiz(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this user.",
+        )
+    # IDOR guard — session must belong to the requested lesson
+    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Session does not belong to this lesson.",
         )
 
     # Step 2 — Load lesson JSONB
@@ -105,14 +112,14 @@ async def grade_quiz(
         q["question_id"]: q for q in target_segment.get("quiz", [])
     }
 
-    # Step 5 — Guard: reject empty submissions before any DB write
+    # Step 5 — Guard: reject empty submissions before any grading or DB write
     if not answers:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="answers list must not be empty.",
         )
 
-    # Step 5 — Grade each answer
+    # Step 6 — Grade each answer
     graded: list[dict[str, Any]] = []
     for ans in answers:
         question = question_map.get(ans.question_id)
@@ -121,7 +128,7 @@ async def grade_quiz(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"question_id {ans.question_id!r} not found in segment "
-                    f"{segment_id!r}. Valid IDs: {list(question_map.keys())}."
+                    f"{segment_id!r}."
                 ),
             )
         graded.append(
@@ -133,7 +140,7 @@ async def grade_quiz(
             }
         )
 
-    # Step 6 — Bulk insert to quiz_attempts
+    # Step 7 — Bulk insert to quiz_attempts
     rows_to_insert = [
         {
             "session_id": session_id,
@@ -146,9 +153,19 @@ async def grade_quiz(
         }
         for g in graded
     ]
-    await asyncio.to_thread(
+    insert_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts").insert(rows_to_insert).execute()
     )
+    if getattr(insert_resp, "error", None):
+        logger.error(
+            "quiz_attempts insert failed: session=%s error=%s",
+            session_id,
+            insert_resp.error,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist quiz attempt.",
+        )
     logger.info(
         "quiz_attempts inserted: session=%s segment=%s count=%d",
         session_id,
@@ -156,7 +173,7 @@ async def grade_quiz(
         len(rows_to_insert),
     )
 
-    # Step 7 — Compute aggregate metrics
+    # Step 8 — Compute aggregate metrics
     correct_count = sum(1 for g in graded if g["is_correct"])
     total_count = len(graded)
     quiz_accuracy: float = correct_count / total_count if total_count > 0 else 0.0
@@ -164,7 +181,7 @@ async def grade_quiz(
     settings = get_settings()
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
 
-    # Step 8 — Build per-question feedback
+    # Step 9 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
         {
             "question_id": g["question"]["question_id"],

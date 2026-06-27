@@ -1,10 +1,10 @@
 ---
-baseline_commit: a99972f033fea6376d2ee026053d650abad506c8
+baseline_commit: "ed72aaa1cd118d8b31fd8fd08d1818244c3f2587"
 ---
 
 # Story 3.8: POST /api/assessment/quiz — Quiz Grading Endpoint Live
 
-Status: done
+Status: in-progress
 
 ---
 
@@ -28,45 +28,77 @@ AC 7: HTTP 422 returned if answer.question_id not found in the segment's quiz
 AC 8: is_correct is True when response_index == QuizQuestion.correct_index, False otherwise
 AC 9: All answers are written to quiz_attempts table (one row per QuizAnswer)
 AC 10: response_time_ms from each answer is written to quiz_attempts.response_time_ms
-AC 11: ces_contribution = (correct_count / total_count) * settings.ces_weight_quiz
+AC 11: ces_contribution = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4) — on 0-100 POINT scale; max = 35.0 pts at default weights. Dev 4 sums component contributions directly — do NOT multiply by 100 again in ces.py.
 AC 12: feedback list includes question text, correct_option text, and explanation for each answer
 AC 13: test_assessment_stub_contracts.py no longer tests quiz endpoint for 501 (quiz is now live)
-AC 14: pytest -m unit exits 0 with no regressions — minimum 13 new unit tests in test_quiz_endpoint.py
+AC 14: pytest -m unit exits 0 with no regressions — minimum 22 unit tests in test_quiz_endpoint.py
+AC 15: QuizAnswer.response_index has Field(ge=0) — Pydantic rejects negative index with HTTP 422 before any business logic runs
+AC 16: QuizAnswer.response_time_ms has Field(default=0, ge=0) — Pydantic rejects negative time with HTTP 422; field is optional (defaults to 0)
+AC 17: HTTP 403 returned if session.lesson_id (from DB) does not match the lesson_id in the request body — IDOR guard prevents cross-lesson session hijacking
+AC 18: HTTP 500 returned if quiz_attempts bulk insert returns a truthy .error — logged; response body says "Failed to persist quiz attempt."
+AC 19: HTTP 422 error detail for unknown question_id must NOT include the list of valid question IDs — prevents ID enumeration attack
 
 ---
 
 ## Tasks / Subtasks
 
-- [x] Task 1: Write story file — AC: all — ✓ in-progress
-  - [x] 1.1 Create docs/stories/3-8-quiz-endpoint-live.md
+- [ ] Task 1: Write story file — AC: all — ✓ in-progress
+  - [ ] 1.1 Create docs/stories/3-8-quiz-endpoint-live.md
 
-- [x] Task 2: Create apps/api/app/modules/assessment/service.py with grade_quiz() — AC: #2-#12
-  - [x] 2.1 Session ownership validation (HTTP 403/404)
-  - [x] 2.2 Lesson JSONB load and segment lookup (HTTP 404)
-  - [x] 2.3 Question lookup dict from segment.quiz (HTTP 422 on unknown question_id)
-  - [x] 2.4 Answer grading loop (is_correct = response_index == correct_index)
-  - [x] 2.5 Bulk insert to quiz_attempts via asyncio.to_thread
-  - [x] 2.6 Compute quiz_accuracy, ces_contribution, and QuizResult feedback
+- [ ] Task 2: Create apps/api/app/modules/assessment/service.py with grade_quiz() — AC: #2-#12
+  - [ ] 2.1 Session ownership validation (HTTP 403/404)
+  - [ ] 2.2 Lesson JSONB load and segment lookup (HTTP 404)
+  - [ ] 2.3 Question lookup dict from segment.quiz (HTTP 422 on unknown question_id)
+  - [ ] 2.4 Answer grading loop (is_correct = response_index == correct_index)
+  - [ ] 2.5 Bulk insert to quiz_attempts via asyncio.to_thread
+  - [ ] 2.6 Compute quiz_accuracy, ces_contribution, and QuizResult feedback
 
-- [x] Task 3: Update apps/api/app/modules/assessment/router.py — AC: #1
-  - [x] 3.1 Replace 501 stub with delegation to grade_quiz() using lazy import
+- [ ] Task 3: Update apps/api/app/modules/assessment/router.py — AC: #1
+  - [ ] 3.1 Replace 501 stub with delegation to grade_quiz() using lazy import
 
-- [x] Task 4: Update apps/api/tests/test_assessment_stub_contracts.py — AC: #13
-  - [x] 4.1 Remove test_quiz_endpoint_returns_501 (quiz is now live)
-  - [x] 4.2 Update module docstring to reflect 4 stubs remain (not 5)
+- [ ] Task 4: Update apps/api/tests/test_assessment_stub_contracts.py — AC: #13
+  - [ ] 4.1 Remove test_quiz_endpoint_returns_501 (quiz is now live)
+  - [ ] 4.2 Update module docstring to reflect 4 stubs remain (not 5)
 
-- [x] Task 5: Create apps/api/tests/test_quiz_endpoint.py — AC: #14
-  - [x] 5.1 asyncio.to_thread shim fixture (mock_to_thread) + _mock_settings autouse fixture
-  - [x] 5.2 _build_supabase() helper with side_effect chain
-  - [x] 5.3 Tests: correct/wrong/mixed grading, score=100/0/50
-  - [x] 5.4 Tests: ces_contribution uses settings.ces_weight_quiz
-  - [x] 5.5 Tests: response_time_ms written to DB, attempt_number written to DB
-  - [x] 5.6 Tests: feedback has correct_option + explanation
-  - [x] 5.7 Error tests: 404 no session, 403 wrong user, 404 no lesson, 404 no segment, 422 bad question_id
+- [ ] Task 5: Create apps/api/tests/test_quiz_endpoint.py — AC: #14
+  - [ ] 5.1 asyncio.to_thread shim fixture (mock_to_thread) + _mock_settings autouse fixture
+  - [ ] 5.2 _build_supabase() helper with side_effect chain
+  - [ ] 5.3 Tests: correct/wrong/mixed grading, score=100/0/50
+  - [ ] 5.4 Tests: ces_contribution uses settings.ces_weight_quiz
+  - [ ] 5.5 Tests: response_time_ms written to DB, attempt_number written to DB
+  - [ ] 5.6 Tests: feedback has correct_option + explanation
+  - [ ] 5.7 Error tests: 404 no session, 403 wrong user, 404 no lesson, 404 no segment, 422 bad question_id
 
-- [x] Task 6: Run tests and verify — AC: #14
-  - [x] 6.1 pytest tests/test_quiz_endpoint.py → 15 passed, 0 failures
-  - [x] 6.2 No regressions — 163 passing (7 pre-existing Dev 4/1 failures unchanged)
+- [ ] Task 6: Run tests and verify — AC: #14
+  - [ ] 6.1 pytest tests/test_quiz_endpoint.py → all pass, 0 failures
+  - [ ] 6.2 No regressions in full suite
+
+- [ ] Task 7: Update schemas.py — AC: 15, 16
+  - [ ] 7.1 response_index: int = Field(ge=0)
+  - [ ] 7.2 response_time_ms: int = Field(default=0, ge=0)
+
+- [ ] Task 8: Add IDOR guard to service.py grade_quiz() — AC: 17
+  - [ ] 8.1 After user ownership check: if str(session.lesson_id) != str(lesson_id) → HTTP 403
+
+- [ ] Task 9: Add insert error check to service.py — AC: 18
+  - [ ] 9.1 if getattr(insert_resp, "error", None): raise HTTPException 500
+
+- [ ] Task 10: Confirm ID enumeration is absent from 422 detail — AC: 19
+  - [ ] 10.1 Verify detail string does not contain "Valid IDs" or list of question_ids
+
+- [ ] Task 11: New tests in test_quiz_endpoint.py — AC: 15–19
+  - [ ] 11.1 test_negative_response_index_rejected — expects HTTP 422 (RED: fails before Field(ge=0))
+  - [ ] 11.2 test_negative_response_time_rejected — expects HTTP 422 (RED: fails before Field(ge=0))
+  - [ ] 11.3 test_raises_403_when_lesson_id_mismatches_session — IDOR guard (RED: fails before guard added)
+  - [ ] 11.4 test_insert_error_raises_500 — insert_resp.error truthy → HTTP 500 (RED: fails before error check)
+  - [ ] 11.5 test_422_does_not_leak_question_ids — detail must not contain "Valid IDs" (regression guard)
+  - [ ] 11.6 test_ces_contribution_at_partial_accuracy — 50% accuracy → ces_contribution ≈ 17.5
+  - [ ] 11.7 test_raises_404_when_lesson_row_absent — lesson_data=None path (complement to content=None test)
+  - [ ] 11.8 test_db_rows_contain_required_fields — all required fields present in insert rows
+
+- [ ] Task 12: Run full test suite — AC: 14 expanded
+  - [ ] 12.1 pytest -m unit → 0 failures, minimum 28 tests in test_quiz_endpoint.py
+  - [ ] 12.2 No regressions in rest of suite (≥198 tests pass)
 
 ---
 
@@ -104,12 +136,12 @@ Each QuizQuestion: {"question_id", "type", "question", "options": [str×4], "cor
 Grading: is_correct = (answer.response_index == question["correct_index"])
 
 ### Circular Import Prevention
-service.py DOES import from router.py (for QuizAnswer, QuizResult models).
-router.py MUST import service.py lazily (inside function body).
-This is the established pattern — see websocket.py for reference.
+schemas.py is the neutral shared module — both router.py and service.py import from it.
+router.py re-exports from schemas.py (preserves backward compat for test imports).
+router.py MUST import service.py lazily (inside function body) to avoid circular import.
 
 service.py imports at module level (OK, no circular):
-  from app.modules.assessment.router import QuizAnswer, QuizResult
+  from app.modules.assessment.schemas import QuizAnswer, QuizResult
 
 router.py submit_quiz route body (lazy, prevents circular):
   from app.core.db import get_supabase
@@ -169,29 +201,11 @@ claude-sonnet-4-6
 
 ### Change Log
 - 2026-06-27: Initial implementation — service.py, router wiring, 15 unit tests
-- 2026-06-27: Post-review fixes — schemas.py (circular import), correct_option guard, str() UUID cast, empty-answers 422 guard, 5 new tests (empty answers, table routing assertion, zero-index correctness, 2 HTTP-layer tests)
+- 2026-06-27: Post-review fixes — schemas.py (circular import), correct_option guard, str() UUID cast, empty-answers 422 guard, 5 new tests
+- 2026-06-28: Story amended — corrected AC 11, added ACs 15-19 (IDOR, Field validators, insert check, ID enumeration), tasks 7-12 added, status reset to ready-for-dev for proper BMAD re-implementation on branch sprint1/s1-1-quiz-endpoint-v2
 
 ---
 
 ## Senior Developer Review (AI)
 
-**Review date:** 2026-06-27
-**Reviewers:** 4 parallel adversarial agents (Blind Hunter, Edge Case Hunter, AC Auditor, Process Integrity Auditor)
-**Outcome:** Changes Requested — BLOCKERs identified and resolved in post-review fix commit
-
-### Action Items
-
-- [x] **[BLOCKER]** Circular import: `service.py:15` imported `QuizAnswer, QuizResult` from `router.py` at module level — resolved by creating `schemas.py` as a neutral shared module; both router and service import from schemas.py
-- [x] **[BLOCKER]** `correct_option` IndexError: `options[correct_index]` had no bounds check (asymmetric with `selected_option` which was guarded) — resolved with same guard pattern
-- [x] **[BLOCKER]** Empty `answers=[]` fired `supabase.insert([])` with undefined behavior — resolved with 422 guard at top of grading loop
-- [x] **[BLOCKER]** Zero HTTP-layer test coverage — router's `current_user["sub"]` extraction, `get_supabase()` injection, and kwarg passing to `grade_quiz` completely unverified — resolved with 2 TestClient tests
-- [x] **[BLOCKER]** Mock table routing unverified — no `assert_called_with` so service could call wrong table and tests would pass — resolved with `test_table_routing_is_verified` asserting call order
-- [x] **[IMPROVEMENT]** UUID type comparison: `session.user_id` may return as `uuid.UUID` from supabase-py; JWT sub is always str — resolved with `str()` cast on both sides
-- [ ] **[IMPROVEMENT]** DB insert response unchecked — if supabase returns an error in `resp.error`, service logs success and returns QuizResult as if persisted (deferred: requires real DB to test; Sprint 2)
-- [ ] **[IMPROVEMENT]** `attempt_number` always 1 from router — no mechanism for frontend to send retry attempt number (deferred to Sprint 2 when retry UX is built)
-- [ ] **[NITPICK]** `test_attempt_number_written_to_db` tests `attempt_number=2` which router never passes — test verifies a code path unreachable via HTTP (documented as known; kept as service-layer contract test)
-- [x] **[PROCESS]** Story created concurrently with code in a single commit (not story-first) — acknowledged as process debt; remediated by completing all mandatory story sections and adding post-review fix commit
-
-### Resolved BLOCKER count: 5 of 5
-### Remaining improvements: 2 (deferred to Sprint 2 with rationale)
-### Post-review fix commit: `fix(dev3/sprint1): story 3.8 post-review fixes — 5 BLOCKERs resolved`
+_To be filled after 5-agent adversarial code review on branch sprint1/s1-1-quiz-endpoint-v2._
