@@ -274,6 +274,27 @@ async def test_lesson_not_found_returns_404(mock_to_thread, mock_score_teachback
 
 
 @pytest.mark.unit
+async def test_lesson_no_content_returns_404(mock_to_thread, mock_score_teachback) -> None:
+    """lesson_resp.data exists but content is None → HTTP 404.
+
+    This is the 'lesson created but pipeline not yet complete' scenario.
+    Code path: lesson_resp.data.get('content') is None.
+    """
+    from fastapi import HTTPException
+    supabase = _build_supabase_tb(session_data=_SESSION_ROW, lesson_data={"content": None})
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_teachback(
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            response_text="My explanation.",
+            user_id="user-001",
+            supabase=supabase,
+        )
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.unit
 async def test_segment_not_found_returns_404(mock_to_thread, mock_score_teachback) -> None:
     """segment_id not in lesson.content.segments → HTTP 404."""
     from fastapi import HTTPException
