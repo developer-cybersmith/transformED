@@ -162,7 +162,7 @@ async def grade_quiz(
     quiz_accuracy: float = correct_count / total_count if total_count > 0 else 0.0
 
     settings = get_settings()
-    ces_contribution: float = quiz_accuracy * settings.ces_weight_quiz
+    ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
 
     # Step 8 — Build per-question feedback
     feedback: list[dict[str, Any]] = [

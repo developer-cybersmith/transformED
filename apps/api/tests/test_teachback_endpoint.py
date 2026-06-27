@@ -490,6 +490,66 @@ async def test_overall_score_matches_llm_score(mock_to_thread, mock_score_teachb
     assert result.overall_score == pytest.approx(float(_MOCK_TB_RESULT.score))
 
 
+# ── AC 6 / AC 7: LLM call argument verification ───────────────────────────────
+
+@pytest.mark.unit
+async def test_score_teachback_called_with_correct_args(mock_to_thread) -> None:
+    """AC 6: score_teachback() receives topic, key_concepts, response_text from the segment."""
+    captured_kwargs: dict = {}
+
+    async def _capture_score_teachback(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _MOCK_TB_RESULT
+
+    import pytest as _pt
+    from unittest.mock import patch as _patch
+
+    with _patch("app.modules.assessment.service.score_teachback", _capture_score_teachback):
+        supabase = _default_supabase_tb()
+        await grade_teachback(
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            response_text="Chlorophyll captures sunlight for photosynthesis.",
+            user_id="user-001",
+            supabase=supabase,
+        )
+
+    assert captured_kwargs["topic"] == "Photosynthesis", (
+        f"topic must be segment['title'], got {captured_kwargs.get('topic')!r}"
+    )
+    assert captured_kwargs["key_concepts"] == ["chlorophyll", "ATP"], (
+        f"key_concepts must be [j['term'] for j in jargon], got {captured_kwargs.get('key_concepts')!r}"
+    )
+    assert captured_kwargs["response_text"] == "Chlorophyll captures sunlight for photosynthesis."
+
+
+@pytest.mark.unit
+async def test_llm_provider_constructed_with_lesson_id(mock_to_thread, mock_score_teachback) -> None:
+    """AC 7: OpenAILLMProvider is constructed with lesson_id so cost is tracked per lesson."""
+    from unittest.mock import patch as _patch, MagicMock as _MM, call as _call
+
+    provider_mock_cls = _MM()
+    provider_mock_cls.return_value = _MM()
+
+    with _patch("app.modules.assessment.service.OpenAILLMProvider", provider_mock_cls):
+        supabase = _default_supabase_tb()
+        await grade_teachback(
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            response_text="My explanation.",
+            user_id="user-001",
+            supabase=supabase,
+        )
+
+    provider_mock_cls.assert_called_once()
+    assert provider_mock_cls.call_args.kwargs.get("lesson_id") == "lesson-001", (
+        f"OpenAILLMProvider must be constructed with lesson_id='lesson-001', "
+        f"got kwargs={provider_mock_cls.call_args.kwargs!r}"
+    )
+
+
 # ── DB write tests ────────────────────────────────────────────────────────────
 
 @pytest.mark.unit
@@ -597,6 +657,9 @@ async def test_concepts_written_to_db(mock_to_thread, mock_score_teachback) -> N
     )
     assert captured_rows[0]["concepts_hit"] == _MOCK_TB_RESULT.concepts_hit
     assert captured_rows[0]["concepts_missed"] == _MOCK_TB_RESULT.concepts_missed
+    # AC 13: feedback_praise and feedback_correction also persisted separately
+    assert captured_rows[0]["feedback_praise"] == _MOCK_TB_RESULT.praise
+    assert captured_rows[0]["feedback_correction"] == _MOCK_TB_RESULT.correction
 
 
 @pytest.mark.unit

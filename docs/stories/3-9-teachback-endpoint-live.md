@@ -71,36 +71,36 @@ and adds comprehensive tests covering all paths.
 
 ### Task 1 — Extend prompts.py (sub-scores for rubric_scores)
 
-- [ ] 1.1 Add `accuracy_score: int = Field(ge=0, le=100)`, `completeness_score: int = Field(ge=0, le=100)`, `clarity_score: int = Field(ge=0, le=100)` to `TeachbackScoreResult` in `prompts.py`
-- [ ] 1.2 Update `TEACHBACK_SYSTEM_PROMPT` to ask the LLM to return those three fields in the JSON output alongside `score`, `praise`, `correction`, `concepts_hit`, `concepts_missed`
-- [ ] 1.3 Red: write failing test that asserts `TeachbackScoreResult` has `accuracy_score`, `completeness_score`, `clarity_score` attributes — confirm it fails before the change
+- [x] 1.1 Add `accuracy_score: int = Field(ge=0, le=100)`, `completeness_score: int = Field(ge=0, le=100)`, `clarity_score: int = Field(ge=0, le=100)` to `TeachbackScoreResult` in `prompts.py` — done 2026-06-27
+- [x] 1.2 Update `TEACHBACK_SYSTEM_PROMPT` to ask the LLM to return those three fields in the JSON output alongside `score`, `praise`, `correction`, `concepts_hit`, `concepts_missed` — done 2026-06-27
+- [x] 1.3 Red: write failing test that asserts `TeachbackScoreResult` has `accuracy_score`, `completeness_score`, `clarity_score` attributes — confirm it fails before the change — done 2026-06-27
 
 ### Task 2 — Move Teachback models to schemas.py and update router.py
 
-- [ ] 2.1 Move `TeachbackSubmission` and `TeachbackResult` class definitions from `router.py` to `schemas.py`
-- [ ] 2.2 In `router.py`: replace the two class bodies with `from app.modules.assessment.schemas import TeachbackSubmission, TeachbackResult`; keep `__all__` updated
-- [ ] 2.3 Add `TeachbackSubmission` and `TeachbackResult` to `__all__` in `schemas.py`
-- [ ] 2.4 Red: confirm existing tests still pass after the import refactor (no regression)
+- [x] 2.1 Move `TeachbackSubmission` and `TeachbackResult` class definitions from `router.py` to `schemas.py` — done 2026-06-27
+- [x] 2.2 In `router.py`: replace the two class bodies with `from app.modules.assessment.schemas import TeachbackSubmission, TeachbackResult`; keep `__all__` updated — done 2026-06-27
+- [x] 2.3 Add `TeachbackSubmission` and `TeachbackResult` to `__all__` in `schemas.py` — done 2026-06-27
+- [x] 2.4 Red: confirm existing tests still pass after the import refactor (no regression) — done 2026-06-27
 
 ### Task 3 — Implement grade_teachback() in service.py
 
-- [ ] 3.1 Add `grade_teachback()` async function to `service.py` following the exact same defensive pattern as `grade_quiz()`:
+- [x] 3.1 Add `grade_teachback()` async function to `service.py` following the exact same defensive pattern as `grade_quiz()`:
   - Validate session ownership (session 404 → 404, user mismatch → 403, IDOR lesson mismatch → 403)
-  - Load lesson 404, segment 404
-- [ ] 3.2 Extract `topic = segment["title"]`, `key_concepts = [j["term"] for j in segment.get("jargon", [])]`
-- [ ] 3.3 Query `teachback_attempts` count for same session+segment to compute `attempt_number`
-- [ ] 3.4 Construct `OpenAILLMProvider(lesson_id=lesson_id)` and call `score_teachback()`
-- [ ] 3.5 Compute `ces_contribution = round((result.score / 100.0) * settings.ces_weight_teachback * 100, 4)`
-- [ ] 3.6 Build `feedback` string: praise only if score ≥ 90, else `f"{praise}\n\n{correction}"`
-- [ ] 3.7 Build and insert `teachback_attempts` row; capture and check insert response error
-- [ ] 3.8 Return `TeachbackResult(session_id=..., rubric_scores={...}, overall_score=..., ces_contribution=..., feedback=...)`
+  - Load lesson 404, segment 404 — done 2026-06-27
+- [x] 3.2 Extract `topic = segment["title"]`, `key_concepts = [j["term"] for j in segment.get("jargon", [])]` — done 2026-06-27
+- [x] 3.3 Query `teachback_attempts` count for same session+segment to compute `attempt_number` — done 2026-06-27
+- [x] 3.4 Construct `OpenAILLMProvider(lesson_id=lesson_id)` and call `score_teachback()` — done 2026-06-27
+- [x] 3.5 Compute `ces_contribution = round((result.score / 100.0) * settings.ces_weight_teachback * 100, 4)` — done 2026-06-27
+- [x] 3.6 Build `feedback` string: praise only if score ≥ 90, else `f"{praise}\n\n{correction}"` — done 2026-06-27
+- [x] 3.7 Build and insert `teachback_attempts` row; capture and check insert response error — done 2026-06-27
+- [x] 3.8 Return `TeachbackResult(session_id=..., rubric_scores={...}, overall_score=..., ces_contribution=..., feedback=...)` — done 2026-06-27
 
 ### Task 4 — Wire router and add tests
 
-- [ ] 4.1 In `router.py` `submit_teachback()`: remove 501, add lazy imports, call `grade_teachback()`
-- [ ] 4.2 Create `apps/api/tests/test_teachback_endpoint.py` with all tests (see Dev Notes for test list)
-- [ ] 4.3 Run full test suite: all existing 27 quiz tests still pass; all new teachback tests pass
-- [ ] 4.4 Update `dev3-assessment-tracker.md`: mark S1-3, S1-4, S1-5, S1-6 done with today's date
+- [x] 4.1 In `router.py` `submit_teachback()`: remove 501, add lazy imports, call `grade_teachback()` — done 2026-06-27
+- [x] 4.2 Create `apps/api/tests/test_teachback_endpoint.py` with all tests (see Dev Notes for test list) — done 2026-06-27
+- [x] 4.3 Run full test suite: all existing 27 quiz tests still pass; all new teachback tests pass — done 2026-06-27
+- [x] 4.4 Update `dev3-assessment-tracker.md`: mark S1-3, S1-4, S1-5, S1-6 done with today's date — done 2026-06-27
 
 ---
 
@@ -335,14 +335,26 @@ Total: 19 tests.
 
 ## Senior Developer Review (AI)
 
-*(To be filled after implementation)*
+**Outcome:** APPROVE (post-audit fixes applied 2026-06-27)
+
+**Action Items resolved:**
+- [x] CES scale mismatch in grade_quiz fixed — formula now `round(quiz_accuracy * ces_weight_quiz * 100, 4)` on 0-100 scale
+- [x] `__all__` added to schemas.py (AC 2.3 compliance)
+- [x] All 13 task checkboxes checked off
+- [x] Missing test `test_lesson_no_content_returns_404` added (content=None branch)
+- [x] `baseline_commit` filled in YAML frontmatter
+- [x] Tests added for AC 6 (score_teachback call args) and AC 7 (OpenAILLMProvider lesson_id)
+- [x] AC 13 feedback_praise/correction assertions added to DB write test
 
 ---
 
 ## Dev Agent Record
 
-**Status:** ready-for-dev
+**Status:** done
 
-**Debug Log:** *(to be filled during implementation)*
+**Debug Log:**
+- Circular import prevented by moving TeachbackSubmission/TeachbackResult from router.py → schemas.py
+- MagicMock truthy auto-attr required explicit `insert_mock.execute.return_value.error = None`
+- 5-agent BMAD parallel audit (2026-06-27): detected CES scale mismatch (grade_quiz used decimal range [0,0.35] vs grade_teachback correct range [0,25]); fixed on this branch
 
-**Completion Notes:** *(to be filled on completion)*
+**Completion Notes:** All 18 ACs satisfied. 25 teachback-specific tests pass (23 unit + 2 schema rule). Full suite: 196 passing, 7 pre-existing Dev 1/Dev 4 failures unchanged. CES contract: teachback ces_contribution max = 25.0 pts at weight=0.25; quiz ces_contribution max = 35.0 pts at weight=0.35. Dev 4 sums components directly — do NOT multiply by 100 again in ces.py.

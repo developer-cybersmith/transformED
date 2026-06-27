@@ -69,7 +69,7 @@ _LESSON_CONTENT: dict = {"lesson_id": "lesson-001", "segments": [_SEGMENT]}
 def _mock_settings(monkeypatch) -> None:
     """Patch get_settings so unit tests don't require real environment variables.
 
-    All happy-path tests reach ces_contribution = quiz_accuracy * settings.ces_weight_quiz,
+    All happy-path tests reach ces_contribution = quiz_accuracy * settings.ces_weight_quiz * 100,
     so settings must always be mocked. Tests that need a different weight override this
     fixture with their own monkeypatch.setattr on the same target.
     """
@@ -223,7 +223,7 @@ async def test_ces_contribution_uses_quiz_weight(mock_to_thread, monkeypatch) ->
         session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
         answers=answers, user_id="user-001", supabase=supabase,
     )
-    assert result.ces_contribution == pytest.approx(1.0 * 0.35)
+    assert result.ces_contribution == pytest.approx(1.0 * 0.35 * 100)
 
 
 @pytest.mark.unit
@@ -473,7 +473,7 @@ def test_http_layer_post_quiz_returns_200(monkeypatch) -> None:
             score=100.0,
             correct_count=1,
             total_count=1,
-            ces_contribution=0.35,
+            ces_contribution=35.0,
             feedback=[],
         )
 
