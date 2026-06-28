@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-29 (tracker switched to Not Started / Partial / Completed labels; mock_ws_client + jwt_all_routes closed)
-**Overall status:** 15/36 Completed · 5 Partial · 16 Not Started
+**Last updated:** 2026-06-29 (redis_lpush_pattern verified + tested → Completed; 3-state labels)
+**Overall status:** 16/36 Completed · 4 Partial · 16 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -14,13 +14,13 @@
 
 | Sprint | Period | Tasks | Completed | Partial | Not Started |
 |--------|--------|-------|-----------|---------|-------------|
-| Sprint 0 | Week 1 | 7 | 6 | 1 | 0 |
+| Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 5 | 2 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 0 | 0 | 6 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **15** | **5** | **16** |
+| **Total** | | **36** | **16** | **4** | **16** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -189,13 +189,20 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** JWT verified without remote call; expired/invalid tokens return 401 ✅
 
 <!-- CHECK:redis_lpush_pattern -->
-- [Partial] **Redis LPUSH/LTRIM/LRANGE CES signal buffer pattern operational** ⚠️ PARTIAL
+- [Completed] **Redis LPUSH/LTRIM/LRANGE CES signal buffer pattern operational** ✅ 2026-06-29
   - `apps/api/app/core/redis.py` — ConnectionPool singleton exists ✅
   - `get_redis()` dependency available for injection ✅
-  - **MISSING:** `session:{session_id}:ces_history` LPUSH/LTRIM/LRANGE pattern not implemented
-  - **MISSING:** No `ces_window` Redis key writes anywhere in codebase yet
-  - **Action needed:** Implement the windowed CES buffer in `tutor/service.py` (Sprint 1 work — but pattern must be proven in Sprint 0)
-  - **AC NOT MET:** No file in codebase writes `ces_history` list or uses LRANGE for CES ❌
+  - `tutor/service.py::process_attention_signal()` implements the full pattern ✅
+    - writes `session:{session_id}:ces_window` (24 h TTL)
+    - `LPUSH` → `LTRIM(0, 9)` → `EXPIRE` on `session:{session_id}:ces_history`
+    - reads via `LRANGE(0, 9)`; trigger fires `distraction_detected` when the 2 most-recent
+      values are both `< ces_threshold` and no `tutor_cooldown` key exists
+  - **Tests added:** `apps/api/tests/test_tutor_service.py` — 19 tests (parse, window/history writes,
+    LPUSH/LTRIM/EXPIRE order, LRANGE read, trigger + threshold-boundary + cooldown + stale-history guards)
+  - Story: `docs/stories/4-2-ces-buffer-tests.md`
+  - **Cross-check (2026-06-29):** prior "pattern not implemented" note was stale — the impl already
+    existed; the real gap was test coverage, now closed
+  - **AC MET:** `ces_history` LPUSH/LTRIM written and read via LRANGE, proven by tests ✅
 
 <!-- CHECK:langgraph_scaffold -->
 - [Completed] **LangGraph StateGraph scaffold (7 state nodes)** ✅ 2026-06-25 (verified — fully implemented, not just stubbed)
