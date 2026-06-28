@@ -3,26 +3,26 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-26 (re-verified against pulled repo — service.py live, pyproject.toml bugs fixed)
-**Overall status:** 13/36 done · 4 partial · 19 not started
-**Sprint 1 deadline:** 2026-06-27 — 4 tasks remain · critical path: WS session wiring + ARQ pub/sub fix
+**Last updated:** 2026-06-29 (tracker switched to Not Started / Partial / Completed labels; mock_ws_client + jwt_all_routes closed)
+**Overall status:** 15/36 Completed · 5 Partial · 16 Not Started
+**Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
 ---
 
 ## Quick Status Dashboard
 
-| Sprint | Period | Tasks | Done | Partial | Not Started |
-|--------|--------|-------|------|---------|-------------|
-| Sprint 0 | Week 1 | 7 | 6 | 0 | 1 |
-| Sprint 1 | Weeks 2–3 | 7 | 3 | 3 | 1 |
+| Sprint | Period | Tasks | Completed | Partial | Not Started |
+|--------|--------|-------|-----------|---------|-------------|
+| Sprint 0 | Week 1 | 7 | 6 | 1 | 0 |
+| Sprint 1 | Weeks 2–3 | 7 | 5 | 2 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 0 | 0 | 6 |
-| Sprint 3 | Weeks 6–7 | 8 | 3 | 1 | 4 |
+| Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **13** | **4** | **19** |
+| **Total** | | **36** | **15** | **5** | **16** |
 
-Update this table each time a task is checked off below.
+Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
 ---
 
@@ -169,7 +169,7 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Scaffold all Dev 4 owned files. No business logic — stubs and wiring only.
 
 <!-- CHECK:ws_handler_scaffold -->
-- [x] **FastAPI WebSocket handler scaffold** ✅ 2026-06-25 (verified)
+- [Completed] **FastAPI WebSocket handler scaffold** ✅ 2026-06-25 (verified)
   - File: `apps/api/app/core/websocket.py`
   - `ConnectionManager` class with `connect()`, `disconnect()`, `send()`, `broadcast()` ✅
   - `ws_router = APIRouter()` with `@ws_router.websocket("/ws/{session_id}")` ✅
@@ -179,7 +179,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** WebSocket accepts connections and dispatches by message type ✅
 
 <!-- CHECK:jwt_middleware -->
-- [x] **Local JWT middleware (PyJWT + SUPABASE_JWT_SECRET)** ✅ 2026-06-25 (verified)
+- [Completed] **Local JWT middleware (PyJWT + SUPABASE_JWT_SECRET)** ✅ 2026-06-25 (verified)
   - File: `apps/api/app/dependencies.py`
   - `get_current_user()` uses `jwt.decode()` with `settings.supabase_jwt_secret` ✅
   - Algorithms `["HS256"]`, required claims `["sub", "exp", "iat"]` ✅
@@ -189,7 +189,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** JWT verified without remote call; expired/invalid tokens return 401 ✅
 
 <!-- CHECK:redis_lpush_pattern -->
-- [x] **Redis LPUSH/LTRIM/LRANGE CES signal buffer pattern operational** ⚠️ PARTIAL
+- [Partial] **Redis LPUSH/LTRIM/LRANGE CES signal buffer pattern operational** ⚠️ PARTIAL
   - `apps/api/app/core/redis.py` — ConnectionPool singleton exists ✅
   - `get_redis()` dependency available for injection ✅
   - **MISSING:** `session:{session_id}:ces_history` LPUSH/LTRIM/LRANGE pattern not implemented
@@ -198,7 +198,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC NOT MET:** No file in codebase writes `ces_history` list or uses LRANGE for CES ❌
 
 <!-- CHECK:langgraph_scaffold -->
-- [x] **LangGraph StateGraph scaffold (7 state nodes)** ✅ 2026-06-25 (verified — fully implemented, not just stubbed)
+- [Completed] **LangGraph StateGraph scaffold (7 state nodes)** ✅ 2026-06-25 (verified — fully implemented, not just stubbed)
   - File: `apps/api/app/modules/tutor/state_machine/graph.py`
   - All 7 states defined in `TutorState(StrEnum)`: IDLE, TEACHING, INTERVENING, CHECKING_IN, QUIZZING, TEACH_BACK, SESSION_END ✅
   - All 7 node functions implemented: `idle_node`, `teaching_node`, `intervening_node`, `checking_in_node`, `quizzing_node`, `teach_back_node`, `session_end_node` ✅
@@ -210,7 +210,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Graph compiles; all 7 nodes registered; all 14 transitions wired ✅
 
 <!-- CHECK:tutor_stub -->
-- [x] **Tutor module stub in FastAPI** ✅ 2026-06-25 (verified)
+- [Completed] **Tutor module stub in FastAPI** ✅ 2026-06-25 (verified)
   - File: `apps/api/app/modules/tutor/router.py`
   - `GET /api/tutor/session/{session_id}/state` → 501 ✅
   - `POST /api/tutor/session/{session_id}/intervene` → 501 ✅
@@ -219,17 +219,16 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Endpoints return 501 and are discoverable in /docs ✅
 
 <!-- CHECK:mock_ws_client -->
-- [ ] **Mock WebSocket client for local testing (Python script)** ❌ NOT STARTED
-  - Target: `scripts/mock_ws_client.py` (or `tests/fixtures/ws_client.py`)
-  - Must connect to `ws://localhost:8000/ws/{session_id}`
-  - Must send: `{ "type": "attention_signal", "behavioral": 0.8, "head_pose": 0.7, "blink": 0.9, ... }`
-  - Must print received messages (intervention, lesson_ready, pong)
-  - Should be runnable: `python scripts/mock_ws_client.py --session-id <uuid>`
-  - **Blocker for Sprint 1:** Without a mock client, WebSocket behaviour cannot be verified locally
-  - **AC:** Script connects, sends an attention_signal, prints the server response
+- [Completed] **Mock WebSocket client for local testing (Python script)** ✅ 2026-06-28 (PR #22 merged)
+  - File: `scripts/mock_ws_client.py` ✅
+  - Connects to `ws://localhost:8000/ws/{session_id}` (configurable via `--host`) ✅
+  - Sends `session_start` → `attention_signal` (ws.ts-compliant nested payload) → `ping` ✅
+  - Prints all received messages; exits cleanly after a 2 s collection window ✅
+  - Runnable: `python scripts/mock_ws_client.py --session-id <uuid>` ✅
+  - **AC MET:** Script connects, sends an attention_signal, prints the server response ✅
 
 <!-- CHECK:sentry_wired -->
-- [x] **Sentry wired to FastAPI error handler** ✅ 2026-06-25 (verified)
+- [Completed] **Sentry wired to FastAPI error handler** ✅ 2026-06-25 (verified)
   - File: `apps/api/app/main.py`
   - `sentry_sdk.init()` called in `lifespan()` with `dsn`, `traces_sample_rate=0.1`, `profiles_sample_rate=0.1`, `environment` ✅
   - No-op when `SENTRY_DSN` is absent ✅
@@ -244,22 +243,25 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** JWT auth live on all routes. WebSocket fully functional end-to-end. State machine transitions running.
 
 <!-- CHECK:jwt_all_routes -->
-- [ ] **JWT middleware live and tested on all routes** ⚠️ PARTIAL — middleware implemented, tests missing
+- [Completed] **JWT middleware live and tested on all routes** ✅ 2026-06-28
   - `get_current_user()` in `dependencies.py` is fully implemented ✅
-  - All routers import `CurrentUser` — but not verified on every route ⚠️
-  - **MISSING:** No `tests/test_auth.py` exists anywhere in codebase
-  - Write integration test: request without token → 401; with expired token → 401; with valid token → 200
-  - **AC NOT MET:** Tests do not exist
+  - `apps/api/tests/test_auth.py` added — 10 tests against the REAL `get_current_user` ✅
+    - no header → 401/403; valid → 200; expired → 401; wrong secret → 401; malformed → 401
+    - `alg:none` rejected (HS256-only); missing `sub` → 401; empty `sub` → 401; missing `iat` → 401
+    - real tutor router mounted → unauthenticated request rejected (proves a production route enforces `CurrentUser`)
+  - Story: `docs/stories/4-1-jwt-auth-tests.md`
+  - **Out of scope:** WebSocket `/ws/{session_id}` does not use `CurrentUser` (separate auth concern, not yet implemented)
+  - **AC MET:** request without token → 401/403; expired → 401; valid → 200 ✅
 
 <!-- CHECK:ws_message_routing -->
-- [x] **WebSocket connection + message type routing**
+- [Completed] **WebSocket connection + message type routing**
   - Implement `apps/api/app/modules/tutor/service.py` with `process_attention_signal(session_id, signal)` 
   - `process_attention_signal` must: validate signal shape, store in Redis window, call `compute_ces()` (stub in Sprint 1, real in Sprint 3)
   - Implement `handle_ping()` → sends `{ "type": "pong" }` (already done in websocket.py — verify)
   - **AC:** Sending `{ "type": "attention_signal", ... }` via mock WS client produces no errors; sending `{ "type": "ping" }` returns `{ "type": "pong" }`
 
 <!-- CHECK:arq_lesson_ready -->
-- [ ] **Lesson progress push (ARQ pub/sub → WebSocket)** ⚠️ PARTIAL — wired but broken cross-process (Bug #6)
+- [Partial] **Lesson progress push (ARQ pub/sub → WebSocket)** ⚠️ PARTIAL — wired but broken cross-process (Bug #6)
   - `content_pipeline_job.py` currently calls `manager.send()` directly ✅ (works only if same process)
   - **CRITICAL BUG #6:** ARQ worker is a separate OS process — `manager._connections` is always empty there, so `lesson_ready` events are NEVER delivered to clients in production
   - **Fix required:** Replace `manager.send()` with Redis pub/sub:
@@ -269,14 +271,14 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC NOT MET:** Cross-process delivery broken
 
 <!-- CHECK:redis_signal_buffer -->
-- [x] **Redis signal buffer operational (LPUSH/LTRIM/LRANGE)**
+- [Completed] **Redis signal buffer operational (LPUSH/LTRIM/LRANGE)**
   - Implement `session:{session_id}:ces_history` list buffer in `tutor/service.py`
   - On every `attention_signal`: LPUSH new CES value, LTRIM to last 10 (50s history), LRANGE to read
   - Trigger check: if `history[:2]` both below `CES_THRESHOLD` → dispatch `distraction_detected` event
   - **AC:** Unit test: push 2 values below threshold → `distraction_detected` dispatched; push 1 below + 1 above → no dispatch
 
 <!-- CHECK:idle_to_teaching -->
-- [ ] **IDLE → TEACHING state transition live** ⚠️ PARTIAL — state machine logic done, wiring missing
+- [Partial] **IDLE → TEACHING state transition live** ⚠️ PARTIAL — state machine logic done, wiring missing
   - `graph.py` routes `session_start` event → TEACHING node correctly ✅
   - `dispatch_event()` is fully callable ✅
   - **MISSING:** `tutor/service.py` does not exist — no caller for `dispatch_event(session_id, "session_start")`
@@ -284,7 +286,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC NOT MET:** Transition never gets triggered
 
 <!-- CHECK:session_state_init -->
-- [x] **Session state init on lesson start**
+- [Completed] **Session state init on lesson start**
   - On new WebSocket connection: initialise Redis keys with 24h TTL
     - `tutor_state:{session_id}` = "IDLE"
     - `tutor_distraction_count:{session_id}` = "0"
@@ -293,7 +295,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** After WS connection, all session Redis keys are initialised; stale keys from previous session are cleared
 
 <!-- CHECK:session_redis_persistence -->
-- [x] **Session state Redis persistence (24h TTL)**
+- [Completed] **Session state Redis persistence (24h TTL)**
   - Verify ALL `redis.set()` calls in `graph.py` use `ex=_STATE_TTL` (86400 seconds)
   - Add test: mock Redis, call each node, assert TTL is set on every write
   - Verify reconnecting client reads correct state from Redis
@@ -306,7 +308,7 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Full 7-state machine with real transition logic. Intervention message delivery. WebSocket message types finalised.
 
 <!-- CHECK:full_state_machine -->
-- [ ] **Full 7-state LangGraph StateGraph with real logic**
+- [Not Started] **Full 7-state LangGraph StateGraph with real logic**
   - `graph.py` already has all nodes and transitions — replace any remaining stubs with real logic
   - `intervening_node`: read pre-generated intervention message from `LessonPackage.segments[].intervention_messages`
   - `teach_back_node`: set `in_teachback: True` flag; block all intervention dispatches while active
@@ -314,14 +316,14 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Simulated session flows from IDLE → TEACHING → INTERVENING → TEACHING without errors
 
 <!-- CHECK:all_transitions -->
-- [ ] **All 14 transitions wired and tested**
+- [Not Started] **All 14 transitions wired and tested**
   - Write one unit test per transition using mocked Redis and a mocked LessonPackage
   - Cover every conditional edge: distraction guard blocks, fatigue blocks, teachback blocks
   - All 14 transitions defined in `graph.py` are already wired — tests must prove correctness
   - **AC:** 14 passing tests, one per transition; each guard rule has a separate test for the blocked case
 
 <!-- CHECK:quizzing_teachback_flow -->
-- [ ] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow**
+- [Not Started] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow**
   - Implement trigger: when WS client sends `{ "type": "segment_complete" }` → `segment_complete` event
   - Implement trigger: when WS client sends `{ "type": "quiz_failed" }` → `quiz_failed` event
   - Implement trigger: when WS client sends `{ "type": "teachback_complete" }` → `teachback_complete` event
@@ -329,20 +331,20 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Step-through test shows CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING state sequence
 
 <!-- CHECK:session_restore -->
-- [ ] **Session state restore on reconnect tested**
+- [Not Started] **Session state restore on reconnect tested**
   - On reconnect: read `tutor_state:{session_id}` from Redis → send current state to client as `{ "type": "state_sync", "state": "QUIZZING" }`
   - Write test: set Redis key manually → connect WS → assert client receives `state_sync` with correct state
   - **AC:** Client reconnecting mid-session receives current state within 100ms of reconnect
 
 <!-- CHECK:intervention_selection -->
-- [ ] **Intervention message selection from lesson package**
+- [Not Started] **Intervention message selection from lesson package**
   - At intervention time: read `LessonPackage` from DB (or Redis cache), extract `segments[current_idx].intervention_messages[type]`
   - Never call GPT at intervention time — messages are pre-generated at lesson build (Dev 1's pipeline)
   - Send to client: `{ "type": "intervention", "intervention_type": "distraction", "message": "...", "overlay_seconds": 5 }`
   - **AC:** Intervention delivery latency < 50ms (no LLM call, only Redis reads)
 
 <!-- CHECK:ws_message_types_final -->
-- [ ] **WebSocket message types finalised and published**
+- [Not Started] **WebSocket message types finalised and published**
   - Share `/openapi.json` WebSocket spec with Dev 2 (WebSocket types are not in OpenAPI — share a separate `docs/ws-message-contract.md`)
   - Write `docs/ws-message-contract.md` with all inbound/outbound message shapes + example payloads
   - Dev 2 confirms frontend matches the contract
@@ -355,14 +357,14 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Attention signal processing live. Full CES pipeline. All intervention guard rules enforced.
 
 <!-- CHECK:attention_ingestion -->
-- [x] **Attention signal ingestion from WebSocket live**
+- [Completed] **Attention signal ingestion from WebSocket live**
   - `_handle_attention_signal()` in `websocket.py` is already wired — implement `process_attention_signal()` fully
   - Validate signal: all 5 fields present and in [0, 1] range; reject malformed with `{ "error": "invalid signal" }`
   - On valid signal: push to Redis CES window, compute CES, check trigger condition
   - **AC:** Sending 10 sequential `attention_signal` messages → Redis `ces_history` list has 10 values
 
 <!-- CHECK:ces_redis_buffer -->
-- [x] **Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s**
+- [Completed] **Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s**
   - Implement a 5-second aggregation window: buffer signals, compute average CES every 5s
   - Use `asyncio.create_task()` or ARQ periodic job — NOT a blocking sleep
   - Store window result in `session:{session_id}:ces_window`
@@ -370,41 +372,41 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Load test: 50 concurrent sessions each sending 1 signal/second → CES computed every 5s with < 10ms latency
 
 <!-- CHECK:ces_computation -->
-- [ ] **CES computation in-process (~3–5ms total)**
+- [Not Started] **CES computation in-process (~3–5ms total)**
   - Call `compute_ces()` from Dev 3's `apps/api/app/modules/assessment/ces.py`
   - Pass: `quiz_accuracy`, `teachback_score`, `behavioral`, `head_pose`, `blink` from the attention signal
   - Store result in `tutor_ces:{session_id}` Redis key
   - **AC:** `compute_ces()` roundtrip including Redis write completes in < 5ms (benchmark test)
 
 <!-- CHECK:intervention_trigger -->
-- [x] **Intervention trigger: 2 consecutive windows below threshold**
+- [Completed] **Intervention trigger: 2 consecutive windows below threshold**
   - After each 5s CES computation: LRANGE `ces_history` → check last 2 values
   - If both < `CES_THRESHOLD (50.0)` AND not in cooldown AND not in TEACH_BACK → dispatch `distraction_detected`
   - If fatigue heuristic fires → dispatch `fatigue_detected`
   - **AC:** Unit test: 2 consecutive CES values of 40 → `distraction_detected` dispatched; values [40, 60] → no dispatch
 
 <!-- CHECK:cooldown_enforcement -->
-- [x] **2-minute cooldown enforcement (Redis TTL key)**
+- [Completed] **2-minute cooldown enforcement (Redis TTL key)**
   - After any intervention: `redis.set(f"tutor_cooldown:{session_id}", "1", ex=settings.intervention_cooldown_seconds)`
   - Guard in `route_from_teaching()` already checks `redis.exists(cooldown_key)` — verify it's called correctly
   - **AC:** After an intervention fires, attempting to trigger another within 2 minutes → guard blocks; after 2 minutes → guard allows
 
 <!-- CHECK:max_distraction_cap -->
-- [ ] **Max 3 distraction interventions per session cap** ⚠️ PARTIAL — implementation done, tests missing
+- [Partial] **Max 3 distraction interventions per session cap** ⚠️ PARTIAL — implementation done, tests missing
   - `tutor_distraction_count:{session_id}` incremented in `intervening_node()` for `type == "distraction"` ✅ (graph.py)
   - Guard `_can_intervene_distraction()` checks `count < settings.max_distraction_per_session` ✅ (graph.py)
   - **MISSING:** No integration test firing 3 interventions → 4th blocked
   - **AC NOT MET:** Tests required to verify guard correctness end-to-end
 
 <!-- CHECK:fatigue_once -->
-- [ ] **Fatigue intervention: once per session flag** ⚠️ PARTIAL — implementation done, tests missing
+- [Partial] **Fatigue intervention: once per session flag** ⚠️ PARTIAL — implementation done, tests missing
   - `tutor_fatigue_fired:{session_id}` = "1" set in `intervening_node()` for `type == "fatigue"` ✅ (graph.py)
   - Guard `_can_intervene_fatigue()` checks `redis.exists(fatigue_key)` ✅ (graph.py)
   - **MISSING:** No test triggering fatigue twice → second trigger blocked
   - **AC NOT MET:** Tests required to verify guard correctness end-to-end
 
 <!-- CHECK:intervention_routing -->
-- [ ] **Type A/B/C intervention routing to correct message**
+- [Not Started] **Type A/B/C intervention routing to correct message**
   - Intervention types: `distraction` | `fatigue` | `encouragement`
   - Each maps to a different pre-generated message from `LessonPackage.segments[].intervention_messages`
   - Route based on `intervention_type` in the state bag
@@ -417,42 +419,42 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Stability, tuning, load testing. No new features.
 
 <!-- CHECK:threshold_tuning -->
-- [ ] **Intervention threshold tuning (is CES < 50 right?)**
+- [Not Started] **Intervention threshold tuning (is CES < 50 right?)**
   - Analyse 20+ real sessions: plot CES value distribution vs post-session quiz scores
   - Objective: find CES threshold where sensitivity (true interventions) > 70% and false positive rate < 20%
   - Propose updated `CES_THRESHOLD` value with data backing
   - **AC:** Analysis written in `docs/sprint4-ces-threshold-analysis.md`; new threshold proposed
 
 <!-- CHECK:intervention_response_review -->
-- [ ] **Review which interventions students responded to vs ignored**
+- [Not Started] **Review which interventions students responded to vs ignored**
   - Query `session_events` for `intervention_acknowledged` events
   - Compute acknowledgement rate per intervention type (distraction / fatigue / encouragement)
   - Flag types with < 50% acknowledgement rate for message copy revision
   - **AC:** Review doc written; at least 1 intervention type flagged with proposed copy change
 
 <!-- CHECK:cooldown_tuning -->
-- [ ] **Cooldown period tuning from real session data**
+- [Not Started] **Cooldown period tuning from real session data**
   - Analyse time between consecutive interventions in real sessions
   - If avg inter-intervention time < 4 minutes, increase `INTERVENTION_COOLDOWN_SECONDS`
   - Update Railway env var; document change
   - **AC:** Cooldown value updated in Railway; documented with data rationale
 
 <!-- CHECK:ws_load_test -->
-- [ ] **WebSocket stability testing under 50 concurrent users**
+- [Not Started] **WebSocket stability testing under 50 concurrent users**
   - Use `locust` or `websockets` Python lib to simulate 50 concurrent WS sessions
   - Each session: connect → send 60 attention_signals over 5 minutes → disconnect
   - Target: 0 dropped connections, memory stable, Redis connection count < pool max (20)
   - **AC:** Load test report in `docs/sprint4-ws-load-test.md`; 0 connection drops at 50 concurrent users
 
 <!-- CHECK:reconnect_test -->
-- [ ] **Session reconnect testing under poor network conditions**
+- [Not Started] **Session reconnect testing under poor network conditions**
   - Use `toxiproxy` or manual network interrupt to simulate dropped connection mid-session
   - Client reconnects → receives `state_sync` → session continues without data loss
   - Test all 7 states: reconnect should work from any state
   - **AC:** Reconnect from each of the 7 states tested; state is always correctly restored from Redis
 
 <!-- CHECK:intervention_copy_review -->
-- [ ] **Intervention message copy review (tone + warmth)**
+- [Not Started] **Intervention message copy review (tone + warmth)**
   - Extract all pre-generated intervention messages from 5 real lesson packages
   - Review checklist: warm tone, not condescending, < 15 words, action-oriented
   - Flag any failing messages and coordinate with Dev 1 (pipeline owner) to regenerate
@@ -465,13 +467,13 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Verify WebSocket and tutor interventions are production-ready.
 
 <!-- CHECK:ws_launch_stability -->
-- [ ] **WebSocket stability confirmed at launch load**
+- [Not Started] **WebSocket stability confirmed at launch load**
   - Run load test against Railway production with 20 concurrent users (real lesson playback, not synthetic)
   - Monitor Redis memory, CPU, WS connection count in Railway metrics
   - **AC:** 20 concurrent real users complete full sessions without WS drops
 
 <!-- CHECK:interventions_production -->
-- [ ] **Tutor interventions verified firing correctly in production**
+- [Not Started] **Tutor interventions verified firing correctly in production**
   - Manually complete 3 full lesson sessions with simulated low attention (behavioral < 0.3)
   - Verify all 3 intervention types fire at least once across sessions
   - Verify cooldown and max-cap guards work in production Redis
@@ -481,21 +483,31 @@ MAX_DISTRACTION_PER_SESSION=3
 
 ## Update Protocol
 
-When a task is completed:
+Every task line carries one of three explicit status labels (NOT a binary checkbox — a checkbox
+cannot express "implemented but untested"):
 
-1. Change `- [ ]` to `- [x]` on the task line
-2. Append ` ✅ YYYY-MM-DD` to the task title line
-3. Update the **Quick Status Dashboard** table (increment Done, decrement Not Started)
+- `[Not Started]` — no implementation yet
+- `[Partial]` — implementation exists but an AC is unmet (e.g. tests missing, cross-process bug)
+- `[Completed]` — all ACs met and verified
+
+When a task's status changes:
+
+1. Update the label on the task line, e.g. `- [Partial]` → `- [Completed]`
+2. Append/refresh ` ✅ YYYY-MM-DD` (or the relevant `⚠️ PARTIAL — reason`) on the task title line
+3. Update the **Quick Status Dashboard** table counts
 4. Update **Last updated** date in the header
 
-Or run the auto-check script:
+Or run the auto-check script (read-only by default for safety — it reports detected status and
+fills `[Completed]`/`[Not Started]` from codebase evidence, but never downgrades a human-set
+`[Partial]`):
 ```bash
-python scripts/check_dev4_progress.py
+python scripts/check_dev4_progress.py            # report + safe update
+python scripts/check_dev4_progress.py --dry-run  # report only
 ```
 
 Example completed task:
 ```markdown
-- [x] **WebSocket connection + message type routing** ✅ 2026-06-30
+- [Completed] **WebSocket connection + message type routing** ✅ 2026-06-30
 ```
 
 Do not delete task details after completion — they serve as a specification record.
