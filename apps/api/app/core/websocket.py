@@ -122,6 +122,42 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         manager.disconnect(websocket, session_id)
 
 
+# ── Session lifecycle helpers ──────────────────────────────────────────────────
+
+
+async def _init_session_state(session_id: str) -> None:
+    """Initialise Redis keys for a new session.
+
+    Sets tutor state to IDLE, zeroes the distraction counter, and clears any
+    stale cooldown / fatigue flags left over from a previous session with the
+    same ID.  All errors are swallowed so a Redis blip never blocks connection.
+    """
+    try:
+        from app.core.redis import get_redis
+
+        redis = get_redis()
+        await redis.set(f"tutor_state:{session_id}", "IDLE", ex=86400)
+        await redis.set(f"tutor_distraction_count:{session_id}", "0", ex=86400)
+        await redis.delete(f"tutor_cooldown:{session_id}")
+        await redis.delete(f"tutor_fatigue_fired:{session_id}")
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to initialise session state for session %s", session_id)
+
+
+async def _handle_session_start(session_id: str) -> None:
+    """Dispatch the session_start event into the tutor state machine.
+
+    Imported lazily to avoid circular imports between core and modules.
+    Errors are swallowed so an FSM failure never crashes the WS handshake.
+    """
+    try:
+        from app.modules.tutor.state_machine.graph import dispatch_event
+
+        await dispatch_event(session_id, "session_start")
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to dispatch session_start for session %s", session_id)
+
+
 # ── Dispatch helpers ───────────────────────────────────────────────────────────
 
 
