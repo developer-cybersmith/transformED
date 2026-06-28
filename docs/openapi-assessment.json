@@ -1,0 +1,628 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "HIE Assessment API",
+    "description": "Assessment endpoints for TransformED — quiz submission, teach-back evaluation, session reports, Learner DNA, and onboarding diagnostic.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/assessment/quiz": {
+      "post": {
+        "tags": [
+          "assessment"
+        ],
+        "summary": "Submit quiz answers for a session",
+        "description": "Grade a quiz submission and update the session's CES score.\n\nTODO (Sprint 1): Delegate to assessment service.",
+        "operationId": "submit_quiz_api_assessment_quiz_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/assessment/teachback": {
+      "post": {
+        "tags": [
+          "assessment"
+        ],
+        "summary": "Submit a typed teach-back response for LLM evaluation",
+        "description": "Evaluate a student's typed teach-back response using the LLM rubric.\n\nTODO (Sprint 1): Delegate to assessment service.",
+        "operationId": "submit_teachback_api_assessment_teachback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeachbackSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeachbackResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/assessment/session/{session_id}/report": {
+      "get": {
+        "tags": [
+          "assessment"
+        ],
+        "summary": "Get the complete assessment report for a session",
+        "description": "Return the final CES breakdown and scores for a completed session.\n\nTODO (Sprint 2): Query session_reports table.",
+        "operationId": "get_session_report_api_assessment_session__session_id__report_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/assessment/user/dna": {
+      "get": {
+        "tags": [
+          "assessment"
+        ],
+        "summary": "Get the learner DNA profile for the current user",
+        "description": "Return aggregated learning patterns for the authenticated user.\n\nTODO (Sprint 2): Aggregate from session_reports.",
+        "operationId": "get_learner_dna_api_assessment_user_dna_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearnerDNA"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/assessment/onboarding/submit": {
+      "post": {
+        "tags": [
+          "assessment"
+        ],
+        "summary": "Submit onboarding diagnostic answers",
+        "description": "Process onboarding diagnostic and generate initial learner DNA.\n\nTODO (Sprint 1): Delegate to assessment service.",
+        "operationId": "submit_onboarding_diagnostic_api_assessment_onboarding_submit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingDiagnosticSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Submit Onboarding Diagnostic Api Assessment Onboarding Submit Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LearnerDNA": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "badge_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Badge Labels"
+          },
+          "profile_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Text"
+          },
+          "session_count": {
+            "type": "integer",
+            "title": "Session Count"
+          },
+          "reassessment_due": {
+            "type": "boolean",
+            "title": "Reassessment Due",
+            "default": false
+          },
+          "last_updated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Updated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "badge_labels",
+          "profile_text",
+          "session_count",
+          "last_updated"
+        ],
+        "title": "LearnerDNA"
+      },
+      "OnboardingAnswer": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "title": "Question Id"
+          },
+          "dimension": {
+            "type": "string",
+            "title": "Dimension"
+          },
+          "selected_index": {
+            "type": "integer",
+            "title": "Selected Index"
+          },
+          "selected_text": {
+            "type": "string",
+            "title": "Selected Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "dimension",
+          "selected_index",
+          "selected_text"
+        ],
+        "title": "OnboardingAnswer"
+      },
+      "OnboardingDiagnosticSubmission": {
+        "properties": {
+          "responses": {
+            "items": {
+              "$ref": "#/components/schemas/OnboardingAnswer"
+            },
+            "type": "array",
+            "title": "Responses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "responses"
+        ],
+        "title": "OnboardingDiagnosticSubmission"
+      },
+      "QuizAnswer": {
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "title": "Question Id"
+          },
+          "response_index": {
+            "type": "integer",
+            "title": "Response Index"
+          },
+          "response_time_ms": {
+            "type": "integer",
+            "title": "Response Time Ms",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id",
+          "response_index"
+        ],
+        "title": "QuizAnswer"
+      },
+      "QuizResult": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "correct_count": {
+            "type": "integer",
+            "title": "Correct Count"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "ces_contribution": {
+            "type": "number",
+            "title": "Ces Contribution"
+          },
+          "feedback": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Feedback"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "score",
+          "correct_count",
+          "total_count",
+          "ces_contribution",
+          "feedback"
+        ],
+        "title": "QuizResult"
+      },
+      "QuizSubmission": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/QuizAnswer"
+            },
+            "type": "array",
+            "title": "Answers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "lesson_id",
+          "segment_id",
+          "answers"
+        ],
+        "title": "QuizSubmission"
+      },
+      "SessionReport": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "ces_score": {
+            "type": "number",
+            "title": "Ces Score"
+          },
+          "ces_breakdown": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Ces Breakdown"
+          },
+          "interventions_count": {
+            "type": "integer",
+            "title": "Interventions Count"
+          },
+          "quiz_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Score"
+          },
+          "teachback_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachback Score"
+          },
+          "duration_minutes": {
+            "type": "number",
+            "title": "Duration Minutes"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "user_id",
+          "lesson_id",
+          "ces_score",
+          "ces_breakdown",
+          "interventions_count",
+          "quiz_score",
+          "teachback_score",
+          "duration_minutes",
+          "completed_at"
+        ],
+        "title": "SessionReport"
+      },
+      "TeachbackResult": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "rubric_scores": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Rubric Scores"
+          },
+          "overall_score": {
+            "type": "number",
+            "title": "Overall Score"
+          },
+          "ces_contribution": {
+            "type": "number",
+            "title": "Ces Contribution"
+          },
+          "feedback": {
+            "type": "string",
+            "title": "Feedback"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "rubric_scores",
+          "overall_score",
+          "ces_contribution",
+          "feedback"
+        ],
+        "title": "TeachbackResult"
+      },
+      "TeachbackSubmission": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "segment_id": {
+            "type": "string",
+            "title": "Segment Id"
+          },
+          "response_text": {
+            "type": "string",
+            "title": "Response Text",
+            "description": "Student's typed teach-back response"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "lesson_id",
+          "segment_id",
+          "response_text"
+        ],
+        "title": "TeachbackSubmission"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

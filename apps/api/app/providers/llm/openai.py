@@ -14,12 +14,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langfuse import Langfuse
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from app.config import get_settings
 from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.langfuse import get_langfuse
 from app.core.retry import with_retry
 from app.providers.base import LLMProvider
 
@@ -41,11 +41,7 @@ class OpenAILLMProvider(LLMProvider):
     def __init__(self, lesson_id: str | None = None) -> None:
         settings = get_settings()
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self._langfuse = Langfuse(
-            public_key=settings.langfuse_public_key,
-            secret_key=settings.langfuse_secret_key,
-            host=settings.langfuse_host,
-        )
+        self._langfuse = get_langfuse()
         self._lesson_id = lesson_id
 
     @with_retry(max_attempts=3)

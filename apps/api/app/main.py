@@ -1,4 +1,4 @@
-﻿"""
+"""
 FastAPI application factory.
 
 Usage:
@@ -7,6 +7,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.config import get_settings
+from app.core.langfuse import get_langfuse
 from app.core.redis import close_redis, init_redis
 from app.core.websocket import ws_router
 from app.modules.admin.router import router as admin_router
@@ -32,7 +34,7 @@ from app.modules.tutor.router import router as tutor_router
 
 logger = logging.getLogger(__name__)
 
-# â”€â”€ Rate limiter (module-level so middleware can reference it) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# -- Rate limiter (module-level so middleware can reference it) ----------------
 limiter = Limiter(key_func=get_remote_address, default_limits=["10/second"])
 
 
@@ -41,12 +43,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage startup / shutdown of shared resources."""
     settings = get_settings()
 
-    # â”€â”€ Startup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    logger.info("Starting HIE APIâ€¦")
+    # -- Startup ---------------------------------------------------------------
+    logger.info("Starting HIE API...")
 
     # Redis
     await init_redis(settings.redis_url)
     logger.info("Redis connection pool initialised")
+
+    # lesson_ready pub/sub listener (bridges ARQ worker -> WebSocket clients)
+    from app.core.pubsub import start_lesson_ready_listener
+    from app.core.websocket import manager as ws_manager
+
+    _pubsub_task = await start_lesson_ready_listener(ws_manager)
+    logger.info("lesson_ready pub/sub listener started")
+
+    # Langfuse - initialise singleton so the first trace isn't delayed
+    get_langfuse()
+    logger.info("Langfuse host: %s", settings.langfuse_host)
 
     # Sentry (no-op when DSN is absent)
     if settings.sentry_dsn:
@@ -60,10 +73,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # â”€â”€ Shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    logger.info("Shutting down HIE APIâ€¦")
-    await close_redis()
-    logger.info("Redis connections closed")
+    # -- Shutdown --------------------------------------------------------------
+    logger.info("Shutting down HIE API...")
+
+    # Cancel pub/sub listener before closing the shared Redis pool
+    _pubsub_task.cancel()
+    try:
+        await _pubsub_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("lesson_ready pub/sub listener stopped")
+
+    try:
+        await close_redis()
+        logger.info("Redis connections closed")
+    finally:
+        try:
+            await asyncio.to_thread(get_langfuse().flush)
+            logger.info("Langfuse traces flushed")
+        except Exception:
+            logger.warning("Langfuse flush failed - some traces may be lost", exc_info=True)
 
 
 def create_app() -> FastAPI:
@@ -72,14 +101,14 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="HIE API",
-        description="Human Intelligence Engine platform â€” Sprint 0",
+        description="Human Intelligence Engine platform - Sprint 0",
         version="0.1.0",
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
         lifespan=lifespan,
     )
 
-    # â”€â”€ Middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- Middleware ------------------------------------------------------------
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -88,11 +117,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # â”€â”€ Rate limiting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- Rate limiting ---------------------------------------------------------
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
-    # â”€â”€ Module routers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- Module routers --------------------------------------------------------
     app.include_router(auth_router,       prefix="/api/auth")
     app.include_router(content_router,    prefix="/api/content")
     app.include_router(media_router,      prefix="/api/media")
@@ -101,10 +130,10 @@ def create_app() -> FastAPI:
     app.include_router(tutor_router,      prefix="/api/tutor")
     app.include_router(admin_router,      prefix="/api/admin")
 
-    # â”€â”€ WebSocket router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- WebSocket router ------------------------------------------------------
     app.include_router(ws_router)
 
-    # â”€â”€ Health endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- Health endpoint -------------------------------------------------------
     @app.get("/health", tags=["ops"], summary="Liveness probe")
     async def health(request: Request) -> dict[str, str]:  # noqa: RUF029
         return {"status": "ok", "version": app.version}

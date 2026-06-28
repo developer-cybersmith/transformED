@@ -1,4 +1,21 @@
-"""Unit tests for WebSocket session lifecycle and tutor guard rules."""
+"""Unit tests for WebSocket session lifecycle and tutor guard rules.
+
+Covers two tracker tasks in ``apps/api/app/core/websocket.py``:
+- ``session_state_init``  → ``_init_session_state()``
+- ``idle_to_teaching``    → ``_handle_session_start()``
+
+All tests are ``@pytest.mark.unit`` — no real Redis / state machine required.
+``asyncio_mode = "auto"`` (see pyproject.toml) runs the async tests directly.
+
+Patch-target note
+-----------------
+``_init_session_state`` lazily imports ``get_redis`` *inside* the function
+(per the no-module-level-imports rule in websocket.py), so the only effective
+patch target is ``app.core.redis.get_redis`` — the namespace the lazy
+``from app.core.redis import get_redis`` actually resolves against. Patching
+``app.core.websocket.get_redis`` would not intercept it (the name never lives
+on the websocket module).
+"""
 
 from __future__ import annotations
 

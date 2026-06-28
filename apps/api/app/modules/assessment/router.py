@@ -7,54 +7,25 @@ learner DNA retrieval, and onboarding diagnostic submission.
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.dependencies import CurrentUser
 
+# All request/response models live in schemas.py so service.py can import them
+# without creating a circular import (service ← router ← service).
+from app.modules.assessment.schemas import (
+    QuizAnswer,
+    QuizResult,
+    QuizSubmission,
+    TeachbackResult,
+    TeachbackSubmission,
+)
+
 router = APIRouter(tags=["assessment"])
 
-
-# ── Request / Response models ─────────────────────────────────────────────────
-
-
-class QuizAnswer(BaseModel):
-    question_id: str
-    response_index: int
-    response_time_ms: int = 0
-
-
-class QuizSubmission(BaseModel):
-    session_id: str
-    lesson_id: str
-    segment_id: str
-    answers: list[QuizAnswer]
-
-
-class QuizResult(BaseModel):
-    session_id: str
-    score: float
-    correct_count: int
-    total_count: int
-    ces_contribution: float
-    feedback: list[dict[str, Any]]
-
-
-class TeachbackSubmission(BaseModel):
-    session_id: str
-    lesson_id: str
-    segment_id: str
-    response_text: str = Field(description="Student's typed teach-back response")
-
-
-class TeachbackResult(BaseModel):
-    session_id: str
-    rubric_scores: dict[str, float]
-    overall_score: float
-    ces_contribution: float
-    feedback: str
+# Re-export for backward compatibility — tests and other modules import from here.
+__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult", "TeachbackSubmission", "TeachbackResult"]
 
 
 class SessionReport(BaseModel):
@@ -73,6 +44,9 @@ class SessionReport(BaseModel):
 class LearnerDNA(BaseModel):
     user_id: str
     badge_labels: list[str]
+    # DPDP Act 2023 (Sprint 2): profile_text MUST end with the statutory disclaimer
+    # before this field is returned to the client. Never truncate or omit the disclaimer.
+    # See CLAUDE.md §dev-rules and prompts.py when implementing get_learner_dna().
     profile_text: str | None
     session_count: int
     reassessment_due: bool = False
@@ -102,27 +76,39 @@ async def submit_quiz(
     body: QuizSubmission,
     current_user: CurrentUser,
 ) -> QuizResult:
-    """Grade a quiz submission and update the session's CES score.
-
-    TODO (Sprint 1): Delegate to assessment service.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    """Grade a quiz submission and update the session's CES score."""
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import grade_quiz
+    return await grade_quiz(
+        session_id=body.session_id,
+        lesson_id=body.lesson_id,
+        segment_id=body.segment_id,
+        answers=body.answers,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(
     "/teachback",
     response_model=TeachbackResult,
-    summary="Submit a teach-back transcript for LLM evaluation",
+    summary="Submit a typed teach-back response for LLM evaluation",
 )
 async def submit_teachback(
     body: TeachbackSubmission,
     current_user: CurrentUser,
 ) -> TeachbackResult:
-    """Evaluate a student's typed teach-back response using the LLM rubric.
-
-    TODO (Sprint 1): Delegate to assessment service.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    """Evaluate a student's typed teach-back response using the GPT-4o-mini rubric."""
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import grade_teachback
+    return await grade_teachback(
+        session_id=body.session_id,
+        lesson_id=body.lesson_id,
+        segment_id=body.segment_id,
+        response_text=body.response_text,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.get(
