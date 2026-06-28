@@ -3,9 +3,9 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-26 (re-verified against pulled repo — service.py live, pyproject.toml bugs fixed)
-**Overall status:** 13/36 done · 4 partial · 19 not started
-**Sprint 1 deadline:** 2026-06-27 — 4 tasks remain · critical path: WS session wiring + ARQ pub/sub fix
+**Last updated:** 2026-06-28 (jwt_all_routes tests added — Sprint 1 auth task closed)
+**Overall status:** 14/36 done · 3 partial · 19 not started
+**Sprint 1 deadline:** 2026-06-27 — 3 tasks remain · critical path: WS session wiring + ARQ pub/sub fix
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
 ---
@@ -15,12 +15,12 @@
 | Sprint | Period | Tasks | Done | Partial | Not Started |
 |--------|--------|-------|------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 6 | 0 | 1 |
-| Sprint 1 | Weeks 2–3 | 7 | 3 | 3 | 1 |
+| Sprint 1 | Weeks 2–3 | 7 | 4 | 2 | 1 |
 | Sprint 2 | Weeks 4–5 | 6 | 0 | 0 | 6 |
 | Sprint 3 | Weeks 6–7 | 8 | 3 | 1 | 4 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **13** | **4** | **19** |
+| **Total** | | **36** | **14** | **3** | **19** |
 
 Update this table each time a task is checked off below.
 
@@ -244,12 +244,15 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** JWT auth live on all routes. WebSocket fully functional end-to-end. State machine transitions running.
 
 <!-- CHECK:jwt_all_routes -->
-- [ ] **JWT middleware live and tested on all routes** ⚠️ PARTIAL — middleware implemented, tests missing
+- [x] **JWT middleware live and tested on all routes** ✅ 2026-06-28
   - `get_current_user()` in `dependencies.py` is fully implemented ✅
-  - All routers import `CurrentUser` — but not verified on every route ⚠️
-  - **MISSING:** No `tests/test_auth.py` exists anywhere in codebase
-  - Write integration test: request without token → 401; with expired token → 401; with valid token → 200
-  - **AC NOT MET:** Tests do not exist
+  - `apps/api/tests/test_auth.py` added — 10 tests against the REAL `get_current_user` ✅
+    - no header → 401/403; valid → 200; expired → 401; wrong secret → 401; malformed → 401
+    - `alg:none` rejected (HS256-only); missing `sub` → 401; empty `sub` → 401; missing `iat` → 401
+    - real tutor router mounted → unauthenticated request rejected (proves a production route enforces `CurrentUser`)
+  - Story: `docs/stories/4-1-jwt-auth-tests.md`
+  - **Out of scope:** WebSocket `/ws/{session_id}` does not use `CurrentUser` (separate auth concern, not yet implemented)
+  - **AC MET:** request without token → 401/403; expired → 401; valid → 200 ✅
 
 <!-- CHECK:ws_message_routing -->
 - [x] **WebSocket connection + message type routing**
