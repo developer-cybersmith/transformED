@@ -7,18 +7,23 @@ import from this single module.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import Settings, get_settings
 from app.core.redis import get_redis
 
+if TYPE_CHECKING:
+    from arq.connections import ArqRedis as ArqRedisType
+
 # Re-export for use in route type annotations
 __all__ = [
+    "ArqRedis",
     "CurrentUser",
+    "get_arq_redis",
     "get_current_user",
     "get_redis",
     "get_settings",
@@ -68,7 +73,19 @@ async def get_current_user(
     return payload
 
 
+async def get_arq_redis(request: Request) -> "ArqRedisType":
+    """Inject the ARQ Redis pool from app state (for job enqueue only).
+
+    Distinct from get_redis() which returns redis.asyncio.Redis.
+    Only ArqRedis has .enqueue_job().
+    """
+    return request.app.state.arq_redis  # type: ignore[no-any-return]
+
+
 # ── Annotated shorthands ──────────────────────────────────────────────────────
 
 CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 """Type alias: inject the current user's decoded JWT payload."""
+
+ArqRedis = Annotated["ArqRedisType", Depends(get_arq_redis)]
+"""Type alias: inject the ARQ job-enqueue pool."""

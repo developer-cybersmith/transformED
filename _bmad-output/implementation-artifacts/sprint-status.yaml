@@ -1,0 +1,88 @@
+# generated: 2026-06-28T00:00:00Z
+# last_updated: 2026-06-28T00:00:00Z
+# project: HIE
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-06-28T00:00:00Z
+last_updated: 2026-06-28T12:00:00Z
+project: HIE
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # ── Epic 1: Content Ingestion Pipeline ───────────────────────────────────────
+  # Goal: PDF upload → extract → structure → chunk → embed → stored in pgvector
+  # Sprint: 1 (Weeks 2–3, due ~2026-07-02)
+  epic-1: in-progress
+  1-1-post-lessons-endpoint-arq-job-enqueue: review
+  1-2-pdf-extraction-node-pdfplumber-docling-tesseract-ocr: backlog
+  1-3-structure-detection-node-rule-based-llm-validation: backlog
+  1-4-semantic-chunking-node: backlog
+  1-5-embeddings-pgvector-storage-node: backlog
+  epic-1-retrospective: optional
+
+  # ── Epic 2: Content Generation Pipeline ──────────────────────────────────────
+  # Goal: Chunks → LessonPackage JSONB with slides, quiz, audio, images
+  # Sprint: 2 (Weeks 4–5, due ~2026-07-16)
+  epic-2: backlog
+  2-1-phase-1-economy-nodes-all-6-parallel: backlog
+  2-2-lesson-planner-node: backlog
+  2-3-slide-generator-node: backlog
+  2-4-tts-node-sarvam-bulbul-v2-azure-browser-fallback: backlog
+  2-5-image-generator-node-gpt-image-1-mini-imagen-4-fast-text-only: backlog
+  2-6-package-builder-node-lesson-ready-websocket-push: backlog
+  2-7-cost-ceiling-enforcement-all-nodes: backlog
+  2-8-eval-harness-5-representative-pdfs: backlog
+  epic-2-retrospective: optional
+
+  # ── Epic 3: Observability, Eval Scale & Admin ─────────────────────────────────
+  # Goal: 20-PDF eval, admin panel, full Langfuse cost attribution
+  # Sprint: 3 (Weeks 6–7, due ~2026-07-30)
+  epic-3: backlog
+  3-1-expanded-eval-harness-20-pdfs-prompt-iteration: backlog
+  3-2-admin-panel-jobs-costs-retry: backlog
+  3-3-pipeline-cost-attribution-in-langfuse: backlog
+  epic-3-retrospective: optional
+
+  # ── Epic 4: Launch Readiness ──────────────────────────────────────────────────
+  # Goal: Load-tested, rate-limited, Stripe-ready, first paying student
+  # Sprint: 4 + Week 10 (due ~2026-08-20)
+  epic-4: backlog
+  4-1-load-test-50-concurrent-lesson-generations: backlog
+  4-2-rate-limiting-stripe-checkout: backlog
+  4-3-rls-security-audit: backlog
+  4-4-backups-disaster-recovery-runbook: backlog
+  4-5-production-launch-first-paying-student: backlog
+  epic-4-retrospective: optional
