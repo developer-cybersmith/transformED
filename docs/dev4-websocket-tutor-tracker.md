@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-29 (redis_lpush_pattern verified + tested → Completed; 3-state labels)
-**Overall status:** 16/36 Completed · 4 Partial · 16 Not Started
+**Last updated:** 2026-06-29 (arq_lesson_ready verified + tests green → Completed)
+**Overall status:** 17/36 Completed · 3 Partial · 16 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -15,12 +15,12 @@
 | Sprint | Period | Tasks | Completed | Partial | Not Started |
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 7 | 5 | 2 | 0 |
+| Sprint 1 | Weeks 2–3 | 7 | 6 | 1 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 0 | 0 | 6 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **16** | **4** | **16** |
+| **Total** | | **36** | **17** | **3** | **16** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -268,14 +268,21 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Sending `{ "type": "attention_signal", ... }` via mock WS client produces no errors; sending `{ "type": "ping" }` returns `{ "type": "pong" }`
 
 <!-- CHECK:arq_lesson_ready -->
-- [Partial] **Lesson progress push (ARQ pub/sub → WebSocket)** ⚠️ PARTIAL — wired but broken cross-process (Bug #6)
-  - `content_pipeline_job.py` currently calls `manager.send()` directly ✅ (works only if same process)
-  - **CRITICAL BUG #6:** ARQ worker is a separate OS process — `manager._connections` is always empty there, so `lesson_ready` events are NEVER delivered to clients in production
-  - **Fix required:** Replace `manager.send()` with Redis pub/sub:
-    1. Worker: `await redis.publish(f"lesson_ready:{session_id}", json.dumps(message))`
-    2. WebSocket layer: background task subscribes to channel and calls `manager.send()`
-  - Also fix message shape: wrap in `payload: {}` to match ws.ts (Bug #5c)
-  - **AC NOT MET:** Cross-process delivery broken
+- [Completed] **Lesson progress push (ARQ pub/sub → WebSocket)** ✅ 2026-06-29
+  - **Bug #6 FIXED — cross-process delivery via Redis pub/sub:**
+    1. Worker `content_pipeline_job.py` publishes to `lesson_ready:{session_id}` via `redis.publish` ✅
+    2. `core/pubsub.py::_run_lesson_subscriber` psubscribes `lesson_ready:*`, decodes, forwards via
+       `manager.send()` on a dedicated connection with exponential back-off ✅
+    3. `main.py` lifespan starts the listener (`start_lesson_ready_listener`) and cancels it on shutdown ✅
+  - **Bug #5c FIXED** — published message uses the nested `payload: {...}` shape ✅
+  - **Tests green:** `test_lesson_ready_pubsub.py` (6) + `test_lesson_ready_integration.py` (5) — publish
+    channel/shape, subscriber forward, malformed-JSON survival, session_id≠lesson_id routing, listener
+    factory start/cancel, no-manager-import discipline guard. Fixed 3 env-fragile tests (missing
+    `get_settings` mock) + added the listener-factory test. Story: `docs/stories/4-3-lesson-ready-pubsub-test-fix.md`
+  - **⚠️ Flagged (not blocking, needs 4-dev decision):** published payload includes `session_id`, which
+    deviates from the frozen `ws.ts` `LessonReadyMessage` payload `{lesson_id, lesson}` — resolve via
+    4-dev PR (remove the field or amend ws.ts). Back-off/reconnect path is a recommended test follow-up.
+  - **AC MET:** cross-process `lesson_ready` delivery works and is proven by tests ✅
 
 <!-- CHECK:redis_signal_buffer -->
 - [Completed] **Redis signal buffer operational (LPUSH/LTRIM/LRANGE)**
