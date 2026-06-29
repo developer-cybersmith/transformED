@@ -58,7 +58,7 @@ function LessonParseErrorState() {
         Lesson data is corrupted
       </p>
       <p className="text-neutral-500 text-sm mb-8 max-w-md">
-        The lesson package could not be read. This is unexpected — our team has been notified. You can try reloading or report the issue.
+        The lesson package could not be read. You can try reloading or report the issue so we can investigate.
       </p>
       <div className="flex items-center gap-3">
         <button
@@ -89,6 +89,7 @@ function isValidLessonPackage(lesson: unknown): lesson is LessonPackage {
     typeof l.lesson_id === 'string' &&
     Array.isArray(l.segments) &&
     l.segments.length > 0 &&
+    l.segments.every((s) => s !== null && typeof s === 'object') &&
     typeof l.metadata === 'object' &&
     l.metadata !== null &&
     typeof (l.metadata as LessonPackage['metadata']).title === 'string'

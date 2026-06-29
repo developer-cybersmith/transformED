@@ -137,7 +137,7 @@ export function AudioTimeline() {
     }
   }, [status]);
 
-  // Clear buffer timer on segment change to prevent stale timer firing on new segment
+  // Clear buffer/error state on segment change to prevent stale state bleeding into new segment
   useEffect(() => {
     return () => {
       if (bufferTimerRef.current !== null) {
@@ -145,8 +145,9 @@ export function AudioTimeline() {
         bufferTimerRef.current = null;
       }
       setBuffering(false);
+      setAudioError(false);
     };
-  }, [segment?.segment_id, setBuffering]);
+  }, [segment?.segment_id, setBuffering, setAudioError]);
 
   function handleTimeUpdate(e: React.SyntheticEvent<HTMLAudioElement>) {
     processTimeUpdate(e.currentTarget.currentTime * 1000);

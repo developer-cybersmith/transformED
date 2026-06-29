@@ -115,6 +115,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       currentSegmentIndex: nextIndex,
       currentSlideId: firstTimestamp?.slide_id ?? null,
       audioPositionMs: 0,
+      audioError: false,
     });
   },
 
@@ -168,6 +169,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   retryAudio: () => {
-    set((state) => ({ audioError: false, audioRetryCount: state.audioRetryCount + 1 }));
+    set((state) => ({ audioError: false, isBuffering: false, audioRetryCount: state.audioRetryCount + 1 }));
   },
 }));

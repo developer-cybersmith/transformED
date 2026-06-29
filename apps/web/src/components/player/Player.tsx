@@ -16,9 +16,9 @@ function BufferingOverlay() {
     <div
       data-testid="buffering-overlay"
       aria-live="polite"
-      aria-label="Audio buffering"
       className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none z-10"
     >
+      <span className="sr-only">Audio buffering, please wait</span>
       <svg
         className="animate-spin w-10 h-10 text-white/70"
         viewBox="0 0 24 24"
@@ -45,7 +45,6 @@ function AudioErrorNotification({ onRetry }: { onRetry: () => void }) {
   return (
     <div
       data-testid="audio-error-notification"
-      aria-live="polite"
       role="alert"
       className="flex items-center justify-between px-6 py-3 bg-red-900/60 border-t border-red-700/50 text-white text-sm shrink-0"
     >
@@ -63,6 +62,7 @@ function AudioErrorNotification({ onRetry }: { onRetry: () => void }) {
 // Default export required by next/dynamic
 export default function Player({ lesson }: PlayerProps) {
   const loadLesson = usePlayerStore((s) => s.loadLesson);
+  const status = usePlayerStore((s) => s.status);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
   const isBuffering = usePlayerStore((s) => s.isBuffering);
@@ -91,8 +91,8 @@ export default function Player({ lesson }: PlayerProps) {
           />
         ))}
 
-        {/* Buffering spinner overlay — shown after 2s audio stall */}
-        {isBuffering && <BufferingOverlay />}
+        {/* Buffering spinner overlay — shown after 2s audio stall, hidden while paused */}
+        {isBuffering && status !== 'PAUSED' && <BufferingOverlay />}
 
         {/* Lesson metadata shown before any slide is active */}
         {!currentSlideId && (
