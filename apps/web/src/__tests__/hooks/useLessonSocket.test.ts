@@ -15,7 +15,7 @@ vi.mock('@/lib/ws/lessonSocket', () => ({
     connect: mockConnect,
     disconnect: mockDisconnect,
     send: mockSend,
-    connectionStatus: 'connecting',
+    connectionStatus: 'connected', // P8: interval guard checks this — must be 'connected' for send to fire
   },
 }));
 

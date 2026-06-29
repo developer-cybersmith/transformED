@@ -1,5 +1,9 @@
 # Deferred Work
 
+## Deferred from: code review of 1-07-real-websocket-client (2026-06-29)
+
+- **`reconnectAttempts` reset on `disconnect()` loses backoff state** [`lessonSocket.ts:83`] — when `disconnect()` fires mid-backoff (e.g. component unmount), attempt counter resets to 0; next `connect()` restarts backoff from scratch. In MVP this only affects rapid remount scenarios. Revisit in Sprint 4 hardening if rapid-reconnect patterns appear.
+
 ## Deferred from: code review of S0-9 (2026-06-26)
 
 - **`OpenAILLMProvider` captures singleton by reference at construction** [`providers/llm/openai.py:44`] — stale reference in tests if singleton is reset mid-test; not a production bug since singleton is never reset in prod. Revisit if test suite grows to construct providers across singleton resets.

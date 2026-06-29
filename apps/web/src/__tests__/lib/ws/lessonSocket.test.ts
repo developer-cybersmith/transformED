@@ -179,6 +179,20 @@ describe('LessonSocket', () => {
     expect(lastSocket).toBe(socketAtOffline);
   });
 
+  it('2g2: onStatusChange callback fires on open and on close', async () => {
+    process.env.NEXT_PUBLIC_WS_URL = 'ws://test-server:8000';
+    const socket = await makeFreshSocket();
+    const onStatusChange = vi.fn();
+    const cb = { onTutorIntervene: vi.fn(), onCesUpdate: vi.fn(), onStateChange: vi.fn(), onStatusChange };
+
+    socket.connect('sess-abc', 'tok', cb);
+    lastSocket!.triggerOpen();
+    expect(onStatusChange).toHaveBeenCalledWith('connected');
+
+    lastSocket!.close(); // handleClose → 'reconnecting'
+    expect(onStatusChange).toHaveBeenCalledWith('reconnecting');
+  });
+
   it('2h: send() calls ws.send with JSON-stringified message', async () => {
     process.env.NEXT_PUBLIC_WS_URL = 'ws://test-server:8000';
     const socket = await makeFreshSocket();
