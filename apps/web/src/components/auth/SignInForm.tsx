@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Mail, Lock, ArrowRight } from "lucide-react";
@@ -12,9 +12,14 @@ import { createClient } from "@/lib/supabase/client";
 
 export function SignInForm() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const supabase = createClient();
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState("");
+    const [error, setError] = useState(
+        searchParams.get("error") === "auth_callback_failed"
+            ? "Sign-in failed. Please try again or use email and password."
+            : ""
+    );
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -50,7 +55,7 @@ export function SignInForm() {
         supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: `${window.location.origin}/dashboard`
+                redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`
             }
         });
     };
@@ -94,12 +99,9 @@ export function SignInForm() {
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <Label htmlFor="password">Password</Label>
-                            <Link
-                                href="/forgot-password"
-                                className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] transition-colors"
-                            >
+                            <span className="text-sm font-medium text-neutral-400 cursor-not-allowed">
                                 Forgot password?
-                            </Link>
+                            </span>
                         </div>
                         <Input
                             id="password"
