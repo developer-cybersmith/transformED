@@ -78,6 +78,22 @@ describe('binarySearchTimestamps — single-element array', () => {
   });
 });
 
+// Patch 1+2: empty array and negative ms edge cases
+describe('binarySearchTimestamps — boundary edge cases', () => {
+  const ts = make30Timestamps();
+  // Empty array: loop never runs, result stays at initialised 0.
+  // Caller (processTimeUpdate) must guard against empty segment timestamps before calling.
+  it('empty array returns 0', () => {
+    expect(binarySearchTimestamps([], 5000)).toBe(0);
+    expect(binarySearchTimestamps([], 0)).toBe(0);
+  });
+  // Negative ms: no timestamp satisfies start_ms <= negative value; result stays 0 (first slide).
+  it('negative ms clamps to index 0', () => {
+    expect(binarySearchTimestamps(ts, -1)).toBe(0);
+    expect(binarySearchTimestamps(ts, -100)).toBe(0);
+  });
+});
+
 // ── processTimeUpdate — slide sync integration ────────────────────────────────
 
 describe('processTimeUpdate — slide sync', () => {
@@ -106,6 +122,17 @@ describe('processTimeUpdate — slide sync', () => {
 
     expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_0');
   });
+
+  // Patch 5: verify per-segment relative time — seg_1 has its own timestamps starting at 0ms
+  it('updates currentSlideId correctly when currentSegmentIndex is 1', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 1, currentSlideId: 'sl_1_0' });
+
+    // seg_1: sl_1_0 at 0–15000ms, sl_1_1 at 15000–30000ms
+    processTimeUpdate(16000);
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_1_1');
+  });
 });
 
 describe('processTimeUpdate — segment boundary + quiz guard', () => {
@@ -131,33 +158,68 @@ describe('processTimeUpdate — segment boundary + quiz guard', () => {
 
     expect(usePlayerStore.getState().status).toBe('PLAYING');
   });
+
+  // Patch 4: verify quiz fires and records correct segment_id for seg_1
+  it('enters QUIZ state for seg_1 and records seg_1 in quizFiredForSegment', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 1 });
+
+    // seg_1 ends at 30000ms (sl_1_1.end_ms)
+    processTimeUpdate(30000);
+
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+    expect(usePlayerStore.getState().quizFiredForSegment.has('seg_1')).toBe(true);
+    expect(usePlayerStore.getState().quizFiredForSegment.has('seg_0')).toBe(false);
+  });
 });
 
 describe('processTimeUpdate — status no-ops', () => {
+  // Patch 6: all no-op tests assert both audioPositionMs and currentSlideId are unchanged
   it('is a no-op when status is QUIZ', () => {
     usePlayerStore.getState().loadLesson(mockLessonPackage);
-    usePlayerStore.setState({ status: 'QUIZ', audioPositionMs: 0 });
+    usePlayerStore.setState({ status: 'QUIZ', audioPositionMs: 0, currentSlideId: 'sl_0_0' });
     processTimeUpdate(8000);
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_0');
   });
 
   it('is a no-op when status is TEACH_BACK', () => {
     usePlayerStore.getState().loadLesson(mockLessonPackage);
-    usePlayerStore.setState({ status: 'TEACH_BACK', audioPositionMs: 0 });
+    usePlayerStore.setState({ status: 'TEACH_BACK', audioPositionMs: 0, currentSlideId: 'sl_0_0' });
     processTimeUpdate(8000);
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_0');
   });
 
   it('is a no-op when status is PAUSED', () => {
     usePlayerStore.getState().loadLesson(mockLessonPackage);
-    usePlayerStore.setState({ status: 'PAUSED', audioPositionMs: 0 });
+    usePlayerStore.setState({ status: 'PAUSED', audioPositionMs: 0, currentSlideId: 'sl_0_0' });
     processTimeUpdate(8000);
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_0');
+  });
+
+  // Patch 3: IDLE and ENDED are also implicit no-ops via the status !== 'PLAYING' guard
+  it('is a no-op when status is IDLE', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'IDLE', audioPositionMs: 0, currentSlideId: 'sl_0_0' });
+    processTimeUpdate(8000);
+    expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_0');
+  });
+
+  it('is a no-op when status is ENDED', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'ENDED', audioPositionMs: 0, currentSlideId: 'sl_0_0' });
+    processTimeUpdate(8000);
+    expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_0');
   });
 
   it('is a no-op when lesson is null', () => {
     usePlayerStore.setState({ status: 'PLAYING', lesson: null, audioPositionMs: 0 });
     processTimeUpdate(5000);
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().currentSlideId).toBeNull();
   });
 });
