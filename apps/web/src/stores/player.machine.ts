@@ -17,6 +17,7 @@ export interface PlayerStore {
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
   quizFiredForSegment: Set<string>;
+  cesScore: number | null;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
@@ -39,6 +40,7 @@ export interface PlayerStore {
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
   updateAudioPosition: (ms: number) => void;
+  updateCes: (ces: number) => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -50,6 +52,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   audioPositionMs: 0,
   tutorState: 'IDLE',
   quizFiredForSegment: new Set<string>(),
+  cesScore: null,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -143,5 +146,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   updateAudioPosition: (ms) => {
     set({ audioPositionMs: ms });
+  },
+
+  updateCes: (ces) => {
+    set({ cesScore: ces });
   },
 }));
