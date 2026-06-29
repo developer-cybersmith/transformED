@@ -1,5 +1,10 @@
 # Deferred Work
 
+## Deferred from: code review of 1-11-player-loading-errors (2026-06-29)
+
+- **"Report a Bug" URL hardcoded placeholder** [`PlayerLoader.tsx` `LessonParseErrorState`] — `https://github.com/HIE-corp/hie/issues` is a placeholder. Wire `NEXT_PUBLIC_BUG_REPORT_URL` env var in Sprint 2 so the URL is configurable without a code change.
+- **`window.location.reload()` in `LessonParseErrorState` technically contradicts AC3 "none requires a full browser refresh" wording** — intentional per spec dev notes (parse error recovery is the explicit exception). Tighten AC3 wording in next spec pass to make the exception explicit.
+
 ## Deferred from: code review of S0-9 (2026-06-26)
 
 - **`OpenAILLMProvider` captures singleton by reference at construction** [`providers/llm/openai.py:44`] — stale reference in tests if singleton is reset mid-test; not a production bug since singleton is never reset in prod. Revisit if test suite grows to construct providers across singleton resets.
