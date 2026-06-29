@@ -17,6 +17,10 @@ export interface PlayerStore {
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
   quizFiredForSegment: Set<string>;
+  isBuffering: boolean;
+  audioError: boolean;
+  /** Incremented by retryAudio() to force <audio> remount via key prop change. */
+  audioRetryCount: number;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
@@ -39,6 +43,10 @@ export interface PlayerStore {
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
   updateAudioPosition: (ms: number) => void;
+  setBuffering: (b: boolean) => void;
+  setAudioError: (b: boolean) => void;
+  /** Clears audioError and increments audioRetryCount to force <audio> remount. */
+  retryAudio: () => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -50,6 +58,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   audioPositionMs: 0,
   tutorState: 'IDLE',
   quizFiredForSegment: new Set<string>(),
+  isBuffering: false,
+  audioError: false,
+  audioRetryCount: 0,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -62,6 +73,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       audioPositionMs: 0,
       tutorState: 'IDLE',
       quizFiredForSegment: new Set<string>(),
+      isBuffering: false,
+      audioError: false,
+      audioRetryCount: 0,
     });
   },
 
@@ -143,5 +157,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   updateAudioPosition: (ms) => {
     set({ audioPositionMs: ms });
+  },
+
+  setBuffering: (b) => {
+    set({ isBuffering: b });
+  },
+
+  setAudioError: (b) => {
+    set({ audioError: b });
+  },
+
+  retryAudio: () => {
+    set((state) => ({ audioError: false, audioRetryCount: state.audioRetryCount + 1 }));
   },
 }));

@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import type { NarrationTimestamp } from '@hie/shared/types/lesson';
-import { binarySearchTimestamps, processTimeUpdate } from '@/components/player/AudioTimeline';
+import {
+  binarySearchTimestamps,
+  processTimeUpdate,
+  handleAudioWaiting,
+  handleAudioResume,
+  handleAudioError,
+} from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
@@ -166,5 +172,102 @@ describe('processTimeUpdate — status guards (no-op cases)', () => {
     processTimeUpdate(5000);
 
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+  });
+});
+
+// ── S1-11: buffer/error handler pure function tests ──────────────────────────
+
+describe('handleAudioWaiting', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('4a: schedules setBuffering(true) after 2000ms', () => {
+    vi.useFakeTimers();
+    const ref = { current: null } as React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
+    const setBuffering = vi.fn();
+
+    handleAudioWaiting(ref, setBuffering);
+
+    expect(setBuffering).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(2000);
+    expect(setBuffering).toHaveBeenCalledWith(true);
+  });
+
+  it('4b: onCanPlay before 2s cancels timer — setBuffering never called with true', () => {
+    vi.useFakeTimers();
+    const ref = { current: null } as React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
+    const setBuffering = vi.fn();
+
+    handleAudioWaiting(ref, setBuffering);
+    vi.advanceTimersByTime(1000);
+    handleAudioResume(ref, setBuffering); // cancel before 2s
+
+    vi.advanceTimersByTime(2000);
+    expect(setBuffering).not.toHaveBeenCalledWith(true);
+    // setBuffering(false) was called by handleAudioResume
+    expect(setBuffering).toHaveBeenCalledWith(false);
+  });
+
+  it('4c: onPlaying before 2s cancels timer — setBuffering(true) never fires', () => {
+    vi.useFakeTimers();
+    const ref = { current: null } as React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
+    const setBuffering = vi.fn();
+
+    handleAudioWaiting(ref, setBuffering);
+    vi.advanceTimersByTime(500);
+    handleAudioResume(ref, setBuffering); // onPlaying maps to handleAudioResume
+
+    vi.advanceTimersByTime(2000);
+    expect(setBuffering).not.toHaveBeenCalledWith(true);
+  });
+
+  it('4f: calling handleAudioWaiting twice only schedules one timer (idempotent)', () => {
+    vi.useFakeTimers();
+    const ref = { current: null } as React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
+    const setBuffering = vi.fn();
+
+    handleAudioWaiting(ref, setBuffering);
+    handleAudioWaiting(ref, setBuffering); // second call is a no-op
+
+    vi.advanceTimersByTime(2000);
+    // setBuffering(true) called exactly once, not twice
+    expect(setBuffering).toHaveBeenCalledTimes(1);
+    expect(setBuffering).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('handleAudioError', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('4d: sets audioError to true and isBuffering to false', () => {
+    const ref = { current: null } as React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
+    const setBuffering = vi.fn();
+    const setAudioError = vi.fn();
+
+    handleAudioError(ref, setBuffering, setAudioError);
+
+    expect(setAudioError).toHaveBeenCalledWith(true);
+    expect(setBuffering).toHaveBeenCalledWith(false);
+  });
+
+  it('4e: clears pending buffer timer before setting audioError', () => {
+    vi.useFakeTimers();
+    const ref = { current: null } as React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
+    const setBuffering = vi.fn();
+    const setAudioError = vi.fn();
+
+    handleAudioWaiting(ref, setBuffering); // schedule buffer timer
+    expect(ref.current).not.toBeNull(); // timer was set
+
+    handleAudioError(ref, setBuffering, setAudioError); // should cancel the timer
+    expect(ref.current).toBeNull(); // timer was cleared
+
+    vi.advanceTimersByTime(2000);
+    // setBuffering(true) should NOT have been called — timer was cancelled
+    expect(setBuffering).not.toHaveBeenCalledWith(true);
+    expect(setAudioError).toHaveBeenCalledWith(true);
   });
 });
