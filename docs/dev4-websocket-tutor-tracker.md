@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (intervention_routing — routing test + encouragement→confusion reconcile → Completed; SPRINT 3 DONE 8/8)
-**Overall status:** 28/36 Completed · 0 Partial · 8 Not Started
+**Last updated:** 2026-06-30 (ws_load_test — load-test harness built + validated 50-concurrent locally → Partial; production run pending staging)
+**Overall status:** 28/36 Completed · 1 Partial · 7 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -18,9 +18,9 @@
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
+| Sprint 4 | Weeks 8–9 | 6 | 0 | 1 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **28** | **0** | **8** |
+| **Total** | | **36** | **28** | **1** | **7** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -556,11 +556,21 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Cooldown value updated in Railway; documented with data rationale
 
 <!-- CHECK:ws_load_test -->
-- [Not Started] **WebSocket stability testing under 50 concurrent users**
-  - Use `locust` or `websockets` Python lib to simulate 50 concurrent WS sessions
-  - Each session: connect → send 60 attention_signals over 5 minutes → disconnect
-  - Target: 0 dropped connections, memory stable, Redis connection count < pool max (20)
-  - **AC:** Load test report in `docs/sprint4-ws-load-test.md`; 0 connection drops at 50 concurrent users
+- [Partial] **WebSocket stability testing under 50 concurrent users** ⚠️ PARTIAL — harness built + locally validated; production run pending staging
+  - **Harness:** `scripts/ws_load_test.py` (`websockets`) — N concurrent sessions, each connect →
+    `session_start` → M `attention_signal`s over a duration (awaiting each `attention_ack`) → disconnect.
+    Aggregates drops/errors/acks/latency p50-p95-max; **exit 0 iff 0 drops + 0 errors + 0 missed acks**.
+    Report: `docs/sprint4-ws-load-test.md`. Story: `docs/stories/4-15-ws-load-test.md`.
+  - **Validated locally (`--self-test`, in-process reference server):** **50/50 connected, 0 dropped, 150/150
+    acks, p50≈3.4ms** — confirms the harness + 50-way concurrency model + ack contract. `summarize()` unit-tested
+    (7 cases, socket-free) in `apps/api/tests/test_ws_load_test.py`.
+  - **🔎 Review-caught (HIGH, fixed):** mid-run drops were undercounted (`connected` stayed True) → would
+    false-green. Now a drop = "didn't cleanly complete"; `passed` gates drops+errors+missed-acks.
+  - **⚠️ NOT DONE (why Partial):** the real **50-user × 60-signal × 5-min** run vs the live API+Redis is
+    pending a running server — ideally the **India-region deploy** (Sprint-3 prerequisite per CLAUDE.md;
+    Railway has no India region). Harness is ready to point at staging unchanged.
+  - **AC PARTIALLY MET:** report exists + harness proves 0 drops at 50 concurrent locally; production-server
+    run + memory/Redis-pool observation remain.
 
 <!-- CHECK:reconnect_test -->
 - [Not Started] **Session reconnect testing under poor network conditions**
