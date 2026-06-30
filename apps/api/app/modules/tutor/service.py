@@ -7,6 +7,7 @@ Dev 3 will replace compute_ces() with the real formula (PRD §11).
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -99,6 +100,81 @@ def compute_ces(signal: NormalizedSignal) -> float:  # noqa: ARG001
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+async def start_session(session_id: str) -> None:
+    """Drive the IDLE → TEACHING transition for a newly started session.
+
+    Thin service-layer entry point over the tutor state machine so callers (the
+    WebSocket handler) go through the service, mirroring ``process_attention_signal``.
+    """
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(session_id, "session_start")
+
+
+# Lifecycle events a CLIENT may drive via WebSocket. distraction_detected / fatigue_detected are
+# excluded on purpose — those come from the server-side CES engine, not the client; session_reset is
+# admin-only; session_start has its own handler.
+_CLIENT_DRIVABLE_EVENTS = frozenset(
+    {
+        "segment_complete",
+        "checkin_complete",
+        "low_checkin_score",
+        "quiz_trigger",
+        "quiz_complete",
+        "quiz_failed",
+        "teachback_complete",
+        "teachback_failed",
+        "lesson_complete",
+    }
+)
+
+
+async def advance_tutor_state(session_id: str, event: str) -> None:
+    """Dispatch a client-driven lifecycle *event* into the tutor FSM.
+
+    Allow-listed: rejects any event a client must not be able to drive (server/engine/admin events).
+    """
+    if event not in _CLIENT_DRIVABLE_EVENTS:
+        raise ValueError(f"event not client-drivable: {event!r}")
+
+    # Completing a segment advances the student's position (used to pick the right segment's
+    # pre-generated intervention messages). 24h TTL, matching the other session keys.
+    if event == "segment_complete":
+        from app.core.redis import get_redis
+
+        redis = get_redis()
+        await redis.incr(f"session:{session_id}:segment_index")
+        await redis.expire(f"session:{session_id}:segment_index", 86_400)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(session_id, event)
+
+
+async def _segment_intervention_messages(session_id: str, redis: Any) -> dict[str, Any]:
+    """Return the current segment's ``intervention_messages`` from the cached LessonPackage.
+
+    Returns ``{}`` on any miss (no cache / parse error / no segments / bad index). Performs ONLY
+    Redis reads — never a Supabase/DB round-trip — so the intervention hot path stays < 50 ms.
+    """
+    try:
+        raw = await redis.get(f"lesson_package:{session_id}")
+        if not raw:
+            return {}
+        pkg = json.loads(raw)
+        segments = pkg.get("segments") or []
+        if not segments:
+            return {}
+        idx_raw = await redis.get(f"session:{session_id}:segment_index")
+        idx = int(idx_raw) if idx_raw else 0
+        idx = max(0, min(idx, len(segments) - 1))
+        # Frozen LessonPackage schema: Segment.interventions = {distraction|confusion|fatigue: [3]}.
+        return segments[idx].get("interventions") or {}
+    except Exception:  # noqa: BLE001 — degrade gracefully, never block the hot path
+        logger.warning("intervention message lookup failed for %s", session_id, exc_info=True)
+        return {}
+
+
 async def process_attention_signal(
     session_id: str,
     signal: dict[str, Any],
@@ -155,8 +231,34 @@ async def process_attention_signal(
                 recent[0],
                 recent[1],
             )
-            await dispatch_event(session_id, "distraction_detected")
+            # Pass the current segment's pre-generated messages so the FSM can select one
+            # (Redis reads only — no DB/LLM on this hot path).
+            seg_msgs = await _segment_intervention_messages(session_id, redis)
+            result = await dispatch_event(
+                session_id, "distraction_detected", payload={"intervention_messages": seg_msgs}
+            )
             intervention_dispatched = True
+
+            # Deliver the selected message to the client (in-process WS hub). Best-effort: a
+            # delivery failure must never break signal processing.
+            msg = result.get("intervention_message")
+            if result.get("current_state") == "INTERVENING" and msg:
+                try:
+                    from app.core.websocket import manager
+
+                    await manager.send(
+                        session_id,
+                        {
+                            "type": "tutor_intervene",
+                            "payload": {
+                                "session_id": session_id,
+                                "type": result.get("intervention_type") or "distraction",
+                                "message": msg,
+                            },
+                        },
+                    )
+                except Exception:
+                    logger.exception("tutor_intervene delivery failed for %s", session_id)
 
     logger.debug(
         "[tutor:%s] ces=%.4f intervention_dispatched=%s",
