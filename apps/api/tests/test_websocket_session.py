@@ -331,3 +331,33 @@ async def test_f3_reconnect_read_failure_degrades_to_init(mocker):
     await mgr.connect(ws, "sess-fail")  # must not raise
 
     ws.send_json.assert_not_called()  # no sync message when state couldn't be read
+
+
+# ── s4-5 reconnect_test: state correctly restored from Redis for ALL 7 FSM states ──
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "state",
+    ["IDLE", "TEACHING", "INTERVENING", "CHECKING_IN", "QUIZZING", "TEACH_BACK", "SESSION_END"],
+)
+async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
+    """AC: a reconnect restores the live tutor state from Redis for ALL 7 FSM states — pushes a
+    state_change sync (from == to) and does not reset."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=state)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    from app.core.websocket import ConnectionManager
+
+    ws = AsyncMock()
+    sid = f"sess-{state}"
+    await ConnectionManager().connect(ws, sid)
+
+    # Restored FROM Redis (the tutor_state key was read).
+    mock_redis.get.assert_awaited_once_with(f"tutor_state:{sid}")
+    # Synced to the client via the frozen state_change (from == to), and NOT reset.
+    ws.send_json.assert_called_once_with(
+        {"type": "state_change", "payload": {"session_id": sid, "from_state": state, "to_state": state}}
+    )
+    mock_redis.set.assert_not_called()

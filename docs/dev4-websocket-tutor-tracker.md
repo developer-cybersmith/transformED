@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (ws_load_test — load-test harness built + validated 50-concurrent locally → Partial; production run pending staging)
-**Overall status:** 28/36 Completed · 1 Partial · 7 Not Started
+**Last updated:** 2026-06-30 (reconnect_test — all-7-states restore-from-Redis test → Partial; live network-fault sim pending)
+**Overall status:** 28/36 Completed · 2 Partial · 6 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -18,9 +18,9 @@
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 6 | 0 | 1 | 5 |
+| Sprint 4 | Weeks 8–9 | 6 | 0 | 2 | 4 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **28** | **1** | **7** |
+| **Total** | | **36** | **28** | **2** | **6** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -573,11 +573,18 @@ MAX_DISTRACTION_PER_SESSION=3
     run + memory/Redis-pool observation remain.
 
 <!-- CHECK:reconnect_test -->
-- [Not Started] **Session reconnect testing under poor network conditions**
-  - Use `toxiproxy` or manual network interrupt to simulate dropped connection mid-session
-  - Client reconnects → receives `state_sync` → session continues without data loss
-  - Test all 7 states: reconnect should work from any state
-  - **AC:** Reconnect from each of the 7 states tested; state is always correctly restored from Redis
+- [Partial] **Session reconnect testing under poor network conditions** ⚠️ PARTIAL — all-7-states restore proven; live network-fault sim pending
+  - **DONE — all 7 states restore from Redis:** `test_f7_reconnect_restores_each_of_7_states`
+    (`test_websocket_session.py`, parametrized ×7: IDLE/TEACHING/INTERVENING/CHECKING_IN/QUIZZING/TEACH_BACK/
+    SESSION_END) drives the real `connect()`/`_restore_or_init_session` — each reads `tutor_state:{sid}` from
+    Redis and pushes the frozen **`state_change`** sync (`from==to`), no reset. Mutation-verified non-vacuous.
+    Story: `docs/stories/4-16-reconnect-test.md`. **AC sentence ("restored from Redis, each of 7 states") MET.**
+  - **Contract note:** reconnect sync uses the frozen `state_change` (from==to), NOT `state_sync` (not in ws.ts).
+  - **⚠️ NOT DONE (why Partial):** live **network-fault simulation** (`toxiproxy` / manual interrupt — drop a
+    real socket mid-session, reconnect against the running API) needs a live server (India-region deploy,
+    Sprint-3 prerequisite); and **"without data loss"** beyond the FSM state name (`segment_index`/player
+    position) is a known s2-4 follow-up (the sync carries the state name only).
+  - **🔎 Flagged:** SESSION_END (terminal) restore locked in without a guard against re-driving a dead session.
 
 <!-- CHECK:intervention_copy_review -->
 - [Not Started] **Intervention message copy review (tone + warmth)**
