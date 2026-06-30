@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (quizzing_teachback_flow + TEACH_BACK guard fix → Completed)
-**Overall status:** 20/36 Completed · 2 Partial · 14 Not Started
+**Last updated:** 2026-06-30 (full_state_machine real logic + fatigue bug fix → Completed)
+**Overall status:** 21/36 Completed · 3 Partial · 12 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -16,11 +16,11 @@
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 6 | 2 | 0 | 4 |
+| Sprint 2 | Weeks 4–5 | 6 | 3 | 1 | 2 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **20** | **2** | **14** |
+| **Total** | | **36** | **21** | **3** | **12** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -335,12 +335,20 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Full 7-state machine with real transition logic. Intervention message delivery. WebSocket message types finalised.
 
 <!-- CHECK:full_state_machine -->
-- [Not Started] **Full 7-state LangGraph StateGraph with real logic**
-  - `graph.py` already has all nodes and transitions — replace any remaining stubs with real logic
-  - `intervening_node`: read pre-generated intervention message from `LessonPackage.segments[].intervention_messages`
-  - `teach_back_node`: set `in_teachback: True` flag; block all intervention dispatches while active
-  - Add Langfuse tracing spans around every `dispatch_event()` call
-  - **AC:** Simulated session flows from IDLE → TEACHING → INTERVENING → TEACHING without errors
+- [Completed] **Full 7-state LangGraph StateGraph with real logic** ✅ 2026-06-30
+  - **🐛 [MED] FIXED:** `dispatch_event` now derives `intervention_type` from the event
+    (`distraction_detected`→distraction, `fatigue_detected`→fatigue, `teachback_failed`→confusion; explicit
+    payload wins). The fatigue path previously left it `None` → `tutor_fatigue_fired` was never set; now the
+    fatigue-once guard trips end-to-end (proven by `test_fatigue_fires_once_then_blocked`). ✅
+  - `intervening_node`: selects the pre-generated message from `event_payload.intervention_messages[type]`
+    → `state["intervention_message"]` (recording logic unchanged) ✅
+  - `teach_back_node` sets `in_teachback: True`; `teaching_node` clears it (tested) ✅
+  - Langfuse tracing (`tutor.dispatch_event`) wraps every `dispatch_event` — best-effort, never breaks the FSM ✅
+  - **Tests:** `test_tutor_graph.py` (41) — fatigue flag set, distraction count incr, message selection
+    (fatigue/confusion/none), explicit-type override, Langfuse trace + failure-swallow, in_teachback both
+    directions, full IDLE→TEACHING→INTERVENING→TEACHING cycle. Story: `docs/stories/4-7-full-state-machine.md`
+  - **⚠️ Flagged:** `langfuse>=2.0.0` unpinned (`.trace` removed in v3 → silent no-op); pin recommended.
+  - **AC MET:** simulated session flows IDLE → TEACHING → INTERVENING → TEACHING without errors ✅
 
 <!-- CHECK:all_transitions -->
 - [Completed] **All 14 transitions wired and tested** ✅ 2026-06-30
@@ -383,10 +391,15 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Client reconnecting mid-session receives current state within 100ms of reconnect
 
 <!-- CHECK:intervention_selection -->
-- [Not Started] **Intervention message selection from lesson package**
+- [Partial] **Intervention message selection from lesson package** ⚠️ PARTIAL — selection logic done (s2-1), fetch + delivery remain
   - At intervention time: read `LessonPackage` from DB (or Redis cache), extract `segments[current_idx].intervention_messages[type]`
   - Never call GPT at intervention time — messages are pre-generated at lesson build (Dev 1's pipeline)
   - Send to client: `{ "type": "intervention", "intervention_type": "distraction", "message": "...", "overlay_seconds": 5 }`
+  - **Wiring from s2-1:** `intervening_node` already SELECTS `intervention_messages[type][0]` from
+    `event_payload`. This task must (a) FETCH the LessonPackage (DB/Redis) and pass its current segment's
+    `intervention_messages` into the dispatch payload — else `intervention_message` is always None in prod —
+    and (b) deliver the selected message to the client. Also rotate beyond `[0]` (3 msgs/type) e.g. by
+    `tutor_distraction_count`.
   - **AC:** Intervention delivery latency < 50ms (no LLM call, only Redis reads)
 
 <!-- CHECK:ws_message_types_final -->

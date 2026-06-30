@@ -20,6 +20,15 @@ from app.modules.tutor.state_machine.graph import TutorState
 _STATE_TTL = 86_400  # mirrors graph._STATE_TTL
 
 
+@pytest.fixture(autouse=True)
+def _stub_langfuse(mocker):
+    """dispatch_event traces every call via get_langfuse(); stub it so no real Langfuse client is
+    built in any graph test. Returns the stub client for trace-assertion tests."""
+    client = MagicMock()
+    mocker.patch("app.core.langfuse.get_langfuse", return_value=client)
+    return client
+
+
 def _redis(current_state: str | None) -> AsyncMock:
     """An AsyncMock Redis whose GET returns *current_state* (None → fresh/IDLE)."""
     redis = AsyncMock()
@@ -530,3 +539,252 @@ async def test_start_session_dispatches_session_start(mocker) -> None:
     await start_session("s-svc")
 
     mock_dispatch.assert_called_once_with("s-svc", "session_start")
+
+
+# ── full_state_machine real logic: fatigue fix, message selection, Langfuse, flags (s2-1) ──
+
+
+@pytest.mark.unit
+async def test_fatigue_detected_sets_fatigue_fired_flag(mocker) -> None:
+    """AC1/AC2: fatigue_detected now records the fatigue flag (intervention_type derived = fatigue)."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-ff", state="TEACHING", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-ff", "fatigue_detected")
+
+    assert result["current_state"] == TutorState.INTERVENING
+    redis.set.assert_any_call("tutor_fatigue_fired:s-ff", "1", ex=_STATE_TTL)
+
+
+@pytest.mark.unit
+async def test_distraction_detected_increments_count(mocker) -> None:
+    """AC2: distraction_detected increments the distraction counter (intervention_type = distraction)."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-dc", state="TEACHING", count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-dc", "distraction_detected")
+
+    assert result["current_state"] == TutorState.INTERVENING
+    redis.incr.assert_any_call("tutor_distraction_count:s-dc")
+
+
+@pytest.mark.unit
+async def test_intervention_message_selected_from_payload(mocker) -> None:
+    """AC3: intervening_node selects the pre-generated message for the active type from the payload."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-msg", state="TEACHING", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    payload = {
+        "intervention_messages": {
+            "fatigue": ["rest your eyes", "take a break", "stretch"],
+            "distraction": ["focus up"],
+            "confusion": ["let's revisit"],
+        }
+    }
+    result = await dispatch_event("s-msg", "fatigue_detected", payload=payload)
+
+    assert result["current_state"] == TutorState.INTERVENING
+    assert result["intervention_message"] == "rest your eyes"
+
+
+@pytest.mark.unit
+async def test_intervention_message_none_when_absent(mocker) -> None:
+    """AC4: no package supplied → intervention_message is None, recording/transition still happen."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-nomsg", state="TEACHING", count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-nomsg", "distraction_detected")
+
+    assert result["current_state"] == TutorState.INTERVENING
+    assert result["intervention_message"] is None
+
+
+@pytest.mark.unit
+async def test_langfuse_trace_called_on_dispatch(mocker, _stub_langfuse) -> None:
+    """AC5: dispatch_event emits a Langfuse trace."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event("s-lf", "session_start")
+
+    _stub_langfuse.trace.assert_called_once()
+
+
+@pytest.mark.unit
+async def test_langfuse_failure_does_not_break_dispatch(mocker) -> None:
+    """AC5: a Langfuse failure must never break a dispatch (best-effort tracing)."""
+    mocker.patch("app.core.langfuse.get_langfuse", side_effect=RuntimeError("no langfuse"))
+    mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-lf-fail", "session_start")
+
+    assert result["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
+async def test_teaching_clears_in_teachback(mocker) -> None:
+    """AC6: teaching_node resets the in_teachback flag to False."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-itb-false", "session_start")
+
+    assert result["in_teachback"] is False
+
+
+@pytest.mark.unit
+async def test_teach_back_sets_in_teachback(mocker) -> None:
+    """AC6: teach_back_node sets the in_teachback flag True (guard signal)."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("QUIZZING"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-itb-true", "quiz_failed")
+
+    assert result["in_teachback"] is True
+
+
+def _stateful_full_redis(initial: str) -> AsyncMock:
+    """Stateful Redis for the full intervention cycle: live tutor_state + count='0' + no cooldown."""
+    store = {"tutor_state": initial}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key.startswith("tutor_state:"):
+            return store["tutor_state"]
+        if key.startswith("tutor_distraction_count:"):
+            return "0"
+        return None
+
+    async def _set(key: str, value, **_kw):
+        if key.startswith("tutor_state:"):
+            store["tutor_state"] = value
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    redis.exists = AsyncMock(return_value=0)
+    return redis
+
+
+@pytest.mark.unit
+async def test_full_intervention_cycle_step_through(mocker) -> None:
+    """AC7: IDLE → TEACHING → INTERVENING → TEACHING flows with no errors."""
+    _patch_settings(mocker)
+    mocker.patch("app.core.redis.get_redis", return_value=_stateful_full_redis("IDLE"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    sid = "s-cycle"
+
+    r1 = await dispatch_event(sid, "session_start")
+    assert r1["current_state"] == TutorState.TEACHING
+
+    r2 = await dispatch_event(sid, "distraction_detected")
+    assert r2["current_state"] == TutorState.INTERVENING
+
+    r3 = await dispatch_event(sid, "intervention_complete")
+    assert r3["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
+async def test_explicit_intervention_type_overrides_event_default(mocker) -> None:
+    """AC1: an explicit payload intervention_type wins over the event-derived one."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-override", state="TEACHING", count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    # Event would derive "distraction", but the caller explicitly says "confusion".
+    payload = {
+        "intervention_type": "confusion",
+        "intervention_messages": {
+            "confusion": ["clarify this"],
+            "distraction": ["focus up"],
+            "fatigue": ["rest"],
+        },
+    }
+    result = await dispatch_event("s-override", "distraction_detected", payload=payload)
+
+    assert result["current_state"] == TutorState.INTERVENING
+    assert result["intervention_message"] == "clarify this"  # confusion won, not distraction
+
+
+@pytest.mark.unit
+async def test_intervention_message_selected_for_confusion(mocker) -> None:
+    """AC3: teachback_failed (→ confusion) selects the confusion message set."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-conf", state="TEACH_BACK", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    payload = {
+        "intervention_messages": {
+            "confusion": ["let's revisit that"],
+            "distraction": ["focus up"],
+            "fatigue": ["rest"],
+        }
+    }
+    result = await dispatch_event("s-conf", "teachback_failed", payload=payload)
+
+    assert result["current_state"] == TutorState.INTERVENING
+    assert result["intervention_message"] == "let's revisit that"
+
+
+@pytest.mark.unit
+async def test_fatigue_fires_once_then_blocked(mocker) -> None:
+    """AC2 end-to-end: fatigue fires once (real flag write) → after returning, a second
+    fatigue_detected is blocked by the once-guard reading that flag."""
+    _patch_settings(mocker)
+
+    store = {"tutor_state": "TEACHING", "fatigue_fired": False}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        return store["tutor_state"] if key.startswith("tutor_state:") else None
+
+    async def _set(key: str, value, **_kw):
+        if key.startswith("tutor_state:"):
+            store["tutor_state"] = value
+        elif key.startswith("tutor_fatigue_fired:"):
+            store["fatigue_fired"] = True
+
+    async def _exists(key: str):
+        if key.startswith("tutor_fatigue_fired:"):
+            return 1 if store["fatigue_fired"] else 0
+        return 0
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    redis.exists = AsyncMock(side_effect=_exists)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    sid = "s-fatonce"
+
+    r1 = await dispatch_event(sid, "fatigue_detected")
+    assert r1["current_state"] == TutorState.INTERVENING  # fires the first time
+
+    back = await dispatch_event(sid, "intervention_complete")
+    assert back["current_state"] == TutorState.TEACHING
+
+    r2 = await dispatch_event(sid, "fatigue_detected")
+    assert r2["current_state"] == TutorState.TEACHING  # blocked — fatigue already fired
