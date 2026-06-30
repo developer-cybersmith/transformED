@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (max_distraction_cap — end-to-end 3-fire→4th-blocked integration test → Completed)
-**Overall status:** 26/36 Completed · 1 Partial · 9 Not Started
+**Last updated:** 2026-06-30 (fatigue_once — verified existing once-per-session test; was mis-tracked → Completed)
+**Overall status:** 27/36 Completed · 0 Partial · 9 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -17,10 +17,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 8 | 6 | 1 | 1 |
+| Sprint 3 | Weeks 6–7 | 8 | 7 | 0 | 1 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **26** | **1** | **9** |
+| **Total** | | **36** | **27** | **0** | **9** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -498,11 +498,17 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC MET:** guard correctness verified end-to-end (exactly 3 fire, 4th blocked).
 
 <!-- CHECK:fatigue_once -->
-- [Partial] **Fatigue intervention: once per session flag** ⚠️ PARTIAL — implementation done, tests missing
+- [Completed] **Fatigue intervention: once per session flag** — ✓ 2026-06-30
   - `tutor_fatigue_fired:{session_id}` = "1" set in `intervening_node()` for `type == "fatigue"` ✅ (graph.py)
   - Guard `_can_intervene_fatigue()` checks `redis.exists(fatigue_key)` ✅ (graph.py)
-  - **MISSING:** No test triggering fatigue twice → second trigger blocked
-  - **AC NOT MET:** Tests required to verify guard correctness end-to-end
+  - **Test (already present — task was mis-tracked):** `test_tutor_graph.py::test_fatigue_fires_once_then_blocked`
+    drives the real FSM — fatigue fires once (→ INTERVENING, sets the flag), `intervention_complete` → TEACHING,
+    then a 2nd `fatigue_detected` → TEACHING (**blocked**, flag present). Flag write asserted by
+    `test_fatigue_detected_sets_fatigue_fired_flag`. Story: `docs/stories/4-13-fatigue-once.md`.
+  - **🔎 Finding:** the integration test the tracker listed as "missing" already existed on `main` (landed
+    with the s2-1 full_state_machine fatigue tests but never reconciled). Verified sound (hand-traced — `r2 ==
+    TEACHING` proves the guard blocked it, not a false-green); a redundant duplicate was discarded. No code change.
+  - **AC MET:** once-per-session guard verified end-to-end.
 
 <!-- CHECK:intervention_routing -->
 - [Not Started] **Type A/B/C intervention routing to correct message**
