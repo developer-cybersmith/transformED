@@ -574,6 +574,61 @@ async def test_distraction_detected_increments_count(mocker) -> None:
     redis.incr.assert_any_call("tutor_distraction_count:s-dc")
 
 
+# ── max_distraction_cap: 3 fire → 4th blocked (s3-6) ──────────────────────────
+
+
+def _cap_redis(initial_state: str = "TEACHING"):
+    """Stateful redis tracking tutor_state + distraction count; cooldown never active (exists=0) so the
+    distraction CAP is the only gate. Returns (redis, store) so the test can reset state between dispatches."""
+    store = {"state": initial_state, "count": 0}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key.startswith("tutor_state:"):
+            return store["state"]
+        if key.startswith("tutor_distraction_count:"):
+            return str(store["count"])
+        return None
+
+    async def _set(key: str, value, **_kw):
+        if key.startswith("tutor_state:"):
+            store["state"] = value
+
+    async def _incr(key: str):
+        if key.startswith("tutor_distraction_count:"):
+            store["count"] += 1
+            return store["count"]
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    redis.incr = AsyncMock(side_effect=_incr)
+    redis.exists = AsyncMock(return_value=0)  # never in cooldown — isolate the cap
+    return redis, store
+
+
+@pytest.mark.unit
+async def test_max_distraction_cap_blocks_fourth(mocker) -> None:
+    """s3-6: interventions 1–3 fire; the 4th is blocked by the cap (count < max=3). Cooldown is never
+    active, so the CAP is the sole gate."""
+    _patch_settings(mocker, max_distraction=3)
+    redis, store = _cap_redis("TEACHING")
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    sid = "s-cap-4th"
+    for n in (1, 2, 3):
+        store["state"] = "TEACHING"  # student resumed teaching; CES monitoring active again
+        result = await dispatch_event(sid, "distraction_detected")
+        assert result["current_state"] == TutorState.INTERVENING, f"intervention {n} should fire"
+        assert store["count"] == n
+
+    store["state"] = "TEACHING"
+    blocked = await dispatch_event(sid, "distraction_detected")
+    assert blocked["current_state"] == TutorState.TEACHING  # cap reached
+    assert store["count"] == 3  # 4th never reached intervening_node — no incr
+
+
 @pytest.mark.unit
 async def test_intervention_message_selected_from_payload(mocker) -> None:
     """AC3: intervening_node selects the pre-generated message for the active type from the payload."""
