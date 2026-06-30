@@ -718,6 +718,40 @@ async def test_insert_error_raises_500(mock_to_thread, mock_score_teachback) -> 
     assert exc_info.value.status_code == 500
 
 
+# ── S3-13: Unique attempt constraint 409 tests ────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_teachback_duplicate_attempt_returns_409(mock_to_thread, mock_score_teachback) -> None:
+    """Insert error containing 'duplicate key' → HTTP 409 Conflict.
+
+    When the DB returns a unique-constraint violation, grade_teachback must raise
+    HTTPException(409) instead of the generic 500.
+    """
+    from fastapi import HTTPException
+
+    error_obj = MagicMock()
+    error_obj.__str__ = MagicMock(
+        return_value="duplicate key value violates unique constraint \"uq_teachback_attempt\""
+    )
+    supabase = _build_supabase_tb(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": _LESSON_CONTENT},
+        insert_error=error_obj,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_teachback(
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            response_text="Explanation.",
+            user_id="user-001",
+            supabase=supabase,
+        )
+    assert exc_info.value.status_code == 409
+    assert "duplicate" in exc_info.value.detail.lower()
+
+
 # ── HTTP-layer test ───────────────────────────────────────────────────────────
 
 @pytest.mark.unit

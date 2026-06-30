@@ -146,9 +146,21 @@ async def grade_quiz(
         }
         for g in graded
     ]
-    await asyncio.to_thread(
+    insert_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts").insert(rows_to_insert).execute()
     )
+    insert_error = getattr(insert_resp, "error", None)
+    if insert_error:
+        err_str = str(insert_error).lower()
+        if "duplicate" in err_str or "unique" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Duplicate quiz attempt detected.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist quiz attempt.",
+        )
     logger.info(
         "quiz_attempts inserted: session=%s segment=%s count=%d",
         session_id,
@@ -333,7 +345,14 @@ async def grade_teachback(
     insert_resp = await asyncio.to_thread(
         lambda: supabase.table("teachback_attempts").insert(row).execute()
     )
-    if getattr(insert_resp, "error", None):
+    insert_error = getattr(insert_resp, "error", None)
+    if insert_error:
+        err_str = str(insert_error).lower()
+        if "duplicate" in err_str or "unique" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Duplicate teach-back attempt detected.",
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist teach-back attempt.",

@@ -119,6 +119,7 @@ def _build_supabase(
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = insert_data or []
+    insert_mock.insert.return_value.execute.return_value.error = None  # explicit success
 
     mock.table.side_effect = [session_mock, lesson_mock, insert_mock]
     return mock
@@ -240,6 +241,7 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -270,6 +272,7 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -502,3 +505,67 @@ def test_http_layer_post_quiz_returns_404_on_missing_session(monkeypatch) -> Non
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/quiz", json=_VALID_HTTP_PAYLOAD)
     assert resp.status_code == 404
+
+
+# ── S3-13: Unique attempt constraint 409 tests ────────────────────────────────
+
+
+def _build_supabase_with_insert_error(error_message: str) -> MagicMock:
+    """Build a mock Supabase client where the quiz_attempts insert returns an error.
+
+    Call order: sessions → lessons → quiz_attempts (insert with error).
+    """
+    session_mock = MagicMock()
+    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+
+    lesson_mock = MagicMock()
+    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+
+    error_obj = MagicMock()
+    error_obj.__str__ = MagicMock(return_value=error_message)
+
+    insert_mock = MagicMock()
+    insert_mock.insert.return_value.execute.return_value.data = []
+    insert_mock.insert.return_value.execute.return_value.error = error_obj
+
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+    return supabase
+
+
+@pytest.mark.unit
+async def test_quiz_duplicate_attempt_returns_409(mock_to_thread) -> None:
+    """Insert error containing 'duplicate key' → HTTP 409 Conflict.
+
+    When the DB returns a unique-constraint violation, grade_quiz must raise
+    HTTPException(409) instead of the generic 500.
+    """
+    from fastapi import HTTPException
+    supabase = _build_supabase_with_insert_error(
+        "duplicate key value violates unique constraint \"uq_quiz_attempt\""
+    )
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 409
+    assert "duplicate" in exc_info.value.detail.lower()
+
+
+@pytest.mark.unit
+async def test_quiz_generic_insert_error_still_returns_500(mock_to_thread) -> None:
+    """Insert error NOT containing 'duplicate'/'unique' → HTTP 500 (not 409).
+
+    Non-constraint errors (e.g. connection timeout) must still produce a 500.
+    """
+    from fastapi import HTTPException
+    supabase = _build_supabase_with_insert_error("connection timeout")
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 500
