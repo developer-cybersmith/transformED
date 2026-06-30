@@ -23,7 +23,6 @@ async def grade_quiz(
     lesson_id: str,
     segment_id: str,
     answers: list[QuizAnswer],
-    attempt_number: int = 1,
     user_id: str,
     supabase: Any,
 ) -> QuizResult:
@@ -42,7 +41,6 @@ async def grade_quiz(
         lesson_id: UUID of the lesson whose JSONB content contains the quiz.
         segment_id: ID of the segment (string, not UUID) within the lesson.
         answers: Student answers — one QuizAnswer per submitted question.
-        attempt_number: 1 for first attempt, 2 for retry. Defaults to 1.
         user_id: User UUID from the decoded JWT (for ownership check).
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
 
@@ -112,7 +110,17 @@ async def grade_quiz(
             detail="answers list must not be empty.",
         )
 
-    # Step 5 — Grade each answer
+    # Step 6 — Query existing attempt count to compute attempt_number
+    count_resp = await asyncio.to_thread(
+        lambda: supabase.table("quiz_attempts")
+        .select("id", count="exact")
+        .eq("session_id", session_id)
+        .eq("segment_id", segment_id)
+        .execute()
+    )
+    attempt_number: int = (count_resp.count or 0) + 1
+
+    # Step 7 — Grade each answer
     graded: list[dict[str, Any]] = []
     for ans in answers:
         question = question_map.get(ans.question_id)
@@ -133,7 +141,7 @@ async def grade_quiz(
             }
         )
 
-    # Step 6 — Bulk insert to quiz_attempts
+    # Step 8 — Bulk insert to quiz_attempts
     rows_to_insert = [
         {
             "session_id": session_id,
@@ -156,7 +164,7 @@ async def grade_quiz(
         len(rows_to_insert),
     )
 
-    # Step 7 — Compute aggregate metrics
+    # Step 9 — Compute aggregate metrics
     correct_count = sum(1 for g in graded if g["is_correct"])
     total_count = len(graded)
     quiz_accuracy: float = correct_count / total_count if total_count > 0 else 0.0
@@ -164,7 +172,7 @@ async def grade_quiz(
     settings = get_settings()
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
 
-    # Step 8 — Build per-question feedback
+    # Step 10 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
         {
             "question_id": g["question"]["question_id"],
