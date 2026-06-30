@@ -1,5 +1,5 @@
 ---
-Status: in-progress
+Status: done
 baseline_commit: ""
 ---
 
@@ -45,11 +45,11 @@ so that the same BMAD violations (story-simultaneously-with-code, 4-agent instea
 ## Tasks
 
 - [x] Task 1: Create story file (story-first commit) — ✓ 2026-06-29
-- [ ] Task 2: Update `CLAUDE.md` — AC 1 + AC 2
-- [ ] Task 3: Update `docs/stories/3-8-quiz-endpoint-live.md` — AC 3 + AC 4
-- [ ] Task 4: Update `docs/stories/3-9-teachback-endpoint-live.md` — AC 5
-- [ ] Task 5: Update `docs/dev3-assessment-tracker.md` — AC 6
-- [ ] Task 6: Commit all changes
+- [x] Task 2: Update `CLAUDE.md` — AC 1 + AC 2 — ✓ 2026-06-29
+- [x] Task 3: Update `docs/stories/3-8-quiz-endpoint-live.md` — AC 3 + AC 4 — ✓ 2026-06-29
+- [x] Task 4: Update `docs/stories/3-9-teachback-endpoint-live.md` — AC 5 — ✓ 2026-06-29
+- [x] Task 5: Update `docs/dev3-assessment-tracker.md` — AC 6 — ✓ 2026-06-29
+- [x] Task 6: Commit all changes — ✓ 2026-06-29
 
 ## Dev Agent Record
 

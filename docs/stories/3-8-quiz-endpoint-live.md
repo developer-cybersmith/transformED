@@ -4,7 +4,7 @@ baseline_commit: a99972f033fea6376d2ee026053d650abad506c8
 
 # Story 3.8: POST /api/assessment/quiz — Quiz Grading Endpoint Live
 
-Status: done
+Status: in-progress
 
 ---
 
@@ -158,6 +158,24 @@ claude-sonnet-4-6
 - get_settings() called inside grade_quiz() requires _mock_settings autouse fixture to prevent pydantic ValidationError in unit tests (no env vars in CI)
 - All 20 unit tests pass; 168 total unit tests passing (7 pre-existing Dev 4/1 failures unrelated to this story)
 - schemas.py created as a neutral shared module — both router.py and service.py import from it; re-export in router.py preserves backward compatibility for all existing test imports
+
+### Process Failure Post-Mortem
+
+**Root Cause of Original BMAD Violation (PR #19):**
+Story 3-8 was implemented non-BMAD: the story file `3-8-quiz-endpoint-live.md` was created in the same commit (`d58f67a`) as `service.py`, `router.py`, and `test_quiz_endpoint.py`. The story was written simultaneously with the code instead of before it.
+
+**Consequence:** ACs 15–19 (IDOR guard, Field validators, insert error check, ID enumeration fix) were never written into the original story. The 4-agent code review (Blind Hunter, Edge Case Hunter, AC Auditor, Process Integrity Auditor) missed these gaps because the Story Quality agent was absent. All 5 ACs reached main in PR #19 without being implemented.
+
+**BMAD Re-implementation (branch sprint1/s1-1-quiz-endpoint-v2):**
+A correct re-implementation was completed (ACs 15–19 fixed, 28 tests written, 3 BLOCKER fixes applied) but was never pushed to remote due to a git push timeout. The branch exists only locally as of 2026-06-29. Status remains in-progress until the branch is pushed and PR merged.
+
+**Process Guards Added:**
+1. Pre-implementation checklist added to project `CLAUDE.md` (Story 3-15)
+2. 5-agent code review requirement explicitly documented in `CLAUDE.md`
+3. Future stories: story file must be the chronologically first commit on the branch, pushed before any code
+
+**What to do next:**
+Run `git push origin sprint1/s1-1-quiz-endpoint-v2`, open PR → main, merge after CI passes. This resolves 5 CRITICAL findings (AC3-8-15 through AC3-8-19).
 
 ### File List
 - docs/stories/3-8-quiz-endpoint-live.md — CREATED
