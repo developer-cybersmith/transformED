@@ -58,10 +58,33 @@ class ConnectionManager:
         self._connections: dict[str, list[WebSocket]] = defaultdict(list)
 
     async def connect(self, websocket: WebSocket, session_id: str) -> None:
-        """Accept a new WebSocket and register it under *session_id*."""
+        """Accept a new WebSocket and register it under *session_id*.
+
+        Reconnect-aware: if a live tutor_state exists, restore it (push ``state_sync`` to the
+        reconnecting client, no reset); otherwise initialise a fresh session.
+        """
         await websocket.accept()
         self._connections[session_id].append(websocket)
-        await _init_session_state(session_id)
+        restored = await _restore_or_init_session(session_id)
+        if restored is not None:
+            # Sync the reconnecting client to the live state. Reuse the FROZEN ws.ts `state_change`
+            # message (no transition → from == to); ws.ts has no `state_sync`, and inventing an
+            # outbound type the client can't narrow would violate the §16 contract freeze.
+            # Guarded: a dead socket must never break the handshake or leak a registry entry.
+            try:
+                await websocket.send_json(
+                    {
+                        "type": "state_change",
+                        "payload": {
+                            "session_id": session_id,
+                            "from_state": restored,
+                            "to_state": restored,
+                        },
+                    }
+                )
+            except Exception:
+                logger.warning("reconnect state sync send failed for %s — dropping socket", session_id)
+                self.disconnect(websocket, session_id)
         logger.info("WS connected: session=%s  total_sessions=%d", session_id, len(self._connections))
 
     def disconnect(self, websocket: WebSocket, session_id: str) -> None:
@@ -148,6 +171,30 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 
 
 # ── Session lifecycle ────────────────────────────────────────────────────────
+
+
+async def _restore_or_init_session(session_id: str) -> str | None:
+    """Reconnect-aware session bootstrap.
+
+    If a ``tutor_state:{session_id}`` already exists, this is a reconnect — return the stored state so
+    the caller can push ``state_sync`` to the client; the session is NOT reset. Otherwise initialise a
+    fresh session and return ``None``.
+
+    Never raises — the WebSocket handshake must not fail on a Redis blip (degrade to fresh init).
+    """
+    try:
+        from app.core.redis import get_redis  # type: ignore[import]
+
+        existing = await get_redis().get(f"tutor_state:{session_id}")
+        if existing:
+            state = existing.decode() if isinstance(existing, (bytes, bytearray)) else str(existing)
+            logger.info("WS reconnect: session=%s restoring state=%s", session_id, state)
+            return state
+    except Exception:
+        logger.warning("reconnect-state read failed for %s — initialising fresh", session_id)
+
+    await _init_session_state(session_id)
+    return None
 
 
 async def _init_session_state(session_id: str) -> None:

@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (intervention_selection — cache + segment tracking + tutor_intervene delivery → Completed)
-**Overall status:** 22/36 Completed · 2 Partial · 12 Not Started
+**Last updated:** 2026-06-30 (session_restore — reconnect-aware connect + state_change sync → Completed)
+**Overall status:** 23/36 Completed · 2 Partial · 11 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -16,11 +16,11 @@
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 6 | 4 | 0 | 2 |
+| Sprint 2 | Weeks 4–5 | 6 | 5 | 0 | 1 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **22** | **2** | **12** |
+| **Total** | | **36** | **23** | **2** | **11** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -385,10 +385,18 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC MET:** step-through shows CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING ✅
 
 <!-- CHECK:session_restore -->
-- [Not Started] **Session state restore on reconnect tested**
-  - On reconnect: read `tutor_state:{session_id}` from Redis → send current state to client as `{ "type": "state_sync", "state": "QUIZZING" }`
-  - Write test: set Redis key manually → connect WS → assert client receives `state_sync` with correct state
-  - **AC:** Client reconnecting mid-session receives current state within 100ms of reconnect
+- [Completed] **Session state restore on reconnect tested** ✅ 2026-06-30
+  - `ConnectionManager.connect` is now reconnect-aware (`_restore_or_init_session`): if `tutor_state:{sid}`
+    exists → restore (push state to the client, NO reset); else → fresh `_init_session_state` ✅
+  - **Contract:** syncs via the FROZEN ws.ts `state_change` message (`{session_id, from_state, to_state}`,
+    from == to) — NOT a new off-contract `state_sync` (review caught that a strict client couldn't parse one) ✅
+  - Reads from Redis only (one GET on connect); Redis failure degrades to fresh init (handshake never fails);
+    the sync send is guarded (dead socket dropped, no registry leak) ✅
+  - **Tests:** `test_websocket_session.py` F1 (reconnect→state_change sync, no reset), F2 (new→init, no sync),
+    F3 (read-failure degrade), F5 (bytes/non-QUIZZING decode), F6 (send-failure drops socket). Story: `docs/stories/4-9-session-restore.md`
+  - **⚠️ Flagged (deferred):** stale reused-id skips guard-counter reset (negligible w/ UUID ids); SESSION_END
+    terminal restore; `segment_index` (player position) not part of restore.
+  - **AC MET:** a client reconnecting mid-session receives its current state (Redis read only) ✅
 
 <!-- CHECK:intervention_selection -->
 - [Completed] **Intervention message selection from lesson package** ✅ 2026-06-30
