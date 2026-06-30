@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (session_restore — reconnect-aware connect + state_change sync → Completed)
-**Overall status:** 23/36 Completed · 2 Partial · 11 Not Started
+**Last updated:** 2026-06-30 (ws_message_types_final — docs/ws-message-contract.md published → Completed; Sprint 2 done 6/6)
+**Overall status:** 24/36 Completed · 2 Partial · 10 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -16,11 +16,11 @@
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 6 | 5 | 0 | 1 |
+| Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **23** | **2** | **11** |
+| **Total** | | **36** | **24** | **2** | **10** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -416,14 +416,22 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC MET:** delivery is Redis-reads-only (no LLM/DB on the hot path); message reaches the client ✅
 
 <!-- CHECK:ws_message_types_final -->
-- [Not Started] **WebSocket message types finalised and published**
-  - Share `/openapi.json` WebSocket spec with Dev 2 (WebSocket types are not in OpenAPI — share a separate `docs/ws-message-contract.md`)
-  - Write `docs/ws-message-contract.md` with all inbound/outbound message shapes + example payloads
-  - **Note (s2-3):** inbound flat control messages now in use but undocumented & not in `ws.ts ClientMessage`:
-    `ping`, `session_start`, and the 9 flow events (`segment_complete`, `checkin_complete`, `low_checkin_score`,
+- [Completed] **WebSocket message types finalised and published** — ✓ 2026-06-30
+  - `docs/ws-message-contract.md` published: every inbound + outbound message shape with concrete JSON
+    examples, source cites, and a reconciliation section vs the frozen `ws.ts`. Story: `docs/stories/4-10-ws-message-types-final.md`.
+  - **Inbound documented:** `attention_signal` (in `ws.ts`) + the flat control messages NOT in `ws.ts ClientMessage` —
+    `session_start`, `ping`, and the 9 flow events (`segment_complete`, `checkin_complete`, `low_checkin_score`,
     `quiz_trigger`, `quiz_complete`, `quiz_failed`, `teachback_complete`, `teachback_failed`, `lesson_complete`).
-    Document them here + reconcile with `ws.ts` via the 4-dev contract.
-  - Dev 2 confirms frontend matches the contract
+  - **Outbound documented:** `lesson_ready`, `attention_ack`, `tutor_intervene`, `state_change` (+ reconnect-sync
+    convention), `pong`, `error`; `generation_progress`/`ces_update` noted as other-owner/not-yet-emitted.
+  - **Reconciliation gaps flagged for the 4-dev `ws.ts` PR:** (a) control messages absent from `ClientMessage`
+    → propose `ControlMessage` union; (b) `pong` absent from `ServerMessage`; (c) `error` flat-vs-typed
+    `{code,message}` mismatch; (d) `lesson_ready` extra `session_id`; (e) `state_change`-as-reconnect-sync.
+  - **🔎 Review-caught (Blind + Edge Case Hunter):** no wrong shapes, but added the omitted wire SEMANTICS —
+    session-scoped fan-out (multi-connection), `attention_ack` best-effort/no-ack-on-failure, first-connect-silent
+    vs reconnect-sync, fire-and-forget + no-replay for `lesson_ready`, no ordering guarantee, non-object-JSON
+    socket teardown. Plus code-cleanup flags (phantom `intervention` docstring; `state_sync` naming).
+  - **⚠️ Pending:** Dev 2 sign-off on the contract; the follow-up 4-dev `ws.ts` PR applying gaps (a)–(e).
   - **AC:** Dev 2 signs off on the WS message contract; no breaking changes after this point
 
 ---
