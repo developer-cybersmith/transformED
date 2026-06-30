@@ -164,7 +164,7 @@ async def test_wrong_answer_is_marked_incorrect(mock_to_thread) -> None:
 
 @pytest.mark.unit
 async def test_all_correct_gives_score_100(mock_to_thread) -> None:
-    """2/2 correct → score == 100.0."""
+    """2/2 correct → score == 100.0, ces_contribution == 35.0."""
     supabase = _default_supabase()
     answers = [
         QuizAnswer(question_id="q1", response_index=1, response_time_ms=1200),
@@ -177,6 +177,8 @@ async def test_all_correct_gives_score_100(mock_to_thread) -> None:
     assert result.correct_count == 2
     assert result.total_count == 2
     assert result.score == pytest.approx(100.0)
+    # AC 7: CES SCALE CONTRACT — all correct at ces_weight_quiz=0.35 must yield exactly 35.0 pts
+    assert result.ces_contribution == pytest.approx(35.0)
 
 
 @pytest.mark.unit
@@ -327,8 +329,13 @@ async def test_raises_404_when_session_not_found(mock_to_thread) -> None:
 
 
 @pytest.mark.unit
-async def test_raises_403_when_session_belongs_to_other_user(mock_to_thread) -> None:
-    """session.user_id != request user_id → HTTP 403."""
+async def test_session_wrong_user_returns_404(mock_to_thread) -> None:
+    """session.user_id != request user_id → HTTP 404 (SEC-006: session enumeration fix).
+
+    AC 4 and AC 8: wrong-owner path must return 404 (not 403) so attackers cannot
+    distinguish 'session belongs to someone else' from 'session does not exist'.
+    Detail must contain 'not found or access denied'.
+    """
     from fastapi import HTTPException
     other_session = {"session_id": "sess-001", "user_id": "other-user", "lesson_id": "lesson-001"}
     supabase = _build_supabase(session_data=other_session, lesson_data={"content": _LESSON_CONTENT})
@@ -338,7 +345,8 @@ async def test_raises_403_when_session_belongs_to_other_user(mock_to_thread) -> 
             session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
             answers=answers, user_id="user-001", supabase=supabase,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
+    assert "not found or access denied" in exc_info.value.detail
 
 
 @pytest.mark.unit
@@ -502,3 +510,163 @@ def test_http_layer_post_quiz_returns_404_on_missing_session(monkeypatch) -> Non
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/quiz", json=_VALID_HTTP_PAYLOAD)
     assert resp.status_code == 404
+
+
+# ── Security hardening tests (Story 3-10, AC 9) ──────────────────────────────
+
+
+@pytest.mark.unit
+def test_too_many_answers_rejected() -> None:
+    """AC 1 / AC 9.1: answers list with 51 items → Pydantic ValidationError (max_length=50)."""
+    from pydantic import ValidationError
+    answers = [QuizAnswer(question_id=f"q{i}", response_index=0, response_time_ms=0) for i in range(51)]
+    with pytest.raises(ValidationError):
+        from app.modules.assessment.schemas import QuizSubmission
+        QuizSubmission(session_id="s", lesson_id="l", segment_id="seg", answers=answers)
+
+
+@pytest.mark.unit
+async def test_answers_at_max_length_accepted(mock_to_thread) -> None:
+    """AC 1 / AC 9.2: answers list with exactly 50 items must be accepted (happy path).
+
+    Builds a segment with 50 questions so all question_ids are valid.
+    """
+    questions = [
+        {
+            "question_id": f"q{i}",
+            "type": "mcq",
+            "question": f"Question {i}?",
+            "options": ["A", "B", "C", "D"],
+            "correct_index": 0,
+            "explanation": f"Explanation {i}.",
+            "difficulty": "easy",
+        }
+        for i in range(50)
+    ]
+    segment = {"segment_id": "seg-001", "quiz": questions}
+    lesson_content = {"lesson_id": "lesson-001", "segments": [segment]}
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": lesson_content},
+        insert_data=[],
+    )
+    answers = [QuizAnswer(question_id=f"q{i}", response_index=0, response_time_ms=0) for i in range(50)]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.total_count == 50
+
+
+@pytest.mark.unit
+async def test_response_index_upper_bound_rejected(mock_to_thread) -> None:
+    """AC 2 / AC 9.3: response_index=99 for a 4-option question → HTTP 422."""
+    from fastapi import HTTPException
+    supabase = _default_supabase()
+    answers = [QuizAnswer(question_id="q1", response_index=99, response_time_ms=500)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 422
+    assert "out of range" in exc_info.value.detail
+
+
+@pytest.mark.unit
+async def test_response_index_at_max_valid(mock_to_thread) -> None:
+    """AC 2 / AC 9.4: response_index=3 for a 4-option question is valid and graded correctly."""
+    supabase = _default_supabase()
+    # _QUESTION_1 has options ["Nucleus", "Mitochondria", "Ribosome", "Golgi apparatus"], correct=1
+    answers = [QuizAnswer(question_id="q1", response_index=3, response_time_ms=500)]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.total_count == 1
+    assert result.feedback[0]["is_correct"] is False  # index 3 != correct_index 1
+
+
+@pytest.mark.unit
+async def test_duplicate_question_id_rejected(mock_to_thread) -> None:
+    """AC 3 / AC 9.5: two QuizAnswer items with the same question_id → HTTP 422."""
+    from fastapi import HTTPException
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": _LESSON_CONTENT},
+    )
+    answers = [
+        QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000),
+        QuizAnswer(question_id="q1", response_index=0, response_time_ms=1500),  # duplicate
+    ]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 422
+    assert "Duplicate" in exc_info.value.detail
+
+
+@pytest.mark.unit
+async def test_insert_error_log_sanitized(mock_to_thread, monkeypatch) -> None:
+    """AC 5 / AC 9.6: newlines in insert_resp.error are stripped before logging."""
+    import logging
+
+    session_mock = MagicMock()
+    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    lesson_mock = MagicMock()
+    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+
+    # Insert mock that returns an error object containing newlines
+    insert_resp_mock = MagicMock()
+    insert_resp_mock.error = "DB error\nline2\rline3"
+    insert_mock = MagicMock()
+    insert_mock.insert.return_value.execute.return_value = insert_resp_mock
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+
+    logged_args: list = []
+
+    original_error = logging.Logger.error
+
+    def _capture_error(self, msg, *args, **kwargs):
+        if "quiz_attempts" in str(msg):
+            logged_args.extend(args)
+        original_error(self, msg, *args, **kwargs)
+
+    monkeypatch.setattr("logging.Logger.error", _capture_error)
+
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    # The insert "fails" (error is set) — service should log sanitized error
+    # We call grade_quiz; it will insert and log the error if the service checks insert_resp.error
+    # Note: the service currently doesn't raise on insert error for quiz (only teachback does),
+    # but it should log a sanitized error message.
+    await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    # If logged, verify no newlines in any arg
+    for arg in logged_args:
+        assert "\n" not in str(arg), f"Newline found in log arg: {arg!r}"
+        assert "\r" not in str(arg), f"CR found in log arg: {arg!r}"
+
+
+@pytest.mark.unit
+async def test_answers_list_empty_returns_422(mock_to_thread) -> None:
+    """AC 1 (defense-in-depth) / extra guard: empty answers list → 422 from service layer.
+
+    Pydantic min_length=1 catches this at schema parse time; this test verifies the
+    service-level guard also raises 422 if somehow an empty list reaches grade_quiz.
+    """
+    from fastapi import HTTPException
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": _LESSON_CONTENT},
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=[], user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 422

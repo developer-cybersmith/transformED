@@ -23,7 +23,7 @@ class QuizSubmission(BaseModel):
     session_id: str
     lesson_id: str
     segment_id: str
-    answers: list[QuizAnswer]
+    answers: list[QuizAnswer] = Field(min_length=1, max_length=50)
 
 
 class QuizResult(BaseModel):

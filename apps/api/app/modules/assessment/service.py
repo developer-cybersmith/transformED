@@ -68,9 +68,11 @@ async def grade_quiz(
             detail=f"Session {session_id!r} not found.",
         )
     if str(session_resp.data["user_id"]) != str(user_id):
+        # AC 4 (SEC-006): Return 404 instead of 403 to prevent session enumeration oracle.
+        # Attacker must not be able to distinguish "belongs to someone else" from "doesn't exist".
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session does not belong to this user.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
         )
 
     # Step 2 — Load lesson JSONB
@@ -112,17 +114,31 @@ async def grade_quiz(
             detail="answers list must not be empty.",
         )
 
-    # Step 5 — Grade each answer
+    # AC 3 (TQ-007): Reject duplicate question_ids — prevents double-counting a single question.
+    seen_ids: set[str] = set()
+    for ans in answers:
+        if ans.question_id in seen_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Duplicate question_id {ans.question_id!r} in submission.",
+            )
+        seen_ids.add(ans.question_id)
+
+    # Step 6 — Grade each answer
     graded: list[dict[str, Any]] = []
     for ans in answers:
         question = question_map.get(ans.question_id)
         if question is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"question_id {ans.question_id!r} not found in segment "
-                    f"{segment_id!r}. Valid IDs: {list(question_map.keys())}."
-                ),
+                detail=f"question_id {ans.question_id!r} not found in segment {segment_id!r}.",
+            )
+        # AC 2 (SEC-008): Validate response_index upper bound to prevent array-index manipulation.
+        options = question.get("options", [])
+        if not (0 <= ans.response_index < len(options)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"response_index {ans.response_index} is out of range for question {ans.question_id!r}.",
             )
         graded.append(
             {
@@ -146,9 +162,13 @@ async def grade_quiz(
         }
         for g in graded
     ]
-    await asyncio.to_thread(
+    insert_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts").insert(rows_to_insert).execute()
     )
+    if getattr(insert_resp, "error", None):
+        # AC 5 (SEC-009): Sanitize error string before logging to prevent log injection.
+        safe_err = str(insert_resp.error).replace("\n", " ").replace("\r", " ")
+        logger.error("quiz_attempts insert failed: session=%s error=%s", session_id, safe_err)
     logger.info(
         "quiz_attempts inserted: session=%s segment=%s count=%d",
         session_id,
@@ -163,6 +183,10 @@ async def grade_quiz(
 
     settings = get_settings()
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
+    # AC 6 (INT-03) — CES SCALE CONTRACT (communicate to Dev 4):
+    # ces_contribution is on the 0-100 POINT scale.
+    # ces_weight_quiz (0.35 default) = max 35.0 pts at full accuracy.
+    # Dev 4's ces.py must SUM component contributions directly — do NOT multiply by 100 again.
 
     # Step 8 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
