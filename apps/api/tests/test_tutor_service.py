@@ -15,6 +15,7 @@ All tests are ``@pytest.mark.unit`` — no real Redis / state machine. ``asyncio
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -182,7 +183,11 @@ async def test_two_below_threshold_no_cooldown_dispatches(mocker) -> None:
 
     result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
 
-    mock_dispatch.assert_called_once_with("sess-1", "distraction_detected")
+    # The dispatch now carries the current segment's pre-generated messages ({} here — the
+    # _setup mock has no cached package, so selection degrades to empty).
+    mock_dispatch.assert_called_once_with(
+        "sess-1", "distraction_detected", payload={"intervention_messages": {}}
+    )
     assert result.intervention_dispatched is True
 
 
@@ -292,3 +297,179 @@ async def test_cesresult_fields(mocker) -> None:
     assert result.session_id == "sess-1"
     assert result.ces == compute_ces(_parse_signal(_VALID_PAYLOAD))
     assert result.ces == 0.5
+
+
+# ── Intervention selection + delivery (s2-5) ──────────────────────────────────
+
+
+def _intervention_redis(package_json: str | None) -> AsyncMock:
+    """Key-aware Redis for the intervention-delivery path: triggers (lrange below threshold,
+    no cooldown) and serves the cached package + segment index by key."""
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == "lesson_package:sess-1":
+            return package_json
+        if key == "session:sess-1:segment_index":
+            return "0"
+        return None
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.lrange = AsyncMock(return_value=["0.1", "0.2"])  # 2 windows below threshold → trigger
+    redis.exists = AsyncMock(return_value=0)  # no cooldown
+    return redis
+
+
+def _patch_dispatch(mocker, intervention_message):
+    """Mock dispatch_event to return an INTERVENING result (real selection covered in test_tutor_graph)."""
+    mock_dispatch = AsyncMock(
+        return_value={
+            "current_state": "INTERVENING",
+            "intervention_message": intervention_message,
+            "intervention_type": "distraction",
+        }
+    )
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+    return mock_dispatch
+
+
+@pytest.mark.unit
+async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
+    """Triggered intervention passes the segment's messages to the FSM and delivers tutor_intervene."""
+    # Segment field is `interventions` per the frozen LessonPackage schema (SegmentInterventions).
+    pkg = {
+        "segments": [
+            {"interventions": {"distraction": ["focus up", "x", "y"], "confusion": ["c"], "fatigue": ["f"]}}
+        ]
+    }
+    mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
+    mock_settings = MagicMock()
+    mock_settings.ces_threshold = 0.5
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mock_dispatch = _patch_dispatch(mocker, "focus up")
+
+    mock_manager = MagicMock()
+    mock_manager.send = AsyncMock()
+    mocker.patch("app.core.websocket.manager", mock_manager)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    # The segment's messages were passed into the dispatch payload.
+    _, kwargs = mock_dispatch.call_args
+    assert kwargs["payload"]["intervention_messages"]["distraction"][0] == "focus up"
+
+    # The client received a ws.ts-shaped tutor_intervene message.
+    mock_manager.send.assert_called_once()
+    sid_arg, sent = mock_manager.send.call_args[0]
+    assert sid_arg == "sess-1"
+    assert sent["type"] == "tutor_intervene"
+    assert sent["payload"]["message"] == "focus up"
+    assert sent["payload"]["type"] == "distraction"
+    assert sent["payload"]["session_id"] == "sess-1"
+    assert result.intervention_dispatched is True
+
+
+@pytest.mark.unit
+async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
+    """Cache miss → no message → tutor_intervene skipped; no crash; CesResult still returned."""
+    mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(None))  # no cached package
+    mock_settings = MagicMock()
+    mock_settings.ces_threshold = 0.5
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    _patch_dispatch(mocker, None)  # FSM returns no message when no package supplied
+
+    mock_manager = MagicMock()
+    mock_manager.send = AsyncMock()
+    mocker.patch("app.core.websocket.manager", mock_manager)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_manager.send.assert_not_called()
+    assert result.intervention_dispatched is True  # the intervention still fired in the FSM
+
+
+@pytest.mark.unit
+async def test_segment_complete_increments_segment_index(mocker) -> None:
+    """advance_tutor_state(segment_complete) advances the current-segment pointer."""
+    redis = AsyncMock()
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state("sess-9", "segment_complete")
+
+    redis.incr.assert_called_once_with("session:sess-9:segment_index")
+    redis.expire.assert_any_call("session:sess-9:segment_index", 86_400)
+    mock_dispatch.assert_called_once_with("sess-9", "segment_complete")
+
+
+# ── _segment_intervention_messages helper (direct unit coverage) ──────────────
+
+
+def _pkg_redis(get_map: dict) -> AsyncMock:
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        return get_map.get(key)
+
+    redis.get = AsyncMock(side_effect=_get)
+    return redis
+
+
+@pytest.mark.unit
+async def test_segment_messages_returns_interventions_for_segment(mocker) -> None:
+    """Reads the frozen `interventions` field for the current segment."""
+    from app.modules.tutor.service import _segment_intervention_messages
+
+    pkg = {"segments": [
+        {"interventions": {"distraction": ["d0"], "confusion": ["c0"], "fatigue": ["f0"]}},
+        {"interventions": {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}},
+    ]}
+    redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "1"})
+
+    out = await _segment_intervention_messages("s", redis)
+
+    assert out == {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}
+
+
+@pytest.mark.unit
+async def test_segment_messages_cache_miss_returns_empty(mocker) -> None:
+    from app.modules.tutor.service import _segment_intervention_messages
+
+    redis = _pkg_redis({})  # no cached package
+    assert await _segment_intervention_messages("s", redis) == {}
+
+
+@pytest.mark.unit
+async def test_segment_messages_malformed_json_returns_empty(mocker) -> None:
+    from app.modules.tutor.service import _segment_intervention_messages
+
+    redis = _pkg_redis({"lesson_package:s": "not-json{"})
+    assert await _segment_intervention_messages("s", redis) == {}
+
+
+@pytest.mark.unit
+async def test_segment_messages_empty_segments_returns_empty(mocker) -> None:
+    from app.modules.tutor.service import _segment_intervention_messages
+
+    redis = _pkg_redis({"lesson_package:s": json.dumps({"segments": []})})
+    assert await _segment_intervention_messages("s", redis) == {}
+
+
+@pytest.mark.unit
+async def test_segment_messages_index_clamped_to_range(mocker) -> None:
+    """An out-of-range segment_index (e.g. stale) clamps to the last segment instead of raising."""
+    from app.modules.tutor.service import _segment_intervention_messages
+
+    pkg = {"segments": [{"interventions": {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}}]}
+    redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "9"})
+
+    out = await _segment_intervention_messages("s", redis)
+
+    assert out == {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}
