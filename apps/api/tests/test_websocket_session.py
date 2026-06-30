@@ -232,3 +232,102 @@ def test_e4_client_event_allowlists_match():
     from app.modules.tutor.service import _CLIENT_DRIVABLE_EVENTS
 
     assert _TUTOR_CLIENT_EVENTS == _CLIENT_DRIVABLE_EVENTS
+
+
+# ── Group F — session restore on reconnect (s2-4) ─────────────────────────────
+
+
+@pytest.mark.unit
+async def test_f1_reconnect_syncs_state_and_no_reset(mocker):
+    """A reconnect (tutor_state present) pushes a state_change sync and does NOT reset the session."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value="QUIZZING")
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    from app.core.websocket import ConnectionManager
+
+    ws = AsyncMock()
+    mgr = ConnectionManager()
+    await mgr.connect(ws, "sess-r1")
+
+    # On-contract ws.ts state_change (from == to, i.e. a sync, not a transition).
+    ws.send_json.assert_called_once_with(
+        {
+            "type": "state_change",
+            "payload": {"session_id": "sess-r1", "from_state": "QUIZZING", "to_state": "QUIZZING"},
+        }
+    )
+    mock_redis.set.assert_not_called()  # reconnect must not reset state
+
+
+@pytest.mark.unit
+async def test_f5_reconnect_decodes_bytes_state(mocker):
+    """Restore handles a bytes tutor_state (real redis without decode_responses) and any state value."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=b"TEACH_BACK")
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    from app.core.websocket import ConnectionManager
+
+    ws = AsyncMock()
+    await ConnectionManager().connect(ws, "sess-bytes")
+
+    ws.send_json.assert_called_once_with(
+        {
+            "type": "state_change",
+            "payload": {"session_id": "sess-bytes", "from_state": "TEACH_BACK", "to_state": "TEACH_BACK"},
+        }
+    )
+
+
+@pytest.mark.unit
+async def test_f6_reconnect_send_failure_does_not_break_connect(mocker):
+    """If the reconnecting socket is already gone, the failed sync send must not break connect, and the
+    dead socket is dropped from the registry (no leak)."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value="TEACHING")
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    from app.core.websocket import ConnectionManager
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock(side_effect=RuntimeError("socket closed"))
+    mgr = ConnectionManager()
+
+    await mgr.connect(ws, "sess-deadsock")  # must not raise
+
+    # The dead socket was reaped, not left registered.
+    assert "sess-deadsock" not in mgr._connections
+
+
+@pytest.mark.unit
+async def test_f2_new_session_inits_and_no_sync(mocker):
+    """A fresh session (no prior tutor_state) initialises and sends no sync message."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    from app.core.websocket import ConnectionManager
+
+    ws = AsyncMock()
+    mgr = ConnectionManager()
+    await mgr.connect(ws, "sess-new")
+
+    mock_redis.set.assert_any_call("tutor_state:sess-new", "IDLE", ex=86400)  # fresh init
+    ws.send_json.assert_not_called()  # no restore
+
+
+@pytest.mark.unit
+async def test_f3_reconnect_read_failure_degrades_to_init(mocker):
+    """A Redis read failure on connect degrades to fresh init — never breaks the handshake."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(side_effect=ConnectionError("down"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    from app.core.websocket import ConnectionManager
+
+    ws = AsyncMock()
+    mgr = ConnectionManager()
+    await mgr.connect(ws, "sess-fail")  # must not raise
+
+    ws.send_json.assert_not_called()  # no sync message when state couldn't be read
