@@ -51,8 +51,8 @@ async def grade_quiz(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user.
-        HTTPException 422: A submitted question_id is not in the segment quiz.
+        HTTPException 403: Session belongs to a different lesson (IDOR guard).
+        HTTPException 422: A submitted question_id is not in the segment quiz, response_index out of range, or duplicate question_id.
     """
     # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
@@ -68,9 +68,17 @@ async def grade_quiz(
             detail=f"Session {session_id!r} not found.",
         )
     if str(session_resp.data["user_id"]) != str(user_id):
+        # AC 4 (SEC-006): Return 404 instead of 403 to prevent session enumeration oracle.
+        # Attacker must not be able to distinguish "belongs to someone else" from "doesn't exist".
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
+        )
+    # IDOR guard — session must belong to the requested lesson
+    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session does not belong to this user.",
+            detail="Session does not belong to this lesson.",
         )
 
     # Step 2 — Load lesson JSONB
@@ -112,7 +120,17 @@ async def grade_quiz(
             detail="answers list must not be empty.",
         )
 
-    # Step 5 — Grade each answer
+    # AC 3 (TQ-007): Reject duplicate question_ids — prevents double-counting a single question.
+    seen_ids: set[str] = set()
+    for ans in answers:
+        if ans.question_id in seen_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Duplicate question_id {ans.question_id!r} in submission.",
+            )
+        seen_ids.add(ans.question_id)
+
+    # Step 6 — Grade each answer
     graded: list[dict[str, Any]] = []
     for ans in answers:
         question = question_map.get(ans.question_id)
@@ -124,6 +142,13 @@ async def grade_quiz(
                     f"{segment_id!r}. Valid IDs: {list(question_map.keys())}."
                 ),
             )
+        # AC 2 (SEC-008): Validate response_index upper bound to prevent array-index manipulation.
+        options = question.get("options", [])
+        if not (0 <= ans.response_index < len(options)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"response_index {ans.response_index} is out of range for question {ans.question_id!r}.",
+            )
         graded.append(
             {
                 "question": question,
@@ -133,7 +158,7 @@ async def grade_quiz(
             }
         )
 
-    # Step 6 — Bulk insert to quiz_attempts
+    # Step 7 — Bulk insert to quiz_attempts
     rows_to_insert = [
         {
             "session_id": session_id,
@@ -146,9 +171,13 @@ async def grade_quiz(
         }
         for g in graded
     ]
-    await asyncio.to_thread(
+    insert_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts").insert(rows_to_insert).execute()
     )
+    if getattr(insert_resp, "error", None):
+        # AC 5 (SEC-009): Sanitize error string before logging to prevent log injection.
+        safe_err = str(insert_resp.error).replace("\n", " ").replace("\r", " ")
+        logger.error("quiz_attempts insert failed: session=%s error=%s", session_id, safe_err)
     logger.info(
         "quiz_attempts inserted: session=%s segment=%s count=%d",
         session_id,
@@ -156,15 +185,19 @@ async def grade_quiz(
         len(rows_to_insert),
     )
 
-    # Step 7 — Compute aggregate metrics
+    # Step 8 — Compute aggregate metrics
     correct_count = sum(1 for g in graded if g["is_correct"])
     total_count = len(graded)
     quiz_accuracy: float = correct_count / total_count if total_count > 0 else 0.0
 
     settings = get_settings()
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
+    # AC 6 (INT-03) — CES SCALE CONTRACT (communicate to Dev 4):
+    # ces_contribution is on the 0-100 POINT scale.
+    # ces_weight_quiz (0.35 default) = max 35.0 pts at full accuracy.
+    # Dev 4's ces.py must SUM component contributions directly — do NOT multiply by 100 again.
 
-    # Step 8 — Build per-question feedback
+    # Step 9 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
         {
             "question_id": g["question"]["question_id"],

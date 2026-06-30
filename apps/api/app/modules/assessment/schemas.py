@@ -15,15 +15,15 @@ __all__ = ["QuizAnswer", "QuizSubmission", "QuizResult", "TeachbackSubmission", 
 
 class QuizAnswer(BaseModel):
     question_id: str
-    response_index: int
-    response_time_ms: int = 0
+    response_index: int = Field(ge=0)
+    response_time_ms: int = Field(default=0, ge=0)
 
 
 class QuizSubmission(BaseModel):
     session_id: str
     lesson_id: str
     segment_id: str
-    answers: list[QuizAnswer]
+    answers: list[QuizAnswer] = Field(min_length=1, max_length=50)
 
 
 class QuizResult(BaseModel):
