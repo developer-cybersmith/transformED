@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (ces_computation — real §11 weighted formula (0–100) + tutor_ces + NaN-reject → Completed)
-**Overall status:** 25/36 Completed · 2 Partial · 9 Not Started
+**Last updated:** 2026-06-30 (max_distraction_cap — end-to-end 3-fire→4th-blocked integration test → Completed)
+**Overall status:** 26/36 Completed · 1 Partial · 9 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -17,10 +17,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 8 | 5 | 2 | 1 |
+| Sprint 3 | Weeks 6–7 | 8 | 6 | 1 | 1 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **25** | **2** | **9** |
+| **Total** | | **36** | **26** | **1** | **9** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -485,11 +485,17 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** After an intervention fires, attempting to trigger another within 2 minutes → guard blocks; after 2 minutes → guard allows
 
 <!-- CHECK:max_distraction_cap -->
-- [Partial] **Max 3 distraction interventions per session cap** ⚠️ PARTIAL — implementation done, tests missing
+- [Completed] **Max 3 distraction interventions per session cap** — ✓ 2026-06-30
   - `tutor_distraction_count:{session_id}` incremented in `intervening_node()` for `type == "distraction"` ✅ (graph.py)
   - Guard `_can_intervene_distraction()` checks `count < settings.max_distraction_per_session` ✅ (graph.py)
-  - **MISSING:** No integration test firing 3 interventions → 4th blocked
-  - **AC NOT MET:** Tests required to verify guard correctness end-to-end
+  - **Integration test added:** `test_max_distraction_cap_blocks_fourth` (`test_tutor_graph.py`) drives the
+    real compiled FSM via `dispatch_event` — interventions #1–#3 reach INTERVENING + incr the counter to
+    1/2/3; #4 (count == max 3) is blocked → stays TEACHING, counter NOT incremented. Cooldown held at 0 so
+    the cap is provably the sole gate. Story: `docs/stories/4-12-max-distraction-cap.md`.
+  - **🔎 Review:** false-green review (SHIP) hand-traced all 4 dispatches; confirmed the state-reset is
+    load-bearing (forces each firing through the guard, not the INTERVENING bypass) and the dual
+    `TEACHING`+`count==3` assertion can't hold if the 4th fired. Full suite **299 passed**.
+  - **AC MET:** guard correctness verified end-to-end (exactly 3 fire, 4th blocked).
 
 <!-- CHECK:fatigue_once -->
 - [Partial] **Fatigue intervention: once per session flag** ⚠️ PARTIAL — implementation done, tests missing
