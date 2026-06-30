@@ -166,10 +166,12 @@ async def _handle_session_start(session_id: str) -> None:
     Mirrors the error contract of ``_handle_attention_signal``: never re-raises.
     """
     try:
-        # Lazy import — tutor module depends on core, not the other way round
-        from app.modules.tutor.state_machine.graph import dispatch_event  # type: ignore[import]
+        # Lazy import — tutor module depends on core, not the other way round.
+        # Go through the service layer (mirrors _handle_attention_signal); start_session
+        # calls dispatch_event(session_id, "session_start") → IDLE → TEACHING.
+        from app.modules.tutor.service import start_session  # type: ignore[import]
 
-        await dispatch_event(session_id, "session_start")
+        await start_session(session_id)
         logger.info("[tutor:%s] session_start dispatched → TEACHING", session_id)
     except Exception:
         logger.exception("session_start dispatch failed for %s", session_id)
