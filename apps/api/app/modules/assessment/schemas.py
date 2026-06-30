@@ -48,7 +48,7 @@ class TeachbackSubmission(BaseModel):
 
 class TeachbackResult(BaseModel):
     session_id: str
-    rubric_scores: dict[str, float]  # {"accuracy": float, "completeness": float, "clarity": float}
+    rubric_labels: dict[str, str]  # descriptive labels — never return raw numerics to students
     overall_score: float
     ces_contribution: float
     feedback: str  # praise only (score >= 90) or praise + "\n\n" + correction (score < 90)

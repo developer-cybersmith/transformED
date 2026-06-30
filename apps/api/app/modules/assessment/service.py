@@ -17,6 +17,15 @@ from app.providers.llm.openai import OpenAILLMProvider
 logger = logging.getLogger(__name__)
 
 
+def _label(score: float) -> str:
+    """Convert numeric rubric score to descriptive label. Never expose raw scores to students."""
+    if score >= 80:
+        return "Strong"
+    elif score >= 60:
+        return "Developing"
+    return "Needs Work"
+
+
 async def grade_quiz(
     *,
     session_id: str,
@@ -220,7 +229,7 @@ async def grade_teachback(
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
 
     Returns:
-        TeachbackResult with rubric_scores, overall_score, ces_contribution, feedback.
+        TeachbackResult with rubric_labels, overall_score, ces_contribution, feedback.
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
@@ -348,10 +357,10 @@ async def grade_teachback(
 
     return TeachbackResult(
         session_id=session_id,
-        rubric_scores={
-            "accuracy": float(result.accuracy_score),
-            "completeness": float(result.completeness_score),
-            "clarity": float(result.clarity_score),
+        rubric_labels={
+            "accuracy": _label(result.accuracy_score),
+            "completeness": _label(result.completeness_score),
+            "clarity": _label(result.clarity_score),
         },
         overall_score=float(result.score),
         ces_contribution=ces_contribution,
