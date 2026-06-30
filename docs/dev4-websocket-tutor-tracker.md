@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (reconnect_test — all-7-states restore-from-Redis test → Partial; live network-fault sim pending)
-**Overall status:** 28/36 Completed · 2 Partial · 6 Not Started
+**Last updated:** 2026-06-30 (Sprint 4 analysis tasks — methodology/skeleton docs authored → Partial; findings pending real data)
+**Overall status:** 28/36 Completed · 6 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -18,9 +18,9 @@
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 6 | 0 | 2 | 4 |
+| Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **28** | **2** | **6** |
+| **Total** | | **36** | **28** | **6** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -535,25 +535,28 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Stability, tuning, load testing. No new features.
 
 <!-- CHECK:threshold_tuning -->
-- [Not Started] **Intervention threshold tuning (is CES < 50 right?)**
-  - Analyse 20+ real sessions: plot CES value distribution vs post-session quiz scores
-  - Objective: find CES threshold where sensitivity (true interventions) > 70% and false positive rate < 20%
-  - Propose updated `CES_THRESHOLD` value with data backing
-  - **AC:** Analysis written in `docs/sprint4-ces-threshold-analysis.md`; new threshold proposed
+- [Partial] **Intervention threshold tuning (is CES < 50 right?)** ⚠️ PARTIAL — methodology written; findings pending ≥20 real sessions
+  - **Methodology doc:** `docs/sprint4-ces-threshold-analysis.md` — objective, data sources, threshold-sweep
+    method, SQL query templates, decision rule (env-var-only `CES_THRESHOLD` change).
+  - **🔎 Surfaced prerequisite:** per-window CES is **not persisted** (Redis 24 h TTL) — recompute from
+    `attention_events` (raw components persisted) or add a `ces_window` event log before the analysis runs.
+  - **⏳ Pending:** ≥20 real sessions (production deploy) → threshold sweep + proposed value. No data invented.
 
 <!-- CHECK:intervention_response_review -->
-- [Not Started] **Review which interventions students responded to vs ignored**
-  - Query `session_events` for `intervention_acknowledged` events
-  - Compute acknowledgement rate per intervention type (distraction / fatigue / encouragement)
-  - Flag types with < 50% acknowledgement rate for message copy revision
-  - **AC:** Review doc written; at least 1 intervention type flagged with proposed copy change
+- [Partial] **Review which interventions students responded to vs ignored** ⚠️ PARTIAL — methodology written; blocked on instrumentation + data
+  - **Methodology doc:** `docs/sprint4-intervention-review.md` — ack-rate-per-type method + SQL templates.
+  - **🔎 Surfaced blocking gap:** **interventions + acknowledgements are NOT logged** — firing only updates
+    Redis counters, and there is **no `intervention_acknowledged` message/handler** (analytics event_type enum
+    lacks it). Needs an instrumentation story (Dev 4 fire→`session_events`; Dev 2 client ack tap) first.
+  - **⏳ Pending:** instrumentation + real sessions → per-type ack rates + flagged type. No rates invented.
 
 <!-- CHECK:cooldown_tuning -->
-- [Not Started] **Cooldown period tuning from real session data**
-  - Analyse time between consecutive interventions in real sessions
-  - If avg inter-intervention time < 4 minutes, increase `INTERVENTION_COOLDOWN_SECONDS`
-  - Update Railway env var; document change
-  - **AC:** Cooldown value updated in Railway; documented with data rationale
+- [Partial] **Cooldown period tuning from real session data** ⚠️ PARTIAL — methodology written; pending intervention-timestamp logging + data
+  - **Methodology doc:** `docs/sprint4-cooldown-tuning.md` — inter-intervention-gap analysis (LAG window),
+    decision rule (raise `INTERVENTION_COOLDOWN_SECONDS` if mean gap < 4 min), env-var-only rollout.
+  - **🔎 Surfaced prerequisite:** needs per-intervention timestamps in `session_events` (same instrumentation
+    gap as `intervention_response_review`).
+  - **⏳ Pending:** instrumentation + real sessions → gap distribution + cooldown decision. No timings invented.
 
 <!-- CHECK:ws_load_test -->
 - [Partial] **WebSocket stability testing under 50 concurrent users** ⚠️ PARTIAL — harness built + locally validated; production run pending staging
@@ -587,11 +590,13 @@ MAX_DISTRACTION_PER_SESSION=3
   - **🔎 Flagged:** SESSION_END (terminal) restore locked in without a guard against re-driving a dead session.
 
 <!-- CHECK:intervention_copy_review -->
-- [Not Started] **Intervention message copy review (tone + warmth)**
-  - Extract all pre-generated intervention messages from 5 real lesson packages
-  - Review checklist: warm tone, not condescending, < 15 words, action-oriented
-  - Flag any failing messages and coordinate with Dev 1 (pipeline owner) to regenerate
-  - **AC:** All reviewed messages pass checklist; failing ones have documented fix requests to Dev 1
+- [Partial] **Intervention message copy review (tone + warmth)** ⚠️ PARTIAL — checklist ready; pending 5 real lesson packages
+  - **Checklist doc:** `docs/sprint4-intervention-copy-review.md` — 5-point checklist (warm/not-condescending,
+    < 15 words, action-oriented, type-appropriate, no clinical/DNA language), message-extraction method, and
+    a verdict table to fill. Messages live in `LessonPackage.segments[].interventions` (frozen schema).
+  - **🔎 Surfaced prerequisite:** needs 5 generated lesson packages (Dev 1's pipeline); also flagged Dev 1's
+    `content/pipeline/graph.py:249` stale `encouragement` TODO to reconcile to `distraction|confusion|fatigue`.
+  - **⏳ Pending:** 5 real packages → verdict table + fix requests to Dev 1. No messages reviewed/invented yet.
 
 ---
 
