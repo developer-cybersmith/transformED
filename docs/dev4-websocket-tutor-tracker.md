@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-29 (idle_to_teaching — graph self-loop bug fixed + tested → Completed; Sprint 1 done)
-**Overall status:** 18/36 Completed · 3 Partial · 15 Not Started
+**Last updated:** 2026-06-30 (all_transitions — 14 transitions + guards tested → Completed)
+**Overall status:** 19/36 Completed · 2 Partial · 15 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -16,11 +16,11 @@
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 6 | 0 | 1 | 5 |
+| Sprint 2 | Weeks 4–5 | 6 | 1 | 0 | 5 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **18** | **3** | **15** |
+| **Total** | | **36** | **19** | **2** | **15** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -343,13 +343,21 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Simulated session flows from IDLE → TEACHING → INTERVENING → TEACHING without errors
 
 <!-- CHECK:all_transitions -->
-- [Partial] **All 14 transitions wired and tested** ⚠️ PARTIAL — 6/14 covered incidentally by the s1-5 graph fix
-  - `tests/test_tutor_graph.py` now exercises the real graph for: IDLE→TEACHING, INTERVENING→TEACHING,
-    TEACHING→CHECKING_IN, TEACHING→INTERVENING (guarded), QUIZZING→TEACH_BACK, SESSION_END→IDLE ✅
-  - **Remaining (Sprint 2):** the other ~8 transitions + each guard's BLOCKED case (cooldown blocks,
-    fatigue fires once, teach-back blocks) — one test per transition
-  - All 14 transitions are wired via the new entry-router topology — tests must prove each
-  - **AC:** 14 passing tests, one per transition; each guard rule has a separate blocked-case test
+- [Completed] **All 14 transitions wired and tested** ✅ 2026-06-30
+  - `tests/test_tutor_graph.py` (25 tests) exercises the REAL graph for **all 14 transitions** end-to-end
+    via `dispatch_event` + guard-blocked cases:
+    - 14 transitions: IDLE→TEACHING, TEACHING→{INTERVENING(distraction), INTERVENING(fatigue), CHECKING_IN,
+      QUIZZING, SESSION_END}, INTERVENING→TEACHING, CHECKING_IN→{TEACHING, QUIZZING},
+      QUIZZING→{TEACHING, TEACH_BACK}, TEACH_BACK→{TEACHING, INTERVENING}, SESSION_END→IDLE
+    - guard-blocked (suppression proven, not just "stays"): distraction blocked by cooldown, distraction
+      blocked at max count, fatigue blocked when already fired; plus the count==max-1 allow boundary
+  - Story: `docs/stories/4-5-all-transitions-tested.md`
+  - **AC MET:** one test per transition; each intervention guard has a blocked-case test ✅
+  - **⚠️ Bugs found during review (NOT fixed here — see owning tasks):**
+    - **[HIGH]** "NEVER interrupt mid-TEACH_BACK" is unenforced — `_is_in_teachback` is dead code in
+      routing; distraction/fatigue during TEACH_BACK leaks to TEACHING → fix in `quizzing_teachback_flow`
+    - **[MED]** fatigue interventions never set `tutor_fatigue_fired` end-to-end (intervention_type not
+      propagated for `fatigue_detected`) → fix in `full_state_machine`
 
 <!-- CHECK:quizzing_teachback_flow -->
 - [Not Started] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow**
@@ -357,6 +365,10 @@ MAX_DISTRACTION_PER_SESSION=3
   - Implement trigger: when WS client sends `{ "type": "quiz_failed" }` → `quiz_failed` event
   - Implement trigger: when WS client sends `{ "type": "teachback_complete" }` → `teachback_complete` event
   - Extend WebSocket `_handle_*` dispatch to cover these 3 new message types
+  - **🐛 [HIGH] Must fix here:** `_is_in_teachback` is dead code in routing — `route_from_teach_back`
+    routes any non-`teachback_failed` event (incl. distraction/fatigue) to TEACHING via its default, so
+    "NEVER interrupt mid-TEACH_BACK" (CLAUDE.md §10) is unenforced. Wire the guard so interventions are
+    blocked while in TEACH_BACK. (Found in s2-2 all_transitions review, 2026-06-30.)
   - **AC:** Step-through test shows CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING state sequence
 
 <!-- CHECK:session_restore -->
