@@ -172,6 +172,7 @@ async def _init_session_state(session_id: str) -> None:
         await redis.set(f"tutor_distraction_count:{session_id}", "0", ex=86400)
         await redis.delete(f"tutor_cooldown:{session_id}")
         await redis.delete(f"tutor_fatigue_fired:{session_id}")
+        await redis.delete(f"session:{session_id}:segment_index")  # reset segment pointer for a reused id
         logger.info("WS session initialised: session=%s", session_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to init session state for %s: %s", session_id, e)

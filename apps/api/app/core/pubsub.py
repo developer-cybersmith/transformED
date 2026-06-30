@@ -84,6 +84,18 @@ async def _run_lesson_subscriber(manager: ConnectionManager) -> None:
                     session_id,
                 )
 
+                # Cache the lesson package so the in-process intervention path can read the
+                # segment's pre-generated messages with a single Redis GET (no DB at intervention
+                # time). Best-effort — a cache failure must never break message forwarding.
+                try:
+                    lesson = (message.get("payload") or {}).get("lesson")
+                    if lesson is not None and _sub_conn is not None:
+                        await _sub_conn.set(
+                            f"lesson_package:{session_id}", json.dumps(lesson), ex=86_400
+                        )
+                except Exception:
+                    logger.warning("lesson_package cache write failed for %s", session_id)
+
         except asyncio.CancelledError:
             raise  # DECISION 3: shutdown signal — do not restart
         except Exception:

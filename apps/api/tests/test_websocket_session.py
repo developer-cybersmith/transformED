@@ -62,6 +62,7 @@ async def test_a3_init_clears_stale_cooldown_and_fatigue_keys(mocker):
 
     mock_redis.delete.assert_any_call("tutor_cooldown:sess-001")
     mock_redis.delete.assert_any_call("tutor_fatigue_fired:sess-001")
+    mock_redis.delete.assert_any_call("session:sess-001:segment_index")  # reset segment pointer
 
 
 @pytest.mark.unit

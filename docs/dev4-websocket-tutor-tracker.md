@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (full_state_machine real logic + fatigue bug fix → Completed)
-**Overall status:** 21/36 Completed · 3 Partial · 12 Not Started
+**Last updated:** 2026-06-30 (intervention_selection — cache + segment tracking + tutor_intervene delivery → Completed)
+**Overall status:** 22/36 Completed · 2 Partial · 12 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -16,11 +16,11 @@
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 6 | 3 | 1 | 2 |
+| Sprint 2 | Weeks 4–5 | 6 | 4 | 0 | 2 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **21** | **3** | **12** |
+| **Total** | | **36** | **22** | **2** | **12** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -391,16 +391,21 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Client reconnecting mid-session receives current state within 100ms of reconnect
 
 <!-- CHECK:intervention_selection -->
-- [Partial] **Intervention message selection from lesson package** ⚠️ PARTIAL — selection logic done (s2-1), fetch + delivery remain
-  - At intervention time: read `LessonPackage` from DB (or Redis cache), extract `segments[current_idx].intervention_messages[type]`
-  - Never call GPT at intervention time — messages are pre-generated at lesson build (Dev 1's pipeline)
-  - Send to client: `{ "type": "intervention", "intervention_type": "distraction", "message": "...", "overlay_seconds": 5 }`
-  - **Wiring from s2-1:** `intervening_node` already SELECTS `intervention_messages[type][0]` from
-    `event_payload`. This task must (a) FETCH the LessonPackage (DB/Redis) and pass its current segment's
-    `intervention_messages` into the dispatch payload — else `intervention_message` is always None in prod —
-    and (b) deliver the selected message to the client. Also rotate beyond `[0]` (3 msgs/type) e.g. by
-    `tutor_distraction_count`.
-  - **AC:** Intervention delivery latency < 50ms (no LLM call, only Redis reads)
+- [Completed] **Intervention message selection from lesson package** ✅ 2026-06-30
+  - **Package cache:** the `lesson_ready` pub/sub subscriber now caches the full package at
+    `lesson_package:{session_id}` (24h TTL) — intervention reads it with one Redis GET, no DB on the hot path ✅
+  - **Segment tracking:** `session:{sid}:segment_index` (default 0), incremented on `segment_complete`,
+    reset on WS connect (`_init_session_state`) so reused ids don't inherit a stale index ✅
+  - **Select + deliver:** `process_attention_signal` fetches the current segment's `interventions` (frozen
+    `SegmentInterventions` field), passes them into the dispatch payload, and on a fired intervention sends
+    `tutor_intervene` `{session_id, type, message}` (ws.ts shape) via in-process `manager.send` ✅
+  - **🐛 Review-caught CRITICAL fix:** read field is `segments[].interventions` (frozen schema), not
+    `intervention_messages` — the original code would have delivered NO message in prod. Fixed + contract-shaped tests.
+  - **Degrade:** cache miss / bad JSON / empty segments / out-of-range index → no crash, no DB call, send skipped.
+  - **Tests:** `test_tutor_service.py` (delivery, cache-miss, segment incr, 5 direct helper tests),
+    `test_lesson_ready_pubsub.py` (cache write + TTL), websocket A3 (segment_index reset). Story: `docs/stories/4-8-intervention-selection.md`
+  - **⚠️ Flagged (deferred):** message rotation (still `[0]`); TTL-expiry-on-reconnect warm-up; `"intervention"`→`"tutor_intervene"` rename elsewhere (Bug #5b).
+  - **AC MET:** delivery is Redis-reads-only (no LLM/DB on the hot path); message reaches the client ✅
 
 <!-- CHECK:ws_message_types_final -->
 - [Not Started] **WebSocket message types finalised and published**
