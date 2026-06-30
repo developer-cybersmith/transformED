@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (all_transitions — 14 transitions + guards tested → Completed)
-**Overall status:** 19/36 Completed · 2 Partial · 15 Not Started
+**Last updated:** 2026-06-30 (quizzing_teachback_flow + TEACH_BACK guard fix → Completed)
+**Overall status:** 20/36 Completed · 2 Partial · 14 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -16,11 +16,11 @@
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 6 | 1 | 0 | 5 |
+| Sprint 2 | Weeks 4–5 | 6 | 2 | 0 | 4 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **19** | **2** | **15** |
+| **Total** | | **36** | **20** | **2** | **14** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -360,16 +360,21 @@ MAX_DISTRACTION_PER_SESSION=3
       propagated for `fatigue_detected`) → fix in `full_state_machine`
 
 <!-- CHECK:quizzing_teachback_flow -->
-- [Not Started] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow**
-  - Implement trigger: when WS client sends `{ "type": "segment_complete" }` → `segment_complete` event
-  - Implement trigger: when WS client sends `{ "type": "quiz_failed" }` → `quiz_failed` event
-  - Implement trigger: when WS client sends `{ "type": "teachback_complete" }` → `teachback_complete` event
-  - Extend WebSocket `_handle_*` dispatch to cover these 3 new message types
-  - **🐛 [HIGH] Must fix here:** `_is_in_teachback` is dead code in routing — `route_from_teach_back`
-    routes any non-`teachback_failed` event (incl. distraction/fatigue) to TEACHING via its default, so
-    "NEVER interrupt mid-TEACH_BACK" (CLAUDE.md §10) is unenforced. Wire the guard so interventions are
-    blocked while in TEACH_BACK. (Found in s2-2 all_transitions review, 2026-06-30.)
-  - **AC:** Step-through test shows CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING state sequence
+- [Completed] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow** ✅ 2026-06-30
+  - WS endpoint now dispatches client-drivable lifecycle events (`segment_complete`, `checkin_complete`,
+    `low_checkin_score`, `quiz_trigger`, `quiz_complete`, `quiz_failed`, `teachback_complete`,
+    `teachback_failed`, `lesson_complete`) → `service.advance_tutor_state` (allow-listed) → `dispatch_event` ✅
+  - **🐛 [HIGH] FIXED:** `route_from_teach_back` default changed `teaching` → `teach_back` — "NEVER interrupt
+    mid-TEACH_BACK" (CLAUDE.md §10) now enforced at the routing layer. distraction/fatigue during TEACH_BACK
+    stay in TEACH_BACK (tested). ✅
+  - **Tests:** `test_tutor_graph.py` — distraction/fatigue/noop blocked in TEACH_BACK + full step-through
+    (TEACHING→CHECKING_IN→QUIZZING→TEACH_BACK→TEACHING via stateful Redis); `test_websocket_session.py` E1
+    (dispatch), E2 (server-only events rejected ×3), E3 (swallow), E4 (allow-list drift guard). 256 passed.
+  - Story: `docs/stories/4-6-quizzing-teachback-flow.md`
+  - **⚠️ [SECURITY] Flagged follow-up:** `/ws/{session_id}` has no JWT auth and the allow-list lets a client
+    self-certify `quiz_complete`/`teachback_complete`/`lesson_complete`. Implemented per task spec (MVP);
+    harden later (WS JWT auth + server-authoritative outcomes via assessment API).
+  - **AC MET:** step-through shows CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING ✅
 
 <!-- CHECK:session_restore -->
 - [Not Started] **Session state restore on reconnect tested**
@@ -388,6 +393,10 @@ MAX_DISTRACTION_PER_SESSION=3
 - [Not Started] **WebSocket message types finalised and published**
   - Share `/openapi.json` WebSocket spec with Dev 2 (WebSocket types are not in OpenAPI — share a separate `docs/ws-message-contract.md`)
   - Write `docs/ws-message-contract.md` with all inbound/outbound message shapes + example payloads
+  - **Note (s2-3):** inbound flat control messages now in use but undocumented & not in `ws.ts ClientMessage`:
+    `ping`, `session_start`, and the 9 flow events (`segment_complete`, `checkin_complete`, `low_checkin_score`,
+    `quiz_trigger`, `quiz_complete`, `quiz_failed`, `teachback_complete`, `teachback_failed`, `lesson_complete`).
+    Document them here + reconcile with `ws.ts` via the 4-dev contract.
   - Dev 2 confirms frontend matches the contract
   - **AC:** Dev 2 signs off on the WS message contract; no breaking changes after this point
 
