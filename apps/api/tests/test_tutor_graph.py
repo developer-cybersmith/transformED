@@ -430,6 +430,92 @@ async def test_fatigue_blocked_when_already_fired_stays_teaching(mocker) -> None
     _assert_intervention_suppressed(redis, "s-fat2")
 
 
+# ── NEVER interrupt mid-TEACH_BACK (CLAUDE.md §10 guard) ─────────────────────────
+
+
+@pytest.mark.unit
+async def test_distraction_blocked_during_teach_back(mocker) -> None:
+    """A distraction_detected event while in TEACH_BACK must NOT leave teach-back."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACH_BACK"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-tb-distract", "distraction_detected")
+
+    assert result["current_state"] == TutorState.TEACH_BACK
+
+
+@pytest.mark.unit
+async def test_fatigue_blocked_during_teach_back(mocker) -> None:
+    """A fatigue_detected event while in TEACH_BACK must NOT leave teach-back."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACH_BACK"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-tb-fatigue", "fatigue_detected")
+
+    assert result["current_state"] == TutorState.TEACH_BACK
+
+
+@pytest.mark.unit
+async def test_teach_back_stays_on_unrelated_event(mocker) -> None:
+    """Any non teach-back-outcome event keeps the FSM in TEACH_BACK (not the old default→TEACHING)."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACH_BACK"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-tb-noop", "noop")
+
+    assert result["current_state"] == TutorState.TEACH_BACK
+
+
+# ── Full comprehension flow step-through (CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING) ──
+
+
+def _stateful_redis(initial: str) -> AsyncMock:
+    """Redis mock whose tutor_state GET reflects the last persisted SET — so chained dispatches
+    read the evolving state (each dispatch_event is one transition)."""
+    store = {"tutor_state": initial}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        return store["tutor_state"] if key.startswith("tutor_state:") else None
+
+    async def _set(key: str, value, **_kw):
+        if key.startswith("tutor_state:"):
+            store["tutor_state"] = value
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    redis.exists = AsyncMock(return_value=0)
+    return redis
+
+
+@pytest.mark.unit
+async def test_quiz_teachback_step_through(mocker) -> None:
+    """AC5: TEACHING → CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING across chained dispatches.
+
+    None of these 4 events route through intervening_node, so no get_settings patch is needed.
+    """
+    mocker.patch("app.core.redis.get_redis", return_value=_stateful_redis("TEACHING"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    sid = "s-flow"
+
+    r1 = await dispatch_event(sid, "segment_complete")
+    assert r1["current_state"] == TutorState.CHECKING_IN
+
+    r2 = await dispatch_event(sid, "low_checkin_score")
+    assert r2["current_state"] == TutorState.QUIZZING
+
+    r3 = await dispatch_event(sid, "quiz_failed")
+    assert r3["current_state"] == TutorState.TEACH_BACK
+
+    r4 = await dispatch_event(sid, "teachback_complete")
+    assert r4["current_state"] == TutorState.TEACHING
+
+
 # ── Service-layer caller ─────────────────────────────────────────────────────────
 
 

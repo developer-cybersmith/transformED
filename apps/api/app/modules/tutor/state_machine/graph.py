@@ -263,11 +263,18 @@ async def route_from_quizzing(state: TutorMachineState) -> str:
 
 
 async def route_from_teach_back(state: TutorMachineState) -> str:
-    """Route out of TEACH_BACK. Interventions during TEACH_BACK are blocked."""
+    """Route out of TEACH_BACK.
+
+    CLAUDE.md §10 — NEVER interrupt mid-TEACH_BACK: only an explicit teach-back outcome leaves this
+    state. Any other event (including ``distraction_detected`` / ``fatigue_detected``) is suppressed —
+    the FSM stays in TEACH_BACK. This is the authoritative routing-level enforcement of the guard.
+    """
     event = state.get("event", "")
+    if event == "teachback_complete":
+        return "teaching"
     if event == "teachback_failed":
         return "intervening"
-    return "teaching"
+    return "teach_back"  # guard: interventions blocked during teach-back
 
 
 async def route_from_session_end(state: TutorMachineState) -> str:

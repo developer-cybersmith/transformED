@@ -31,6 +31,24 @@ from fastapi.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
+# Client-drivable tutor lifecycle events accepted as inbound WS control messages (same category as
+# "ping" / "session_start" — flat control messages, not the ws.ts payload union). Server/engine-only
+# events (distraction_detected, fatigue_detected) and admin events (session_reset) are NOT here, so a
+# client cannot drive them. Mirrors service._CLIENT_DRIVABLE_EVENTS.
+_TUTOR_CLIENT_EVENTS = frozenset(
+    {
+        "segment_complete",
+        "checkin_complete",
+        "low_checkin_score",
+        "quiz_trigger",
+        "quiz_complete",
+        "quiz_failed",
+        "teachback_complete",
+        "teachback_failed",
+        "lesson_complete",
+    }
+)
+
 
 class ConnectionManager:
     """Thread-safe (asyncio) multi-connection WebSocket manager."""
@@ -112,6 +130,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             elif msg_type == "session_start":
                 await _handle_session_start(session_id)
 
+            elif msg_type in _TUTOR_CLIENT_EVENTS:
+                await _handle_tutor_event(session_id, msg_type)
+
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
 
@@ -175,6 +196,21 @@ async def _handle_session_start(session_id: str) -> None:
         logger.info("[tutor:%s] session_start dispatched → TEACHING", session_id)
     except Exception:
         logger.exception("session_start dispatch failed for %s", session_id)
+
+
+async def _handle_tutor_event(session_id: str, event: str) -> None:
+    """Dispatch a client-driven lifecycle event into the tutor FSM via the service layer.
+
+    Imported lazily to avoid circular imports between core and modules. Errors are swallowed so a
+    bad client message never crashes the WS receive loop (mirrors ``_handle_session_start``).
+    """
+    try:
+        from app.modules.tutor.service import advance_tutor_state  # type: ignore[import]
+
+        await advance_tutor_state(session_id, event)
+        logger.info("[tutor:%s] client event dispatched: %s", session_id, event)
+    except Exception:
+        logger.exception("tutor event %s failed for %s", event, session_id)
 
 
 async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> None:

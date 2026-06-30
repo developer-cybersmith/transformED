@@ -183,3 +183,51 @@ async def test_d2_g5_teach_back_absent_allows_intervention(mocker):
     result = await _is_in_teachback("sess-004")
 
     assert result is False
+
+
+# ── Group E — quizzing/teachback flow dispatch (s2-3) ─────────────────────────
+
+
+@pytest.mark.unit
+async def test_e1_flow_event_dispatches_to_fsm(mocker):
+    """A client-drivable lifecycle event is dispatched into the tutor FSM."""
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.core.websocket import _handle_tutor_event
+
+    await _handle_tutor_event("sess-q", "quiz_failed")
+
+    mock_dispatch.assert_called_once_with("sess-q", "quiz_failed")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("event", ["distraction_detected", "fatigue_detected", "session_reset"])
+async def test_e2_server_only_event_rejected_by_service(event):
+    """Server/engine/admin-only events must NOT be client-drivable — advance_tutor_state rejects them."""
+    from app.modules.tutor.service import advance_tutor_state
+
+    with pytest.raises(ValueError):
+        await advance_tutor_state("sess-x", event)
+
+
+@pytest.mark.unit
+async def test_e3_tutor_event_failure_does_not_raise(mocker):
+    """A transient FSM error during a flow event must be swallowed at the WS boundary (B2 analog)."""
+    mocker.patch(
+        "app.modules.tutor.state_machine.graph.dispatch_event",
+        side_effect=RuntimeError("FSM crash"),
+    )
+
+    from app.core.websocket import _handle_tutor_event
+
+    await _handle_tutor_event("sess-q", "quiz_failed")  # must not raise
+
+
+@pytest.mark.unit
+def test_e4_client_event_allowlists_match():
+    """The WS-routing allow-list and the service allow-list must stay in sync (no silent drift)."""
+    from app.core.websocket import _TUTOR_CLIENT_EVENTS
+    from app.modules.tutor.service import _CLIENT_DRIVABLE_EVENTS
+
+    assert _TUTOR_CLIENT_EVENTS == _CLIENT_DRIVABLE_EVENTS
