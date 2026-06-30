@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-29 (arq_lesson_ready verified + tests green → Completed)
-**Overall status:** 17/36 Completed · 3 Partial · 16 Not Started
+**Last updated:** 2026-06-29 (idle_to_teaching — graph self-loop bug fixed + tested → Completed; Sprint 1 done)
+**Overall status:** 18/36 Completed · 3 Partial · 15 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -15,12 +15,12 @@
 | Sprint | Period | Tasks | Completed | Partial | Not Started |
 |--------|--------|-------|-----------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 7 | 6 | 1 | 0 |
-| Sprint 2 | Weeks 4–5 | 6 | 0 | 0 | 6 |
+| Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
+| Sprint 2 | Weeks 4–5 | 6 | 0 | 1 | 5 |
 | Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **17** | **3** | **16** |
+| **Total** | | **36** | **18** | **3** | **15** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -292,12 +292,25 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Unit test: push 2 values below threshold → `distraction_detected` dispatched; push 1 below + 1 above → no dispatch
 
 <!-- CHECK:idle_to_teaching -->
-- [Partial] **IDLE → TEACHING state transition live** ⚠️ PARTIAL — state machine logic done, wiring missing
-  - `graph.py` routes `session_start` event → TEACHING node correctly ✅
-  - `dispatch_event()` is fully callable ✅
-  - **MISSING:** `tutor/service.py` does not exist — no caller for `dispatch_event(session_id, "session_start")`
-  - **MISSING:** `websocket.py` does not handle `"session_start"` message type from client
-  - **AC NOT MET:** Transition never gets triggered
+- [Completed] **IDLE → TEACHING state transition live** ✅ 2026-06-29
+  - **Runtime bug found + fixed:** the transition was wired (websocket→dispatch_event, graph idle→teaching)
+    but `dispatch_event(sid,"session_start")` raised `GraphRecursionError` — LangGraph ran the graph to
+    completion and `route_from_teaching` self-looped `teaching→teaching` on the default branch. Never caught
+    because every prior test mocked `dispatch_event`.
+  - **Architect fix (Winston):** converted the FSM to **one transition per dispatch** — a conditional entry
+    router (`route_entry`) routes from the live `current_state`, runs exactly one node, then `→ END`. No
+    self-loops. Guard logic (`route_from_*`) reused unchanged; `recursion_limit=5` added as a tripwire.
+  - **Service layer:** added `tutor/service.py::start_session()`; `websocket._handle_session_start` now
+    delegates through it (mirrors the attention-signal path; §5 discipline).
+  - **Robustness (review):** a corrupt/stale persisted state now falls back to IDLE instead of crashing
+    `dispatch_event`.
+  - **Tests:** `tests/test_tutor_graph.py` (13) drive the REAL graph (Redis mocked): IDLE→TEACHING, persists
+    TEACHING (call_count==1), no GraphRecursionError, live-state routing (QUIZZING+quiz_failed→TEACH_BACK),
+    corrupt-state fallback, INTERVENING→TEACHING, segment_complete→CHECKING_IN, guarded
+    distraction_detected→INTERVENING, session_reset→IDLE, SESSION_END no-op. websocket B1/B2 still green.
+    Story: `docs/stories/4-4-idle-to-teaching-live.md`
+  - **Follow-up:** full 14-transition matrix → Sprint 2 `all_transitions`.
+  - **AC MET:** `dispatch_event(sid,"session_start")` transitions IDLE→TEACHING and persists, proven end-to-end ✅
 
 <!-- CHECK:session_state_init -->
 - [Completed] **Session state init on lesson start**
@@ -330,11 +343,13 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Simulated session flows from IDLE → TEACHING → INTERVENING → TEACHING without errors
 
 <!-- CHECK:all_transitions -->
-- [Not Started] **All 14 transitions wired and tested**
-  - Write one unit test per transition using mocked Redis and a mocked LessonPackage
-  - Cover every conditional edge: distraction guard blocks, fatigue blocks, teachback blocks
-  - All 14 transitions defined in `graph.py` are already wired — tests must prove correctness
-  - **AC:** 14 passing tests, one per transition; each guard rule has a separate test for the blocked case
+- [Partial] **All 14 transitions wired and tested** ⚠️ PARTIAL — 6/14 covered incidentally by the s1-5 graph fix
+  - `tests/test_tutor_graph.py` now exercises the real graph for: IDLE→TEACHING, INTERVENING→TEACHING,
+    TEACHING→CHECKING_IN, TEACHING→INTERVENING (guarded), QUIZZING→TEACH_BACK, SESSION_END→IDLE ✅
+  - **Remaining (Sprint 2):** the other ~8 transitions + each guard's BLOCKED case (cooldown blocks,
+    fatigue fires once, teach-back blocks) — one test per transition
+  - All 14 transitions are wired via the new entry-router topology — tests must prove each
+  - **AC:** 14 passing tests, one per transition; each guard rule has a separate blocked-case test
 
 <!-- CHECK:quizzing_teachback_flow -->
 - [Not Started] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow**

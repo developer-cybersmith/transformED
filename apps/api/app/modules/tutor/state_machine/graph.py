@@ -278,6 +278,52 @@ async def route_from_session_end(state: TutorMachineState) -> str:
     return END  # type: ignore[return-value]
 
 
+async def route_from_idle(state: TutorMachineState) -> str:
+    """IDLE → TEACHING on session_start; otherwise stay IDLE."""
+    return "teaching" if state.get("event") == "session_start" else "idle"
+
+
+async def route_from_intervening(state: TutorMachineState) -> str:
+    """INTERVENING → TEACHING on intervention_complete; otherwise stay INTERVENING."""
+    return "teaching" if state.get("event") == "intervention_complete" else "intervening"
+
+
+# Transition table: current state → its routing function. dispatch_event applies exactly
+# ONE transition per call (entry router → one node → END), so the graph never self-loops.
+_ROUTE_BY_STATE = {
+    TutorState.IDLE: route_from_idle,
+    TutorState.TEACHING: route_from_teaching,
+    TutorState.INTERVENING: route_from_intervening,
+    TutorState.CHECKING_IN: route_from_checking_in,
+    TutorState.QUIZZING: route_from_quizzing,
+    TutorState.TEACH_BACK: route_from_teach_back,
+    TutorState.SESSION_END: route_from_session_end,
+}
+
+
+async def route_entry(state: TutorMachineState) -> str:
+    """Conditional entry point: route from the CURRENT state based on the event.
+
+    This is what makes the FSM apply one transition per dispatch instead of running to
+    completion. ``current_state`` is seeded from Redis by ``dispatch_event``.
+
+    A corrupt or stale persisted state (a value not in ``TutorState``) must never crash a
+    dispatch — fall back to IDLE so the session self-heals rather than wedging the tutor.
+    """
+    raw = state.get("current_state") or TutorState.IDLE
+    try:
+        current = TutorState(raw)
+    except ValueError:
+        logger.warning(
+            "[tutor:%s] unknown persisted state %r — defaulting to IDLE",
+            state.get("session_id", ""),
+            raw,
+        )
+        current = TutorState.IDLE
+    router = _ROUTE_BY_STATE.get(current, route_from_idle)
+    return await router(state)
+
+
 # ── Graph construction ────────────────────────────────────────────────────────
 
 
@@ -299,64 +345,33 @@ def _build_tutor_graph() -> Any:
     graph.add_node("teach_back", teach_back_node)
     graph.add_node("session_end", session_end_node)
 
-    # Entry point
-    graph.set_entry_point("idle")
-
-    # Simple (unconditional) edges
-    # IDLE → TEACHING on session_start (handled via conditional from idle)
-    graph.add_edge("idle", "teaching")  # session_start always moves to TEACHING
-
-    # INTERVENING → TEACHING (intervention_complete)
-    graph.add_edge("intervening", "teaching")
-
-    # All conditional routing
-    graph.add_conditional_edges(
-        "teaching",
-        route_from_teaching,
+    # Conditional ENTRY: route from the current state based on the event, run that one
+    # node, then END. One transition per dispatch — no self-loops, no run-to-completion.
+    graph.set_conditional_entry_point(
+        route_entry,
         {
+            "idle": "idle",
             "teaching": "teaching",
             "intervening": "intervening",
             "checking_in": "checking_in",
             "quizzing": "quizzing",
-            "session_end": "session_end",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "checking_in",
-        route_from_checking_in,
-        {
-            "teaching": "teaching",
-            "quizzing": "quizzing",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "quizzing",
-        route_from_quizzing,
-        {
-            "teaching": "teaching",
             "teach_back": "teach_back",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "teach_back",
-        route_from_teach_back,
-        {
-            "teaching": "teaching",
-            "intervening": "intervening",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "session_end",
-        route_from_session_end,
-        {
-            "idle": "idle",
+            "session_end": "session_end",
             END: END,
         },
     )
+
+    # Every node is terminal: it persists its state and the run ends.
+    for node in (
+        "idle",
+        "teaching",
+        "intervening",
+        "checking_in",
+        "quizzing",
+        "teach_back",
+        "session_end",
+    ):
+        graph.add_edge(node, END)
 
     return graph.compile(checkpointer=checkpointer)
 
@@ -414,7 +429,10 @@ async def dispatch_event(
         "error": None,
     }
 
-    config = {"configurable": {"thread_id": session_id}}
+    # recursion_limit is a regression tripwire: with terminal nodes a dispatch is
+    # entry-router → one node → END (1 step). Any future self-loop fails fast here
+    # with GraphRecursionError instead of hanging.
+    config = {"configurable": {"thread_id": session_id}, "recursion_limit": 5}
     result: TutorMachineState = await graph.ainvoke(input_state, config=config)
     return result
 
