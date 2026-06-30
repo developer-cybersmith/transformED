@@ -99,6 +99,17 @@ def compute_ces(signal: NormalizedSignal) -> float:  # noqa: ARG001
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+async def start_session(session_id: str) -> None:
+    """Drive the IDLE → TEACHING transition for a newly started session.
+
+    Thin service-layer entry point over the tutor state machine so callers (the
+    WebSocket handler) go through the service, mirroring ``process_attention_signal``.
+    """
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(session_id, "session_start")
+
+
 async def process_attention_signal(
     session_id: str,
     signal: dict[str, Any],
