@@ -27,6 +27,35 @@ def _redis(current_state: str | None) -> AsyncMock:
     return redis
 
 
+def _keyed_redis(sid: str, *, state: str, count: str | None = None, exists: int = 0) -> AsyncMock:
+    """Key-aware AsyncMock Redis for guard tests.
+
+    GET returns *state* for ``tutor_state:{sid}`` and *count* for ``tutor_distraction_count:{sid}``,
+    so the guard's ``int(count_raw)`` never receives the state string. EXISTS returns *exists*
+    (1 = cooldown / fatigue-fired present).
+    """
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return state
+        if key == f"tutor_distraction_count:{sid}":
+            return count
+        return None
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.exists = AsyncMock(return_value=exists)
+    return redis
+
+
+def _patch_settings(mocker, *, max_distraction: int = 3) -> None:
+    """Patch get_settings — required by any test whose path reaches a guard or intervening_node."""
+    settings = MagicMock()
+    settings.max_distraction_per_session = max_distraction
+    settings.intervention_cooldown_seconds = 120
+    mocker.patch("app.config.get_settings", return_value=settings)
+
+
 # ── IDLE → TEACHING (the task) ──────────────────────────────────────────────────
 
 
@@ -219,6 +248,186 @@ async def test_session_end_noop_terminates_without_running_a_node(mocker) -> Non
     result = await dispatch_event("s-end", "noop")
 
     assert result["current_state"] == TutorState.SESSION_END
+
+
+# ── Remaining transitions — complete the 14 (story 4-5) ──────────────────────────
+
+
+@pytest.mark.unit
+async def test_fatigue_detected_routes_to_intervening(mocker) -> None:
+    """TEACHING + fatigue_detected (not yet fired) → INTERVENING."""
+    _patch_settings(mocker)
+    mocker.patch(
+        "app.core.redis.get_redis",
+        return_value=_keyed_redis("s-fatigue", state="TEACHING", exists=0),
+    )
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-fatigue", "fatigue_detected")
+
+    assert result["current_state"] == TutorState.INTERVENING
+
+
+@pytest.mark.unit
+async def test_quiz_trigger_routes_to_quizzing(mocker) -> None:
+    """TEACHING + quiz_trigger → QUIZZING."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-qtrig", "quiz_trigger")
+
+    assert result["current_state"] == TutorState.QUIZZING
+
+
+@pytest.mark.unit
+async def test_lesson_complete_routes_to_session_end(mocker) -> None:
+    """TEACHING + lesson_complete → SESSION_END."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-lesson", "lesson_complete")
+
+    assert result["current_state"] == TutorState.SESSION_END
+
+
+@pytest.mark.unit
+async def test_checkin_complete_returns_to_teaching(mocker) -> None:
+    """CHECKING_IN + checkin_complete → TEACHING."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("CHECKING_IN"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-checkin", "checkin_complete")
+
+    assert result["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
+async def test_low_checkin_score_routes_to_quizzing(mocker) -> None:
+    """CHECKING_IN + low_checkin_score → QUIZZING."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("CHECKING_IN"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-lowcheck", "low_checkin_score")
+
+    assert result["current_state"] == TutorState.QUIZZING
+
+
+@pytest.mark.unit
+async def test_quiz_complete_returns_to_teaching(mocker) -> None:
+    """QUIZZING + quiz_complete → TEACHING."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("QUIZZING"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-qdone", "quiz_complete")
+
+    assert result["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
+async def test_teachback_complete_returns_to_teaching(mocker) -> None:
+    """TEACH_BACK + teachback_complete → TEACHING."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACH_BACK"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-tbdone", "teachback_complete")
+
+    assert result["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
+async def test_teachback_failed_routes_to_intervening(mocker) -> None:
+    """TEACH_BACK + teachback_failed → INTERVENING."""
+    _patch_settings(mocker)
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACH_BACK"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-tbfail", "teachback_failed")
+
+    assert result["current_state"] == TutorState.INTERVENING
+
+
+# ── Guard-blocked cases (event fires, guard keeps FSM in TEACHING) ────────────────
+
+
+def _assert_intervention_suppressed(redis: AsyncMock, sid: str) -> None:
+    """Prove the intervention was BLOCKED, not merely that the state happened to stay TEACHING:
+    the guard was consulted (exists awaited), and intervening_node never ran (no INTERVENING
+    persisted, no distraction-count increment)."""
+    redis.exists.assert_awaited()  # the guard actually ran
+    assert not any(
+        c.args[:2] == (f"tutor_state:{sid}", "INTERVENING") for c in redis.set.call_args_list
+    ), "INTERVENING must never be persisted when the guard blocks"
+    redis.incr.assert_not_called()  # intervening_node (which incr's the counter) did not run
+
+
+@pytest.mark.unit
+async def test_distraction_blocked_by_cooldown_stays_teaching(mocker) -> None:
+    """distraction_detected during an active cooldown → guard blocks → stays TEACHING (suppressed)."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-cool", state="TEACHING", exists=1)  # cooldown active
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-cool", "distraction_detected")
+
+    assert result["current_state"] == TutorState.TEACHING
+    _assert_intervention_suppressed(redis, "s-cool")
+
+
+@pytest.mark.unit
+async def test_distraction_blocked_by_max_count_stays_teaching(mocker) -> None:
+    """distraction_detected at the per-session cap (count == max) → guard blocks → stays TEACHING."""
+    _patch_settings(mocker, max_distraction=3)
+    redis = _keyed_redis("s-cap", state="TEACHING", count="3", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-cap", "distraction_detected")
+
+    assert result["current_state"] == TutorState.TEACHING
+    _assert_intervention_suppressed(redis, "s-cap")
+
+
+@pytest.mark.unit
+async def test_distraction_allowed_just_below_max(mocker) -> None:
+    """Boundary (allow side): count == max-1 is still below the cap → INTERVENING.
+
+    Pairs with the count==max blocked test to pin the `<` operator from both directions.
+    """
+    _patch_settings(mocker, max_distraction=3)
+    redis = _keyed_redis("s-belowcap", state="TEACHING", count="2", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-belowcap", "distraction_detected")
+
+    assert result["current_state"] == TutorState.INTERVENING
+
+
+@pytest.mark.unit
+async def test_fatigue_blocked_when_already_fired_stays_teaching(mocker) -> None:
+    """fatigue_detected after fatigue already fired this session → guard blocks → stays TEACHING."""
+    _patch_settings(mocker)  # consistency: future fatigue-guard changes won't crash on MagicMock attrs
+    redis = _keyed_redis("s-fat2", state="TEACHING", exists=1)  # fatigue_fired present
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-fat2", "fatigue_detected")
+
+    assert result["current_state"] == TutorState.TEACHING
+    _assert_intervention_suppressed(redis, "s-fat2")
 
 
 # ── Service-layer caller ─────────────────────────────────────────────────────────
