@@ -58,6 +58,16 @@ logger = logging.getLogger(__name__)
 
 _STATE_TTL = 86_400  # 24 h
 
+# Maps an intervention-triggering event to the intervention_type it records / selects a message for.
+# Used by dispatch_event so the FSM records the RIGHT intervention (the fatigue path previously left
+# intervention_type=None → tutor_fatigue_fired was never set). Valid types match the LessonPackage
+# intervention_messages schema: distraction | confusion | fatigue.
+_EVENT_INTERVENTION_TYPE = {
+    "distraction_detected": "distraction",
+    "fatigue_detected": "fatigue",
+    "teachback_failed": "confusion",
+}
+
 
 # ── State definitions ─────────────────────────────────────────────────────────
 
@@ -86,6 +96,7 @@ class TutorMachineState(TypedDict, total=False):
     event: str  # the triggering event name
     event_payload: dict[str, Any]
     intervention_type: str | None
+    intervention_message: str | None  # pre-generated message selected at intervention time
     error: str | None
 
 
@@ -177,8 +188,19 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     cooldown_key = f"tutor_cooldown:{session_id}"
     await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds)
 
+    # Select the pre-generated intervention message for this type from the segment's
+    # intervention_messages (supplied via the event payload). The DB/Redis LessonPackage fetch and
+    # WS delivery to the client are the intervention_selection task; here we just pick the message.
+    messages = (state.get("event_payload") or {}).get("intervention_messages") or {}
+    chosen = messages.get(intervention_type) or []
+    intervention_message = chosen[0] if chosen else None
+
     await _persist_state(session_id, TutorState.INTERVENING)
-    return {**state, "current_state": TutorState.INTERVENING}
+    return {
+        **state,
+        "current_state": TutorState.INTERVENING,
+        "intervention_message": intervention_message,
+    }
 
 
 async def checking_in_node(state: TutorMachineState) -> TutorMachineState:
@@ -432,7 +454,11 @@ async def dispatch_event(
         "in_teachback": current_state_val == TutorState.TEACH_BACK,
         "event": event,
         "event_payload": payload or {},
-        "intervention_type": payload.get("intervention_type") if payload else None,
+        # Derive intervention_type from the event when the caller didn't set it explicitly. Without
+        # this, fatigue_detected/distraction_detected (dispatched without a payload) left it None and
+        # intervening_node recorded neither branch (the fatigue-once flag never got set).
+        "intervention_type": (payload.get("intervention_type") if payload else None)
+        or _EVENT_INTERVENTION_TYPE.get(event),
         "error": None,
     }
 
@@ -441,7 +467,24 @@ async def dispatch_event(
     # with GraphRecursionError instead of hanging.
     config = {"configurable": {"thread_id": session_id}, "recursion_limit": 5}
     result: TutorMachineState = await graph.ainvoke(input_state, config=config)
+    _trace_dispatch(session_id, event, result)
     return result
+
+
+def _trace_dispatch(session_id: str, event: str, result: TutorMachineState | None) -> None:
+    """Best-effort Langfuse trace of one dispatch. Observability must NEVER break the FSM, so any
+    Langfuse/config failure is swallowed."""
+    try:
+        from app.core.langfuse import get_langfuse
+
+        get_langfuse().trace(
+            name="tutor.dispatch_event",
+            session_id=session_id,
+            input={"event": event},
+            output={"current_state": str(result.get("current_state")) if result else None},
+        )
+    except Exception:  # noqa: BLE001 — tracing is best-effort
+        logger.debug("langfuse trace skipped for %s/%s", session_id, event, exc_info=True)
 
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────
