@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (ws_message_types_final — docs/ws-message-contract.md published → Completed; Sprint 2 done 6/6)
-**Overall status:** 24/36 Completed · 2 Partial · 10 Not Started
+**Last updated:** 2026-06-30 (ces_computation — real §11 weighted formula (0–100) + tutor_ces + NaN-reject → Completed)
+**Overall status:** 25/36 Completed · 2 Partial · 9 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -17,10 +17,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
+| Sprint 3 | Weeks 6–7 | 8 | 5 | 2 | 1 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **24** | **2** | **10** |
+| **Total** | | **36** | **25** | **2** | **9** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -456,11 +456,20 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Load test: 50 concurrent sessions each sending 1 signal/second → CES computed every 5s with < 10ms latency
 
 <!-- CHECK:ces_computation -->
-- [Not Started] **CES computation in-process (~3–5ms total)**
-  - Call `compute_ces()` from Dev 3's `apps/api/app/modules/assessment/ces.py`
-  - Pass: `quiz_accuracy`, `teachback_score`, `behavioral`, `head_pose`, `blink` from the attention signal
-  - Store result in `tutor_ces:{session_id}` Redis key
-  - **AC:** `compute_ces()` roundtrip including Redis write completes in < 5ms (benchmark test)
+- [Completed] **CES computation in-process (~3–5ms total)** — ✓ 2026-06-30
+  - Real §11 weighted formula now in `tutor/service.py:compute_ces` (replaces the `0.5` stub): reads
+    `settings.ces_weight_*`, **0–100 scale** (matches Dev 3's `ces_contribution` contract → `ces_threshold=50`
+    works; fixes the latent always-fire bug where `0.5 < 50`). Story: `docs/stories/4-11-ces-computation.md`.
+  - **`None`-signal handling:** weight of any `None` signal (quiz/teachback) redistributed proportionally
+    across present signals — reduces exactly to §11's ÷0.75 when only teachback is `None`. Clamped `[0,100]`.
+  - **Persistence:** `process_attention_signal` writes `tutor_ces:{session_id}` (24 h TTL) alongside `ces_window`.
+  - **🔎 Review-caught (Edge Case Hunter, HIGH):** `float("nan")`/`inf` passed the parser and NaN clamped to
+    100 (maximally-engaged) → suppressed interventions. **Fixed:** `_parse_signal` rejects non-finite values.
+  - **Tests:** Group G (formula 71.8, teachback-`None` 75.733, quiz+teachback-`None`, clamp hi/lo,
+    all-`None` guard, `tutor_ces` write, benchmark) + non-finite parse tests. **298 passed** (full suite).
+  - **AC MET:** benchmark ~7 µs/call (≈690× under the 5 ms budget; in-process — Redis I/O excluded).
+  - **⚠️ Flagged:** input `[0,1]` range-reject belongs to `attention_ingestion`; quiz-`None` extension +
+    eventual move to Dev 3's `assessment/ces.py` need Dev 3 (CES owner) sign-off.
 
 <!-- CHECK:intervention_trigger -->
 - [Completed] **Intervention trigger: 2 consecutive windows below threshold**

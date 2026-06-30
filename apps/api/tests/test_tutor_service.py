@@ -16,7 +16,8 @@ All tests are ``@pytest.mark.unit`` — no real Redis / state machine. ``asyncio
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -39,10 +40,30 @@ _VALID_PAYLOAD = {
 _WINDOW_KEY = "session:sess-1:ces_window"
 _HISTORY_KEY = "session:sess-1:ces_history"
 
-# The value process_attention_signal writes is whatever compute_ces returns — pin the
-# assertions to that (currently the 0.5 stub) so they stay correct when Dev 3 swaps in
-# the real formula, rather than hard-coding 0.5 in the buffer-write checks.
-_EXPECTED_CES = compute_ces(_parse_signal(_VALID_PAYLOAD))
+
+def _settings_mock(threshold: float = 0.5) -> MagicMock:
+    """A settings mock carrying the real §11 weights.
+
+    compute_ces reads ces_weight_*, so the mock must expose real floats — otherwise the weights are
+    MagicMock attributes and the arithmetic breaks. These are the real ``Settings`` defaults, so
+    compute_ces returns the same value everywhere this mock is used (keeps buffer-write assertions
+    exact) without constructing a real ``Settings()`` (which needs env vars at import time).
+    """
+    s = MagicMock()
+    s.ces_threshold = threshold
+    s.ces_weight_quiz = 0.35
+    s.ces_weight_teachback = 0.25
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
+    return s
+
+
+# The value process_attention_signal writes is whatever compute_ces returns — pin the buffer-write
+# assertions to that (not a hard-coded number) so they track the real §11 formula. Computed under a
+# patched get_settings so it uses the real weights without building an env-dependent Settings().
+with patch("app.config.get_settings", return_value=_settings_mock()):
+    _EXPECTED_CES = compute_ces(_parse_signal(_VALID_PAYLOAD))
 
 
 def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float = 0.5):
@@ -52,9 +73,7 @@ def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float 
     mock_redis.exists = AsyncMock(return_value=exists)
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = threshold
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(threshold))
 
     mock_dispatch = AsyncMock()
     mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
@@ -122,6 +141,27 @@ def test_parse_non_numeric_optional_raises() -> None:
     """AC3: a non-numeric OPTIONAL field → ValueError (distinct _optional_float branch)."""
     payload = dict(_VALID_PAYLOAD)
     payload["quiz_accuracy"] = "x"
+    with pytest.raises(ValueError):
+        _parse_signal(payload)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", float("nan"), float("inf")])
+def test_parse_non_finite_required_raises(bad) -> None:
+    """Non-finite required field → ValueError. float('nan') would otherwise propagate through
+    compute_ces and clamp to a misleading CES (NaN→100), silently suppressing interventions."""
+    payload = dict(_VALID_PAYLOAD)
+    payload["behavioral_score"] = bad
+    with pytest.raises(ValueError):
+        _parse_signal(payload)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+def test_parse_non_finite_optional_raises(bad) -> None:
+    """Non-finite OPTIONAL field → ValueError (distinct _optional_float branch)."""
+    payload = dict(_VALID_PAYLOAD)
+    payload["quiz_accuracy"] = bad
     with pytest.raises(ValueError):
         _parse_signal(payload)
 
@@ -286,7 +326,11 @@ async def test_only_two_most_recent_considered(mocker) -> None:
 
 @pytest.mark.unit
 async def test_cesresult_fields(mocker) -> None:
-    """AC11: CesResult carries the correct session_id and ces (stub 0.5)."""
+    """AC11: CesResult carries the correct session_id and the computed ces.
+
+    Pinned to the dynamic ``compute_ces(...)`` value (not a hard-coded stub) so it stays correct
+    now that the real §11 formula is in place.
+    """
     _setup(mocker, lrange_vals=["0.5"])
 
     from app.modules.tutor.service import process_attention_signal
@@ -296,7 +340,6 @@ async def test_cesresult_fields(mocker) -> None:
     assert isinstance(result, CesResult)
     assert result.session_id == "sess-1"
     assert result.ces == compute_ces(_parse_signal(_VALID_PAYLOAD))
-    assert result.ces == 0.5
 
 
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────
@@ -343,9 +386,7 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
         ]
     }
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     mock_dispatch = _patch_dispatch(mocker, "focus up")
 
     mock_manager = MagicMock()
@@ -375,9 +416,7 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
 async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
     """Cache miss → no message → tutor_intervene skipped; no crash; CesResult still returned."""
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(None))  # no cached package
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     _patch_dispatch(mocker, None)  # FSM returns no message when no package supplied
 
     mock_manager = MagicMock()
@@ -473,3 +512,148 @@ async def test_segment_messages_index_clamped_to_range(mocker) -> None:
     out = await _segment_intervention_messages("s", redis)
 
     assert out == {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}
+
+
+# ── Group G — CES formula (s3-3 ces_computation) ──────────────────────────────
+#
+# compute_ces lazy-imports get_settings inside the function body, so the patch target is the SOURCE
+# module ``app.config.get_settings`` (consistent with the rest of this file).
+
+
+@pytest.mark.unit
+def test_g1_all_signals_present(mocker) -> None:
+    """AC1: 0–100 weighted score with all five signals present."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    sig = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=0.8,
+        teachback_score=0.6,
+        behavioral_score=0.9,
+        head_pose_score=0.7,
+        blink_rate=0.3,
+    )
+    # (.8·.35 + .6·.25 + .9·.20 + .7·.12 + .3·.08)·100 = (.28+.15+.18+.084+.024)·100 = 71.8
+    assert compute_ces(sig) == pytest.approx(71.8, abs=1e-3)
+
+
+@pytest.mark.unit
+def test_g2_teachback_none_redistributes(mocker) -> None:
+    """AC2: teachback None → §11 redistribution (each present weight ÷ 0.75)."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    sig = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=0.8,
+        teachback_score=None,
+        behavioral_score=0.9,
+        head_pose_score=0.7,
+        blink_rate=0.3,
+    )
+    # (.8·.46667 + .9·.26667 + .7·.16 + .3·.10667)·100 ≈ 75.733
+    assert compute_ces(sig) == pytest.approx(75.733, abs=1e-2)
+
+
+@pytest.mark.unit
+def test_g3_quiz_and_teachback_none(mocker) -> None:
+    """AC3: quiz + teachback both None → redistribute across the 3 present signals (weights sum .40)."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    sig = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral_score=0.9,
+        head_pose_score=0.7,
+        blink_rate=0.3,
+    )
+    expected = (0.9 * 0.20 + 0.7 * 0.12 + 0.3 * 0.08) / 0.40 * 100
+    result = compute_ces(sig)
+    assert result == pytest.approx(expected, abs=1e-6)
+    assert 0.0 <= result <= 100.0
+
+
+@pytest.mark.unit
+def test_g4_clamps_to_100(mocker) -> None:
+    """AC6: an out-of-range input signal cannot push CES above 100."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    sig = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=1.0,
+        teachback_score=1.0,
+        behavioral_score=2.0,  # bad input (parser is type-checked, not range-checked)
+        head_pose_score=1.0,
+        blink_rate=1.0,
+    )
+    assert compute_ces(sig) <= 100.0
+
+
+@pytest.mark.unit
+def test_g4b_clamps_to_zero(mocker) -> None:
+    """AC6 lower bound: a negative input signal cannot push CES below 0."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    sig = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=-5.0,  # bad input
+        teachback_score=-5.0,
+        behavioral_score=-5.0,
+        head_pose_score=-5.0,
+        blink_rate=-5.0,
+    )
+    assert compute_ces(sig) == 0.0
+
+
+@pytest.mark.unit
+def test_g4c_all_none_returns_zero(mocker) -> None:
+    """The weight_sum<=0 guard: an all-None signal (constructible directly) degrades to 0.0, not a
+    crash. Unreachable via _parse_signal (3 fields are required) but compute_ces is called directly."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    sig = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral_score=None,  # type: ignore[arg-type]
+        head_pose_score=None,  # type: ignore[arg-type]
+        blink_rate=None,  # type: ignore[arg-type]
+    )
+    assert compute_ces(sig) == 0.0
+
+
+@pytest.mark.unit
+async def test_g5_tutor_ces_written(mocker) -> None:
+    """AC4: process_attention_signal persists the CES to tutor_ces:{session_id} with the 24 h TTL."""
+    mock_redis, _ = _setup(mocker, lrange_vals=["0.5"])
+
+    from app.modules.tutor.service import process_attention_signal
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_redis.set.assert_any_call("tutor_ces:sess-1", _EXPECTED_CES, ex=86400)
+
+
+@pytest.mark.unit
+def test_g6_compute_ces_benchmark_under_5ms(mocker) -> None:
+    """AC5: in-process compute_ces averages < 5 ms/call. Pure arithmetic — expect microseconds.
+
+    Measures the IN-PROCESS computation only; Redis network I/O is excluded (environment-dependent).
+    """
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    sig = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=0.8,
+        teachback_score=0.6,
+        behavioral_score=0.9,
+        head_pose_score=0.7,
+        blink_rate=0.3,
+    )
+    compute_ces(sig)  # warmup — exclude the first-call lazy import from the measurement
+    n = 2000
+    t0 = time.perf_counter()
+    for _ in range(n):
+        compute_ces(sig)
+    per_call = (time.perf_counter() - t0) / n
+    assert per_call < 0.005
