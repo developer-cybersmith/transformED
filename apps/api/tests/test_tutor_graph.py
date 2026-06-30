@@ -803,6 +803,45 @@ async def test_intervention_message_selected_for_confusion(mocker) -> None:
     assert result["intervention_message"] == "let's revisit that"
 
 
+# ── intervention_routing: each type → its own message (s3-8) ──────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "event,state,exp_type,exp_msg",
+    [
+        ("distraction_detected", "TEACHING", "distraction", "D0"),
+        ("fatigue_detected", "TEACHING", "fatigue", "F0"),
+        ("teachback_failed", "TEACH_BACK", "confusion", "C0"),
+    ],
+)
+async def test_intervention_routes_each_type_to_its_own_message(
+    mocker, event, state, exp_type, exp_msg
+) -> None:
+    """s3-8: each triggering event routes to its OWN intervention type and selects that type's distinct
+    message[0] from the shared package (D0/F0/C0 are distinct → proves no cross-talk)."""
+    _patch_settings(mocker)
+    sid = f"s-route-{exp_type}"
+    # count="0" + exists=0 so the distraction cap / cooldown / fatigue-once guards all allow the fire.
+    redis = _keyed_redis(sid, state=state, count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    payload = {
+        "intervention_messages": {
+            "distraction": ["D0", "D1", "D2"],
+            "confusion": ["C0", "C1", "C2"],
+            "fatigue": ["F0", "F1", "F2"],
+        }
+    }
+    result = await dispatch_event(sid, event, payload=payload)
+
+    assert result["current_state"] == TutorState.INTERVENING
+    assert result["intervention_type"] == exp_type
+    assert result["intervention_message"] == exp_msg
+
+
 @pytest.mark.unit
 async def test_fatigue_fires_once_then_blocked(mocker) -> None:
     """AC2 end-to-end: fatigue fires once (real flag write) → after returning, a second

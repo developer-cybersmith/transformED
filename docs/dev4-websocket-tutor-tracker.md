@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (fatigue_once — verified existing once-per-session test; was mis-tracked → Completed)
-**Overall status:** 27/36 Completed · 0 Partial · 9 Not Started
+**Last updated:** 2026-06-30 (intervention_routing — routing test + encouragement→confusion reconcile → Completed; SPRINT 3 DONE 8/8)
+**Overall status:** 28/36 Completed · 0 Partial · 8 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -17,10 +17,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 8 | 7 | 0 | 1 |
+| Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **27** | **0** | **9** |
+| **Total** | | **36** | **28** | **0** | **8** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -511,11 +511,22 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC MET:** once-per-session guard verified end-to-end.
 
 <!-- CHECK:intervention_routing -->
-- [Not Started] **Type A/B/C intervention routing to correct message**
-  - Intervention types: `distraction` | `fatigue` | `encouragement`
-  - Each maps to a different pre-generated message from `LessonPackage.segments[].intervention_messages`
-  - Route based on `intervention_type` in the state bag
-  - **AC:** All 3 intervention types deliver distinct, correct messages from the lesson package
+- [Completed] **Type A/B/C intervention routing to correct message** — ✓ 2026-06-30
+  - Intervention types (frozen contract): `distraction` | `confusion` | `fatigue`
+    (`ws.ts InterventionType` + `SegmentInterventions`). **NOT `encouragement`** — that type was stale tracker
+    wording; reconciled out of the Dev-4 surfaces (`tutor/router.py` comment, `check_dev4_progress.py` heuristic).
+  - Routing already implemented: `_EVENT_INTERVENTION_TYPE` maps `distraction_detected→distraction`,
+    `fatigue_detected→fatigue`, `teachback_failed→confusion`; `intervening_node` selects
+    `segments[].interventions[type][0]` (frozen field). **No routing-logic change** this task.
+  - **Test added:** `test_intervention_routes_each_type_to_its_own_message` (parametrized ×3) drives the real
+    FSM and proves each event routes to its OWN type and selects that type's **distinct** message (D0/F0/C0) —
+    covers the previously-untested distraction selection. Story: `docs/stories/4-14-intervention-routing.md`.
+  - **🔎 Review (SHIP):** hand-traced all 3 — distinct messages mean a cross-wire fails; the type + message
+    assertions are complementary (derive stage vs select stage). Reconciliation verified complete across
+    ws.ts/schema/router/heuristic. **⚠️ Flagged (pre-existing):** admin `InterventionRequest.intervention_type`
+    is an unvalidated `str` → follow-up to constrain with `Literal`. Dev 1's pipeline TODO still says
+    "encouragement" — flagged for Dev 1.
+  - **AC MET:** all 3 frozen types deliver distinct, correct messages from the lesson package.
 
 ---
 
