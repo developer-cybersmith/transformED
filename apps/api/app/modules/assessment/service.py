@@ -50,8 +50,9 @@ async def grade_quiz(
         QuizResult with score, ces_contribution, and per-question feedback.
 
     Raises:
-        HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user, or session.lesson_id != lesson_id (IDOR guard).
+        HTTPException 404: Session not found, lesson not found, segment not found,
+            or ownership check failed (SEC-006: enumeration oracle fix).
+        HTTPException 403: session.lesson_id != lesson_id (IDOR guard).
         HTTPException 422: answers is empty, or a submitted question_id is not in the segment quiz.
         HTTPException 500: quiz_attempts insert returns a truthy error.
     """
@@ -69,9 +70,11 @@ async def grade_quiz(
             detail=f"Session {session_id!r} not found.",
         )
     if str(session_resp.data["user_id"]) != str(user_id):
+        # SEC-006: Return 404 to prevent session enumeration oracle.
+        # Attacker must not distinguish "belongs to someone else" from "doesn't exist".
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session does not belong to this user.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
         )
     # IDOR guard — session must belong to the requested lesson
     if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
