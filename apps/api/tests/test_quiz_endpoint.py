@@ -129,7 +129,7 @@ def _build_supabase(
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = insert_data or []
-    insert_mock.insert.return_value.execute.return_value.error = None
+    insert_mock.insert.return_value.execute.return_value.error = None  # explicit success
 
     # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
     mock.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
@@ -546,101 +546,65 @@ def test_http_layer_post_quiz_returns_404_on_missing_session(monkeypatch) -> Non
     assert resp.status_code == 404
 
 
-# ── S3-12: attempt_number dynamic computation tests ──────────────────────────
+# ── S3-13: Unique attempt constraint 409 tests ────────────────────────────────
 
 
-@pytest.mark.unit
-async def test_attempt_number_increments_on_retry(mock_to_thread) -> None:
-    """When 2 prior attempts exist, attempt_number written to DB must be 3.
+def _build_supabase_with_insert_error(error_message: str) -> MagicMock:
+    """Build a mock Supabase client where the quiz_attempts insert returns an error.
 
-    RED: Fails on main (hardcoded attempt_number=1 in service.py → gets 1, not 3).
-    GREEN: Passes after SELECT COUNT query is added before grading loop.
-
-    Mock uses 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT).
-    count_resp.count=2 simulates 2 prior rows so service computes attempt_number=3.
+    Call order: sessions → lessons → quiz_attempts (insert with error).
     """
-    captured_rows: list = []
-
     session_mock = MagicMock()
     session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+
     lesson_mock = MagicMock()
     lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
 
-    count_resp = MagicMock()
-    count_resp.count = 2  # 2 prior attempts → service computes attempt_number=3
-    count_table_mock = MagicMock()
-    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp
+    error_obj = MagicMock()
+    error_obj.__str__ = MagicMock(return_value=error_message)
 
-    def _capture(rows):
-        captured_rows.extend(rows)
-        m = MagicMock()
-        m.execute.return_value.data = []
-        return m
-
-    # Insert mock that returns an error object containing newlines
-    insert_resp_mock = MagicMock()
-    insert_resp_mock.error = "DB error\nline2\rline3"
     insert_mock = MagicMock()
-    insert_mock.insert.return_value.execute.return_value = insert_resp_mock
-    supabase = MagicMock()
-    # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
-    supabase.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
+    insert_mock.insert.return_value.execute.return_value.data = []
+    insert_mock.insert.return_value.execute.return_value.error = error_obj
 
-    answers = [
-        QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000),
-        QuizAnswer(question_id="q2", response_index=2, response_time_ms=1500),
-    ]
-    result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
-    )
-    assert len(captured_rows) == 2
-    assert captured_rows[0]["attempt_number"] == 3, (
-        f"Expected attempt_number=3 for retry, got {captured_rows[0]['attempt_number']}"
-    )
-    assert captured_rows[1]["attempt_number"] == 3
-    assert result.correct_count == 2
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+    return supabase
 
 
 @pytest.mark.unit
-async def test_first_attempt_uses_attempt_number_1(mock_to_thread) -> None:
-    """When no prior attempts exist (count=0), attempt_number written to DB must be 1.
+async def test_quiz_duplicate_attempt_returns_409(mock_to_thread) -> None:
+    """Insert error containing 'duplicate key' → HTTP 409 Conflict.
 
-    Confirms no regression for first-time quiz takers after SELECT COUNT is added.
-
-    Mock uses 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT).
-    count_resp.count=0 simulates no prior rows so service computes attempt_number=1.
+    When the DB returns a unique-constraint violation, grade_quiz must raise
+    HTTPException(409) instead of the generic 500.
     """
-    captured_rows: list = []
-
-    session_mock = MagicMock()
-    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
-    lesson_mock = MagicMock()
-    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
-
-    count_resp = MagicMock()
-    count_resp.count = 0  # no prior attempts → service computes attempt_number=1
-    count_table_mock = MagicMock()
-    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp
-
-    def _capture(rows):
-        captured_rows.extend(rows)
-        m = MagicMock()
-        m.execute.return_value.data = []
-        return m
-
-    insert_mock = MagicMock()
-    insert_mock.insert.side_effect = _capture
-    supabase = MagicMock()
-    # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
-    supabase.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
-
-    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=800)]
-    await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+    from fastapi import HTTPException
+    supabase = _build_supabase_with_insert_error(
+        "duplicate key value violates unique constraint \"uq_quiz_attempt\""
     )
-    assert len(captured_rows) == 1
-    assert captured_rows[0]["attempt_number"] == 1, (
-        f"Expected attempt_number=1 for first attempt, got {captured_rows[0]['attempt_number']}"
-    )
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 409
+    assert "duplicate" in exc_info.value.detail.lower()
+
+
+@pytest.mark.unit
+async def test_quiz_generic_insert_error_still_returns_500(mock_to_thread) -> None:
+    """Insert error NOT containing 'duplicate'/'unique' → HTTP 500 (not 409).
+
+    Non-constraint errors (e.g. connection timeout) must still produce a 500.
+    """
+    from fastapi import HTTPException
+    supabase = _build_supabase_with_insert_error("connection timeout")
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 500

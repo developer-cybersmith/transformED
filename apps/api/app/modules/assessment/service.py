@@ -48,11 +48,11 @@ async def grade_quiz(
         QuizResult with score, ces_contribution, and per-question feedback.
 
     Raises:
-        HTTPException 404: Session not found, lesson not found, segment not found,
-            or ownership check failed (SEC-006: enumeration oracle fix).
-        HTTPException 403: session.lesson_id != lesson_id (IDOR guard).
+        HTTPException 404: Session not found, lesson not found, or segment not found.
+        HTTPException 403: Session belongs to a different user, or session.lesson_id != lesson_id (IDOR guard).
+        HTTPException 409: Duplicate quiz attempt detected (unique constraint).
         HTTPException 422: answers is empty, or a submitted question_id is not in the segment quiz.
-        HTTPException 500: quiz_attempts insert returns a truthy error.
+        HTTPException 500: quiz_attempts insert fails for a non-duplicate reason.
     """
     # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
@@ -167,11 +167,18 @@ async def grade_quiz(
     insert_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts").insert(rows_to_insert).execute()
     )
-    if getattr(insert_resp, "error", None):
+    insert_error = getattr(insert_resp, "error", None)
+    if insert_error:
+        err_str = str(insert_error).lower()
+        if "duplicate" in err_str or "unique" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Duplicate quiz attempt detected.",
+            )
         logger.error(
             "quiz_attempts insert failed: session=%s error=%s",
             session_id,
-            insert_resp.error,
+            insert_error,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -251,11 +258,10 @@ async def grade_teachback(
         TeachbackResult with rubric_scores, overall_score, ces_contribution, feedback.
 
     Raises:
-        HTTPException 404: Session not found, lesson not found, segment not found,
-            or session belongs to a different user (SEC-006: enumeration oracle fix).
-        HTTPException 403: Session belongs to a different lesson (IDOR guard).
-        HTTPException 502: score_teachback raised an exception or returned None.
-        HTTPException 500: DB insert failed.
+        HTTPException 404: Session not found, lesson not found, or segment not found.
+        HTTPException 403: Session belongs to a different user or to a different lesson (IDOR).
+        HTTPException 409: Duplicate teach-back attempt (unique constraint).
+        HTTPException 500: DB insert fails for a non-duplicate reason.
     """
     # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
@@ -378,7 +384,19 @@ async def grade_teachback(
     insert_resp = await asyncio.to_thread(
         lambda: supabase.table("teachback_attempts").insert(row).execute()
     )
-    if getattr(insert_resp, "error", None):
+    insert_error = getattr(insert_resp, "error", None)
+    if insert_error:
+        err_str = str(insert_error).lower()
+        if "duplicate" in err_str or "unique" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Duplicate teach-back attempt detected.",
+            )
+        logger.error(
+            "teachback_attempts insert failed: session=%s error=%s",
+            session_id,
+            insert_error,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist teach-back attempt.",
