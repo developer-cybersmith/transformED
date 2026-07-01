@@ -72,6 +72,8 @@ export function AudioTimeline() {
   const status = usePlayerStore((s) => s.status);
   const lesson = usePlayerStore((s) => s.lesson);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
+  const seekRequestMs = usePlayerStore((s) => s.seekRequestMs);
+  const playbackRate = usePlayerStore((s) => s.playbackRate);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
 
@@ -81,22 +83,69 @@ export function AudioTimeline() {
     if (!audio) return;
     if (status === 'PLAYING') {
       audio.play().catch(() => {});
-    } else if (status === 'PAUSED') {
+    } else {
       audio.pause();
     }
   }, [status]);
+
+  // Apply pending seek from the store then clear it
+  useEffect(() => {
+    if (seekRequestMs === null) return;
+    const audio = audioRef.current;
+    if (audio) {
+      audio.currentTime = seekRequestMs / 1000;
+    }
+    usePlayerStore.getState().clearSeekRequest();
+  }, [seekRequestMs]);
+
+  // Keep audio playback rate in sync
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) audio.playbackRate = playbackRate;
+  }, [playbackRate]);
+
+  function handleLoadedMetadata(e: React.SyntheticEvent<HTMLAudioElement>) {
+    const durationMs = e.currentTarget.duration * 1000;
+    usePlayerStore.getState().setAudioDuration(isFinite(durationMs) ? durationMs : 0);
+    // Re-apply playback rate after src change resets it
+    e.currentTarget.playbackRate = usePlayerStore.getState().playbackRate;
+  }
 
   function handleTimeUpdate(e: React.SyntheticEvent<HTMLAudioElement>) {
     processTimeUpdate(e.currentTarget.currentTime * 1000);
   }
 
   function handleEnded() {
-    const { lesson: l, currentSegmentIndex: idx, endLesson } = usePlayerStore.getState();
+    const {
+      lesson: l,
+      currentSegmentIndex: idx,
+      quizFiredForSegment,
+      endLesson,
+      advanceSegment,
+      enterQuiz,
+    } = usePlayerStore.getState();
     if (!l) return;
-    if (idx >= l.segments.length - 1) {
-      endLesson();
+    const segment = l.segments[idx];
+    const isLast = idx >= l.segments.length - 1;
+
+    if (isLast) {
+      // Last segment: end the lesson (quiz boundary detection handles quiz first if not yet fired)
+      if (segment && !quizFiredForSegment.has(segment.segment_id)) {
+        enterQuiz(); // audio ended before quiz fired (very short audio or tight timing)
+      } else {
+        endLesson();
+      }
+    } else {
+      // Non-last segment: if quiz already fired (student sought back and replayed), advance
+      if (segment && quizFiredForSegment.has(segment.segment_id)) {
+        advanceSegment();
+      }
+      // If quiz hasn't fired yet, processTimeUpdate's boundary check should have caught it.
+      // If the audio ended before hitting the boundary, fire the quiz now.
+      else if (segment) {
+        enterQuiz();
+      }
     }
-    // Non-last segments: quiz should have already fired via handleTimeUpdate boundary detection
   }
 
   if (!segment) return null;
@@ -107,6 +156,8 @@ export function AudioTimeline() {
       key={segment.segment_id}
       ref={audioRef}
       src={segment.narration.audio_url}
+      preload="metadata"
+      onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}
       onEnded={handleEnded}
       aria-label={`Narration: ${segment.title}`}

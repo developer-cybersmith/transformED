@@ -221,7 +221,7 @@ describe('quizFiredForSegment — double-fire prevention', () => {
     usePlayerStore.getState().play();
     usePlayerStore.getState().enterQuiz();
     // Simulate seek backward
-    usePlayerStore.getState().seek(0);
+    usePlayerStore.getState().requestSeek(0);
     expect(usePlayerStore.getState().quizFiredForSegment.has('seg_0')).toBe(true);
   });
 });
