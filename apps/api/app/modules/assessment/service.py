@@ -82,12 +82,6 @@ async def grade_quiz(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this lesson.",
         )
-    # IDOR guard — session must belong to the requested lesson
-    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session does not belong to this lesson.",
-        )
 
     # Step 2 — Load lesson JSONB
     lesson_resp = await asyncio.to_thread(
