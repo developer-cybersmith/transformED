@@ -260,6 +260,7 @@ async def grade_teachback(
             detail=f"Session {session_id!r} not found.",
         )
     if str(session_resp.data["user_id"]) != str(user_id):
+        # SEC-006: Return 404 to prevent session enumeration oracle.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or access denied.",
