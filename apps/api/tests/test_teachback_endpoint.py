@@ -65,6 +65,8 @@ _LESSON_CONTENT: dict = {
     "segments": [_SEGMENT],
 }
 
+VALID_LABELS = {"Exceptional", "Proficient", "Developing", "Emerging", "Beginning"}
+
 _MOCK_TB_RESULT = TeachbackScoreResult(
     score=75,
     accuracy_score=80,
@@ -1175,3 +1177,62 @@ async def test_score_teachback_raises_http_exception_passes_through(mock_to_thre
         f"HTTPException(401) from provider must pass through as 401, not be wrapped as 502. "
         f"Got: {exc_info.value.status_code}"
     )
+
+
+# -- B5: Rubric descriptive labels (Story 3-14) --------------------------------
+
+@pytest.mark.unit
+async def test_rubric_scores_are_descriptive_labels(mock_to_thread, monkeypatch) -> None:
+    """B5/AC 5: rubric_scores values must be descriptive strings, not raw floats.
+
+    _MOCK_TB_RESULT has accuracy_score=80 (Proficient), completeness_score=70 (Developing),
+    clarity_score=75 (Proficient). grade_teachback must call _score_to_label() on each.
+    """
+    # accuracy=80 → Proficient (≥75), completeness=70 → Developing (≥60), clarity=75 → Proficient (≥75)
+    async def _fake_score(*args, **kwargs):
+        return _MOCK_TB_RESULT
+
+    monkeypatch.setattr("app.modules.assessment.service.score_teachback", _fake_score)
+    supabase = _default_supabase_tb()
+    result = await grade_teachback(
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        response_text="Explanation.",
+        user_id="user-001",
+        supabase=supabase,
+    )
+    assert set(result.rubric_scores.keys()) == {"accuracy", "completeness", "clarity"}
+    for key, val in result.rubric_scores.items():
+        assert isinstance(val, str), (
+            f"rubric_scores['{key}'] must be str, got {type(val).__name__}: {val!r}"
+        )
+        assert val in VALID_LABELS, (
+            f"rubric_scores['{key}'] = {val!r} not in VALID_LABELS {VALID_LABELS}"
+        )
+    assert result.rubric_scores["accuracy"] == "Proficient", (
+        f"accuracy_score=80 must map to 'Proficient', got {result.rubric_scores['accuracy']!r}"
+    )
+    assert result.rubric_scores["completeness"] == "Developing", (
+        f"completeness_score=70 must map to 'Developing', got {result.rubric_scores['completeness']!r}"
+    )
+    assert result.rubric_scores["clarity"] == "Proficient", (
+        f"clarity_score=75 must map to 'Proficient', got {result.rubric_scores['clarity']!r}"
+    )
+
+
+@pytest.mark.unit
+def test_score_to_label_boundaries() -> None:
+    """B5/AC 6: _score_to_label() must respect all 5 boundary transitions exactly."""
+    from app.modules.assessment.service import _score_to_label
+
+    assert _score_to_label(100.0) == "Exceptional"
+    assert _score_to_label(90.0) == "Exceptional"
+    assert _score_to_label(89.9) == "Proficient"
+    assert _score_to_label(75.0) == "Proficient"
+    assert _score_to_label(74.9) == "Developing"
+    assert _score_to_label(60.0) == "Developing"
+    assert _score_to_label(59.9) == "Emerging"
+    assert _score_to_label(40.0) == "Emerging"
+    assert _score_to_label(39.9) == "Beginning"
+    assert _score_to_label(0.0) == "Beginning"
