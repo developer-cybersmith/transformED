@@ -58,6 +58,16 @@ logger = logging.getLogger(__name__)
 
 _STATE_TTL = 86_400  # 24 h
 
+# Maps an intervention-triggering event to the intervention_type it records / selects a message for.
+# Used by dispatch_event so the FSM records the RIGHT intervention (the fatigue path previously left
+# intervention_type=None → tutor_fatigue_fired was never set). Valid types match the LessonPackage
+# intervention_messages schema: distraction | confusion | fatigue.
+_EVENT_INTERVENTION_TYPE = {
+    "distraction_detected": "distraction",
+    "fatigue_detected": "fatigue",
+    "teachback_failed": "confusion",
+}
+
 
 # ── State definitions ─────────────────────────────────────────────────────────
 
@@ -86,6 +96,7 @@ class TutorMachineState(TypedDict, total=False):
     event: str  # the triggering event name
     event_payload: dict[str, Any]
     intervention_type: str | None
+    intervention_message: str | None  # pre-generated message selected at intervention time
     error: str | None
 
 
@@ -177,8 +188,19 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     cooldown_key = f"tutor_cooldown:{session_id}"
     await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds)
 
+    # Select the pre-generated intervention message for this type from the segment's
+    # intervention_messages (supplied via the event payload). The DB/Redis LessonPackage fetch and
+    # WS delivery to the client are the intervention_selection task; here we just pick the message.
+    messages = (state.get("event_payload") or {}).get("intervention_messages") or {}
+    chosen = messages.get(intervention_type) or []
+    intervention_message = chosen[0] if chosen else None
+
     await _persist_state(session_id, TutorState.INTERVENING)
-    return {**state, "current_state": TutorState.INTERVENING}
+    return {
+        **state,
+        "current_state": TutorState.INTERVENING,
+        "intervention_message": intervention_message,
+    }
 
 
 async def checking_in_node(state: TutorMachineState) -> TutorMachineState:
@@ -263,11 +285,18 @@ async def route_from_quizzing(state: TutorMachineState) -> str:
 
 
 async def route_from_teach_back(state: TutorMachineState) -> str:
-    """Route out of TEACH_BACK. Interventions during TEACH_BACK are blocked."""
+    """Route out of TEACH_BACK.
+
+    CLAUDE.md §10 — NEVER interrupt mid-TEACH_BACK: only an explicit teach-back outcome leaves this
+    state. Any other event (including ``distraction_detected`` / ``fatigue_detected``) is suppressed —
+    the FSM stays in TEACH_BACK. This is the authoritative routing-level enforcement of the guard.
+    """
     event = state.get("event", "")
+    if event == "teachback_complete":
+        return "teaching"
     if event == "teachback_failed":
         return "intervening"
-    return "teaching"
+    return "teach_back"  # guard: interventions blocked during teach-back
 
 
 async def route_from_session_end(state: TutorMachineState) -> str:
@@ -276,6 +305,52 @@ async def route_from_session_end(state: TutorMachineState) -> str:
     if event == "session_reset":
         return "idle"
     return END  # type: ignore[return-value]
+
+
+async def route_from_idle(state: TutorMachineState) -> str:
+    """IDLE → TEACHING on session_start; otherwise stay IDLE."""
+    return "teaching" if state.get("event") == "session_start" else "idle"
+
+
+async def route_from_intervening(state: TutorMachineState) -> str:
+    """INTERVENING → TEACHING on intervention_complete; otherwise stay INTERVENING."""
+    return "teaching" if state.get("event") == "intervention_complete" else "intervening"
+
+
+# Transition table: current state → its routing function. dispatch_event applies exactly
+# ONE transition per call (entry router → one node → END), so the graph never self-loops.
+_ROUTE_BY_STATE = {
+    TutorState.IDLE: route_from_idle,
+    TutorState.TEACHING: route_from_teaching,
+    TutorState.INTERVENING: route_from_intervening,
+    TutorState.CHECKING_IN: route_from_checking_in,
+    TutorState.QUIZZING: route_from_quizzing,
+    TutorState.TEACH_BACK: route_from_teach_back,
+    TutorState.SESSION_END: route_from_session_end,
+}
+
+
+async def route_entry(state: TutorMachineState) -> str:
+    """Conditional entry point: route from the CURRENT state based on the event.
+
+    This is what makes the FSM apply one transition per dispatch instead of running to
+    completion. ``current_state`` is seeded from Redis by ``dispatch_event``.
+
+    A corrupt or stale persisted state (a value not in ``TutorState``) must never crash a
+    dispatch — fall back to IDLE so the session self-heals rather than wedging the tutor.
+    """
+    raw = state.get("current_state") or TutorState.IDLE
+    try:
+        current = TutorState(raw)
+    except ValueError:
+        logger.warning(
+            "[tutor:%s] unknown persisted state %r — defaulting to IDLE",
+            state.get("session_id", ""),
+            raw,
+        )
+        current = TutorState.IDLE
+    router = _ROUTE_BY_STATE.get(current, route_from_idle)
+    return await router(state)
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
@@ -299,64 +374,33 @@ def _build_tutor_graph() -> Any:
     graph.add_node("teach_back", teach_back_node)
     graph.add_node("session_end", session_end_node)
 
-    # Entry point
-    graph.set_entry_point("idle")
-
-    # Simple (unconditional) edges
-    # IDLE → TEACHING on session_start (handled via conditional from idle)
-    graph.add_edge("idle", "teaching")  # session_start always moves to TEACHING
-
-    # INTERVENING → TEACHING (intervention_complete)
-    graph.add_edge("intervening", "teaching")
-
-    # All conditional routing
-    graph.add_conditional_edges(
-        "teaching",
-        route_from_teaching,
+    # Conditional ENTRY: route from the current state based on the event, run that one
+    # node, then END. One transition per dispatch — no self-loops, no run-to-completion.
+    graph.set_conditional_entry_point(
+        route_entry,
         {
+            "idle": "idle",
             "teaching": "teaching",
             "intervening": "intervening",
             "checking_in": "checking_in",
             "quizzing": "quizzing",
-            "session_end": "session_end",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "checking_in",
-        route_from_checking_in,
-        {
-            "teaching": "teaching",
-            "quizzing": "quizzing",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "quizzing",
-        route_from_quizzing,
-        {
-            "teaching": "teaching",
             "teach_back": "teach_back",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "teach_back",
-        route_from_teach_back,
-        {
-            "teaching": "teaching",
-            "intervening": "intervening",
-        },
-    )
-
-    graph.add_conditional_edges(
-        "session_end",
-        route_from_session_end,
-        {
-            "idle": "idle",
+            "session_end": "session_end",
             END: END,
         },
     )
+
+    # Every node is terminal: it persists its state and the run ends.
+    for node in (
+        "idle",
+        "teaching",
+        "intervening",
+        "checking_in",
+        "quizzing",
+        "teach_back",
+        "session_end",
+    ):
+        graph.add_edge(node, END)
 
     return graph.compile(checkpointer=checkpointer)
 
@@ -410,13 +454,37 @@ async def dispatch_event(
         "in_teachback": current_state_val == TutorState.TEACH_BACK,
         "event": event,
         "event_payload": payload or {},
-        "intervention_type": payload.get("intervention_type") if payload else None,
+        # Derive intervention_type from the event when the caller didn't set it explicitly. Without
+        # this, fatigue_detected/distraction_detected (dispatched without a payload) left it None and
+        # intervening_node recorded neither branch (the fatigue-once flag never got set).
+        "intervention_type": (payload.get("intervention_type") if payload else None)
+        or _EVENT_INTERVENTION_TYPE.get(event),
         "error": None,
     }
 
-    config = {"configurable": {"thread_id": session_id}}
+    # recursion_limit is a regression tripwire: with terminal nodes a dispatch is
+    # entry-router → one node → END (1 step). Any future self-loop fails fast here
+    # with GraphRecursionError instead of hanging.
+    config = {"configurable": {"thread_id": session_id}, "recursion_limit": 5}
     result: TutorMachineState = await graph.ainvoke(input_state, config=config)
+    _trace_dispatch(session_id, event, result)
     return result
+
+
+def _trace_dispatch(session_id: str, event: str, result: TutorMachineState | None) -> None:
+    """Best-effort Langfuse trace of one dispatch. Observability must NEVER break the FSM, so any
+    Langfuse/config failure is swallowed."""
+    try:
+        from app.core.langfuse import get_langfuse
+
+        get_langfuse().trace(
+            name="tutor.dispatch_event",
+            session_id=session_id,
+            input={"event": event},
+            output={"current_state": str(result.get("current_state")) if result else None},
+        )
+    except Exception:  # noqa: BLE001 — tracing is best-effort
+        logger.debug("langfuse trace skipped for %s/%s", session_id, event, exc_info=True)
 
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────

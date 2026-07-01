@@ -170,10 +170,65 @@ async def test_subscriber_forwards_pmessage_to_manager(mocker) -> None:
 
     mocker.patch("app.core.pubsub.Redis").from_url.return_value = mock_sub_conn
 
+    # _run_lesson_subscriber calls get_settings(); mock it so no real Settings()
+    # (and no env vars) are required. Redis.from_url is already patched above, so
+    # redis_url is never dialled — the stub only prevents Settings() construction.
+    mock_settings = MagicMock()
+    mock_settings.redis_url = "redis://localhost:6379/0"
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+
     with pytest.raises(asyncio.CancelledError):
         await _run_lesson_subscriber(mock_manager)
 
     mock_manager.send.assert_called_once_with(session_id, payload)
+
+
+@pytest.mark.unit
+async def test_subscriber_caches_lesson_package(mocker) -> None:
+    """On a lesson_ready pmessage, the subscriber caches the package at lesson_package:{sid}."""
+    from app.core.pubsub import _run_lesson_subscriber
+
+    session_id = "cache-sess"
+    payload = {
+        "type": "lesson_ready",
+        "payload": {"session_id": session_id, "lesson_id": session_id, "lesson": {"segments": []}},
+    }
+    pmessage = {
+        "type": "pmessage",
+        "pattern": b"lesson_ready:*",
+        "channel": f"lesson_ready:{session_id}".encode(),
+        "data": json.dumps(payload).encode(),
+    }
+
+    mock_manager = MagicMock()
+    mock_manager.send = AsyncMock()
+
+    async def _fake_listen():
+        yield pmessage
+        raise asyncio.CancelledError
+
+    mock_pubsub = MagicMock()
+    mock_pubsub.psubscribe = AsyncMock()
+    mock_pubsub.listen = _fake_listen
+
+    mock_sub_conn = MagicMock()
+    mock_sub_conn.pubsub.return_value = mock_pubsub
+    mock_sub_conn.set = AsyncMock()  # the cache write
+    mocker.patch("app.core.pubsub.Redis").from_url.return_value = mock_sub_conn
+
+    mock_settings = MagicMock()
+    mock_settings.redis_url = "redis://localhost:6379/0"
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+
+    with pytest.raises(asyncio.CancelledError):
+        await _run_lesson_subscriber(mock_manager)
+
+    # Cached the package under the session-scoped key (in addition to forwarding it), with 24h TTL.
+    mock_sub_conn.set.assert_called_once()
+    args, kwargs = mock_sub_conn.set.call_args
+    assert args[0] == f"lesson_package:{session_id}"
+    assert json.loads(args[1]) == {"segments": []}  # cached value is the package JSON
+    assert kwargs.get("ex") == 86400
 
 
 @pytest.mark.unit
@@ -205,6 +260,13 @@ async def test_subscriber_handles_malformed_json(mocker) -> None:
     mock_sub_conn.pubsub.return_value = mock_pubsub
 
     mocker.patch("app.core.pubsub.Redis").from_url.return_value = mock_sub_conn
+
+    # _run_lesson_subscriber calls get_settings(); mock it so no real Settings()
+    # (and no env vars) are required. Redis.from_url is already patched above, so
+    # redis_url is never dialled — the stub only prevents Settings() construction.
+    mock_settings = MagicMock()
+    mock_settings.redis_url = "redis://localhost:6379/0"
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
 
     with pytest.raises(asyncio.CancelledError):
         await _run_lesson_subscriber(mock_manager)
@@ -284,6 +346,13 @@ async def test_routing_reaches_correct_client_when_session_id_differs(mocker) ->
     mock_sub_conn.pubsub.return_value = mock_pubsub
     mocker.patch("app.core.pubsub.Redis").from_url.return_value = mock_sub_conn
 
+    # _run_lesson_subscriber calls get_settings(); mock it so no real Settings()
+    # (and no env vars) are required. Redis.from_url is already patched above, so
+    # redis_url is never dialled — the stub only prevents Settings() construction.
+    mock_settings = MagicMock()
+    mock_settings.redis_url = "redis://localhost:6379/0"
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+
     with pytest.raises(asyncio.CancelledError):
         await _run_lesson_subscriber(mock_manager)
 
@@ -292,3 +361,53 @@ async def test_routing_reaches_correct_client_when_session_id_differs(mocker) ->
     # Sanity: it must NOT have been called with lesson_id
     first_arg = mock_manager.send.call_args[0][0]
     assert first_arg != lesson_id, "manager.send must not route to lesson_id"
+
+
+# -- Test 6: lifespan wiring -- listener task start + clean cancel ------------
+
+
+@pytest.mark.unit
+async def test_start_lesson_ready_listener_returns_cancellable_task(mocker) -> None:
+    """start_lesson_ready_listener schedules _run_lesson_subscriber as a named, cancellable task.
+
+    Verifies the listener-factory contract that the lifespan relies on: the returned object is the
+    named background asyncio.Task, the scheduled coroutine actually runs (it reaches psubscribe — so
+    a broken factory that scheduled the wrong coroutine would be caught), and cancellation propagates
+    CancelledError cleanly with no restart. (main.py's lifespan start/cancel is exercised end-to-end
+    by the integration suite's ``running_listener``.)
+    """
+    mock_settings = MagicMock()
+    mock_settings.redis_url = "redis://localhost:6379/0"
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+
+    async def _hang_listen():
+        # Park forever; the task is alive but idle until cancelled.
+        await asyncio.Event().wait()
+        yield  # pragma: no cover -- unreachable (cancelled while waiting)
+
+    mock_pubsub = MagicMock()
+    mock_pubsub.psubscribe = AsyncMock()
+    mock_pubsub.listen = _hang_listen
+
+    mock_sub_conn = MagicMock()
+    mock_sub_conn.pubsub.return_value = mock_pubsub
+    mocker.patch("app.core.pubsub.Redis").from_url.return_value = mock_sub_conn
+
+    from app.core.pubsub import start_lesson_ready_listener
+
+    task = await start_lesson_ready_listener(MagicMock())
+    try:
+        assert isinstance(task, asyncio.Task)
+        assert task.get_name() == "lesson_ready_subscriber"
+
+        # Let the scheduled coroutine run up to its parked listen(); reaching psubscribe
+        # proves _run_lesson_subscriber (not some unrelated coroutine) was scheduled.
+        for _ in range(10):
+            if mock_pubsub.psubscribe.await_count:
+                break
+            await asyncio.sleep(0)
+        mock_pubsub.psubscribe.assert_awaited_once_with("lesson_ready:*")
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
