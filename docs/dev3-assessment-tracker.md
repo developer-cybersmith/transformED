@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-01 (Sprint 1 complete — all tasks done + 4 security hardening tasks merged: S1-10 quiz oracle fix, S1-11 teachback oracle/502, S1-12 dynamic attempt_number, S1-13 409 conflict handling)
+**Last updated:** 2026-07-01 (Sprint 1 BMAD blockers resolved — B5 rubric_scores descriptive labels (Story 3-14), B6 quiz security tests (SEC-008/009/TQ-007), all stories 3-10..3-14 marked done with 5-agent reviews)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -415,7 +415,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 - [x] **GPT-4o-mini rubric scoring (accuracy / completeness / clarity)** — ✓ 2026-06-27
   - `TeachbackScoreResult` extended with `accuracy_score`, `completeness_score`, `clarity_score` sub-scores ✓
   - `TEACHBACK_SYSTEM_PROMPT` updated to request all 3 sub-scores in JSON output ✓
-  - `rubric_scores` in `TeachbackResult` = `{"accuracy": float, "completeness": float, "clarity": float}` ✓
+  - `rubric_scores` in `TeachbackResult` = `{"accuracy": str, "completeness": str, "clarity": str}` — descriptive labels (Exceptional/Proficient/Developing/Emerging/Beginning) ✓ **B5 fix applied 2026-07-01 via Story 3-14**
   - `score_teachback()` calls `provider.complete_structured()` with `settings.llm_mini` ✓
   - `OpenAILLMProvider(lesson_id=lesson_id)` constructed so cost tracks against the lesson ✓
   - Existing prompt tests updated for new 8-field model (was `test_model_has_five_fields`) ✓
@@ -463,6 +463,16 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - DB migration `20260630000000_unique_attempt_constraints.sql` applied to Supabase ✓
   - Merged to main via PR #48 on 2026-07-01 ✓
   - Branch: `sprint1/s1-13-unique-attempt-constraints`
+
+- [x] **B5/B6 BMAD Blocker Fixes: rubric labels + quiz security tests** — ✓ 2026-07-01
+  - Story 3-14: `docs/stories/3-14-teachback-rubric-labels.md` — B5 rubric_scores descriptive labels ✓
+  - `_score_to_label()` helper added to `service.py`: 90+=Exceptional, 75-89=Proficient, 60-74=Developing, 40-59=Emerging, 0-39=Beginning ✓
+  - `TeachbackResult.rubric_scores`: `dict[str, float]` → `dict[str, str]` — never expose raw floats to students ✓
+  - 2 new tests: `test_rubric_scores_are_descriptive_labels` + `test_score_to_label_boundaries` ✓
+  - B6: 6 new quiz security tests (SEC-008 response_index bounds, SEC-009 log sanitization, TQ-007 duplicate question_id) ✓
+  - 4-call mock fix in `_build_supabase_with_insert_error()` for 409/500 paths ✓
+  - Branch: `dev3-sprint1-blocker-fixes`
+  - Stories 3-10..3-13 marked done with 5-agent reviews ✓
 
 - [x] **BMAD Process Documentation + Story Status Corrections** — ✓ 2026-06-29
   - Story 3-15: `docs/stories/3-15-bmad-process-docs.md` — documentation-only story ✓

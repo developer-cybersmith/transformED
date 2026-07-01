@@ -1,6 +1,6 @@
 ---
-Status: ready-for-dev
-baseline_commit: ""
+Status: done
+baseline_commit: "c3505e9"
 ---
 
 # Story 3-10: Quiz Endpoint Security Hardening
@@ -83,30 +83,30 @@ All tests in `apps/api/tests/test_quiz_endpoint.py` marked `@pytest.mark.unit`:
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: `schemas.py` — AC 1: Add `Field(min_length=1, max_length=50)` to `QuizSubmission.answers`
-  - [ ] 1.1 Change `answers: list[QuizAnswer]` to `answers: list[QuizAnswer] = Field(min_length=1, max_length=50)`
-- [ ] Task 2: `service.py` — AC 2: Add response_index upper bound check in grading loop
-  - [ ] 2.1 After `question = question_map[ans.question_id]`, add bounds check raising 422
-- [ ] Task 3: `service.py` — AC 3: Add duplicate question_id guard before grading loop
-  - [ ] 3.1 Initialize `seen: set[str] = set()` before loop; raise 422 if duplicate detected
-- [ ] Task 4: `service.py` — AC 4: Wrong-owner path: 403 → 404
-  - [ ] 4.1 Change `status.HTTP_403_FORBIDDEN` → `status.HTTP_404_NOT_FOUND` for user_id mismatch
-  - [ ] 4.2 Change detail to `"Session not found or access denied."`
-- [ ] Task 5: `service.py` — AC 5: Sanitize log error string
-  - [ ] 5.1 Add `safe_err = str(insert_resp.error).replace('\n', ' ').replace('\r', ' ')` before logger.error
-- [ ] Task 6: `service.py` — AC 6: Add CES SCALE CONTRACT comment
-  - [ ] 6.1 Add comment block after CES formula computation
-- [ ] Task 7: `test_quiz_endpoint.py` — AC 7: Add CES assertion to test_all_correct_gives_score_100
-- [ ] Task 8: `test_quiz_endpoint.py` — AC 8: Update wrong-user test to assert 404
-- [ ] Task 9: `test_quiz_endpoint.py` — AC 9: Write 7 new unit tests
-  - [ ] 9.1 test_too_many_answers_rejected
-  - [ ] 9.2 test_answers_at_max_length_accepted
-  - [ ] 9.3 test_response_index_upper_bound_rejected
-  - [ ] 9.4 test_response_index_at_max_valid
-  - [ ] 9.5 test_duplicate_question_id_rejected
-  - [ ] 9.6 test_insert_error_log_sanitized
-  - [ ] 9.7 test_session_wrong_user_returns_404 (renamed from wrong_user_returns_403)
-- [ ] Task 10: Run full unit test suite — 0 failures
+- [x] Task 1: `schemas.py` — AC 1: Add `Field(min_length=1, max_length=50)` to `QuizSubmission.answers` — ✓ 2026-07-01
+  - [x] 1.1 Change `answers: list[QuizAnswer]` to `answers: list[QuizAnswer] = Field(min_length=1, max_length=50)`
+- [x] Task 2: `service.py` — AC 2: Add response_index upper bound check in grading loop — ✓ 2026-07-01
+  - [x] 2.1 After question lookup, check `0 <= ans.response_index < len(options)` → 422 if out of range
+- [x] Task 3: `service.py` — AC 3: Add duplicate question_id guard before grading loop — ✓ 2026-07-01
+  - [x] 3.1 Step 5b: `seen_qids: set[str]` before loop; raise 422 if `ans.question_id in seen_qids`
+- [x] Task 4: `service.py` — AC 4: Wrong-owner path: 403 → 404 — ✓ 2026-07-01
+  - [x] 4.1 Changed `status.HTTP_403_FORBIDDEN` → `status.HTTP_404_NOT_FOUND` for user_id mismatch
+  - [x] 4.2 Detail: `"Session not found or access denied."`
+- [x] Task 5: `service.py` — AC 5: Sanitize log error string — ✓ 2026-07-01
+  - [x] 5.1 `safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')` before logger.error
+- [x] Task 6: `service.py` — AC 6: Add CES SCALE CONTRACT comment — ✓ 2026-07-01
+  - [x] 6.1 Comment block added after `ces_contribution` line in grade_quiz Step 9
+- [x] Task 7: `test_quiz_endpoint.py` — AC 7: CES assertion in test_all_correct_gives_score_100 — ✓ 2026-07-01
+- [x] Task 8: `test_quiz_endpoint.py` — AC 8: test_session_wrong_user_returns_404 asserts 404 — ✓ 2026-07-01
+- [x] Task 9: `test_quiz_endpoint.py` — AC 9: 6 new unit tests + 1 pre-existing — ✓ 2026-07-01
+  - [x] 9.1 test_too_many_answers_rejected
+  - [x] 9.2 test_answers_at_max_length_accepted
+  - [x] 9.3 test_response_index_upper_bound_rejected
+  - [x] 9.4 test_response_index_at_max_valid
+  - [x] 9.5 test_duplicate_question_id_rejected
+  - [x] 9.6 test_insert_error_log_sanitized
+  - [x] 9.7 test_session_wrong_user_returns_404 (pre-existing from S1-10 PR, satisfies this AC)
+- [x] Task 10: Run full unit test suite — 0 failures — ✓ 2026-07-01
 
 ## Dev Notes
 
@@ -169,16 +169,67 @@ OR test at HTTP layer if Field validation is expected to return 422 from FastAPI
 
 ## Senior Developer Review (AI)
 
-_To be completed after implementation by running /bmad-code-review with 5 agents:_
-_Story Quality · Blind Hunter (Security) · Test Coverage · AC Completeness · Process Integrity_
+**Review date:** 2026-07-01
+**Branch:** `dev3-sprint1-blocker-fixes`
+**Layers run:** Story Quality | Blind Hunter (Security) | Test Coverage | AC Completeness | Process Integrity
+**Verdict:** APPROVED with documented TDD limitation
+
+### Agent 1 — Story Quality
+All 10 ACs are fully specified with testable conditions. ACs 1–6 are code requirements; ACs 7–10 are test requirements. Every AC maps to at least one explicit implementation. Story was created before code (story-first gate satisfied for the story file itself). PASS.
+
+### Agent 2 — Blind Hunter (Security)
+- SEC-006 (oracle fix): wrong-owner returns 404, correct. IDOR guard (lesson_id mismatch) remains 403 — intentional distinction, documented. PASS.
+- SEC-008 (response_index upper bound): bounds check `0 <= ans.response_index < len(options)` correctly prevents array indexing OOB. PASS.
+- SEC-009 (log sanitization): `safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')` strips log injection vectors before logger.error call. PASS.
+- TQ-007 (duplicate question_id): `seen_qids` set guard prevents score inflation via duplicate submissions. PASS.
+- No new attack surfaces introduced. PASS.
+
+### Agent 3 — Test Coverage
+- AC 1 (max_length=50): tested at HTTP layer via `test_too_many_answers_rejected` (51 items → 422) and `test_answers_at_max_length_accepted` (50 items → 200). PASS.
+- AC 2 (response_index upper bound): `test_response_index_upper_bound_rejected` (index 99 on 4-option question) and `test_response_index_at_max_valid` (index 3 accepted). PASS.
+- AC 3 (duplicate question_id): `test_duplicate_question_id_rejected` (same question_id twice → 422). PASS.
+- AC 4 (SEC-006): `test_session_wrong_user_returns_404` asserts 404 + "not found or access denied". PASS.
+- AC 5 (log sanitization): `test_insert_error_log_sanitized` asserts logger.error called with no newlines/carriage returns. PASS.
+- AC 6 (CES comment): Structural/documentation — no test needed. PASS.
+- AC 7 (CES assertion): `test_all_correct_gives_score_100` asserts `ces_contribution == 35.0`. PASS.
+- _build_supabase_with_insert_error helper upgraded to 4-call side_effect — existing 409/500 tests now correct. PASS.
+
+### Agent 4 — AC Completeness
+All 9 code-level ACs map to explicit test assertions. Every new test references its AC. No AC is tested only via a boolean field-existence check. PASS.
+
+### Agent 5 — Process Integrity
+- No LLM calls in quiz grading logic. PASS.
+- No hardcoded model strings. PASS.
+- No direct DB calls at module level. PASS.
+- All Supabase calls wrapped in asyncio.to_thread. PASS.
+- TDD limitation: ACs 2, 3, 5, 6 and 6 missing tests were implemented in the same commit without a prior separate RED-phase commit. This is a PROCESS VIOLATION inherited from the PR history — RED phase commit was not separately preserved. Documented here as technical debt. IMPROVEMENT (deferred): In future stories, maintain separate RED → GREEN commits even for remediation branches.
+
+### Review Follow-ups (AI)
+
+#### BLOCKERs
+None — all 10 ACs satisfied.
+
+#### IMPROVEMENTs — deferred
+- [ ] [Review][Defer] I1 — TDD process: ACs 2/3/5/6 implementation did not have a prior separate RED-phase commit. Documented limitation; future sprints must maintain RED → GREEN separation even on remediation branches.
+- [ ] [Review][Defer] I2 — `test_insert_error_log_sanitized` uses string join across all logged args; a more precise approach would capture the specific `safe_err` argument via `call_args.args[2]`. Acceptable for now.
 
 ## Dev Agent Record
 
 ### Completion Notes
-_TBD_
+- ACs 1 and 4 (SEC-006) were already implemented in PR #43 (`sprint1/s1-10-quiz-security-hardening`) in the previous session
+- ACs 2, 3, 5, 6 and the 6 missing tests (AC 9.1–9.6) were implemented on `dev3-sprint1-blocker-fixes` (2026-07-01)
+- `_build_supabase_with_insert_error()` helper fixed from 3-call to 4-call side_effect to match the SELECT COUNT step added by Story 3-12
+- The duplicate question_id guard (Step 5b) was inserted between the empty-answers guard (Step 5) and the SELECT COUNT (Step 6), keeping step numbering consistent
+- Log sanitization (`safe_err`) applies to quiz insert errors only; teachback insert errors follow the same pattern independently
+- TDD compliance note: The RED phase was not a separate commit — implementation and tests were committed together in the blocker-fixes branch. This is a documented process limitation; all ACs are fully tested.
 
 ### File List
-_TBD_
+- `docs/stories/3-10-quiz-security-hardening.md` — UPDATED (status → done, tasks checked, review added)
+- `apps/api/app/modules/assessment/schemas.py` — MODIFIED (answers Field max_length=50 — AC 1)
+- `apps/api/app/modules/assessment/service.py` — MODIFIED (AC 2, 3, 5, 6 — upper bound, dup guard, log sanitize, CES comment)
+- `apps/api/tests/test_quiz_endpoint.py` — MODIFIED (_build_supabase_with_insert_error 4-call fix + 6 new tests)
 
 ### Change Log
 - 2026-06-29: Story 3-10 created — BMAD Phase 1 story-first commit
+- 2026-07-01: AC 4 (SEC-006 oracle) and AC 1 partial (schemas) implemented via PR #43
+- 2026-07-01: ACs 2, 3, 5, 6 + 6 missing tests implemented on dev3-sprint1-blocker-fixes; story marked done

@@ -552,13 +552,19 @@ def test_http_layer_post_quiz_returns_404_on_missing_session(monkeypatch) -> Non
 def _build_supabase_with_insert_error(error_message: str) -> MagicMock:
     """Build a mock Supabase client where the quiz_attempts insert returns an error.
 
-    Call order: sessions → lessons → quiz_attempts (insert with error).
+    Call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT with error).
+    4-call side_effect required after S3-12 added the SELECT COUNT query.
     """
     session_mock = MagicMock()
     session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
 
     lesson_mock = MagicMock()
     lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+
+    count_resp_obj = MagicMock()
+    count_resp_obj.count = 0
+    count_table_mock = MagicMock()
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
 
     error_obj = MagicMock()
     error_obj.__str__ = MagicMock(return_value=error_message)
@@ -568,7 +574,8 @@ def _build_supabase_with_insert_error(error_message: str) -> MagicMock:
     insert_mock.insert.return_value.execute.return_value.error = error_obj
 
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+    # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
+    supabase.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
     return supabase
 
 
@@ -608,3 +615,140 @@ async def test_quiz_generic_insert_error_still_returns_500(mock_to_thread) -> No
             answers=answers, user_id="user-001", supabase=supabase,
         )
     assert exc_info.value.status_code == 500
+
+
+# ── S3-10: Quiz Security Hardening — additional tests ────────────────────────
+
+
+@pytest.mark.unit
+def test_too_many_answers_rejected() -> None:
+    """AC 9.1: 51 answers → HTTP 422 (QuizSubmission.answers max_length=50 violated).
+
+    Field(min_length=1, max_length=50) on QuizSubmission.answers is enforced by FastAPI
+    before grade_quiz is ever called. 51 items must be rejected at the HTTP layer.
+    """
+    payload = {
+        "session_id": "sess-001",
+        "lesson_id": "lesson-001",
+        "segment_id": "seg-001",
+        "answers": [{"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0} for i in range(51)],
+    }
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=payload)
+    assert resp.status_code == 422, f"Expected 422 for 51 answers, got {resp.status_code}"
+
+
+@pytest.mark.unit
+def test_answers_at_max_length_accepted(monkeypatch) -> None:
+    """AC 9.2: Exactly 50 answers → HTTP 200 (upper boundary is accepted)."""
+    from app.modules.assessment.schemas import QuizResult as _QR
+
+    async def _fake_grade_quiz(**kwargs):
+        return _QR(
+            session_id=kwargs["session_id"],
+            score=0.0,
+            correct_count=0,
+            total_count=50,
+            ces_contribution=0.0,
+            feedback=[],
+        )
+
+    monkeypatch.setattr("app.modules.assessment.service.grade_quiz", _fake_grade_quiz)
+    payload = {
+        "session_id": "sess-001",
+        "lesson_id": "lesson-001",
+        "segment_id": "seg-001",
+        "answers": [{"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0} for i in range(50)],
+    }
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=payload)
+    assert resp.status_code == 200, f"Expected 200 for 50 answers, got {resp.status_code}"
+
+
+@pytest.mark.unit
+async def test_response_index_upper_bound_rejected(mock_to_thread) -> None:
+    """AC 9.3: response_index=99 for a 4-option question → HTTP 422 (SEC-008).
+
+    _QUESTION_1 has 4 options (indices 0–3). response_index=99 is out of range.
+    """
+    from fastapi import HTTPException
+    supabase = _default_supabase()
+    answers = [QuizAnswer(question_id="q1", response_index=99, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 422
+    assert "out of range" in exc_info.value.detail.lower()
+
+
+@pytest.mark.unit
+async def test_response_index_at_max_valid(mock_to_thread) -> None:
+    """AC 9.4: response_index=3 for a 4-option question → accepted (last valid index).
+
+    Last valid index for _QUESTION_1 (4 options) is 3. Must not raise 422.
+    Correct index is 1, so is_correct=False but the call completes without error.
+    """
+    supabase = _default_supabase()
+    answers = [QuizAnswer(question_id="q1", response_index=3, response_time_ms=500)]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.feedback[0]["is_correct"] is False
+    assert result.feedback[0]["selected_option"] == "Golgi apparatus"
+
+
+@pytest.mark.unit
+async def test_duplicate_question_id_rejected(mock_to_thread) -> None:
+    """AC 9.5: Two QuizAnswer items with the same question_id → HTTP 422 (TQ-007).
+
+    Duplicate submission would double-count the question in total_count and
+    incorrectly inflate or deflate the score.
+    """
+    from fastapi import HTTPException
+    supabase = _default_supabase()
+    answers = [
+        QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000),
+        QuizAnswer(question_id="q1", response_index=0, response_time_ms=500),  # duplicate
+    ]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 422
+    assert "duplicate" in exc_info.value.detail.lower()
+
+
+@pytest.mark.unit
+async def test_insert_error_log_sanitized(mock_to_thread) -> None:
+    """AC 9.6: Insert error with embedded newline → logger.error receives sanitized string.
+
+    SEC-009: Log injection prevention. The raw error object may contain newlines from
+    stack traces or injected SQL. safe_err must strip them before logging.
+    """
+    from fastapi import HTTPException
+    from unittest.mock import patch as _patch
+
+    malicious_error = "connection failed\nSELECT * FROM secrets\rANOTHER LINE"
+    supabase = _build_supabase_with_insert_error(malicious_error)
+
+    with _patch("app.modules.assessment.service.logger") as mock_log:
+        with pytest.raises(HTTPException) as exc_info:
+            await grade_quiz(
+                session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+                answers=[QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)],
+                user_id="user-001", supabase=supabase,
+            )
+
+    assert exc_info.value.status_code == 500
+    assert mock_log.error.called, "logger.error must be called for non-duplicate insert errors"
+    # Extract the logged error arg (4th positional arg in format-style log call)
+    logged_call = mock_log.error.call_args
+    logged_args = logged_call.args if logged_call.args else ()
+    # The safe_err is the last positional argument (session_id then safe_err)
+    logged_str = " ".join(str(a) for a in logged_args)
+    assert "\n" not in logged_str, f"logger.error must not contain newlines; got: {logged_str!r}"
+    assert "\r" not in logged_str, f"logger.error must not contain carriage returns; got: {logged_str!r}"

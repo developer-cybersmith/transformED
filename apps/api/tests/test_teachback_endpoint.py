@@ -1,4 +1,4 @@
-"""Unit tests for teach-back grading service (grade_teachback) and POST /teachback endpoint.
+﻿"""Unit tests for teach-back grading service (grade_teachback) and POST /teachback endpoint.
 
 All tests are @pytest.mark.unit â€” no real Supabase or OpenAI connection required.
 asyncio.to_thread is shimmed to run synchronously so MagicMock chain works correctly.
@@ -64,6 +64,8 @@ _LESSON_CONTENT: dict = {
     "lesson_id": "lesson-001",
     "segments": [_SEGMENT],
 }
+
+VALID_LABELS = {"Exceptional", "Proficient", "Developing", "Emerging", "Beginning"}
 
 _MOCK_TB_RESULT = TeachbackScoreResult(
     score=75,
@@ -389,7 +391,7 @@ async def test_ces_contribution_at_partial_score(mock_to_thread, monkeypatch) ->
 
 @pytest.mark.unit
 async def test_rubric_scores_contains_three_keys(mock_to_thread, mock_score_teachback) -> None:
-    """rubric_scores must contain 'accuracy', 'completeness', 'clarity' as float keys."""
+    """rubric_scores must contain 'accuracy', 'completeness', 'clarity' as descriptive string labels."""
     supabase = _default_supabase_tb()
     result = await grade_teachback(
         session_id="sess-001",
@@ -401,13 +403,17 @@ async def test_rubric_scores_contains_three_keys(mock_to_thread, mock_score_teac
     )
     assert set(result.rubric_scores.keys()) == {"accuracy", "completeness", "clarity"}
     for key, val in result.rubric_scores.items():
-        assert isinstance(val, float), f"rubric_scores['{key}'] must be float, got {type(val)}"
-        assert 0.0 <= val <= 100.0, f"rubric_scores['{key}'] = {val} out of range [0, 100]"
+        assert isinstance(val, str), f"rubric_scores['{key}'] must be str label, got {type(val).__name__}: {val!r}"
+        assert val in VALID_LABELS, f"rubric_scores['{key}'] = {val!r} not in VALID_LABELS {VALID_LABELS}"
 
 
 @pytest.mark.unit
 async def test_rubric_scores_match_llm_sub_scores(mock_to_thread, mock_score_teachback) -> None:
-    """rubric_scores values match accuracy_score/completeness_score/clarity_score from LLM result."""
+    """rubric_scores values are descriptive labels derived from LLM sub-scores.
+
+    _MOCK_TB_RESULT: accuracy_score=80 (Proficient), completeness_score=70 (Developing),
+    clarity_score=75 (Proficient). Raw floats must NOT be returned.
+    """
     supabase = _default_supabase_tb()
     result = await grade_teachback(
         session_id="sess-001",
@@ -417,9 +423,9 @@ async def test_rubric_scores_match_llm_sub_scores(mock_to_thread, mock_score_tea
         user_id="user-001",
         supabase=supabase,
     )
-    assert result.rubric_scores["accuracy"] == pytest.approx(float(_MOCK_TB_RESULT.accuracy_score))
-    assert result.rubric_scores["completeness"] == pytest.approx(float(_MOCK_TB_RESULT.completeness_score))
-    assert result.rubric_scores["clarity"] == pytest.approx(float(_MOCK_TB_RESULT.clarity_score))
+    assert result.rubric_scores["accuracy"] == "Proficient"      # 80 >= 75
+    assert result.rubric_scores["completeness"] == "Developing"  # 70 >= 60, < 75
+    assert result.rubric_scores["clarity"] == "Proficient"       # 75 >= 75
 
 
 # â”€â”€ Feedback format tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -756,7 +762,7 @@ def test_http_layer_post_teachback_returns_200(monkeypatch) -> None:
         captured_kwargs.update(kwargs)
         return TeachbackResult(
             session_id=kwargs["session_id"],
-            rubric_scores={"accuracy": 80.0, "completeness": 70.0, "clarity": 75.0},
+            rubric_scores={"accuracy": "Proficient", "completeness": "Developing", "clarity": "Proficient"},
             overall_score=75.0,
             ces_contribution=18.75,
             feedback="Good job.",
@@ -800,7 +806,7 @@ def test_response_text_at_max_length_accepted(monkeypatch) -> None:
     async def _fake_grade_teachback(**kwargs):
         return TeachbackResult(
             session_id=kwargs["session_id"],
-            rubric_scores={"accuracy": 80.0, "completeness": 70.0, "clarity": 75.0},
+            rubric_scores={"accuracy": "Proficient", "completeness": "Developing", "clarity": "Proficient"},
             overall_score=75.0,
             ces_contribution=18.75,
             feedback="Good job.",
@@ -819,7 +825,7 @@ def test_response_text_single_char_accepted(monkeypatch) -> None:
     async def _fake_grade_teachback(**kwargs):
         return TeachbackResult(
             session_id=kwargs["session_id"],
-            rubric_scores={"accuracy": 80.0, "completeness": 70.0, "clarity": 75.0},
+            rubric_scores={"accuracy": "Proficient", "completeness": "Developing", "clarity": "Proficient"},
             overall_score=75.0,
             ces_contribution=18.75,
             feedback="Good job.",
@@ -1175,3 +1181,62 @@ async def test_score_teachback_raises_http_exception_passes_through(mock_to_thre
         f"HTTPException(401) from provider must pass through as 401, not be wrapped as 502. "
         f"Got: {exc_info.value.status_code}"
     )
+
+
+# -- B5: Rubric descriptive labels (Story 3-14) --------------------------------
+
+@pytest.mark.unit
+async def test_rubric_scores_are_descriptive_labels(mock_to_thread, monkeypatch) -> None:
+    """B5/AC 5: rubric_scores values must be descriptive strings, not raw floats.
+
+    _MOCK_TB_RESULT has accuracy_score=80 (Proficient), completeness_score=70 (Developing),
+    clarity_score=75 (Proficient). grade_teachback must call _score_to_label() on each.
+    """
+    # accuracy=80 → Proficient (≥75), completeness=70 → Developing (≥60), clarity=75 → Proficient (≥75)
+    async def _fake_score(*args, **kwargs):
+        return _MOCK_TB_RESULT
+
+    monkeypatch.setattr("app.modules.assessment.service.score_teachback", _fake_score)
+    supabase = _default_supabase_tb()
+    result = await grade_teachback(
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        response_text="Explanation.",
+        user_id="user-001",
+        supabase=supabase,
+    )
+    assert set(result.rubric_scores.keys()) == {"accuracy", "completeness", "clarity"}
+    for key, val in result.rubric_scores.items():
+        assert isinstance(val, str), (
+            f"rubric_scores['{key}'] must be str, got {type(val).__name__}: {val!r}"
+        )
+        assert val in VALID_LABELS, (
+            f"rubric_scores['{key}'] = {val!r} not in VALID_LABELS {VALID_LABELS}"
+        )
+    assert result.rubric_scores["accuracy"] == "Proficient", (
+        f"accuracy_score=80 must map to 'Proficient', got {result.rubric_scores['accuracy']!r}"
+    )
+    assert result.rubric_scores["completeness"] == "Developing", (
+        f"completeness_score=70 must map to 'Developing', got {result.rubric_scores['completeness']!r}"
+    )
+    assert result.rubric_scores["clarity"] == "Proficient", (
+        f"clarity_score=75 must map to 'Proficient', got {result.rubric_scores['clarity']!r}"
+    )
+
+
+@pytest.mark.unit
+def test_score_to_label_boundaries() -> None:
+    """B5/AC 6: _score_to_label() must respect all 5 boundary transitions exactly."""
+    from app.modules.assessment.service import _score_to_label
+
+    assert _score_to_label(100.0) == "Exceptional"
+    assert _score_to_label(90.0) == "Exceptional"
+    assert _score_to_label(89.9) == "Proficient"
+    assert _score_to_label(75.0) == "Proficient"
+    assert _score_to_label(74.9) == "Developing"
+    assert _score_to_label(60.0) == "Developing"
+    assert _score_to_label(59.9) == "Emerging"
+    assert _score_to_label(40.0) == "Emerging"
+    assert _score_to_label(39.9) == "Beginning"
+    assert _score_to_label(0.0) == "Beginning"

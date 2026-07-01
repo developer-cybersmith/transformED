@@ -4,7 +4,7 @@ baseline_commit: "ed72aaa1cd118d8b31fd8fd08d1818244c3f2587"
 
 # Story 3.8: POST /api/assessment/quiz — Quiz Grading Endpoint Live
 
-Status: in-progress
+Status: done
 
 ---
 
@@ -211,8 +211,12 @@ A correct re-implementation was completed (ACs 15–19 fixed, 28 tests written, 
 2. 5-agent code review requirement explicitly documented in `CLAUDE.md`
 3. Future stories: story file must be the chronologically first commit on the branch, pushed before any code
 
-**What to do next:**
-Run `git push origin sprint1/s1-1-quiz-endpoint-v2`, open PR → main, merge after CI passes. This resolves 5 CRITICAL findings (AC3-8-15 through AC3-8-19).
+**Resolution (2026-07-01):**
+The `sprint1/s1-1-quiz-endpoint-v2` branch was never pushed due to a git push timeout. However, all ACs were satisfied on `main` via the S1-10..S1-13 security hardening chain:
+- ACs 1–14: Satisfied via the original PR #19 (June 2026)
+- ACs 15–19 (IDOR, Field validators, insert error check, ID enumeration, SEC-006 oracle): Satisfied via `sprint1/s1-10-quiz-security-hardening` (PR #43) and subsequent hardening PRs (#46, #47, #48)
+
+Story formally closed as `done` on 2026-07-01. The local v2 branch is superseded and can be discarded.
 
 ### File List
 - docs/stories/3-8-quiz-endpoint-live.md — CREATED then AMENDED (BMAD re-implementation)
