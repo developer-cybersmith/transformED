@@ -51,7 +51,7 @@ async def grade_quiz(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user.
+        HTTPException 404: Session not found or ownership check failed (SEC-006 oracle).
         HTTPException 422: A submitted question_id is not in the segment quiz.
     """
     # Step 1 — Validate session ownership
