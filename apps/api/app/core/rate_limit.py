@@ -13,6 +13,8 @@ router.py — circular import.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -41,4 +43,9 @@ def _get_user_key(request: Request) -> str:
     return get_remote_address(request)
 
 
-limiter = Limiter(key_func=_get_user_key)
+limiter = Limiter(
+    key_func=_get_user_key,
+    storage_uri=os.environ.get("RATE_LIMIT_STORAGE_URL", "memory://"),
+    headers_enabled=True,
+    retry_after="delta-seconds",
+)

@@ -22,9 +22,9 @@ FAKE_USER: dict[str, Any] = {
     "role": "authenticated",
 }
 
-FAKE_BOOK_ID = "book-uuid-0001"
-FAKE_LESSON_ID = "lesson-uuid-0001"
-FAKE_JOB_ID = "arq-job-uuid-0001"
+FAKE_BOOK_ID = "11111111-1111-1111-1111-111111111111"
+FAKE_LESSON_ID = "22222222-2222-2222-2222-222222222222"
+FAKE_JOB_ID = "33333333-3333-3333-3333-333333333333"
 
 MINIMAL_PDF = b"%PDF-1.4 minimal\n%%EOF"
 
@@ -347,3 +347,52 @@ def test_get_user_key_returns_sub_from_valid_jwt() -> None:
         key = _get_user_key(req)
 
     assert key == "user:user-123"
+
+
+# ── Rate limiting — 429 + Retry-After ────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_upload_lesson_429_rate_limit() -> None:
+    """6th upload from the same JWT sub within a minute returns 429 with Retry-After header."""
+    import jwt as pyjwt
+
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    # Use a unique sub so this test's counter is isolated from other tests
+    secret = "test-jwt-secret-that-is-long-enough-32-bytes"
+    token = pyjwt.encode(
+        {"sub": "rate-limit-test-unique-sub-for-429", "exp": 9999999999},
+        secret,
+        algorithm="HS256",
+    )
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    sb_mock = _make_supabase_mock()
+    arq_mock = _make_arq_mock()
+
+    app.dependency_overrides[get_current_user] = lambda: {
+        **FAKE_USER,
+        "sub": "rate-limit-test-unique-sub-for-429",
+    }
+    app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
+        tc = TestClient(app, raise_server_exceptions=False)
+        for _ in range(5):
+            tc.post(
+                "/api/content/lessons",
+                files={"file": ("ch.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+                headers=auth_headers,
+            )
+        resp = tc.post(
+            "/api/content/lessons",
+            files={"file": ("ch.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+            headers=auth_headers,
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers

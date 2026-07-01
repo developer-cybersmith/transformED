@@ -4,7 +4,7 @@ baseline_commit: ea5f9380923d21ad153ad26c5c8f5b94009a0f76
 
 # Story 1.1: POST /lessons Endpoint + ARQ Job Enqueue
 
-Status: review
+Status: done
 
 ## Story
 
@@ -64,6 +64,36 @@ so that I don't wait for the full pipeline before I can poll for status.
 - [x] **Task 8: Tests** — ✓ 2026-06-28
   - [x] `apps/api/tests/unit/test_content_router.py` — 13 tests: 202 shape, DB insert order, 413, 422 magic bytes, 422 content-type, GET 200/404 wrong user/404 not found, LIST 200, status map, key func IP fallback, key func JWT sub
   - [x] `tests/conftest.py` — session-scoped env stubs for all required Settings fields
+
+### Review Findings
+
+**Decision-needed (resolve before patching):**
+
+- [x] [Review][Decision] Status gap: upload response returns `"queued"` but DB `lessons.status` is immediately set to `"generating"` — **resolved: intentional design.** `"queued"` in upload response is the immediate acknowledgment; by the time the DB row exists the job is already dispatched. No change needed.
+- [x] [Review][Decision] ARQ `job is None` handling — **resolved: return 409 Conflict.** `job is None` means ARQ deduplicated the key (not a failure). Moved to patch: `raise HTTPException(status_code=409)` instead of `RuntimeError`.
+
+**Patch items:**
+
+- [x] [Review][Patch] `_build_arq_redis_settings` ignores `rediss://` TLS scheme — Railway Redis uses TLS, this connects plaintext or fails [main.py:36-47]
+- [x] [Review][Patch] Unsanitized filename in storage path — `../` or URL-special chars in filename create path traversal risk [router.py:140]
+- [x] [Review][Patch] Rate limiter uses in-memory backend — `Limiter(key_func=...)` with no `storage_uri` means 5/min limit is per-process, not enforced globally across workers [core/rate_limit.py:44]
+- [x] [Review][Patch] ARQ `job is None` → raise 409 Conflict instead of RuntimeError (duplicate job key is not a failure) [router.py:160-161]
+- [x] [Review][Patch] Orphaned `books` row on failure — error cleanup updates `lesson_jobs`/`lessons` but never deletes the `books` row inserted at step 1 [router.py:164-177]
+- [x] [Review][Patch] Orphaned PDF in storage on failure after step 3 — no `storage.remove()` call in cleanup path [router.py:164-177]
+- [x] [Review][Patch] books/lessons insert returns empty data → uncaught `IndexError` — no guard on `resp.data[0]` [router.py:129, router.py:137]
+- [x] [Review][Patch] `completed_at` hardcoded as `None` in `_row_to_status_response` — `lessons.completed_at` column is fetched with `select("*")` but never mapped [router.py:68]
+- [x] [Review][Patch] `get_arq_redis` no guard — bare `AttributeError` if ARQ pool not in `app.state` (startup failure) [dependencies.py:85-91]
+- [x] [Review][Patch] `list_lessons` unbounded `limit`/`offset` — no upper bound; `limit=1000000` triggers full table scan [router.py:220-221]
+- [x] [Review][Patch] `file.size` fast-path skipped when client omits Content-Length — full 50 MB body read before size check triggers [router.py:100]
+- [x] [Review][Patch] conftest missing `REDIS_URL` stub — Settings validation fails at collection time if `redis_url` is required [tests/conftest.py]
+- [x] [Review][Patch] `lesson_id` path param not UUID-validated — non-UUID strings cause Postgres syntax error → 500 [router.py:187]
+- [x] [Review][Patch] No test for rate-limit 429 + `Retry-After` header (AC 7 untested) [tests/unit/test_content_router.py]
+- [x] [Review][Patch] `RateLimitExceeded` imported in router.py but never referenced there — unused import [router.py:14]
+
+**Deferred (pre-existing / future sprint):**
+
+- [x] [Review][Defer] Synchronous Supabase `.execute()` calls in async handlers block event loop [router.py everywhere] — deferred, pre-existing architecture (whole codebase); revisit in Sprint 4 load test per dev notes
+- [x] [Review][Defer] `cost_limit_exceeded` DB status not in `_STATUS_MAP` — maps to `"queued"` as fallback [router.py:47-51] — deferred, Sprint 2 cost-ceiling node concern; `cost_limit_exceeded` not a `lessons.status` CHECK value yet
 
 ## Dev Notes
 

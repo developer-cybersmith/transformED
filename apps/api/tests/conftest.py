@@ -25,6 +25,7 @@ def _set_test_env() -> None:
         "HEYGEN_API_KEY": "test-heygen-key",
         "LANGFUSE_PUBLIC_KEY": "test-langfuse-public",
         "LANGFUSE_SECRET_KEY": "test-langfuse-secret",
+        "REDIS_URL": "redis://localhost:6379",
     }
     for key, value in stubs.items():
         os.environ.setdefault(key, value)

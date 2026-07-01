@@ -79,6 +79,11 @@ async def get_arq_redis(request: Request) -> "ArqRedisType":
     Distinct from get_redis() which returns redis.asyncio.Redis.
     Only ArqRedis has .enqueue_job().
     """
+    if not hasattr(request.app.state, "arq_redis"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job queue unavailable",
+        )
     return request.app.state.arq_redis  # type: ignore[no-any-return]
 
 

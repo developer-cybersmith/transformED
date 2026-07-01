@@ -7,11 +7,13 @@ Handles PDF upload → lesson pipeline dispatch and lesson status/retrieval.
 from __future__ import annotations
 
 import logging
+import os
+import re
+import uuid
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel
-from slowapi.errors import RateLimitExceeded
 
 from app.core.rate_limit import _get_user_key, limiter
 from app.core.db import get_supabase
@@ -65,7 +67,7 @@ def _row_to_status_response(
         title=lesson.get("title"),
         error=error,
         created_at=str(lesson["created_at"]) if lesson.get("created_at") else None,
-        completed_at=None,
+        completed_at=str(lesson["completed_at"]) if lesson.get("completed_at") else None,
     )
 
 
@@ -81,6 +83,7 @@ def _row_to_status_response(
 @limiter.limit("5/minute", key_func=_get_user_key)
 async def upload_lesson(
     request: Request,
+    response: Response,
     current_user: CurrentUser,
     arq_redis: ArqRedis,
     file: UploadFile = File(..., description="PDF file to process (max 50 MB)"),
@@ -110,22 +113,33 @@ async def upload_lesson(
     if file.content_type not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(status_code=422, detail="Invalid content type — expected application/pdf")
 
-    # ── Read full body ────────────────────────────────────────────────────────
-    pdf_bytes = await file.read()
-    if len(pdf_bytes) > MAX_PDF_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
+    # ── Read full body with streaming size guard (enforces limit even without Content-Length) ──
+    chunks: list[bytes] = []
+    total_bytes = 0
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1 MB per iteration
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        if total_bytes > MAX_PDF_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
+        chunks.append(chunk)
+    pdf_bytes = b"".join(chunks)
 
-    filename = file.filename or "upload.pdf"
+    safe_filename = re.sub(r"[^a-zA-Z0-9._\-]", "_", os.path.basename(file.filename or "upload.pdf"))
 
     book_id: str | None = None
     lesson_id: str | None = None
+    storage_path: str | None = None
 
     try:
         # ── 1. books row ──────────────────────────────────────────────────────
         books_resp = supabase.table("books").insert({
             "user_id": user_id,
-            "filename": filename,
+            "filename": safe_filename,
         }).execute()
+        if not books_resp.data:
+            raise RuntimeError("books insert returned no rows")
         book_id = books_resp.data[0]["book_id"]
 
         # ── 2. lessons row ────────────────────────────────────────────────────
@@ -134,10 +148,12 @@ async def upload_lesson(
             "book_id": book_id,
             "status": "generating",
         }).execute()
+        if not lessons_resp.data:
+            raise RuntimeError("lessons insert returned no rows")
         lesson_id = lessons_resp.data[0]["lesson_id"]
 
         # ── 3. Storage upload ─────────────────────────────────────────────────
-        storage_path = f"{user_id}/{book_id}/{filename}"
+        storage_path = f"{user_id}/{book_id}/{safe_filename}"
         supabase.storage.from_("source-pdfs").upload(
             path=storage_path,
             file=pdf_bytes,
@@ -156,19 +172,61 @@ async def upload_lesson(
         }).execute()
 
         # ── 6. Enqueue ARQ job ────────────────────────────────────────────────
-        job = await arq_redis.enqueue_job("content_pipeline_job", lesson_id)
+        # P5: pass _job_id so ARQ deduplicates by lesson — one pipeline job per lesson
+        job = await arq_redis.enqueue_job(
+            "content_pipeline_job", lesson_id, _job_id=f"pipeline:{lesson_id}"
+        )
         if job is None:
-            raise RuntimeError("ARQ returned None for enqueue_job — possible duplicate job key")
+            # ARQ deduplicated the key — not a failure, but no job will run.
+            # Clean up all created rows before returning 409. Each delete is isolated
+            # so a transient failure on one doesn't abandon the remaining cleanup.
+            logger.warning("ARQ deduped job for lesson_id=%s", lesson_id)
+            try:
+                supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+            except Exception:  # noqa: BLE001
+                pass
+            if storage_path:
+                try:
+                    supabase.storage.from_("source-pdfs").remove([storage_path])
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                supabase.table("books").delete().eq("book_id", book_id).execute()
+            except Exception:  # noqa: BLE001
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A lesson pipeline job is already queued for this ID",
+            )
         job_id: str = job.job_id
 
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("upload_lesson failed for user_id=%s filename=%s", user_id, filename)
+        logger.exception("upload_lesson failed for user_id=%s filename=%s", user_id, safe_filename)
+        # P4: hard-delete all created rows in FK order so the user gets a clean slate on retry.
+        # (marking as "failed" leaves orphaned books rows on subsequent retry attempts)
         if lesson_id:
             try:
-                supabase.table("lesson_jobs").update({"status": "failed", "error": str(exc)[:2000]}).eq("lesson_id", lesson_id).execute()
-                supabase.table("lessons").update({"status": "failed"}).eq("lesson_id", lesson_id).execute()
+                supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+            except Exception:  # noqa: BLE001
+                pass
+        if storage_path:
+            try:
+                supabase.storage.from_("source-pdfs").remove([storage_path])
+            except Exception:  # noqa: BLE001
+                pass
+        if book_id:
+            try:
+                supabase.table("books").delete().eq("book_id", book_id).execute()
             except Exception:  # noqa: BLE001
                 pass
         raise HTTPException(
@@ -192,6 +250,10 @@ async def get_lesson(
 
     Returns 404 if not found or user does not own the lesson.
     """
+    try:
+        uuid.UUID(lesson_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
     user_id: str = current_user["sub"]
     supabase = get_supabase()
 
@@ -218,8 +280,8 @@ async def get_lesson(
 )
 async def list_lessons(
     current_user: CurrentUser,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[LessonStatusResponse]:
     """Return paginated lessons for the authenticated user, newest first."""
     user_id: str = current_user["sub"]
