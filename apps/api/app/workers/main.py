@@ -65,6 +65,7 @@ def _build_redis_settings() -> RedisSettings:
         port=parsed.port or 6379,
         password=parsed.password or None,
         database=int(parsed.path.lstrip("/") or "0"),
+        ssl=parsed.scheme == "rediss",
     )
 
 
