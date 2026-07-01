@@ -197,6 +197,33 @@ Applied and frozen migrations (do not alter):
 - Chunk embeddings at ingestion only — never regenerate stored chunk embeddings. Phase 2 RAG tutor query-embedding IS allowed (embed the student question at query time).
 - API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1)
 
+## BMAD Pre-Implementation Checklist (Story-First Gate)
+
+Before writing ANY code for a new story, complete ALL of the following in order — no exceptions:
+
+1. **Create the story file** at `docs/stories/{N}-{M}-{story-slug}.md` with all ACs fully defined
+2. **Commit ONLY the story file**: `git commit -m "docs(story-first): Story N-M — {title}"`
+3. **Push the story-only commit** to remote: `git push origin <branch-name>`
+4. **Verify** the story commit is the chronologically first commit on the branch
+5. **Only then** begin the RED phase (write failing tests)
+
+**NEVER** write implementation code in the same commit as the story file.
+**NEVER** merge a PR where story and implementation share a commit.
+
+## BMAD Code Review Gate (5-Agent Requirement)
+
+Every PR requires a 5-agent adversarial code review via `/bmad-code-review` before merge.
+
+The 5 required agent layers are:
+1. **Story Quality** — all ACs testable, story complete before code
+2. **Blind Hunter (Security)** — IDOR, injection, enumeration, DoS vectors
+3. **Test Coverage** — every AC has a test, edge cases covered, no false confidence
+4. **AC Completeness** — every AC maps to at least one explicit test assertion
+5. **Process Integrity** — no LLM calls in wrong modules, no hardcoded models, no rule violations
+
+**REJECT** any PR whose Senior Developer Review section lists fewer than 5 agent layers.
+The Story Quality agent is the most critical — it catches missing ACs before they reach main.
+
 ## Build Roadmap (10 weeks, §22)
 
 - **Week 1 (Sprint 0):** Infra setup + shared contracts frozen (THIS SPRINT)
@@ -216,3 +243,49 @@ Applied and frozen migrations (do not alter):
 | Dev 4 | WebSocket handlers, JWT middleware, 7-state tutor, Redis buffer, interventions |
 
 Anti-deadlock: after Week 1 schema freeze, each dev mocks the other's interface.
+
+## Sprint Tracker Auto-Update Rule
+
+Whenever you mark any task complete in `docs/dev1-tracker.md` — either because you just implemented it or the user confirms it is done — you MUST immediately, in the same response:
+
+1. Change the task checkbox from `- [ ]` to `- [x]`
+2. Append ` — ✓ YYYY-MM-DD` (today's date) to the task title line
+3. Update the **Quick Status Dashboard** table at the top of the file (increment Done, decrement Not Started or Partial on the correct sprint row, and update Totals)
+4. Update **Last updated** in the header to today's date
+
+Do this without being asked. Never mark a task complete without also updating the dashboard. Never update the dashboard without also updating the header date.
+
+## Sprint Task Branch Rule
+
+**Apply automatically — do not wait to be asked.**
+
+When you begin implementing any sprint task from `docs/dev1-tracker.md`, the very first action before any file edit must be to create a dedicated git branch.
+
+### Branch naming
+
+| Pattern | Example |
+|---------|---------|
+| `sprint{N}/s{N}-{M}-{slug}` | `sprint1/s1-2-pymupdf-extract` |
+| `week10/w10-{M}-{slug}` | `week10/w10-1-prod-deploy` |
+
+- `N` = sprint number (0–4)
+- `M` = task number within the sprint
+- `slug` = 2–4 word lowercase hyphenated summary of the task title (not the full title — just enough to identify it at a glance)
+
+Examples:
+- S1-2 "PyMuPDF text + image + layout extraction node" → `sprint1/s1-2-pymupdf-extract`
+- S1-7 "Semantic chunking" → `sprint1/s1-7-semantic-chunking`
+- S2-7 "`lesson_planner` node" → `sprint2/s2-7-lesson-planner`
+- S0-9 "Langfuse wired globally" → `sprint0/s0-9-langfuse-global`
+
+### Steps (execute in this order, no exceptions)
+
+1. If there are uncommitted changes from a previous task, commit them to the current branch first.
+2. Run: `git checkout main && git checkout -b <branch-name>`
+   - If the branch already exists (resumed session): `git checkout <branch-name>` instead.
+3. Announce the branch in the first line of your response — e.g., `Branch: sprint1/s1-2-pymupdf-extract created.`
+4. Then begin implementation.
+
+### One task, one branch
+
+Every task gets its own branch based on `main`. Never stack a new task on top of the previous task's branch. When a task is marked complete and the next task begins, the next branch is created fresh from `main` at the start of implementation — again, without being asked.

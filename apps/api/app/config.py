@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, HttpUrl, field_validator
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -106,11 +106,21 @@ class Settings(BaseSettings):
         description="CES score below this triggers an intervention",
     )
 
-    @field_validator("ces_weight_quiz", "ces_weight_teachback", "ces_weight_behavioral", "ces_weight_head_pose", "ces_weight_blink", mode="after")
-    @classmethod
-    def _ces_weights_must_sum_to_one(cls, v: float, info: object) -> float:  # noqa: ANN001
-        # Individual field validation only; cross-field sum checked at model level
-        return v
+    @model_validator(mode="after")
+    def _ces_weights_must_sum_to_one(self) -> "Settings":
+        total = (
+            self.ces_weight_quiz
+            + self.ces_weight_teachback
+            + self.ces_weight_behavioral
+            + self.ces_weight_head_pose
+            + self.ces_weight_blink
+        )
+        if abs(total - 1.0) > 0.001:
+            raise ValueError(
+                f"CES weights must sum to 1.0 (got {total:.4f}). "
+                "Check CES_WEIGHT_* env vars."
+            )
+        return self
 
     # ── Intervention tuning ───────────────────────────────────────────────────
     intervention_cooldown_seconds: int = Field(

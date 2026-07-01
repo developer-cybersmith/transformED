@@ -20,6 +20,7 @@ import logging
 from arq.connections import RedisSettings
 
 from app.config import get_settings
+from app.core.langfuse import get_langfuse
 from app.workers.jobs.content_pipeline import content_pipeline_job
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,10 @@ async def startup(ctx: dict) -> None:  # type: ignore[type-arg]
     # Initialise Supabase client
     init_supabase(settings)
 
+    # Initialise Langfuse singleton so the first pipeline trace isn't delayed
+    get_langfuse()
+    logger.info("Langfuse initialised (worker)")
+
     logger.info("ARQ worker started â€” ready to process jobs")
     ctx["settings"] = settings
 
@@ -46,7 +51,15 @@ async def shutdown(ctx: dict) -> None:  # type: ignore[type-arg]
     """Cleanly close shared resources when the worker shuts down."""
     from app.core.redis import close_redis
 
-    await close_redis()
+    try:
+        await close_redis()
+        logger.info("ARQ worker Redis connections closed")
+    finally:
+        try:
+            get_langfuse().flush()
+            logger.info("Langfuse traces flushed (worker)")
+        except Exception:
+            logger.warning("Langfuse flush failed on worker shutdown", exc_info=True)
     logger.info("ARQ worker shutdown complete")
 
 

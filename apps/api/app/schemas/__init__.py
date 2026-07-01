@@ -2,6 +2,26 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.lesson import (
+    AudioProvider,
+    ComplexityLevel,
+    GlossaryEntry,
+    JargonEntry,
+    LessonMetadata,
+    LessonPackage,
+    LessonRecord,
+    LessonStatus,
+    Narration,
+    NarrationTimestamp,
+    QuizDifficulty,
+    QuizQuestion,
+    QuizType,
+    Segment,
+    SegmentComplexity,
+    SegmentInterventions,
+    Slide,
+)
+
 
 class SectionBoundary(BaseModel):
     id: str
@@ -14,3 +34,26 @@ class SectionBoundary(BaseModel):
 
 class DocumentStructure(BaseModel):
     sections: list[SectionBoundary] = Field(min_length=1)
+
+
+__all__ = [
+    "AudioProvider",
+    "ComplexityLevel",
+    "DocumentStructure",
+    "GlossaryEntry",
+    "JargonEntry",
+    "LessonMetadata",
+    "LessonPackage",
+    "LessonRecord",
+    "LessonStatus",
+    "Narration",
+    "NarrationTimestamp",
+    "QuizDifficulty",
+    "QuizQuestion",
+    "QuizType",
+    "Segment",
+    "SegmentComplexity",
+    "SegmentInterventions",
+    "SectionBoundary",
+    "Slide",
+]

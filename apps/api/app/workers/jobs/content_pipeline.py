@@ -43,7 +43,6 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
     """
     from app.core.cost_tracker import clear_lesson_cost
     from app.core.db import get_supabase
-    from app.core.websocket import manager
     from app.modules.content.pipeline.graph import run_pipeline
 
     logger.info("content_pipeline_job START lesson_id=%s", lesson_id)
@@ -67,6 +66,9 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         user_id: str = lesson_row.get("user_id", "")
         source_pdf_path: str = lesson_row.get("source_file_path", "")
         book_id: str = lesson_row.get("book_id", "")
+        # session_id is the WebSocket routing key; falls back to lesson_id until
+        # the upload route stores it (Sprint 2 — Dev 4 coordinates)
+        session_id: str = lesson_row.get("session_id") or lesson_id
 
         # ── 3. Run LangGraph pipeline ─────────────────────────────────────────
         lesson_package = await run_pipeline(
@@ -85,15 +87,22 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             }
         ).eq("lesson_id", lesson_id).execute()
 
-        # ── 4b. Notify client via WebSocket ───────────────────────────────────
-        await manager.send(
-            session_id=lesson_id,  # lesson_id doubles as the WS session for upload flow
-            message={
-                "type": "lesson_ready",
+        # ── 4b. Notify client via Redis pub/sub ──────────────────────────────
+        import json
+        from app.core.redis import get_redis
+
+        redis = get_redis()
+        channel = f"lesson_ready:{session_id}"
+        message = {
+            "type": "lesson_ready",
+            "payload": {
+                "session_id": session_id,
                 "lesson_id": lesson_id,
-                "title": lesson_package.get("lesson_plan", {}).get("title", ""),
+                "lesson": lesson_package,
             },
-        )
+        }
+        await redis.publish(channel, json.dumps(message))
+        logger.info("content_pipeline_job PUBLISHED lesson_ready channel=%s", channel)
 
         # ── 4c. Clear cost tracker ────────────────────────────────────────────
         await clear_lesson_cost(lesson_id)

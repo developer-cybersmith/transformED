@@ -125,11 +125,13 @@ async def test_content_pipeline_job_queries_lessons_not_lesson_jobs() -> None:
             "segment_summaries": [],
         }
 
+    mock_redis = AsyncMock()
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.modules.content.pipeline.graph.run_pipeline", side_effect=mock_run_pipeline),
         patch("app.core.websocket.manager.send", new_callable=AsyncMock),
         patch("app.core.cost_tracker.clear_lesson_cost", new_callable=AsyncMock),
+        patch("app.core.redis.get_redis", return_value=mock_redis),
     ):
         await content_pipeline_job({}, FAKE_LESSON_ID)
 
