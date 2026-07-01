@@ -1,5 +1,5 @@
 """
-Assessment service layer â€” quiz grading and teach-back scoring business logic.
+Assessment service layer — quiz grading and teach-back scoring business logic.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ async def grade_quiz(
         session_id: UUID of the live session.
         lesson_id: UUID of the lesson whose JSONB content contains the quiz.
         segment_id: ID of the segment (string, not UUID) within the lesson.
-        answers: Student answers â€” one QuizAnswer per submitted question.
+        answers: Student answers — one QuizAnswer per submitted question.
         attempt_number: 1 for first attempt, 2 for retry. Defaults to 1.
         user_id: User UUID from the decoded JWT (for ownership check).
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
@@ -51,10 +51,11 @@ async def grade_quiz(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 404: Session not found or access denied (SEC-006).
-        HTTPException 422: A submitted question_id is not in the segment quiz.
+        HTTPException 403: Session belongs to a different user, or session.lesson_id != lesson_id (IDOR guard).
+        HTTPException 422: answers is empty, or a submitted question_id is not in the segment quiz.
+        HTTPException 500: quiz_attempts insert returns a truthy error.
     """
-    # Step 1 â€” Validate session ownership
+    # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
         lambda: supabase.table("sessions")
         .select("session_id, user_id, lesson_id")
@@ -72,8 +73,14 @@ async def grade_quiz(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this user.",
         )
+    # IDOR guard — session must belong to the requested lesson
+    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Session does not belong to this lesson.",
+        )
 
-    # Step 2 â€” Load lesson JSONB
+    # Step 2 — Load lesson JSONB
     lesson_resp = await asyncio.to_thread(
         lambda: supabase.table("lessons")
         .select("content")
@@ -90,7 +97,7 @@ async def grade_quiz(
     content: dict[str, Any] = lesson_resp.data["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
-    # Step 3 â€” Find the segment
+    # Step 3 — Find the segment
     target_segment: dict[str, Any] | None = next(
         (s for s in segments if s["segment_id"] == segment_id), None
     )
@@ -100,19 +107,19 @@ async def grade_quiz(
             detail=f"Segment {segment_id!r} not found in lesson {lesson_id!r}.",
         )
 
-    # Step 4 â€” Build question lookup {question_id: question_dict}
+    # Step 4 — Build question lookup {question_id: question_dict}
     question_map: dict[str, dict[str, Any]] = {
         q["question_id"]: q for q in target_segment.get("quiz", [])
     }
 
-    # Step 5 â€” Guard: reject empty submissions before any DB write
+    # Step 5 — Guard: reject empty submissions before any grading or DB write
     if not answers:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="answers list must not be empty.",
         )
 
-    # Step 5 â€” Grade each answer
+    # Step 6 — Grade each answer
     graded: list[dict[str, Any]] = []
     for ans in answers:
         question = question_map.get(ans.question_id)
@@ -121,7 +128,7 @@ async def grade_quiz(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"question_id {ans.question_id!r} not found in segment "
-                    f"{segment_id!r}. Valid IDs: {list(question_map.keys())}."
+                    f"{segment_id!r}."
                 ),
             )
         graded.append(
@@ -133,7 +140,7 @@ async def grade_quiz(
             }
         )
 
-    # Step 6 â€” Bulk insert to quiz_attempts
+    # Step 7 — Bulk insert to quiz_attempts
     rows_to_insert = [
         {
             "session_id": session_id,
@@ -146,9 +153,19 @@ async def grade_quiz(
         }
         for g in graded
     ]
-    await asyncio.to_thread(
+    insert_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts").insert(rows_to_insert).execute()
     )
+    if getattr(insert_resp, "error", None):
+        logger.error(
+            "quiz_attempts insert failed: session=%s error=%s",
+            session_id,
+            insert_resp.error,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist quiz attempt.",
+        )
     logger.info(
         "quiz_attempts inserted: session=%s segment=%s count=%d",
         session_id,
@@ -156,7 +173,7 @@ async def grade_quiz(
         len(rows_to_insert),
     )
 
-    # Step 7 â€” Compute aggregate metrics
+    # Step 8 — Compute aggregate metrics
     correct_count = sum(1 for g in graded if g["is_correct"])
     total_count = len(graded)
     quiz_accuracy: float = correct_count / total_count if total_count > 0 else 0.0
@@ -164,7 +181,7 @@ async def grade_quiz(
     settings = get_settings()
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
 
-    # Step 8 â€” Build per-question feedback
+    # Step 9 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
         {
             "question_id": g["question"]["question_id"],
@@ -229,7 +246,7 @@ async def grade_teachback(
         HTTPException 502: score_teachback raised an exception or returned None.
         HTTPException 500: DB insert failed.
     """
-    # Step 1 â€” Validate session ownership
+    # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
         lambda: supabase.table("sessions")
         .select("session_id, user_id, lesson_id")
@@ -247,14 +264,14 @@ async def grade_teachback(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or access denied.",
         )
-    # IDOR guard â€” session must belong to the requested lesson
+    # IDOR guard — session must belong to the requested lesson
     if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this lesson.",
         )
 
-    # Step 2 â€” Load lesson JSONB
+    # Step 2 — Load lesson JSONB
     lesson_resp = await asyncio.to_thread(
         lambda: supabase.table("lessons")
         .select("content")
@@ -271,7 +288,7 @@ async def grade_teachback(
     content: dict[str, Any] = lesson_resp.data["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
-    # Step 3 â€” Find the segment
+    # Step 3 — Find the segment
     target_segment: dict[str, Any] | None = next(
         (s for s in segments if s["segment_id"] == segment_id), None
     )
@@ -281,11 +298,11 @@ async def grade_teachback(
             detail=f"Segment {segment_id!r} not found in lesson {lesson_id!r}.",
         )
 
-    # Step 4 â€” Extract topic and key concepts from segment
+    # Step 4 — Extract topic and key concepts from segment
     topic: str = target_segment.get("title", "")
     key_concepts: list[str] = [j["term"] for j in target_segment.get("jargon", [])]
 
-    # Step 5 â€” Query existing attempt count to compute attempt_number
+    # Step 5 — Query existing attempt count to compute attempt_number
     count_resp = await asyncio.to_thread(
         lambda: supabase.table("teachback_attempts")
         .select("id", count="exact")
@@ -295,7 +312,7 @@ async def grade_teachback(
     )
     attempt_number: int = (count_resp.count or 0) + 1
 
-    # Step 6 â€” Score via GPT-4o-mini through OpenAILLMProvider (cost tracked by provider)
+    # Step 6 — Score via GPT-4o-mini through OpenAILLMProvider (cost tracked by provider)
     provider = OpenAILLMProvider(lesson_id=lesson_id)
     try:
         result = await score_teachback(
@@ -318,7 +335,7 @@ async def grade_teachback(
             detail="Scoring service unavailable.",
         )
 
-    # Step 7 â€” Compute CES contribution
+    # Step 7 — Compute CES contribution
     # CES SCALE CONTRACT (communicate to Dev 4):
     # ces_contribution is on the 0-100 POINT scale where ces_weight_teachback (0.25)
     # represents the MAXIMUM POINT contribution (25 pts).
@@ -327,14 +344,14 @@ async def grade_teachback(
     settings = get_settings()
     ces_contribution: float = round((result.score / 100.0) * settings.ces_weight_teachback * 100, 4)
 
-    # Step 8 â€” Build feedback string (praise only for score >= 90, praise + correction otherwise)
+    # Step 8 — Build feedback string (praise only for score >= 90, praise + correction otherwise)
     feedback: str = (
         result.praise
         if not result.correction
         else f"{result.praise}\n\n{result.correction}"
     )
 
-    # Step 9 â€” Persist to teachback_attempts
+    # Step 9 — Persist to teachback_attempts
     row: dict[str, Any] = {
         "session_id": session_id,
         "segment_id": segment_id,
