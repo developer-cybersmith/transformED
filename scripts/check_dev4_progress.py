@@ -1,8 +1,14 @@
 """
 Dev 4 sprint tracker auto-checker.
 
-Scans the codebase for evidence that each task is done, then rewrites
-docs/dev4-websocket-tutor-tracker.md with updated [x] / [ ] checkboxes.
+Scans the codebase for evidence that each task is done, then updates
+docs/dev4-websocket-tutor-tracker.md, which uses three-state labels:
+``[Not Started]`` / ``[Partial]`` / ``[Completed]``.
+
+Safety contract: this script auto-advances tasks between ``[Not Started]`` and
+``[Completed]`` based on codebase evidence, but NEVER downgrades a human-set
+``[Partial]`` label — "implemented but untested" is a human judgement the
+codebase scan cannot make. Partial lines are left untouched.
 
 Usage:
     python scripts/check_dev4_progress.py          # update tracker + print summary
@@ -122,7 +128,7 @@ def _build_checks() -> dict[str, object]:
         ),
         "mock_ws_client": lambda: (
             file_exists("scripts", "mock_ws_client.py")
-            or any_file_contains("tests/**/*.py", "websocket", "attention_signal", "ws://")
+            or any_file_contains("apps/api/tests/**/*.py", "websocket", "attention_signal", "ws://")
         ),
         "sentry_wired": lambda: file_contains(
             ("apps", "api", "app", "main.py"),
@@ -131,7 +137,7 @@ def _build_checks() -> dict[str, object]:
         ),
         # ── Sprint 1 ──────────────────────────────────────────────────────────
         "jwt_all_routes": lambda: any_file_contains(
-            "tests/**/*.py",
+            "apps/api/tests/**/*.py",
             "401",
             "Authorization",
             "CurrentUser",
@@ -194,7 +200,7 @@ def _build_checks() -> dict[str, object]:
             and file_exists("apps", "api", "app", "modules", "tutor", "service.py")
         ),
         "all_transitions": lambda: any_file_contains(
-            "tests/**/*.py",
+            "apps/api/tests/**/*.py",
             "dispatch_event",
             "INTERVENING",
             "TEACH_BACK",
@@ -253,7 +259,7 @@ def _build_checks() -> dict[str, object]:
                 "tutor_distraction_count:",
             )
             and any_file_contains(
-                "tests/**/*.py",
+                "apps/api/tests/**/*.py",
                 "distraction_count",
                 "max_distraction",
             )
@@ -264,7 +270,7 @@ def _build_checks() -> dict[str, object]:
                 "tutor_fatigue_fired:",
             )
             and any_file_contains(
-                "tests/**/*.py",
+                "apps/api/tests/**/*.py",
                 "fatigue",
                 "fatigue_fired",
             )
@@ -273,7 +279,7 @@ def _build_checks() -> dict[str, object]:
             "apps/api/app/**/*.py",
             '"distraction"',
             '"fatigue"',
-            '"encouragement"',
+            '"confusion"',
         ),
         # ── Sprint 4 ──────────────────────────────────────────────────────────
         "threshold_tuning": lambda: file_exists("docs", "sprint4-ces-threshold-analysis.md"),
@@ -281,7 +287,7 @@ def _build_checks() -> dict[str, object]:
         "cooldown_tuning": lambda: file_exists("docs", "sprint4-cooldown-tuning.md"),
         "ws_load_test": lambda: file_exists("docs", "sprint4-ws-load-test.md"),
         "reconnect_test": lambda: any_file_contains(
-            "tests/**/*.py",
+            "apps/api/tests/**/*.py",
             "reconnect",
             "state_sync",
         ),
@@ -307,8 +313,35 @@ def run_all_checks() -> dict[str, bool]:
     return results
 
 
+# Matches the label/checkbox token immediately after a <!-- CHECK:tag --> marker.
+# Accepts both the legacy checkbox forms ([ ]/[x]) and the three-state labels.
+_LABEL_TOKEN = r"(?:Not Started|Partial|Completed|x|X| )"
+
+
+def read_current_labels() -> dict[str, str]:
+    """Return {tag: current_label} parsed from the tracker (label or checkbox)."""
+    if not TRACKER.exists():
+        return {}
+    content = TRACKER.read_text(encoding="utf-8")
+    labels: dict[str, str] = {}
+    for tag, token in re.findall(
+        rf"<!-- CHECK:([a-z0-9_]+) -->\n- \[({_LABEL_TOKEN})\]", content
+    ):
+        if token in ("x", "X"):
+            labels[tag] = "Completed"
+        elif token == " ":
+            labels[tag] = "Not Started"
+        else:
+            labels[tag] = token
+    return labels
+
+
 def update_tracker(results: dict[str, bool], dry_run: bool = False) -> str:
-    """Read tracker, flip checkboxes based on results, return updated content."""
+    """Update task labels from check results.
+
+    Auto-advances between [Not Started] and [Completed]; never overwrites a
+    human-set [Partial] label.
+    """
     if not TRACKER.exists():
         print(f"ERROR: tracker not found at {TRACKER}", file=sys.stderr)
         sys.exit(1)
@@ -316,10 +349,16 @@ def update_tracker(results: dict[str, bool], dry_run: bool = False) -> str:
     content = TRACKER.read_text(encoding="utf-8")
 
     for tag, done in results.items():
-        # Find the <!-- CHECK:tag --> marker and the checkbox line immediately after
-        pattern = rf"(<!-- CHECK:{re.escape(tag)} -->\n)(- \[[ x]\])"
-        replacement = rf"\g<1>- [{'x' if done else ' '}]"
-        content = re.sub(pattern, replacement, content)
+        pattern = rf"(<!-- CHECK:{re.escape(tag)} -->\n)- \[({_LABEL_TOKEN})\]"
+
+        def _sub(m: re.Match) -> str:
+            current = m.group(2)
+            # Preserve human-set Partial — the scan can't judge "implemented but untested".
+            if current == "Partial":
+                return m.group(0)
+            return f"{m.group(1)}- [{'Completed' if done else 'Not Started'}]"
+
+        content = re.sub(pattern, _sub, content)
 
     if not dry_run:
         TRACKER.write_text(content, encoding="utf-8")
@@ -421,21 +460,36 @@ TASK_LABELS: dict[str, str] = {
 
 
 def print_summary(results: dict[str, bool]) -> None:
+    """Print the post-update tracker state (3-state), honouring human-set Partial."""
+    current = read_current_labels()
+
+    def _effective(tag: str) -> str:
+        # Mirror update_tracker: Partial is preserved; otherwise driven by the check.
+        if current.get(tag) == "Partial":
+            return "Partial"
+        return "Completed" if results.get(tag) else "Not Started"
+
+    glyph = {"Completed": "✅", "Partial": "⚠️ ", "Not Started": "⬜"}
+
     print("\n── Dev 4 Sprint Progress ──────────────────────────────────────────")
-    total_done = 0
+    totals = {"Completed": 0, "Partial": 0, "Not Started": 0}
     total_tasks = 0
     for sprint, tags in SPRINT_TAGS.items():
-        done = sum(1 for t in tags if results.get(t))
-        total_done += done
+        states = [_effective(t) for t in tags]
+        done = sum(1 for s in states if s == "Completed")
+        part = sum(1 for s in states if s == "Partial")
         total_tasks += len(tags)
-        bar = "█" * done + "░" * (len(tags) - done)
-        print(f"\n  {sprint} ({done}/{len(tags)})  [{bar}]")
-        for tag in tags:
-            status = "✅" if results.get(tag) else "⬜"
-            label = TASK_LABELS.get(tag, tag)
-            print(f"    {status}  {label}")
-    pct = int(100 * total_done / total_tasks) if total_tasks else 0
-    print(f"\n  Overall: {total_done}/{total_tasks} tasks done ({pct}%)")
+        for s in states:
+            totals[s] += 1
+        bar = "█" * done + "▒" * part + "░" * (len(tags) - done - part)
+        print(f"\n  {sprint} ({done}/{len(tags)} done, {part} partial)  [{bar}]")
+        for tag, state in zip(tags, states):
+            print(f"    {glyph[state]}  {TASK_LABELS.get(tag, tag)}")
+    pct = int(100 * totals["Completed"] / total_tasks) if total_tasks else 0
+    print(
+        f"\n  Overall: {totals['Completed']} Completed · {totals['Partial']} Partial · "
+        f"{totals['Not Started']} Not Started  ({pct}% done)"
+    )
     print("──────────────────────────────────────────────────────────────────\n")
 
 

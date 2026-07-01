@@ -358,3 +358,14 @@ Total: 19 tests.
 - 5-agent BMAD parallel audit (2026-06-27): detected CES scale mismatch (grade_quiz used decimal range [0,0.35] vs grade_teachback correct range [0,25]); fixed on this branch
 
 **Completion Notes:** All 18 ACs satisfied. 25 teachback-specific tests pass (23 unit + 2 schema rule). Full suite: 196 passing, 7 pre-existing Dev 1/Dev 4 failures unchanged. CES contract: teachback ces_contribution max = 25.0 pts at weight=0.25; quiz ces_contribution max = 35.0 pts at weight=0.35. Dev 4 sums components directly — do NOT multiply by 100 again in ces.py.
+
+### Process Notes — REFACTOR Phase
+
+No dedicated REFACTOR phase commit exists for Story 3-9. Code quality improvements and BLOCKER fixes were bundled in commit `ee05080`.
+
+**For future stories:** After the GREEN phase passes all tests, make a standalone REFACTOR commit containing only non-behavioral changes:
+- Variable renames, helper extraction, dead code removal, docstring improvements
+- Commit message prefix: `refactor:`
+- No test changes, no behavior changes — purely structural improvements
+
+This REFACTOR commit is a required BMAD phase and must be auditable separately from bug fixes.
