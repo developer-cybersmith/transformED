@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-29 (Story 3-15 done — BMAD process docs, pre-impl checklist, 5-agent review gate, post-mortem for story 3-8)
+**Last updated:** 2026-07-01 (Sprint 1 complete — all tasks done + 4 security hardening tasks merged: S1-10 quiz oracle fix, S1-11 teachback oracle/502, S1-12 dynamic attempt_number, S1-13 409 conflict handling)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -13,12 +13,12 @@
 | Sprint | Period | Tasks | Done | Partial | Not Started |
 |--------|--------|-------|------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 7 | 4 | 1 | 2 |
+| Sprint 1 | Weeks 2–3 | 11 | 11 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 8 | 0 | 0 | 8 |
 | Sprint 3 | Weeks 6–7 | 7 | 0 | 0 | 7 |
 | Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **11** | **1** | **24** |
+| **Total** | | **40** | **18** | **0** | **22** |
 
 Update this table each time a task is checked off below.
 
@@ -389,22 +389,19 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 
 > **Goal:** Quiz and teach-back endpoints live with DB writes. Assessment data flowing end-to-end.
 
-- [ ] **`POST /api/assessment/quiz` endpoint live** — NOT DONE (BMAD re-impl on unmerged branch)
-  - BMAD process COMPLETE on branch `sprint1/s1-1-quiz-endpoint-v2` (local only, never pushed):
+- [x] **`POST /api/assessment/quiz` endpoint live** — ✓ 2026-07-01
+  - BMAD process COMPLETE on branch `sprint1/s1-1-quiz-endpoint-v2`:
     - Story 3-8 amended first (story-first) ✓
     - RED: 5 failing tests written before implementation ✓
     - GREEN + REFACTOR: 28/28 unit tests pass ✓
     - 5-agent adversarial code review: 3 BLOCKERs resolved ✓
-    - Commits: 0c3b6ba (impl), e2f8eb0 (blockers), b6460a7 (docs)
-  - WHAT IS ON MAIN: original non-BMAD implementation (PR #19) — missing IDOR guard, Field(ge=0), insert error check, ID enum fix, wrong CES formula (decimal scale, not 0-100 points)
-  - **ACTION REQUIRED:** `! git push origin sprint1/s1-1-quiz-endpoint-v2` then open PR → main
+  - Merged to main via PR #44 on 2026-07-01 ✓
+  - Final implementation: `grade_quiz()` in `service.py` — session/IDOR validation, bulk insert to `quiz_attempts`, CES ×100 scale, per-question feedback ✓
 
-- [ ] **MCQ scoring + response time capture** — NOT DONE (same unmerged branch as S1-1)
-  - BMAD-compliant implementation on branch `sprint1/s1-1-quiz-endpoint-v2` (local only):
-    - `response_time_ms: int = Field(default=0, ge=0)` in `QuizAnswer` schema ✓
-    - `response_time_ms` written to `quiz_attempts` on every submission ✓
-    - `test_response_time_ms_written_to_db` PASSING ✓
-  - **ACTION REQUIRED:** Push `sprint1/s1-1-quiz-endpoint-v2` and merge PR (same PR as S1-1)
+- [x] **MCQ scoring + response time capture** — ✓ 2026-07-01
+  - `response_time_ms: int = Field(default=0, ge=0)` in `QuizAnswer` schema ✓
+  - `response_time_ms` written to `quiz_attempts` on every submission ✓
+  - Merged to main via PR #44 (same as S1-1) ✓
 
 - [x] **`POST /api/assessment/teachback` live** — ✓ 2026-06-27
   - Story 3-9: `docs/stories/3-9-teachback-endpoint-live.md` — story-first before implementation ✓
@@ -428,14 +425,44 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `feedback = f"{praise}\n\n{correction}"` when `score < 90` ✓
   - `test_feedback_high_score_praise_only` + `test_feedback_low_score_praise_and_correction` PASSING ✓
 
-- [~] **`quiz_attempts` + `teachback_attempts` DB writes working** — PARTIAL (teachback merged, quiz not)
-  - `teachback_attempts`: DONE via BMAD — merged to main via PR #20 ✓
-    - `grade_teachback()` inserts with all required fields, `attempt_number` increments, insert error → HTTP 500 ✓
-    - All 5 teachback DB write tests PASSING on main ✓
-  - `quiz_attempts`: BMAD-compliant code on unmerged branch `sprint1/s1-1-quiz-endpoint-v2` ✗
-    - `grade_quiz()` bulk-insert with error check written and tested (28 tests pass on branch)
-    - What's on main: old implementation (no insert error check, no IDOR guard)
-  - **ACTION REQUIRED:** Same as S1-1 — push and merge `sprint1/s1-1-quiz-endpoint-v2`
+- [x] **`quiz_attempts` + `teachback_attempts` DB writes working** — ✓ 2026-07-01
+  - `teachback_attempts`: merged to main via PR #20 ✓
+    - `grade_teachback()` inserts with all required fields, `attempt_number` increments via SELECT COUNT ✓
+  - `quiz_attempts`: merged to main via PR #44 (S1-1) ✓
+    - `grade_quiz()` bulk-insert with error check, 409/500 branching (PR #48), dynamic attempt_number (PR #47) ✓
+  - Both endpoints now have: session ownership validation, IDOR guard, 409 duplicate detection, 502 on scoring failure ✓
+
+- [x] **SEC-006 quiz oracle fix: grade_quiz ownership returns HTTP 404** — ✓ 2026-07-01
+  - Story 3-10: `docs/stories/3-10-quiz-security-hardening.md` ✓
+  - `grade_quiz()` wrong-user check: 403 → 404 — prevents session-existence enumeration ✓
+  - Comment explains security rationale: "Attacker must not distinguish belongs-to-someone-else from doesn't-exist" ✓
+  - Merged to main via PR #43 on 2026-07-01 ✓
+  - Branch: `sprint1/s1-10-quiz-security-hardening`
+
+- [x] **SEC-006 + SEC-007 teachback hardening: oracle fix + 502 on scoring failure** — ✓ 2026-07-01
+  - Story 3-11: `docs/stories/3-11-teachback-security-hardening.md` ✓
+  - `grade_teachback()` wrong-user check: 403 → 404 (same oracle pattern as S1-10) ✓
+  - `score_teachback()` wrapped in `try/except`: any exception → HTTP 502 Bad Gateway ✓
+  - `result is None` guard added → HTTP 502 (double safety in case provider returns None) ✓
+  - SEC-007 prompt injection: `<student_response>` XML wrapper + HTML entity escaping in `prompts.py` ✓
+  - Merged to main via PR #46 on 2026-07-01 ✓
+  - Branch: `sprint1/s1-11-teachback-security-hardening`
+
+- [x] **Dynamic attempt_number via SELECT COUNT for quiz** — ✓ 2026-07-01
+  - Story 3-12: `docs/stories/3-12-quiz-attempt-number-fix.md` ✓
+  - Removed hardcoded `attempt_number: int = 1` param from `grade_quiz()` signature ✓
+  - Added Step 6 SELECT COUNT from `quiz_attempts` to compute `attempt_number` dynamically ✓
+  - Parity with `grade_teachback()` which already had SELECT COUNT pattern ✓
+  - Merged to main via PR #47 on 2026-07-01 ✓
+  - Branch: `sprint1/s1-12-quiz-attempt-number-fix`
+
+- [x] **409 Conflict on duplicate quiz/teachback attempt** — ✓ 2026-07-01
+  - Story 3-13: `docs/stories/3-13-unique-attempt-constraints.md` ✓
+  - Insert error in `grade_quiz()`: inspect error string for "duplicate"/"unique" → 409; else → 500 ✓
+  - Insert error in `grade_teachback()`: same branching pattern ✓
+  - DB migration `20260630000000_unique_attempt_constraints.sql` applied to Supabase ✓
+  - Merged to main via PR #48 on 2026-07-01 ✓
+  - Branch: `sprint1/s1-13-unique-attempt-constraints`
 
 - [x] **BMAD Process Documentation + Story Status Corrections** — ✓ 2026-06-29
   - Story 3-15: `docs/stories/3-15-bmad-process-docs.md` — documentation-only story ✓
