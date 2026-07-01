@@ -176,7 +176,7 @@ async def test_wrong_answer_is_marked_incorrect(mock_to_thread) -> None:
 
 @pytest.mark.unit
 async def test_all_correct_gives_score_100(mock_to_thread) -> None:
-    """2/2 correct → score == 100.0."""
+    """2/2 correct → score == 100.0, ces_contribution == 35.0."""
     supabase = _default_supabase()
     answers = [
         QuizAnswer(question_id="q1", response_index=1, response_time_ms=1200),
@@ -189,6 +189,8 @@ async def test_all_correct_gives_score_100(mock_to_thread) -> None:
     assert result.correct_count == 2
     assert result.total_count == 2
     assert result.score == pytest.approx(100.0)
+    # AC 7: CES SCALE CONTRACT — all correct at ces_weight_quiz=0.35 must yield exactly 35.0 pts
+    assert result.ces_contribution == pytest.approx(35.0)
 
 
 @pytest.mark.unit
@@ -360,8 +362,13 @@ async def test_raises_404_when_session_not_found(mock_to_thread) -> None:
 
 
 @pytest.mark.unit
-async def test_raises_403_when_session_belongs_to_other_user(mock_to_thread) -> None:
-    """session.user_id != request user_id → HTTP 403."""
+async def test_session_wrong_user_returns_404(mock_to_thread) -> None:
+    """session.user_id != request user_id → HTTP 404 (SEC-006: session enumeration fix).
+
+    AC 4 and AC 8: wrong-owner path must return 404 (not 403) so attackers cannot
+    distinguish 'session belongs to someone else' from 'session does not exist'.
+    Detail must contain 'not found or access denied'.
+    """
     from fastapi import HTTPException
     other_session = {"session_id": "sess-001", "user_id": "other-user", "lesson_id": "lesson-001"}
     supabase = _build_supabase(session_data=other_session, lesson_data={"content": _LESSON_CONTENT})
@@ -371,7 +378,8 @@ async def test_raises_403_when_session_belongs_to_other_user(mock_to_thread) -> 
             session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
             answers=answers, user_id="user-001", supabase=supabase,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
+    assert "not found or access denied" in exc_info.value.detail
 
 
 @pytest.mark.unit
@@ -569,8 +577,11 @@ async def test_attempt_number_increments_on_retry(mock_to_thread) -> None:
         m.execute.return_value.data = []
         return m
 
+    # Insert mock that returns an error object containing newlines
+    insert_resp_mock = MagicMock()
+    insert_resp_mock.error = "DB error\nline2\rline3"
     insert_mock = MagicMock()
-    insert_mock.insert.side_effect = _capture
+    insert_mock.insert.return_value.execute.return_value = insert_resp_mock
     supabase = MagicMock()
     # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
     supabase.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]

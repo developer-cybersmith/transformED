@@ -48,8 +48,9 @@ async def grade_quiz(
         QuizResult with score, ces_contribution, and per-question feedback.
 
     Raises:
-        HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user, or session.lesson_id != lesson_id (IDOR guard).
+        HTTPException 404: Session not found, lesson not found, segment not found,
+            or ownership check failed (SEC-006: enumeration oracle fix).
+        HTTPException 403: session.lesson_id != lesson_id (IDOR guard).
         HTTPException 422: answers is empty, or a submitted question_id is not in the segment quiz.
         HTTPException 500: quiz_attempts insert returns a truthy error.
     """
@@ -67,9 +68,11 @@ async def grade_quiz(
             detail=f"Session {session_id!r} not found.",
         )
     if str(session_resp.data["user_id"]) != str(user_id):
+        # SEC-006: Return 404 to prevent session enumeration oracle.
+        # Attacker must not distinguish "belongs to someone else" from "doesn't exist".
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session does not belong to this user.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
         )
     # IDOR guard — session must belong to the requested lesson
     if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
@@ -248,8 +251,10 @@ async def grade_teachback(
         TeachbackResult with rubric_scores, overall_score, ces_contribution, feedback.
 
     Raises:
-        HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user or to a different lesson (IDOR).
+        HTTPException 404: Session not found, lesson not found, segment not found,
+            or session belongs to a different user (SEC-006: enumeration oracle fix).
+        HTTPException 403: Session belongs to a different lesson (IDOR guard).
+        HTTPException 502: score_teachback raised an exception or returned None.
         HTTPException 500: DB insert failed.
     """
     # Step 1 — Validate session ownership
@@ -266,9 +271,10 @@ async def grade_teachback(
             detail=f"Session {session_id!r} not found.",
         )
     if str(session_resp.data["user_id"]) != str(user_id):
+        # SEC-006: Return 404 to prevent session enumeration oracle.
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session does not belong to this user.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
         )
     # IDOR guard — session must belong to the requested lesson
     if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
@@ -320,12 +326,26 @@ async def grade_teachback(
 
     # Step 6 — Score via GPT-4o-mini through OpenAILLMProvider (cost tracked by provider)
     provider = OpenAILLMProvider(lesson_id=lesson_id)
-    result = await score_teachback(
-        topic=topic,
-        key_concepts=key_concepts,
-        response_text=response_text,
-        provider=provider,
-    )
+    try:
+        result = await score_teachback(
+            topic=topic,
+            key_concepts=key_concepts,
+            response_text=response_text,
+            provider=provider,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("score_teachback failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Scoring service unavailable.",
+        )
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Scoring service unavailable.",
+        )
 
     # Step 7 — Compute CES contribution
     # CES SCALE CONTRACT (communicate to Dev 4):
