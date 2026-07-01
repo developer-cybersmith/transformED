@@ -455,6 +455,32 @@ def test_chunk_sections_empty_body_returns_single_empty_chunk() -> None:
 
 
 @pytest.mark.unit
+def test_ac7_large_section_produces_at_least_eight_chunks() -> None:
+    """AC 7: a ~5000-word section with target=512 produces ≥8 chunks.
+
+    The fake tokenizer counts words as tokens, so a 5000-word body produces
+    roughly 5000/512 ≈ 9.7 chunks before overlap.  Even after overlap shrinks
+    effective capacity each chunk still yields at least 8 distinct chunks.
+    """
+    _, _, tiktoken_patch = _make_tiktoken_mock()
+
+    # Build a 5000-word body: 500 sentences of 10 words each separated by ". "
+    sentence = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+    body = ". ".join([sentence] * 500) + "."
+
+    section = {"id": "s0", "title": "Large Section", "body": body, "page_start": 1, "page_end": 50}
+
+    with patch.dict("sys.modules", tiktoken_patch):
+        from app.modules.content.pipeline.nodes.chunking import chunk_sections
+        chunks = chunk_sections([section], target=512, overlap=64, tokenizer_name="cl100k_base")
+
+    assert len(chunks) >= 8, (
+        f"Expected ≥8 chunks for a ~5000-word section with target=512; got {len(chunks)}"
+    )
+    assert all(c["token_count"] > 0 for c in chunks), "All chunks must have token_count > 0"
+
+
+@pytest.mark.unit
 def test_chunk_sections_multiple_sections_produce_chunks_for_each() -> None:
     """10 sections each produce at least one chunk — minimum 10 total."""
     _, _, tiktoken_patch = _make_tiktoken_mock()

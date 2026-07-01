@@ -4,7 +4,7 @@ baseline_commit: "d12638d216b7de56a93fa29f76fda23608cb853f"
 
 # Story 1.3: Structure Detection Node — Rule-Based + LLM Validation
 
-Status: review
+Status: done
 
 ## Story
 
@@ -95,6 +95,20 @@ so that downstream chunking respects the document's logical hierarchy and LLM ca
   - [x] `test_workers_build_redis_settings_tls`: rediss:// → ssl=True
   - [x] `test_workers_build_redis_settings_no_tls`: redis:// → ssl=False
   - [x] Run `uv run --no-project pytest tests/unit/ -m unit -x` — **35/35 passed**
+
+### Review Findings (code review 2026-07-01)
+
+- [x] [Review][Patch] Font strategy unconditionally overwrites `candidates[text]` — add `if text not in candidates:` guard (mirrors regex loops) [`structure_detection.py:63`]
+- [x] [Review][Patch] AC 11 not covered by a test — add assertion that ≥3 sections are produced for a multi-heading document [`test_structure_node.py`]
+- [x] [Review][Defer] `raw_text.find(text)` returns TOC position when heading text appears in TOC before body [`structure_detection.py:53`] — deferred; LLM validation pass corrects rule-based misdetections
+- [x] [Review][Defer] Table PDFs: docling replaces `raw_text` with markdown, breaking font `find()` and numbered-heading regex — zero candidates falls back to single section for LLM to correct [`structure_detection.py`] — deferred; LLM fallback handles this for MVP
+- [x] [Review][Defer] `_CHAPTER_RE` second alternative `\d+\.\s+[A-Z].{3+}` false-positives on numbered body list items [`structure_detection.py:28`] — deferred; LLM validation corrects spurious candidates
+- [x] [Review][Defer] `SectionBoundary` missing `page_end >= page_start` model validator [`schemas/__init__.py`] — deferred; `build_section_bodies` guards prevent invalid values from this code path
+- [x] [Review][Defer] Fallback single-section body has no size cap — very large documents produce one massive section [`structure_detection.py:120`] — deferred; `chunk_node` handles large bodies via 512-token chunking
+- [x] [Review][Defer] Trailing heading (last candidate) produces empty `body` string [`structure_detection.py:139`] — deferred; rare edge case, no crash
+- [x] [Review][Defer] `page_count` not in pipeline state — silently defaults to 1 if DB checkpoint write fails [`graph.py`] — deferred; tracked as W7 (JSONB atomic write risk)
+- [x] [Review][Defer] AC 1: TOC entry detection absent — regex+font is MVP simplification [`structure_detection.py`] — deferred; LLM validation compensates
+- [x] [Review][Defer] AC 1: `detect_headings` returns `char_offset` not page numbers — LLM prompt uses char_offset anyway [`structure_detection.py:33`] — deferred; no material impact on output quality
 
 ---
 

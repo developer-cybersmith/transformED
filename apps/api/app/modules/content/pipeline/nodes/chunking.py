@@ -38,7 +38,7 @@ def split_into_segments(text: str) -> list[str]:
             segments.append(s + " ")
         segments.append(sentences[-1])
         segments.append("\n\n")
-    return [s for s in segments if s.strip()]
+    return [s for s in segments if s]
 
 
 def chunk_section(
@@ -93,7 +93,7 @@ def chunk_section(
                 "page_end": page_end,
             })
             full_tokens = encoding.encode(chunk_text)
-            overlap_prefix = encoding.decode(full_tokens[-overlap:]) if len(full_tokens) >= overlap else chunk_text
+            overlap_prefix = encoding.decode(full_tokens[-overlap:]) if len(full_tokens) >= overlap else encoding.decode(full_tokens)
             buffer = [seg]
             buffer_tokens = seg_tokens
         else:

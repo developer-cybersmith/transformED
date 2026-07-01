@@ -89,7 +89,6 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
-    "fitz.*",
     "docling.*",
     "pypdfium2.*",
     "pdftext.*",

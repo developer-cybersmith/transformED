@@ -197,6 +197,50 @@ And expose a distinct client status string if the frontend needs to differentiat
 
 ---
 
+## Deferred from: code review of 1-4-semantic-chunking-node (2026-07-01)
+
+### W16 — `chapter_index` hardcoded to 1 — multi-chapter books collide on repeat ingestion
+
+**File:** `apps/api/app/modules/content/pipeline/graph.py` — `chunk_node` chapters insert
+
+**Detail:** Every call to `chunk_node` inserts a `chapters` row with `chapter_index=1`. If a book has multiple chapters or is re-ingested (the `chapters` table has no unique constraint on `(book_id, chapter_index)` in the current schema), multiple rows accumulate with the same index. Any ordering or deduplication logic downstream that relies on `chapter_index` for ordering will produce incorrect results.
+
+**When to fix:** Story 2.1 (`phase-1-economy-nodes`) when real multi-chapter PDFs are processed. Add a `UNIQUE (book_id, chapter_index)` constraint to the `chapters` table via migration, and pass the actual chapter number from the pipeline state.
+
+---
+
+### W17 — `chunk_id` UUIDs not stored in checkpoint — embed_node must re-query by chapter_id
+
+**File:** `apps/api/app/modules/content/pipeline/graph.py` — `chunk_node` checkpoint
+
+**Detail:** The `chunks.upsert()` return value is discarded, so the DB-generated `chunk_id` UUIDs are never captured. Story 1.5 (`embed_node`) must issue an extra `SELECT chunk_id FROM chunks WHERE chapter_id=? ORDER BY chunk_index` query to get the UUIDs before it can issue `UPDATE chunks SET embedding=...`. This is not a bug (intentional design — `chapter_id` is stored in checkpoint specifically for this purpose) but adds one extra DB round-trip per pipeline run.
+
+**When to fix:** Story 1.5 — capture `[row["chunk_id"] for row in supabase.table("chunks").upsert(rows).execute().data]` in chunk_node and include in checkpoint. This eliminates the re-query in embed_node.
+
+---
+
+## Deferred from: code review of 1-3-structure-detection-node-rule-based-llm-validation (2026-07-01)
+
+### W14 — `raw_text.find(text)` returns TOC offset for repeated headings
+
+**File:** `apps/api/app/modules/content/pipeline/nodes/structure_detection.py:53`
+
+**Detail:** `raw_text.find(text)` always returns the first occurrence. In PDFs with a Table of Contents, heading text appears first in the TOC, so font-strategy candidates get the TOC character offset, not the actual heading position. `build_section_bodies` then slices incorrect body text. Mitigated by LLM validation pass which corrects structural errors. Also: font strategy has no `if text not in candidates` guard (unlike regex loops) — last qualifying block for a given text wins, causing running-headers to overwrite chapter heading levels.
+
+**When to fix:** Sprint 2 — consider using `raw_text.find(text, start)` with an approximate page-offset derived from the font_block's `page` field, or move to an `re.finditer` approach that returns all offsets, keeping the one closest to the expected page range.
+
+---
+
+### W15 — Table PDFs: docling markdown breaks both heading detection strategies
+
+**File:** `apps/api/app/modules/content/pipeline/nodes/structure_detection.py`
+
+**Detail:** When any page has tables, `extract_subprocess.py` replaces `raw_text` with docling markdown (e.g., `## Section`, `### Topic` ATX headings). The font-strategy `raw_text.find(text)` returns -1 for all font spans (markdown wording differs from pdftext spans). The regex strategies match numbered headings (`\d+\.\d+`) but miss ATX markdown headings (`## 1.1 Background`). Result: zero candidates → single-section fallback for all table-containing PDFs. LLM sees first 6000 chars of markdown and can produce structure — this is the primary mitigation.
+
+**When to fix:** Sprint 2 — either (a) run heading detection against the original pdftext output (not docling), or (b) add ATX markdown heading patterns (`^#{1,3}\s+.+`) to Strategy 2 when `raw_text` starts with `#`.
+
+---
+
 ### W13 — DALL-E 3 reference in `image_generator_node` TODO (dead provider)
 
 **File:** `apps/api/app/modules/content/pipeline/graph.py` `image_generator_node`

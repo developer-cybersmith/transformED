@@ -369,7 +369,7 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     from app.modules.content.pipeline.nodes.chunking import chunk_sections
 
     lesson_id: str = state["lesson_id"]
-    book_id: str = state.get("book_id", "")
+    book_id: str = state.get("book_id") or ""  # coerce None → "" so NOT NULL constraint gives clear error
     sections: list[dict[str, Any]] = state.get("sections", [])
 
     logger.info("[%s] chunk_node: chunking %d sections", lesson_id, len(sections))
@@ -406,32 +406,51 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     chapter_page_start = sections[0].get("page_start", 1) if sections else 1
     chapter_page_end = sections[-1].get("page_end", 1) if sections else 1
 
-    chapter_resp = supabase.table("chapters").insert({
-        "lesson_id": lesson_id,
-        "book_id": book_id,
-        "title": chapter_title,
-        "page_start": chapter_page_start,
-        "page_end": chapter_page_end,
-        "chapter_index": 1,
-    }).execute()
+    try:
+        chapter_resp = supabase.table("chapters").insert({
+            "lesson_id": lesson_id,
+            "book_id": book_id,
+            "title": chapter_title,
+            "page_start": chapter_page_start,
+            "page_end": chapter_page_end,
+            "chapter_index": 1,
+        }).execute()
+    except Exception as exc:
+        raise RuntimeError(
+            f"chunk_node: failed to create chapter row for lesson_id={lesson_id}"
+        ) from exc
+
+    if not chapter_resp.data:
+        raise RuntimeError(
+            f"chunk_node: chapters insert returned no data for lesson_id={lesson_id}"
+        )
     chapter_id: str = chapter_resp.data[0]["chapter_id"]
 
     # ── Bulk-upsert chunk rows (embedding column left NULL — Story 1.5 fills it) ─
-    if chunks:
-        rows = [
-            {
-                "chapter_id": chapter_id,
-                "book_id": book_id,
-                "section": chunk["section_title"],
-                "page_start": chunk["page_start"],
-                "page_end": chunk["page_end"],
-                "content": chunk["text"],
-                "chunk_index": global_i,
-                "token_count": chunk["token_count"],
-            }
-            for global_i, chunk in enumerate(chunks)
-        ]
-        supabase.table("chunks").upsert(rows).execute()
+    # Zero-token chunks (empty section bodies) are excluded from DB to prevent
+    # embed_node from calling OpenAI embeddings API with an empty string (→ 400).
+    # They remain in the in-memory chunks list for state consistency.
+    db_rows = [
+        {
+            "chapter_id": chapter_id,
+            "book_id": book_id,
+            "section": chunk["section_title"],
+            "page_start": chunk["page_start"],
+            "page_end": chunk["page_end"],
+            "content": chunk["text"],
+            "chunk_index": global_i,
+            "token_count": chunk["token_count"],
+        }
+        for global_i, chunk in enumerate(chunks)
+        if chunk["token_count"] > 0
+    ]
+    if db_rows:
+        try:
+            supabase.table("chunks").upsert(db_rows).execute()
+        except Exception as exc:
+            raise RuntimeError(
+                f"chunk_node: failed to upsert {len(db_rows)} chunks for lesson_id={lesson_id}"
+            ) from exc
 
     # ── Write checkpoint to lesson_jobs ───────────────────────────────────────
     chunk_cache: dict[str, Any] = {"chunks": chunks, "chapter_id": chapter_id}

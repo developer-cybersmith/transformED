@@ -4,7 +4,7 @@ baseline_commit: "d12638d216b7de56a93fa29f76fda23608cb853f"
 
 # Story 1.4: Semantic Chunking Node — tiktoken-Based Token-Bounded Splitting
 
-Status: review
+Status: done
 
 ## Story
 
@@ -113,6 +113,23 @@ context windows or produce 5× cost overruns.
   - [x] `test_chunk_sections_empty_body_returns_single_empty_chunk` — PASSED
   - [x] `test_chunk_sections_multiple_sections_produce_chunks_for_each` — PASSED
   - [x] Full suite: 49/49 passed, 0 regressions
+
+### Review Findings (code review 2026-07-01)
+
+- [x] [Review][Patch] Unguarded `chapter_resp.data[0]["chapter_id"]` — IndexError if chapters insert returns empty data [`graph.py:391`]
+- [x] [Review][Patch] `chapters` insert and `chunks` upsert not wrapped in try/except — checkpoint failure leaves no cache key so ARQ retry re-inserts duplicate rows [`graph.py:383-408`]
+- [x] [Review][Patch] Overlap fallback `else chunk_text` balloons subsequent chunks when previous chunk < overlap tokens — fix: `else encoding.decode(full_tokens)` [`chunking.py:96`]
+- [x] [Review][Patch] `split_into_segments` appends `"\n\n"` then filters it with `if s.strip()` — last sentence of para N runs into first sentence of para N+1 with no separator; fix: change filter to `if s` [`chunking.py:41`]
+- [x] [Review][Patch] `fitz.*` still in mypy overrides — banned AGPL import silently passes type checking [`pyproject.toml`]
+- [x] [Review][Patch] `book_id` may be `None` (not `""`) if `lessons.book_id IS NULL`; `chapters.book_id NOT NULL` causes FK crash — add null guard [`graph.py:385`]
+- [x] [Review][Patch] Empty-body sections produce `content=""` chunk rows in DB — embed_node will 400 on empty OpenAI embeddings input; filter zero-token chunks before upsert [`graph.py:394-408`]
+- [x] [Review][Patch] AC 7 second bound untested — 5000-token section → ≥8 chunks not covered [`test_chunk_node.py`]
+- [x] [Review][Defer] `chapter_index` hardcoded to 1 — multi-chapter books will collide [`graph.py:389`] — deferred; MVP limitation (one chapter per ingestion), Story 2.1 scope
+- [x] [Review][Defer] `json.loads` raises uncaught on 0-exit subprocess with partial stdout [`graph.py:150`] — deferred; extremely unlikely with controlled subprocess
+- [x] [Review][Defer] DB-generated `chunk_id` UUIDs not stored in checkpoint — embed_node must re-query by chapter_id [`graph.py:411`] — deferred; intentional design (AC 9 checkpoint stores chapter_id for this purpose)
+- [x] [Review][Defer] `progress_pct` not persisted to DB (no lesson_jobs column) — deferred; already W4
+- [x] [Review][Defer] `cost_limit_exceeded` violates CHECK constraint — deferred; already W3
+- [x] [Review][Defer] `content_pipeline_job` success path invalid status/columns — deferred; already W12
 
 ---
 

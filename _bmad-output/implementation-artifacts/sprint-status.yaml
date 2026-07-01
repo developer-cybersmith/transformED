@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-06-28T00:00:00Z
-last_updated: 2026-07-02T01:00:00Z
+last_updated: 2026-07-01T12:00:00Z
 project: HIE
 project_key: NOKEY
 tracking_system: file-system
@@ -48,8 +48,8 @@ development_status:
   epic-1: in-progress
   1-1-post-lessons-endpoint-arq-job-enqueue: done
   1-2-pdf-extraction-node-pdfplumber-docling-tesseract-ocr: done
-  1-3-structure-detection-node-rule-based-llm-validation: review
-  1-4-semantic-chunking-node: review
+  1-3-structure-detection-node-rule-based-llm-validation: done
+  1-4-semantic-chunking-node: done
   1-5-embeddings-pgvector-storage-node: backlog
   epic-1-retrospective: optional
 

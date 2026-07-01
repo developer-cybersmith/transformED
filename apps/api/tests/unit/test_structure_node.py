@@ -408,3 +408,34 @@ def test_workers_build_redis_settings_no_tls() -> None:
         settings = _build_redis_settings()
 
     assert settings.ssl is False
+
+
+# ── Tests: AC 11 — multi-heading document produces ≥ 3 sections ──────────────
+
+
+@pytest.mark.unit
+def test_ac11_multi_heading_chapter_produces_three_or_more_sections() -> None:
+    """AC 11: a chapter with numbered headings produces at least 3 sections."""
+    from app.modules.content.pipeline.nodes.structure_detection import (
+        build_section_bodies,
+        detect_headings,
+    )
+
+    raw_text = (
+        "1. Introduction\n\n"
+        "This is introductory body text covering the basics of the topic.\n\n"
+        "1.1 Background\n\n"
+        "Background material for the chapter, covering prior work and context.\n\n"
+        "1.2 Scope and Objectives\n\n"
+        "This section defines the scope of the chapter and its learning objectives.\n\n"
+        "1.3 Organisation\n\n"
+        "An overview of how the remaining sections are organised.\n\n"
+        "1.4 Summary\n\n"
+        "Key points from the chapter are collected here for revision.\n"
+    )
+    candidates = detect_headings(raw_text, font_blocks=[])
+    sections = build_section_bodies(raw_text, candidates, total_pages=20)
+
+    assert len(sections) >= 3, (
+        f"Expected ≥ 3 sections for a 20-page chapter with numbered headings; got {len(sections)}"
+    )

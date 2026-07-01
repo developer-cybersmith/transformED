@@ -60,11 +60,12 @@ def detect_headings(
                         level = "section"
                     else:
                         level = "topic"
-                    candidates[text] = {
-                        "text": text,
-                        "level": level,
-                        "char_offset": offset,
-                    }
+                    if text not in candidates:
+                        candidates[text] = {
+                            "text": text,
+                            "level": level,
+                            "char_offset": offset,
+                        }
 
     # ── Strategy 2: regex on raw_text ────────────────────────────────────────
     for match in _TOPIC_RE.finditer(raw_text):
