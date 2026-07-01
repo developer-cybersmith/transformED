@@ -1,4 +1,4 @@
-"""Unit tests for teach-back grading service (grade_teachback) and POST /teachback endpoint.
+﻿"""Unit tests for teach-back grading service (grade_teachback) and POST /teachback endpoint.
 
 All tests are @pytest.mark.unit â€” no real Supabase or OpenAI connection required.
 asyncio.to_thread is shimmed to run synchronously so MagicMock chain works correctly.
@@ -391,7 +391,7 @@ async def test_ces_contribution_at_partial_score(mock_to_thread, monkeypatch) ->
 
 @pytest.mark.unit
 async def test_rubric_scores_contains_three_keys(mock_to_thread, mock_score_teachback) -> None:
-    """rubric_scores must contain 'accuracy', 'completeness', 'clarity' as float keys."""
+    """rubric_scores must contain 'accuracy', 'completeness', 'clarity' as descriptive string labels."""
     supabase = _default_supabase_tb()
     result = await grade_teachback(
         session_id="sess-001",
@@ -403,13 +403,17 @@ async def test_rubric_scores_contains_three_keys(mock_to_thread, mock_score_teac
     )
     assert set(result.rubric_scores.keys()) == {"accuracy", "completeness", "clarity"}
     for key, val in result.rubric_scores.items():
-        assert isinstance(val, float), f"rubric_scores['{key}'] must be float, got {type(val)}"
-        assert 0.0 <= val <= 100.0, f"rubric_scores['{key}'] = {val} out of range [0, 100]"
+        assert isinstance(val, str), f"rubric_scores['{key}'] must be str label, got {type(val).__name__}: {val!r}"
+        assert val in VALID_LABELS, f"rubric_scores['{key}'] = {val!r} not in VALID_LABELS {VALID_LABELS}"
 
 
 @pytest.mark.unit
 async def test_rubric_scores_match_llm_sub_scores(mock_to_thread, mock_score_teachback) -> None:
-    """rubric_scores values match accuracy_score/completeness_score/clarity_score from LLM result."""
+    """rubric_scores values are descriptive labels derived from LLM sub-scores.
+
+    _MOCK_TB_RESULT: accuracy_score=80 (Proficient), completeness_score=70 (Developing),
+    clarity_score=75 (Proficient). Raw floats must NOT be returned.
+    """
     supabase = _default_supabase_tb()
     result = await grade_teachback(
         session_id="sess-001",
@@ -419,9 +423,9 @@ async def test_rubric_scores_match_llm_sub_scores(mock_to_thread, mock_score_tea
         user_id="user-001",
         supabase=supabase,
     )
-    assert result.rubric_scores["accuracy"] == pytest.approx(float(_MOCK_TB_RESULT.accuracy_score))
-    assert result.rubric_scores["completeness"] == pytest.approx(float(_MOCK_TB_RESULT.completeness_score))
-    assert result.rubric_scores["clarity"] == pytest.approx(float(_MOCK_TB_RESULT.clarity_score))
+    assert result.rubric_scores["accuracy"] == "Proficient"      # 80 >= 75
+    assert result.rubric_scores["completeness"] == "Developing"  # 70 >= 60, < 75
+    assert result.rubric_scores["clarity"] == "Proficient"       # 75 >= 75
 
 
 # â”€â”€ Feedback format tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -758,7 +762,7 @@ def test_http_layer_post_teachback_returns_200(monkeypatch) -> None:
         captured_kwargs.update(kwargs)
         return TeachbackResult(
             session_id=kwargs["session_id"],
-            rubric_scores={"accuracy": 80.0, "completeness": 70.0, "clarity": 75.0},
+            rubric_scores={"accuracy": "Proficient", "completeness": "Developing", "clarity": "Proficient"},
             overall_score=75.0,
             ces_contribution=18.75,
             feedback="Good job.",
@@ -802,7 +806,7 @@ def test_response_text_at_max_length_accepted(monkeypatch) -> None:
     async def _fake_grade_teachback(**kwargs):
         return TeachbackResult(
             session_id=kwargs["session_id"],
-            rubric_scores={"accuracy": 80.0, "completeness": 70.0, "clarity": 75.0},
+            rubric_scores={"accuracy": "Proficient", "completeness": "Developing", "clarity": "Proficient"},
             overall_score=75.0,
             ces_contribution=18.75,
             feedback="Good job.",
@@ -821,7 +825,7 @@ def test_response_text_single_char_accepted(monkeypatch) -> None:
     async def _fake_grade_teachback(**kwargs):
         return TeachbackResult(
             session_id=kwargs["session_id"],
-            rubric_scores={"accuracy": 80.0, "completeness": 70.0, "clarity": 75.0},
+            rubric_scores={"accuracy": "Proficient", "completeness": "Developing", "clarity": "Proficient"},
             overall_score=75.0,
             ces_contribution=18.75,
             feedback="Good job.",

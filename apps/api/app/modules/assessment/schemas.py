@@ -48,7 +48,10 @@ class TeachbackSubmission(BaseModel):
 
 class TeachbackResult(BaseModel):
     session_id: str
-    rubric_scores: dict[str, float]  # {"accuracy": float, "completeness": float, "clarity": float}
+    # B5 (Story 3-14): Changed from dict[str, float] to dict[str, str] — descriptive labels only.
+    # Raw numeric sub-scores are never returned to students (CLAUDE.md Learner DNA display rules).
+    # Authorised breaking-change exception: documented in Story 3-14 5-agent review.
+    rubric_scores: dict[str, str]  # {"accuracy": label, "completeness": label, "clarity": label}
     overall_score: float
     ces_contribution: float
     feedback: str  # praise only (score >= 90) or praise + "\n\n" + correction (score < 90)

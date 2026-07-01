@@ -17,6 +17,23 @@ from app.providers.llm.openai import OpenAILLMProvider
 logger = logging.getLogger(__name__)
 
 
+def _score_to_label(score: float) -> str:
+    """Convert a numeric rubric sub-score (0-100) to a descriptive label.
+
+    Never returns raw floats to students (CLAUDE.md Learner DNA display rules).
+    Thresholds: Exceptional ≥90, Proficient ≥75, Developing ≥60, Emerging ≥40, Beginning <40.
+    """
+    if score >= 90:
+        return "Exceptional"
+    if score >= 75:
+        return "Proficient"
+    if score >= 60:
+        return "Developing"
+    if score >= 40:
+        return "Emerging"
+    return "Beginning"
+
+
 async def grade_quiz(
     *,
     session_id: str,
@@ -120,6 +137,16 @@ async def grade_quiz(
             detail="answers list must not be empty.",
         )
 
+    # Step 5b — Guard: reject duplicate question_ids in a single submission (TQ-007)
+    seen_qids: set[str] = set()
+    for ans in answers:
+        if ans.question_id in seen_qids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Duplicate question_id {ans.question_id!r} in submission.",
+            )
+        seen_qids.add(ans.question_id)
+
     # Step 6 — Query existing attempt count to compute attempt_number
     count_resp = await asyncio.to_thread(
         lambda: supabase.table("quiz_attempts")
@@ -141,6 +168,13 @@ async def grade_quiz(
                     f"question_id {ans.question_id!r} not found in segment "
                     f"{segment_id!r}."
                 ),
+            )
+        # SEC-008: Validate response_index is within valid option range
+        options = question.get("options", [])
+        if not (0 <= ans.response_index < len(options)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"response_index {ans.response_index} is out of range for question {ans.question_id!r}.",
             )
         graded.append(
             {
@@ -175,10 +209,11 @@ async def grade_quiz(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Duplicate quiz attempt detected.",
             )
+        safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')
         logger.error(
             "quiz_attempts insert failed: session=%s error=%s",
             session_id,
-            insert_error,
+            safe_err,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -198,6 +233,10 @@ async def grade_quiz(
 
     settings = get_settings()
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
+    # CES SCALE CONTRACT (communicate to Dev 4):
+    # ces_contribution is on the 0-100 POINT scale.
+    # ces_weight_quiz (0.35 default) = max 35.0 pts at full accuracy.
+    # Dev 4's ces.py must SUM component contributions directly — do NOT multiply by 100 again.
 
     # Step 10 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
@@ -412,9 +451,9 @@ async def grade_teachback(
     return TeachbackResult(
         session_id=session_id,
         rubric_scores={
-            "accuracy": float(result.accuracy_score),
-            "completeness": float(result.completeness_score),
-            "clarity": float(result.clarity_score),
+            "accuracy": _score_to_label(result.accuracy_score),
+            "completeness": _score_to_label(result.completeness_score),
+            "clarity": _score_to_label(result.clarity_score),
         },
         overall_score=float(result.score),
         ces_contribution=ces_contribution,
