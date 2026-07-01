@@ -54,24 +54,26 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
     await _update_lesson_status(supabase, lesson_id, "running")
 
     try:
-        # ── 2. Fetch lesson metadata ──────────────────────────────────────────
-        result = supabase.table("lesson_jobs").select("*").eq("lesson_id", lesson_id).single().execute()
+        # ── 2. Fetch lesson metadata from lessons table ───────────────────────
+        result = (
+            supabase.table("lessons")
+            .select("user_id, source_file_path, book_id")
+            .eq("lesson_id", lesson_id)
+            .single()
+            .execute()
+        )
         lesson_row: dict[str, Any] = result.data or {}
 
         user_id: str = lesson_row.get("user_id", "")
-        chapter_content: str = lesson_row.get("extracted_text", "")  # pre-extracted or empty
-
-        if not chapter_content and lesson_row.get("source_pdf_path"):
-            # PDF not yet extracted — extract inline
-            # TODO (Sprint 1): call PDF extraction utility
-            chapter_content = ""
-            logger.warning("lesson_id=%s has PDF path but no pre-extracted text — extraction TODO", lesson_id)
+        source_pdf_path: str = lesson_row.get("source_file_path", "")
+        book_id: str = lesson_row.get("book_id", "")
 
         # ── 3. Run LangGraph pipeline ─────────────────────────────────────────
         lesson_package = await run_pipeline(
             lesson_id=lesson_id,
-            chapter_content=chapter_content,
             user_id=user_id,
+            source_pdf_path=source_pdf_path,
+            book_id=book_id,
         )
 
         # ── 4a. Persist final package ─────────────────────────────────────────
