@@ -1,14 +1,15 @@
 """
 Tutor service — CES signal processing.
 
-Boundary mapper, CES computation stub, and Redis window/history management.
-Dev 3 will replace compute_ces() with the real formula (PRD §11).
+Boundary mapper, weighted CES computation (PRD §11, 0–100 scale), and Redis
+window/history management.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,18 +64,26 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
         if v is None:
             raise ValueError(f"attention_signal missing required field: {key}")
         try:
-            return float(v)
+            f = float(v)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"attention_signal field {key!r} must be numeric") from exc
+        # Reject NaN/±inf: float("nan") would propagate through compute_ces and clamp to a
+        # misleading value (NaN→100 = maximally engaged), silently suppressing interventions.
+        if not math.isfinite(f):
+            raise ValueError(f"attention_signal field {key!r} must be a finite number")
+        return f
 
     def _optional_float(key: str) -> float | None:
         v = data.get(key)
         if v is None:
             return None
         try:
-            return float(v)
+            f = float(v)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"attention_signal field {key!r} must be numeric or null") from exc
+        if not math.isfinite(f):
+            raise ValueError(f"attention_signal field {key!r} must be a finite number or null")
+        return f
 
     return NormalizedSignal(
         session_id=str(session_id),
@@ -89,12 +98,36 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
 # ── CES computation ───────────────────────────────────────────────────────────
 
 
-def compute_ces(signal: NormalizedSignal) -> float:  # noqa: ARG001
-    """Compute the Cognitive Engagement Score.
+def compute_ces(signal: NormalizedSignal) -> float:
+    """Weighted Cognitive Engagement Score on the 0–100 scale (PRD §11).
 
-    Temporary stub — Dev 3 replaces with the weighted formula from PRD §11.
+    ``CES = (Σ signalᵢ × weightᵢ) × 100`` using the frozen ``settings.ces_weight_*`` weights, matching
+    Dev 3's ``ces_contribution`` scale contract (assessment/service.py) so ``ces_threshold = 50`` is
+    correct.
+
+    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None`` (not yet attempted
+    / skipped). The weight of any ``None`` signal is redistributed proportionally across the present
+    signals (each present weight ÷ sum-of-present-weights). This generalises the §11 teachback-``None``
+    rule — when only teachback is ``None`` the present weights sum to 0.75, so each is divided by 0.75,
+    reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
     """
-    return 0.5
+    from app.config import get_settings
+
+    s = get_settings()
+    # (value, weight) for every signal, dropping the None ones.
+    pairs = [
+        (signal.quiz_accuracy, s.ces_weight_quiz),
+        (signal.teachback_score, s.ces_weight_teachback),
+        (signal.behavioral_score, s.ces_weight_behavioral),
+        (signal.head_pose_score, s.ces_weight_head_pose),
+        (signal.blink_rate, s.ces_weight_blink),
+    ]
+    present = [(v, w) for (v, w) in pairs if v is not None]
+    weight_sum = sum(w for _, w in present)
+    if weight_sum <= 0:
+        return 0.0
+    ces = sum(v * (w / weight_sum) for v, w in present) * 100.0
+    return max(0.0, min(100.0, ces))
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -184,8 +217,9 @@ async def process_attention_signal(
     Steps
     -----
     1. Parse and validate the payload → NormalizedSignal.
-    2. Compute CES (stub: 0.5).
-    3. Persist latest CES to ``session:{session_id}:ces_window`` (24 h TTL).
+    2. Compute the weighted CES (PRD §11, 0–100 scale).
+    3. Persist latest CES to ``session:{session_id}:ces_window`` and
+       ``tutor_ces:{session_id}`` (24 h TTL).
     4. Prepend CES to ``session:{session_id}:ces_history`` (keep last 10).
     5. Read history; if the two most-recent values are both below
        ``settings.ces_threshold`` and tutor cooldown is absent, dispatch
@@ -207,6 +241,7 @@ async def process_attention_signal(
 
     # Latest window
     await redis.set(window_key, ces, ex=_CES_WINDOW_TTL)
+    await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)  # ces_computation (s3-3)
 
     # Prepend to history and trim to keep only the last _CES_HISTORY_MAX values
     await redis.lpush(history_key, ces)

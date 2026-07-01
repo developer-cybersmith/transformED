@@ -119,6 +119,7 @@ def _build_supabase(
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = insert_data or []
+    insert_mock.insert.return_value.execute.return_value.error = None
 
     mock.table.side_effect = [session_mock, lesson_mock, insert_mock]
     return mock
@@ -193,6 +194,7 @@ async def test_all_wrong_gives_score_0(mock_to_thread) -> None:
     )
     assert result.correct_count == 0
     assert result.score == pytest.approx(0.0)
+    assert result.ces_contribution == pytest.approx(0.0)
 
 
 @pytest.mark.unit
@@ -240,6 +242,7 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -270,6 +273,7 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -287,7 +291,7 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
 
 @pytest.mark.unit
 async def test_feedback_contains_explanation(mock_to_thread) -> None:
-    """Each feedback item includes the QuizQuestion explanation text."""
+    """Each feedback item includes the QuizQuestion explanation text and question text (AC 12)."""
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=0, response_time_ms=1000)]
     result = await grade_quiz(
@@ -295,6 +299,7 @@ async def test_feedback_contains_explanation(mock_to_thread) -> None:
         answers=answers, user_id="user-001", supabase=supabase,
     )
     assert result.feedback[0]["explanation"] == _QUESTION_1["explanation"]
+    assert result.feedback[0]["question"] == _QUESTION_1["question"]
 
 
 @pytest.mark.unit
@@ -502,3 +507,226 @@ def test_http_layer_post_quiz_returns_404_on_missing_session(monkeypatch) -> Non
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/quiz", json=_VALID_HTTP_PAYLOAD)
     assert resp.status_code == 404
+
+
+# ── New tests for AC 15-19 (BMAD re-implementation sprint1/s1-1-quiz-endpoint-v2) ──
+
+
+@pytest.mark.unit
+def test_negative_response_index_rejected() -> None:
+    """AC 15: response_index < 0 must be rejected with HTTP 422 by Pydantic before service runs.
+
+    RED test — fails on main until Field(ge=0) is added to QuizAnswer.response_index.
+    """
+    payload = {
+        "session_id": "sess-001",
+        "lesson_id": "lesson-001",
+        "segment_id": "seg-001",
+        "answers": [{"question_id": "q1", "response_index": -1, "response_time_ms": 0}],
+    }
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=payload)
+    assert resp.status_code == 422, (
+        f"Expected 422 for negative response_index, got {resp.status_code}: {resp.text}"
+    )
+
+
+@pytest.mark.unit
+def test_negative_response_time_rejected() -> None:
+    """AC 16: response_time_ms < 0 must be rejected with HTTP 422 by Pydantic.
+
+    RED test — fails on main until Field(default=0, ge=0) is added to QuizAnswer.response_time_ms.
+    """
+    payload = {
+        "session_id": "sess-001",
+        "lesson_id": "lesson-001",
+        "segment_id": "seg-001",
+        "answers": [{"question_id": "q1", "response_index": 0, "response_time_ms": -500}],
+    }
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=payload)
+    assert resp.status_code == 422, (
+        f"Expected 422 for negative response_time_ms, got {resp.status_code}: {resp.text}"
+    )
+
+
+@pytest.mark.unit
+async def test_raises_403_when_lesson_id_mismatches_session(mock_to_thread) -> None:
+    """AC 17: session.lesson_id (from DB) != request body lesson_id → HTTP 403 (IDOR guard).
+
+    RED test — fails on main until the IDOR guard is added to grade_quiz().
+    Without the guard, the service continues and returns a 200.
+    """
+    from fastapi import HTTPException
+    # Session in DB belongs to lesson-999; request claims lesson-001 — cross-lesson hijack attempt
+    mismatched_session = {"session_id": "sess-001", "user_id": "user-001", "lesson_id": "lesson-999"}
+    supabase = _build_supabase(
+        session_data=mismatched_session,
+        lesson_data={"content": _LESSON_CONTENT},
+    )
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 403
+    assert "lesson" in exc_info.value.detail.lower(), (
+        "403 detail must mention lesson to be actionable for debugging"
+    )
+
+
+@pytest.mark.unit
+async def test_insert_error_raises_500(mock_to_thread) -> None:
+    """AC 18: truthy insert_resp.error must raise HTTP 500.
+
+    RED test — fails on main until the insert error check is added to grade_quiz().
+    Without the check, the service ignores the error and returns a QuizResult.
+    """
+    from fastapi import HTTPException
+
+    session_mock = MagicMock()
+    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    lesson_mock = MagicMock()
+    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+        "content": _LESSON_CONTENT
+    }
+    insert_mock = MagicMock()
+    # Simulate a DB error on insert
+    insert_mock.insert.return_value.execute.return_value.data = []
+    insert_mock.insert.return_value.execute.return_value.error = "constraint violation"
+
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 500
+    assert "persist" in exc_info.value.detail.lower(), (
+        "500 detail must describe the persistence failure"
+    )
+
+
+@pytest.mark.unit
+async def test_422_does_not_leak_question_ids(mock_to_thread) -> None:
+    """AC 19: 422 error detail for unknown question_id must NOT list valid question IDs.
+
+    Regression guard — prevents ID enumeration vulnerability from being re-introduced.
+    """
+    from fastapi import HTTPException
+    supabase = _build_supabase(session_data=_SESSION_ROW, lesson_data={"content": _LESSON_CONTENT})
+    answers = [QuizAnswer(question_id="BOGUS-Q", response_index=0, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 422
+    detail = exc_info.value.detail.lower()
+    assert "valid id" not in detail, "422 must not enumerate valid question IDs"
+    assert "q1" not in detail, "422 must not expose real question IDs to the caller"
+    assert "q2" not in detail, "422 must not expose real question IDs to the caller"
+
+
+@pytest.mark.unit
+async def test_ces_contribution_at_partial_accuracy(mock_to_thread, monkeypatch) -> None:
+    """AC 11: 50% accuracy with ces_weight_quiz=0.35 → ces_contribution ≈ 17.5 pts.
+
+    Regression guard verifying the 0-100 POINT scale formula at non-boundary accuracy.
+    """
+    mock_settings = MagicMock()
+    mock_settings.ces_weight_quiz = 0.35
+    monkeypatch.setattr("app.modules.assessment.service.get_settings", lambda: mock_settings)
+
+    supabase = _build_supabase(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": _LESSON_CONTENT},
+        insert_data=[],
+    )
+    answers = [
+        QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000),  # correct
+        QuizAnswer(question_id="q2", response_index=0, response_time_ms=1000),  # wrong
+    ]
+    result = await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+    assert result.ces_contribution == pytest.approx(0.5 * 0.35 * 100, rel=1e-4)  # 17.5
+
+
+@pytest.mark.unit
+async def test_raises_404_when_lesson_row_absent(mock_to_thread) -> None:
+    """AC 5 (second path): lesson DB row entirely absent (data=None) → HTTP 404.
+
+    Complements test_raises_404_when_lesson_content_is_none which tests data={"content": None}.
+    """
+    from fastapi import HTTPException
+
+    session_mock = MagicMock()
+    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    lesson_mock = MagicMock()
+    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
+
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, lesson_mock]
+
+    answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
+    with pytest.raises(HTTPException) as exc_info:
+        await grade_quiz(
+            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+            answers=answers, user_id="user-001", supabase=supabase,
+        )
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.unit
+async def test_db_rows_contain_required_fields(mock_to_thread) -> None:
+    """AC 9: each quiz_attempts row must contain all required DB columns.
+
+    Regression guard — verifies session_id, segment_id, question_id, response_index,
+    is_correct, response_time_ms, and attempt_number are all present in every insert row.
+    """
+    captured_rows: list = []
+
+    session_mock = MagicMock()
+    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    lesson_mock = MagicMock()
+    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+        "content": _LESSON_CONTENT
+    }
+
+    def _capture(rows):
+        captured_rows.extend(rows)
+        m = MagicMock()
+        m.execute.return_value.data = []
+        m.execute.return_value.error = None
+        return m
+
+    insert_mock = MagicMock()
+    insert_mock.insert.side_effect = _capture
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+
+    answers = [
+        QuizAnswer(question_id="q1", response_index=1, response_time_ms=1500),
+        QuizAnswer(question_id="q2", response_index=0, response_time_ms=2000),
+    ]
+    await grade_quiz(
+        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+        answers=answers, user_id="user-001", supabase=supabase,
+    )
+
+    assert len(captured_rows) == 2, "One DB row per answer"
+    required_keys = {"session_id", "segment_id", "question_id", "response_index",
+                     "is_correct", "response_time_ms", "attempt_number"}
+    for row in captured_rows:
+        missing = required_keys - row.keys()
+        assert not missing, f"DB row missing required fields: {missing}"
+    assert captured_rows[0]["session_id"] == "sess-001"
+    assert captured_rows[0]["segment_id"] == "seg-001"
+    assert captured_rows[0]["is_correct"] is True   # q1 response_index=1 == correct_index=1
+    assert captured_rows[1]["is_correct"] is False  # q2 response_index=0 != correct_index=2
