@@ -195,6 +195,33 @@ Applied and frozen migrations (do not alter):
 - Chunk embeddings at ingestion only — never regenerate stored chunk embeddings. Phase 2 RAG tutor query-embedding IS allowed (embed the student question at query time).
 - API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1)
 
+## BMAD Pre-Implementation Checklist (Story-First Gate)
+
+Before writing ANY code for a new story, complete ALL of the following in order — no exceptions:
+
+1. **Create the story file** at `docs/stories/{N}-{M}-{story-slug}.md` with all ACs fully defined
+2. **Commit ONLY the story file**: `git commit -m "docs(story-first): Story N-M — {title}"`
+3. **Push the story-only commit** to remote: `git push origin <branch-name>`
+4. **Verify** the story commit is the chronologically first commit on the branch
+5. **Only then** begin the RED phase (write failing tests)
+
+**NEVER** write implementation code in the same commit as the story file.
+**NEVER** merge a PR where story and implementation share a commit.
+
+## BMAD Code Review Gate (5-Agent Requirement)
+
+Every PR requires a 5-agent adversarial code review via `/bmad-code-review` before merge.
+
+The 5 required agent layers are:
+1. **Story Quality** — all ACs testable, story complete before code
+2. **Blind Hunter (Security)** — IDOR, injection, enumeration, DoS vectors
+3. **Test Coverage** — every AC has a test, edge cases covered, no false confidence
+4. **AC Completeness** — every AC maps to at least one explicit test assertion
+5. **Process Integrity** — no LLM calls in wrong modules, no hardcoded models, no rule violations
+
+**REJECT** any PR whose Senior Developer Review section lists fewer than 5 agent layers.
+The Story Quality agent is the most critical — it catches missing ACs before they reach main.
+
 ## Build Roadmap (10 weeks, §22)
 
 - **Week 1 (Sprint 0):** Infra setup + shared contracts frozen (THIS SPRINT)

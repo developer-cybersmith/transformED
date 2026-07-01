@@ -129,6 +129,7 @@ def _build_supabase(
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = insert_data or []
+    insert_mock.insert.return_value.execute.return_value.error = None
 
     # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
     mock.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
@@ -204,6 +205,7 @@ async def test_all_wrong_gives_score_0(mock_to_thread) -> None:
     )
     assert result.correct_count == 0
     assert result.score == pytest.approx(0.0)
+    assert result.ces_contribution == pytest.approx(0.0)
 
 
 @pytest.mark.unit
@@ -257,6 +259,7 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -297,6 +300,7 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
         captured_rows.extend(rows)
         m = MagicMock()
         m.execute.return_value.data = []
+        m.execute.return_value.error = None
         return m
 
     insert_mock = MagicMock()
@@ -315,7 +319,7 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
 
 @pytest.mark.unit
 async def test_feedback_contains_explanation(mock_to_thread) -> None:
-    """Each feedback item includes the QuizQuestion explanation text."""
+    """Each feedback item includes the QuizQuestion explanation text and question text (AC 12)."""
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=0, response_time_ms=1000)]
     result = await grade_quiz(
@@ -323,6 +327,7 @@ async def test_feedback_contains_explanation(mock_to_thread) -> None:
         answers=answers, user_id="user-001", supabase=supabase,
     )
     assert result.feedback[0]["explanation"] == _QUESTION_1["explanation"]
+    assert result.feedback[0]["question"] == _QUESTION_1["question"]
 
 
 @pytest.mark.unit
