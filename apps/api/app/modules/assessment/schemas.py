@@ -23,7 +23,7 @@ class QuizSubmission(BaseModel):
     session_id: str
     lesson_id: str
     segment_id: str
-    answers: list[QuizAnswer]
+    answers: list[QuizAnswer] = Field(min_length=1, max_length=50)
 
 
 class QuizResult(BaseModel):
@@ -43,7 +43,7 @@ class TeachbackSubmission(BaseModel):
     session_id: str
     lesson_id: str
     segment_id: str
-    response_text: str = Field(description="Student's typed teach-back response")
+    response_text: str = Field(min_length=1, max_length=4000, description="Student's typed teach-back response")
 
 
 class TeachbackResult(BaseModel):

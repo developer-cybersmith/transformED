@@ -96,12 +96,16 @@ def _build_supabase(
     session_data=None,
     lesson_data=None,
     insert_data=None,
+    count=0,
 ) -> MagicMock:
     """Build a mock Supabase client with ordered call side effects.
 
-    Call order matches grade_quiz internals: sessions → lessons → quiz_attempts insert.
+    Call order matches grade_quiz internals (post-fix):
+      sessions → lessons → quiz_attempts (COUNT) → quiz_attempts (INSERT).
     Pass session_data=None to simulate session not found.
     Pass lesson_data with content=None to simulate lesson without content.
+    Pass count=N to simulate N existing quiz_attempts rows for attempt_number computation.
+    Defaults to count=0 (first attempt, no prior rows).
     """
     if session_data is None and lesson_data is None and insert_data is None:
         # Default: valid session + valid lesson
@@ -117,11 +121,18 @@ def _build_supabase(
     lesson_mock = MagicMock()
     lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = lesson_data
 
+    count_resp_obj = MagicMock()
+    count_resp_obj.count = count
+
+    count_table_mock = MagicMock()
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
+
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = insert_data or []
     insert_mock.insert.return_value.execute.return_value.error = None  # explicit success
 
-    mock.table.side_effect = [session_mock, lesson_mock, insert_mock]
+    # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
+    mock.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
     return mock
 
 
@@ -165,7 +176,7 @@ async def test_wrong_answer_is_marked_incorrect(mock_to_thread) -> None:
 
 @pytest.mark.unit
 async def test_all_correct_gives_score_100(mock_to_thread) -> None:
-    """2/2 correct → score == 100.0."""
+    """2/2 correct → score == 100.0, ces_contribution == 35.0."""
     supabase = _default_supabase()
     answers = [
         QuizAnswer(question_id="q1", response_index=1, response_time_ms=1200),
@@ -178,6 +189,8 @@ async def test_all_correct_gives_score_100(mock_to_thread) -> None:
     assert result.correct_count == 2
     assert result.total_count == 2
     assert result.score == pytest.approx(100.0)
+    # AC 7: CES SCALE CONTRACT — all correct at ces_weight_quiz=0.35 must yield exactly 35.0 pts
+    assert result.ces_contribution == pytest.approx(35.0)
 
 
 @pytest.mark.unit
@@ -238,6 +251,12 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
     lesson_mock = MagicMock()
     lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
 
+    # count query: count=0 → attempt_number=1 (first attempt)
+    count_resp_obj = MagicMock()
+    count_resp_obj.count = 0
+    count_table_mock = MagicMock()
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
+
     def _capture(rows):
         captured_rows.extend(rows)
         m = MagicMock()
@@ -248,7 +267,8 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+    # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
+    supabase.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
 
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=3750)]
     await grade_quiz(
@@ -261,13 +281,22 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
 
 @pytest.mark.unit
 async def test_attempt_number_written_to_db(mock_to_thread) -> None:
-    """attempt_number parameter is written to each quiz_attempts row."""
+    """attempt_number is computed from DB count and written to each quiz_attempts row.
+
+    count=1 (1 prior attempt exists) → service computes attempt_number=2 and inserts it.
+    """
     captured_rows: list = []
 
     session_mock = MagicMock()
     session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
     lesson_mock = MagicMock()
     lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+
+    # count=1 → service computes attempt_number = 1 + 1 = 2
+    count_resp_obj = MagicMock()
+    count_resp_obj.count = 1
+    count_table_mock = MagicMock()
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
 
     def _capture(rows):
         captured_rows.extend(rows)
@@ -279,12 +308,13 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, lesson_mock, insert_mock]
+    # 4-call order: sessions → lessons → quiz_attempts(COUNT) → quiz_attempts(INSERT)
+    supabase.table.side_effect = [session_mock, lesson_mock, count_table_mock, insert_mock]
 
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     await grade_quiz(
         session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, attempt_number=2, user_id="user-001", supabase=supabase,
+        answers=answers, user_id="user-001", supabase=supabase,
     )
     assert captured_rows[0]["attempt_number"] == 2
 
@@ -332,8 +362,13 @@ async def test_raises_404_when_session_not_found(mock_to_thread) -> None:
 
 
 @pytest.mark.unit
-async def test_raises_403_when_session_belongs_to_other_user(mock_to_thread) -> None:
-    """session.user_id != request user_id → HTTP 403."""
+async def test_session_wrong_user_returns_404(mock_to_thread) -> None:
+    """session.user_id != request user_id → HTTP 404 (SEC-006: session enumeration fix).
+
+    AC 4 and AC 8: wrong-owner path must return 404 (not 403) so attackers cannot
+    distinguish 'session belongs to someone else' from 'session does not exist'.
+    Detail must contain 'not found or access denied'.
+    """
     from fastapi import HTTPException
     other_session = {"session_id": "sess-001", "user_id": "other-user", "lesson_id": "lesson-001"}
     supabase = _build_supabase(session_data=other_session, lesson_data={"content": _LESSON_CONTENT})
@@ -343,7 +378,8 @@ async def test_raises_403_when_session_belongs_to_other_user(mock_to_thread) -> 
             session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
             answers=answers, user_id="user-001", supabase=supabase,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
+    assert "not found or access denied" in exc_info.value.detail
 
 
 @pytest.mark.unit
@@ -412,7 +448,8 @@ async def test_raises_422_when_answers_list_is_empty(mock_to_thread) -> None:
 async def test_table_routing_is_verified(mock_to_thread) -> None:
     """supabase.table() must be called with the correct table names in order.
 
-    Verifies that grade_quiz calls sessions → lessons → quiz_attempts in that order.
+    Verifies that grade_quiz calls sessions → lessons → quiz_attempts(COUNT) →
+    quiz_attempts(INSERT) in that order (4 calls total after S3-12 fix).
     If service.py reorders queries, this test catches it before mocks silently
     return wrong data to wrong queries.
     """
@@ -423,8 +460,8 @@ async def test_table_routing_is_verified(mock_to_thread) -> None:
         answers=answers, user_id="user-001", supabase=supabase,
     )
     calls = [c.args[0] for c in supabase.table.call_args_list]
-    assert calls == ["sessions", "lessons", "quiz_attempts"], (
-        f"Expected table call order [sessions, lessons, quiz_attempts], got {calls}"
+    assert calls == ["sessions", "lessons", "quiz_attempts", "quiz_attempts"], (
+        f"Expected table call order [sessions, lessons, quiz_attempts, quiz_attempts], got {calls}"
     )
 
 
