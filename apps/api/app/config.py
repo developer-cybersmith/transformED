@@ -122,6 +122,26 @@ class Settings(BaseSettings):
         description="Maximum number of distraction interventions per session before escalating",
     )
 
+    # ── PDF extraction ────────────────────────────────────────────────────────
+    ocr_text_yield_threshold: int = Field(
+        default=50,
+        description="Min chars/page from pdfplumber before Tesseract OCR fallback (env: OCR_TEXT_YIELD_THRESHOLD)",
+    )
+
+    # ── Chunking (Node 3) ─────────────────────────────────────────────────────
+    chunk_target_tokens: int = Field(
+        default=512,
+        description="Target token count per chunk for the chunking node (cl100k_base tokens)",
+    )
+    chunk_overlap_tokens: int = Field(
+        default=64,
+        description="Token overlap between consecutive chunks to preserve context continuity",
+    )
+    embedding_tokenizer: str = Field(
+        default="cl100k_base",
+        description="tiktoken encoding name used for token counting (must match embedding model)",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

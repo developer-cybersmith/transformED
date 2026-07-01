@@ -20,8 +20,9 @@ dependencies = [
     "langchain-openai>=0.1.0",
     "openai>=1.40.0",              # beta.chat.completions.parse requires >=1.40.0
     "anthropic>=0.26.0",
-    "pymupdf>=1.24.0",
-    "pdfplumber>=0.11.0",
+    "docling>=2.0.0,<3.0.0",     # Apache 2.0 — table extraction; replaces PyMuPDF (AGPL-3.0 banned); pinned per CLAUDE.md policy
+    "pdftext>=0.6.0,<1.0.0",    # Apache 2.0 — structured font/layout metadata (blocks→lines→spans); brings pypdfium2 4.30.0 as dep
+    "pdfplumber>=0.11.0",        # MIT — retained only for table detection trigger (page.extract_tables() → docling)
     "pytesseract>=0.3.10",
     "Pillow>=10.3.0",
     "langfuse>=2.0.0",
@@ -29,6 +30,7 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.4.0",
     "httpx>=0.27.0",
     "slowapi>=0.1.9",
+    "tiktoken>=0.7.0",             # BPE tokenizer for cl100k_base (text-embedding-3-small)
 ]
 
 [project.optional-dependencies]
@@ -88,11 +90,15 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = [
     "fitz.*",
+    "docling.*",
+    "pypdfium2.*",
+    "pdftext.*",
     "pdfplumber.*",
     "pytesseract.*",
     "langfuse.*",
     "arq.*",
     "slowapi.*",
+    "tiktoken.*",
 ]
 ignore_missing_imports = true
 
