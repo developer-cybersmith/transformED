@@ -51,7 +51,7 @@ async def grade_quiz(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, segment not found,
-            or ownership check failed (SEC-006 oracle).
+            or ownership check failed (SEC-006: enumeration oracle fix).
         HTTPException 403: session.lesson_id != lesson_id (IDOR guard).
         HTTPException 422: answers is empty, or a submitted question_id is not in the segment quiz.
         HTTPException 500: quiz_attempts insert returns a truthy error.
