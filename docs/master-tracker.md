@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-06-30 (Dev 1 Sprint 1 API status synced from direct reply)
+**Last updated:** 2026-07-01 (Dev 3 quiz/teachback live; Dev 4 WS contract published + full FSM done; content router clarified as route-stub only)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -73,10 +73,9 @@
 - [ ] text-embedding-3-small + pgvector storage
 - [x] lesson_jobs table + ARQ job enqueue — ✓ confirmed live (pipeline submit working)
 - [ ] with_retry() decorator (exponential backoff + jitter)
-- [x] POST /api/content/lessons — ✓ live, 14/14 tests pass (Dev 2 was using wrong path /api/pipeline/submit)
-- [x] GET /api/content/lessons — ✓ live, paginated (?limit=20&offset=0), returns status/title/created_at
-- [x] GET /api/content/lessons/{lesson_id} — ✓ live, returns status only (not lesson package content)
-- [ ] GET /api/content/lessons/{lesson_id}/package — ⬜ NOT BUILT — Dev 1 needs to expose lessons.content JSONB (~30 min). **Blocks Dev 2 real player wiring.**
+- [x] POST /api/content/lessons — route registered, auth wired, 14/14 tests pass. Body: returns `{lesson_id, status:"queued"}`. Supabase storage + ARQ enqueue are TODO stubs (HTTP 501 until implemented). Dev 2 must keep using mock until Supabase integration lands.
+- [x] GET /api/content/lessons — route registered, auth wired. Returns `list[{lesson_id, status, title, progress_pct, error, created_at, completed_at}]`. Supabase query TODO stub.
+- [x] GET /api/content/lessons/{lesson_id} — route registered, auth wired. Returns status metadata only — **NOT the full lesson package JSONB**. Supabase query TODO stub. **Dev 2 cannot load lesson content via REST yet.**
 
 ### Dev 2 — Lesson Player + Frontend
 - [x] Custom React audio-timeline state machine — ✓ done
@@ -84,28 +83,38 @@
 - [x] Audio playback + timestamp-driven slide advance — ✓ done
 - [ ] Avatar intro/outro video component (HeyGen cached) — ⛔ BLOCKED: avatar_intro/outro/static_url not in frozen schema; needs all-4-dev sign-off + Sprint 2 avatar node. Deferred to Sprint 2.
 - [x] Jargon hover tooltip component — ✓ done
-- [ ] Lesson load from Supabase Storage signed URLs — 🔵 IN PROGRESS: service layer ready, blocked on GET /api/content/lessons/{id}/package (Dev 1, ~30 min)
+- [ ] Lesson load from real API — ⛔ BLOCKED: GET /api/content/lessons/{id} returns status only (no JSONB). Full package endpoint not built yet. Continue using mock.
 - [x] PDF upload UI + generation progress indicator — ✓ done
-- [ ] Wire upload to POST /api/content/lessons — ⬜ ready to wire (URL correction only, endpoint is live)
-- [ ] Wire library/dashboard to GET /api/content/lessons — ⬜ ready to wire (URL correction only, endpoint is live)
+- [ ] Wire upload to POST /api/content/lessons — ⬜ ready to wire (URL + auth wired; Supabase stub on backend, will get 501 until Dev 1 implements storage)
+- [ ] Wire library/dashboard to GET /api/content/lessons — ⬜ ready to wire (URL + auth wired; will return empty/501 until Dev 1 implements Supabase query)
 - [ ] GET /api/sessions/latest for continue-learning card — ⛔ BLOCKED: endpoint doesn't exist, Dev 4 owns (session state in Redis). Escalate.
+- [ ] Wire QuizOverlay to POST /api/assessment/quiz — ⬜ READY: endpoint live (Dev 3). Send {session_id, lesson_id, segment_id, answers:[{question_id, response_index, response_time_ms}]}. Receive {score, correct_count, total_count, ces_contribution, feedback}.
+- [ ] Wire TeachBackModal to POST /api/assessment/teachback — ⬜ READY: endpoint live (Dev 3). Send {session_id, lesson_id, segment_id, response_text}. Receive {rubric_scores, overall_score, ces_contribution, feedback}.
+- [ ] Build WebSocket client (/ws/{session_id}) — ⬜ READY: contract published by Dev 4, needs Dev 2 sign-off on docs/ws-message-contract.md before client is built.
+- [ ] Sign off on WS message contract — ⬜ ACTION REQUIRED: Dev 4 submitted docs/ws-message-contract.md, awaiting Dev 2 sign-off (table at bottom of that file).
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
-- [ ] POST /api/assessment/quiz endpoint live — 🔵 IN PROGRESS
-- [ ] MCQ scoring + response time capture
-- [ ] POST /api/assessment/teachback live
-- [ ] GPT-4o-mini rubric scoring (accuracy/completeness/clarity)
-- [ ] Praise + correction feedback response format
-- [ ] quiz_attempts + teachback_attempts DB writes working
+- [x] POST /api/assessment/quiz — ✓ LIVE. Accepts {session_id, lesson_id, segment_id, answers:[{question_id, response_index, response_time_ms}]}. Returns {session_id, score, correct_count, total_count, ces_contribution, feedback}.
+- [x] MCQ scoring + response time capture — ✓ done (in grade_quiz service)
+- [x] POST /api/assessment/teachback — ✓ LIVE. Accepts {session_id, lesson_id, segment_id, response_text}. Returns {session_id, rubric_scores:{accuracy,completeness,clarity}, overall_score, ces_contribution, feedback}.
+- [x] GPT-4o-mini rubric scoring (accuracy/completeness/clarity) — ✓ done
+- [x] Praise + correction feedback response format — ✓ done (praise only if ≥90, praise+correction if <90)
+- [ ] quiz_attempts + teachback_attempts DB writes working — status unknown
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
 - [x] JWT middleware live and tested on all routes — merge conflicts resolved
-- [ ] WebSocket connection + message type routing — 🔵 IN PROGRESS (target: 2026-06-29 EOD)
-- [ ] Lesson progress push (ARQ pub/sub → WebSocket)
-- [ ] Redis signal buffer operational
-- [ ] IDLE → TEACHING state transition live
-- [x] Session state init on lesson start
-- [x] Session state Redis persistence (24h TTL)
+- [x] WebSocket connection + message type routing — ✓ live at /ws/{session_id}
+- [x] Lesson progress push (ARQ pub/sub → WebSocket) — ✓ lesson_ready push via Redis pub/sub live
+- [x] Redis signal buffer operational — ✓ done
+- [x] IDLE → TEACHING state transition live — ✓ done
+- [x] Session state init on lesson start — ✓ done
+- [x] Session state Redis persistence (24h TTL) — ✓ done
+- [x] Full 7-state LangGraph StateGraph with real logic — ✓ done (merged Sprint 2 work)
+- [x] All 14 transitions wired and tested — ✓ done (884-line test suite)
+- [x] QUIZZING → TEACH_BACK → TEACHING flow — ✓ done
+- [x] Session state restore on reconnect tested — ✓ done
+- [x] Intervention message selection from lesson package — ✓ done
+- [x] WebSocket message types finalized — ✓ docs/ws-message-contract.md published. **Needs Dev 2 sign-off.**
 
 ---
 
@@ -146,12 +155,12 @@
 - [ ] PostHog events for all assessment actions
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
-- [ ] Full 7-state LangGraph StateGraph with real logic
-- [ ] All 14 transitions wired and tested
-- [ ] CHECKING IN → QUIZZING → TEACH-BACK → TEACHING flow
-- [ ] Session state restore on reconnect tested
-- [ ] Intervention message selection from lesson package
-- [ ] WebSocket message types finalized and published
+- [x] Full 7-state LangGraph StateGraph with real logic — ✓ completed early (merged Sprint 1)
+- [x] All 14 transitions wired and tested — ✓ completed early
+- [x] CHECKING IN → QUIZZING → TEACH-BACK → TEACHING flow — ✓ completed early
+- [x] Session state restore on reconnect tested — ✓ completed early
+- [x] Intervention message selection from lesson package — ✓ completed early
+- [x] WebSocket message types finalized and published — ✓ docs/ws-message-contract.md published
 
 ---
 
@@ -186,14 +195,14 @@
 - [ ] Re-assessment prompt after 10 sessions logic
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
-- [ ] Attention signal ingestion from WebSocket live
-- [ ] Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s
-- [ ] CES computation in-process (~3–5ms total)
-- [ ] Intervention trigger: 2 consecutive windows below threshold
-- [ ] 2-minute cooldown enforcement (Redis TTL key)
-- [ ] Max 3 distraction interventions per session cap
-- [ ] Fatigue intervention: once per session flag
-- [ ] Type A/B/C intervention routing to correct message
+- [x] Attention signal ingestion from WebSocket live — ✓ done
+- [x] Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s — ✓ done
+- [x] CES computation in-process (~3–5ms total) — ✓ done 2026-06-30
+- [x] Intervention trigger: 2 consecutive windows below threshold — ✓ done
+- [x] 2-minute cooldown enforcement (Redis TTL key) — ✓ done
+- [x] Max 3 distraction interventions per session cap — ✓ done 2026-06-30
+- [x] Fatigue intervention: once per session flag — ✓ done 2026-06-30
+- [x] Type A/B/C intervention routing to correct message — ✓ done 2026-06-30
 
 ---
 
@@ -226,12 +235,12 @@
 - [ ] PostHog funnel analysis: where do students drop off?
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
-- [ ] Intervention threshold tuning (is CES < 50 right?)
-- [ ] Review which interventions students responded to vs ignored
-- [ ] Cooldown period tuning from real session data
-- [ ] WebSocket stability testing under 50 concurrent users
-- [ ] Session reconnect testing under poor network conditions
-- [ ] Intervention message copy review (tone + warmth)
+- [ ] Intervention threshold tuning — 🔵 PARTIAL: methodology written, pending ≥20 real sessions of data
+- [ ] Review which interventions students responded to vs ignored — 🔵 PARTIAL: blocked on instrumentation + real data
+- [ ] Cooldown period tuning from real session data — 🔵 PARTIAL: methodology written, pending session data
+- [ ] WebSocket stability testing under 50 concurrent users — 🔵 PARTIAL: harness built + locally validated, production run pending staging
+- [ ] Session reconnect testing under poor network conditions — 🔵 PARTIAL: all-7-states Redis restore proven, live network-fault sim pending
+- [ ] Intervention message copy review (tone + warmth) — 🔵 PARTIAL: checklist ready, pending 5 real lesson packages
 
 ---
 
@@ -262,18 +271,19 @@
 ```
 When Dev 2 is blocked on...                          → Escalate to...
 ────────────────────────────────────────────────────────────────────────────────────
-POST /api/content/lessons (upload)                   → Dev 1 ✅ live
-GET /api/content/lessons (library list)              → Dev 1 ✅ live
-GET /api/content/lessons/{id} (status)               → Dev 1 ✅ live
-GET /api/content/lessons/{id}/package (full JSONB)   → Dev 1 ⬜ ~30 min to add
+POST /api/content/lessons (upload)                   → Dev 1 ⚠️ route live, Supabase impl TODO (501)
+GET /api/content/lessons (library list)              → Dev 1 ⚠️ route live, Supabase impl TODO (501)
+GET /api/content/lessons/{id} (status only)          → Dev 1 ⚠️ route live, Supabase impl TODO (501)
+Full lesson package JSONB via REST                   → Dev 1 ❌ not built — GET /{id} returns status only, no content field. Discuss whether to add content field to existing model or build new endpoint.
 Supabase Storage signed URLs                         → Dev 1
 avatar_intro/outro/static_url in lesson package      → All 4 devs (schema change) — Sprint 2
-POST /api/assessment/quiz                            → Dev 3
-POST /api/assessment/teachback                       → Dev 3
-GET /api/session/:id/report                          → Dev 3
-POST /api/onboarding/dna                             → Dev 3
+POST /api/assessment/quiz                            → Dev 3 ✅ live and implemented
+POST /api/assessment/teachback                       → Dev 3 ✅ live and implemented
+GET /api/assessment/session/{id}/report              → Dev 3 ⬜ Sprint 2 stub
+POST /api/assessment/onboarding/submit               → Dev 3 ⬜ Sprint 2 stub
 GET /api/sessions/latest (continue-learning card)    → Dev 4 ❌ not built, needs new endpoint
-WebSocket /ws/:session_id                            → Dev 4
-tutor_intervene / ces_update / state_change WS msgs  → Dev 4
-JWT middleware / auth errors                         → Dev 4
+WebSocket /ws/{session_id}                           → Dev 4 ✅ live
+WS message contract sign-off                         → Dev 2 ACTION: review docs/ws-message-contract.md
+tutor_intervene / attention_ack / state_change msgs  → Dev 4 ✅ live
+JWT middleware / auth errors                         → Dev 4 ✅ live
 ```
