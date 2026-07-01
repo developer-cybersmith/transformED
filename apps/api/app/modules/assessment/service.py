@@ -367,6 +367,11 @@ async def grade_teachback(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Duplicate teach-back attempt detected.",
             )
+        logger.error(
+            "teachback_attempts insert failed: session=%s error=%s",
+            session_id,
+            insert_error,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist teach-back attempt.",
