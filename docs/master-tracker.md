@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-02 (Dev 2: quiz/teachback popup integration + feedback display confirmed done from code; CHECKING IN state flagged BLOCKED — no WebSocket client exists despite prior done-marking. Dev 3 quiz/teachback confirmed live from code; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
+**Last updated:** 2026-07-02 (Dev 2: quiz/teachback popup integration + feedback display confirmed done from code; real WebSocket client (S1-07) implemented, unblocking CHECKING IN state at the transport layer. Dev 3 quiz/teachback confirmed live from code; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -139,7 +139,7 @@
 ### Dev 2 — Lesson Player + Frontend
 - [x] Quiz popup integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/quiz` in `QuizOverlay.tsx`
 - [x] Teach-back modal integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/teachback` in `TeachBackModal.tsx`
-- [ ] Segment-end detection → CHECKING IN state — 🔴 BLOCKED: no WebSocket client exists in `apps/web` (`lib/ws/lessonSocket.ts` was never built despite being marked done in Dev 2's tracker). Nothing can deliver Dev 4's `state_change` message to the player. In progress on `sprint1/s1-07-websocket-client`.
+- [ ] Segment-end detection → CHECKING IN state — 🟡 UNBLOCKED AT TRANSPORT LAYER (2026-07-02): `lib/ws/lessonSocket.ts` + `useLessonSocket.ts` now built on `sprint1/s1-07-websocket-client` (S1-07). `state_change` messages (including CHECKING_IN) now reach `store.setTutorState()` — Dev 4's FSM state is live in the player store. The player UI reacting to `CHECKING_IN` (a check-in prompt/screen) is still separate, un-scoped work — not built yet.
 - [x] Feedback display (praise + correction sentences) — ✓ 2026-07-02, `result.feedback` rendered in both `QuizOverlay.tsx` and `TeachBackModal.tsx`
 - [ ] Session report page v1 (quiz + teach-back scores)
 - [ ] Onboarding assessment UI (20 questions flow)
