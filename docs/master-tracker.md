@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-02 (Dev 2: quiz/teachback popup integration + feedback display confirmed done from code; CHECKING IN state flagged BLOCKED — no WebSocket client exists despite prior done-marking. Dev 3 quiz/teachback confirmed live from code; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
+**Last updated:** 2026-07-02 (Dev 2: quiz/teachback popup integration + feedback display confirmed done from code; real WebSocket client (S1-07) implemented, unblocking CHECKING IN state at the transport layer; frontend security/bug audit (S1-13) fixed a real auth-guard gap in middleware.ts. Dev 3 quiz/teachback confirmed live from code; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -85,6 +85,7 @@
 - [x] Jargon hover tooltip component — ✓ done
 - [ ] Lesson load from real API — ⛔ BLOCKED: GET /api/content/lessons/{id} returns status only (no JSONB). Full package endpoint not built yet. Continue using mock.
 - [x] PDF upload UI + generation progress indicator — ✓ done
+- [x] Frontend security/bug audit (S1-13) — ✓ 2026-07-02, scoped to apps/web only. Fixed a real auth-guard gap in `middleware.ts` (`/library`, `/upload`, `/onboarding`, `/lesson/[id]` were all completely unauthenticated — allow-list only matched `/dashboard`/`/settings`; now a deny-list, fails safe for future routes) and a resource-leak in `UploadFlow.tsx` (generation socket singleton never disconnected on unmount/completion). See `docs/dev2-sprint-tracker.md` S1-13 for full findings including deferred items (Next.js 16/React 19 vs. locked Next 14 — governance decision, not fixed here).
 - [ ] Wire upload to POST /api/content/lessons — ⬜ ready to wire (URL + auth wired; Supabase stub on backend, will get 501 until Dev 1 implements storage)
 - [ ] Wire library/dashboard to GET /api/content/lessons — ⬜ ready to wire (URL + auth wired; will return empty/501 until Dev 1 implements Supabase query)
 - [ ] GET /api/sessions/latest for continue-learning card — ⛔ BLOCKED: endpoint doesn't exist, Dev 4 owns (session state in Redis). Escalate.
@@ -139,7 +140,7 @@
 ### Dev 2 — Lesson Player + Frontend
 - [x] Quiz popup integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/quiz` in `QuizOverlay.tsx`
 - [x] Teach-back modal integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/teachback` in `TeachBackModal.tsx`
-- [ ] Segment-end detection → CHECKING IN state — 🔴 BLOCKED: no WebSocket client exists in `apps/web` (`lib/ws/lessonSocket.ts` was never built despite being marked done in Dev 2's tracker). Nothing can deliver Dev 4's `state_change` message to the player. In progress on `sprint1/s1-07-websocket-client`.
+- [ ] Segment-end detection → CHECKING IN state — 🟡 PARTIALLY UNBLOCKED (2026-07-02), receive side only: `lib/ws/lessonSocket.ts` + `useLessonSocket.ts` now built on `sprint1/s1-07-websocket-client` (S1-07). `state_change` messages the *server* sends (including a transition to CHECKING_IN) now reach `store.setTutorState()` — Dev 4's FSM state is live in the player store. **Not yet wired:** the *send* side — nothing in the player currently calls `sendControl({type:'segment_complete'})` to tell the backend a segment ended and trigger CHECKING_IN in the first place; `LessonSocket.sendControl()` exists and is tested, but has no caller. The player UI reacting to CHECKING_IN once entered (a check-in prompt/screen) is also still separate, un-scoped work.
 - [x] Feedback display (praise + correction sentences) — ✓ 2026-07-02, `result.feedback` rendered in both `QuizOverlay.tsx` and `TeachBackModal.tsx`
 - [ ] Session report page v1 (quiz + teach-back scores)
 - [ ] Onboarding assessment UI (20 questions flow)

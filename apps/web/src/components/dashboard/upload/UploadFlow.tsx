@@ -81,7 +81,13 @@ export function UploadFlow() {
                 });
             });
 
-            return () => unsubscribe();
+            // Tear down the connection too, not just this subscription — the
+            // singleton's generation loop otherwise keeps running in the
+            // background after navigating away mid-generation.
+            return () => {
+                unsubscribe();
+                uploadGenerationService.disconnect();
+            };
         }
     }, [uploadState, file]);
 
