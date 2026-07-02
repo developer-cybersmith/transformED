@@ -1,5 +1,12 @@
 # Deferred Work
 
+## Deferred from: code review of 1-15-brand-recolor (2026-07-02)
+
+- **`/onboarding/page.tsx` is unbranded and has dead/no-op button classes** [`apps/web/src/app/onboarding/page.tsx`] — pre-existing, not touched by the S1-15 diff: it's the only route in the app using `dark:` Tailwind variants (will flip to a dark theme under OS dark mode while every other page stays light); uses `bg-primary-600`/`text-primary-700`-style numbered-scale classes that don't resolve to anything (no `tailwind.config`, no `--color-primary-600` token defined), so several buttons/selected-states on this live, auth-gated route likely render without their intended background; also still shows leftover copy "TransformED AI" instead of "HIE". Needs its own follow-up story.
+- **Bare untokenized hex `#E8D08D` (lighter gold tint)** [`apps/web/src/components/ui/AuroraBackground.tsx`, `apps/web/src/components/sections/JourneyToSelfReliance.tsx`] — introduced as a literal rather than a named CSS variable; low priority, but a future gold retune would miss this shade on a `--accent-secondary` grep.
+- **AC9 visual verification incomplete** [`_bmad-output/implementation-artifacts/1-15-brand-recolor.md`] — dashboard sidebar/nav active states, `QuizOverlay`, `TeachBackModal`, and `PlayerControls` were named in AC9's required manual-check list but never actually screenshotted; only landing and signup pages were. Recommend a follow-up manual pass with real auth credentials.
+- **Residual cool-toned `slate-*` grays** [`apps/web/src/components/sections/CognitiveVisualization.tsx`, `apps/web/src/components/sections/Hero.tsx`, `apps/web/src/components/sections/HowItWorks.tsx`] — several `slate-*` Tailwind classes and matching hex literals remain from the old blue-family palette; not literally "blue" so out of this story's grep-defined scope, but read slightly mismatched against the new warm Navy/Gold/Grey system. Design-consistency nit, not a functional bug.
+
 ## Deferred from: code review of 1-07-websocket-client (2026-07-02)
 
 - **`handleClose` gives up silently after 5 reconnect attempts with no way to distinguish "permanently failed" from a transient `closed` state** [`apps/web/src/lib/ws/lessonSocket.ts:handleClose`] — not required by any AC today since nothing consumes `status` yet. Revisit once Sprint 3 wires the lesson player UI to `LessonSocketStatus`.

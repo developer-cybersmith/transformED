@@ -53,7 +53,7 @@ export function SettingsTabs() {
                             {isActive && (
                                 <motion.div
                                     layoutId="active-tab-indicator"
-                                    className="absolute left-0 right-0 bottom-0 h-0.5 bg-[var(--accent-secondary)] rounded-t-full shadow-[0_0_8px_rgba(198,164,92,0.4)]"
+                                    className="absolute left-0 right-0 bottom-0 h-0.5 bg-[var(--accent-primary)] rounded-t-full shadow-[0_0_8px_rgba(7,23,44,0.4)]"
                                     transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                                 />
                             )}

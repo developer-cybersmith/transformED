@@ -84,7 +84,7 @@ export default function CognitiveVisualization({ activePhase }: { activePhase: n
                             <motion.path
                                 key={`pulse-${i}`}
                                 d={d}
-                                className="stroke-[var(--accent-secondary)]"
+                                className="stroke-[var(--accent-primary)]"
                                 strokeWidth="4"
                                 fill="none"
                                 strokeLinecap="round"

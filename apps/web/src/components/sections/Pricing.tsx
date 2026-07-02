@@ -89,7 +89,7 @@ export default function Pricing() {
                     "#07172C", // primary (navy)
                     "#C6A45C", // accent (gold)
                     "#040D19", // dark (navy-dark)
-                    "#F3F5F8", // soft wrapper (light navy-tint)
+                    "#EDEFF3", // soft wrapper (light navy-tint)
                 ],
                 ticks: 200,
                 gravity: 1.2,
