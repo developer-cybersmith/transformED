@@ -1308,3 +1308,22 @@ async def test_teachback_insert_error_log_sanitized(mock_to_thread, mock_score_t
     assert "\r" not in logged_str, (
         f"logger.error must not contain carriage returns (log injection risk); got: {logged_str!r}"
     )
+
+@pytest.mark.unit
+def test_score_teachback_docstring_no_encoding_artifact() -> None:
+    """FIND-001/AC 2: score_teachback() docstring must not contain the garbled em-dash sequence.
+
+    The second occurrence of the Windows-1252 misread artifact (U+00E2 + U+20AC + U+201D) was
+    in the score_teachback() function docstring at prompts.py line ~118. This test guards against
+    regression via the function's __doc__ attribute.
+    """
+    from app.modules.assessment.prompts import score_teachback
+
+    doc = score_teachback.__doc__ or ""
+    # Build artifact from code points to avoid source-encoding ambiguity:
+    # U+00E2 (a-circumflex) + U+20AC (euro sign) + U+201D (right curly quote)
+    artifact = chr(0xE2) + chr(0x20AC) + chr(0x201D)
+    assert artifact not in doc, (
+        "Garbled em-dash artifact (Windows-1252 misread of UTF-8 0xE2 0x80 0x94) "
+        "found in score_teachback() docstring. Fix: replace with literal em-dash."
+    )

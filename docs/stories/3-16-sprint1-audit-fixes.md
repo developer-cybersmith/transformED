@@ -4,7 +4,7 @@ baseline_commit: ""
 
 # Story 3-16: Sprint 1 Audit Technical Debt Fixes (FIND-001 / FIND-002 / FIND-003)
 
-**Status:** in-progress
+**Status:** done
 **Epic:** Sprint 1 Assessment API — Remediation
 **Branch:** `sprint1/s1-16-audit-fixes`
 **Depends on:** all Sprint 1 stories merged to main
@@ -60,35 +60,44 @@ across both endpoints, and accurate docstring documentation before Sprint 2 begi
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Write story file — AC: all
-  - [ ] 1.1 Create `docs/stories/3-16-sprint1-audit-fixes.md`
-  - [ ] 1.2 Commit story-only, push to remote
+- [x] Task 1: Write story file — AC: all
+  - [x] 1.1 Create `docs/stories/3-16-sprint1-audit-fixes.md`
+  - [x] 1.2 Commit story-only, push to remote
 
-- [ ] Task 2: RED — write failing tests before applying fixes
-  - [ ] 2.1 Add `test_teachback_insert_error_log_sanitized` to `test_teachback_endpoint.py` (AC 5)
-  - [ ] 2.2 Add `test_teachback_system_prompt_no_encoding_artifact` to `test_teachback_endpoint.py` (AC 6)
-  - [ ] 2.3 Run `pytest -m unit` — confirm both new tests FAIL, existing tests still pass
-  - [ ] 2.4 Commit RED tests
+- [x] Task 2: RED — write failing tests before applying fixes
+  - [x] 2.1 Add `test_teachback_insert_error_log_sanitized` to `test_teachback_endpoint.py` (AC 5)
+  - [x] 2.2 Add `test_teachback_system_prompt_no_encoding_artifact` to `test_teachback_endpoint.py` (AC 6)
+  - [x] 2.3 Run `pytest -m unit` — confirm both new tests FAIL, existing tests still pass
+  - [x] 2.4 Commit RED tests
 
-- [ ] Task 3: GREEN — fix prompts.py encoding artifact (AC 1, AC 2)
-  - [ ] 3.1 Replace `â€"` with `—` at line 73 (TEACHBACK_SYSTEM_PROMPT)
-  - [ ] 3.2 Replace `â€"` with `—` at line 118 (score_teachback docstring)
-  - [ ] 3.3 Save file as UTF-8
+- [x] Task 3: GREEN — fix prompts.py encoding artifact (AC 1, AC 2)
+  - [x] 3.1 Replace `â€"` with `—` at line 73 (TEACHBACK_SYSTEM_PROMPT)
+  - [x] 3.2 Replace `â€"` with `—` at line 118 (score_teachback docstring)
+  - [x] 3.3 Save file as UTF-8
 
-- [ ] Task 4: GREEN — fix service.py log sanitization (AC 3)
-  - [ ] 4.1 Add `safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')` before `logger.error` in `grade_teachback()` insert error block
-  - [ ] 4.2 Pass `safe_err` to `logger.error()` instead of `insert_error`
+- [x] Task 4: GREEN — fix service.py log sanitization (AC 3)
+  - [x] 4.1 Add `safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')` before `logger.error` in `grade_teachback()` insert error block
+  - [x] 4.2 Pass `safe_err` to `logger.error()` instead of `insert_error`
 
-- [ ] Task 5: GREEN — fix service.py docstring (AC 4)
-  - [ ] 5.1 Update `grade_teachback()` Raises section to correctly describe 404 for wrong-user, 403 for IDOR lesson mismatch
+- [x] Task 5: GREEN — fix service.py docstring (AC 4)
+  - [x] 5.1 Update `grade_teachback()` Raises section to correctly describe 404 for wrong-user, 403 for IDOR lesson mismatch
 
-- [ ] Task 6: Run tests and verify GREEN (AC 7)
-  - [ ] 6.1 `pytest -m unit` → all pass, 0 failures
-  - [ ] 6.2 Confirm test counts: quiz ≥ 28, teachback ≥ 42
+- [x] Task 6: Run tests and verify GREEN (AC 7)
+  - [x] 6.1 `pytest -m unit` → all pass, 0 failures
+  - [x] 6.2 Confirm test counts: quiz ≥ 28, teachback ≥ 42
 
-- [ ] Task 7: Commit GREEN + push
-  - [ ] 7.1 `git add` changed files
-  - [ ] 7.2 Commit with message `fix(dev3/sprint1): B16 GREEN — prompts encoding + teachback log sanitization + docstring`
+- [x] Task 7: Commit GREEN + push
+  - [x] 7.1 `git add` changed files
+  - [x] 7.2 Commit with message `fix(dev3/sprint1): B16 GREEN — prompts encoding + teachback log sanitization + docstring`
+
+### Review Findings (5-agent adversarial review — 2026-07-02)
+
+- [x] [Review][Patch] AC 2 missing regression test — no test asserts `score_teachback.__doc__` is free of encoding artifact; add `test_score_teachback_docstring_no_encoding_artifact` [apps/api/tests/test_teachback_endpoint.py]
+- [x] [Review][Patch] Missing newline at end of test file — `test_teachback_endpoint.py` last byte is `)` not `\n`; causes ruff W292 lint failure [apps/api/tests/test_teachback_endpoint.py:1310]
+- [x] [Review][Defer] ANSI/null-byte log sanitization gap [apps/api/app/modules/assessment/service.py:435] — deferred, pre-existing: `\n`/`\r`-only strip matches the existing grade_quiz() pattern (Story 3-10); ANSI/null/tab not stripped in either endpoint; valid for follow-up story
+- [x] [Review][Defer] `exc` from LLM provider logged raw at service.py:385 — deferred, pre-existing: out of scope for FIND-002; affects the score_teachback exception path, not the insert_error path; new finding for future story
+- [x] [Review][Defer] Test call_args.args check fragile under f-string refactor [apps/api/tests/test_teachback_endpoint.py:1302] — deferred, pre-existing: not a current failure; only relevant if logger call style changes
+- [x] [Review][Defer] _build_supabase_tb routing assumption undocumented — deferred: low priority comment hardening; no correctness issue
 
 ---
 
@@ -131,14 +140,29 @@ The fix: replace the 3-char sequence with a literal `—` (U+2014). Two occurren
 
 ## Senior Developer Review (AI)
 
-*To be filled after 5-agent code review.*
+**Review date:** 2026-07-02
+**Layers:** Story Quality | Blind Hunter | Test Coverage | AC Completeness | Process Integrity
+
+**Verdict:** APPROVED — all patches applied, 72/72 tests pass.
+
+### Action Items
+
+- [ ] [Patch] Add `test_score_teachback_docstring_no_encoding_artifact` — AC 2 has no regression test
+- [ ] [Patch] Add trailing newline to `test_teachback_endpoint.py` — ruff W292 lint issue
+
+### Deferred Findings (not blocking this PR)
+
+- [x] ANSI/null-byte sanitization gap in both endpoints — follow-up story
+- [x] Raw `exc` logging at service.py:385 — out of scope, new finding
+- [x] Test call_args.args fragility — hypothetical, not a current failure
+- [x] _build_supabase_tb comment hardening — low priority
 
 ---
 
 ## Dev Agent Record
 
 ### Completion Notes
-*To be filled on completion.*
+All 3 audit findings resolved. 72 unit tests pass (28 quiz + 44 teachback). 5-agent review cleared after adding AC 2 docstring regression test and EOF newline fix. 4 findings deferred to follow-up stories (ANSI sanitization gap in both endpoints, raw exc logging at line 385).
 
 ### File List
 - `docs/stories/3-16-sprint1-audit-fixes.md` (this file)
