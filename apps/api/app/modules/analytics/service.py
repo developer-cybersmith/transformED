@@ -143,6 +143,7 @@ async def get_session_summary(
         lambda: supabase.table("session_events")
         .select("event_type")
         .eq("session_id", session_id)
+        .limit(10_000)
         .execute()
     )
     events_rows = events_resp.data or []
@@ -156,11 +157,12 @@ async def get_session_summary(
         if r.get("event_type") == "segment_complete"
     )
 
-    # Step 3 — Attention events (RLS enforces attention_consent; 0 rows if no consent)
+    # Step 3 — Attention events (0 rows when none recorded; attention_consent enforcement is Sprint 3 DPDP hardening)
     attn_resp = await asyncio.to_thread(
         lambda: supabase.table("attention_events")
         .select("gaze_score, head_pose_score, blink_rate")
         .eq("session_id", session_id)
+        .limit(10_000)
         .execute()
     )
     attn_rows = attn_resp.data or []
@@ -178,7 +180,16 @@ async def get_session_summary(
         if val is None:
             return None
         if isinstance(val, str):
-            return datetime.fromisoformat(val.replace("Z", "+00:00"))
+            try:
+                return datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except ValueError:
+                logger.error(
+                    "analytics: corrupt timestamp string=%r session=%r", val, session_id
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to compute session duration.",
+                )
         return val
 
     started_at = _parse_ts(session_row.get("started_at"))

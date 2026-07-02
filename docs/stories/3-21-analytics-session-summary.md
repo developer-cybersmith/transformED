@@ -390,4 +390,40 @@ Key design decisions:
 
 ## Senior Developer Review (AI)
 
-_To be filled after code review_
+**Review date:** 2026-07-03
+**Layers run:** Story Quality · Blind Hunter (Security) · Test Coverage · AC Completeness · Process Integrity
+**Outcome:** Changes Requested — 1 decision-needed, 10 patches, 12 deferred
+
+### Review Findings
+
+**Decision-Needed:**
+
+- [ ] [Review][Decision] Verify `get_supabase()` returns anon-key client (RLS enforced), not service-role client (RLS bypassed) — The blind hunter flagged that if `get_supabase()` returns a service-role client, the `session_events` and `attention_events` queries bypass RLS and would return data for any session_id regardless of ownership. The app-layer `sessions` ownership check only covers the `sessions` table. `apps/api/app/core/db.py` — confirm supabase client type used in analytics context.
+
+**Patches:**
+
+- [ ] [Review][Patch] Add test for `ces_final=None` (AC 4 null branch uncovered) [tests/test_analytics_summary_endpoint.py]
+- [ ] [Review][Patch] Add `.limit()` to session_events and attention_events queries (unbounded fetch DoS) [app/modules/analytics/service.py:120,133]
+- [ ] [Review][Patch] Assert exact detail string `"Session not found."` in 404 tests (AC 2 + AC 3 string unpinned) [tests/test_analytics_summary_endpoint.py:337,345,361]
+- [ ] [Review][Patch] Assert `asyncio.to_thread` called exactly 3 times (AC 15 unverified — removing all wraps would not fail any test) [tests/test_analytics_summary_endpoint.py]
+- [ ] [Review][Patch] Add fractional `blink_rate` test data (AC 12 `round()` never exercised — all current sums are whole numbers) [tests/test_analytics_summary_endpoint.py]
+- [ ] [Review][Patch] Add fractional-second timestamp test for `duration_seconds` (AC 9 2dp rounding unverifiable with current whole-second test data) [tests/test_analytics_summary_endpoint.py]
+- [ ] [Review][Patch] Add non-clean gaze/head_pose test data (AC 10/11 4dp rounding unverifiable — current means are exact) [tests/test_analytics_summary_endpoint.py]
+- [ ] [Review][Patch] Fix `test_no_llm_calls_made_by_service` to patch `app.providers.llm.openai.OpenAIProvider.complete` not `openai.AsyncOpenAI` constructor (constructor patch gives false confidence — a pre-instantiated provider singleton making calls would pass the current test) [tests/test_analytics_summary_endpoint.py:479]
+- [ ] [Review][Patch] Wrap `datetime.fromisoformat()` in `_parse_ts` in `try/except ValueError` to prevent HTTP 500 on corrupt timestamp strings [app/modules/analytics/service.py:175]
+- [ ] [Review][Patch] Add assertions on identity field values (`session_id`, `user_id`, `lesson_id`) in at least one test (only field presence is checked, not values) [tests/test_analytics_summary_endpoint.py]
+
+**Deferred:**
+
+- [x] [Review][Defer] [app/modules/analytics/service.py] `session_id` URL path param not validated as UUID — deferred, pre-existing: same pattern across all analytics and assessment endpoints; UUID validation is an infrastructure concern not specific to this story
+- [x] [Review][Defer] [app/modules/analytics/service.py] Biometric consent guard only in RLS, no app-layer backup — deferred, pre-existing: `attention_events` RLS-only pattern established in Sprint 0 schema; defense-in-depth upgrade is Sprint 3 DPDP hardening work
+- [x] [Review][Defer] [app/modules/analytics/router.py] `user_id` echoed in `SessionSummary` response body — deferred, pre-existing: same pattern in `SessionReport`; revisit at public API design review
+- [x] [Review][Defer] [app/modules/analytics/service.py] `float(... or 0.0)` falsy-coercion pattern — deferred, pre-existing: same idiom in assessment service; acceptable for boolean-like null where 0 is the correct default
+- [x] [Review][Defer] [app/modules/analytics/service.py] `sessions` table read from analytics module — deferred, pre-existing: same pattern in `ingest_events`; no session-ownership service layer exists yet; track as Sprint 3 architecture debt
+- [x] [Review][Defer] [tests/test_analytics_summary_endpoint.py] All-NULL attention rows (all rows present but all gaze_score=None) untested — deferred, pre-existing: code path identical to empty rows; same `if gaze_vals else 0.0` guard
+- [x] [Review][Defer] [tests/test_analytics_summary_endpoint.py] `.eq()` call arguments not verified in mock — deferred, pre-existing: mock framework limitation; query-arg verification requires Supabase integration tests
+- [x] [Review][Defer] [tests/test_analytics_summary_endpoint.py] `_parse_ts` third branch (native `datetime` object from Supabase) untested — deferred, pre-existing: `supabase-py` v2 always returns ISO strings from `.execute()`; native datetime is theoretical
+- [x] [Review][Defer] [tests/test_analytics_summary_endpoint.py] `duration_seconds` negative case (started_at > ended_at) untested — deferred, pre-existing: data corruption path; acceptable 500 if Pydantic rejects negative float via validator; add ge=0 constraint in future
+- [x] [Review][Defer] [tests/test_analytics_summary_endpoint.py] `distraction_events` / `events_count` / `page_views` int types not asserted (only `total_blinks` has isinstance check) — deferred: FastAPI/Pydantic `response_model` coerces correctly; asymmetry is cosmetic
+- [x] [Review][Defer] [docs/stories/3-21-analytics-session-summary.md] Task list has duplicate entry for `test_supabase_called_in_correct_table_order` — deferred: documentation drift only; no code impact
+- [x] [Review][Defer] [docs/stories/3-21-analytics-session-summary.md] AC 9 text does not specify `started_at = NULL → 0.0` (only `ended_at = NULL` documented) — deferred: test 21 covers the behavior; AC text should be updated in a housekeeping pass

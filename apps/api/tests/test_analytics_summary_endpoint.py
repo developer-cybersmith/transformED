@@ -3,15 +3,16 @@ Tests for GET /api/analytics/session/{session_id}/summary endpoint.
 
 Story 3-21 — Analytics Session Summary
 
-Test count: 26
+Test count: 31
 All tests are @pytest.mark.unit — no external services required.
 
 Coverage:
   - Happy path: 200 + all SessionSummary fields (ACs 1–9)
   - Zero / null states (ACs 10–12)
   - IDOR / not-found (SEC-006) (ACs 14–16)
-  - Duration edge cases (AC 17)
-  - Process integrity: no LLM calls, correct DB call order (AC 15)
+  - Duration edge cases (AC 9, AC 17)
+  - Rounding: 2dp duration, 4dp attention scores, fractional blink sum (ACs 9–12)
+  - Process integrity: no LLM calls, correct DB call order, asyncio.to_thread × 3 (AC 15)
 """
 
 from __future__ import annotations
@@ -82,9 +83,9 @@ def _build_summary_supabase(
     """Call-order-aware Supabase mock for the summary endpoint.
 
     DB call order:
-      1 → sessions       .select(...).eq(...).maybe_single().execute()
-      2 → session_events .select("event_type").eq(...).execute()
-      3 → attention_events .select("gaze_score, head_pose_score, blink_rate").eq(...).execute()
+      1 → sessions         .select(...).eq(...).maybe_single().execute()
+      2 → session_events   .select("event_type").eq(...).limit(10_000).execute()
+      3 → attention_events .select("gaze_score, head_pose_score, blink_rate").eq(...).limit(10_000).execute()
     """
     mock = MagicMock()
     call_count = [0]
@@ -98,11 +99,12 @@ def _build_summary_supabase(
         if n == 1:
             m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
         elif n == 2:
-            m.select.return_value.eq.return_value.execute.return_value.data = (
+            # .select().eq().limit().execute() — limit was added to cap unbounded fetches
+            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
                 events_data if events_data is not None else []
             )
         elif n == 3:
-            m.select.return_value.eq.return_value.execute.return_value.data = (
+            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
                 attn_data if attn_data is not None else []
             )
         return m
@@ -138,7 +140,7 @@ def test_unauthenticated_request_rejected():
 
 @pytest.mark.unit
 def test_returns_200_with_full_summary_shape():
-    """Happy path: 200 and all 11 required SessionSummary fields present in response."""
+    """Happy path: 200, all 11 required fields present, and identity fields match DB values."""
     supabase_mock = _build_summary_supabase(
         events_data=_EVENTS_DATA, attn_data=_ATTN_DATA
     )
@@ -154,6 +156,10 @@ def test_returns_200_with_full_summary_shape():
     }
     missing = required_fields - body.keys()
     assert not missing, f"Response missing fields: {missing}"
+    # P10 — identity field values pinned (not just presence)
+    assert body["session_id"] == SESSION_ID
+    assert body["user_id"] == USER_ID
+    assert body["lesson_id"] == LESSON_ID
 
 
 @pytest.mark.unit
@@ -331,11 +337,12 @@ def test_null_blink_rates_excluded_from_sum():
 
 @pytest.mark.unit
 def test_session_not_found_returns_404():
-    """session_resp.data is None (session does not exist) → HTTP 404."""
+    """session_resp.data is None (session does not exist) → HTTP 404 with exact detail."""
     supabase_mock = _build_summary_supabase(session_data=None)
     with patch("app.core.db.get_supabase", return_value=supabase_mock):
         response = client.get("/api/analytics/session/nonexistent-session/summary")
     assert response.status_code == 404
+    assert response.json()["detail"] == "Session not found."  # P3 — pin exact string (AC 2)
 
 
 @pytest.mark.unit
@@ -348,6 +355,7 @@ def test_session_owned_by_other_user_returns_404_not_403():
     assert response.status_code == 404, (
         f"Expected 404 for IDOR attempt (SEC-006 anti-enumeration), got {response.status_code}"
     )
+    assert response.json()["detail"] == "Session not found."  # P3 — pin exact string (AC 3)
 
 
 @pytest.mark.unit
@@ -366,6 +374,8 @@ def test_not_found_detail_strings_are_identical():
 
     assert resp_missing.status_code == 404
     assert resp_idor.status_code == 404
+    # Both paths same detail AND pinned to exact string (P3)
+    assert resp_missing.json()["detail"] == "Session not found."
     assert resp_missing.json()["detail"] == resp_idor.json()["detail"], (
         "Both 404 paths must return identical detail (SEC-006 anti-enumeration)"
     )
@@ -474,13 +484,104 @@ def test_supabase_called_in_correct_table_order():
 
 @pytest.mark.unit
 def test_no_llm_calls_made_by_service():
-    """Analytics summary is pure DB aggregation — no LLM calls allowed (AC 15 / process integrity)."""
+    """Analytics summary is pure DB aggregation — no LLM calls allowed (AC 15 / process integrity).
+
+    Patches OpenAILLMProvider.complete (not the constructor) to catch calls from any
+    pre-instantiated singleton, not just newly constructed instances.
+    """
     supabase_mock = _build_summary_supabase(
         events_data=_EVENTS_DATA, attn_data=_ATTN_DATA
     )
     with patch("app.core.db.get_supabase", return_value=supabase_mock):
-        with patch("openai.AsyncOpenAI") as openai_mock:
+        with patch("app.providers.llm.openai.OpenAILLMProvider.complete") as mock_complete:
             response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
 
     assert response.status_code == 200
-    openai_mock.assert_not_called()
+    mock_complete.assert_not_called()
+
+
+# ── New patch-fix tests (code review P1, P4–P7) ───────────────────────────────
+
+
+@pytest.mark.unit
+def test_ces_score_zero_when_ces_final_is_null():
+    """ces_final=NULL in DB → ces_score=0.0 (AC 4)."""
+    session = {**_SESSION_ROW, "ces_final": None}
+    supabase_mock = _build_summary_supabase(session_data=session)
+    with patch("app.core.db.get_supabase", return_value=supabase_mock):
+        response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
+    assert response.status_code == 200
+    assert response.json()["ces_score"] == 0.0
+
+
+@pytest.mark.unit
+def test_asyncio_to_thread_called_three_times():
+    """Service wraps all 3 DB calls in asyncio.to_thread — none may call supabase directly (AC 15)."""
+    call_count = [0]
+
+    async def _counting_shim(fn, *args, **kwargs):
+        call_count[0] += 1
+        return fn(*args, **kwargs)
+
+    supabase_mock = _build_summary_supabase(events_data=_EVENTS_DATA, attn_data=_ATTN_DATA)
+    with patch("app.modules.analytics.service.asyncio.to_thread", new=_counting_shim):
+        with patch("app.core.db.get_supabase", return_value=supabase_mock):
+            response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
+
+    assert response.status_code == 200
+    assert call_count[0] == 3, (
+        f"Expected asyncio.to_thread called 3 times (sessions + session_events + attention_events), "
+        f"got {call_count[0]}"
+    )
+
+
+@pytest.mark.unit
+def test_total_blinks_rounds_fractional_sum():
+    """total_blinks: int(round(sum(blink_rate))) rounds fractional totals correctly (AC 12)."""
+    attn = [
+        {"gaze_score": 0.8, "head_pose_score": 0.7, "blink_rate": 1.3},
+        {"gaze_score": 0.6, "head_pose_score": 0.5, "blink_rate": 1.4},
+    ]
+    # 1.3 + 1.4 = 2.7 → int(round(2.7)) = 3
+    supabase_mock = _build_summary_supabase(attn_data=attn)
+    with patch("app.core.db.get_supabase", return_value=supabase_mock):
+        response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_blinks"] == 3
+    assert isinstance(body["total_blinks"], int)
+
+
+@pytest.mark.unit
+def test_duration_seconds_rounded_to_two_decimal_places():
+    """duration_seconds rounds to 2dp: sub-second precision preserved (AC 9)."""
+    session = {
+        **_SESSION_ROW,
+        "started_at": "2026-07-01T09:00:00Z",
+        "ended_at": "2026-07-01T09:00:00.123456Z",
+    }
+    # (ended - started).total_seconds() = 0.123456 → round(2dp) = 0.12
+    supabase_mock = _build_summary_supabase(session_data=session)
+    with patch("app.core.db.get_supabase", return_value=supabase_mock):
+        response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
+    assert response.status_code == 200
+    assert response.json()["duration_seconds"] == pytest.approx(0.12, abs=1e-9)
+
+
+@pytest.mark.unit
+def test_avg_attention_and_head_pose_score_rounded_to_four_decimal_places():
+    """avg_attention and avg_head_pose_score round to 4dp for non-terminating means (ACs 10–11)."""
+    attn = [
+        {"gaze_score": 0.1, "head_pose_score": 0.3, "blink_rate": 1.0},
+        {"gaze_score": 0.2, "head_pose_score": 0.5, "blink_rate": 1.0},
+        {"gaze_score": 0.4, "head_pose_score": 0.6, "blink_rate": 1.0},
+    ]
+    # gaze: 0.7/3 = 0.23333... → round(4dp) = 0.2333
+    # head_pose: 1.4/3 = 0.46666... → round(4dp) = 0.4667
+    supabase_mock = _build_summary_supabase(attn_data=attn)
+    with patch("app.core.db.get_supabase", return_value=supabase_mock):
+        response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["avg_attention"] == pytest.approx(0.2333, abs=1e-4)
+    assert body["avg_head_pose_score"] == pytest.approx(0.4667, abs=1e-4)
