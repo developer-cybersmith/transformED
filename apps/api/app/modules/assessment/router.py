@@ -8,13 +8,15 @@ learner DNA retrieval, and onboarding diagnostic submission.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
 from app.dependencies import CurrentUser
 
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
 from app.modules.assessment.schemas import (
+    OnboardingDiagnosticSubmission,
+    OnboardingResult,
     QuizAnswer,
     QuizResult,
     QuizSubmission,
@@ -51,17 +53,6 @@ class LearnerDNA(BaseModel):
     session_count: int
     reassessment_due: bool = False
     last_updated: str | None
-
-
-class OnboardingAnswer(BaseModel):
-    question_id: str
-    dimension: str
-    selected_index: int
-    selected_text: str
-
-
-class OnboardingDiagnosticSubmission(BaseModel):
-    responses: list[OnboardingAnswer]
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -147,15 +138,45 @@ async def get_learner_dna(
 
 @router.post(
     "/onboarding/submit",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Submit onboarding diagnostic answers",
+    response_model=OnboardingResult,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit onboarding diagnostic answers and generate learner DNA",
 )
 async def submit_onboarding_diagnostic(
     body: OnboardingDiagnosticSubmission,
     current_user: CurrentUser,
-) -> dict[str, str]:
-    """Process onboarding diagnostic and generate initial learner DNA.
+) -> OnboardingResult:
+    """Process 20 onboarding diagnostic answers and generate initial learner DNA profile.
 
-    TODO (Sprint 1): Delegate to assessment service.
+    Idempotency: returns 409 if the Redis key user:{id}:onboarding_done is already set.
+    On success, sets the Redis key and returns OnboardingResult with badge_labels,
+    profile_text (with DPDP Act 2023 disclaimer), and session_count=0.
     """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    from app.core.db import get_supabase
+    from app.core.redis import get_redis
+    from app.modules.assessment.service import process_onboarding
+
+    user_id: str = current_user["sub"]
+    onboarding_key = f"user:{user_id}:onboarding_done"
+
+    # Atomic SET NX eliminates the TOCTOU race between a read-check and a later write.
+    # Returns True if key was newly set; None/False if key already existed.
+    redis = get_redis()
+    was_set = await redis.set(onboarding_key, "1", nx=True)
+    if not was_set:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Onboarding diagnostic has already been submitted for this account.",
+        )
+
+    try:
+        result = await process_onboarding(
+            responses=body.responses,
+            user_id=user_id,
+            supabase=get_supabase(),
+        )
+    except HTTPException:
+        # Release the lock so the user can retry after a transient failure.
+        await redis.delete(onboarding_key)
+        raise
+    return result
