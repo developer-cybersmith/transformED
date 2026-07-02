@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-03 (Sprint 2 Task 4 done — Story 3-21: Analytics Session Summary (GET /api/analytics/session/{id}/summary, 26 tests); avg_head_pose scaffold mismatch fixed; SEC-006 anti-enumeration; null-exclusion aggregations; 0 regressions)
+**Last updated:** 2026-07-03 (Sprint 2 Task 4 done — Story 3-21: Analytics Session Summary (GET /api/analytics/session/{id}/summary, 31 tests); avg_head_pose scaffold mismatch fixed; SEC-006 anti-enumeration; null-exclusion aggregations; .limit(10_000) DoS guard; _parse_ts ValueError guard; 5-agent review approved; 0 regressions)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -562,9 +562,9 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Implement `GET /api/analytics/session/{id}/summary`
   - Aggregate from `session_events` + `attention_events` (read-only)
   - Return `SessionSummary` with: ces_score, avg_attention, distraction_events count, total_blinks, page_views, duration_seconds, events_count
-  - 26 unit tests; SEC-006 anti-enumeration (identical 404); null exclusion for attention metrics; single session_events query
+  - 31 unit tests (26 initial + 5 post-review); SEC-006 anti-enumeration (identical 404); null exclusion for attention metrics; single session_events query; .limit(10_000) DoS guard; _parse_ts ValueError guard; 5-agent review approved
   - Story: `docs/stories/3-21-analytics-session-summary.md` — 18 ACs, all satisfied ✓
-  - Branch: `dev3-sprint2-task4`
+  - Branch: `dev3-sprint2-task4`; PR merged to main ✓
   - **AC:** Summary endpoint returns non-null values for a session with >5 events ✓
 
 - [ ] **PostHog events for all assessment actions**

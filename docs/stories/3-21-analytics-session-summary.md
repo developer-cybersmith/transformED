@@ -292,11 +292,11 @@ def _build_summary_supabase(
             # sessions — maybe_single
             m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
         elif n == 2:
-            # session_events — list of event_type dicts
-            m.select.return_value.eq.return_value.execute.return_value.data = events_data or []
+            # session_events — .select().eq().limit(10_000).execute()
+            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = events_data or []
         elif n == 3:
-            # attention_events — list of score dicts
-            m.select.return_value.eq.return_value.execute.return_value.data = attn_data or []
+            # attention_events — .select().eq().limit(10_000).execute()
+            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = attn_data or []
         return m
 
     mock.table.side_effect = _table
@@ -320,9 +320,13 @@ the code under test.
 
 ### DPDP / attention_consent note
 
-`attention_events` RLS policy requires `u.attention_consent = true`. If a user hasn't
-consented, RLS returns 0 rows → `attn_rows = []` → all three attention metrics default
-to 0. The service layer does NOT need to check consent explicitly — RLS handles it.
+**Correction (2026-07-03 code review):** `get_supabase()` uses the **service-role key**, which bypasses RLS
+entirely. The original note that "RLS enforces consent" was inaccurate.
+
+Current behaviour: `attention_events` is queried for all rows where `session_id` matches. If no attention
+data was recorded, `attn_rows = []` → all metrics default to 0. An explicit app-layer `attention_consent`
+check is deferred to Sprint 3 DPDP hardening (CLAUDE.md §18). Session ownership is still enforced by the
+app-layer `sessions` ownership check (Step 1) — IDOR is not a risk.
 
 ### `SessionSummary.avg_head_pose` stub mismatch — why and what changed
 
@@ -348,7 +352,7 @@ Correct field: `avg_head_pose_score: float`.
 |------|--------|
 | `apps/api/app/modules/analytics/router.py` | UPDATE: fix SessionSummary model field, replace 501 stub |
 | `apps/api/app/modules/analytics/service.py` | UPDATE: add `get_session_summary()` |
-| `apps/api/tests/test_analytics_summary_endpoint.py` | CREATE: 26 unit tests |
+| `apps/api/tests/test_analytics_summary_endpoint.py` | CREATE: 31 unit tests (26 initial + 5 added during code review) |
 | `apps/api/tests/test_assessment_stub_contracts.py` | UPDATE: add AC 18 contract test |
 | `docs/dev3-assessment-tracker.md` | UPDATE: mark Task 4 done |
 
@@ -366,25 +370,29 @@ No new migrations. No changes to `packages/shared/`. No changes to `supabase/mig
 
 ### Completion Notes
 
-All 18 ACs satisfied. 26 unit tests written and passing. Zero regressions in 221 Dev 3 owned tests. The 18 pre-existing failures in `test_websocket_session.py` are Dev 4 WebSocket work unrelated to this story.
+All 18 ACs satisfied. **31 unit tests** written and passing (26 initial implementation + 5 added during 5-agent code review: ces_final=None, asyncio.to_thread call count, fractional blink rounding, 2dp duration rounding, 4dp attention rounding). Zero regressions in Dev 3 owned tests. The 18 pre-existing failures in `test_websocket_session.py` and `test_auth.py` / `test_lesson_ready_pubsub.py` are Dev 4/DevOps work unrelated to this story.
+
+Code review (5-agent BMAD) found 2 BLOCKERs (unbounded row fetch DoS, ces_final=None untested) and 8 patches — all resolved before PR. Service-role Supabase client confirmed; IDOR not a risk (app-layer ownership check); attention_consent explicit check deferred to Sprint 3 DPDP hardening.
 
 Key design decisions:
 1. Single `session_events` query (not 3 separate COUNT queries) — satisfies AC 8
 2. SEC-006: both "not found" and "IDOR" paths return identical HTTP 404 + identical detail string
 3. Null exclusion in attention aggregations — rows with NULL gaze/head_pose/blink are skipped; result is 0.0/0 if all rows are NULL or no rows exist
 4. `duration_seconds = 0.0` when either `started_at` or `ended_at` is NULL (not an error)
+5. `.limit(10_000)` on session_events + attention_events — caps unbounded fetch to prevent DoS on large sessions
 
 ### File List
 
 - `apps/api/app/modules/analytics/router.py` — fixed `avg_head_pose_score` field, replaced 501 stub with service call
-- `apps/api/app/modules/analytics/service.py` — added `get_session_summary()` function
-- `apps/api/tests/test_analytics_summary_endpoint.py` — NEW: 26 unit tests
+- `apps/api/app/modules/analytics/service.py` — added `get_session_summary()`; `.limit(10_000)` on session_events + attention_events; `ValueError` guard in `_parse_ts`
+- `apps/api/tests/test_analytics_summary_endpoint.py` — NEW: 31 unit tests (26 + 5 post-review)
 - `apps/api/tests/test_assessment_stub_contracts.py` — added `test_analytics_summary_endpoint_is_live_not_501`
 - `docs/dev3-assessment-tracker.md` — Sprint 2 Task 4 marked done
 
 ### Change Log
 - 2026-07-03: Story created (story-first BMAD gate)
 - 2026-07-03: Implementation complete — all 18 ACs satisfied, 26 tests passing
+- 2026-07-03: 5-agent code review complete — 2 BLOCKERs + 8 patches resolved; `.limit(10_000)` added to session_events + attention_events queries; `_parse_ts` ValueError guard added; 5 new tests (ces_final=None, to_thread count, blink rounding, 2dp duration, 4dp attention); test total 26→31; LLM patch target fixed; identity fields asserted; D1 resolved (service-role confirmed, IDOR not a risk)
 
 ---
 
@@ -392,26 +400,26 @@ Key design decisions:
 
 **Review date:** 2026-07-03
 **Layers run:** Story Quality · Blind Hunter (Security) · Test Coverage · AC Completeness · Process Integrity
-**Outcome:** Changes Requested — 1 decision-needed, 10 patches, 12 deferred
+**Outcome:** Approved — all findings resolved (2 BLOCKERs fixed, 8 patches applied, 1 decision resolved, 12 deferred)
 
 ### Review Findings
 
 **Decision-Needed:**
 
-- [ ] [Review][Decision] Verify `get_supabase()` returns anon-key client (RLS enforced), not service-role client (RLS bypassed) — The blind hunter flagged that if `get_supabase()` returns a service-role client, the `session_events` and `attention_events` queries bypass RLS and would return data for any session_id regardless of ownership. The app-layer `sessions` ownership check only covers the `sessions` table. `apps/api/app/core/db.py` — confirm supabase client type used in analytics context.
+- [x] [Review][Decision] Verify `get_supabase()` returns anon-key client (RLS enforced), not service-role client (RLS bypassed) — **RESOLVED 2026-07-03:** Confirmed service-role key. IDOR risk assessed: not a risk — app-layer `sessions` ownership check (Step 1) covers all three table queries. `attention_consent` RLS gap documented; explicit consent check deferred to Sprint 3 DPDP hardening. Comment in service.py corrected to remove false RLS claim.
 
 **Patches:**
 
-- [ ] [Review][Patch] Add test for `ces_final=None` (AC 4 null branch uncovered) [tests/test_analytics_summary_endpoint.py]
-- [ ] [Review][Patch] Add `.limit()` to session_events and attention_events queries (unbounded fetch DoS) [app/modules/analytics/service.py:120,133]
-- [ ] [Review][Patch] Assert exact detail string `"Session not found."` in 404 tests (AC 2 + AC 3 string unpinned) [tests/test_analytics_summary_endpoint.py:337,345,361]
-- [ ] [Review][Patch] Assert `asyncio.to_thread` called exactly 3 times (AC 15 unverified — removing all wraps would not fail any test) [tests/test_analytics_summary_endpoint.py]
-- [ ] [Review][Patch] Add fractional `blink_rate` test data (AC 12 `round()` never exercised — all current sums are whole numbers) [tests/test_analytics_summary_endpoint.py]
-- [ ] [Review][Patch] Add fractional-second timestamp test for `duration_seconds` (AC 9 2dp rounding unverifiable with current whole-second test data) [tests/test_analytics_summary_endpoint.py]
-- [ ] [Review][Patch] Add non-clean gaze/head_pose test data (AC 10/11 4dp rounding unverifiable — current means are exact) [tests/test_analytics_summary_endpoint.py]
-- [ ] [Review][Patch] Fix `test_no_llm_calls_made_by_service` to patch `app.providers.llm.openai.OpenAIProvider.complete` not `openai.AsyncOpenAI` constructor (constructor patch gives false confidence — a pre-instantiated provider singleton making calls would pass the current test) [tests/test_analytics_summary_endpoint.py:479]
-- [ ] [Review][Patch] Wrap `datetime.fromisoformat()` in `_parse_ts` in `try/except ValueError` to prevent HTTP 500 on corrupt timestamp strings [app/modules/analytics/service.py:175]
-- [ ] [Review][Patch] Add assertions on identity field values (`session_id`, `user_id`, `lesson_id`) in at least one test (only field presence is checked, not values) [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Add test for `ces_final=None` (AC 4 null branch uncovered) — **FIXED:** `test_ces_score_zero_when_ces_final_is_null` added [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Add `.limit()` to session_events and attention_events queries (unbounded fetch DoS) — **FIXED:** `.limit(10_000)` added to both queries [app/modules/analytics/service.py]
+- [x] [Review][Patch] Assert exact detail string `"Session not found."` in 404 tests (AC 2 + AC 3 string unpinned) — **FIXED:** All 3×404 tests now assert exact string [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Assert `asyncio.to_thread` called exactly 3 times (AC 15 unverified) — **FIXED:** `test_asyncio_to_thread_called_three_times` added with counting shim [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Add fractional `blink_rate` test data (AC 12 `round()` never exercised) — **FIXED:** `test_total_blinks_rounds_fractional_sum` added (1.3+1.4=2.7→3) [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Add fractional-second timestamp test for `duration_seconds` (AC 9 2dp rounding unverifiable) — **FIXED:** `test_duration_seconds_rounded_to_two_decimal_places` added (0.123456s→0.12) [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Add non-clean gaze/head_pose test data (AC 10/11 4dp rounding unverifiable) — **FIXED:** `test_avg_attention_and_head_pose_score_rounded_to_four_decimal_places` added (0.7÷3=0.2333) [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Fix `test_no_llm_calls_made_by_service` — patch `OpenAILLMProvider.complete` not `openai.AsyncOpenAI` constructor — **FIXED** [tests/test_analytics_summary_endpoint.py]
+- [x] [Review][Patch] Wrap `datetime.fromisoformat()` in `_parse_ts` in `try/except ValueError` — **FIXED:** raises HTTP 500 with log on corrupt timestamp strings [app/modules/analytics/service.py]
+- [x] [Review][Patch] Add assertions on identity field values (`session_id`, `user_id`, `lesson_id`) — **FIXED:** `test_returns_200_with_full_summary_shape` now asserts values [tests/test_analytics_summary_endpoint.py]
 
 **Deferred:**
 
