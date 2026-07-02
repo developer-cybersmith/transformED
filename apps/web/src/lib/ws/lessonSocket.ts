@@ -1,5 +1,5 @@
 import type { ClientMessage, ErrorMessage, ServerMessage } from '@hie/shared/types/ws';
-import type { LocalControlOut } from './wireTypes';
+import type { LocalControlIn, LocalControlOut, OutgoingMessage } from './wireTypes';
 
 export type LessonSocketStatus = 'connecting' | 'open' | 'closed';
 
@@ -9,6 +9,14 @@ export interface LessonSocketHandlers {
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
+
+function isFlatErrorFrame(data: object): data is Extract<LocalControlIn, { error: string }> {
+  return 'error' in data && !('type' in data);
+}
+
+function isPongFrame(data: object): data is Extract<LocalControlIn, { type: 'pong' }> {
+  return (data as { type?: unknown }).type === 'pong';
+}
 
 /**
  * Real WebSocket client for /ws/{session_id} (Dev 4's FastAPI tutor server).
@@ -34,15 +42,27 @@ export class LessonSocket {
   constructor(private handlers: LessonSocketHandlers) {}
 
   connect(sessionId: string, token: string): void {
+    // Guard against connect() being called again on an instance that's already
+    // holding a live socket — detach its handlers before replacing it so a
+    // stale onclose can never fire a reconnect for the connection we're abandoning.
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+      this.ws = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     this.sessionId = sessionId;
     this.token = token;
     this.manuallyClosed = false;
     this.sessionStarted = false;
     this.reconnectAttempts = 0;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
     this.open();
   }
 
@@ -54,6 +74,7 @@ export class LessonSocket {
     socket.onopen = this.handleOpen;
     socket.onmessage = this.handleMessage;
     socket.onclose = this.handleClose;
+    socket.onerror = this.handleError;
     this.ws = socket;
   }
 
@@ -66,6 +87,14 @@ export class LessonSocket {
     }
   };
 
+  private handleError = (): void => {
+    // The real WebSocket spec always fires close after error — reconnect scheduling
+    // lives entirely in handleClose. This exists so connection failures are at least
+    // observable instead of silently relying on the close event alone.
+    // eslint-disable-next-line no-console
+    console.warn('[LessonSocket] connection error on', this.sessionId);
+  };
+
   private handleMessage = (event: MessageEvent): void => {
     let data: unknown;
     try {
@@ -76,17 +105,16 @@ export class LessonSocket {
     if (typeof data !== 'object' || data === null) return;
 
     // Flat error frame: {"error": "<msg>"}, no `type` field (docs/ws-message-contract.md).
-    if ('error' in data && !('type' in data)) {
+    if (isFlatErrorFrame(data)) {
       const errorMessage: ErrorMessage = {
         type: 'error',
-        payload: { code: 'SERVER_ERROR', message: String((data as { error: unknown }).error) },
+        payload: { code: 'SERVER_ERROR', message: String(data.error) },
       };
       this.handlers.onServerMessage(errorMessage);
       return;
     }
 
-    const frame = data as { type?: string };
-    if (frame.type === 'pong') return; // keepalive ack — no-op, never forwarded
+    if (isPongFrame(data)) return; // keepalive ack — no-op, never forwarded
 
     // Everything else is expected to conform to the frozen ServerMessage union.
     this.handlers.onServerMessage(data as ServerMessage);
@@ -112,7 +140,7 @@ export class LessonSocket {
     this.rawSend(msg);
   }
 
-  private rawSend(msg: ClientMessage | LocalControlOut): void {
+  private rawSend(msg: OutgoingMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }

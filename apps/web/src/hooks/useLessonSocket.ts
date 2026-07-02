@@ -21,11 +21,17 @@ export function useLessonSocket(sessionId: string | null) {
     const sid = sessionId; // stable, non-null alias for use inside the nested async init()
 
     let cancelled = false;
+    setStatus('connecting'); // reflect the token fetch itself, not just the socket handshake
 
     function handleServerMessage(msg: ServerMessage): void {
       switch (msg.type) {
         case 'state_change':
-          setTutorState(msg.payload.to_state);
+          // Defensive: the server is expected to always send a well-formed frame, but
+          // don't let a malformed one crash the player, and ignore a stale message
+          // that belongs to a session this hook has since moved on from.
+          if (msg.payload?.session_id === sid && msg.payload?.to_state) {
+            setTutorState(msg.payload.to_state);
+          }
           break;
         case 'tutor_intervene':
           // Sprint 3 — TutorInterventionCard consumes this; no-op for now.
@@ -47,21 +53,35 @@ export function useLessonSocket(sessionId: string | null) {
           // eslint-disable-next-line no-console
           console.error('[LessonSocket] server error:', msg.payload.message);
           break;
+        default: {
+          // Exhaustiveness guard: if a new ServerMessage variant is ever added to the
+          // frozen contract without a case above, this line fails to compile.
+          const _exhaustiveCheck: never = msg;
+          void _exhaustiveCheck;
+        }
       }
     }
 
     async function init(): Promise<void> {
-      const supabase = createClient();
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token ?? '';
-      if (cancelled) return;
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token ?? '';
+        if (cancelled) return;
 
-      const socket = new LessonSocket({
-        onServerMessage: handleServerMessage,
-        onStatusChange: setStatus,
-      });
-      socketRef.current = socket;
-      socket.connect(sid, token);
+        const socket = new LessonSocket({
+          onServerMessage: handleServerMessage,
+          onStatusChange: setStatus,
+        });
+        socketRef.current = socket;
+        socket.connect(sid, token);
+      } catch (err) {
+        // Supabase session lookup failed (network/auth error) — degrade gracefully
+        // per AC8 rather than leaving an unhandled rejection and a silently-stuck hook.
+        // eslint-disable-next-line no-console
+        console.error('[useLessonSocket] failed to start connection:', err);
+        if (!cancelled) setStatus('closed');
+      }
     }
 
     init();

@@ -90,8 +90,45 @@ describe('LessonSocket — incoming frame normalization', () => {
     socket.connect('sess_1', 'token');
     latestFake().simulateOpen();
 
-    expect(() => latestFake().onmessage?.({ data: 'not json{' })).not.toThrow();
+    expect(() => latestFake().simulateRawMessage('not json{')).not.toThrow();
     expect(onServerMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonSocket — connect() re-entrancy', () => {
+  it('detaches and closes a prior live socket when connect() is called again on the same instance', () => {
+    const socket = new LessonSocket({ onServerMessage: vi.fn() });
+    socket.connect('sess_1', 'token');
+    const firstFake = latestFake();
+    firstFake.simulateOpen();
+
+    socket.connect('sess_2', 'token'); // called again without disconnect() first
+
+    expect(firstFake.onclose).toBeNull();
+    expect(firstFake.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('does not schedule a reconnect from a socket abandoned by a second connect() call', () => {
+    vi.useFakeTimers();
+    const socket = new LessonSocket({ onServerMessage: vi.fn() });
+    socket.connect('sess_1', 'token');
+    const firstFake = latestFake();
+    firstFake.simulateOpen();
+
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    socket.connect('sess_2', 'token');
+
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('LessonSocket — connection errors', () => {
+  it('does not throw when the underlying socket fires an error event', () => {
+    const socket = new LessonSocket({ onServerMessage: vi.fn() });
+    socket.connect('sess_1', 'token');
+
+    expect(() => latestFake().simulateError()).not.toThrow();
   });
 });
 

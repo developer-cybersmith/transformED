@@ -139,7 +139,7 @@
 ### Dev 2 — Lesson Player + Frontend
 - [x] Quiz popup integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/quiz` in `QuizOverlay.tsx`
 - [x] Teach-back modal integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/teachback` in `TeachBackModal.tsx`
-- [ ] Segment-end detection → CHECKING IN state — 🟡 UNBLOCKED AT TRANSPORT LAYER (2026-07-02): `lib/ws/lessonSocket.ts` + `useLessonSocket.ts` now built on `sprint1/s1-07-websocket-client` (S1-07). `state_change` messages (including CHECKING_IN) now reach `store.setTutorState()` — Dev 4's FSM state is live in the player store. The player UI reacting to `CHECKING_IN` (a check-in prompt/screen) is still separate, un-scoped work — not built yet.
+- [ ] Segment-end detection → CHECKING IN state — 🟡 PARTIALLY UNBLOCKED (2026-07-02), receive side only: `lib/ws/lessonSocket.ts` + `useLessonSocket.ts` now built on `sprint1/s1-07-websocket-client` (S1-07). `state_change` messages the *server* sends (including a transition to CHECKING_IN) now reach `store.setTutorState()` — Dev 4's FSM state is live in the player store. **Not yet wired:** the *send* side — nothing in the player currently calls `sendControl({type:'segment_complete'})` to tell the backend a segment ended and trigger CHECKING_IN in the first place; `LessonSocket.sendControl()` exists and is tested, but has no caller. The player UI reacting to CHECKING_IN once entered (a check-in prompt/screen) is also still separate, un-scoped work.
 - [x] Feedback display (praise + correction sentences) — ✓ 2026-07-02, `result.feedback` rendered in both `QuizOverlay.tsx` and `TeachBackModal.tsx`
 - [ ] Session report page v1 (quiz + teach-back scores)
 - [ ] Onboarding assessment UI (20 questions flow)
