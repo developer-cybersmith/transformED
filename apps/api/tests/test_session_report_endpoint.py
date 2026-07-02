@@ -104,11 +104,13 @@ def _build_report_supabase(
 
     mock = MagicMock()
     call_count = [0]
+    captured: dict[int, MagicMock] = {}
 
     def _table(name):
         call_count[0] += 1
         n = call_count[0]
         m = MagicMock()
+        captured[n] = m
         if n == 1:
             # sessions — maybe_single
             m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
@@ -119,11 +121,12 @@ def _build_report_supabase(
             # teachback_attempts — list
             m.select.return_value.eq.return_value.execute.return_value.data = tb_rows
         elif n == 4:
-            # session_events — count
+            # session_events — count (two .eq() filters: session_id, event_type)
             m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = intervention_count
         return m
 
     mock.table.side_effect = _table
+    mock._captured_mocks = captured
     return mock
 
 
@@ -194,8 +197,8 @@ async def test_get_report_wrong_user_returns_404(mock_to_thread):
             supabase=supabase,
         )
     assert exc_info.value.status_code == 404
-    # Must NOT reveal ownership — detail should not say "belongs to another user"
-    assert "access" in exc_info.value.detail.lower() or "not found" in exc_info.value.detail.lower()
+    # SEC-006: detail must be identical to the nonexistent-session path (no ownership leak)
+    assert exc_info.value.detail == "Session not found."
 
 
 @pytest.mark.unit
@@ -214,6 +217,7 @@ async def test_get_report_nonexistent_session_returns_404(mock_to_thread):
             supabase=supabase,
         )
     assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Session not found."
 
 
 @pytest.mark.unit
@@ -411,6 +415,10 @@ async def test_get_report_interventions_count_from_session_events(mock_to_thread
         session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
     )
     assert result.interventions_count == 3
+    # Verify the event_type='intervention_triggered' filter was actually passed to the query
+    events_mock = supabase._captured_mocks[4]
+    second_eq = events_mock.select.return_value.eq.return_value.eq
+    second_eq.assert_called_once_with("event_type", "intervention_triggered")
 
 
 @pytest.mark.unit
@@ -556,6 +564,62 @@ async def test_get_report_ces_breakdown_all_zeros_when_no_data(mock_to_thread):
     )
     for key in ("quiz", "teachback", "behavioral", "head_pose", "blink"):
         assert result.ces_breakdown[key] == pytest.approx(0.0), f"Expected 0.0 for {key!r}"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread):
+    """SEC-006: nonexistent session and wrong-user session return the SAME detail string."""
+    from fastapi import HTTPException
+    from app.modules.assessment.service import get_session_report
+
+    # Path 1 — session does not exist
+    supabase_none = _build_report_supabase(session_data=None)
+    with pytest.raises(HTTPException) as exc_none:
+        await get_session_report(
+            session_id="ghost-session", user_id=_USER_ID, supabase=supabase_none
+        )
+
+    # Path 2 — session exists but belongs to a different user
+    session_other_user = {**_SESSION_ROW, "user_id": "other-user-999"}
+    supabase_other = _build_report_supabase(session_data=session_other_user)
+    with pytest.raises(HTTPException) as exc_other:
+        await get_session_report(
+            session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase_other
+        )
+
+    assert exc_none.value.status_code == exc_other.value.status_code == 404
+    assert exc_none.value.detail == exc_other.value.detail, (
+        "Both 404 paths must return identical detail to prevent session enumeration oracle"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_report_asyncio_to_thread_called_4_times():
+    """AC 15: get_session_report wraps all 4 DB calls in asyncio.to_thread."""
+    from app.modules.assessment.service import get_session_report
+    from unittest.mock import patch
+
+    call_log: list[bool] = []
+
+    async def _counting_shim(func, *args, **kwargs):
+        call_log.append(True)
+        return func(*args, **kwargs)
+
+    supabase = _build_report_supabase(
+        quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG,
+        tb_rows=_TEACHBACK_ROWS,
+        intervention_count=1,
+    )
+    with patch("app.modules.assessment.service.asyncio.to_thread", side_effect=_counting_shim):
+        await get_session_report(
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            supabase=supabase,
+        )
+
+    assert len(call_log) == 4, f"Expected 4 asyncio.to_thread calls, got {len(call_log)}"
 
 
 # ── HTTP-layer tests ──────────────────────────────────────────────────────────

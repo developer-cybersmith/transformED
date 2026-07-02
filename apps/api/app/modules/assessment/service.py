@@ -501,13 +501,14 @@ async def get_session_report(
     if session_resp.data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id!r} not found.",
+            detail="Session not found.",
         )
-    if str(session_resp.data["user_id"]) != str(user_id):
-        # SEC-006: Return 404 to prevent session enumeration oracle.
+    db_user_id = session_resp.data.get("user_id")
+    if str(db_user_id) != str(user_id):
+        # SEC-006: Return 404 (not 403) — identical message prevents enumeration oracle.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or access denied.",
+            detail="Session not found.",
         )
 
     row = session_resp.data
