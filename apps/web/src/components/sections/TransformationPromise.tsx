@@ -86,7 +86,7 @@ export default function TransformationPromise() {
                         className="bg-white rounded-3xl p-8 lg:p-10 border border-primary/20 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative overflow-hidden group transition-shadow duration-300"
                     >
                         <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.03] to-transparent pointer-events-none" />
-                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-sky-400" />
+                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-[var(--accent-secondary)]" />
 
                         <div className="flex items-center gap-4 mb-8 relative">
                             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center transition-transform duration-300">
@@ -132,7 +132,7 @@ export default function TransformationPromise() {
                     opacity: [0, 0.1, 0]
                 }}
                 transition={{ duration: 22, repeat: Infinity, ease: "linear", delay: 5 }}
-                className="absolute bottom-0 left-1/4 w-[500px] h-[500px] bg-sky-300/10 rounded-full blur-[120px] pointer-events-none -z-10"
+                className="absolute bottom-0 left-1/4 w-[500px] h-[500px] bg-[var(--accent-secondary)]/10 rounded-full blur-[120px] pointer-events-none -z-10"
             />
         </section>
     );

@@ -39,7 +39,7 @@ export function TopUtilityBar() {
 
                 {/* Profile Dropdown Placeholder */}
                 <button suppressHydrationWarning className="relative group focus:outline-none flex items-center gap-3 pl-3 pr-2 py-1.5 rounded-full hover:bg-neutral-100/50 transition-colors">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--accent-primary)] to-[var(--accent-secondary)] flex items-center justify-center text-white font-medium text-sm shadow-md overflow-hidden">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--accent-primary)] to-[var(--accent-primary-hover)] flex items-center justify-center text-white font-medium text-sm shadow-md overflow-hidden">
                         <img src="https://ui-avatars.com/api/?name=J+O&background=random&color=fff" alt="Profile" className="w-full h-full object-cover" />
                     </div>
                 </button>

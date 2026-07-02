@@ -14,7 +14,7 @@ export function Toggle({ enabled, onChange }: ToggleProps) {
             onClick={() => onChange(!enabled)}
             className={clsx(
                 "w-11 h-6 flex items-center rounded-full px-1 transition-colors outline-none",
-                enabled ? "bg-blue-600" : "bg-neutral-200"
+                enabled ? "bg-[var(--accent-primary)]" : "bg-neutral-200"
             )}
         >
             <motion.div

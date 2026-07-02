@@ -137,7 +137,7 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
 
                 <div className="absolute top-4 right-4 flex items-center gap-2">
                     {isProcessing && (
-                        <div className="px-3 py-1.5 rounded-full bg-blue-500/90 text-white backdrop-blur flex items-center gap-1.5 text-xs font-medium shadow-sm">
+                        <div className="px-3 py-1.5 rounded-full bg-[var(--accent-primary)]/90 text-white backdrop-blur flex items-center gap-1.5 text-xs font-medium shadow-sm">
                             <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Processing
                         </div>
                     )}
@@ -194,8 +194,8 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
                     )}
 
                     {isProcessing && (
-                        <div className="flex items-center gap-2 text-sm font-medium text-blue-500">
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        <div className="flex items-center gap-2 text-sm font-medium text-[var(--accent-primary)]">
+                            <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] animate-pulse" />
                             Synthesizing content...
                         </div>
                     )}
