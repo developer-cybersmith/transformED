@@ -4,7 +4,7 @@ baseline_commit: "7ef18f3555b04f72b83c88031bfe50fabbe6ca01"
 
 # Story 3-19: Session Report Generation API Live
 
-**Status:** review
+**Status:** done
 **Epic:** 3 — Assessment & Analytics
 **Branch:** `dev3-sprint2-task2`
 **Sprint:** Sprint 2, Task 2
@@ -445,4 +445,52 @@ def _build_report_supabase(
 ### Change Log
 
 - 2026-07-02: Story created — Sprint 2 Task 2, dev3-sprint2-task2 branch
+- 2026-07-02: Code review BLOCKERs resolved — 4 BLOCKERs fixed, 2 new tests added (30 total), story marked done
+
+---
+
+## Senior Developer Review
+
+**Review date:** 2026-07-02
+**Outcome:** Changes Requested → All BLOCKERs Resolved → Approved
+
+### Review Findings
+
+**Resolved BLOCKERs:**
+
+- [x] [Review][Patch] **SEC-006 BLOCKER — Nonexistent-session path leaked session ID in detail string** [`service.py:504`]
+  - Before: `detail=f"Session {session_id!r} not found."` — leaked the session ID in the error body
+  - After: `detail="Session not found."` — no ID, identical to wrong-user path
+  - Fix committed: `690ed40`
+
+- [x] [Review][Patch] **SEC-006 BLOCKER — Both 404 paths returned different detail strings (enumeration oracle)** [`service.py:510`]
+  - Before: wrong-user returned `"Session not found or access denied."` (different wording → distinguishable)
+  - After: both paths return identical `"Session not found."` — attacker cannot distinguish nonexistent from unauthorised
+  - New test `test_get_report_both_404_paths_return_identical_detail` explicitly asserts string equality across both paths
+
+- [x] [Review][Patch] **Weak SEC-006 test — assertion satisfied by both pre-fix messages** [`tests:test_session_report_endpoint.py`]
+  - Before: `assert "access" in detail.lower() or "not found" in detail.lower()` — both old messages satisfied this
+  - After: `assert exc_info.value.detail == "Session not found."` — exact string match catches any future divergence
+
+- [x] [Review][Patch] **event_type filter never verified in mock** [`tests:test_session_report_endpoint.py:test_get_report_interventions_count_from_session_events`]
+  - Before: mock accepted any `.eq()` argument — a bug omitting the `event_type` filter would pass all tests
+  - After: `_build_report_supabase` now captures each table mock in `mock._captured_mocks`; test asserts `second_eq.assert_called_once_with("event_type", "intervention_triggered")`
+
+- [x] [Review][Patch] **KeyError risk on `session_resp.data["user_id"]` direct subscript** [`service.py:506`]
+  - Before: `str(session_resp.data["user_id"])` — raises `KeyError` if DB returns row without that column
+  - After: `db_user_id = session_resp.data.get("user_id")` with explicit variable; missing key returns `None` and correctly fails the ownership check (→ 404)
+
+**Improvements applied:**
+
+- [x] [Review][Patch] **AC 15 test gap — no test verified asyncio.to_thread was called** 
+  - Added `test_get_report_asyncio_to_thread_called_4_times`: patches `asyncio.to_thread` with a counting shim and asserts exactly 4 calls (sessions, quiz_attempts, teachback_attempts, session_events)
+
+**Deferred (pre-existing, not caused by this story):**
+
+- [x] [Review][Defer] **SessionReport defined in router.py instead of schemas.py** — architectural debt, deferred. A future refactor story should move it to `schemas.py` alongside `QuizResult` and `TeachbackResult`. The lazy import pattern in `service.py` is a documented workaround.
+
+### Final Test Count
+
+- 30 tests in `test_session_report_endpoint.py` (was 28, added 2 during BLOCKER resolution)
+- 111 assessment module tests total — all passing
 - 2026-07-02: Implementation complete — 28 tests passing, all 17 ACs satisfied, status → review
