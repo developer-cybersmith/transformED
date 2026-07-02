@@ -8,6 +8,8 @@ export interface PlayerStore {
   // ── State ──────────────────────────────────────────────────────────────────
   status: PlayerStatus;
   lesson: LessonPackage | null;
+  /** Ephemeral session ID — generated on loadLesson; replaced by WS session_id in Sprint 2. */
+  sessionId: string;
   currentSegmentIndex: number;
   /** String slide_id from NarrationTimestamp — NOT an array index. */
   currentSlideId: string | null;
@@ -27,6 +29,8 @@ export interface PlayerStore {
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
   loadLesson: (pkg: LessonPackage) => void;
+  /** Override the session ID once the WebSocket handshake provides a real one (Sprint 2). */
+  setSessionId: (id: string) => void;
   play: () => void;
   pause: () => void;
   /** Queue a seek; AudioTimeline applies it to the audio element and clears it. */
@@ -54,6 +58,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   // ── Initial state ──────────────────────────────────────────────────────────
   status: 'IDLE',
   lesson: null,
+  sessionId: '',
   currentSegmentIndex: 0,
   currentSlideId: null,
   audioPositionMs: 0,
@@ -69,6 +74,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({
       status: 'IDLE',
       lesson: pkg,
+      sessionId: crypto.randomUUID(),
       currentSegmentIndex: 0,
       currentSlideId: firstTimestamp?.slide_id ?? null,
       audioPositionMs: 0,
@@ -97,6 +103,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Update audioPositionMs immediately so the progress bar reflects the seek while paused.
     // Quiz boundary check in processTimeUpdate fires naturally on the next timeupdate tick.
     set({ seekRequestMs: ms, audioPositionMs: ms });
+  },
+
+  setSessionId: (id) => {
+    set({ sessionId: id });
   },
 
   clearSeekRequest: () => {

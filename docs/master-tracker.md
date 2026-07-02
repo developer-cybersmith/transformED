@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-01 (Dev 3 quiz/teachback live; Dev 4 WS contract published + full FSM done; content router clarified as route-stub only)
+**Last updated:** 2026-07-01 (Dev 3 quiz/teachback confirmed live from code; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -155,12 +155,12 @@
 - [ ] PostHog events for all assessment actions
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
-- [x] Full 7-state LangGraph StateGraph with real logic — ✓ completed early (merged Sprint 1)
-- [x] All 14 transitions wired and tested — ✓ completed early
-- [x] CHECKING IN → QUIZZING → TEACH-BACK → TEACHING flow — ✓ completed early
-- [x] Session state restore on reconnect tested — ✓ completed early
-- [x] Intervention message selection from lesson package — ✓ completed early
-- [x] WebSocket message types finalized and published — ✓ docs/ws-message-contract.md published
+- [ ] Full 7-state LangGraph StateGraph with real logic — 🔵 code merged + unit tested (mock Redis); pending integration test against live Redis
+- [ ] All 14 transitions wired and tested — 🔵 code merged + 884-line unit test suite; pending integration test
+- [ ] CHECKING IN → QUIZZING → TEACH-BACK → TEACHING flow — 🔵 code merged; pending integration test
+- [ ] Session state restore on reconnect tested — 🔵 code merged; pending live-network test
+- [ ] Intervention message selection from lesson package — 🔵 code merged; pending integration test
+- [x] WebSocket message types finalized and published — ✓ docs/ws-message-contract.md published. **Needs Dev 2 sign-off.**
 
 ---
 
@@ -195,14 +195,14 @@
 - [ ] Re-assessment prompt after 10 sessions logic
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
-- [x] Attention signal ingestion from WebSocket live — ✓ done
-- [x] Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s — ✓ done
-- [x] CES computation in-process (~3–5ms total) — ✓ done 2026-06-30
-- [x] Intervention trigger: 2 consecutive windows below threshold — ✓ done
-- [x] 2-minute cooldown enforcement (Redis TTL key) — ✓ done
-- [x] Max 3 distraction interventions per session cap — ✓ done 2026-06-30
-- [x] Fatigue intervention: once per session flag — ✓ done 2026-06-30
-- [x] Type A/B/C intervention routing to correct message — ✓ done 2026-06-30
+- [ ] Attention signal ingestion from WebSocket live — 🔵 code merged; pending integration test against live Redis
+- [ ] Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s — 🔵 code merged; pending integration test
+- [ ] CES computation in-process (~3–5ms total) — 🔵 code merged; pending integration test
+- [ ] Intervention trigger: 2 consecutive windows below threshold — 🔵 code merged; pending integration test
+- [ ] 2-minute cooldown enforcement (Redis TTL key) — 🔵 code merged; pending integration test
+- [ ] Max 3 distraction interventions per session cap — 🔵 code merged; pending integration test
+- [ ] Fatigue intervention: once per session flag — 🔵 code merged; pending integration test
+- [ ] Type A/B/C intervention routing to correct message — 🔵 code merged; pending integration test
 
 ---
 
