@@ -72,7 +72,7 @@ class OnboardingAnswer(BaseModel):
     dimension: Literal["cognitive", "emotional", "self_direction"]
     selected_index: int = Field(ge=0, le=3)
     selected_text: str
-    response_time_ms: int | None = None
+    response_time_ms: int | None = Field(default=None, ge=0)
 
 
 class OnboardingDiagnosticSubmission(BaseModel):

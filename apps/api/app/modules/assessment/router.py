@@ -156,18 +156,24 @@ async def submit_onboarding_diagnostic(
     user_id: str = current_user["sub"]
     onboarding_key = f"user:{user_id}:onboarding_done"
 
+    # Atomic SET NX eliminates the TOCTOU race between a read-check and a later write.
+    # Returns True if key was newly set; None/False if key already existed.
     redis = get_redis()
-    existing = await redis.get(onboarding_key)
-    if existing == "1":
+    was_set = await redis.set(onboarding_key, "1", nx=True)
+    if not was_set:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Onboarding diagnostic has already been submitted for this account.",
         )
 
-    result = await process_onboarding(
-        responses=body.responses,
-        user_id=user_id,
-        supabase=get_supabase(),
-    )
-    await redis.set(onboarding_key, "1")
+    try:
+        result = await process_onboarding(
+            responses=body.responses,
+            user_id=user_id,
+            supabase=get_supabase(),
+        )
+    except HTTPException:
+        # Release the lock so the user can retry after a transient failure.
+        await redis.delete(onboarding_key)
+        raise
     return result

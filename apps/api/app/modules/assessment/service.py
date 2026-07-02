@@ -523,8 +523,8 @@ async def process_onboarding(
     1. Compute 9 sub-dimension scores.
     2. Compute badge labels (scores >= 70).
     3. Bulk-insert rows to onboarding_responses.
-    4. Upsert learner_dna with scores, badges, and session_count=0.
-    5. Generate GPT-4o-mini profile_text (with DPDP disclaimer appended).
+    4. Generate GPT-4o-mini profile_text (DPDP disclaimer appended).
+    5. Upsert learner_dna with scores, badges, profile_text, and session_count=0.
     6. Return OnboardingResult (no raw scores to frontend).
 
     The supabase client is synchronous; all DB calls are wrapped in asyncio.to_thread.
@@ -577,25 +577,38 @@ async def process_onboarding(
             detail="Failed to persist onboarding responses.",
         )
 
-    # Step 4 — Upsert learner_dna
-    dna_row: dict[str, Any] = {
-        "user_id": user_id,
-        "badge_labels": badge_labels,
-        "session_count": 0,
-        **scores,
-    }
-    await asyncio.to_thread(
-        lambda: supabase.table("learner_dna")
-        .upsert(dna_row, on_conflict="user_id")
-        .execute()
-    )
-
-    # Step 5 — Generate profile_text via GPT-4o-mini (DPDP disclaimer appended by helper)
+    # Step 4 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
     provider = OpenAILLMProvider(lesson_id="onboarding")
     profile_text = await generate_onboarding_profile(
         badge_labels=badge_labels,
         provider=provider,
     )
+
+    # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
+    dna_row: dict[str, Any] = {
+        "user_id": user_id,
+        "badge_labels": badge_labels,
+        "session_count": 0,
+        "profile_text": profile_text,
+        **scores,
+    }
+    upsert_resp = await asyncio.to_thread(
+        lambda: supabase.table("learner_dna")
+        .upsert(dna_row, on_conflict="user_id")
+        .execute()
+    )
+    upsert_error = getattr(upsert_resp, "error", None)
+    if upsert_error:
+        safe_upsert_err = str(upsert_error).replace('\n', ' ').replace('\r', ' ')
+        logger.error(
+            "learner_dna upsert failed: user=%s error=%s",
+            user_id,
+            safe_upsert_err,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist learner profile.",
+        )
 
     return OnboardingResult(
         badge_labels=badge_labels,

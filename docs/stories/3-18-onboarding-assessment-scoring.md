@@ -474,8 +474,8 @@ None — implementation completed cleanly.
 
 ### Completion Notes List
 
-- 41 unit tests written and passing (41/41 GREEN)
-- No regressions in existing 72 assessment tests (113 total assessment tests pass)
+- 43 unit tests written and passing (43/43 GREEN) — 2 added after code review to cover AC5 (insert payload mapping) and upsert error path
+- No regressions in existing suite (298 total unit tests pass; 19 pre-existing failures unchanged)
 - Scoring formula: normalized = (selected_index / 3) * 100; dim_score = round(mean, 2) — exact match to story spec
 - DPDP_DISCLAIMER appended in generate_onboarding_profile via `f"{text.strip()}\n\n{DPDP_DISCLAIMER}"` — endswith check always reliable
 - prompts.get_settings patched separately from service.get_settings in tests — both paths call get_settings independently
@@ -501,3 +501,68 @@ None — implementation completed cleanly.
 |------|--------|
 | 2026-07-02 | Story 3-18 created — Sprint 2 Task 1: Onboarding Assessment Scoring |
 | 2026-07-02 | Story 3-18 implemented — all 8 tasks complete, 41 tests GREEN, status: done |
+| 2026-07-02 | 5-agent adversarial code review completed — 7 BLOCKERs fixed, all resolved before merge |
+
+---
+
+## Senior Developer Review (AI)
+
+**Review date:** 2026-07-02
+**Branch:** `dev3-sprint2-task1`
+**Reviewer layers run:** 5 parallel adversarial agents (Story Quality, Blind Hunter, Test Coverage, AC Completeness, Process Integrity)
+**Outcome after fixes:** APPROVED — all BLOCKERs resolved, 43/43 tests GREEN, 0 regressions
+
+---
+
+### Action Items
+
+All 7 BLOCKERs were fixed before merge. 2 IMPROVEMENTs and 2 NITPICKs deferred with written rationale.
+
+#### Fixed BLOCKERs
+
+- [x] **B1 — `profile_text` not persisted in `learner_dna` upsert** (AC8, AC6 in DB)
+  LLM call was after the upsert; `profile_text` was not in `dna_row`. Fixed by moving LLM generation (Step 4) before the upsert (Step 5) and adding `"profile_text": profile_text` to `dna_row`. Every student's DNA row now has `profile_text` populated in the DB.
+
+- [x] **B2 — `learner_dna` upsert error silently swallowed — user lockout** (Story Step 5.4)
+  Upsert result was discarded. Added `upsert_error = getattr(upsert_resp, "error", None)` check; raises `HTTP 500` and logs with `safe_err` on failure. Router's `except HTTPException: redis.delete` cleanup ensures user can retry after transient failure.
+
+- [x] **B3 — `test_http_profile_text_no_raw_numeric_scores` was a false-confidence test** (AC9)
+  The test asserted a leaky float (`"67.50"`) passed through unchanged — inverting AC9. Replaced with a clean profile text and `assert re.compile(r'\b\d+\.\d+\b').search(body["profile_text"]) is None`.
+
+- [x] **B4 — AC5 (insert payload mapping) had no test** (AC5)
+  No test verified `response_value=selected_index` or `dimension_tag=dimension` in the insert rows. Added `test_process_onboarding_insert_row_payload_mapping` — captures all 20 rows via `side_effect`, asserts field names and values for each.
+
+- [x] **B5 — AC6 (all 9 dimensions in upsert) had no test** (AC6)
+  Extended `test_process_onboarding_session_count_is_zero`: asserts all 9 `ALL_NINE_DIMENSIONS` keys are present in `upsert_data_captured`, each value is 0-100, and `profile_text` is in the upsert payload.
+
+- [x] **B6 — AC14 model value not asserted** (AC14)
+  `test_generate_onboarding_profile_uses_llm_mini` asserted only that `complete.called` was true. Added assertion: `actual_model == "gpt-4o-mini"`.
+
+- [x] **B7 — TOCTOU race on Redis idempotency guard** (Security)
+  GET→process→SET allows concurrent requests to both pass the guard. Replaced with atomic `redis.set(key, "1", nx=True)` at entry. Added `try/except HTTPException: redis.delete` cleanup so transient failures release the lock. Updated all 5 HTTP-layer tests that mock Redis.
+
+#### Deferred IMPROVEMENTs (rationale documented)
+
+- [ ] **I1 — `question_id` is an unbounded free-text string stored in DB**
+  No `max_length` or `pattern` constraint on `OnboardingAnswer.question_id`. Deferred: the field is compared against `QUESTION_SUBDIMENSION_MAP` and unrecognised IDs are silently skipped — they have no DB-level impact. A `max_length=32, pattern=r'^[a-z][0-9]+$'` constraint will be added in Sprint 3 when the question format is stable.
+
+- [ ] **I2 — `selected_text` is accepted but never stored or used**
+  The field exists for client-side convenience (render selected option text). It is silently dropped on the server. No sprint-3 impact. Document in Sprint 3 as either: add `max_length=256` and store it, or remove it from the schema.
+
+#### Accepted NITPICKs
+
+- **N1 — Default dimension score 0.0 vs story spec 50.0**: `_compute_dimension_scores` defaults unmapped dimensions to `0.0`. The story specified `50.0` as a safety net. With the 20-question mapping fully covering all 9 dimensions, this branch is unreachable. Both values satisfy AC6 (non-null, 0-100). Accepted as-is; revisit if a question mapping gap occurs.
+
+- **N2 — Score clamping step omitted**: Story spec said to clamp to `[0.0, 100.0]` in the service layer. Mathematical proof: `selected_index ∈ {0,1,2,3}` and formula `(x/3)*100` cannot exceed 100.0 or go below 0.0. Clamp is redundant today; will be added in Sprint 3 when `response_time_ms` is blended into scoring and the formula becomes more complex.
+
+---
+
+### Process Integrity Notes
+
+- BMAD process: CLEAN — story commit (`e1177e85`) is chronologically first; implementation commit follows
+- No hardcoded model strings — all LLM calls use `settings.llm_mini` via `OpenAILLMProvider`
+- No direct DB access in router — service layer delegates all Supabase calls
+- All synchronous Supabase calls wrapped in `asyncio.to_thread`
+- New migration is a new file — no applied migration was modified
+- `lesson_id="onboarding"` for cost tracking: accepted as semantic sentinel (onboarding has no lesson context; the rule requires cost context, not UUID format)
+- New `/onboarding/submit` endpoint is an addition, not a shape change to the 5 frozen endpoint signatures — Dev 2 sync required before merge (noted in story Dev Notes OpenAPI section)

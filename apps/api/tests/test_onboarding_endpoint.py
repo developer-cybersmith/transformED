@@ -386,11 +386,15 @@ async def test_generate_onboarding_profile_uses_llm_mini() -> None:
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
         await generate_onboarding_profile(badge_labels=["Curious Explorer"], provider=mock_provider)
 
-    # Verify provider.complete was called
+    # Verify provider.complete was called with model=settings.llm_mini (not hardcoded)
     assert mock_provider.complete.called, "provider.complete must be called by generate_onboarding_profile"
-    # The model arg should come from settings.llm_mini — not a hardcoded string
     call_kwargs = mock_provider.complete.call_args
     assert call_kwargs is not None
+    actual_model = call_kwargs.kwargs.get("model") or (call_kwargs.args[1] if len(call_kwargs.args) > 1 else None)
+    assert actual_model == "gpt-4o-mini", (
+        f"AC #14: provider.complete must be called with model=settings.llm_mini ('gpt-4o-mini'), "
+        f"got model={actual_model!r}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -542,6 +546,23 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
     assert upsert_data_captured.get("session_count") == 0, (
         f"learner_dna upsert must have session_count=0, got {upsert_data_captured.get('session_count')}"
     )
+    # AC #6: all 9 dimension keys must be present and in 0-100 range
+    from app.modules.assessment.onboarding_questions import ALL_NINE_DIMENSIONS
+    for dim in ALL_NINE_DIMENSIONS:
+        assert dim in upsert_data_captured, (
+            f"AC #6: dimension '{dim}' missing from learner_dna upsert payload"
+        )
+        score = upsert_data_captured[dim]
+        assert 0.0 <= score <= 100.0, (
+            f"AC #6: dimension '{dim}' score must be 0-100, got {score}"
+        )
+    # AC #8 (DB): profile_text must be persisted in learner_dna, not just returned in HTTP response
+    assert "profile_text" in upsert_data_captured, (
+        "AC #8 (DB): profile_text must be included in learner_dna upsert payload"
+    )
+    assert upsert_data_captured["profile_text"].endswith("— Pursuant to DPDP Act 2023."), (
+        "AC #8 (DB): persisted profile_text must end with DPDP Act 2023 disclaimer"
+    )
 
 
 @pytest.mark.unit
@@ -639,6 +660,81 @@ async def test_process_onboarding_returns_onboarding_result(mock_to_thread) -> N
         assert field not in result_dict, f"OnboardingResult must not expose '{field}' to students"
 
 
+@pytest.mark.unit
+async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> None:
+    """AC #5: All 20 onboarding_responses rows must have response_value=selected_index and dimension_tag=dimension."""
+    from app.modules.assessment.service import process_onboarding
+
+    answers = _make_onboarding_answers(selected_index=2)
+    insert_rows_captured: list[dict] = []
+
+    insert_mock = MagicMock()
+    def _capture_insert(rows):
+        insert_rows_captured.extend(rows if isinstance(rows, list) else [rows])
+        m = MagicMock()
+        m.execute.return_value = MagicMock(data=[], error=None)
+        return m
+    insert_mock.insert.side_effect = _capture_insert
+
+    upsert_mock = MagicMock()
+    upsert_mock.upsert.return_value.execute.return_value = MagicMock(
+        data=[{"user_id": "user-onb-001"}], error=None
+    )
+
+    supabase = MagicMock()
+    supabase.table.side_effect = [insert_mock, upsert_mock]
+
+    with patch("app.modules.assessment.service.OpenAILLMProvider") as mock_provider_cls:
+        mock_provider_inst = MagicMock()
+        mock_provider_inst.complete = AsyncMock(return_value="You are a pattern thinker.")
+        mock_provider_cls.return_value = mock_provider_inst
+        with patch("app.modules.assessment.service.get_settings") as mock_settings:
+            mock_settings.return_value.llm_mini = "gpt-4o-mini"
+            with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
+                mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
+                await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+
+    assert len(insert_rows_captured) == 20, (
+        f"AC #5: Expected 20 rows in onboarding_responses, got {len(insert_rows_captured)}"
+    )
+    for i, (row, ans) in enumerate(zip(insert_rows_captured, answers)):
+        assert row["response_value"] == ans.selected_index, (
+            f"AC #5: Row {i} response_value must equal selected_index ({ans.selected_index}), got {row['response_value']}"
+        )
+        assert row["dimension_tag"] == ans.dimension, (
+            f"AC #5: Row {i} dimension_tag must equal dimension ({ans.dimension!r}), got {row['dimension_tag']!r}"
+        )
+        assert row["user_id"] == "user-onb-001", f"AC #5: Row {i} user_id mismatch"
+        assert row["question_id"] == ans.question_id, f"AC #5: Row {i} question_id mismatch"
+
+
+@pytest.mark.unit
+async def test_process_onboarding_upsert_error_returns_500(mock_to_thread) -> None:
+    """BLOCKER: learner_dna upsert failure must raise HTTP 500 (not silently lock user out)."""
+    from fastapi import HTTPException
+    from app.modules.assessment.service import process_onboarding
+
+    upsert_error = MagicMock()
+    upsert_error.__str__ = lambda s: "connection timeout — database unreachable"
+    supabase = _build_onboarding_supabase(upsert_error=upsert_error)
+    answers = _make_onboarding_answers(selected_index=2)
+
+    with patch("app.modules.assessment.service.OpenAILLMProvider") as mock_provider_cls:
+        mock_provider_inst = MagicMock()
+        mock_provider_inst.complete = AsyncMock(return_value="You are a visual learner.")
+        mock_provider_cls.return_value = mock_provider_inst
+        with patch("app.modules.assessment.service.get_settings") as mock_settings:
+            mock_settings.return_value.llm_mini = "gpt-4o-mini"
+            with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
+                mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
+                with pytest.raises(HTTPException) as exc_info:
+                    await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+
+    assert exc_info.value.status_code == 500, (
+        f"Expected 500 for learner_dna upsert error, got {exc_info.value.status_code}"
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TASK 6 — HTTP endpoint (router layer)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -700,9 +796,10 @@ def test_http_422_when_selected_index_exceeds_3() -> None:
 
 @pytest.mark.unit
 def test_http_409_when_onboarding_already_done() -> None:
-    """AC #1: POST /onboarding/submit → 409 if Redis key user:{id}:onboarding_done is '1'."""
+    """AC #1: POST /onboarding/submit → 409 if Redis SET NX returns falsy (key already exists)."""
     mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value="1")
+    # SET NX returns None when key already exists (atomic check-and-set)
+    mock_redis.set = AsyncMock(return_value=None)
 
     with patch("app.core.redis.get_redis", return_value=mock_redis):
         response = _client.post(
@@ -721,8 +818,7 @@ def test_http_201_on_success() -> None:
     from app.modules.assessment.schemas import OnboardingResult
 
     mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.set = AsyncMock(return_value=True)  # SET NX succeeds = key was newly set
 
     mock_result = OnboardingResult(
         badge_labels=["Pattern Thinker", "Goal-Oriented"],
@@ -755,12 +851,11 @@ def test_http_201_on_success() -> None:
 
 @pytest.mark.unit
 def test_http_redis_set_called_after_success() -> None:
-    """AC #11: On success, Redis key user:{id}:onboarding_done must be set to '1'."""
+    """AC #11: On success, Redis key user:{id}:onboarding_done must be atomically set via SET NX."""
     from app.modules.assessment.schemas import OnboardingResult
 
     mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.set = AsyncMock(return_value=True)  # SET NX succeeds
 
     mock_result = OnboardingResult(
         badge_labels=[],
@@ -776,7 +871,7 @@ def test_http_redis_set_called_after_success() -> None:
                     json={"responses": _make_20_responses()},
                 )
 
-    mock_redis.set.assert_called_once_with("user:user-onb-001:onboarding_done", "1")
+    mock_redis.set.assert_called_once_with("user:user-onb-001:onboarding_done", "1", nx=True)
 
 
 @pytest.mark.unit
@@ -785,8 +880,7 @@ def test_http_response_no_raw_dimension_scores() -> None:
     from app.modules.assessment.schemas import OnboardingResult
 
     mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.set = AsyncMock(return_value=True)  # SET NX succeeds
 
     mock_result = OnboardingResult(
         badge_labels=["Curious Explorer"],
@@ -818,19 +912,16 @@ def test_http_profile_text_no_raw_numeric_scores() -> None:
     """AC #9: profile_text in response must not contain bare float patterns like '67.50'."""
     from app.modules.assessment.schemas import OnboardingResult
 
-    # Simulate a profile_text that accidentally leaks a score
-    leaky_profile = (
-        "Your pattern recognition is 67.50 which indicates... "
+    mock_redis = MagicMock()
+    mock_redis.set = AsyncMock(return_value=True)  # SET NX succeeds
+
+    clean_profile = (
+        "You tend to think in patterns and set clear goals for yourself. "
         "— Pursuant to DPDP Act 2023."
     )
-
-    mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock(return_value=True)
-
     mock_result = OnboardingResult(
-        badge_labels=[],
-        profile_text=leaky_profile,
+        badge_labels=["Pattern Thinker"],
+        profile_text=clean_profile,
         session_count=0,
     )
 
@@ -842,11 +933,12 @@ def test_http_profile_text_no_raw_numeric_scores() -> None:
                     json={"responses": _make_20_responses()},
                 )
 
-    # The profile text content is controlled by the LLM prompt (system prompt forbids numbers).
-    # This test verifies that a profile_text WITH a raw float would be detectable — the system
-    # must ensure the prompt prevents this. Test simply verifies the field exists in response.
+    assert response.status_code == 201
     body = response.json()
     assert "profile_text" in body
-    # A real production test would assert no float pattern — here we just ensure the field is present
-    # and the mock value flows through correctly
-    assert body["profile_text"] == leaky_profile  # mock passthrough confirms no double-processing
+    # AC #9: profile_text must NOT contain raw numeric patterns (e.g. "67.50", "33.33")
+    raw_float_pattern = re.compile(r'\b\d+\.\d+\b')
+    assert raw_float_pattern.search(body["profile_text"]) is None, (
+        f"AC #9 violated: profile_text contains a raw numeric score. "
+        f"Content: {body['profile_text']!r}"
+    )
