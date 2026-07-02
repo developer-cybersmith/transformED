@@ -53,7 +53,7 @@ class SessionSummary(BaseModel):
     avg_attention: float
     distraction_events: int
     total_blinks: int
-    avg_head_pose: dict[str, float]  # {pitch, yaw, roll}
+    avg_head_pose_score: float
     page_views: int
     duration_seconds: float
     events_count: int
@@ -98,6 +98,14 @@ async def get_session_summary(
 ) -> SessionSummary:
     """Return aggregated analytics for a completed or in-progress session.
 
-    TODO (Sprint 2): Aggregate from analytics_events table.
+    Aggregates from session_events and attention_events tables.
+    Attention metrics default to 0.0 if the user has not consented (RLS enforces consent).
     """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    from app.core.db import get_supabase
+    from app.modules.analytics.service import get_session_summary as _get_session_summary
+
+    return await _get_session_summary(
+        session_id=session_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
