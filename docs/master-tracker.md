@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-02 (Dev 2: quiz/teachback popup integration + feedback display confirmed done from code; real WebSocket client (S1-07) implemented, unblocking CHECKING IN state at the transport layer; frontend security/bug audit (S1-13) fixed a real auth-guard gap in middleware.ts. Dev 3 quiz/teachback confirmed live from code; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
+**Last updated:** 2026-07-02 (Dev 2: quiz/teachback popup integration + feedback display confirmed done from code; real WebSocket client (S1-07) implemented, unblocking CHECKING IN state at the transport layer; frontend security/bug audit (S1-13) fixed a real auth-guard gap in middleware.ts; S1-14 fixed all 5 pre-existing test failures (132/132 passing). All of the above merged to main and pushed (`a4ca1d3`). Dev 2 now pausing Sprint 1/2 work for a UI/UX brand redesign task. Dev 3 quiz/teachback confirmed live from code; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -86,6 +86,8 @@
 - [ ] Lesson load from real API — ⛔ BLOCKED: GET /api/content/lessons/{id} returns status only (no JSONB). Full package endpoint not built yet. Continue using mock.
 - [x] PDF upload UI + generation progress indicator — ✓ done
 - [x] Frontend security/bug audit (S1-13) — ✓ 2026-07-02, scoped to apps/web only. Fixed a real auth-guard gap in `middleware.ts` (`/library`, `/upload`, `/onboarding`, `/lesson/[id]` were all completely unauthenticated — allow-list only matched `/dashboard`/`/settings`; now a deny-list, fails safe for future routes) and a resource-leak in `UploadFlow.tsx` (generation socket singleton never disconnected on unmount/completion). See `docs/dev2-sprint-tracker.md` S1-13 for full findings including deferred items (Next.js 16/React 19 vs. locked Next 14 — governance decision, not fixed here).
+- [x] Fix 5 pre-existing stale test failures (S1-14) — ✓ 2026-07-02, all confirmed stale (implementation was already correct, tests never updated after commit 5c2b5c5). Suite now 132/132 passing. Merged to `main` alongside S1-07/S1-13 (`a4ca1d3`).
+- [ ] **Dev 2 paused Sprint 1/2 work 2026-07-02** — pivoting to a full frontend UI/UX redesign against new brand/color guidelines (incoming from user). Remaining Sprint 1 items below and all Sprint 2 items on hold until that's scoped.
 - [ ] Wire upload to POST /api/content/lessons — ⬜ ready to wire (URL + auth wired; Supabase stub on backend, will get 501 until Dev 1 implements storage)
 - [ ] Wire library/dashboard to GET /api/content/lessons — ⬜ ready to wire (URL + auth wired; will return empty/501 until Dev 1 implements Supabase query)
 - [ ] GET /api/sessions/latest for continue-learning card — ⛔ BLOCKED: endpoint doesn't exist, Dev 4 owns (session state in Redis). Escalate.
