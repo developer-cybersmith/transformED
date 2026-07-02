@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
-__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult", "TeachbackSubmission", "TeachbackResult"]
+__all__ = [
+    "QuizAnswer", "QuizSubmission", "QuizResult",
+    "TeachbackSubmission", "TeachbackResult",
+    "OnboardingAnswer", "OnboardingDiagnosticSubmission", "OnboardingResult",
+]
 
 
 class QuizAnswer(BaseModel):
@@ -55,3 +61,25 @@ class TeachbackResult(BaseModel):
     overall_score: float
     ces_contribution: float
     feedback: str  # praise only (score >= 90) or praise + "\n\n" + correction (score < 90)
+
+
+# ── Onboarding schemas ─────────────────────────────────────────────────────────
+# Frozen contract (Sprint 2, Story 3-18) — shape changes require 4-dev PR review.
+# No raw numeric dimension scores in OnboardingResult (CLAUDE.md Learner DNA rules).
+
+class OnboardingAnswer(BaseModel):
+    question_id: str
+    dimension: Literal["cognitive", "emotional", "self_direction"]
+    selected_index: int = Field(ge=0, le=3)
+    selected_text: str
+    response_time_ms: int | None = None
+
+
+class OnboardingDiagnosticSubmission(BaseModel):
+    responses: list[OnboardingAnswer] = Field(min_length=20, max_length=20)
+
+
+class OnboardingResult(BaseModel):
+    badge_labels: list[str]
+    profile_text: str
+    session_count: int
