@@ -61,6 +61,8 @@ export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockL
 
 export const getLessonPackageById = async (lessonId: string): Promise<ApiResponse<LessonPackage>> => {
     await randomDelay(800, 1500);
+    const known = mockLessons.find(l => l.id === lessonId);
+    if (!known) return createErrorResponse('Lesson not found');
     return createSuccessResponse(
         { ...mockLessonPackage, lesson_id: lessonId },
         'Lesson package retrieved successfully',

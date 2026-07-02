@@ -8,10 +8,18 @@ export interface PlayerStore {
   // ── State ──────────────────────────────────────────────────────────────────
   status: PlayerStatus;
   lesson: LessonPackage | null;
+  /** Ephemeral session ID — generated on loadLesson; replaced by WS session_id in Sprint 2. */
+  sessionId: string;
   currentSegmentIndex: number;
   /** String slide_id from NarrationTimestamp — NOT an array index. */
   currentSlideId: string | null;
   audioPositionMs: number;
+  /** Total duration of the current segment's audio; 0 until metadata loads. */
+  audioDurationMs: number;
+  /** Non-null while a seek is pending; AudioTimeline applies it then clears it. */
+  seekRequestMs: number | null;
+  /** Playback rate multiplier; default 1.0. */
+  playbackRate: number;
   tutorState: TutorState;
   /** segment_id values for segments where quiz has already fired this forward
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
@@ -21,10 +29,15 @@ export interface PlayerStore {
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
   loadLesson: (pkg: LessonPackage) => void;
+  /** Override the session ID once the WebSocket handshake provides a real one (Sprint 2). */
+  setSessionId: (id: string) => void;
   play: () => void;
   pause: () => void;
-  /** Seek audio to a position in ms; does NOT clear quizFiredForSegment. */
-  seek: (ms: number) => void;
+  /** Queue a seek; AudioTimeline applies it to the audio element and clears it. */
+  requestSeek: (ms: number) => void;
+  clearSeekRequest: () => void;
+  setAudioDuration: (ms: number) => void;
+  setPlaybackRate: (rate: number) => void;
   /** Called by AudioTimeline on every timeUpdate; no-op if slide hasn't changed. */
   setCurrentSlide: (slideId: string) => void;
   /** Move to the next segment; calls endLesson() if already on the last one. */
@@ -45,9 +58,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   // ── Initial state ──────────────────────────────────────────────────────────
   status: 'IDLE',
   lesson: null,
+  sessionId: '',
   currentSegmentIndex: 0,
   currentSlideId: null,
   audioPositionMs: 0,
+  audioDurationMs: 0,
+  seekRequestMs: null,
+  playbackRate: 1.0,
   tutorState: 'IDLE',
   quizFiredForSegment: new Set<string>(),
 
@@ -57,9 +74,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({
       status: 'IDLE',
       lesson: pkg,
+      sessionId: crypto.randomUUID(),
       currentSegmentIndex: 0,
       currentSlideId: firstTimestamp?.slide_id ?? null,
       audioPositionMs: 0,
+      audioDurationMs: 0,
+      seekRequestMs: null,
+      playbackRate: 1.0,
       tutorState: 'IDLE',
       quizFiredForSegment: new Set<string>(),
     });
@@ -78,8 +99,26 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
   },
 
-  seek: (ms) => {
-    set({ audioPositionMs: ms });
+  requestSeek: (ms) => {
+    // Update audioPositionMs immediately so the progress bar reflects the seek while paused.
+    // Quiz boundary check in processTimeUpdate fires naturally on the next timeupdate tick.
+    set({ seekRequestMs: ms, audioPositionMs: ms });
+  },
+
+  setSessionId: (id) => {
+    set({ sessionId: id });
+  },
+
+  clearSeekRequest: () => {
+    set({ seekRequestMs: null });
+  },
+
+  setAudioDuration: (ms) => {
+    set({ audioDurationMs: ms });
+  },
+
+  setPlaybackRate: (rate) => {
+    set({ playbackRate: rate });
   },
 
   setCurrentSlide: (slideId) => {
@@ -101,6 +140,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       currentSegmentIndex: nextIndex,
       currentSlideId: firstTimestamp?.slide_id ?? null,
       audioPositionMs: 0,
+      // Keep previous audioDurationMs until loadedmetadata fires on the new element —
+      // avoids a flash where the seek bar is disabled between segments.
+      seekRequestMs: null,
     });
   },
 
@@ -127,10 +169,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   exitTeachBack: () => {
-    if (get().status === 'TEACH_BACK') {
-      set({ status: 'PLAYING' });
+    if (get().status !== 'TEACH_BACK') return;
+    const { lesson, currentSegmentIndex } = get();
+    const isLastSegment = !lesson || currentSegmentIndex >= lesson.segments.length - 1;
+    set({ status: 'PLAYING' });
+    if (!isLastSegment) {
       get().advanceSegment();
     }
+    // Last segment: audio resumes from its current position; handleEnded fires endLesson when it finishes
   },
 
   endLesson: () => {

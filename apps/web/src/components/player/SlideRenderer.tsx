@@ -17,6 +17,9 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
   const [src, setSrc] = useState<string | null>(imageUrl ?? fallbackUrl);
   const [failed, setFailed] = useState(false);
 
+  // No URLs at all — render nothing rather than a blank space-eating placeholder
+  if (!imageUrl && !fallbackUrl) return null;
+
   if (failed || !src) {
     return (
       <div
@@ -57,7 +60,7 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
   return (
     <div
       className={[
-        'absolute inset-0 overflow-y-auto p-6 transition-opacity duration-150',
+        'absolute inset-0 overflow-y-auto overscroll-y-contain p-6 transition-opacity duration-150',
         isActive ? 'opacity-100' : 'opacity-0 pointer-events-none',
       ].join(' ')}
       aria-hidden={isActive ? undefined : true}

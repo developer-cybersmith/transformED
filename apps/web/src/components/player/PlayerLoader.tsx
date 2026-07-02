@@ -53,6 +53,7 @@ export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
   const { lesson, isLoading, error } = useLesson(lessonId);
 
   if (error) return <LessonErrorState />;
-  if (isLoading || !lesson) return <PlayerSkeleton />;
+  if (isLoading) return <PlayerSkeleton />;
+  if (!lesson) return <LessonErrorState />;
   return <Player lesson={lesson} />;
 }
