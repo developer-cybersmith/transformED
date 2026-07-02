@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 baseline_commit: 9d2e480
 ---
 
@@ -259,16 +259,26 @@ No new migrations required. No changes to `packages/shared/`. No changes to `sup
 ## Dev Agent Record
 
 ### Debug Log
-_To be filled during implementation_
+- Fixed `test_no_llm_calls_in_analytics_ingest_flow` — patched wrong attribute (`call_llm` doesn't exist); correct targets are `OpenAILLMProvider.complete` and `OpenAILLMProvider.complete_structured`
+- Pre-existing Dev 4 failures (`test_tutor_*.py`, `test_auth.py`) are unrelated to this story; Dev 3 suite runs clean with `--ignore=tests/test_tutor_*.py`
 
 ### Completion Notes
-_To be filled on completion_
+- 501 stub replaced; `POST /api/analytics/events` returns 202 with `{"ingested": N}`
+- Single bulk insert to `session_events`; ownership check uses SET comparison to prevent enumeration oracle
+- All 17 ACs + AC 3a satisfied; 37 unit tests (26 original + 11 post-review); 194/194 Dev 3 tests pass
+- 5-agent adversarial code review: 6 BLOCKERs + 6 IMPROVEMENTs applied; 3 deferred with rationale
+- Story-first gate satisfied: story commit `5cfe2a1` is chronologically first on branch
 
 ### File List
-_To be filled on completion_
+- `apps/api/app/modules/analytics/service.py` — CREATED: `ingest_events()`, `KNOWN_EVENT_TYPES`
+- `apps/api/app/modules/analytics/router.py` — UPDATED: 501 stub replaced; `ge=0` on `client_timestamp_ms`
+- `apps/api/tests/test_analytics_events_endpoint.py` — CREATED: 37 unit tests (all 17 ACs + AC 3a)
+- `apps/api/tests/test_assessment_stub_contracts.py` — UPDATED: AC 16 fix + AC 17 contract test
+- `docs/dev3-assessment-tracker.md` — UPDATED: Sprint 2 Tasks 3 & 4 done; dashboard updated
 
 ### Change Log
 - 2026-07-02: Story created (story-first BMAD gate)
+- 2026-07-03: Implementation complete; 5-agent code review done; all BLOCKERs fixed; PR opened on `dev3-sprint2-task3`
 
 ---
 
