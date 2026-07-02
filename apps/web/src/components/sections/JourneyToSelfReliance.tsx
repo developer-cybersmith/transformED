@@ -47,7 +47,7 @@ function PhaseTimelineNode({ step, i }: { step: typeof journeySteps[0], i: numbe
             <div className="w-full sm:w-[calc(50%-3rem)] pl-16 sm:pl-0 sm:text-right mb-4 sm:mb-0">
                 {isEven && (
                     <>
-                        <p className="text-primary font-mono text-sm mb-2 transition-colors">{step.stage}</p>
+                        <p className="text-[var(--accent-secondary)] font-mono text-sm mb-2 transition-colors">{step.stage}</p>
                         <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
                         <p className="text-slate-400 leading-relaxed text-[0.95rem]">{step.desc}</p>
                     </>
@@ -66,7 +66,7 @@ function PhaseTimelineNode({ step, i }: { step: typeof journeySteps[0], i: numbe
             <div className="w-full sm:w-[calc(50%-3rem)] pl-16 sm:pl-0">
                 {!isEven && (
                     <>
-                        <p className="text-primary font-mono text-sm mb-2 transition-colors">{step.stage}</p>
+                        <p className="text-[var(--accent-secondary)] font-mono text-sm mb-2 transition-colors">{step.stage}</p>
                         <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
                         <p className="text-slate-400 leading-relaxed text-[0.95rem]">{step.desc}</p>
                     </>
