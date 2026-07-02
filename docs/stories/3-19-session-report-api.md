@@ -449,48 +449,158 @@ def _build_report_supabase(
 
 ---
 
-## Senior Developer Review
+## Senior Developer Review (AI)
 
 **Review date:** 2026-07-02
-**Outcome:** Changes Requested → All BLOCKERs Resolved → Approved
+**Branch:** `dev3-sprint2-task2`
+**Reviewer layers run:** 5 parallel adversarial agents (Story Quality, Blind Hunter, Test Coverage, AC Completeness, Process Integrity)
+**Outcome after fixes:** APPROVED — all BLOCKERs resolved, 30/30 tests GREEN, 0 regressions
 
-### Review Findings
+---
 
-**Resolved BLOCKERs:**
+### Agent 1 — Story Quality
 
-- [x] [Review][Patch] **SEC-006 BLOCKER — Nonexistent-session path leaked session ID in detail string** [`service.py:504`]
-  - Before: `detail=f"Session {session_id!r} not found."` — leaked the session ID in the error body
-  - After: `detail="Session not found."` — no ID, identical to wrong-user path
-  - Fix committed: `690ed40`
+**Verdict: PASS — no BLOCKERs**
 
-- [x] [Review][Patch] **SEC-006 BLOCKER — Both 404 paths returned different detail strings (enumeration oracle)** [`service.py:510`]
-  - Before: wrong-user returned `"Session not found or access denied."` (different wording → distinguishable)
-  - After: both paths return identical `"Session not found."` — attacker cannot distinguish nonexistent from unauthorised
-  - New test `test_get_report_both_404_paths_return_identical_detail` explicitly asserts string equality across both paths
+- Story commit `7ef18f3` (`docs(story-first): Story 3-19`) is chronologically first on the branch; implementation commit `e931860` follows — BMAD story-first gate satisfied.
+- All 17 ACs are fully defined, testable, and measurable before any code was written.
+- All task checkboxes are checked (`[x]`); story `Status = done`; Dev Agent Record (Debug Log, Completion Notes, File List, Change Log) is fully populated.
+- ACs specify concrete HTTP status codes, exact field names, exact detail strings, and arithmetic formulas — none are vague or ambiguous.
 
-- [x] [Review][Patch] **Weak SEC-006 test — assertion satisfied by both pre-fix messages** [`tests:test_session_report_endpoint.py`]
-  - Before: `assert "access" in detail.lower() or "not found" in detail.lower()` — both old messages satisfied this
-  - After: `assert exc_info.value.detail == "Session not found."` — exact string match catches any future divergence
+---
 
-- [x] [Review][Patch] **event_type filter never verified in mock** [`tests:test_session_report_endpoint.py:test_get_report_interventions_count_from_session_events`]
-  - Before: mock accepted any `.eq()` argument — a bug omitting the `event_type` filter would pass all tests
-  - After: `_build_report_supabase` now captures each table mock in `mock._captured_mocks`; test asserts `second_eq.assert_called_once_with("event_type", "intervention_triggered")`
+### Agent 2 — Blind Hunter (Security)
 
-- [x] [Review][Patch] **KeyError risk on `session_resp.data["user_id"]` direct subscript** [`service.py:506`]
-  - Before: `str(session_resp.data["user_id"])` — raises `KeyError` if DB returns row without that column
-  - After: `db_user_id = session_resp.data.get("user_id")` with explicit variable; missing key returns `None` and correctly fails the ownership check (→ 404)
+**Verdict: PASS — 4 BLOCKERs previously found and resolved; no new BLOCKERs**
+
+**Previously resolved BLOCKERs (all fixed before merge):**
+
+- [x] **B1 — SEC-006: nonexistent-session path leaked `session_id` in detail string** [`service.py:516`]
+  - Before: `detail=f"Session {session_id!r} not found."` — ID in error body
+  - After: `detail="Session not found."` — no ID, no information leakage
+
+- [x] **B2 — SEC-006: wrong-user and nonexistent paths returned different detail strings (enumeration oracle)** [`service.py:523`]
+  - Before: wrong-user returned `"Session not found or access denied."` — distinguishable from nonexistent-session
+  - After: both 404 paths return identical `"Session not found."` — attacker cannot distinguish ownership from existence
+  - Dedicated test `test_get_report_both_404_paths_return_identical_detail` asserts string equality across both paths
+
+- [x] **B3 — Weak SEC-006 test assertion satisfied by both pre-fix messages**
+  - Before: `assert "access" in detail.lower() or "not found" in detail.lower()` — both old strings passed
+  - After: `assert exc_info.value.detail == "Session not found."` — exact string match
+
+- [x] **B4 — KeyError risk: `session_resp.data["user_id"]` direct subscript** [`service.py:518`]
+  - Before: `str(session_resp.data["user_id"])` — `KeyError` if column absent
+  - After: `db_user_id = session_resp.data.get("user_id")` — absent key returns `None`, correctly fails ownership check → 404
+
+**Current security posture (clean):**
+- No session_id, user_id, or any PII exposed in any HTTP error detail string.
+- Ownership check compares DB `user_id` against JWT `sub` — IDOR fully blocked.
+- `session_id` path parameter handled by supabase-py's parameterised queries — no SQL injection vector.
+- `db_user_id = None` (edge case: column missing) → `str(None) != str(user_id)` → 404 — safe fail, no crash.
+- JWT required via `CurrentUser` dependency — unauthenticated requests blocked at framework level.
+- `logger.info` logs session_id/scores server-side only — not exposed in HTTP response.
+
+---
+
+### Agent 3 — Test Coverage
+
+**Verdict: PASS — no BLOCKERs**
+
+30 tests covering all 17 ACs. Edge cases explicitly tested:
+
+| Edge Case | Test |
+|-----------|------|
+| NULL `ces_final` → `ces_score = 0.0` | `test_get_report_ces_score_null_returns_zero` |
+| Empty `quiz_attempts` → `quiz_score = None` | `test_get_report_quiz_score_none_when_no_attempts` |
+| Empty `quiz_attempts` → `ces_breakdown["quiz"] = 0.0` | `test_get_report_ces_breakdown_quiz_zero_when_no_attempts` |
+| Empty `teachback_attempts` → `teachback_score = None` | `test_get_report_teachback_score_none_when_no_attempts` |
+| Empty `teachback_attempts` → `ces_breakdown["teachback"] = 0.0` | `test_get_report_ces_breakdown_teachback_zero_when_no_attempts` |
+| NULL `ended_at` → `duration_minutes = 0.0`, `completed_at = None` | `test_get_report_duration_minutes_zero_when_ended_at_null`, `test_get_report_completed_at_none_when_ended_at_null` |
+| Fractional duration (12.5 min) | `test_get_report_duration_minutes_fractional` |
+| Perfect quiz score (100%) | `test_get_report_quiz_score_perfect` |
+| Zero interventions → `int` not `None` | `test_get_report_interventions_count_zero_when_no_events` |
+| `event_type` filter verified via mock assertion | `test_get_report_interventions_count_from_session_events` |
+| Both 404 paths identical detail (SEC-006) | `test_get_report_both_404_paths_return_identical_detail` |
+| asyncio.to_thread called exactly 4 times | `test_get_report_asyncio_to_thread_called_4_times` |
+| No LLM instantiation regression guard | `test_get_report_no_llm_calls` |
+| HTTP layer smoke test | `test_http_get_report_returns_200` |
+| Unauthenticated rejected | `test_http_get_report_unauthenticated_returns_401` |
+
+**Deferred IMPROVEMENT (not a BLOCKER):**
+No test for `started_at = None` path (code: `if ended_at is not None and started_at is not None`). The `sessions` schema has `started_at NOT NULL`, making this branch unreachable in production. Deferred to Sprint 3 if session schema changes.
+
+---
+
+### Agent 4 — AC Completeness
+
+**Verdict: PASS — all 17 ACs have ≥ 1 explicit test assertion**
+
+| AC | Covering Test(s) | Assertion Type |
+|----|-----------------|----------------|
+| AC 1 — HTTP 200, all 9 fields | `test_get_report_returns_200_with_all_fields`, `test_http_get_report_returns_200` | All field names present, status 200 |
+| AC 2 — Wrong user → 404 (SEC-006) | `test_get_report_wrong_user_returns_404`, `test_get_report_both_404_paths_return_identical_detail` | `status==404`, `detail == "Session not found."` (exact) |
+| AC 3 — Nonexistent session → 404 | `test_get_report_nonexistent_session_returns_404` | `status==404`, `detail == "Session not found."` (exact) |
+| AC 4 — `ces_score` from `ces_final` | `test_get_report_ces_score_from_sessions_ces_final`, `test_get_report_ces_score_null_returns_zero` | `approx(83.75)`, `approx(0.0)` |
+| AC 5 — `quiz_score` from attempts | `test_get_report_quiz_score_calculated_from_attempts`, `_none_when_no_attempts`, `_perfect` | `approx(66.67)`, `None`, `approx(100.0)` |
+| AC 6 — `teachback_score` from attempts | `test_get_report_teachback_score_calculated_from_attempts`, `_none_when_no_attempts` | `approx(85.0)`, `None` |
+| AC 7 — `ces_breakdown` exactly 5 keys | `test_get_report_ces_breakdown_has_exactly_5_keys` | `set == {"quiz","teachback","behavioral","head_pose","blink"}` |
+| AC 8 — `ces_breakdown["quiz"]` formula | `test_get_report_ces_breakdown_quiz_matches_formula`, `_zero_when_no_attempts` | Exact arithmetic, `approx(0.0)` |
+| AC 9 — `ces_breakdown["teachback"]` formula | `test_get_report_ces_breakdown_teachback_matches_formula`, `_zero_when_no_attempts` | Exact arithmetic, `approx(0.0)` |
+| AC 10 — `behavioral`/`head_pose`/`blink` = 0.0 | `test_get_report_ces_breakdown_attention_always_zero` | 3 × `approx(0.0)` |
+| AC 11 — `interventions_count` from events | `test_get_report_interventions_count_from_session_events`, `_zero_when_no_events` | `==3`, `==0`, filter string verified |
+| AC 12 — `duration_minutes` from timestamps | `test_get_report_duration_minutes_computed_from_timestamps`, `_fractional`, `_zero_when_ended_at_null` | `approx(30.0)`, `approx(12.5)`, `approx(0.0)` |
+| AC 13 — `completed_at` as ISO or None | `test_get_report_completed_at_isoformat_when_ended_at_set`, `_none_when_ended_at_null` | Parseable ISO 8601, `None` |
+| AC 14 — No LLM calls | `test_get_report_no_llm_calls` | `OpenAILLMProvider.assert_not_called()` |
+| AC 15 — `asyncio.to_thread` used | `test_get_report_asyncio_to_thread_called_4_times` | `len(call_log) == 4` |
+| AC 16 — Unauthenticated → 401 | `test_http_get_report_unauthenticated_returns_401` | `status in (401, 403)` |
+| AC 17 — `user_id`/`lesson_id` from DB row | `test_get_report_user_id_and_lesson_id_from_db_row` | `result.user_id == db_user`, `result.lesson_id == db_lesson` |
+
+---
+
+### Agent 5 — Process Integrity
+
+**Verdict: PASS — no BLOCKERs**
+
+- `get_session_report` contains zero LLM imports and zero LLM calls — pure DB reads and arithmetic. Confirmed by code inspection and AC 14 regression guard test.
+- No hardcoded model strings (none applicable — no LLM).
+- No direct DB access in `router.py` — `get_supabase()` lazily imported inside the handler function body only.
+- `get_session_report` lazily imported inside router handler — no circular import at module load.
+- `SessionReport` lazily imported inside service function body — documented workaround for the `router.py` definition location (architectural debt; future refactor will move to `schemas.py`, deferred).
+- All 4 Supabase calls wrapped in `asyncio.to_thread` — verified by AC 15 counting test.
+- No applied migrations modified — pure read endpoint, no schema changes in this story.
+- `SessionReport` frozen contract shape unchanged — all 10 fields match `router.py:31–42` verbatim.
+- No `duration_seconds` field added (would imply a timer exists — prohibited by CLAUDE.md).
+- One-discipline rule satisfied: service queries its own tables (sessions, quiz_attempts, teachback_attempts, session_events) via injected supabase client — no cross-module table access.
+
+---
+
+### Process Integrity Notes
+
+- BMAD process: CLEAN — story commit `7ef18f3` is chronologically first; implementation commit `e931860` follows.
+- 30/30 tests pass after all 4 BLOCKERs resolved; 0 regressions in assessment suite (111 total passing).
+- Architectural debt noted and documented: `SessionReport` defined in `router.py` — lazy import workaround in place; future refactor story to move to `schemas.py` deferred.
+- `event_type = "intervention_triggered"` filter string: previously unverified in tests (BLOCKER B during review); now explicitly asserted via mock capture pattern.
+
+### Action Items
+
+**All BLOCKERs resolved before merge:**
+
+- [x] **B1** — SEC-006: session_id leaked in nonexistent-session detail string → fixed
+- [x] **B2** — SEC-006: different detail strings across 404 paths (enumeration oracle) → fixed
+- [x] **B3** — Weak SEC-006 test assertion → fixed to exact string equality
+- [x] **B4** — KeyError risk on direct subscript `["user_id"]` → fixed to `.get("user_id")`
 
 **Improvements applied:**
 
-- [x] [Review][Patch] **AC 15 test gap — no test verified asyncio.to_thread was called** 
-  - Added `test_get_report_asyncio_to_thread_called_4_times`: patches `asyncio.to_thread` with a counting shim and asserts exactly 4 calls (sessions, quiz_attempts, teachback_attempts, session_events)
+- [x] AC 15 test gap: no test verified `asyncio.to_thread` was called → `test_get_report_asyncio_to_thread_called_4_times` added
 
-**Deferred (pre-existing, not caused by this story):**
+**Deferred (documented with rationale):**
 
-- [x] [Review][Defer] **SessionReport defined in router.py instead of schemas.py** — architectural debt, deferred. A future refactor story should move it to `schemas.py` alongside `QuizResult` and `TeachbackResult`. The lazy import pattern in `service.py` is a documented workaround.
+- [ ] `SessionReport` defined in `router.py` instead of `schemas.py` — architectural debt; lazy import pattern is safe workaround; refactor deferred to avoid frozen-contract PR review overhead in Sprint 2.
+- [ ] No test for `started_at = None` path — `sessions.started_at` is `NOT NULL` in schema; branch is unreachable in production; deferred to Sprint 3.
 
 ### Final Test Count
 
-- 30 tests in `test_session_report_endpoint.py` (was 28, added 2 during BLOCKER resolution)
-- 111 assessment module tests total — all passing
-- 2026-07-02: Implementation complete — 28 tests passing, all 17 ACs satisfied, status → review
+- 30 tests in `test_session_report_endpoint.py` (28 original + 2 added during BLOCKER resolution)
+- 111 assessment module tests total — all passing (quiz=42, teachback=28, session_report=30, contracts=11)
+- All 17 ACs covered by ≥ 1 named test with an explicit, non-trivial assertion
