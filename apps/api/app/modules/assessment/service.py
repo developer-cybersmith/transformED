@@ -1,10 +1,11 @@
 """
-Assessment service layer — quiz grading and teach-back scoring business logic.
+Assessment service layer — quiz grading, teach-back scoring, and session report business logic.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -472,6 +473,158 @@ async def grade_teachback(
         overall_score=float(result.score),
         ces_contribution=ces_contribution,
         feedback=feedback,
+    )
+
+
+async def get_session_report(
+    *,
+    session_id: str,
+    user_id: str,
+    supabase: Any,
+) -> Any:
+    """Aggregate a completed session's assessment data into a SessionReport.
+
+    Reads from sessions, quiz_attempts, teachback_attempts, and session_events.
+    No LLM calls — pure DB aggregation and arithmetic.
+
+    Args:
+        session_id: UUID of the session to report on.
+        user_id: User UUID from decoded JWT (for ownership check).
+        supabase: Synchronous Supabase client from app.core.db.get_supabase().
+
+    Returns:
+        SessionReport with ces_score, ces_breakdown, quiz_score, teachback_score,
+        interventions_count, duration_minutes, completed_at.
+
+    Raises:
+        HTTPException 404: Session not found.
+        HTTPException 404: Session belongs to a different user (SEC-006 — no 403 to prevent enumeration).
+    """
+    from app.modules.assessment.router import SessionReport  # lazy — avoids circular import
+
+    # Step 1 — Validate session ownership and fetch all needed columns in one query
+    session_resp = await asyncio.to_thread(
+        lambda: supabase.table("sessions")
+        .select("session_id, user_id, lesson_id, ces_final, started_at, ended_at")
+        .eq("session_id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    if session_resp.data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+    db_user_id = session_resp.data.get("user_id")
+    if str(db_user_id) != str(user_id):
+        # SEC-006: Return 404 (not 403) — identical message prevents enumeration oracle.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    row = session_resp.data
+
+    # Step 2 — Quiz stats from quiz_attempts
+    quiz_resp = await asyncio.to_thread(
+        lambda: supabase.table("quiz_attempts")
+        .select("is_correct")
+        .eq("session_id", session_id)
+        .execute()
+    )
+    quiz_rows: list[dict[str, Any]] = quiz_resp.data or []
+    total_quiz = len(quiz_rows)
+    correct_count = sum(1 for r in quiz_rows if r.get("is_correct") is True)
+    quiz_score: float | None = round((correct_count / total_quiz) * 100, 2) if total_quiz > 0 else None
+    quiz_accuracy: float = (correct_count / total_quiz) if total_quiz > 0 else 0.0
+
+    # Step 3 — Teachback stats from teachback_attempts
+    tb_resp = await asyncio.to_thread(
+        lambda: supabase.table("teachback_attempts")
+        .select("score")
+        .eq("session_id", session_id)
+        .execute()
+    )
+    tb_rows: list[dict[str, Any]] = tb_resp.data or []
+    teachback_count = len(tb_rows)
+    if teachback_count > 0:
+        sum_scores = sum(r.get("score", 0) or 0 for r in tb_rows)
+        avg_teachback: float = sum_scores / teachback_count
+        teachback_score: float | None = round(avg_teachback, 2)
+    else:
+        avg_teachback = 0.0
+        teachback_score = None
+
+    # Step 4 — Interventions count from session_events
+    events_resp = await asyncio.to_thread(
+        lambda: supabase.table("session_events")
+        .select("id", count="exact")
+        .eq("session_id", session_id)
+        .eq("event_type", "intervention_triggered")
+        .execute()
+    )
+    interventions_count: int = events_resp.count or 0
+
+    # Step 5 — CES breakdown arithmetic
+    settings = get_settings()
+    quiz_contribution = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
+    teachback_contribution = round((avg_teachback / 100.0) * settings.ces_weight_teachback * 100, 4)
+    ces_breakdown: dict[str, float] = {
+        "quiz": quiz_contribution,
+        "teachback": teachback_contribution,
+        # Sprint 2: behavioral/head_pose/blink contributions deferred to Phase 3
+        "behavioral": 0.0,
+        "head_pose": 0.0,
+        "blink": 0.0,
+    }
+
+    # Step 6 — Duration and completion timestamp from session timestamps
+    raw_started = row.get("started_at")
+    raw_ended = row.get("ended_at")
+
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+
+    if isinstance(raw_started, str):
+        started_at = datetime.fromisoformat(raw_started.replace("Z", "+00:00"))
+    elif isinstance(raw_started, datetime):
+        started_at = raw_started
+
+    if isinstance(raw_ended, str):
+        ended_at = datetime.fromisoformat(raw_ended.replace("Z", "+00:00"))
+    elif isinstance(raw_ended, datetime):
+        ended_at = raw_ended
+
+    if ended_at is not None and started_at is not None:
+        duration_minutes: float = round((ended_at - started_at).total_seconds() / 60.0, 2)
+        completed_at: str | None = ended_at.isoformat()
+    else:
+        duration_minutes = 0.0
+        completed_at = None
+
+    # Step 7 — ces_score from sessions.ces_final (Dev 4 owns this write)
+    ces_final = row.get("ces_final")
+    ces_score: float = float(ces_final) if ces_final is not None else 0.0
+
+    logger.info(
+        "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
+        session_id,
+        quiz_score,
+        teachback_score,
+        interventions_count,
+    )
+
+    return SessionReport(
+        session_id=str(row["session_id"]),
+        user_id=str(row["user_id"]),
+        lesson_id=str(row["lesson_id"]),
+        ces_score=ces_score,
+        ces_breakdown=ces_breakdown,
+        interventions_count=interventions_count,
+        quiz_score=quiz_score,
+        teachback_score=teachback_score,
+        duration_minutes=duration_minutes,
+        completed_at=completed_at,
     )
 
 

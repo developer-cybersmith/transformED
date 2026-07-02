@@ -89,12 +89,17 @@ def test_teachback_endpoint_is_live_not_501() -> None:
 
 
 @pytest.mark.unit
-def test_report_endpoint_returns_501() -> None:
-    """GET /api/assessment/session/{session_id}/report must return HTTP 501."""
+def test_report_endpoint_is_live_not_501() -> None:
+    """GET /api/assessment/session/{session_id}/report must NOT return 501 (implemented in Sprint 2).
+
+    The endpoint is now live — it delegates to get_session_report() in service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_session_report_endpoint.py.
+    """
     response = client.get("/api/assessment/session/test-id/report")
-    assert response.status_code == 501, (
-        f"Expected 501, got {response.status_code}. "
-        "Session report endpoint must remain a stub until Sprint 2."
+    assert response.status_code != 501, (
+        f"Session report endpoint returned 501 — implementation is missing. "
+        "Sprint 2 requires this endpoint to be live."
     )
 
 
