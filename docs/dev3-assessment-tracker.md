@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-01 (Sprint 1 BMAD blockers resolved — B5 rubric_scores descriptive labels (Story 3-14), B6 quiz security tests (SEC-008/009/TQ-007), all stories 3-10..3-14 marked done with 5-agent reviews)
+**Last updated:** 2026-07-02 (Story 3-16 done — Sprint 1 audit technical debt fixes: FIND-001 encoding artifacts, FIND-002 log sanitization, FIND-003 docstring; 5-agent review passed; 72 unit tests green)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -483,6 +483,18 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `docs/stories/3-9-teachback-endpoint-live.md`: REFACTOR phase note added (AC 5) ✓
   - Tracker updated — this entry (AC 6) ✓
   - Branch: `sprint1/s1-15-bmad-process-docs`
+
+- [x] **Sprint 1 Audit Technical Debt Fixes (FIND-001 / FIND-002 / FIND-003)** — ✓ 2026-07-02
+  - Story 3-16: `docs/stories/3-16-sprint1-audit-fixes.md` — remediation story ✓
+  - FIND-001: UTF-8 encoding artifact `prompts.py` line 73 (TEACHBACK_SYSTEM_PROMPT) fixed: `â€"` → `—` ✓
+  - FIND-001b: Same artifact at `prompts.py` line 118 (score_teachback docstring) fixed ✓
+  - FIND-002 (SEC-009b): `grade_teachback()` insert error now uses `safe_err` sanitization — mirrors grade_quiz() pattern ✓
+  - FIND-003: Docstring `Raises:` section corrected — wrong-user returns 404 (SEC-006), not 403 ✓
+  - 3 new unit tests: `test_teachback_system_prompt_no_encoding_artifact`, `test_teachback_insert_error_log_sanitized`, `test_score_teachback_docstring_no_encoding_artifact` ✓
+  - 5-agent adversarial review passed: 2 patches applied (AC 2 docstring test + EOF newline) ✓
+  - 72 unit tests pass (28 quiz + 44 teachback); no regressions ✓
+  - Branch: `sprint1/s1-16-audit-fixes`
+  - PR open: `sprint1/s1-16-audit-fixes` → `main` (pending merge)
 
 ---
 
