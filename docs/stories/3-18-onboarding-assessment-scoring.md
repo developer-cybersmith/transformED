@@ -1,10 +1,10 @@
 ---
-baseline_commit: ""
+baseline_commit: e1177e85db264a13062f3f300da1aed7e2e265ba
 ---
 
 # Story 3.18: Onboarding Assessment Scoring — POST /api/assessment/onboarding/submit
 
-Status: ready-for-dev
+Status: done
 
 ---
 
@@ -40,14 +40,14 @@ so that a new student's initial Learner DNA profile is computed and stored befor
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: DB migration — add UNIQUE constraint to onboarding_responses (AC: #15)
-  - [ ] 1.1 Create `supabase/migrations/20260703000000_onboarding_unique_constraint.sql`
-  - [ ] 1.2 SQL: `ALTER TABLE public.onboarding_responses ADD CONSTRAINT onboarding_responses_user_question_unique UNIQUE (user_id, question_id);`
-  - [ ] 1.3 Do NOT apply the migration autonomously — create the file only (team PR review required before applying to Supabase)
-  - [ ] 1.4 Add a comment at the top explaining the constraint closes the Sprint 0 code review finding
+- [x] Task 1: DB migration — add UNIQUE constraint to onboarding_responses (AC: #15) — ✓ 2026-07-02
+  - [x] 1.1 Create `supabase/migrations/20260703000000_onboarding_unique_constraint.sql`
+  - [x] 1.2 SQL: `ALTER TABLE public.onboarding_responses ADD CONSTRAINT onboarding_responses_user_question_unique UNIQUE (user_id, question_id);`
+  - [x] 1.3 Do NOT apply the migration autonomously — create the file only (team PR review required before applying to Supabase)
+  - [x] 1.4 Add a comment at the top explaining the constraint closes the Sprint 0 code review finding
 
-- [ ] Task 2: Migrate schemas + create OnboardingResult (AC: #2, #3, #4, #12, #13)
-  - [ ] 2.1 In `apps/api/app/modules/assessment/schemas.py`, add:
+- [x] Task 2: Migrate schemas + create OnboardingResult (AC: #2, #3, #4, #12, #13) — ✓ 2026-07-02
+  - [x] 2.1 In `apps/api/app/modules/assessment/schemas.py`, add:
     ```python
     from typing import Literal
 
@@ -66,12 +66,12 @@ so that a new student's initial Learner DNA profile is computed and stored befor
         profile_text: str
         session_count: int
     ```
-  - [ ] 2.2 Remove `OnboardingAnswer` and `OnboardingDiagnosticSubmission` class definitions from `router.py`
-  - [ ] 2.3 In `router.py`, add `OnboardingAnswer, OnboardingDiagnosticSubmission, OnboardingResult` to the `schemas` import
+  - [x] 2.2 Remove `OnboardingAnswer` and `OnboardingDiagnosticSubmission` class definitions from `router.py`
+  - [x] 2.3 In `router.py`, add `OnboardingAnswer, OnboardingDiagnosticSubmission, OnboardingResult` to the `schemas` import
 
-- [ ] Task 3: Create onboarding_questions.py — question → sub-dimension mapping (AC: #6)
-  - [ ] 3.1 Create `apps/api/app/modules/assessment/onboarding_questions.py`
-  - [ ] 3.2 Define `QUESTION_SUBDIMENSION_MAP: dict[str, str]` mapping all 20 question IDs to their sub-dimension:
+- [x] Task 3: Create onboarding_questions.py — question → sub-dimension mapping (AC: #6) — ✓ 2026-07-02
+  - [x] 3.1 Create `apps/api/app/modules/assessment/onboarding_questions.py`
+  - [x] 3.2 Define `QUESTION_SUBDIMENSION_MAP: dict[str, str]` mapping all 20 question IDs to their sub-dimension:
     ```python
     # Cognitive (c1–c8) → pattern_recognition, logical_deduction, processing_speed
     "c1": "pattern_recognition",   # learning style preference
@@ -97,8 +97,8 @@ so that a new student's initial Learner DNA profile is computed and stored befor
     "s6": "curiosity_index",       # study consistency
     "s7": "study_independence",    # post-lesson behaviour
     ```
-  - [ ] 3.3 Define `ALL_NINE_DIMENSIONS: tuple[str, ...]` listing all 9 sub-dimension column names
-  - [ ] 3.4 Define `BADGE_THRESHOLDS: dict[str, str]` mapping sub-dimension → badge label (threshold: score >= 70)
+  - [x] 3.3 Define `ALL_NINE_DIMENSIONS: tuple[str, ...]` listing all 9 sub-dimension column names
+  - [x] 3.4 Define `BADGE_THRESHOLDS: dict[str, str]` mapping sub-dimension → badge label (threshold: score >= 70)
     ```python
     "pattern_recognition": "Pattern Thinker",
     "logical_deduction": "Logical Reasoner",
@@ -111,24 +111,24 @@ so that a new student's initial Learner DNA profile is computed and stored befor
     "study_independence": "Self-Directed Learner",
     ```
 
-- [ ] Task 4: Add onboarding profile prompt to prompts.py (AC: #8, #9, #10)
-  - [ ] 4.1 Add `ONBOARDING_PROFILE_SYSTEM_PROMPT` constant — instructs model to write a 2–3 sentence descriptive profile using learning tendency language, no IQ/EQ/SQ terms, no clinical language, no raw numbers
-  - [ ] 4.2 Add `DPDP_DISCLAIMER` constant: `"This assessment reflects your personal learning preferences, not your intelligence or capability. TransformED Learner DNA is not a clinical assessment and does not diagnose any learning or psychological condition. — Pursuant to DPDP Act 2023."`
-  - [ ] 4.3 Add `build_onboarding_profile_prompt(badge_labels: list[str]) -> str` function — builds user-turn message using badge labels as dimension descriptors (no numeric scores in prompt to model either)
-  - [ ] 4.4 Add `generate_onboarding_profile(*, badge_labels: list[str], provider: Any) -> str` async function — calls `provider.complete()` with `settings.llm_mini`, appends `DPDP_DISCLAIMER` to the result before returning
+- [x] Task 4: Add onboarding profile prompt to prompts.py (AC: #8, #9, #10) — ✓ 2026-07-02
+  - [x] 4.1 Add `ONBOARDING_PROFILE_SYSTEM_PROMPT` constant — instructs model to write a 2–3 sentence descriptive profile using learning tendency language, no IQ/EQ/SQ terms, no clinical language, no raw numbers
+  - [x] 4.2 Add `DPDP_DISCLAIMER` constant: `"This assessment reflects your personal learning preferences, not your intelligence or capability. TransformED Learner DNA is not a clinical assessment and does not diagnose any learning or psychological condition. — Pursuant to DPDP Act 2023."`
+  - [x] 4.3 Add `build_onboarding_profile_prompt(badge_labels: list[str]) -> str` function — builds user-turn message using badge labels as dimension descriptors (no numeric scores in prompt to model either)
+  - [x] 4.4 Add `generate_onboarding_profile(*, badge_labels: list[str], provider: Any) -> str` async function — calls `provider.complete()` with `settings.llm_mini`, appends `DPDP_DISCLAIMER` to the result before returning
 
-- [ ] Task 5: Implement process_onboarding() in service.py (AC: #5, #6, #7, #8, #9, #10, #14, #16, #17)
-  - [ ] 5.1 Import `OnboardingAnswer, OnboardingResult` from `schemas`, `QUESTION_SUBDIMENSION_MAP, ALL_NINE_DIMENSIONS, BADGE_THRESHOLDS` from `onboarding_questions`, `generate_onboarding_profile` from `prompts`
-  - [ ] 5.2 Add private `_compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, float]`:
+- [x] Task 5: Implement process_onboarding() in service.py (AC: #5, #6, #7, #8, #9, #10, #14, #16, #17) — ✓ 2026-07-02
+  - [x] 5.1 Import `OnboardingAnswer, OnboardingResult` from `schemas`, `QUESTION_SUBDIMENSION_MAP, ALL_NINE_DIMENSIONS, BADGE_THRESHOLDS` from `onboarding_questions`, `generate_onboarding_profile` from `prompts`
+  - [x] 5.2 Add private `_compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, float]`:
     - For each response: `normalized = (selected_index / 3) * 100`
     - Group normalized scores by sub-dimension using `QUESTION_SUBDIMENSION_MAP`
     - Per sub-dimension: `score = round(mean(normalized_values_for_dim), 2)`
     - Default `50.0` for any dimension with no mapped questions (safety net)
     - Return dict with all 9 dimensions
-  - [ ] 5.3 Add private `_compute_badge_labels(scores: dict[str, float]) -> list[str]`:
+  - [x] 5.3 Add private `_compute_badge_labels(scores: dict[str, float]) -> list[str]`:
     - Iterate `BADGE_THRESHOLDS`; add badge label if `scores[subdim] >= 70.0`
     - Return list (may be empty for first-time user with all mid-range scores)
-  - [ ] 5.4 Add async `process_onboarding(*, responses: list[OnboardingAnswer], user_id: str, supabase: Any) -> OnboardingResult`:
+  - [x] 5.4 Add async `process_onboarding(*, responses: list[OnboardingAnswer], user_id: str, supabase: Any) -> OnboardingResult`:
     - **Step 1** — Bulk insert 20 rows to `onboarding_responses`:
       ```python
       rows = [
@@ -164,11 +164,11 @@ so that a new student's initial Learner DNA profile is computed and stored befor
     - Error check: if upsert returns error → HTTP 500 with `safe_err` log
     - **Step 7** — Return `OnboardingResult(badge_labels=badge_labels, profile_text=profile_text, session_count=0)`
 
-- [ ] Task 6: Update router submit_onboarding_diagnostic() (AC: #1, #11, #12)
-  - [ ] 6.1 Change `status_code` from `HTTP_202_ACCEPTED` to `HTTP_201_CREATED`
-  - [ ] 6.2 Change return type annotation from `dict[str, str]` to `OnboardingResult`
-  - [ ] 6.3 Add `response_model=OnboardingResult`
-  - [ ] 6.4 Implement body (lazy imports pattern — same as `submit_quiz`):
+- [x] Task 6: Update router submit_onboarding_diagnostic() (AC: #1, #11, #12) — ✓ 2026-07-02
+  - [x] 6.1 Change `status_code` from `HTTP_202_ACCEPTED` to `HTTP_201_CREATED`
+  - [x] 6.2 Change return type annotation from `dict[str, str]` to `OnboardingResult`
+  - [x] 6.3 Add `response_model=OnboardingResult`
+  - [x] 6.4 Implement body (lazy imports pattern — same as `submit_quiz`):
     ```python
     from app.core.db import get_supabase
     from app.core.redis import get_redis
@@ -195,31 +195,31 @@ so that a new student's initial Learner DNA profile is computed and stored befor
     return result
     ```
 
-- [ ] Task 7: Write unit tests in test_onboarding_endpoint.py (AC: #1–#17)
-  - [ ] 7.1 `test_409_when_onboarding_already_done` — mock `redis.get` returning `"1"` → assert 409
-  - [ ] 7.2 `test_422_when_fewer_than_20_responses` — send 19 responses → assert 422
-  - [ ] 7.3 `test_422_when_more_than_20_responses` — send 21 responses → assert 422
-  - [ ] 7.4 `test_422_when_invalid_dimension` — send `dimension="invalid_dim"` → assert 422
-  - [ ] 7.5 `test_422_when_selected_index_negative` — `selected_index=-1` → assert 422
-  - [ ] 7.6 `test_422_when_selected_index_exceeds_3` — `selected_index=4` → assert 422
-  - [ ] 7.7 `test_all_9_dimensions_computed` — mock 20 responses (c1-c8, e1-e5, s1-s7 all present), assert `_compute_dimension_scores` returns dict with exactly 9 keys matching `ALL_NINE_DIMENSIONS`
-  - [ ] 7.8 `test_dimension_scores_within_bounds` — all 20 responses with `selected_index=3` → all dimensions = 100.0; all `selected_index=0` → all dimensions = 0.0
-  - [ ] 7.9 `test_dimension_score_normalization` — `selected_index=1` → normalized = `round((1/3)*100, 2)` = `33.33`; verify score matches expected
-  - [ ] 7.10 `test_redis_set_after_success` — mock full flow, assert `redis.set(onboarding_key, "1")` called after `process_onboarding`
-  - [ ] 7.11 `test_profile_text_has_dpdp_disclaimer` — mock LLM returning `"You are a..."`, assert returned `profile_text` ends with `"— Pursuant to DPDP Act 2023."`
-  - [ ] 7.12 `test_profile_text_no_raw_numeric_scores` — assert response `profile_text` does not match `r"\b\d+\.\d+\b"` (no floats like "67.5" in the text)
-  - [ ] 7.13 `test_response_has_no_raw_dimension_scores` — assert `OnboardingResult` response does not have numeric dimension fields (no `pattern_recognition`, `logical_deduction`, etc. in response)
-  - [ ] 7.14 `test_session_count_is_zero` — assert upsert call includes `session_count: 0`
-  - [ ] 7.15 `test_badge_labels_no_iq_eq_sq` — generate badge_labels, assert none contain "IQ", "EQ", "SQ" (case-insensitive)
-  - [ ] 7.16 `test_insert_error_non_duplicate_returns_500` — mock insert error without "unique" in string → assert 500
-  - [ ] 7.17 `test_insert_error_duplicate_returns_409` — mock insert error containing "duplicate" → assert 409
-  - [ ] 7.18 `test_schemas_in_schemas_not_router` — import `OnboardingAnswer` from `app.modules.assessment.schemas`, assert it can be instantiated
+- [x] Task 7: Write unit tests in test_onboarding_endpoint.py (AC: #1–#17) — ✓ 2026-07-02
+  - [x] 7.1 `test_409_when_onboarding_already_done` — mock `redis.get` returning `"1"` → assert 409
+  - [x] 7.2 `test_422_when_fewer_than_20_responses` — send 19 responses → assert 422
+  - [x] 7.3 `test_422_when_more_than_20_responses` — send 21 responses → assert 422
+  - [x] 7.4 `test_422_when_invalid_dimension` — send `dimension="invalid_dim"` → assert 422
+  - [x] 7.5 `test_422_when_selected_index_negative` — `selected_index=-1` → assert 422
+  - [x] 7.6 `test_422_when_selected_index_exceeds_3` — `selected_index=4` → assert 422
+  - [x] 7.7 `test_all_9_dimensions_computed` — mock 20 responses (c1-c8, e1-e5, s1-s7 all present), assert `_compute_dimension_scores` returns dict with exactly 9 keys matching `ALL_NINE_DIMENSIONS`
+  - [x] 7.8 `test_dimension_scores_within_bounds` — all 20 responses with `selected_index=3` → all dimensions = 100.0; all `selected_index=0` → all dimensions = 0.0
+  - [x] 7.9 `test_dimension_score_normalization` — `selected_index=1` → normalized = `round((1/3)*100, 2)` = `33.33`; verify score matches expected
+  - [x] 7.10 `test_redis_set_after_success` — mock full flow, assert `redis.set(onboarding_key, "1")` called after `process_onboarding`
+  - [x] 7.11 `test_profile_text_has_dpdp_disclaimer` — mock LLM returning `"You are a..."`, assert returned `profile_text` ends with `"— Pursuant to DPDP Act 2023."`
+  - [x] 7.12 `test_profile_text_no_raw_numeric_scores` — assert response `profile_text` does not match `r"\b\d+\.\d+\b"` (no floats like "67.5" in the text)
+  - [x] 7.13 `test_response_has_no_raw_dimension_scores` — assert `OnboardingResult` response does not have numeric dimension fields (no `pattern_recognition`, `logical_deduction`, etc. in response)
+  - [x] 7.14 `test_session_count_is_zero` — assert upsert call includes `session_count: 0`
+  - [x] 7.15 `test_badge_labels_no_iq_eq_sq` — generate badge_labels, assert none contain "IQ", "EQ", "SQ" (case-insensitive)
+  - [x] 7.16 `test_insert_error_non_duplicate_returns_500` — mock insert error without "unique" in string → assert 500
+  - [x] 7.17 `test_insert_error_duplicate_returns_409` — mock insert error containing "duplicate" → assert 409
+  - [x] 7.18 `test_schemas_in_schemas_not_router` — import `OnboardingAnswer` from `app.modules.assessment.schemas`, assert it can be instantiated
 
-- [ ] Task 8: Run tests and verify 0 failures (AC: all)
-  - [ ] 8.1 Run `cd apps/api && pytest -m unit -v` — assert exit 0, zero failures
-  - [ ] 8.2 Verify no regressions in existing 72 unit tests (quiz 28 + teachback 44)
-  - [ ] 8.3 Verify new test count ≥ 18 in `test_onboarding_endpoint.py`
-  - [ ] 8.4 Verify `pytest` shows all new tests with descriptive names in output
+- [x] Task 8: Run tests and verify 0 failures (AC: all) — ✓ 2026-07-02
+  - [x] 8.1 Run `cd apps/api && pytest -m unit -v` — assert exit 0, zero failures
+  - [x] 8.2 Verify no regressions in existing 72 unit tests (quiz 28 + teachback 44)
+  - [x] 8.3 Verify new test count ≥ 18 in `test_onboarding_endpoint.py`
+  - [x] 8.4 Verify `pytest` shows all new tests with descriptive names in output
 
 ---
 
@@ -470,11 +470,28 @@ claude-sonnet-4-6
 
 ### Debug Log References
 
+None — implementation completed cleanly.
+
 ### Completion Notes List
+
+- 41 unit tests written and passing (41/41 GREEN)
+- No regressions in existing 72 assessment tests (113 total assessment tests pass)
+- Scoring formula: normalized = (selected_index / 3) * 100; dim_score = round(mean, 2) — exact match to story spec
+- DPDP_DISCLAIMER appended in generate_onboarding_profile via `f"{text.strip()}\n\n{DPDP_DISCLAIMER}"` — endswith check always reliable
+- prompts.get_settings patched separately from service.get_settings in tests — both paths call get_settings independently
+- router calls get_supabase() before process_onboarding, so HTTP tests must patch both get_redis and get_supabase
+- session_count=0 confirmed in learner_dna upsert payload via capture_upsert side_effect test
 
 ### File List
 
 - `docs/stories/3-18-onboarding-assessment-scoring.md` — this story file
+- `supabase/migrations/20260703000000_onboarding_unique_constraint.sql` — new migration
+- `apps/api/app/modules/assessment/schemas.py` — added OnboardingAnswer, OnboardingDiagnosticSubmission, OnboardingResult
+- `apps/api/app/modules/assessment/onboarding_questions.py` — new file: QUESTION_SUBDIMENSION_MAP, ALL_NINE_DIMENSIONS, BADGE_THRESHOLDS
+- `apps/api/app/modules/assessment/prompts.py` — added DPDP_DISCLAIMER, ONBOARDING_PROFILE_SYSTEM_PROMPT, generate_onboarding_profile
+- `apps/api/app/modules/assessment/service.py` — added _compute_dimension_scores, _compute_badge_labels, process_onboarding
+- `apps/api/app/modules/assessment/router.py` — updated submit_onboarding_diagnostic (201, OnboardingResult, full logic)
+- `apps/api/tests/test_onboarding_endpoint.py` — 41 unit tests
 
 ---
 
@@ -483,3 +500,4 @@ claude-sonnet-4-6
 | Date | Change |
 |------|--------|
 | 2026-07-02 | Story 3-18 created — Sprint 2 Task 1: Onboarding Assessment Scoring |
+| 2026-07-02 | Story 3-18 implemented — all 8 tasks complete, 41 tests GREEN, status: done |
