@@ -45,12 +45,15 @@ describe('PlayerLoader', () => {
     expect(screen.queryByTestId('player-stub')).toBeNull();
   });
 
-  it('renders PlayerSkeleton when lesson is null and not errored', () => {
+  it('renders LessonErrorState when the fetch completes with a null lesson (no explicit error)', () => {
+    // A completed fetch (isLoading: false) with no lesson and no error is treated as
+    // an error state, not a skeleton — see PlayerLoader.tsx's own comment on this branch.
     mockUseLesson.mockReturnValue({ lesson: null, isLoading: false, error: null });
 
     render(<PlayerLoader lessonId="lesson_1" />);
 
-    expect(screen.getByTestId('player-skeleton')).toBeDefined();
+    expect(screen.getByTestId('lesson-error')).toBeDefined();
+    expect(screen.queryByTestId('player-skeleton')).toBeNull();
   });
 
   it('renders LessonErrorState when hook returns an error', () => {
