@@ -298,7 +298,8 @@ async def grade_teachback(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user or to a different lesson (IDOR).
+        HTTPException 404: Session belongs to a different user (SEC-006 enumeration prevention).
+        HTTPException 403: session.lesson_id does not match request lesson_id (IDOR guard).
         HTTPException 409: Duplicate teach-back attempt (unique constraint).
         HTTPException 500: DB insert fails for a non-duplicate reason.
     """
@@ -431,10 +432,11 @@ async def grade_teachback(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Duplicate teach-back attempt detected.",
             )
+        safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')
         logger.error(
             "teachback_attempts insert failed: session=%s error=%s",
             session_id,
-            insert_error,
+            safe_err,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
