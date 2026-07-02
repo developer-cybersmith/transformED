@@ -39,8 +39,8 @@ export function LearningPulse({ pulse }: { pulse: PulseType }) {
 
                 {/* Metric 3 */}
                 <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center flex-shrink-0">
-                        <Brain className="w-5 h-5 text-indigo-500" />
+                    <div className="w-10 h-10 rounded-xl bg-[var(--accent-secondary)]/15 flex items-center justify-center flex-shrink-0">
+                        <Brain className="w-5 h-5 text-[var(--accent-primary)]" />
                     </div>
                     <div>
                         <div className="text-xs text-neutral-500 font-medium tracking-wide uppercase">Deep Work This Week</div>

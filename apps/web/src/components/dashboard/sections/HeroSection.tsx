@@ -60,7 +60,7 @@ export function HeroSection() {
                         <BookOpen className="w-10 h-10 text-[var(--accent-primary)]" />
                     </div>
                     <div className="w-20 h-20 rounded-2xl bg-white/60 backdrop-blur shadow-lg -rotate-12 absolute right-8 bottom-12 border border-neutral-100 justify-center flex items-center">
-                        <span className="text-[var(--accent-secondary)] font-bold text-xl">94%</span>
+                        <span className="bg-[var(--accent-secondary)] text-[var(--accent-primary)] font-bold text-base px-2 py-0.5 rounded-lg">94%</span>
                     </div>
                 </div>
             </div>

@@ -43,7 +43,7 @@ export function SettingsTabs() {
                             onClick={() => setActiveTab(tab.id)}
                             className={clsx(
                                 "relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors outline-none",
-                                isActive ? "text-blue-600" : "text-neutral-500 hover:text-neutral-900"
+                                isActive ? "text-[var(--accent-primary)]" : "text-neutral-500 hover:text-neutral-900"
                             )}
                             style={{ WebkitTapHighlightColor: "transparent" }}
                             suppressHydrationWarning
@@ -53,7 +53,7 @@ export function SettingsTabs() {
                             {isActive && (
                                 <motion.div
                                     layoutId="active-tab-indicator"
-                                    className="absolute left-0 right-0 bottom-0 h-0.5 bg-blue-600 rounded-t-full shadow-[0_0_8px_rgba(37,99,235,0.4)]"
+                                    className="absolute left-0 right-0 bottom-0 h-0.5 bg-[var(--accent-secondary)] rounded-t-full shadow-[0_0_8px_rgba(198,164,92,0.4)]"
                                     transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                                 />
                             )}

@@ -79,14 +79,14 @@ export default function Hero() {
                                 {/* CTA */}
                                 <div className="flex flex-wrap items-center gap-4 mb-6">
                                     <motion.div
-                                        whileHover={{ y: -2, boxShadow: "0 20px 40px -10px rgba(47,128,237,0.4)" }}
+                                        whileHover={{ y: -2, boxShadow: "0 20px 40px -10px rgba(7,23,44,0.4)" }}
                                         whileTap={{ y: 1 }}
                                         transition={{ type: "spring", stiffness: 400, damping: 25 }}
                                         className="rounded-xl"
                                     >
                                         <Link
                                             href="/signup"
-                                            className="group inline-flex items-center gap-2.5 px-7 py-3.5 text-[0.95rem] font-semibold text-white bg-primary rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_16px_rgba(47,128,237,0.25)] transition-colors duration-150"
+                                            className="group inline-flex items-center gap-2.5 px-7 py-3.5 text-[0.95rem] font-semibold text-white bg-primary rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_16px_rgba(7,23,44,0.25)] transition-colors duration-150"
                                         >
                                             Try it free
                                             <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
@@ -132,12 +132,12 @@ export default function Hero() {
                                         repeat: Infinity,
                                         ease: "linear"
                                     }}
-                                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[110%] h-[110%] bg-gradient-to-tr from-primary/15 to-sky-300/15 blur-3xl rounded-full z-0 pointer-events-none"
+                                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[110%] h-[110%] bg-gradient-to-tr from-primary/15 to-[var(--accent-secondary)]/15 blur-3xl rounded-full z-0 pointer-events-none"
                                 />
 
                                 {/* Main lesson card */}
                                 <motion.div
-                                    className="bg-white/90 backdrop-blur-xl rounded-2xl border border-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08),_0_0_40px_-10px_rgba(47,128,237,0.12)] overflow-hidden relative z-10"
+                                    className="bg-white/90 backdrop-blur-xl rounded-2xl border border-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08),_0_0_40px_-10px_rgba(7,23,44,0.12)] overflow-hidden relative z-10"
                                 >
                                     {/* Window chrome */}
                                     <div className="flex items-center justify-between px-5 py-3 border-b border-[#f1f5f9] bg-[#fafbfc]/50">
@@ -191,7 +191,7 @@ export default function Hero() {
                                         </div>
 
                                         {/* Teach-back prompt */}
-                                        <div className="rounded-xl p-4 lg:p-5 border border-primary/20 bg-gradient-to-b from-primary/[0.02] to-transparent shadow-[inset_0_2px_10px_rgba(47,128,237,0.02)]">
+                                        <div className="rounded-xl p-4 lg:p-5 border border-primary/20 bg-gradient-to-b from-primary/[0.02] to-transparent shadow-[inset_0_2px_10px_rgba(7,23,44,0.02)]">
                                             <p className="text-[11px] font-bold text-primary mb-2 flex items-center gap-1.5 uppercase tracking-widest">
                                                 <span className="relative flex h-2 w-2">
                                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-40"></span>

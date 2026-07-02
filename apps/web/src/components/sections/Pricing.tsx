@@ -86,10 +86,10 @@ export default function Pricing() {
                     y: y / window.innerHeight,
                 },
                 colors: [
-                    "#2F80ED", // primary
-                    "#3FA9F5", // accent
-                    "#1a6dd4", // dark
-                    "#EAF5FF", // soft wrapper
+                    "#07172C", // primary (navy)
+                    "#C6A45C", // accent (gold)
+                    "#040D19", // dark (navy-dark)
+                    "#F3F5F8", // soft wrapper (light navy-tint)
                 ],
                 ticks: 200,
                 gravity: 1.2,
