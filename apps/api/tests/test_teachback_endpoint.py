@@ -1240,3 +1240,90 @@ def test_score_to_label_boundaries() -> None:
     assert _score_to_label(40.0) == "Emerging"
     assert _score_to_label(39.9) == "Beginning"
     assert _score_to_label(0.0) == "Beginning"
+
+
+# ── Story 3-16: Sprint 1 audit fixes (FIND-001 / FIND-002) ───────────────────
+
+
+@pytest.mark.unit
+def test_teachback_system_prompt_no_encoding_artifact() -> None:
+    """FIND-001/AC 6: TEACHBACK_SYSTEM_PROMPT must not contain the garbled em-dash sequence.
+
+    The UTF-8 em-dash (U+2014, bytes 0xE2 0x80 0x94) was mis-saved as Windows-1252,
+    producing the 3-char sequence 'â€"'. This test asserts the artifact is absent and
+    the literal em-dash is present in the injection-resistance instruction.
+    """
+    from app.modules.assessment.prompts import TEACHBACK_SYSTEM_PROMPT
+
+    assert "â€“" not in TEACHBACK_SYSTEM_PROMPT, (
+        "Garbled em-dash artifact 'â€“' (Windows-1252 misread of UTF-8 0xE2 0x80 0x94) "
+        "found in TEACHBACK_SYSTEM_PROMPT. Fix: replace with literal — and save as UTF-8."
+    )
+    assert "—" in TEACHBACK_SYSTEM_PROMPT, (
+        "Literal em-dash — not found in TEACHBACK_SYSTEM_PROMPT after fix."
+    )
+
+
+@pytest.mark.unit
+async def test_teachback_insert_error_log_sanitized(mock_to_thread, mock_score_teachback) -> None:
+    """FIND-002/AC 5: Insert error with embedded newline → logger.error receives sanitized string.
+
+    SEC-009b: grade_teachback() must apply the same log sanitization that grade_quiz()
+    already applies (Story 3-10 SEC-009). Raw insert_error objects may contain newlines
+    from stack traces or injected SQL that would split log lines and enable log injection.
+    """
+    from fastapi import HTTPException
+    from unittest.mock import patch as _patch
+
+    malicious_error = "connection failed\nSELECT * FROM secrets\rANOTHER LINE"
+
+    error_obj = MagicMock()
+    error_obj.__str__ = MagicMock(return_value=malicious_error)
+
+    supabase = _build_supabase_tb(
+        session_data=_SESSION_ROW,
+        lesson_data={"content": _LESSON_CONTENT},
+        insert_error=error_obj,
+    )
+
+    with _patch("app.modules.assessment.service.logger") as mock_log:
+        with pytest.raises(HTTPException) as exc_info:
+            await grade_teachback(
+                session_id="sess-001",
+                lesson_id="lesson-001",
+                segment_id="seg-001",
+                response_text="Explanation.",
+                user_id="user-001",
+                supabase=supabase,
+            )
+
+    assert exc_info.value.status_code == 500
+    assert mock_log.error.called, "logger.error must be called for non-duplicate insert errors"
+    logged_call = mock_log.error.call_args
+    logged_args = logged_call.args if logged_call.args else ()
+    logged_str = " ".join(str(a) for a in logged_args)
+    assert "\n" not in logged_str, (
+        f"logger.error must not contain newlines (log injection risk); got: {logged_str!r}"
+    )
+    assert "\r" not in logged_str, (
+        f"logger.error must not contain carriage returns (log injection risk); got: {logged_str!r}"
+    )
+
+@pytest.mark.unit
+def test_score_teachback_docstring_no_encoding_artifact() -> None:
+    """FIND-001/AC 2: score_teachback() docstring must not contain the garbled em-dash sequence.
+
+    The second occurrence of the Windows-1252 misread artifact (U+00E2 + U+20AC + U+201D) was
+    in the score_teachback() function docstring at prompts.py line ~118. This test guards against
+    regression via the function's __doc__ attribute.
+    """
+    from app.modules.assessment.prompts import score_teachback
+
+    doc = score_teachback.__doc__ or ""
+    # Build artifact from code points to avoid source-encoding ambiguity:
+    # U+00E2 (a-circumflex) + U+20AC (euro sign) + U+201D (right curly quote)
+    artifact = chr(0xE2) + chr(0x20AC) + chr(0x201D)
+    assert artifact not in doc, (
+        "Garbled em-dash artifact (Windows-1252 misread of UTF-8 0xE2 0x80 0x94) "
+        "found in score_teachback() docstring. Fix: replace with literal em-dash."
+    )
