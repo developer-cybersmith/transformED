@@ -1,6 +1,6 @@
 ---
 status: in-progress
-baseline_commit: ""
+baseline_commit: "41fb90f"
 ---
 
 # Story 3-24 — Per-Learner CES Baseline Computation
