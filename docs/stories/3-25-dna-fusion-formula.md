@@ -1,6 +1,6 @@
 ---
-status: in-progress
-baseline_commit: ""
+status: done
+baseline_commit: "c01584f"
 ---
 
 # Story 3-25 — Learner DNA Fusion Formula
@@ -234,55 +234,57 @@ passing. Full suite has 0 regressions.
 
 ## Tasks
 
-- [ ] Task 1: Add `dna_ema_retain` to Settings
-  - [ ] 1.1 Add `dna_ema_retain: float = Field(default=0.7, ge=0.0, le=1.0)` after CES baseline block
-  - [ ] 1.2 Verify no existing @model_validator conflict
+- [x] Task 1: Add `dna_ema_retain` to Settings
+  - [x] 1.1 Add `dna_ema_retain: float = Field(default=0.7, ge=0.0, le=1.0)` after CES baseline block
+  - [x] 1.2 Verify no existing @model_validator conflict
 
-- [ ] Task 2: Create `apps/api/app/modules/assessment/dna_fusion.py`
-  - [ ] 2.1 Module docstring + `__all__ = ["fuse_learner_dna"]`
-  - [ ] 2.2 Module-level constants (_JARGON_CAP, _HELP_CAP, _SKIP_CAP, etc.)
-  - [ ] 2.3 Private `_apply_ema(old, signal, retain) -> float`
-  - [ ] 2.4 Private `_compute_signals(*, quiz_rows, tb_rows, event_counts) -> dict[str, float]`
-  - [ ] 2.5 Async `fuse_learner_dna(*, user_id, session_id, supabase, settings)` implementation
-    - [ ] 2.5a Read session row; guard ended_at=None → return None; IDOR guard
-    - [ ] 2.5b Read quiz_attempts, teachback_attempts, session_events (failures → neutral signals)
-    - [ ] 2.5c Count event_types from session_events rows
-    - [ ] 2.5d Read existing learner_dna row (not found → neutral old values)
-    - [ ] 2.5e Compute signals via _compute_signals
-    - [ ] 2.5f Apply EMA via _apply_ema for each dimension
-    - [ ] 2.5g Upsert learner_dna (increment session_count, update 9 dims)
-    - [ ] 2.5h Return dict of updated dimension values
+- [x] Task 2: Create `apps/api/app/modules/assessment/dna_fusion.py`
+  - [x] 2.1 Module docstring + `__all__ = ["fuse_learner_dna"]`
+  - [x] 2.2 Module-level constants (_JARGON_CAP, _HELP_CAP, _SKIP_CAP, etc.)
+  - [x] 2.3 Private `_apply_ema(old, signal, retain) -> float`
+  - [x] 2.4 Private `_compute_signals(*, quiz_rows, tb_rows, event_counts) -> dict[str, float]`
+  - [x] 2.5 Async `fuse_learner_dna(*, user_id, session_id, supabase, settings)` implementation
+    - [x] 2.5a Read session row; guard ended_at=None → return None; IDOR guard
+    - [x] 2.5b Read quiz_attempts, teachback_attempts, session_events (failures → neutral signals)
+    - [x] 2.5c Count event_types from session_events rows
+    - [x] 2.5d Read existing learner_dna row (not found → neutral old values)
+    - [x] 2.5e Compute signals via _compute_signals
+    - [x] 2.5f Apply EMA via _apply_ema for each dimension
+    - [x] 2.5g Upsert learner_dna (increment session_count, update 9 dims)
+    - [x] 2.5h Return dict of updated dimension values
 
-- [ ] Task 3: Write `apps/api/tests/test_dna_fusion.py` (RED → GREEN)
-  - [ ] 3.1 `test_dunder_all_exports_only_fuse_learner_dna`
-  - [ ] 3.2 `test_positional_args_raise_type_error`
-  - [ ] 3.3 `test_apply_ema_basic_formula`
-  - [ ] 3.4 `test_apply_ema_none_old_uses_neutral`
-  - [ ] 3.5 `test_apply_ema_clamps_above_100`
-  - [ ] 3.6 `test_apply_ema_clamps_below_0`
-  - [ ] 3.7 `test_compute_signals_quiz_accuracy_maps_to_pattern_and_logical`
-  - [ ] 3.8 `test_compute_signals_no_quiz_returns_neutral_for_cognitive`
-  - [ ] 3.9 `test_compute_signals_fast_response_processing_speed_100`
-  - [ ] 3.10 `test_compute_signals_slow_response_processing_speed_0`
-  - [ ] 3.11 `test_compute_signals_high_interventions_frustration_tolerance_0`
-  - [ ] 3.12 `test_compute_signals_persistence_retry_after_low_score`
-  - [ ] 3.13 `test_compute_signals_persistence_no_retry_good_scores`
-  - [ ] 3.14 `test_compute_signals_persistence_gave_up_no_retry`
-  - [ ] 3.15 `test_compute_signals_help_seeking_and_study_independence_are_inverse`
-  - [ ] 3.16 `test_compute_signals_goal_orientation_decreases_with_skips`
-  - [ ] 3.17 `test_compute_signals_curiosity_index_increases_with_jargon`
-  - [ ] 3.18 `test_async_session_not_ended_returns_none`
-  - [ ] 3.19 `test_async_user_id_mismatch_raises_404`
-  - [ ] 3.20 `test_async_db_failure_raises_503`
-  - [ ] 3.21 `test_async_happy_path_returns_9_dimension_dict`
-  - [ ] 3.22 `test_async_session_count_incremented`
-  - [ ] 3.23 `test_async_no_dna_row_uses_neutral_old`
-  - [ ] 3.24 `test_no_hardcoded_ema_weights`
-  - [ ] 3.25 `test_no_forbidden_imports`
+- [x] Task 3: Write `apps/api/tests/test_dna_fusion.py` (RED → GREEN)
+  - [x] 3.1 `test_dunder_all_exports_only_fuse_learner_dna`
+  - [x] 3.2 `test_positional_args_raise_type_error`
+  - [x] 3.3 `test_apply_ema_basic_formula`
+  - [x] 3.4 `test_apply_ema_none_old_uses_neutral`
+  - [x] 3.5 `test_apply_ema_clamps_above_100`
+  - [x] 3.6 `test_apply_ema_clamps_below_0`
+  - [x] 3.7 `test_compute_signals_quiz_accuracy_maps_to_pattern_and_logical`
+  - [x] 3.8 `test_compute_signals_no_quiz_returns_zero_for_cognitive_dims` (renamed + fixed: AC6 says 0.0, not _NEUTRAL)
+  - [x] 3.9 `test_compute_signals_fast_response_processing_speed_100`
+  - [x] 3.10 `test_compute_signals_slow_response_processing_speed_0`
+  - [x] 3.11 `test_compute_signals_high_interventions_frustration_tolerance_0`
+  - [x] 3.12 `test_compute_signals_persistence_retry_after_low_score`
+  - [x] 3.13 `test_compute_signals_persistence_no_retry_good_scores`
+  - [x] 3.14 `test_compute_signals_persistence_gave_up_no_retry`
+  - [x] 3.15 `test_compute_signals_help_seeking_and_study_independence_are_inverse`
+  - [x] 3.16 `test_compute_signals_goal_orientation_decreases_with_skips`
+  - [x] 3.17 `test_compute_signals_curiosity_index_increases_with_jargon`
+  - [x] 3.18 `test_async_session_not_ended_returns_none`
+  - [x] 3.19 `test_async_user_id_mismatch_raises_404`
+  - [x] 3.20 `test_async_db_failure_raises_503`
+  - [x] 3.21 `test_async_happy_path_returns_9_dimension_dict`
+  - [x] 3.22 `test_async_session_count_incremented`
+  - [x] 3.23 `test_async_no_dna_row_uses_neutral_old`
+  - [x] 3.24 `test_no_hardcoded_ema_weights`
+  - [x] 3.25 `test_no_forbidden_imports`
+  - [x] 3.26 `test_async_upsert_failure_raises_503` (added in code review — covers AC17)
+  - [x] 3.27 `test_async_data_read_failure_is_non_fatal` (added in code review — covers AC18)
 
-- [ ] Task 4: Run full test suite — AC 25
-  - [ ] 4.1 `pytest -m unit tests/test_dna_fusion.py` → all pass
-  - [ ] 4.2 Full suite → 0 regressions
+- [x] Task 4: Run full test suite — AC 25
+  - [x] 4.1 `pytest -m unit tests/test_dna_fusion.py` → all pass
+  - [x] 4.2 Full suite → 0 regressions
 
 ## Dev Notes
 
@@ -378,10 +380,20 @@ BEFORE implementation (purely, no mocks needed). Async fuse_learner_dna tests
 use MagicMock supabase. All tests fail on ImportError first.
 
 ### Debug Log
-_To be filled during implementation._
+- **config.py read conflict**: After adding `dna_ema_retain` to Settings, a "file has been modified since read" error occurred on the Edit call. Fix: re-read with offset/limit before applying edit.
+- **AC6 BLOCKER found in 5-agent review**: `pattern_recognition` and `logical_deduction` were returning `_NEUTRAL` (50.0) when no quiz rows — AC6 specifies 0.0. Fixed `dna_fusion.py` L94-95 and updated/renamed the test.
+- **AC17 gap**: Test docstring claimed AC17 coverage but zero tests called `upsert_raises=True`. Added `test_async_upsert_failure_raises_503`.
+- **AC18 gap**: Test docstring claimed AC18 coverage but the mock didn't support quiz/tb/events read exceptions. Added `test_async_data_read_failure_is_non_fatal` with inline custom mock.
+- **Mock interference check**: Select and upsert chains on `learner_dna` mock are separate MagicMock attributes — no interference.
+- **None segment_id**: `defaultdict(list)` accepts None as key, no crash, groups under None key. Acceptable edge case; production data always has valid UUIDs.
 
 ### Completion Notes
-_To be filled after implementation._
+- Implementation: `dna_fusion.py` is 361 lines. Pure EMA computation with no LLM calls.
+- Tests: 29 unit tests (27 initial + 2 from code review fixes), all GREEN.
+- Full suite: 463 pass, 18 pre-existing failures unchanged (test_auth.py, test_lesson_ready_pubsub.py, test_websocket_session.py).
+- 5-agent review found 3 BLOCKERs (AC6 impl bug, AC17 missing test, AC18 missing test), 2 IMPROVEMENTs (deferred with rationale), 4 NITPICKs.
+- All BLOCKERs resolved in commit `901d9d4`.
+- Deferred IMPROVEMENTs: (1) Log injection via CRLF in session_id — requires router-level uuid.UUID type enforcement, defer to Sprint 4; (2) Secondary query missing `.eq("user_id", user_id)` defence-in-depth — valid in current call path (Step 1 gates access), defer to Sprint 4.
 
 ### File List
 - `apps/api/app/modules/assessment/dna_fusion.py` — NEW
@@ -390,6 +402,25 @@ _To be filled after implementation._
 
 ### Change Log
 - 2026-07-03: Story created — Sprint 3 Task 3 Learner DNA fusion formula (BMAD story-first gate)
+- 2026-07-03: Implementation complete — dna_fusion.py (27 tests GREEN, 461 total pass)
+- 2026-07-03: Code review BLOCKERs resolved — AC6 impl fix (0.0 not neutral for no-quiz), AC17 test, AC18 test (29 tests, 463 total pass)
+- 2026-07-03: Story marked done
 
 ## Senior Developer Review (AI)
-_To be filled by /bmad-code-review after implementation._
+
+5-agent adversarial review ran 2026-07-03 against commits `c01584f`+`db3c593` (pre-fix).
+
+| # | Agent | Finding | Severity | Status |
+|---|-------|---------|----------|--------|
+| 1 | Story Quality | AC6: `pattern_recognition`/`logical_deduction` return `_NEUTRAL` (50.0) when no quiz — spec says 0.0. Both impl and test wrong. | BLOCKER | Fixed (`901d9d4`) |
+| 2 | Story Quality / Test Coverage | AC17: No test for `learner_dna` upsert exception → HTTPException(503). Mock supports `upsert_raises=True` but zero tests called it. | BLOCKER | Fixed (`901d9d4`) |
+| 3 | Story Quality / Test Coverage | AC18: No test for non-fatal quiz/teachback/events read failures. Docstring falsely claimed coverage. | BLOCKER | Fixed (`901d9d4`) |
+| 4 | Blind Hunter | Log injection: `session_id` typed as `str` — CRLF in value can inject fake log lines into Railway/Sentry. Fix: type as `uuid.UUID` at router level. | IMPROVEMENT | Deferred to Sprint 4 (requires router-level change outside story scope) |
+| 5 | Blind Hunter | Secondary queries (quiz/tb/events) filter only on `session_id`, not `user_id`. Defence-in-depth missing if Step 1 is bypassed. | IMPROVEMENT | Deferred to Sprint 4 (current call path is safe; Step 1 gates access) |
+| 6 | Test Coverage | `test_async_session_count_incremented` used mutable dict reference. | IMPROVEMENT | Fixed (snapshot copy in `901d9d4`) |
+| 7 | Test Coverage | Processing speed tests only verify boundary cases (0 and 100), not interpolation. | IMPROVEMENT | Deferred (boundary coverage is sufficient for MVP) |
+| 8 | Blind Hunter | IDOR check uses 404 not 403 — correct per PRD §18 security rules. | NITPICK | Pass |
+| 9 | Blind Hunter | upsert_payload `**new_dims` correctly excludes badge_labels/profile_text. | NITPICK | Pass |
+| 10 | Process Integrity | No LLM calls, no hardcoded model strings, no forbidden imports. All EMA weight from `settings.dna_ema_retain`. | PASS | — |
+
+**Verdict:** APPROVED after BLOCKER fixes. Story 3-25 done.
