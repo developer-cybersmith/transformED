@@ -596,12 +596,12 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 
 - [x] **Per-learner baseline computation** — ✓ 2026-07-03
   - After session 1: baseline CES = session 1 CES final
-  - From session 2+: rolling average of last 5 sessions' CES
+  - From session 2+: rolling average of last 5 sessions' CES (window configurable via `CES_BASELINE_WINDOW`)
   - Cached in Redis `user:{user_id}:ces_baseline` (TTL-based)
   - `compute_and_store_ces_baseline(user_id, session_id, supabase, redis, settings)` returns `float | None`
   - 25 unit tests pass; 5-agent adversarial review approved; 2 BLOCKERs fixed
   - Story 3-24 at `docs/stories/3-24-ces-baseline-computation.md` — status: done
-  - Branch: `dev3-sprint3-task2` — pushed to origin, PR pending
+  - Branch: `dev3-sprint3-task2` — merged to main via PR #59
 
 - [x] **Learner DNA fusion formula live** — ✓ 2026-07-03
   - After each completed session, update `learner_dna` dimensions:
