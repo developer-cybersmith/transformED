@@ -81,4 +81,6 @@ def compute_ces(
             + bl  * settings.ces_weight_blink
         )
 
-    return round(raw * 100, 4)
+    # Guard: weights may sum to up to 1.001 (within ±0.001 model_validator tolerance),
+    # which can push raw slightly above 1.0 in the redistribution branch.
+    return min(100.0, round(raw * 100, 4))

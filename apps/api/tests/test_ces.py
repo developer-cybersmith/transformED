@@ -1,22 +1,25 @@
 """Unit tests for CES v1 formula (Story 3-23).
 
-Test count: 16
+Test count: 20
 Coverage:
+- AC 1:  ces.py importable (implicit — import failure cascades to all tests)
 - AC 2:  __all__ contains only "compute_ces"
 - AC 3:  keyword-only signature (positional args raise TypeError)
 - AC 4:  no hardcoded weight literals in ces.py
+- AC 5:  all 5 inputs clamped to [0,1], silent (quiz, teachback, behavioral, head_pose, blink)
 - AC 6:  full 5-signal weighted sum formula
-- AC 7:  teachback_score=None redistributes weights proportionally
-- AC 8:  quiz_accuracy=None treated as 0.0, weight retained
+- AC 7:  teachback_score=None redistributes weights proportionally (per-weight verified)
+- AC 8:  quiz_accuracy=None treated as 0.0, weight retained; teachback=0.0 uses full formula
 - AC 9:  division-by-zero guard returns 0.0
 - AC 10: all-zeros → 0.0
 - AC 11: all-ones → 100.0 (full formula)
 - AC 12: all-ones → 100.0 (teachback None)
 - AC 13: mid-values (all 0.5) → 50.0
 - AC 14: partial values with teachback None → ≈73.33
-- AC 15: out-of-range inputs clamped, not rejected
+- AC 15: out-of-range inputs clamped, not rejected (all 5 signals covered)
 - AC 16: custom non-default weights produce correct result
 - AC 17: no forbidden imports in ces.py
+- Output clamp: CES never exceeds 100.0 even when weights sum to 1.001 (±tolerance)
 
 All tests are @pytest.mark.unit — no DB, no LLM, no network.
 """
@@ -199,22 +202,30 @@ def test_partial_values_teachback_none_correct_weighted_sum():
     assert result == pytest.approx(73.33, abs=0.1)
 
 
-# ── AC 7: redistribution weights sum to 1.0 ──────────────────────────────────
+# ── AC 7: redistribution weights are proportional (per-weight) ───────────────
 
 @pytest.mark.unit
-def test_redistribution_weights_sum_to_one():
-    """AC 7: With teachback=None and all remaining signals=1.0 → exactly 100.0."""
+def test_redistribution_weights_are_proportional():
+    """AC 7: Each redistributed weight equals original_weight / remaining.
+
+    Uses asymmetric signals (only quiz=1.0, all others=0.0) so any weight-swap
+    bug produces a distinctly wrong result — not just a wrong sum.
+    """
     compute_ces = _import_compute_ces()
-    # If redistributed weights sum to exactly 1.0, all-ones still gives 100.0
+    s = _settings()  # quiz=0.35, tb=0.25, beh=0.20, hp=0.12, blink=0.08
+    # remaining = 1.0 - 0.25 = 0.75
+    # Only quiz=1.0, so: CES = 1.0 × (0.35 / 0.75) × 100 ≈ 46.67
     result = compute_ces(
         quiz_accuracy=1.0,
         teachback_score=None,
-        behavioral=1.0,
-        head_pose=1.0,
-        blink=1.0,
-        settings=_settings(),
+        behavioral=0.0,
+        head_pose=0.0,
+        blink=0.0,
+        settings=s,
     )
-    assert result == pytest.approx(100.0, abs=0.001)
+    remaining = 1.0 - s.ces_weight_teachback
+    expected = (1.0 * (s.ces_weight_quiz / remaining)) * 100
+    assert result == pytest.approx(expected, abs=0.01)
 
 
 # ── AC 8: quiz_accuracy=None treated as 0.0, weight retained ─────────────────
@@ -382,3 +393,91 @@ def test_ces_py_has_no_forbidden_imports():
             if root in forbidden_modules:
                 found.append(node.module)
     assert not found, f"Forbidden imports found in ces.py: {found}"
+
+
+# ── AC 5 (extended): head_pose and blink clamped ─────────────────────────────
+
+@pytest.mark.unit
+def test_head_pose_and_blink_clamped_when_out_of_range():
+    """AC 5: head_pose > 1 and blink < 0 are clamped silently — no exception raised."""
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    result = compute_ces(
+        quiz_accuracy=0.5,
+        teachback_score=0.5,
+        behavioral=0.5,
+        head_pose=2.0,   # > 1.0 — clamped to 1.0
+        blink=-1.0,      # < 0.0 — clamped to 0.0
+        settings=s,
+    )
+    # Equivalent: quiz=0.5, tb=0.5, beh=0.5, hp=1.0, blink=0.0
+    expected = (0.5 * 0.35 + 0.5 * 0.25 + 0.5 * 0.20 + 1.0 * 0.12 + 0.0 * 0.08) * 100
+    assert result == pytest.approx(expected, abs=0.001)
+
+
+# ── AC 8 (extended): teachback=0.0 uses full formula, not redistribution ─────
+
+@pytest.mark.unit
+def test_teachback_zero_uses_full_formula_not_redistribution():
+    """AC 8: teachback_score=0.0 must route through the FULL formula.
+
+    A bug using 'if not teachback_score:' (Python falsy) would route 0.0
+    into the redistribution branch, inflating CES by dropping the teachback
+    weight. This test proves 0.0 and None produce different results.
+    """
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    # teachback=0.0 → full formula:
+    # CES = (0.5×0.35 + 0.0×0.25 + 0.5×0.20 + 0.5×0.12 + 0.5×0.08) × 100 = 37.5
+    result_zero = compute_ces(
+        quiz_accuracy=0.5,
+        teachback_score=0.0,
+        behavioral=0.5,
+        head_pose=0.5,
+        blink=0.5,
+        settings=s,
+    )
+    # teachback=None → redistribution (remaining=0.75):
+    # CES = 0.5 × (0.35+0.20+0.12+0.08)/0.75 × 100 = 0.5 × 1.0 × 100 = 50.0
+    result_none = compute_ces(
+        quiz_accuracy=0.5,
+        teachback_score=None,
+        behavioral=0.5,
+        head_pose=0.5,
+        blink=0.5,
+        settings=s,
+    )
+    assert result_zero == pytest.approx(37.5, abs=0.001), (
+        f"teachback=0.0 should give 37.5 (full formula), got {result_zero}"
+    )
+    assert result_none == pytest.approx(50.0, abs=0.001), (
+        f"teachback=None should give 50.0 (redistribution), got {result_none}"
+    )
+    assert result_zero != result_none, (
+        "teachback=0.0 and teachback=None must give different CES values"
+    )
+
+
+# ── Output clamp: CES never exceeds 100.0 ────────────────────────────────────
+
+@pytest.mark.unit
+def test_output_clamped_to_100_when_weights_sum_exceeds_one():
+    """CES never exceeds 100.0 even when weights sum to 1.001 (±tolerance allowed).
+
+    Settings @model_validator allows abs(sum - 1.0) <= 0.001. In the redistribution
+    branch, (sum - w_teachback) / remaining can be slightly > 1.0, pushing raw > 1.
+    compute_ces must clamp the output to 100.0.
+    """
+    compute_ces = _import_compute_ces()
+    # Sum = 0.3503 + 0.001 + 0.20 + 0.12 + 0.3296 = 1.0009 (within ±0.001 tolerance)
+    s = _settings(quiz=0.3503, tb=0.001, beh=0.20, hp=0.12, blink=0.3296)
+    result = compute_ces(
+        quiz_accuracy=1.0,
+        teachback_score=None,  # triggers redistribution; raw ≈ 1.0009
+        behavioral=1.0,
+        head_pose=1.0,
+        blink=1.0,
+        settings=s,
+    )
+    assert result <= 100.0, f"CES exceeded 100.0: {result}"
+    assert result == pytest.approx(100.0, abs=0.001)
