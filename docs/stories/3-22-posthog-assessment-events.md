@@ -1,6 +1,6 @@
 ---
-status: in-progress
-baseline_commit: ""
+status: done
+baseline_commit: "daddb26"
 ---
 
 # Story 3-22 — PostHog Events for Assessment Actions
@@ -66,44 +66,44 @@ As the **product team**, I want PostHog events fired after every key assessment 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Add dependency + config
-  - [ ] 1.1 Add `posthog>=3.0.0` to `[project.dependencies]` in `apps/api/pyproject.toml`
-  - [ ] 1.2 Add `posthog_api_key: str = ""` to `Settings` in `apps/api/app/config.py`
-  - [ ] 1.3 Add `posthog_host: str = "https://us.i.posthog.com"` to `Settings`
+- [x] Task 1: Add dependency + config — ✓ 2026-07-03
+  - [x] 1.1 Add `posthog>=3.0.0` to `[project.dependencies]` in `apps/api/pyproject.toml` (already present)
+  - [x] 1.2 Add `posthog_api_key: str = ""` to `Settings` in `apps/api/app/config.py`
+  - [x] 1.3 Add `posthog_host: str = "https://us.i.posthog.com"` to `Settings`
 
-- [ ] Task 2: Create `apps/api/app/core/posthog_client.py`
-  - [ ] 2.1 Import `posthog` and `settings` at module level; set `posthog.api_key` and `posthog.host` from settings
-  - [ ] 2.2 Implement `capture_event(*, distinct_id, event, properties)` — early return if api_key falsy; catch all exceptions, log WARNING, never re-raise
+- [x] Task 2: Create `apps/api/app/core/posthog_client.py` — ✓ 2026-07-03
+  - [x] 2.1 Import `posthog`; set `posthog.api_key` and `posthog.host` from settings at module level (try/except for test env)
+  - [x] 2.2 Implement `capture_event(*, distinct_id, event, properties)` — early return if api_key falsy; catch all exceptions, log WARNING, never re-raise
 
-- [ ] Task 3: Write RED tests for all 5 PostHog events
-  - [ ] 3.1 `test_posthog_quiz_event_fired` — fails before AC 6 implemented
-  - [ ] 3.2 `test_posthog_teachback_event_fired` — fails before AC 7 implemented
-  - [ ] 3.3 `test_posthog_onboarding_event_fired` — fails before AC 8 implemented
-  - [ ] 3.4 `test_posthog_session_report_event_fired` — fails before AC 9 implemented
-  - [ ] 3.5 `test_posthog_dna_viewed_event_fired` — fails before AC 10 implemented
-  - [ ] 3.6 `test_posthog_no_call_when_api_key_empty` — fails before AC 18 implemented
-  - [ ] 3.7 Verify RED: run `pytest -m unit` — new tests fail, existing tests still pass
+- [x] Task 3: Write RED tests for all 5 PostHog events — ✓ 2026-07-03
+  - [x] 3.1 `test_posthog_quiz_event_fired` — failed before AC 6 implemented ✓
+  - [x] 3.2 `test_posthog_teachback_event_fired` — failed before AC 7 implemented ✓
+  - [x] 3.3 `test_posthog_onboarding_event_fired` — failed before AC 8 implemented ✓
+  - [x] 3.4 `test_posthog_session_report_event_fired` — failed before AC 9 implemented ✓
+  - [x] 3.5 `test_posthog_dna_viewed_event_fired` — failed before AC 10 implemented ✓
+  - [x] 3.6 `test_posthog_no_call_when_api_key_empty` — passed trivially in RED (no PostHog called at all)
+  - [x] 3.7 RED verified: 5 failed, 1 passed trivially
 
-- [ ] Task 4: Add `capture_event` call to `grade_quiz()` (service.py) — AC 6
-  - [ ] 4.1 After successful bulk insert, call `capture_event` with quiz event
-  - [ ] 4.2 Run `test_posthog_quiz_event_fired` — must turn GREEN
+- [x] Task 4: Add `capture_event` call to `grade_quiz()` (service.py) — AC 6 — ✓ 2026-07-03
+  - [x] 4.1 After successful bulk insert (Step 9), call `capture_event` with quiz event
+  - [x] 4.2 `test_posthog_quiz_event_fired` GREEN ✓
 
-- [ ] Task 5: Add `capture_event` call to `grade_teachback()` (service.py) — AC 7
-  - [ ] 5.1 After successful insert, call `capture_event` with teachback event
-  - [ ] 5.2 Run `test_posthog_teachback_event_fired` — must turn GREEN
+- [x] Task 5: Add `capture_event` call to `grade_teachback()` (service.py) — AC 7 — ✓ 2026-07-03
+  - [x] 5.1 After successful insert, call `capture_event` with teachback event
+  - [x] 5.2 `test_posthog_teachback_event_fired` GREEN ✓
 
-- [ ] Task 6: Add `capture_event` call to `process_onboarding()` (service.py) — AC 8
-  - [ ] 6.1 After upsert, call `capture_event` with onboarding event
-  - [ ] 6.2 Run `test_posthog_onboarding_event_fired` — must turn GREEN
+- [x] Task 6: Add `capture_event` call to `process_onboarding()` (service.py) — AC 8 — ✓ 2026-07-03
+  - [x] 6.1 After upsert, call `capture_event` with onboarding event
+  - [x] 6.2 `test_posthog_onboarding_event_fired` GREEN ✓
 
-- [ ] Task 7: Add `capture_event` to `get_session_report` and `get_learner_dna` route handlers (router.py) — AC 9, AC 10
-  - [ ] 7.1 Session report route: fire event after service call returns
-  - [ ] 7.2 DNA route: fire event after service call returns, using `session_count` from response
-  - [ ] 7.3 Both new tests must turn GREEN
+- [x] Task 7: Add `capture_event` to `get_session_report` and `get_learner_dna` route handlers (router.py) — AC 9, AC 10 — ✓ 2026-07-03
+  - [x] 7.1 Session report route: fire event after service call returns
+  - [x] 7.2 DNA route: implement `get_learner_dna_data()` service function + fire event with session_count
+  - [x] 7.3 Both tests GREEN ✓
 
-- [ ] Task 8: Verify no-op test and full suite GREEN
-  - [ ] 8.1 `test_posthog_no_call_when_api_key_empty` — run isolated
-  - [ ] 8.2 Run `pytest -m unit` — all pass, 0 failures
+- [x] Task 8: Verify no-op test and full suite GREEN — ✓ 2026-07-03
+  - [x] 8.1 `test_posthog_no_call_when_api_key_empty` passes (api_key="" → no capture call)
+  - [x] 8.2 150/150 Dev 3 unit tests pass; 0 regressions in Dev 3 modules
 
 ## Dev Notes
 
@@ -184,14 +184,28 @@ The session report route is in `apps/api/app/modules/assessment/router.py` — c
 
 ### Completion Notes
 
-<!-- filled by agent after implementation -->
+All 19 ACs satisfied. 6 unit tests, all passing. Key implementation details:
+
+- `posthog_client.py` uses try/except around the Settings initialization at module import time so the module loads cleanly in test environments (where required env vars are absent). `posthog.api_key` stays falsy → `capture_event()` is a no-op. Test fixture `_enable_posthog_key` sets `posthog.api_key = "phc_test_key"` via monkeypatch to activate instrumentation in tests.
+- `GET /api/assessment/user/dna` was previously a 501 stub — implemented as part of this story using `get_learner_dna_data()` service function. `test_assessment_stub_contracts.py::test_dna_endpoint_returns_501` renamed to `test_dna_endpoint_is_live_not_501`.
+- PostHog calls in service functions fire AFTER successful DB writes (insert/upsert) — never on error paths.
+- 0 regressions in Dev 3 modules (150 tests pass).
 
 ### File List
 
-<!-- filled by agent after implementation -->
+| File | Action | Notes |
+|------|--------|-------|
+| `apps/api/pyproject.toml` | No change needed | `posthog>=3.0.0` was already present |
+| `apps/api/app/config.py` | Updated | Added `posthog_api_key` + `posthog_host` settings |
+| `apps/api/app/core/posthog_client.py` | Created | PostHog wrapper with fire-and-forget `capture_event()` |
+| `apps/api/app/modules/assessment/service.py` | Updated | Added `capture_event` calls to `grade_quiz()`, `grade_teachback()`, `process_onboarding()`; added `get_learner_dna_data()` |
+| `apps/api/app/modules/assessment/router.py` | Updated | PostHog call in `get_session_report_endpoint()`; implemented `get_learner_dna()` (replaced 501 stub) |
+| `apps/api/tests/test_posthog_events.py` | Created | 6 unit tests (ACs 13–18) |
+| `apps/api/tests/test_assessment_stub_contracts.py` | Updated | Renamed `test_dna_endpoint_returns_501` → `test_dna_endpoint_is_live_not_501` |
 
 ### Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-07-03 | Story created — story-first commit before implementation |
+| 2026-07-03 | Implementation: posthog_client.py, config settings, service PostHog calls, router updates, 6 tests |

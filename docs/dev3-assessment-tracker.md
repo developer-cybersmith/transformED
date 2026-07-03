@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-03 (Sprint 2 Task 4 done — Story 3-21: Analytics Session Summary (GET /api/analytics/session/{id}/summary, 31 tests); avg_head_pose scaffold mismatch fixed; SEC-006 anti-enumeration; null-exclusion aggregations; .limit(10_000) DoS guard; _parse_ts ValueError guard; 5-agent review approved; 0 regressions)
+**Last updated:** 2026-07-03 (Sprint 2 Task 5 done — Story 3-22: PostHog events for all assessment actions; posthog_client.py wrapper; capture_event in grade_quiz, grade_teachback, process_onboarding; GET /user/dna implemented (was 501 stub); 6 PostHog tests; 150 Dev 3 unit tests pass)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -14,11 +14,11 @@
 |--------|--------|-------|------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 7 | 5 | 0 | 2 |
+| Sprint 2 | Weeks 4–5 | 7 | 6 | 0 | 1 |
 | Sprint 3 | Weeks 6–7 | 7 | 0 | 0 | 7 |
 | Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **40** | **24** | **0** | **16** |
+| **Total** | | **40** | **25** | **0** | **15** |
 
 Update this table each time a task is checked off below.
 
@@ -567,11 +567,16 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Branch: `dev3-sprint2-task4`; PR merged to main ✓
   - **AC:** Summary endpoint returns non-null values for a session with >5 events ✓
 
-- [ ] **PostHog events for all assessment actions**
-  - Install `posthog-python` in `pyproject.toml`
-  - Fire PostHog event after each: quiz submit, teachback submit, onboarding complete, session report viewed, learner DNA viewed
-  - PostHog event format: `{"event": "assessment_quiz_submitted", "distinct_id": user_id, "properties": {session_id, score, ...}}`
-  - **AC:** PostHog dashboard shows events for each action in a test session
+- [x] **PostHog events for all assessment actions** — ✓ 2026-07-03
+  - Story 3-22: `docs/stories/3-22-posthog-assessment-events.md` — 19 ACs, all satisfied ✓
+  - `posthog>=3.0.0` already in pyproject.toml; `posthog_api_key` + `posthog_host` added to config.py ✓
+  - `apps/api/app/core/posthog_client.py` created — fire-and-forget `capture_event()` wrapper; no-op when `POSTHOG_API_KEY` empty ✓
+  - `grade_quiz()` fires `assessment_quiz_submitted`; `grade_teachback()` fires `assessment_teachback_submitted`; `process_onboarding()` fires `assessment_onboarding_completed` ✓
+  - `GET /api/assessment/session/{id}/report` fires `assessment_session_report_viewed` ✓
+  - `GET /api/assessment/user/dna` implemented (was 501 stub) + fires `assessment_dna_viewed` ✓
+  - 6 unit tests in `test_posthog_events.py`; 150 Dev 3 unit tests pass; 0 regressions ✓
+  - Branch: `dev3-sprint2-task5`
+  - **AC:** PostHog dashboard shows events for each action in a test session ✓
 
 ---
 

@@ -113,12 +113,20 @@ async def get_session_report_endpoint(
 ) -> SessionReport:
     """Return the final CES breakdown and scores for a completed session."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.core.posthog_client import capture_event
     from app.modules.assessment.service import get_session_report
-    return await get_session_report(
+
+    result = await get_session_report(
         session_id=session_id,
         user_id=current_user["sub"],
         supabase=get_supabase(),
     )
+    capture_event(
+        distinct_id=current_user["sub"],
+        event="assessment_session_report_viewed",
+        properties={"session_id": session_id},
+    )
+    return result
 
 
 @router.get(
@@ -129,11 +137,19 @@ async def get_session_report_endpoint(
 async def get_learner_dna(
     current_user: CurrentUser,
 ) -> LearnerDNA:
-    """Return aggregated learning patterns for the authenticated user.
+    """Return the learner DNA profile for the authenticated user."""
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.core.posthog_client import capture_event
+    from app.modules.assessment.service import get_learner_dna_data
 
-    TODO (Sprint 2): Aggregate from session_reports.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    user_id: str = current_user["sub"]
+    body = await get_learner_dna_data(user_id=user_id, supabase=get_supabase())
+    capture_event(
+        distinct_id=user_id,
+        event="assessment_dna_viewed",
+        properties={"session_count": body.get("session_count", 0)},
+    )
+    return LearnerDNA(**body)
 
 
 @router.post(
