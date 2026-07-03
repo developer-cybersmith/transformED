@@ -1,6 +1,6 @@
 """Unit tests for CES per-learner baseline computation (Story 3-24).
 
-Test count: 19
+Test count: 25
 Coverage:
 - AC 1:  ces_baseline.py importable (implicit — import failure cascades to all tests)
 - AC 2:  __all__ contains only "compute_and_store_ces_baseline"
@@ -8,14 +8,16 @@ Coverage:
 - AC 4:  single session → baseline = that session's ces_final
 - AC 5:  fewer sessions than window → average of all available
 - AC 6:  more sessions than window → average of most recent window only
-- AC 7:  NULL ces_final rows excluded from average
+- AC 7:  NULL ces_final rows and NULL ended_at rows excluded from average
 - AC 8:  no completed sessions → returns None, no Redis write
-- AC 9:  baseline written to Redis key user:{user_id}:ces_baseline
+          (covers: empty rows, resp.data=None, all ended_at=None)
+- AC 9:  baseline written to Redis key user:{user_id}:ces_baseline as STRING
 - AC 10: Redis key has TTL = ces_baseline_ttl_seconds
 - AC 13: Redis write failure → logged, does NOT raise, baseline still returned
 - AC 14: DB failure → raises HTTPException(503)
 - AC 15: no hardcoded window literal (5) in ces_baseline.py (AST)
 - AC 16: no forbidden imports in ces_baseline.py (AST)
+- AC 17: Supabase query bounded by window*3 rows (fetch_limit checked)
 - AC 18: baseline rounded to 4 decimal places
 - AC 19: Redis.set NOT called when baseline is None
 
@@ -421,3 +423,95 @@ def test_no_forbidden_imports():
             if root in forbidden:
                 found.append(node.module)
     assert not found, f"Forbidden imports found in ces_baseline.py: {found}"
+
+
+# ── BLOCKER fix 1: Redis value must be a STRING ───────────────────────────────
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_redis_value_is_string():
+    """AC 9: Value written to Redis must be a string, not a bare float.
+
+    A future change from str(baseline) to baseline (float) would break Redis
+    clients that expect decode_responses=True string values.
+    """
+    func = _import_func()
+    supabase = _supabase_mock(rows=[
+        {"ces_final": 72.5, "ended_at": "2026-07-01T10:00:00"},
+    ])
+    redis = AsyncMock()
+    await func(user_id="user-1", supabase=supabase, redis=redis, settings=_settings())
+    redis.set.assert_called_once()
+    stored_value = redis.set.call_args[0][1]  # positional arg[1] = the value
+    assert isinstance(stored_value, str), (
+        f"Redis value must be a string, got {type(stored_value)}: {stored_value!r}"
+    )
+    assert stored_value == "72.5"
+
+
+# ── BLOCKER fix 2: AC 17 fetch limit is bounded ───────────────────────────────
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_fetch_limit_is_bounded():
+    """AC 17: Supabase .limit() is called with window*3 — never unbounded."""
+    func = _import_func()
+    s = _settings(window=3)  # window=3 → fetch_limit should be 9
+    supabase = _supabase_mock(rows=[])
+    redis = AsyncMock()
+    await func(user_id="user-1", supabase=supabase, redis=redis, settings=s)
+    limit_mock = (
+        supabase.table.return_value
+        .select.return_value
+        .eq.return_value
+        .order.return_value
+        .limit
+    )
+    limit_mock.assert_called_once_with(9)  # 3 (window) × 3 (_OVERFETCH_FACTOR)
+
+
+# ── IMPROVEMENT: resp.data = None path ───────────────────────────────────────
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_resp_data_none():
+    """AC 8: resp.data=None (not empty list) is handled correctly — returns None."""
+    func = _import_func()
+    supabase = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.data = None  # explicit None, not []
+    (
+        supabase.table.return_value
+        .select.return_value
+        .eq.return_value
+        .order.return_value
+        .limit.return_value
+        .execute.return_value
+    ) = mock_resp
+    redis = AsyncMock()
+    result = await func(
+        user_id="user-1", supabase=supabase, redis=redis, settings=_settings()
+    )
+    assert result is None
+    redis.set.assert_not_called()
+
+
+# ── IMPROVEMENT: all ended_at=None path ──────────────────────────────────────
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_all_rows_ended_at_none_returns_none():
+    """AC 8: All rows have ended_at=None (all sessions in-progress) → returns None."""
+    func = _import_func()
+    rows = [
+        {"ces_final": 80.0, "ended_at": None},
+        {"ces_final": 70.0, "ended_at": None},
+        {"ces_final": 60.0, "ended_at": None},
+    ]
+    supabase = _supabase_mock(rows=rows)
+    redis = AsyncMock()
+    result = await func(
+        user_id="user-1", supabase=supabase, redis=redis, settings=_settings()
+    )
+    assert result is None
+    redis.set.assert_not_called()

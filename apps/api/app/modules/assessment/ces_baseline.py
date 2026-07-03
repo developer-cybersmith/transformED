@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -28,6 +29,9 @@ __all__ = ["compute_and_store_ces_baseline"]
 
 _KEY_PREFIX = "user"
 _KEY_SUFFIX = "ces_baseline"
+# Extra rows fetched beyond the window to account for rows with NULL ces_final.
+# With the default window=5, this caps the query at 15 rows maximum.
+_OVERFETCH_FACTOR = 3
 
 
 def _redis_key(user_id: str) -> str:
@@ -72,10 +76,13 @@ async def compute_and_store_ces_baseline(
     Raises:
         HTTPException 503: If the Supabase sessions query fails.
     """
+    # SECURITY NOTE: user_id must come from the JWT-decoded subject (extracted
+    # at the router level). This function trusts the caller to have verified it.
+    # The Supabase client uses the service-role key (RLS bypassed), so the
+    # .eq("user_id", user_id) filter is the sole access gate.
     from fastapi import HTTPException, status  # local import avoids circular dependency
 
-    # Fetch extra rows to account for rows that have ended_at but no ces_final.
-    fetch_limit = settings.ces_baseline_window * 3
+    fetch_limit = settings.ces_baseline_window * _OVERFETCH_FACTOR
 
     try:
         resp = await asyncio.to_thread(
@@ -97,11 +104,14 @@ async def compute_and_store_ces_baseline(
 
     rows: list[dict] = resp.data or []
 
-    # Keep only rows where both fields are non-NULL, take window most-recent.
+    # Keep only rows where both fields are non-NULL and ces_final is finite.
+    # PostgreSQL NUMERIC(5,2) cannot store NaN/Inf, but guard anyway for robustness.
     scores: list[float] = [
         float(r["ces_final"])
         for r in rows
-        if r.get("ces_final") is not None and r.get("ended_at") is not None
+        if r.get("ces_final") is not None
+        and r.get("ended_at") is not None
+        and math.isfinite(float(r["ces_final"]))
     ][: settings.ces_baseline_window]
 
     baseline = _compute_baseline(scores)
