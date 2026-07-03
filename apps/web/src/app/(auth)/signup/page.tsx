@@ -19,15 +19,15 @@ export default function SignUpPage() {
                 <div className="flex-1 flex flex-col justify-center p-20 relative z-10 w-full max-w-2xl mx-auto">
                     <Link href="/" className="flex items-center gap-2 mb-12">
                         <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
-                        <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
+                        <span className="text-2xl font-serif font-semibold text-white">
                             HIEIQ.AI
                         </span>
                     </Link>
 
                     <div className="border-l-4 border-[var(--accent-secondary)] pl-6 mb-8">
-                        <h1 className="text-4xl md:text-5xl lg:text-5xl font-semibold tracking-tight mb-4 leading-[1.15]">
-                            Stop Consuming.<br />
-                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-[var(--accent-secondary)]">Start Becoming.</span>
+                        <h1 className="font-serif tracking-tight mb-4">
+                            <span className="block font-semibold text-4xl md:text-5xl lg:text-5xl leading-[1.05]">Stop Consuming.</span>
+                            <span className="block italic font-normal text-[var(--accent-secondary)] text-3xl md:text-4xl lg:text-4xl leading-[1.15] mt-1">Start Becoming.</span>
                         </h1>
                         <p className="text-lg text-neutral-400 leading-relaxed max-w-md">
                             Build the capacity to think independently. Move away from shallow distraction toward deep, guided mastery.
@@ -64,7 +64,7 @@ export default function SignUpPage() {
                     <div className="lg:hidden mb-10 text-center">
                         <Link href="/" className="flex items-center justify-center gap-2">
                             <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
-                            <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/80 lg:from-[var(--accent-primary)] lg:to-[var(--accent-primary-hover)] drop-shadow-md lg:drop-shadow-none">
+                            <span className="text-2xl font-serif font-semibold text-white lg:text-[var(--accent-primary)] drop-shadow-md lg:drop-shadow-none">
                                 HIEIQ.AI
                             </span>
                         </Link>

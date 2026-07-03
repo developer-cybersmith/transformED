@@ -112,7 +112,7 @@ export function UploadFlow() {
                     <div className="w-20 h-20 bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500">
                         <UploadCloud className="w-10 h-10" />
                     </div>
-                    <h3 className="text-2xl font-semibold tracking-tight text-neutral-900 mb-2">
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-2">
                         Drop your course material here
                     </h3>
                     <p className="text-neutral-500 max-w-sm mb-8">
@@ -154,7 +154,7 @@ export function UploadFlow() {
                         <span className="text-sm font-semibold text-[var(--accent-primary)] uppercase tracking-widest">{statusMessage}</span>
                     </div>
 
-                    <h3 className="text-2xl font-bold tracking-tight text-neutral-900 mb-3">Architecting your lesson...</h3>
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-3">Architecting your lesson...</h3>
                     <p className="text-neutral-500 max-w-sm leading-relaxed">
                         Establishing intelligence matrix, compiling timeline sequences, and synthesizing audio overlays.
                     </p>
@@ -175,7 +175,7 @@ export function UploadFlow() {
                             <CheckCircle className="w-12 h-12" />
                         </div>
                     </div>
-                    <h3 className="text-3xl font-bold tracking-tight text-neutral-900 mb-3">Generation Complete</h3>
+                    <h3 className="font-serif text-3xl font-semibold tracking-tight text-neutral-900 mb-3">Generation Complete</h3>
                     <p className="text-neutral-500 text-lg mb-10 max-w-md">Your uploaded material has been successfully transformed into a dynamic, interactive lesson.</p>
                     <button
                         onClick={() => router.push(`/lesson/${lessonId}`)}
@@ -202,7 +202,7 @@ export function UploadFlow() {
                     <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-8">
                         <AlertCircle className="w-12 h-12" />
                     </div>
-                    <h3 className="text-2xl font-bold text-neutral-900 mb-3">Generation Failed</h3>
+                    <h3 className="font-serif text-2xl font-semibold text-neutral-900 mb-3">Generation Failed</h3>
                     <p className="text-neutral-500 mb-10 max-w-sm">{errorMessage}</p>
                     <button
                         onClick={() => setUploadState('idle')}

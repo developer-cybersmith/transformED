@@ -12,7 +12,7 @@ export function NotificationsTab() {
     return (
         <div className="flex flex-col gap-8 w-full max-w-3xl pt-8 pb-12">
             <div>
-                <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight mb-2">Notifications</h2>
+                <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight mb-2">Notifications</h2>
                 <p className="text-neutral-500">Manage how and when HIE communicates with you.</p>
             </div>
 

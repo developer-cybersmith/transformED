@@ -13,6 +13,7 @@
   --color-text-muted: #9A9C9E;
   --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
   --font-display: var(--font-outfit), system-ui, -apple-system, sans-serif;
+  --font-serif: var(--font-fraunces), Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
 
   --animate-aurora: aurora 60s linear infinite;
 

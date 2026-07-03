@@ -25,7 +25,7 @@ export default function SettingsPage() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
                 >
-                    <h1 className="text-4xl font-semibold tracking-tight text-neutral-900 mb-2">
+                    <h1 className="font-serif text-4xl font-semibold tracking-tight text-neutral-900 mb-2">
                         Settings
                     </h1>
                     <p className="text-neutral-500 text-lg">

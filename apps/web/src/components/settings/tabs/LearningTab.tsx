@@ -14,7 +14,7 @@ export function LearningTab() {
     return (
         <div className="flex flex-col gap-10 w-full max-w-3xl pt-8 pb-12">
             <div>
-                <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight mb-2">Learning Preferences</h2>
+                <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight mb-2">Learning Preferences</h2>
                 <p className="text-neutral-500">Fine-tune how the intelligent tutor interacts with you.</p>
             </div>
 

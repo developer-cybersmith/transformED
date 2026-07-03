@@ -71,7 +71,7 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
         title={slide.title}
       />
 
-      <h3 className="text-xl font-semibold text-white mt-5 mb-3 text-wrap-balance">
+      <h3 className="font-serif text-xl font-semibold text-white mt-5 mb-3 text-wrap-balance">
         {slide.title}
       </h3>
 

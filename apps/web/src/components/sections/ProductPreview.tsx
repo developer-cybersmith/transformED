@@ -122,7 +122,7 @@ function RealtimeWhiteboardVisual() {
                     </svg>
 
                     <div className="flex flex-col items-center">
-                        <span className="text-[17px] font-display font-bold text-slate-800">Key Idea</span>
+                        <span className="text-[17px] font-serif font-semibold text-slate-800">Key Idea</span>
                         <span className="text-[11px] text-primary uppercase font-bold tracking-widest mt-0.5">Foundational</span>
                     </div>
                 </motion.div>
@@ -184,7 +184,7 @@ export default function ProductPreview() {
                     transition={{ duration: 0.4 }}
                     className="text-center max-w-2xl mx-auto mb-16"
                 >
-                    <h2 className="text-3xl sm:text-[2.25rem] font-bold text-foreground font-display tracking-tight leading-tight mb-3">
+                    <h2 className="text-3xl sm:text-[2.25rem] font-serif font-semibold text-foreground tracking-tight leading-tight mb-3">
                         What a lesson actually looks like
                     </h2>
                     <p className="text-text-secondary text-[1.05rem]">

@@ -8,7 +8,7 @@ export default function UploadPage() {
     return (
         <div className="w-full max-w-[1000px] mx-auto pt-6 pb-20 flex flex-col min-h-[80vh]">
             <div className="mb-10">
-                <h1 className="text-3xl font-bold tracking-tight text-neutral-900 mb-2">
+                <h1 className="font-serif text-3xl font-semibold tracking-tight text-neutral-900 mb-2">
                     Upload Material
                 </h1>
                 <p className="text-neutral-500 text-lg">

@@ -49,13 +49,13 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
     const score = Math.round(result.overall_score);
     const isPassing = score >= 70;
     return (
-      <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-[#0a0a0f]/90 backdrop-blur-sm">
-        <div className="w-full max-w-lg bg-[#13131c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm">
+        <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
           <div className="px-6 pt-6 pb-4 border-b border-white/5">
-            <span className="text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wider block mb-1">
+            <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider block mb-1">
               Teach It Back
             </span>
-            <p className="text-white text-base font-semibold">
+            <p className="font-serif text-white text-2xl font-semibold">
               {score}%
               <span className={`ml-2 text-sm font-normal ${isPassing ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {isPassing ? 'Well done!' : 'Keep practising'}
@@ -83,8 +83,8 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
           <div className="px-6 pb-6 flex justify-end">
             <button
               onClick={exitTeachBack}
-              className="px-5 py-2 rounded-full bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]
-                         text-white text-sm font-medium transition-colors"
+              className="px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
+                         text-primary text-sm font-semibold transition-all"
             >
               Continue
             </button>
@@ -95,17 +95,17 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
   }
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-[#0a0a0f]/90 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-[#13131c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-white/5">
-          <span className="text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wider block mb-1">
+          <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider block mb-1">
             Teach It Back
           </span>
           <p className="text-neutral-400 text-xs mb-3">
             {segmentTitle}
           </p>
-          <p className="text-white text-sm leading-relaxed">
+          <p className="font-serif text-white text-lg leading-relaxed">
             {prompt}
           </p>
         </div>
@@ -135,8 +135,8 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
           <button
             onClick={handleSubmit}
             disabled={isSubmitting || !text.trim()}
-            className="px-5 py-2 rounded-full bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]
-                       text-white text-sm font-medium transition-colors
+            className="px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
+                       text-primary text-sm font-semibold transition-all
                        disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {isSubmitting ? 'Scoring…' : 'Submit'}

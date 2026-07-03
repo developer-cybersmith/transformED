@@ -29,8 +29,9 @@ export default function TransformationPromise() {
                     transition={{ duration: 0.6 }}
                     className="text-center max-w-3xl mx-auto mb-16"
                 >
-                    <h2 className="text-[2.25rem] sm:text-[2.75rem] font-bold text-slate-900 font-display tracking-tight leading-[1.1] mb-6">
-                        The Shift to Self-Reliance
+                    <h2 className="font-serif text-slate-900 tracking-tight leading-[1.1] mb-6">
+                        <span className="font-semibold text-[2.25rem] sm:text-[2.75rem]">The Shift to </span>
+                        <span className="italic font-normal text-[2.25rem] sm:text-[2.75rem]">Self-Reliance</span>
                     </h2>
                     <p className="text-[1.1rem] text-slate-600 leading-[1.75]">
                         We don't just build software that reads PDFs for you. We build a cognitive engine designed to fundamentally alter how you process information.
@@ -50,7 +51,7 @@ export default function TransformationPromise() {
                                 <BrainCog className="w-6 h-6 text-slate-500" />
                             </div>
                             <div>
-                                <h3 className="text-xl font-bold text-slate-900">Overwhelmed</h3>
+                                <h3 className="text-xl font-serif font-semibold text-slate-900">Overwhelmed</h3>
                                 <p className="text-sm text-slate-500 font-medium">The default modern state</p>
                             </div>
                         </div>
@@ -93,7 +94,7 @@ export default function TransformationPromise() {
                                 <Target className="w-6 h-6 text-primary" />
                             </div>
                             <div>
-                                <h3 className="text-xl font-bold text-slate-900">Self-Reliant Scholar</h3>
+                                <h3 className="text-xl font-serif font-semibold text-slate-900">Self-Reliant Scholar</h3>
                                 <p className="text-sm text-primary font-bold">The HIE state</p>
                             </div>
                         </div>

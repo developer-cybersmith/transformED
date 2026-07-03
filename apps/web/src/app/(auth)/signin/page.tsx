@@ -17,12 +17,12 @@ export default function SignInPage() {
                     <div className="max-w-xl">
                         <Link href="/" className="flex items-center gap-2 mb-16">
                             <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
-                            <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-primary-hover)]">
+                            <span className="text-2xl font-serif font-semibold text-[var(--accent-primary)]">
                                 HIEIQ<span className="text-[var(--accent-primary)]">.AI</span>
                             </span>
                         </Link>
 
-                        <h1 className="text-4xl md:text-5xl font-semibold tracking-tight text-neutral-900 mb-6">
+                        <h1 className="font-serif text-4xl md:text-5xl font-semibold tracking-tight text-neutral-900 mb-6">
                             Continue Your Journey
                         </h1>
                         <p className="text-xl text-neutral-600 mb-16 leading-relaxed">
@@ -95,7 +95,7 @@ export default function SignInPage() {
                     <div className="lg:hidden mb-10">
                         <Link href="/" className="flex items-center justify-center gap-2">
                             <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg object-contain" />
-                            <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-primary-hover)]">
+                            <span className="text-2xl font-serif font-semibold text-[var(--accent-primary)]">
                                 HIEIQ<span className="text-[var(--accent-primary)]">.AI</span>
                             </span>
                         </Link>

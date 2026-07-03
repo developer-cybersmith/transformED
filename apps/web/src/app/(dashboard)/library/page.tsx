@@ -6,7 +6,7 @@ export default async function LibraryPage() {
     return (
         <div className="w-full max-w-[1400px] mx-auto pt-6 pb-24">
             <div className="mb-10">
-                <h1 className="text-3xl font-semibold text-neutral-900 tracking-tight mb-2">Your Library</h1>
+                <h1 className="font-serif text-3xl font-semibold text-neutral-900 tracking-tight mb-2">Your Library</h1>
                 <p className="text-neutral-500 text-lg">Access your generated lessons, review past modules, and track your learning progress.</p>
             </div>
 

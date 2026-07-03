@@ -14,13 +14,13 @@ const Player = dynamic(() => import('./Player'), {
 
 function PlayerSkeleton() {
   return (
-    <div className="flex-1 flex flex-col bg-[#0a0a0f] animate-pulse" data-testid="player-skeleton">
+    <div className="flex-1 flex flex-col bg-primary-dark animate-pulse" data-testid="player-skeleton">
       <div className="h-1.5 bg-neutral-800 w-full" />
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
         <div className="w-48 h-6 rounded bg-neutral-800" />
         <div className="w-32 h-4 rounded bg-neutral-800" />
       </div>
-      <div className="h-20 bg-neutral-900 border-t border-neutral-800" />
+      <div className="h-20 bg-[#07172C] border-t border-white/5" />
     </div>
   );
 }

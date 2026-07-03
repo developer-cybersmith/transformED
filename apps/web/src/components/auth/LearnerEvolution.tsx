@@ -1,46 +1,59 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { useEffect, useState } from "react";
 
-const steps = [
-    { label: "Distracted", opacity: 0.3 },
-    { label: "Guided", opacity: 0.5 },
-    { label: "Focused", opacity: 0.7 },
-    { label: "Independent", opacity: 0.9 },
-    { label: "Scholar", opacity: 1, active: true },
+const PHASES = [
+    "Passive Consumer",
+    "Guided Learner",
+    "Active Synthesizer",
+    "Self-Reliant Scholar",
 ];
 
 export function LearnerEvolution() {
-    return (
-        <div className="relative mt-8 max-w-sm">
-            <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-gradient-to-b from-neutral-800 via-[var(--accent-primary)]/50 to-[var(--accent-primary)] rounded-full" />
+    const [active, setActive] = useState(0);
 
-            <div className="space-y-6">
-                {steps.map((step, index) => (
-                    <motion.div
-                        key={step.label}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.5, delay: index * 0.15 }}
-                        className="flex items-center gap-6 relative"
-                    >
-                        <div
-                            className={`w-6 h-6 rounded-full flex items-center justify-center z-10 shrink-0 ${step.active
-                                    ? "bg-[var(--accent-primary)] shadow-[0_0_20px_rgba(var(--accent-primary-rgb),0.5)]"
-                                    : "bg-neutral-900 border-2 border-neutral-700"
-                                }`}
-                        >
-                            {step.active && <div className="w-2 h-2 rounded-full bg-white" />}
-                        </div>
-                        <div
-                            className={`text-lg font-medium tracking-wide transition-all duration-700`}
-                            style={{ opacity: step.opacity, color: step.active ? 'white' : '#a3a3a3' }}
-                        >
-                            {step.label}
-                        </div>
-                    </motion.div>
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setActive((prev) => (prev + 1) % PHASES.length);
+        }, 2200);
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <div className="mt-2">
+            {/* Progress track */}
+            <div className="relative flex items-center justify-between mb-7 px-1">
+                <div className="absolute left-1 right-1 top-1/2 -translate-y-1/2 h-[2px] bg-white/10" />
+                <div
+                    className="absolute left-1 top-1/2 -translate-y-1/2 h-[2px] bg-[var(--accent-secondary)] transition-all duration-700 ease-out"
+                    style={{ width: `calc(${(active / (PHASES.length - 1)) * 100}% - 2px)` }}
+                />
+                {PHASES.map((phase, i) => (
+                    <div
+                        key={phase}
+                        className={`relative z-10 w-3 h-3 rounded-full border-2 transition-all duration-500 ${i <= active
+                                ? "bg-[var(--accent-secondary)] border-[var(--accent-secondary)] shadow-[0_0_14px_rgba(198,164,92,0.6)]"
+                                : "bg-neutral-900 border-white/20"
+                            }`}
+                    />
                 ))}
             </div>
+
+            {/* Current phase, cross-fading */}
+            <div className="relative h-9 mb-1">
+                {PHASES.map((phase, i) => (
+                    <div
+                        key={phase}
+                        className={`absolute inset-0 flex items-center font-serif italic text-2xl text-white transition-all duration-500 ${i === active ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none"
+                            }`}
+                    >
+                        {phase}
+                    </div>
+                ))}
+            </div>
+            <p className="text-[0.7rem] font-mono text-neutral-500 uppercase tracking-widest">
+                Phase {active + 1} of {PHASES.length}
+            </p>
         </div>
     );
 }

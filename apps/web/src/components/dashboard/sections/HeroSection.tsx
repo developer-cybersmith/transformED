@@ -28,7 +28,7 @@ export function HeroSection() {
                         Optimal Learning State
                     </div>
 
-                    <h1 className="text-3xl lg:text-4xl font-semibold tracking-tight text-neutral-900 mb-3">
+                    <h1 className="font-serif text-3xl lg:text-4xl font-semibold tracking-tight text-neutral-900 mb-3">
                         Good evening, Robert 👋
                     </h1>
 
