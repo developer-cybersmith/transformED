@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-03 (Sprint 3 Task 1 DONE — Story 3-23: CES v1 formula (20 tests, 5-agent review, output clamp BLOCKER fixed, teachback=0.0 distinction BLOCKER fixed); 434 unit tests pass; dev3-sprint3-task1 ready to push PR)
+**Last updated:** 2026-07-03 (Sprint 3 Task 2 DONE — Story 3-24: CES baseline computation (25 tests, 5-agent review, Redis value type BLOCKER fixed, fetch_limit bound BLOCKER fixed); 459 unit tests pass; dev3-sprint3-task2 ready to push PR)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -15,10 +15,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 7 | 1 | 0 | 6 |
+| Sprint 3 | Weeks 6–7 | 7 | 2 | 0 | 5 |
 | Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **40** | **27** | **0** | **13** |
+| **Total** | | **40** | **28** | **0** | **12** |
 
 Update this table each time a task is checked off below.
 
@@ -594,12 +594,13 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Dev 4 calls this function from the WebSocket handler on each `AttentionSignalMessage`
   - **AC:** 20 unit tests pass; 5-agent adversarial code review passed; Story 3-23 status: done
 
-- [ ] **Per-learner baseline computation**
+- [x] **Per-learner baseline computation** — ✓ 2026-07-03
   - After session 1: baseline CES = session 1 CES final
-  - From session 2+: rolling average of last 5 sessions' CES
-  - Store in Redis `session:{session_id}:ces_baseline`
+  - From session 2+: rolling average of last 5 sessions' CES (window configurable via `CES_BASELINE_WINDOW`)
+  - Store in Redis `user:{user_id}:ces_baseline` (corrected from tracker; `session:{session_id}:ces_baseline` was semantically wrong)
   - Use baseline to contextualise Learner DNA updates (delta direction)
-  - **AC:** After 3 test sessions, baseline reflects rolling average correctly
+  - Branch: `dev3-sprint3-task2`; **ready to push PR 2026-07-03** ✓
+  - **AC:** 25 unit tests pass; 5-agent adversarial code review passed; Story 3-24 status: done
 
 - [ ] **Learner DNA fusion formula live**
   - After each completed session, update `learner_dna` dimensions:

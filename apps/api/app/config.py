@@ -132,6 +132,19 @@ class Settings(BaseSettings):
             )
         return self
 
+    # ── CES Baseline (Sprint 3 Task 2) ───────────────────────────────────────
+    ces_baseline_window: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Number of most-recent completed sessions to average for the per-learner CES baseline",
+    )
+    ces_baseline_ttl_seconds: int = Field(
+        default=86400,
+        ge=60,
+        description="TTL for the Redis user:{user_id}:ces_baseline key, in seconds (default 24 h)",
+    )
+
     # ── Intervention tuning ───────────────────────────────────────────────────
     intervention_cooldown_seconds: int = Field(
         default=120,
