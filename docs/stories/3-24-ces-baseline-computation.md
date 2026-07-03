@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 baseline_commit: "41fb90f"
 ---
 
@@ -135,46 +135,52 @@ passing. Full suite has 0 regressions.
 
 ## Tasks
 
-- [ ] Task 1: Add `ces_baseline_window` and `ces_baseline_ttl_seconds` to Settings
-  - [ ] 1.1 Add `ces_baseline_window: int = Field(default=5, ge=1, le=50, ...)` after CES weights block
-  - [ ] 1.2 Add `ces_baseline_ttl_seconds: int = Field(default=86400, ge=60, ...)` after window field
-  - [ ] 1.3 Verify existing `@model_validator` unaffected (only validates CES weight sum)
+- [x] Task 1: Add `ces_baseline_window` and `ces_baseline_ttl_seconds` to Settings
+  - [x] 1.1 Add `ces_baseline_window: int = Field(default=5, ge=1, le=50, ...)` after CES weights block
+  - [x] 1.2 Add `ces_baseline_ttl_seconds: int = Field(default=86400, ge=60, ...)` after window field
+  - [x] 1.3 Verify existing `@model_validator` unaffected (only validates CES weight sum)
 
-- [ ] Task 2: Create `apps/api/app/modules/assessment/ces_baseline.py`
-  - [ ] 2.1 Module docstring + `__all__ = ["compute_and_store_ces_baseline"]`
-  - [ ] 2.2 Private `_redis_key(user_id: str) -> str` returns `user:{user_id}:ces_baseline`
-  - [ ] 2.3 Private `_compute_baseline(scores: list[float]) -> float | None` — pure avg, None on empty
-  - [ ] 2.4 Async `compute_and_store_ces_baseline(*, user_id, supabase, redis, settings)` implementation
-    - [ ] 2.4a Supabase query wrapped in `asyncio.to_thread`, catches exceptions → HTTPException 503
-    - [ ] 2.4b Filter rows: `ces_final IS NOT NULL` AND `ended_at IS NOT NULL`, take window scores
-    - [ ] 2.4c Return `None` early if no scores (no Redis write)
-    - [ ] 2.4d Redis `SET key value EX ttl` — catches exceptions → logs WARNING, does NOT raise
-    - [ ] 2.4e Return `float | None` baseline
+- [x] Task 2: Create `apps/api/app/modules/assessment/ces_baseline.py`
+  - [x] 2.1 Module docstring + `__all__ = ["compute_and_store_ces_baseline"]`
+  - [x] 2.2 Private `_redis_key(user_id: str) -> str` returns `user:{user_id}:ces_baseline`
+  - [x] 2.3 Private `_compute_baseline(scores: list[float]) -> float | None` — pure avg, None on empty
+  - [x] 2.4 Async `compute_and_store_ces_baseline(*, user_id, supabase, redis, settings)` implementation
+    - [x] 2.4a Supabase query wrapped in `asyncio.to_thread`, catches exceptions → HTTPException 503
+    - [x] 2.4b Filter rows: `ces_final IS NOT NULL` AND `ended_at IS NOT NULL`, take window scores
+    - [x] 2.4c Return `None` early if no scores (no Redis write)
+    - [x] 2.4d Redis `SET key value EX ttl` — catches exceptions → logs WARNING, does NOT raise
+    - [x] 2.4e Return `float | None` baseline
 
-- [ ] Task 3: Write `apps/api/tests/test_ces_baseline.py` (RED → GREEN)
-  - [ ] 3.1 `test_dunder_all_exports_only_compute_and_store`
-  - [ ] 3.2 `test_positional_args_raise_type_error`
-  - [ ] 3.3 `test_redis_key_format` — verifies `user:{id}:ces_baseline` format
-  - [ ] 3.4 `test_compute_baseline_single_score` — AC 4
-  - [ ] 3.5 `test_compute_baseline_fewer_than_window` — AC 5
-  - [ ] 3.6 `test_compute_baseline_exactly_window` — AC 6
-  - [ ] 3.7 `test_compute_baseline_empty_returns_none` — AC 8
-  - [ ] 3.8 `test_compute_baseline_rounded_to_4dp` — AC 18
-  - [ ] 3.9 `test_async_returns_none_when_no_sessions` — AC 8 (async, mocked)
-  - [ ] 3.10 `test_async_single_session_baseline` — AC 4 (async, mocked)
-  - [ ] 3.11 `test_async_rolling_window_uses_most_recent` — AC 6 (async, mocked)
-  - [ ] 3.12 `test_async_skips_null_ces_final_rows` — AC 7 (async, mocked)
-  - [ ] 3.13 `test_async_writes_correct_redis_key` — AC 9 (async, mocked)
-  - [ ] 3.14 `test_async_sets_correct_ttl` — AC 10 (async, mocked)
-  - [ ] 3.15 `test_async_redis_failure_does_not_raise` — AC 13 (async, mocked)
-  - [ ] 3.16 `test_async_db_failure_raises_503` — AC 14 (async, mocked)
-  - [ ] 3.17 `test_no_hardcoded_window_literal` — AC 15 (AST)
-  - [ ] 3.18 `test_no_forbidden_imports` — AC 16 (AST)
-  - [ ] 3.19 `test_async_no_redis_write_when_no_sessions` — AC 8 (Redis.set NOT called)
+- [x] Task 3: Write `apps/api/tests/test_ces_baseline.py` (RED → GREEN)
+  - [x] 3.1 `test_dunder_all_exports_only_compute_and_store`
+  - [x] 3.2 `test_positional_args_raise_type_error`
+  - [x] 3.3 `test_redis_key_format` — verifies `user:{id}:ces_baseline` format
+  - [x] 3.4 `test_compute_baseline_single_score` — AC 4
+  - [x] 3.5 `test_compute_baseline_fewer_than_window` — AC 5
+  - [x] 3.6 `test_compute_baseline_exactly_window` — AC 6
+  - [x] 3.7 `test_compute_baseline_empty_returns_none` — AC 8
+  - [x] 3.8 `test_compute_baseline_rounded_to_4dp` — AC 18
+  - [x] 3.9 `test_async_returns_none_when_no_sessions` — AC 8 (async, mocked)
+  - [x] 3.10 `test_async_single_session_baseline` — AC 4 (async, mocked)
+  - [x] 3.11 `test_async_rolling_window_uses_most_recent` — AC 6 (async, mocked)
+  - [x] 3.12 `test_async_skips_null_ces_final_rows` — AC 7 (async, mocked)
+  - [x] 3.13 `test_async_writes_correct_redis_key` — AC 9 (async, mocked)
+  - [x] 3.14 `test_async_sets_correct_ttl` — AC 10 (async, mocked)
+  - [x] 3.15 `test_async_redis_failure_does_not_raise` — AC 13 (async, mocked)
+  - [x] 3.16 `test_async_db_failure_raises_503` — AC 14 (async, mocked)
+  - [x] 3.17 `test_no_hardcoded_window_literal` — AC 15 (AST)
+  - [x] 3.18 `test_no_forbidden_imports` — AC 16 (AST)
+  - [x] 3.19 `test_async_no_redis_write_when_no_sessions` — AC 8 (Redis.set NOT called)
+  - [x] 3.20 `test_async_redis_value_is_string` — BLOCKER fix (Redis value type)
+  - [x] 3.21 `test_async_fetch_limit_is_bounded` — BLOCKER fix (AC 17 fetch limit)
+  - [x] 3.22 `test_async_resp_data_none` — IMPROVEMENT (resp.data=None case)
+  - [x] 3.23 `test_async_all_rows_ended_at_none_returns_none` — IMPROVEMENT (in-progress sessions)
+  - [x] 3.24 `test_async_skips_null_ended_at_rows` — AC 7 (ended_at filtering)
+  - [x] 3.25 `test_compute_baseline_all_zeros` — edge case (all zeros)
 
-- [ ] Task 4: Run full test suite — AC 19
-  - [ ] 4.1 `pytest -m unit tests/test_ces_baseline.py` → all pass
-  - [ ] 4.2 Full suite → 0 regressions
+- [x] Task 4: Run full test suite — AC 19
+  - [x] 4.1 `pytest -m unit tests/test_ces_baseline.py` → 25/25 pass
+  - [x] 4.2 Full suite → 0 regressions (459 pass, 18 pre-existing failures in unrelated auth/websocket modules)
 
 ## Dev Notes
 
@@ -241,18 +247,44 @@ in ces_baseline.py. GREEN: all tests pass. REFACTOR: AST tests confirm no
 hardcoded literals and no forbidden imports.
 
 ### Debug Log
-_To be filled during implementation._
+- Identified semantic error in tracker: `session:{session_id}:ces_baseline` → corrected to `user:{user_id}:ces_baseline`
+  (baseline is per-user rolling average, not per-session value; consistent with `user:{user_id}:dna` pattern)
+- Confirmed `db.py` uses service-role key (RLS bypassed); `.eq("user_id", user_id)` is the sole access gate
+- `asyncio.to_thread` correctly wraps synchronous supabase-py v2 client (same pattern as `service.py`)
+- Added `_OVERFETCH_FACTOR = 3` named constant to avoid magic number `3` in fetch_limit expression
+- Added `math.isfinite()` guard: PostgreSQL NUMERIC(5,2) can't store NaN/Inf but guarded for robustness
 
 ### Completion Notes
-_To be filled after implementation._
+All 19 ACs satisfied. 25 unit tests pass (exceeded AC 19 minimum of 15). 5-agent adversarial code review
+completed with 2 BLOCKERs and 5 improvements — all addressed and committed. 459 total unit tests pass
+with 0 regressions introduced. Redis key corrected from sprint tracker's semantically wrong
+`session:{session_id}:ces_baseline` to `user:{user_id}:ces_baseline` (documented in story Background).
 
 ### File List
 - `apps/api/app/modules/assessment/ces_baseline.py` — NEW
-- `apps/api/app/config.py` — MODIFIED (two new fields)
-- `apps/api/tests/test_ces_baseline.py` — NEW
+- `apps/api/app/config.py` — MODIFIED (`ces_baseline_window`, `ces_baseline_ttl_seconds` fields added)
+- `apps/api/tests/test_ces_baseline.py` — NEW (25 tests)
 
 ### Change Log
-- 2026-07-03: Story created — Sprint 3 Task 2 CES baseline computation (BMAD story-first gate)
+- 2026-07-03: Story created — Sprint 3 Task 2 CES baseline computation (BMAD story-first gate, commit 41fb90f)
+- 2026-07-03: Implementation complete — config.py + ces_baseline.py + test_ces_baseline.py (21 tests GREEN)
+- 2026-07-03: 5-agent code review complete — 2 BLOCKERs fixed, 5 improvements applied, 25 tests total
 
 ## Senior Developer Review (AI)
-_To be filled by /bmad-code-review after implementation._
+
+**Review Date:** 2026-07-03
+**Branch:** dev3-sprint3-task2
+**Outcome:** Changes Requested (2 BLOCKERs, 3 IMPROVEMENTs, 2 NITPICKs) → All resolved → **APPROVED**
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Test Coverage | BLOCKER | Redis value type (`str` vs `float`) never asserted. A `redis.set(key, baseline, ...)` change would pass all 21 tests silently. | Added `test_async_redis_value_is_string` asserting `isinstance(redis.set.call_args[0][1], str)` |
+| 2 | AC Completeness | BLOCKER | AC 17 (fetch_limit=window×3) had zero test coverage — an unbounded query would pass all tests. | Added `test_async_fetch_limit_is_bounded` using window=3 asserting `.limit.assert_called_once_with(9)` |
+| 3 | Test Coverage | IMPROVEMENT | `resp.data=None` case (client returns None instead of empty list) not covered. | Added `test_async_resp_data_none` — `resp.data or []` guard already handles it; test proves it |
+| 4 | Test Coverage | IMPROVEMENT | All rows having `ended_at=None` (in-progress sessions) not tested. | Added `test_async_all_rows_ended_at_none_returns_none` |
+| 5 | Process Integrity | IMPROVEMENT | `503` hardcoded integer; `3` as magic number in fetch_limit. | Changed to `status.HTTP_503_SERVICE_UNAVAILABLE`; added `_OVERFETCH_FACTOR = 3` module constant |
+| 6 | Blind Hunter | IMPROVEMENT | `float(ces_final)` theoretically passes NaN/Infinity values from corrupt data. | Added `math.isfinite(float(r["ces_final"]))` guard in list comprehension |
+| 7 | Story Quality | NITPICK | Story tracker had wrong Redis key `session:{session_id}:ces_baseline`. | Corrected to `user:{user_id}:ces_baseline` in story Background section and tracker |
+| 8 | Blind Hunter | NITPICK | Service-role client bypasses RLS; user_id must come from JWT. | Added SECURITY NOTE comment in `compute_and_store_ces_baseline()` |
+
+**Final state:** 25/25 tests pass, 459 total unit tests pass, 0 regressions. All 19 ACs verified.
