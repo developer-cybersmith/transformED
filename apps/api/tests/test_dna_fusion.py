@@ -2,7 +2,7 @@
 Unit tests for apps/api/app/modules/assessment/dna_fusion.py
 Story 3-25 — Learner DNA Fusion Formula
 
-Test count: 25
+Test count: 29
 Coverage:
   AC 2  — __all__ exports only fuse_learner_dna
   AC 3  — keyword-only signature; positional args raise TypeError
@@ -203,11 +203,13 @@ def test_compute_signals_quiz_accuracy_maps_to_pattern_and_logical():
 
 
 @pytest.mark.unit
-def test_compute_signals_no_quiz_returns_neutral_for_cognitive():
+def test_compute_signals_no_quiz_returns_zero_for_cognitive_dims():
     from app.modules.assessment.dna_fusion import _compute_signals, _NEUTRAL
     sigs = _compute_signals(quiz_rows=[], tb_rows=[], event_counts={})
-    assert sigs["pattern_recognition"] == _NEUTRAL
-    assert sigs["logical_deduction"] == _NEUTRAL
+    # AC 6: pattern/logical = 0.0 when no quiz attempts (no data = pessimistic signal)
+    assert sigs["pattern_recognition"] == 0.0
+    assert sigs["logical_deduction"] == 0.0
+    # AC 7: processing_speed = _NEUTRAL (50.0) when no response times — different policy
     assert sigs["processing_speed"] == _NEUTRAL
 
 
@@ -436,7 +438,7 @@ async def test_async_session_count_incremented():
         if name == "learner_dna":
             orig_upsert = tbl.upsert
             def tracked_upsert(payload, **kwargs):
-                upsert_calls.append(payload)
+                upsert_calls.append(dict(payload))  # snapshot — guard against mutation
                 return orig_upsert(payload, **kwargs)
             tbl.upsert = tracked_upsert
         return tbl
@@ -448,6 +450,60 @@ async def test_async_session_count_incremented():
     )
     assert len(upsert_calls) == 1
     assert upsert_calls[0].get("session_count") == 4  # 3 + 1
+
+
+# ── AC 17: upsert DB failure → 503 ──────────────────────────────────────────
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_upsert_failure_raises_503():
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
+    session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
+    supabase = _supabase_mock(session_row, [], [], [], None, upsert_raises=True)
+    with pytest.raises(HTTPException) as exc_info:
+        await fuse_learner_dna(
+            user_id="u1", session_id="s1", supabase=supabase, settings=_settings()
+        )
+    assert exc_info.value.status_code == 503
+
+
+# ── AC 18: quiz/teachback/events read failure → non-fatal ────────────────────
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_data_read_failure_is_non_fatal():
+    """AC 18: DB failures on quiz/teachback/events reads log WARNING and use
+    neutral signals — they do NOT raise and do NOT abort the DNA update."""
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
+    session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
+
+    supabase = MagicMock()
+
+    def _resp(data):
+        r = MagicMock()
+        r.data = data
+        r.error = None
+        return r
+
+    def _table(name):
+        tbl = MagicMock()
+        if name == "sessions":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(session_row)
+        elif name in ("quiz_attempts", "teachback_attempts", "session_events"):
+            tbl.select.return_value.eq.return_value.execute.side_effect = Exception("DB read failed")
+        elif name == "learner_dna":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(None)
+            tbl.upsert.return_value.execute.return_value = _resp([])
+        return tbl
+
+    supabase.table.side_effect = _table
+
+    # Must NOT raise — non-fatal path, returns 9 dims built from neutral signals
+    result = await fuse_learner_dna(
+        user_id="u1", session_id="s1", supabase=supabase, settings=_settings()
+    )
+    assert result is not None
+    assert set(result.keys()) == set(NINE_DIMS)
 
 
 # ── AC 23: no hardcoded EMA weights in dna_fusion.py ─────────────────────────

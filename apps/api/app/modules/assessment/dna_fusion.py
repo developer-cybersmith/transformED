@@ -91,8 +91,10 @@ def _compute_signals(
         accuracy = None
 
     if accuracy is None:
-        sigs["pattern_recognition"] = _NEUTRAL
-        sigs["logical_deduction"] = _NEUTRAL
+        # No quiz rows → signal is 0.0 (AC 6: "0 if no quiz attempts")
+        # processing_speed uses _NEUTRAL (AC 7) — pattern/logical do not.
+        sigs["pattern_recognition"] = 0.0
+        sigs["logical_deduction"] = 0.0
     else:
         sigs["pattern_recognition"] = min(100.0, max(0.0, accuracy * 100.0))
         sigs["logical_deduction"] = sigs["pattern_recognition"]
