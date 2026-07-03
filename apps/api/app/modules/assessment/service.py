@@ -35,7 +35,7 @@ async def get_analytics_consent(user_id: str, supabase: Any) -> bool:
     """Return True if the user has granted analytics consent (DPDP Act 2023).
 
     Checks the users.analytics_consent column added by migration
-    20260703000000_add_analytics_consent.sql.  Returns False on any DB error
+    20260703010000_add_analytics_consent.sql.  Returns False on any DB error
     or if the column does not exist yet (safe default — no events sent).
 
     Args:
@@ -53,7 +53,8 @@ async def get_analytics_consent(user_id: str, supabase: Any) -> bool:
         if resp.data is None:
             return False
         return bool(resp.data.get("analytics_consent", False))
-    except Exception:
+    except Exception as exc:
+        logger.warning("PostHog consent check failed user=%s: %s", user_id, exc)
         return False  # fail-safe: suppress events when consent check fails
 
 

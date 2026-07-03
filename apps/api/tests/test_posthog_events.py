@@ -261,6 +261,7 @@ async def test_posthog_quiz_event_fired():
     assert pos_args[1] == "assessment_quiz_submitted"
     props = pos_args[2]
     assert props["session_id"] == SESSION_ID
+    assert props["segment_id"] == SEGMENT_ID  # AC 13
     assert "ces_contribution" in props
     assert "quiz_accuracy" in props
     assert "total_questions" in props  # IMP-005
@@ -304,6 +305,7 @@ async def test_posthog_teachback_event_fired():
     assert pos_args[1] == "assessment_teachback_submitted"
     props = pos_args[2]
     assert props["session_id"] == SESSION_ID
+    assert props["segment_id"] == SEGMENT_ID  # AC 14
     assert props["score"] == 80
     assert props["attempt_number"] == 1  # IMP-006: verify value, not just presence
 
@@ -515,4 +517,63 @@ async def test_posthog_not_fired_without_consent(monkeypatch):
             user_id=USER_ID,
             supabase=supabase,
         )
+    mock_capture.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_posthog_not_fired_without_consent_teachback(monkeypatch):
+    """Option C: grade_teachback() suppresses PostHog when analytics_consent is False."""
+    from app.modules.assessment.prompts import TeachbackScoreResult
+
+    monkeypatch.setattr(
+        "app.modules.assessment.service.get_analytics_consent",
+        AsyncMock(return_value=False),
+    )
+    mock_score = TeachbackScoreResult(
+        score=70,
+        praise="Good.",
+        correction="",
+        concepts_hit=["cells"],
+        concepts_missed=[],
+        accuracy_score=70.0,
+        completeness_score=65.0,
+        clarity_score=75.0,
+    )
+    supabase = _build_teachback_supabase()
+    with patch("app.modules.assessment.service.OpenAILLMProvider"):
+        with patch(
+            "app.modules.assessment.service.score_teachback",
+            new=AsyncMock(return_value=mock_score),
+        ):
+            with patch("app.core.posthog_client.posthog.capture") as mock_capture:
+                await grade_teachback(
+                    session_id=SESSION_ID,
+                    lesson_id=LESSON_ID,
+                    segment_id=SEGMENT_ID,
+                    response_text="The cell has a nucleus.",
+                    user_id=USER_ID,
+                    supabase=supabase,
+                )
+    mock_capture.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_posthog_not_fired_without_consent_onboarding(monkeypatch):
+    """Option C: process_onboarding() suppresses PostHog when analytics_consent is False."""
+    monkeypatch.setattr(
+        "app.modules.assessment.service.get_analytics_consent",
+        AsyncMock(return_value=False),
+    )
+    supabase = _build_onboarding_supabase()
+    with patch("app.modules.assessment.service.OpenAILLMProvider"):
+        with patch(
+            "app.modules.assessment.service.generate_onboarding_profile",
+            new=AsyncMock(return_value="Profile text. [DPDP disclaimer]"),
+        ):
+            with patch("app.core.posthog_client.posthog.capture") as mock_capture:
+                await process_onboarding(
+                    responses=_VALID_ONBOARDING_RESPONSES,
+                    user_id=USER_ID,
+                    supabase=supabase,
+                )
     mock_capture.assert_not_called()
