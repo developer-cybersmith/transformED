@@ -13,7 +13,7 @@ export function RecentLessons({ lessons }: { lessons: MockLesson[] }) {
     return (
         <div className="w-full">
             <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-semibold tracking-tight text-neutral-900">
+                <h2 className="font-serif text-xl font-semibold tracking-tight text-neutral-900">
                     Recently Added Lessons
                 </h2>
                 <span className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors">

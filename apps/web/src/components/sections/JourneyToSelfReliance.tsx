@@ -48,7 +48,7 @@ function PhaseTimelineNode({ step, i }: { step: typeof journeySteps[0], i: numbe
                 {isEven && (
                     <>
                         <p className="text-[var(--accent-secondary)] font-mono text-sm mb-2 transition-colors">{step.stage}</p>
-                        <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
+                        <h3 className="text-xl lg:text-2xl font-serif font-semibold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
                         <p className="text-slate-400 leading-relaxed text-[0.95rem]">{step.desc}</p>
                     </>
                 )}
@@ -67,7 +67,7 @@ function PhaseTimelineNode({ step, i }: { step: typeof journeySteps[0], i: numbe
                 {!isEven && (
                     <>
                         <p className="text-[var(--accent-secondary)] font-mono text-sm mb-2 transition-colors">{step.stage}</p>
-                        <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
+                        <h3 className="text-xl lg:text-2xl font-serif font-semibold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
                         <p className="text-slate-400 leading-relaxed text-[0.95rem]">{step.desc}</p>
                     </>
                 )}
@@ -98,8 +98,9 @@ export default function JourneyToSelfReliance() {
                     transition={{ duration: 0.6 }}
                     className="text-center max-w-3xl mx-auto mb-20 lg:mb-28"
                 >
-                    <h2 className="text-[2.25rem] sm:text-[3rem] font-bold font-display tracking-tight leading-[1.1] mb-6">
-                        The Evolution of a Learner
+                    <h2 className="font-serif tracking-tight leading-[1.08] mb-6">
+                        <span className="font-semibold text-[2.25rem] sm:text-[3rem]">The Evolution of</span>{" "}
+                        <span className="italic font-normal text-[2rem] sm:text-[2.7rem] text-white/60">a Learner</span>
                     </h2>
                     <p className="text-[1.1rem] text-slate-400 leading-[1.75]">
                         HIE is temporary by design. Our metric for success is the day you no longer need the AI to understand the textbook.

@@ -23,7 +23,7 @@ export default async function DashboardPage() {
 
                     {/* 3. Quick Action Access */}
                     <div>
-                        <h2 className="text-xl font-semibold tracking-tight text-neutral-900 mb-6">
+                        <h2 className="font-serif text-xl font-semibold tracking-tight text-neutral-900 mb-6">
                             Quick Actions
                         </h2>
                         <QuickActions />

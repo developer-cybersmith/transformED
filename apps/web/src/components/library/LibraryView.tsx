@@ -167,7 +167,7 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
                 <div className="text-xs font-bold text-[var(--accent-primary)] mb-2 uppercase tracking-wide">
                     {lesson.chapterTitle}
                 </div>
-                <h3 className="text-lg font-semibold text-neutral-900 leading-snug mb-4 line-clamp-2">
+                <h3 className="font-serif text-lg font-semibold text-neutral-900 leading-snug mb-4 line-clamp-2">
                     {lesson.title}
                 </h3>
 

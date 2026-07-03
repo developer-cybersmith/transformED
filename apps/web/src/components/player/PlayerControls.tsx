@@ -86,7 +86,7 @@ export function PlayerControls() {
   }
 
   return (
-    <div className="shrink-0 bg-[#0d0d14] border-t border-white/5">
+    <div className="shrink-0 bg-[#07172C] border-t border-white/5">
       {/* Progress bar */}
       <div
         role="slider"
@@ -104,7 +104,7 @@ export function PlayerControls() {
         <div className="absolute inset-0 bg-white/10" />
         {/* Fill */}
         <div
-          className="absolute inset-y-0 left-0 bg-[var(--accent-primary)] transition-[width] duration-100"
+          className="absolute inset-y-0 left-0 bg-[var(--accent-secondary)] transition-[width] duration-100"
           style={{ width: `${progressPct}%` }}
         />
         {/* Thumb — visible on hover */}
@@ -139,8 +139,8 @@ export function PlayerControls() {
             onClick={isPlaying ? pause : play}
             disabled={!canControl}
             aria-label={isPlaying ? 'Pause' : 'Play'}
-            className="w-11 h-11 rounded-full flex items-center justify-center text-white
-                       bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]
+            className="w-11 h-11 rounded-full flex items-center justify-center text-primary
+                       bg-[var(--accent-secondary)] hover:brightness-105
                        active:scale-95 transition-all duration-150
                        disabled:opacity-40 disabled:cursor-not-allowed"
           >

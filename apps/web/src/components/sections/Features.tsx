@@ -56,7 +56,7 @@ function PhaseCard({ cap, index }: { cap: typeof capabilities[0], index: number 
                 <span className="w-1.5 h-1.5 rounded-full bg-primary" />
                 [ PHASE {cap.num} ]
             </motion.span>
-            <h3 className="text-xl sm:text-2xl font-bold text-slate-900 mb-4 tracking-tight leading-tight group-hover:text-primary transition-colors duration-300">
+            <h3 className="text-xl sm:text-2xl font-serif font-semibold text-slate-900 mb-4 tracking-tight leading-tight group-hover:text-primary transition-colors duration-300">
                 {cap.title}
             </h3>
             <p className="text-slate-500 leading-[1.8] text-[1.05rem] mb-10">
@@ -110,8 +110,13 @@ export default function Features() {
                     <p className="text-slate-900 font-semibold tracking-widest uppercase text-[11px] mb-6">
                         The Cognitive Engine
                     </p>
-                    <h2 className="text-[2.5rem] sm:text-[3.5rem] font-bold text-slate-900 font-display tracking-tight leading-[1.05] mb-8">
-                        The architecture of self-reliance.
+                    <h2 className="font-serif text-slate-900 tracking-tight leading-[1.03] mb-8">
+                        <span className="block font-semibold text-[2.5rem] sm:text-[3.5rem]">
+                            The architecture of
+                        </span>
+                        <span className="block italic font-normal text-[2rem] sm:text-[2.8rem] text-slate-500 mt-1">
+                            self-reliance.
+                        </span>
                     </h2>
                     <p className="text-[1.1rem] sm:text-[1.25rem] text-slate-500 leading-[1.6] max-w-2xl">
                         HIE does not just reorganize your PDFs. It acts as an AI Tutor running a continuous cognitive loop designed to rapidly overcome the 7-second attention span and mature your reasoning.

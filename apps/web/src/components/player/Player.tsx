@@ -28,7 +28,7 @@ export default function Player({ lesson }: PlayerProps) {
   const segment = lesson.segments[currentSegmentIndex] ?? null;
 
   return (
-    <div className="flex-1 flex flex-col bg-[#0a0a0f] text-white overflow-hidden">
+    <div className="flex-1 flex flex-col bg-primary-dark text-white overflow-hidden">
       {/* AudioTimeline: hidden, drives audio playback + slide sync */}
       <AudioTimeline />
 
@@ -46,7 +46,7 @@ export default function Player({ lesson }: PlayerProps) {
         {/* Lesson metadata shown before any slide is active */}
         {!currentSlideId && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6">
-            <h2 className="text-xl font-semibold">{lesson.metadata.title}</h2>
+            <h2 className="font-serif text-xl font-semibold">{lesson.metadata.title}</h2>
             <p className="text-neutral-400 text-sm">
               {lesson.metadata.total_segments} segments · ~{lesson.metadata.estimated_duration_mins} min
             </p>
@@ -68,17 +68,22 @@ export default function Player({ lesson }: PlayerProps) {
 
         {/* Lesson complete screen */}
         {status === 'ENDED' && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 p-6 bg-[#0a0a0f]/95 backdrop-blur-sm">
-            <div className="text-4xl">🎓</div>
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 p-6 bg-primary-dark/95 backdrop-blur-sm">
+            <div className="relative">
+              <div className="absolute inset-0 bg-[var(--accent-secondary)]/20 rounded-full blur-xl animate-pulse" />
+              <div className="relative w-20 h-20 bg-[var(--accent-secondary)]/10 text-4xl rounded-full flex items-center justify-center border border-[var(--accent-secondary)]/30">
+                🎓
+              </div>
+            </div>
             <div className="text-center">
-              <h2 className="text-white text-xl font-semibold mb-1">Lesson complete</h2>
+              <h2 className="font-serif text-white text-2xl font-semibold mb-1">Lesson complete</h2>
               <p className="text-neutral-400 text-sm">{lesson.metadata.title}</p>
             </div>
             <div className="flex flex-col items-center gap-3">
               <Link
                 href="/dashboard"
-                className="px-6 py-2.5 rounded-full bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]
-                           text-white text-sm font-medium transition-colors"
+                className="px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary
+                           text-sm font-semibold hover:brightness-105 transition-all"
               >
                 Back to Dashboard
               </Link>

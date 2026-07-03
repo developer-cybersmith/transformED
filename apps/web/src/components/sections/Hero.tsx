@@ -1,226 +1,313 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
-import { motion, useScroll, useTransform } from "framer-motion";
-import { ArrowRight, Play, Brain, BookOpen, CheckCircle } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import { ArrowRight, Play } from "lucide-react";
 import Link from "next/link";
-import { AuroraBackground } from "@/components/ui/AuroraBackground";
+
+const PASSAGES = [
+    {
+        source: "Cognitive Science, Ch. 4 — Attention & Retention",
+        text: "The brain evolved to notice movement and novelty, not dense paragraphs. When attention drifts, comprehension doesn't fade — it drops off a cliff.",
+        trigger: "cliff",
+        question: "Quick check — what happens to comprehension when attention drifts?",
+        answer: "It doesn't fade — it drops sharply.",
+    },
+    {
+        source: "Cognitive Science, Ch. 7 — Study Techniques",
+        text: "Highlighting a sentence feels like learning, but it only proves your eyes moved across it. Real retention needs retrieval, not re-reading.",
+        trigger: "retrieval,",
+        question: "Quick check — what does real retention actually require?",
+        answer: "Retrieval — actively recalling it, not re-reading.",
+    },
+    {
+        source: "Cognitive Science, Ch. 9 — Divided Attention",
+        text: "Multitasking doesn't split attention evenly. Each switch has a cost, and the brain never fully returns to where it left off.",
+        trigger: "cost,",
+        question: "Quick check — what happens every time attention switches tasks?",
+        answer: "It pays a cost — focus never fully resets.",
+    },
+];
+
+type Phase = "idle" | "reading" | "drift" | "prompt" | "answering" | "resuming" | "retained";
+
+const STATUS: Record<Phase, { label: string; className: string }> = {
+    idle: { label: "Reading", className: "text-text-muted border-[var(--color-border-soft)]" },
+    reading: { label: "Reading", className: "text-emerald-700 border-emerald-200" },
+    drift: { label: "Attention drift detected", className: "text-red-700 border-red-200" },
+    prompt: { label: "Waiting for recall", className: "text-primary border-[var(--accent-secondary)]/40 bg-[var(--accent-secondary)]/8" },
+    answering: { label: "Waiting for recall", className: "text-primary border-[var(--accent-secondary)]/40 bg-[var(--accent-secondary)]/8" },
+    resuming: { label: "Resuming — reinforced", className: "text-emerald-700 border-emerald-200" },
+    retained: { label: "Concept retained", className: "text-primary border-[var(--accent-secondary)]/40 bg-[var(--accent-secondary)]/8" },
+};
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export default function Hero() {
-    const [titleNumber, setTitleNumber] = useState(0);
-    const titles = useMemo(
-        () => ["deep thinker.", "focused scholar.", "master learner.", "problem solver."],
-        []
-    );
-
-    const containerRef = useRef<HTMLDivElement>(null);
-    const { scrollYProgress } = useScroll({
-        target: containerRef,
-        offset: ["start start", "end start"]
-    });
-
-    const textY = useTransform(scrollYProgress, [0, 1], [0, 100]);
-    const textOpacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
-    const mockupY = useTransform(scrollYProgress, [0, 1], [0, -80]);
+    const [passageIdx, setPassageIdx] = useState(0);
+    const [inkedCount, setInkedCount] = useState(0);
+    const [phase, setPhase] = useState<Phase>("idle");
+    const [typedAnswer, setTypedAnswer] = useState("");
+    const [isPaused, setIsPaused] = useState(false);
+    const isPausedRef = useRef(false);
 
     useEffect(() => {
-        const timeoutId = setTimeout(() => {
-            if (titleNumber === titles.length - 1) {
-                setTitleNumber(0);
-            } else {
-                setTitleNumber(titleNumber + 1);
+        const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (prefersReducedMotion) {
+            const words = PASSAGES[0].text.split(" ");
+            setInkedCount(words.length);
+            setTypedAnswer(PASSAGES[0].answer);
+            setPhase("retained");
+            return;
+        }
+
+        let cancelled = false;
+
+        async function wait(ms: number) {
+            let remaining = ms;
+            while (remaining > 0) {
+                if (cancelled) return;
+                if (isPausedRef.current) {
+                    await sleep(80);
+                    continue;
+                }
+                const step = Math.min(40, remaining);
+                await sleep(step);
+                remaining -= step;
             }
-        }, 2500);
-        return () => clearTimeout(timeoutId);
-    }, [titleNumber, titles]);
+        }
+
+        async function runCycle() {
+            let idx = 0;
+            while (!cancelled) {
+                const passage = PASSAGES[idx];
+                const words = passage.text.split(" ");
+                const triggerIndex = words.findIndex((w) => w.includes(passage.trigger));
+
+                setPassageIdx(idx);
+                setInkedCount(0);
+                setTypedAnswer("");
+                setPhase("reading");
+                await wait(400);
+
+                for (let i = 0; i <= triggerIndex; i++) {
+                    if (cancelled) return;
+                    setInkedCount(i + 1);
+                    await wait(65);
+                }
+                if (cancelled) return;
+
+                setPhase("drift");
+                await wait(900);
+                if (cancelled) return;
+
+                setPhase("prompt");
+                await wait(900);
+                if (cancelled) return;
+
+                setPhase("answering");
+                for (let i = 0; i <= passage.answer.length; i++) {
+                    if (cancelled) return;
+                    setTypedAnswer(passage.answer.slice(0, i));
+                    await wait(24);
+                }
+                await wait(650);
+                if (cancelled) return;
+
+                setPhase("resuming");
+                for (let i = triggerIndex + 1; i <= words.length; i++) {
+                    if (cancelled) return;
+                    setInkedCount(i);
+                    await wait(50);
+                }
+                if (cancelled) return;
+
+                setPhase("retained");
+                await wait(3000);
+                if (cancelled) return;
+
+                idx = (idx + 1) % PASSAGES.length;
+            }
+        }
+
+        runCycle();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const passage = PASSAGES[passageIdx];
+    const words = passage.text.split(" ");
+    const triggerIndex = words.findIndex((w) => w.includes(passage.trigger));
+    const promptOpen = phase === "prompt" || phase === "answering";
+    const isCaretVisible = phase === "reading" || phase === "resuming";
+    const status = isPaused
+        ? { label: "Paused — move away to resume", className: "text-text-secondary border-[var(--color-border-soft)] bg-[var(--color-light-bg)]" }
+        : STATUS[phase];
 
     return (
-        <div ref={containerRef}>
-            <AuroraBackground
-                className="pt-32 pb-20 lg:pt-40 lg:pb-32 overflow-hidden"
-                showRadialGradient={true}
-            >
-                <div className="relative max-w-7xl mx-auto px-6 lg:px-8 z-10 w-full">
-                    <div className="grid lg:grid-cols-2 gap-16 lg:gap-24 items-center">
-                        {/* Left — Copy */}
-                        <motion.div style={{ y: textY, opacity: textOpacity }}>
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ duration: 0.6 }}
-                            >
-                                <h1 className="text-[2.75rem] sm:text-5xl lg:text-[3.2rem] font-extrabold tracking-tight leading-[1.15] text-foreground font-display mb-6 inline-block w-full">
-                                    The end of passive learning.<br />
-                                    <span className="text-primary">Become a </span>
-                                    <span className="relative inline-flex overflow-hidden min-w-[370px] align-bottom">
-                                        <span className="invisible">problem solver.</span>
-                                        {titles.map((title, index) => (
-                                            <motion.span
-                                                key={index}
-                                                className="absolute left-0 text-primary"
-                                                initial={{ opacity: 0, y: "100%" }}
-                                                transition={{ type: "spring", stiffness: 50 }}
-                                                animate={
-                                                    titleNumber === index
-                                                        ? { y: 0, opacity: 1 }
-                                                        : { y: titleNumber > index ? "-100%" : "100%", opacity: 0 }
-                                                }
-                                            >
-                                                {title}
-                                            </motion.span>
-                                        ))}
-                                    </span>
-                                </h1>
+        <section className="relative overflow-hidden pt-20 pb-6 lg:pt-24 lg:pb-8 min-h-[100svh]">
+            {/* Ambient glow, top-right */}
+            <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                    background:
+                        "radial-gradient(820px 500px at 82% -10%, rgba(198,164,92,0.13), transparent 62%)",
+                }}
+            />
 
-                                <p className="text-[1.1rem] text-text-secondary leading-[1.75] max-w-lg mb-10">
-                                    Human's attention span has been dropping due to modern technological advancements causing cognitive decline. HIE (Human Intelligence Engine) acts as an AI Tutor that monitors your IQ, EQ, SQ, and Critical Thinking to mature your analytical reasoning.
-                                </p>
-
-                                {/* CTA */}
-                                <div className="flex flex-wrap items-center gap-4 mb-6">
-                                    <motion.div
-                                        whileHover={{ y: -2, boxShadow: "0 20px 40px -10px rgba(7,23,44,0.4)" }}
-                                        whileTap={{ y: 1 }}
-                                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                                        className="rounded-xl"
-                                    >
-                                        <Link
-                                            href="/signup"
-                                            className="group inline-flex items-center gap-2.5 px-7 py-3.5 text-[0.95rem] font-semibold text-white bg-primary rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_16px_rgba(7,23,44,0.25)] transition-colors duration-150"
-                                        >
-                                            Try it free
-                                            <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                                        </Link>
-                                    </motion.div>
-                                    <motion.a
-                                        href="#how-it-works"
-                                        whileHover={{ x: 2, color: "#1e293b" }}
-                                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                                        className="inline-flex items-center gap-2 px-5 py-3.5 text-[0.95rem] font-medium text-text-secondary transition-colors"
-                                    >
-                                        <Play className="w-4 h-4" />
-                                        See how it works
-                                    </motion.a>
-                                </div>
-
-                                {/* Trust layer */}
-                                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.85rem] text-text-muted font-medium">
-                                    <span className="flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Free to try</span>
-                                    <span className="flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> Designed for deep learning</span>
-                                    <span className="flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> No credit card</span>
-                                </div>
-                            </motion.div>
-                        </motion.div>
-
-                        {/* Right — Product Mockup */}
-                        <motion.div style={{ y: mockupY }} className="relative z-10">
-                            <motion.div
-                                initial={{ opacity: 0, x: 30 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ duration: 0.7, delay: 0.15 }}
-                                className="relative lg:ml-6 mt-10 lg:mt-0"
-                            >
-                                {/* Decorative glow behind mockup */}
-                                <motion.div
-                                    animate={{
-                                        scale: [1, 1.05, 1],
-                                        opacity: [0.6, 0.4, 0.6],
-                                        rotate: [0, 5, -5, 0]
-                                    }}
-                                    transition={{
-                                        duration: 18,
-                                        repeat: Infinity,
-                                        ease: "linear"
-                                    }}
-                                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[110%] h-[110%] bg-gradient-to-tr from-primary/15 to-[var(--accent-secondary)]/15 blur-3xl rounded-full z-0 pointer-events-none"
-                                />
-
-                                {/* Main lesson card */}
-                                <motion.div
-                                    className="bg-white/90 backdrop-blur-xl rounded-2xl border border-white shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08),_0_0_40px_-10px_rgba(7,23,44,0.12)] overflow-hidden relative z-10"
-                                >
-                                    {/* Window chrome */}
-                                    <div className="flex items-center justify-between px-5 py-3 border-b border-[#f1f5f9] bg-[#fafbfc]/50">
-                                        <div className="flex items-center gap-2">
-                                            <div className="flex gap-1.5">
-                                                <div className="w-2.5 h-2.5 rounded-full bg-[#fca5a5]" />
-                                                <div className="w-2.5 h-2.5 rounded-full bg-[#fde68a]" />
-                                                <div className="w-2.5 h-2.5 rounded-full bg-[#86efac]" />
-                                            </div>
-                                            <span className="text-[11px] text-text-muted ml-2 font-medium">Focus Environment Active</span>
-                                        </div>
-                                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-100">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                            <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-widest">High Engagement</span>
-                                        </div>
-                                    </div>
-
-                                    <div className="p-5 lg:p-6 space-y-5">
-                                        {/* Flow indicator */}
-                                        <div>
-                                            <div className="flex justify-between text-[11px] text-text-muted mb-2">
-                                                <span className="font-semibold text-foreground">Cognitive Load: Optimal</span>
-                                                <span>Focus streak: 12m</span>
-                                            </div>
-                                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                                <motion.div
-                                                    initial={{ width: 0 }}
-                                                    animate={{ width: "75%" }}
-                                                    transition={{ delay: 1.2, duration: 1.5, ease: "easeOut" }}
-                                                    className="h-full bg-emerald-400 rounded-full relative"
-                                                >
-                                                    <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/30 animate-pulse"></div>
-                                                </motion.div>
-                                            </div>
-                                        </div>
-
-                                        {/* AI Intervention block */}
-                                        <div className="bg-[#f8fafc] rounded-xl p-4 lg:p-5 border border-[#f1f5f9] relative overflow-hidden">
-                                            <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-2xl -mt-10 -mr-10"></div>
-                                            <div className="flex gap-3.5 relative">
-                                                <div className="w-8 h-8 rounded-lg bg-white shadow-sm border border-slate-100 flex items-center justify-center shrink-0 mt-0.5">
-                                                    <Brain className="w-4 h-4 text-primary" />
-                                                </div>
-                                                <div>
-                                                    <p className="text-[11px] font-bold text-slate-800 mb-1 uppercase tracking-wider">Passive detection</p>
-                                                    <p className="text-[12px] text-slate-600 leading-relaxed font-medium">
-                                                        I noticed you've been passively consuming for a while. Let's shift gears and ensure you're actually retaining this conceptually.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Teach-back prompt */}
-                                        <div className="rounded-xl p-4 lg:p-5 border border-primary/20 bg-gradient-to-b from-primary/[0.02] to-transparent shadow-[inset_0_2px_10px_rgba(7,23,44,0.02)]">
-                                            <p className="text-[11px] font-bold text-primary mb-2 flex items-center gap-1.5 uppercase tracking-widest">
-                                                <span className="relative flex h-2 w-2">
-                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-40"></span>
-                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                                                </span>
-                                                Active Recall Intervention
-                                            </p>
-                                            <p className="text-[14px] text-slate-800 leading-relaxed font-medium mb-1">
-                                                Before we move forward, explain the foundational concept holding this chapter together.
-                                            </p>
-                                            <p className="text-[11px] text-slate-400 mb-3">Teach it to me in your own words.</p>
-                                            <div className="mt-3 h-10 bg-white rounded-lg border border-[#e2e8f0] px-3.5 flex items-center shadow-sm">
-                                                <motion.span
-                                                    initial={{ opacity: 0 }}
-                                                    animate={{ opacity: 1 }}
-                                                    transition={{ delay: 0.5, duration: 0.5 }}
-                                                    className="text-[12px] text-slate-400"
-                                                >
-                                                    I think the main idea is that...
-                                                </motion.span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            </motion.div>
-                        </motion.div>
+            <div className="relative z-10 max-w-[1600px] mx-auto w-full px-6 lg:px-12">
+                <motion.div
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.6 }}
+                    className="max-w-xl"
+                >
+                    <div className="flex items-center gap-2 mb-4">
+                        <span className="w-6 h-px bg-[var(--accent-secondary)]" />
+                        <span className="text-[0.75rem] font-mono uppercase tracking-[0.14em] text-[var(--accent-secondary)]">
+                            AI Tutor · built different
+                        </span>
                     </div>
-                </div>
-            </AuroraBackground>
-        </div>
+
+                    <h1 className="font-serif text-primary mb-5">
+                        <span className="block font-semibold text-[2.75rem] sm:text-[3.4rem] lg:text-[4.1rem] leading-[1.03] tracking-tight">
+                            Study smarter.
+                        </span>
+                        <span className="block italic font-normal text-text-secondary text-[1.7rem] sm:text-[2.1rem] lg:text-[2.55rem] leading-[1.15] mt-1">
+                            Then study <span className="text-[var(--accent-secondary)]">alone.</span>
+                        </span>
+                    </h1>
+
+                    <p className="text-[1.05rem] lg:text-[1.15rem] text-text-secondary leading-[1.65] mb-6 pl-4 border-l-2 border-[var(--color-border-soft)]">
+                        HIE builds real understanding through guided lessons, active recall, and
+                        teach-back — <strong className="text-primary font-semibold">not another app that wants your attention forever.</strong>
+                    </p>
+
+                    <div className="flex items-center gap-2 mb-4 text-[0.82rem] font-mono text-text-muted">
+                        <span>Here&apos;s what that looks like</span>
+                        <motion.span
+                            animate={{ y: [0, 3, 0] }}
+                            transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                            className="text-[var(--accent-secondary)]"
+                        >
+                            ↓
+                        </motion.span>
+                    </div>
+                </motion.div>
+
+                {/* Stage — live interruption demo. Hover to pause and read at your own pace. */}
+                <motion.div
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.6, delay: 0.15 }}
+                    onMouseEnter={() => {
+                        isPausedRef.current = true;
+                        setIsPaused(true);
+                    }}
+                    onMouseLeave={() => {
+                        isPausedRef.current = false;
+                        setIsPaused(false);
+                    }}
+                    className="bg-white border border-[var(--color-border-soft)] rounded-2xl shadow-[0_24px_60px_-24px_rgba(7,23,44,0.2)] p-5 lg:p-6"
+                >
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-[0.72rem] font-mono text-text-muted">{passage.source}</span>
+                        <span
+                            className={`flex items-center gap-1.5 text-[0.68rem] font-mono uppercase tracking-wide px-2.5 py-1 rounded-full border transition-colors duration-300 ${status.className}`}
+                        >
+                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                            {status.label}
+                        </span>
+                    </div>
+
+                    <p className="text-[1.1rem] lg:text-[1.18rem] leading-[1.6]">
+                        {words.map((word, i) => (
+                            <Fragment key={i}>
+                                <span
+                                    className={`transition-all duration-300 ${i < inkedCount
+                                            ? "text-primary blur-none opacity-100"
+                                            : "text-[var(--color-border-soft)] blur-[1.5px] opacity-70"
+                                        } ${i === triggerIndex && i < inkedCount ? "bg-[var(--accent-secondary)]/25 rounded" : ""
+                                        }`}
+                                >
+                                    {word}
+                                </span>{" "}
+                                {isCaretVisible && i === inkedCount - 1 && (
+                                    <span className="inline-block w-[2px] h-[1em] align-middle bg-[var(--accent-secondary)] animate-pulse" />
+                                )}
+                            </Fragment>
+                        ))}
+                    </p>
+
+                    <div
+                        className="overflow-hidden transition-[max-height,opacity,margin] duration-500 ease-out"
+                        style={{ maxHeight: promptOpen ? 116 : 0, opacity: promptOpen ? 1 : 0, marginTop: promptOpen ? 14 : 0 }}
+                    >
+                        <div className="rounded-xl border border-[var(--accent-secondary)] bg-gradient-to-b from-[var(--accent-secondary)]/8 to-transparent p-4">
+                            <p className="text-[0.94rem] font-semibold text-primary mb-2">{passage.question}</p>
+                            <div className="h-9 bg-[var(--color-light-bg)] rounded-lg border border-[var(--color-border-soft)] px-3.5 flex items-center">
+                                <span className="text-[0.85rem] text-primary font-medium">{typedAnswer}</span>
+                                {phase === "answering" && (
+                                    <span className="inline-block w-[2px] h-4 bg-[var(--accent-secondary)] ml-0.5 animate-pulse" />
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        className="overflow-hidden transition-[max-height,opacity,margin] duration-500 ease-out"
+                        style={{ maxHeight: phase === "retained" ? 32 : 0, opacity: phase === "retained" ? 1 : 0, marginTop: phase === "retained" ? 12 : 0 }}
+                    >
+                        <span className="inline-flex items-center gap-1.5 text-[0.8rem] font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
+                            ✓ Retained — concept understood, not just seen
+                        </span>
+                    </div>
+                </motion.div>
+
+                <motion.div
+                    initial={{ opacity: 0, y: 16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.6, delay: 0.25 }}
+                    className="mt-5"
+                >
+                    <div className="flex flex-wrap items-center gap-4 mb-3">
+                        <motion.div
+                            whileHover={{ y: -2, boxShadow: "0 20px 40px -10px rgba(7,23,44,0.4)" }}
+                            whileTap={{ y: 1 }}
+                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                            className="rounded-xl"
+                        >
+                            <Link
+                                href="/signup"
+                                className="group inline-flex items-center gap-2.5 px-7 py-3.5 text-[0.98rem] font-semibold text-white bg-primary rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_16px_rgba(7,23,44,0.25)] transition-colors duration-150"
+                            >
+                                Try it free
+                                <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                            </Link>
+                        </motion.div>
+                        <a
+                            href="#how-it-works"
+                            className="inline-flex items-center gap-2 px-3 py-3.5 text-[0.98rem] font-medium text-text-secondary hover:text-primary transition-colors"
+                        >
+                            <Play className="w-4 h-4" />
+                            See how it works
+                        </a>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[0.85rem] text-text-muted font-medium">
+                        <span className="flex items-center gap-1.5">
+                            <span className="text-emerald-600">✓</span> Free to try
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                            <span className="text-emerald-600">✓</span> Private Learner DNA profile — never a raw score
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                            <span className="text-emerald-600">✓</span> No credit card
+                        </span>
+                    </div>
+                </motion.div>
+            </div>
+        </section>
     );
 }

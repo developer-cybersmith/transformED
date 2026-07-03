@@ -21,7 +21,7 @@ export function ContinueLearningCard({ lesson }: { lesson: MockLesson | null }) 
     return (
         <div className="mb-0">
             <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold tracking-tight text-neutral-900">
+                <h2 className="font-serif text-xl font-semibold tracking-tight text-neutral-900">
                     Continue Learning
                 </h2>
                 <span className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors">

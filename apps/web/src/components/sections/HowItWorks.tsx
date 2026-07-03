@@ -149,8 +149,9 @@ export default function HowItWorks() {
                             <p className="text-sm font-semibold text-primary mb-2 tracking-wide uppercase">
                                 The Cognitive Pipeline
                             </p>
-                            <h2 className="text-3xl sm:text-[2.25rem] font-bold text-foreground font-display tracking-tight leading-tight">
-                                From cognitive overload to complete mastery.
+                            <h2 className="font-serif text-foreground tracking-tight leading-[1.1]">
+                                <span className="block font-semibold text-3xl sm:text-[2.25rem]">From cognitive overload</span>
+                                <span className="block italic font-normal text-text-secondary text-[1.55rem] sm:text-[1.85rem] mt-0.5">to complete mastery.</span>
                             </h2>
                         </motion.div>
 

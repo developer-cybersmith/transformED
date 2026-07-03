@@ -97,12 +97,12 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
   }
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-[#0a0a0f]/90 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-[#13131c] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-white/5">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wider">
+            <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider">
               Quick Check
             </span>
             {questions.length > 1 && (
@@ -111,7 +111,7 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
               </span>
             )}
           </div>
-          <p className="text-white text-base font-medium leading-snug">
+          <p className="font-serif text-white text-lg font-medium leading-snug">
             {question.question}
           </p>
         </div>
@@ -169,8 +169,8 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
             <button
               onClick={handleSubmit}
               disabled={selectedIndex === null}
-              className="px-5 py-2 rounded-full bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]
-                         text-white text-sm font-medium transition-colors
+              className="px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
+                         text-primary text-sm font-semibold transition-all
                          disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Submit
@@ -179,8 +179,8 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
             <button
               onClick={handleNext}
               disabled={isSubmitting}
-              className="px-5 py-2 rounded-full bg-[var(--accent-primary)] hover:bg-[var(--accent-primary-hover)]
-                         text-white text-sm font-medium transition-colors
+              className="px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
+                         text-primary text-sm font-semibold transition-all
                          disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isSubmitting ? 'Scoring…' : isLast ? 'Continue' : 'Next question'}

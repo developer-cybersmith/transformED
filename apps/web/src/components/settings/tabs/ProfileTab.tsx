@@ -3,7 +3,7 @@ import { MapPin, Target, Sparkles, BookOpen } from "lucide-react";
 export function ProfileTab() {
     return (
         <div className="flex flex-col gap-8 w-full max-w-3xl pt-8">
-            <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight">Profile & Identity</h2>
+            <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight">Profile & Identity</h2>
 
             <div className="flex flex-col md:flex-row gap-8 items-start">
                 {/* Profile Avatar / Photo */}
@@ -23,7 +23,7 @@ export function ProfileTab() {
                 {/* Profile Details */}
                 <div className="flex flex-col gap-6 flex-1">
                     <div>
-                        <h3 className="text-xl font-medium text-neutral-900">Alex Student</h3>
+                        <h3 className="font-serif text-xl font-medium text-neutral-900">Alex Student</h3>
                         <p className="text-neutral-500 mt-1">alex.student@example.com</p>
                     </div>
 

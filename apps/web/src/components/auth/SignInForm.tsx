@@ -68,7 +68,7 @@ export function SignInForm() {
             className="bg-white/80 backdrop-blur-xl rounded-[2rem] p-8 sm:p-10 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.1)] border border-neutral-100"
         >
             <div className="mb-10">
-                <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
+                <h2 className="font-serif text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
                     Continue Learning
                 </h2>
                 <p className="text-neutral-500 text-sm">
