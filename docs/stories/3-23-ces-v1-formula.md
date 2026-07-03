@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 baseline_commit: "af72477"
 ---
 
@@ -305,19 +305,22 @@ No other files are modified. `service.py`, `router.py`, `config.py`, and all mig
 ## Dev Agent Record
 
 ### Implementation Plan
-RED → GREEN → REFACTOR cycle. Tests written first in `test_ces.py` (17 tests covering all 19 ACs). RED confirmed: all 17 tests failed on ModuleNotFoundError / FileNotFoundError. Implementation written as a pure synchronous function with input clamping, redistribution-on-teachback-None, and division-by-zero guard. GREEN: 17/17 pass. REFACTOR: AST-based tests verify no hardcoded literals and no forbidden imports — both pass, confirming clean implementation.
+RED → GREEN → REFACTOR cycle. Tests written first in `test_ces.py` (20 tests covering all 19 ACs). RED confirmed: all 17 initial tests failed on ModuleNotFoundError / FileNotFoundError. Implementation written as a pure synchronous function with input clamping, redistribution-on-teachback-None, and division-by-zero guard. GREEN: 17/17 pass. REFACTOR: AST-based tests verify no hardcoded literals and no forbidden imports. Post-review fixes: added output clamp (BLOCKER 1), teachback=0.0 vs None distinction test (BLOCKER 2), per-weight AC 7 verification, AC 5 head_pose/blink coverage. 20/20 pass.
 
 ### Debug Log
 - RED phase: 17 failures confirmed before any implementation (all ModuleNotFoundError / FileNotFoundError)
 - GREEN phase: 17/17 pass after writing ces.py (0.14s run time — pure computation, no IO)
-- Full suite: 431 pass, 18 pre-existing Dev 4/1 failures (test_tutor_graph, test_tutor_service collection error; test_auth jwt warnings; test_websocket_session, test_lesson_ready_pubsub) — all unchanged from before this story
+- Code review phase: 5-agent adversarial review found 2 BLOCKERs + 3 IMPROVEMENTs
+- Fix phase: 2 BLOCKERs resolved (output clamp + teachback=0.0 test); 3 tests added; 20/20 pass
+- Full suite: 434 pass, 18 pre-existing Dev 4/1 failures (test_tutor_graph, test_tutor_service collection error; test_auth jwt warnings; test_websocket_session, test_lesson_ready_pubsub) — all unchanged
 
 ### Completion Notes
 - Created `apps/api/app/modules/assessment/ces.py` — pure synchronous CES formula, no DB/LLM/network
-- Created `apps/api/tests/test_ces.py` — 17 unit tests covering all ACs
+- Created `apps/api/tests/test_ces.py` — 20 unit tests covering all ACs
 - Key design decisions:
   - `teachback_score=None` redistributes weights; `quiz_accuracy=None` does not (treated as 0.0)
   - Division-by-zero guard for pathological `ces_weight_teachback=1.0` config
+  - Output clamped to 100.0 — necessary because Settings allows weights to sum to 1.001
   - AST-based tests catch hardcoded literals and forbidden imports at test-time
   - All weight constants read from `settings` — swapping weights requires only env var change
 
@@ -328,6 +331,28 @@ RED → GREEN → REFACTOR cycle. Tests written first in `test_ces.py` (17 tests
 ### Change Log
 - 2026-07-03: Story created — Sprint 3 Task 1 CES v1 formula (BMAD story-first gate, branch dev3-sprint3-task1)
 - 2026-07-03: Implementation complete — ces.py + test_ces.py; 17/17 tests pass; 0 regressions
+- 2026-07-03: Code review — 5-agent adversarial review; 2 BLOCKERs fixed; 20/20 tests pass
 
 ## Senior Developer Review (AI)
-_To be filled by /bmad-code-review after implementation._
+
+**Date:** 2026-07-03
+**Branch:** dev3-sprint3-task1
+**Reviewer:** 5-agent adversarial review (Story Quality · Blind Hunter · Test Coverage · AC Completeness · Process Integrity)
+**Outcome:** APPROVED after fixes
+
+### Findings
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Blind Hunter | **BLOCKER** | `raw` can exceed 1.0 in teachback-None redistribution when weight sum = 1.001 (within ±0.001 tolerance) → CES > 100.0 possible | Fixed: `return min(100.0, round(raw * 100, 4))` |
+| 2 | Test Coverage | **BLOCKER** | No test distinguishes `teachback_score=0.0` from `teachback_score=None`. A `if not teachback_score:` bug passes all 17 tests silently. | Fixed: added `test_teachback_zero_uses_full_formula_not_redistribution` |
+| 3 | Story Quality | IMPROVEMENT | `test_redistribution_weights_sum_to_one` was byte-for-byte duplicate of `test_all_ones_teachback_none_returns_100` | Fixed: replaced with `test_redistribution_weights_are_proportional` (asymmetric signals, per-weight verification) |
+| 4 | AC Completeness | IMPROVEMENT | AC 5 clamping: `head_pose` and `blink` not tested with out-of-range values | Fixed: added `test_head_pose_and_blink_clamped_when_out_of_range` |
+| 5 | Multiple | NITPICK | Test count header said "16" but 17 tests existed | Fixed: header updated to "20" |
+
+### Action Items
+- [x] BLOCKER 1: Add output clamp `min(100.0, ...)` to ces.py return statement
+- [x] BLOCKER 2: Add test distinguishing teachback_score=0.0 vs None
+- [x] IMPROVEMENT 3: Replace duplicate redistribution test with per-weight proportionality test
+- [x] IMPROVEMENT 4: Extend AC 5 clamping coverage to head_pose and blink
+- [x] NITPICK 5: Fix test count header
