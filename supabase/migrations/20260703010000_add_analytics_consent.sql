@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration: 20260703000000_add_analytics_consent.sql
+-- Migration: 20260703010000_add_analytics_consent.sql
 -- Story 3-22: DPDP Act 2023 compliance for PostHog behavioral events
 -- Applied: pending (requires manual apply via Supabase dashboard or CLI)
 -- ============================================================
