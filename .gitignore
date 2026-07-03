@@ -11,14 +11,6 @@
 *.key
 secrets/
 
-
-docs/dev3-assessment-tracker.md
-docs/dev2-sprint-tracker.md
-docs/dev2-frontend-role.md
-docs/dev1-pydantic-schemas-task.md
-docs/dev4-*.md
-# per-dev personal tracker docs — never push
-
 # ---- OS ----
 .DS_Store
 .DS_Store?
