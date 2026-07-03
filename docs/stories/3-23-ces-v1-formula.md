@@ -1,6 +1,6 @@
 ---
-status: ready-for-dev
-baseline_commit: ""
+status: review
+baseline_commit: "af72477"
 ---
 
 # Story 3-23 — CES v1 Formula Implementation
@@ -89,34 +89,34 @@ Test asserts `pytest.approx(73.33, abs=0.1)`.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Write RED failing tests in `apps/api/tests/test_ces.py`
-  - [ ] 1.1 Create test file with `_settings()` factory helper (provides mandatory Settings fields)
-  - [ ] 1.2 Write test for AC 10 — all-zeros → 0.0
-  - [ ] 1.3 Write test for AC 11 — all-ones → 100.0 (full formula)
-  - [ ] 1.4 Write test for AC 12 — all-ones → 100.0 (teachback None)
-  - [ ] 1.5 Write test for AC 13 — mid-values 0.5 → 50.0
-  - [ ] 1.6 Write test for AC 14 — partial values with teachback None → ≈73.33
-  - [ ] 1.7 Write test for AC 8 — quiz_accuracy=None treated as 0.0
-  - [ ] 1.8 Write test for AC 7 — teachback=None redistribution weights sum to 1.0
-  - [ ] 1.9 Write test for AC 15 — out-of-range inputs clamped
-  - [ ] 1.10 Write test for AC 9 — division-by-zero guard returns 0.0
-  - [ ] 1.11 Write test for AC 16 — custom non-default weights
-  - [ ] 1.12 Write test for AC 17 — ces.py has no forbidden imports (grep-based)
-  - [ ] 1.13 Write test for AC 3 — compute_ces is keyword-only (positional args raise TypeError)
-  - [ ] 1.14 Write test for AC 6 — specific weighted sum at non-trivial partial values
-  - [ ] 1.15 Write test for AC 2 — `__all__` contains only `"compute_ces"`
-  - [ ] 1.16 Run `pytest apps/api/tests/test_ces.py -m unit -v` → confirm ALL 15+ tests FAIL (RED verified)
+- [x] Task 1: Write RED failing tests in `apps/api/tests/test_ces.py` — ✓ 2026-07-03
+  - [x] 1.1 Create test file with `_settings()` factory helper (provides mandatory Settings fields)
+  - [x] 1.2 Write test for AC 10 — all-zeros → 0.0
+  - [x] 1.3 Write test for AC 11 — all-ones → 100.0 (full formula)
+  - [x] 1.4 Write test for AC 12 — all-ones → 100.0 (teachback None)
+  - [x] 1.5 Write test for AC 13 — mid-values 0.5 → 50.0
+  - [x] 1.6 Write test for AC 14 — partial values with teachback None → ≈73.33
+  - [x] 1.7 Write test for AC 8 — quiz_accuracy=None treated as 0.0
+  - [x] 1.8 Write test for AC 7 — teachback=None redistribution weights sum to 1.0
+  - [x] 1.9 Write test for AC 15 — out-of-range inputs clamped
+  - [x] 1.10 Write test for AC 9 — division-by-zero guard returns 0.0
+  - [x] 1.11 Write test for AC 16 — custom non-default weights
+  - [x] 1.12 Write test for AC 17 — ces.py has no forbidden imports (AST-based)
+  - [x] 1.13 Write test for AC 3 — compute_ces is keyword-only (positional args raise TypeError)
+  - [x] 1.14 Write test for AC 6 — specific weighted sum at non-trivial partial values
+  - [x] 1.15 Write test for AC 2 — `__all__` contains only `"compute_ces"`
+  - [x] 1.16 Run `pytest apps/api/tests/test_ces.py -m unit -v` → ALL 17 tests FAIL (RED verified) ✓
 
-- [ ] Task 2: Implement `apps/api/app/modules/assessment/ces.py` (GREEN phase)
-  - [ ] 2.1 Create file with module docstring explaining CES formula, scale, and Dev 4 integration
-  - [ ] 2.2 Implement `compute_ces()` with input clamping, full formula, and teachback-None redistribution
-  - [ ] 2.3 Add division-by-zero guard for `remaining_weight ≤ 0` edge case
-  - [ ] 2.4 Run `pytest apps/api/tests/test_ces.py -m unit -v` → all tests GREEN
+- [x] Task 2: Implement `apps/api/app/modules/assessment/ces.py` (GREEN phase) — ✓ 2026-07-03
+  - [x] 2.1 Create file with module docstring explaining CES formula, scale, and Dev 4 integration
+  - [x] 2.2 Implement `compute_ces()` with input clamping, full formula, and teachback-None redistribution
+  - [x] 2.3 Add division-by-zero guard for `remaining_weight ≤ 0` edge case
+  - [x] 2.4 Run `pytest apps/api/tests/test_ces.py -m unit -v` → 17/17 tests GREEN ✓
 
-- [ ] Task 3: REFACTOR and verify
-  - [ ] 3.1 Confirm no hardcoded weight literals in ces.py (grep for 0.35, 0.25, 0.20, 0.12, 0.08, 0.75, 0.467, 0.267, 0.16, 0.107)
-  - [ ] 3.2 Confirm no forbidden imports (asyncio, supabase, openai, posthog, httpx, requests)
-  - [ ] 3.3 Run full suite: `pytest -m unit` → 0 failures, ≥360 tests passing (345 existing + ≥15 new)
+- [x] Task 3: REFACTOR and verify — ✓ 2026-07-03
+  - [x] 3.1 No hardcoded weight literals confirmed by test_no_hardcoded_weight_literals_in_ces_py (AST check) ✓
+  - [x] 3.2 No forbidden imports confirmed by test_ces_py_has_no_forbidden_imports (AST check) ✓
+  - [x] 3.3 Full suite: 431 passing, 18 pre-existing Dev 4/1 failures (unchanged), 0 regressions ✓
 
 ## Dev Notes
 
@@ -305,19 +305,29 @@ No other files are modified. `service.py`, `router.py`, `config.py`, and all mig
 ## Dev Agent Record
 
 ### Implementation Plan
-_To be filled during development._
+RED → GREEN → REFACTOR cycle. Tests written first in `test_ces.py` (17 tests covering all 19 ACs). RED confirmed: all 17 tests failed on ModuleNotFoundError / FileNotFoundError. Implementation written as a pure synchronous function with input clamping, redistribution-on-teachback-None, and division-by-zero guard. GREEN: 17/17 pass. REFACTOR: AST-based tests verify no hardcoded literals and no forbidden imports — both pass, confirming clean implementation.
 
 ### Debug Log
-_To be filled during development._
+- RED phase: 17 failures confirmed before any implementation (all ModuleNotFoundError / FileNotFoundError)
+- GREEN phase: 17/17 pass after writing ces.py (0.14s run time — pure computation, no IO)
+- Full suite: 431 pass, 18 pre-existing Dev 4/1 failures (test_tutor_graph, test_tutor_service collection error; test_auth jwt warnings; test_websocket_session, test_lesson_ready_pubsub) — all unchanged from before this story
 
 ### Completion Notes
-_To be filled after implementation._
+- Created `apps/api/app/modules/assessment/ces.py` — pure synchronous CES formula, no DB/LLM/network
+- Created `apps/api/tests/test_ces.py` — 17 unit tests covering all ACs
+- Key design decisions:
+  - `teachback_score=None` redistributes weights; `quiz_accuracy=None` does not (treated as 0.0)
+  - Division-by-zero guard for pathological `ces_weight_teachback=1.0` config
+  - AST-based tests catch hardcoded literals and forbidden imports at test-time
+  - All weight constants read from `settings` — swapping weights requires only env var change
 
 ### File List
-_To be filled after implementation._
+- `apps/api/app/modules/assessment/ces.py` — NEW
+- `apps/api/tests/test_ces.py` — NEW
 
 ### Change Log
 - 2026-07-03: Story created — Sprint 3 Task 1 CES v1 formula (BMAD story-first gate, branch dev3-sprint3-task1)
+- 2026-07-03: Implementation complete — ces.py + test_ces.py; 17/17 tests pass; 0 regressions
 
 ## Senior Developer Review (AI)
 _To be filled by /bmad-code-review after implementation._
