@@ -184,12 +184,16 @@ The session report route is in `apps/api/app/modules/assessment/router.py` — c
 
 ### Completion Notes
 
-All 19 ACs satisfied. 6 unit tests, all passing. Key implementation details:
+All 19 ACs satisfied. 11 unit tests, all passing (expanded from 6 after BMAD review). Key implementation details:
 
-- `posthog_client.py` uses try/except around the Settings initialization at module import time so the module loads cleanly in test environments (where required env vars are absent). `posthog.api_key` stays falsy → `capture_event()` is a no-op. Test fixture `_enable_posthog_key` sets `posthog.api_key = "phc_test_key"` via monkeypatch to activate instrumentation in tests.
-- `GET /api/assessment/user/dna` was previously a 501 stub — implemented as part of this story using `get_learner_dna_data()` service function. `test_assessment_stub_contracts.py::test_dna_endpoint_returns_501` renamed to `test_dna_endpoint_is_live_not_501`.
-- PostHog calls in service functions fire AFTER successful DB writes (insert/upsert) — never on error paths.
-- 0 regressions in Dev 3 modules (150 tests pass).
+- `posthog_client.py` uses try/except around the Settings initialization at module import time so the module loads cleanly in test environments. `posthog.api_key` stays falsy → `capture_event()` is a no-op. Init failures now log at WARNING (BLOCKER-001).
+- `capture_event()` requires `analytics_consent=True` to fire (DPDP Option C). Default is `False` — no events sent without explicit consent.
+- `get_analytics_consent(user_id, supabase)` in service.py reads `users.analytics_consent`; returns `False` on any DB error (fail-safe).
+- `_mock_analytics_consent` autouse fixture in `test_posthog_events.py` patches consent to `True` for PostHog tests; `test_posthog_not_fired_without_consent` overrides to `False`.
+- Same autouse fixture added to `test_quiz_endpoint.py`, `test_teachback_endpoint.py`, `test_onboarding_endpoint.py` with `return_value=False` to isolate consent from table-routing assertions.
+- `GET /api/assessment/user/dna` was previously a 501 stub — implemented using `get_learner_dna_data()`.
+- PostHog calls fire AFTER successful DB writes — never on error paths (IMP-003 test verifies this).
+- 389 Dev 3 unit tests pass; 0 regressions.
 
 ### File List
 
@@ -197,11 +201,16 @@ All 19 ACs satisfied. 6 unit tests, all passing. Key implementation details:
 |------|--------|-------|
 | `apps/api/pyproject.toml` | No change needed | `posthog>=3.0.0` was already present |
 | `apps/api/app/config.py` | Updated | Added `posthog_api_key` + `posthog_host` settings |
-| `apps/api/app/core/posthog_client.py` | Created | PostHog wrapper with fire-and-forget `capture_event()` |
-| `apps/api/app/modules/assessment/service.py` | Updated | Added `capture_event` calls to `grade_quiz()`, `grade_teachback()`, `process_onboarding()`; added `get_learner_dna_data()` |
-| `apps/api/app/modules/assessment/router.py` | Updated | PostHog call in `get_session_report_endpoint()`; implemented `get_learner_dna()` (replaced 501 stub) |
-| `apps/api/tests/test_posthog_events.py` | Created | 6 unit tests (ACs 13–18) |
+| `apps/api/app/core/posthog_client.py` | Created | PostHog wrapper; `capture_event()` with `analytics_consent` guard + WARNING logging |
+| `apps/api/app/modules/assessment/service.py` | Updated | `capture_event` calls in quiz/teachback/onboarding; `get_analytics_consent()`; `get_learner_dna_data()` |
+| `apps/api/app/modules/assessment/router.py` | Updated | Top-level `capture_event` import; consent fetch + event fire in session report and DNA handlers |
+| `apps/api/tests/test_posthog_events.py` | Created | 11 unit tests (ACs 13–18 + BMAD patches IMP-001–003, consent gating, null-safe defaults) |
+| `apps/api/tests/test_quiz_endpoint.py` | Updated | `_mock_analytics_consent` autouse fixture + `AsyncMock` import |
+| `apps/api/tests/test_teachback_endpoint.py` | Updated | `_mock_analytics_consent` autouse fixture + `AsyncMock` import |
+| `apps/api/tests/test_onboarding_endpoint.py` | Updated | `_mock_analytics_consent` autouse fixture |
 | `apps/api/tests/test_assessment_stub_contracts.py` | Updated | Renamed `test_dna_endpoint_returns_501` → `test_dna_endpoint_is_live_not_501` |
+| `supabase/migrations/20260703000000_add_analytics_consent.sql` | Created | Adds `analytics_consent BOOLEAN NOT NULL DEFAULT FALSE` to `public.users` |
+| `docs/deferred-work.md` | Created | DEFER-001 (PostHog erasure), DEFER-002 (sync capture on async loop) |
 
 ### Change Log
 
@@ -209,3 +218,41 @@ All 19 ACs satisfied. 6 unit tests, all passing. Key implementation details:
 |------|--------|
 | 2026-07-03 | Story created — story-first commit before implementation |
 | 2026-07-03 | Implementation: posthog_client.py, config settings, service PostHog calls, router updates, 6 tests |
+| 2026-07-03 | 5-agent adversarial code review run; 1 decision_needed, 10 patch, 2 defer, 1 dismissed |
+| 2026-07-03 | BMAD patches applied: BLOCKER-001/002 fixed; IMP-001–008 implemented; DPDP Option C (analytics_consent); test count 6→11; consent autouse fixture added to quiz/teachback/onboarding test files; 389 tests passing |
+
+---
+
+## Senior Developer Review (AI)
+
+**Review date:** 2026-07-03
+**Branch:** dev3-sprint2-task5
+**Agents:** Story Quality · Blind Hunter · Test Coverage · AC Completeness · Process Integrity
+**Outcome:** Changes Requested
+
+### Decision-Needed
+
+- [x] [Review][Decision] DPDP-001: Selected **Option C** — implemented `analytics_consent` mechanism. New `users.analytics_consent` column (migration `20260703000000_add_analytics_consent.sql`, default FALSE). `capture_event()` now accepts `analytics_consent: bool = False`; events are suppressed when False. `get_analytics_consent(user_id, supabase)` added to service.py; all five call sites updated. `test_posthog_not_fired_without_consent` verifies suppression. `_mock_analytics_consent` autouse fixture grants consent in all PostHog tests.
+
+### Patch Findings (BLOCKERs first, then Improvements)
+
+#### BLOCKERs
+
+- [x] [Review][Patch] BLOCKER-001: `except Exception: pass` in posthog_client.py init swallows unexpected errors (AttributeError, ImportError) with no log line — PostHog is silently disabled with zero observability signal [apps/api/app/core/posthog_client.py:31] — FIXED: replaced with `logger.warning("PostHog client init failed...: %s", _exc)`
+- [x] [Review][Patch] BLOCKER-002: AC 8 test gap — `test_posthog_onboarding_event_fired` asserts `"session_count" in pos_args[2]` (key presence only); AC 8 requires the value written to learner_dna; add `assert pos_args[2]["session_count"] == 0` [apps/api/tests/test_posthog_events.py:285] — FIXED: assertion added
+
+#### Improvements
+
+- [x] [Review][Patch] IMP-001: No test exercises `capture_event()` exception-swallowing path (AC 11); if the try/except is removed all tests remain green — add a test that patches `posthog.capture` to `side_effect=RuntimeError` and asserts `capture_event()` returns normally — FIXED: `test_capture_event_exception_swallowed` added
+- [x] [Review][Patch] IMP-002: `get_learner_dna_data()` 404 path and null-safe defaults (`badge_labels or []`, `session_count or 0`) are entirely untested — the DNA test mocks the whole function; add direct unit tests for these branches [apps/api/app/modules/assessment/service.py:828] — FIXED: `test_get_learner_dna_data_returns_404_when_no_row` and `test_get_learner_dna_data_null_safe_defaults` added
+- [x] [Review][Patch] IMP-003: No test verifies PostHog does NOT fire when `grade_quiz()` DB insert fails — if `capture_event` is accidentally moved above the insert, all 6 tests pass while analytics diverge from DB — FIXED: `test_posthog_not_fired_when_quiz_insert_fails` added
+- [x] [Review][Patch] IMP-004: `process_onboarding()` PostHog call hardcodes `session_count: 0` instead of reading from `dna_row["session_count"]` — will silently diverge if upsert logic ever returns non-zero for re-onboarding [apps/api/app/modules/assessment/service.py:794] — FIXED: reads `dna_row["session_count"]`
+- [x] [Review][Patch] IMP-005: Quiz test missing assertions for `total_questions` and `correct_count` (required by AC 6 property schema); add `assert "total_questions" in props` and `assert "correct_count" in props` [apps/api/tests/test_posthog_events.py:219] — FIXED: both assertions added
+- [x] [Review][Patch] IMP-006: Teachback test asserts `"attempt_number" in props` (presence only) — with mock returning count=0 the expected value is 1; add `assert props["attempt_number"] == 1` [apps/api/tests/test_posthog_events.py:262] — FIXED: value assertion added
+- [x] [Review][Patch] IMP-007: No-op test (AC 18) uses `patch("posthog.capture")` while all other tests use `patch("app.core.posthog_client.posthog.capture")` — functionally equivalent today but inconsistent; change to the explicit path [apps/api/tests/test_posthog_events.py:353] — FIXED: consistent patch path used
+- [x] [Review][Patch] IMP-008: `capture_event` imported top-level in service.py but lazily inside function bodies in router.py — inconsistent; no circular-import reason for lazy in router.py since posthog_client only imports from config (a leaf module) — FIXED: moved to top-level import in router.py
+
+### Deferred Findings
+
+- [x] [Review][Defer] DEFER-001 [apps/api/app/modules/assessment/router.py:125] — UUID `distinct_id` sent to PostHog with no erasure pathway for DPDP right-to-erasure; PostHog person profile persists after account deletion — deferred, pre-existing design concern; addressable in a dedicated DPDP compliance story
+- [x] [Review][Defer] DEFER-002 [apps/api/app/core/posthog_client.py:44] — Synchronous `posthog.capture()` called on the async event loop thread; SDK currently non-blocking (background queue) but no `asyncio.to_thread` guard — deferred, no current risk; guard if SDK v4 changes flush semantics

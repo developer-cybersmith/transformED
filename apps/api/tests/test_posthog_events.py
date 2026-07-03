@@ -1,6 +1,6 @@
 """Unit tests for PostHog event instrumentation across assessment actions (Story 3-22).
 
-Test count: 6
+Test count: 11
 Coverage:
 - AC 13: quiz submit fires assessment_quiz_submitted
 - AC 14: teachback submit fires assessment_teachback_submitted
@@ -8,6 +8,11 @@ Coverage:
 - AC 16: session report viewed fires assessment_session_report_viewed
 - AC 17: learner DNA viewed fires assessment_dna_viewed
 - AC 18: no posthog call when POSTHOG_API_KEY is empty (default)
+- IMP-001 / AC 11: capture_event never raises when SDK throws
+- IMP-002a: get_learner_dna_data raises HTTP 404 when no DB row
+- IMP-002b: get_learner_dna_data null-safe defaults (badge_labels=None, session_count=None)
+- IMP-003: PostHog NOT fired when quiz DB insert fails
+- Option C / DPDP: PostHog NOT fired when analytics_consent is False
 
 All tests are @pytest.mark.unit — no real Supabase, Redis, LLM, or PostHog connections.
 asyncio.to_thread is shimmed synchronously via the _mock_to_thread autouse fixture.
@@ -125,9 +130,25 @@ def _enable_posthog_key(monkeypatch):
 
     posthog_client.capture_event guards on `posthog.api_key` being truthy.
     Setting it here ensures active tests reach posthog.capture.
-    Tests verifying the no-op behaviour (AC 18) override via a second setattr("posthog.api_key","").
+    Tests verifying the no-op behaviour (AC 18) override via a second setattr.
     """
     monkeypatch.setattr("posthog.api_key", "phc_test_key")
+
+
+@pytest.fixture(autouse=True)
+def _mock_analytics_consent(monkeypatch):
+    """Grant analytics consent in all PostHog tests (Option C / DPDP Act 2023).
+
+    capture_event() now requires analytics_consent=True to fire.  This autouse
+    fixture mocks get_analytics_consent() at the service module level to return
+    True so all tests that verify an event IS fired work without needing a real
+    users table. Tests that verify events are NOT fired (consent=False) override
+    this fixture with AsyncMock(return_value=False).
+    """
+    monkeypatch.setattr(
+        "app.modules.assessment.service.get_analytics_consent",
+        AsyncMock(return_value=True),
+    )
 
 
 # ── Supabase mock builders ────────────────────────────────────────────────────
@@ -151,6 +172,29 @@ def _build_quiz_supabase() -> MagicMock:
     insert_m = MagicMock()
     insert_m.insert.return_value.execute.return_value.data = []
     insert_m.insert.return_value.execute.return_value.error = None
+
+    supabase.table.side_effect = [session_m, lesson_m, count_m, insert_m]
+    return supabase
+
+
+def _build_quiz_supabase_insert_error() -> MagicMock:
+    """Like _build_quiz_supabase() but the INSERT call returns a DB error."""
+    supabase = MagicMock()
+
+    session_m = MagicMock()
+    session_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+
+    lesson_m = MagicMock()
+    lesson_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+        "content": _LESSON_CONTENT
+    }
+
+    count_m = MagicMock()
+    count_m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
+
+    insert_m = MagicMock()
+    insert_m.insert.return_value.execute.return_value.data = []
+    insert_m.insert.return_value.execute.return_value.error = "FK constraint violated"
 
     supabase.table.side_effect = [session_m, lesson_m, count_m, insert_m]
     return supabase
@@ -195,7 +239,7 @@ def _build_onboarding_supabase() -> MagicMock:
     return supabase
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ── Tests: PostHog event assertions ──────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -219,6 +263,8 @@ async def test_posthog_quiz_event_fired():
     assert props["session_id"] == SESSION_ID
     assert "ces_contribution" in props
     assert "quiz_accuracy" in props
+    assert "total_questions" in props  # IMP-005
+    assert "correct_count" in props    # IMP-005
 
 
 @pytest.mark.unit
@@ -259,7 +305,7 @@ async def test_posthog_teachback_event_fired():
     props = pos_args[2]
     assert props["session_id"] == SESSION_ID
     assert props["score"] == 80
-    assert "attempt_number" in props
+    assert props["attempt_number"] == 1  # IMP-006: verify value, not just presence
 
 
 @pytest.mark.unit
@@ -282,7 +328,7 @@ async def test_posthog_onboarding_event_fired():
     pos_args = mock_capture.call_args[0]
     assert pos_args[0] == USER_ID
     assert pos_args[1] == "assessment_onboarding_completed"
-    assert "session_count" in pos_args[2]
+    assert pos_args[2]["session_count"] == 0  # BLOCKER-002 fix: verify the value, not just key
 
 
 @pytest.mark.unit
@@ -350,7 +396,117 @@ async def test_posthog_no_call_when_api_key_empty(monkeypatch):
     """
     monkeypatch.setattr("posthog.api_key", "")
     supabase = _build_quiz_supabase()
-    with patch("posthog.capture") as mock_capture:
+    with patch("app.core.posthog_client.posthog.capture") as mock_capture:  # IMP-007: consistent path
+        await grade_quiz(
+            session_id=SESSION_ID,
+            lesson_id=LESSON_ID,
+            segment_id=SEGMENT_ID,
+            answers=[QuizAnswer(question_id="qph1", response_index=1, response_time_ms=500)],
+            user_id=USER_ID,
+            supabase=supabase,
+        )
+    mock_capture.assert_not_called()
+
+
+# ── Tests: exception-swallowing, error paths, consent gating ─────────────────
+
+
+@pytest.mark.unit
+def test_capture_event_exception_swallowed():
+    """AC 11 / IMP-001: capture_event never raises when posthog.capture() throws.
+
+    Verifies that a RuntimeError from the PostHog SDK is swallowed and logged,
+    not propagated to the caller. Without this test, deleting the try/except
+    block would leave all 6 event tests still green.
+    """
+    from app.core.posthog_client import capture_event
+
+    with patch("app.core.posthog_client.posthog.capture", side_effect=RuntimeError("SDK error")):
+        # Must not raise — any exception here is a test failure
+        capture_event(
+            distinct_id="user-test",
+            event="test_event",
+            properties={"k": "v"},
+            analytics_consent=True,
+        )
+
+
+@pytest.mark.unit
+async def test_get_learner_dna_data_returns_404_when_no_row():
+    """IMP-002a: get_learner_dna_data raises HTTP 404 when resp.data is None."""
+    from fastapi import HTTPException
+    from app.modules.assessment.service import get_learner_dna_data
+
+    supabase = MagicMock()
+    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_learner_dna_data(user_id=USER_ID, supabase=supabase)
+
+    assert exc_info.value.status_code == 404
+    assert "onboarding diagnostic" in exc_info.value.detail.lower()
+
+
+@pytest.mark.unit
+async def test_get_learner_dna_data_null_safe_defaults():
+    """IMP-002b: None badge_labels and session_count coerce to [] and 0 safely."""
+    from app.modules.assessment.service import get_learner_dna_data
+
+    supabase = MagicMock()
+    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+        "user_id": USER_ID,
+        "badge_labels": None,
+        "profile_text": "Test profile with DPDP disclaimer.",
+        "session_count": None,
+        "last_updated": None,
+    }
+
+    result = await get_learner_dna_data(user_id=USER_ID, supabase=supabase)
+
+    assert result["badge_labels"] == [], "None badge_labels must coerce to []"
+    assert result["session_count"] == 0, "None session_count must coerce to 0"
+
+
+@pytest.mark.unit
+async def test_posthog_not_fired_when_quiz_insert_fails():
+    """IMP-003: capture_event NOT called when grade_quiz() DB insert returns an error.
+
+    Verifies that PostHog events fire AFTER the DB write, not before. Without
+    this test, accidentally moving capture_event above the insert would leave
+    all other PostHog tests green while analytics permanently diverge from DB.
+    """
+    from fastapi import HTTPException
+
+    supabase = _build_quiz_supabase_insert_error()
+    with patch("app.core.posthog_client.posthog.capture") as mock_capture:
+        with pytest.raises(HTTPException) as exc_info:
+            await grade_quiz(
+                session_id=SESSION_ID,
+                lesson_id=LESSON_ID,
+                segment_id=SEGMENT_ID,
+                answers=[QuizAnswer(question_id="qph1", response_index=1, response_time_ms=500)],
+                user_id=USER_ID,
+                supabase=supabase,
+            )
+
+    assert exc_info.value.status_code == 500
+    mock_capture.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_posthog_not_fired_without_consent(monkeypatch):
+    """Option C / DPDP Act 2023: PostHog events suppressed when analytics_consent is False.
+
+    The autouse _mock_analytics_consent grants consent for all other tests.
+    This test overrides it with False to confirm capture_event short-circuits
+    on the analytics_consent guard.
+    """
+    monkeypatch.setattr(
+        "app.modules.assessment.service.get_analytics_consent",
+        AsyncMock(return_value=False),
+    )
+    supabase = _build_quiz_supabase()
+    with patch("app.core.posthog_client.posthog.capture") as mock_capture:
         await grade_quiz(
             session_id=SESSION_ID,
             lesson_id=LESSON_ID,

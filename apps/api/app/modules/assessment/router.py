@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
+from app.core.posthog_client import capture_event
 from app.dependencies import CurrentUser
 
 # All request/response models live in schemas.py so service.py can import them
@@ -113,18 +114,20 @@ async def get_session_report_endpoint(
 ) -> SessionReport:
     """Return the final CES breakdown and scores for a completed session."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
-    from app.core.posthog_client import capture_event
-    from app.modules.assessment.service import get_session_report
+    from app.modules.assessment.service import get_analytics_consent, get_session_report
 
+    supabase = get_supabase()
     result = await get_session_report(
         session_id=session_id,
         user_id=current_user["sub"],
-        supabase=get_supabase(),
+        supabase=supabase,
     )
+    consent = await get_analytics_consent(user_id=current_user["sub"], supabase=supabase)
     capture_event(
         distinct_id=current_user["sub"],
         event="assessment_session_report_viewed",
         properties={"session_id": session_id},
+        analytics_consent=consent,
     )
     return result
 
@@ -139,15 +142,17 @@ async def get_learner_dna(
 ) -> LearnerDNA:
     """Return the learner DNA profile for the authenticated user."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
-    from app.core.posthog_client import capture_event
-    from app.modules.assessment.service import get_learner_dna_data
+    from app.modules.assessment.service import get_analytics_consent, get_learner_dna_data
 
     user_id: str = current_user["sub"]
-    body = await get_learner_dna_data(user_id=user_id, supabase=get_supabase())
+    supabase = get_supabase()
+    body = await get_learner_dna_data(user_id=user_id, supabase=supabase)
+    consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
     capture_event(
         distinct_id=user_id,
         event="assessment_dna_viewed",
         properties={"session_count": body.get("session_count", 0)},
+        analytics_consent=consent,
     )
     return LearnerDNA(**body)
 

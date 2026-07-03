@@ -31,6 +31,32 @@ from app.providers.llm.openai import OpenAILLMProvider
 logger = logging.getLogger(__name__)
 
 
+async def get_analytics_consent(user_id: str, supabase: Any) -> bool:
+    """Return True if the user has granted analytics consent (DPDP Act 2023).
+
+    Checks the users.analytics_consent column added by migration
+    20260703000000_add_analytics_consent.sql.  Returns False on any DB error
+    or if the column does not exist yet (safe default — no events sent).
+
+    Args:
+        user_id: User UUID from the decoded JWT.
+        supabase: Synchronous Supabase client.
+    """
+    try:
+        resp = await asyncio.to_thread(
+            lambda: supabase.table("users")
+            .select("analytics_consent")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        if resp.data is None:
+            return False
+        return bool(resp.data.get("analytics_consent", False))
+    except Exception:
+        return False  # fail-safe: suppress events when consent check fails
+
+
 def _score_to_label(score: float) -> str:
     """Convert a numeric rubric sub-score (0-100) to a descriptive label.
 
@@ -274,6 +300,7 @@ async def grade_quiz(
         for g in graded
     ]
 
+    consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
     capture_event(
         distinct_id=user_id,
         event="assessment_quiz_submitted",
@@ -285,6 +312,7 @@ async def grade_quiz(
             "total_questions": total_count,
             "correct_count": correct_count,
         },
+        analytics_consent=consent,
     )
 
     return QuizResult(
@@ -477,6 +505,7 @@ async def grade_teachback(
         attempt_number,
     )
 
+    consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
     capture_event(
         distinct_id=user_id,
         event="assessment_teachback_submitted",
@@ -486,6 +515,7 @@ async def grade_teachback(
             "score": result.score,
             "attempt_number": attempt_number,
         },
+        analytics_consent=consent,
     )
 
     return TeachbackResult(
@@ -788,10 +818,12 @@ async def process_onboarding(
             detail="Failed to persist learner profile.",
         )
 
+    consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
     capture_event(
         distinct_id=user_id,
         event="assessment_onboarding_completed",
-        properties={"session_count": 0},
+        properties={"session_count": dna_row["session_count"]},  # IMP-004: reads value written to DB
+        analytics_consent=consent,
     )
 
     return OnboardingResult(
