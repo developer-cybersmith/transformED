@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.config import get_settings
+from app.core.posthog_client import capture_event
 from app.modules.assessment.onboarding_questions import (
     ALL_NINE_DIMENSIONS,
     BADGE_THRESHOLD,
@@ -28,6 +29,33 @@ from app.modules.assessment.schemas import (
 from app.providers.llm.openai import OpenAILLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+async def get_analytics_consent(user_id: str, supabase: Any) -> bool:
+    """Return True if the user has granted analytics consent (DPDP Act 2023).
+
+    Checks the users.analytics_consent column added by migration
+    20260703010000_add_analytics_consent.sql.  Returns False on any DB error
+    or if the column does not exist yet (safe default — no events sent).
+
+    Args:
+        user_id: User UUID from the decoded JWT.
+        supabase: Synchronous Supabase client.
+    """
+    try:
+        resp = await asyncio.to_thread(
+            lambda: supabase.table("users")
+            .select("analytics_consent")
+            .eq("id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        if resp.data is None:
+            return False
+        return bool(resp.data.get("analytics_consent", False))
+    except Exception as exc:
+        logger.warning("PostHog consent check failed user=%s: %s", user_id, exc)
+        return False  # fail-safe: suppress events when consent check fails
 
 
 def _score_to_label(score: float) -> str:
@@ -273,6 +301,21 @@ async def grade_quiz(
         for g in graded
     ]
 
+    consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
+    capture_event(
+        distinct_id=user_id,
+        event="assessment_quiz_submitted",
+        properties={
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "ces_contribution": ces_contribution,
+            "quiz_accuracy": quiz_accuracy,
+            "total_questions": total_count,
+            "correct_count": correct_count,
+        },
+        analytics_consent=consent,
+    )
+
     return QuizResult(
         session_id=session_id,
         score=quiz_accuracy * 100,
@@ -461,6 +504,19 @@ async def grade_teachback(
         segment_id,
         result.score,
         attempt_number,
+    )
+
+    consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
+    capture_event(
+        distinct_id=user_id,
+        event="assessment_teachback_submitted",
+        properties={
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "score": result.score,
+            "attempt_number": attempt_number,
+        },
+        analytics_consent=consent,
     )
 
     return TeachbackResult(
@@ -763,8 +819,56 @@ async def process_onboarding(
             detail="Failed to persist learner profile.",
         )
 
+    consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
+    capture_event(
+        distinct_id=user_id,
+        event="assessment_onboarding_completed",
+        properties={"session_count": dna_row["session_count"]},  # IMP-004: reads value written to DB
+        analytics_consent=consent,
+    )
+
     return OnboardingResult(
         badge_labels=badge_labels,
         profile_text=profile_text,
         session_count=0,
     )
+
+
+async def get_learner_dna_data(
+    *,
+    user_id: str,
+    supabase: Any,
+) -> dict[str, Any]:
+    """Fetch the learner_dna row for a user and return it as a plain dict.
+
+    Returns a dict compatible with the LearnerDNA response model in router.py.
+    Returns a zero-state dict if no learner_dna row exists yet (user not onboarded).
+
+    Args:
+        user_id: User UUID from the decoded JWT.
+        supabase: Synchronous Supabase client.
+
+    Raises:
+        HTTPException 404: No learner_dna row found for this user.
+    """
+    resp = await asyncio.to_thread(
+        lambda: supabase.table("learner_dna")
+        .select("user_id, badge_labels, profile_text, session_count, last_updated")
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    if resp.data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
+        )
+    row = resp.data
+    return {
+        "user_id": str(row["user_id"]),
+        "badge_labels": row.get("badge_labels") or [],
+        "profile_text": row.get("profile_text"),
+        "session_count": int(row.get("session_count") or 0),
+        "reassessment_due": False,
+        "last_updated": row.get("last_updated"),
+    }

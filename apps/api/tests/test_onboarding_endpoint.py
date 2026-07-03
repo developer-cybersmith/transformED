@@ -94,6 +94,20 @@ def _make_onboarding_answers(selected_index: int = 2):
     return answers
 
 
+@pytest.fixture(autouse=True)
+def _mock_analytics_consent(monkeypatch) -> None:
+    """Suppress the analytics-consent DB lookup for all onboarding endpoint tests.
+
+    process_onboarding() calls get_analytics_consent() which makes an extra supabase.table("users")
+    call. Patching it here keeps the supabase side_effect list (2 entries) clean and isolates
+    consent behaviour to test_posthog_events.py where it is tested exhaustively.
+    """
+    monkeypatch.setattr(
+        "app.modules.assessment.service.get_analytics_consent",
+        AsyncMock(return_value=False),
+    )
+
+
 @pytest.fixture
 def mock_to_thread(monkeypatch):
     """Shim asyncio.to_thread to run synchronously for MagicMock chain compatibility."""

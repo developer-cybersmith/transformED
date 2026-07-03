@@ -114,12 +114,17 @@ def test_report_endpoint_is_live_not_501() -> None:
 
 
 @pytest.mark.unit
-def test_dna_endpoint_returns_501() -> None:
-    """GET /api/assessment/user/dna must return HTTP 501 NOT_IMPLEMENTED."""
+def test_dna_endpoint_is_live_not_501() -> None:
+    """GET /api/assessment/user/dna must NOT return HTTP 501 (implemented in Sprint 2, Story 3-22).
+
+    The endpoint is now live — it delegates to get_learner_dna_data() in service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_posthog_events.py (AC 17).
+    """
     response = client.get("/api/assessment/user/dna")
-    assert response.status_code == 501, (
-        f"Expected 501, got {response.status_code}. "
-        "Learner DNA endpoint must remain a stub until Sprint 2."
+    assert response.status_code != 501, (
+        f"Learner DNA endpoint returned 501 — implementation is missing. "
+        "Story 3-22 requires this endpoint to be live."
     )
 
 
