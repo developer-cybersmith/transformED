@@ -145,6 +145,18 @@ class Settings(BaseSettings):
         description="TTL for the Redis user:{user_id}:ces_baseline key, in seconds (default 24 h)",
     )
 
+    # ── Learner DNA Fusion (Sprint 3 Task 3) ──────────────────────────────────
+    dna_ema_retain: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "EMA retention weight for Learner DNA dimension updates. "
+            "new = retain * old + (1 - retain) * session_signal. "
+            "Default 0.7 means each session contributes 30% of the new value."
+        ),
+    )
+
     # ── Intervention tuning ───────────────────────────────────────────────────
     intervention_cooldown_seconds: int = Field(
         default=120,
