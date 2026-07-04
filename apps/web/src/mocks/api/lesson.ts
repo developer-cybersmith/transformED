@@ -21,6 +21,7 @@ export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockL
                 status: 'in_progress',
                 progressPercent: 0,
                 lastAccessed: new Date().toISOString(),
+                thumbnailUrl: "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&q=80&w=600&h=400",
                 slides: [
                     {
                         id: "slide_1",

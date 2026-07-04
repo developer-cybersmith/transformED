@@ -18,6 +18,7 @@ const LESSON: MockLesson = {
   status: 'in_progress',
   progressPercent: 72,
   lastAccessed: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+  thumbnailUrl: 'https://images.unsplash.com/photo-real-thumbnail-1',
   slides: [],
   timeline: [],
 };

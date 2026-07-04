@@ -19,6 +19,7 @@ const LESSONS: MockLesson[] = [
     status: 'in_progress',
     progressPercent: 72,
     lastAccessed: new Date().toISOString(),
+    thumbnailUrl: 'https://images.unsplash.com/photo-real-thumbnail-1',
     slides: [],
     timeline: [],
   },
@@ -36,5 +37,12 @@ describe('RecentLessons', () => {
     await user.click(screen.getByText('View All'));
 
     expect(pushMock).toHaveBeenCalledWith('/library');
+  });
+
+  it('renders lesson.thumbnailUrl from the data layer instead of a locally-computed stock image', () => {
+    const { container } = render(<RecentLessons lessons={LESSONS} />);
+
+    const img = container.querySelector('img');
+    expect(img?.getAttribute('src')).toBe(LESSONS[0].thumbnailUrl);
   });
 });
