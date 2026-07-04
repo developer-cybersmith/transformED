@@ -9,6 +9,7 @@ import type {
   SessionReport,
   LearnerDNA,
   OnboardingDiagnosticSubmission,
+  OnboardingResult,
 } from '@/types/assessment';
 
 // ── Type-shape tests via runtime value construction ───────────────────────
@@ -90,6 +91,25 @@ describe('assessment types', () => {
     expect(sub.responses).toHaveLength(1);
     expect(Object.keys(sub)).not.toContain('subject');
     expect(Object.keys(sub)).not.toContain('grade_level');
+  });
+
+  it('OnboardingResult uses badge_labels/profile_text (not dna_label/profile_narrative)', () => {
+    const result: OnboardingResult = {
+      badge_labels: ['Pattern Thinker'],
+      profile_text: 'You learn visually. — Pursuant to DPDP Act 2023.',
+      session_count: 0,
+    };
+    expect(result.badge_labels).toContain('Pattern Thinker');
+    expect(Object.keys(result)).not.toContain('dna_label');
+    expect(Object.keys(result)).not.toContain('profile_narrative');
+    const forbidden = [
+      'pattern_recognition', 'logical_deduction', 'processing_speed',
+      'frustration_tolerance', 'persistence', 'help_seeking',
+      'goal_orientation', 'curiosity_index', 'study_independence',
+    ];
+    for (const field of forbidden) {
+      expect(Object.keys(result)).not.toContain(field);
+    }
   });
 
   it('SessionReport has duration_minutes (not duration_seconds)', () => {

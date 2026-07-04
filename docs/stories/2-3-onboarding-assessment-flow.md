@@ -4,7 +4,7 @@ baseline_commit: 686a8d5
 
 # Story 2.3: Onboarding Assessment Flow
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -33,42 +33,42 @@ so that TransformED can personalise my learning experience and I understand, bef
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Add typed service layer for onboarding (AC: 5, 7, 10, 12)
-  - [ ] 1.1 Create `src/services/onboarding.service.ts` exporting `submitOnboarding(responses: OnboardingAnswer[]): Promise<OnboardingResult>` (POST `assessment/onboarding/submit`) and `getLearnerDna(): Promise<LearnerDNA>` (GET `assessment/user/dna`), both using the existing `api` axios instance from `@/lib/api` (baseURL already includes `/api`, JWT already attached by its interceptor — do not add auth headers manually)
-  - [ ] 1.2 Add `OnboardingResult` type to `src/types/assessment.ts` (`{ badge_labels: string[]; profile_text: string; session_count: number }`) next to the existing `OnboardingAnswer`/`OnboardingDiagnosticSubmission`/`LearnerDNA` types — do not rename any existing field in that file, it is a frozen contract file
-  - [ ] 1.3 Do not throw/unwrap axios errors inside the service — let `OnboardingFlow` inspect `error.response.status` (409 vs 422 vs other) per AC 10/11
+- [x] Task 1: Add typed service layer for onboarding (AC: 5, 7, 10, 12)
+  - [x] 1.1 Create `src/services/onboarding.service.ts` exporting `submitOnboarding(responses: OnboardingAnswer[]): Promise<OnboardingResult>` (POST `assessment/onboarding/submit`) and `getLearnerDna(): Promise<LearnerDNA>` (GET `assessment/user/dna`), both using the existing `api` axios instance from `@/lib/api` (baseURL already includes `/api`, JWT already attached by its interceptor — do not add auth headers manually)
+  - [x] 1.2 Add `OnboardingResult` type to `src/types/assessment.ts` (`{ badge_labels: string[]; profile_text: string; session_count: number }`) next to the existing `OnboardingAnswer`/`OnboardingDiagnosticSubmission`/`LearnerDNA` types — do not rename any existing field in that file, it is a frozen contract file
+  - [x] 1.3 Do not throw/unwrap axios errors inside the service — let `OnboardingFlow` inspect `error.response.status` (409 vs 422 vs other) per AC 10/11
 
-- [ ] Task 2: Build `QuestionCard.tsx` (AC: 2, 3, 4, 16)
-  - [ ] 2.1 Props: `{ question: Question; selectedIndex: number | undefined; onSelect: (index: number) => void }` — pure/presentational, no fetch logic
-  - [ ] 2.2 Reuse the exact 20-question `QUESTIONS` content already in the current `page.tsx` (content is reviewed/approved per `docs/stories/3-4-onboarding-diagnostic-content.md` — do not edit question text, option text, or IDs)
-  - [ ] 2.3 Restyle to brand tokens (`rounded-2xl`, `--accent-primary`), animate question transitions with `framer-motion` `AnimatePresence`/`motion.div` (pattern already used in `HeroSection.tsx`)
+- [x] Task 2: Build `QuestionCard.tsx` (AC: 2, 3, 4, 16)
+  - [x] 2.1 Props: `{ question: Question; selectedIndex: number | undefined; onSelect: (index: number) => void }` — pure/presentational, no fetch logic
+  - [x] 2.2 Reuse the exact 20-question `QUESTIONS` content already in the current `page.tsx` (content is reviewed/approved per `docs/stories/3-4-onboarding-diagnostic-content.md` — do not edit question text, option text, or IDs)
+  - [x] 2.3 Restyle to brand tokens (`rounded-2xl`, `--accent-primary`), animate question transitions with `framer-motion` `AnimatePresence`/`motion.div` (pattern already used in `HeroSection.tsx`)
 
-- [ ] Task 3: Build `DNAResultCard.tsx` (AC: 7, 8, 9)
-  - [ ] 3.1 Props: `{ result: OnboardingResult | LearnerDNA; onContinue: () => void }` — render `badge_labels` as pills/badges, `profile_text` as body copy in full (it already contains the DPDP disclaimer sentence server-side — render as-is, do not append another disclaimer)
-  - [ ] 3.2 "Continue to Dashboard" button (`@/components/ui/button`, `variant="primary"`) calls `onContinue`
+- [x] Task 3: Build `DNAResultCard.tsx` (AC: 7, 8, 9)
+  - [x] 3.1 Props: `{ result: OnboardingResult | LearnerDNA; onContinue: () => void }` — render `badge_labels` as pills/badges, `profile_text` as body copy in full (it already contains the DPDP disclaimer sentence server-side — render as-is, do not append another disclaimer)
+  - [x] 3.2 "Continue to Dashboard" button (`@/components/ui/button`, `variant="primary"`) calls `onContinue`
 
-- [ ] Task 4: Build `OnboardingFlow.tsx` — orchestration (AC: 1, 4, 5, 6, 9, 10, 11, 12, 15)
-  - [ ] 4.1 State: `phase: 'checking' | 'disclaimer' | 'questions' | 'submitting' | 'result' | 'error'`, `current: number`, `answers: Record<string,{index:number}>`, `result: OnboardingResult | LearnerDNA | null`, `submitError: string | null`
-  - [ ] 4.2 On mount: `phase = 'checking'` → call `getLearnerDna()`. `200` → route to `/dashboard` immediately (AC 12). `404` → `phase = 'disclaimer'`. Any other error → treat as `404` (fail open into the flow, do not hard-block the student on a transient network error)
-  - [ ] 4.3 Disclaimer screen: DPDP-safe text (AC 1) + single "I Understand, Begin Assessment" button → `phase = 'questions'`. Do not persist disclaimer acknowledgment anywhere (no backend field exists for it — see Dev Notes gap)
-  - [ ] 4.4 Question phase: render `QuestionCard` for `QUESTIONS[current]`, Back/Next per existing logic in current `page.tsx` (reuse, do not redesign the state machine — it already works)
-  - [ ] 4.5 On last question's submit: `phase = 'submitting'` → `submitOnboarding(...)`. `201` → `result = response, phase = 'result'`. `409` → call `getLearnerDna()` and use that as `result`, `phase = 'result'` (AC 10). `422`/other → `submitError = message, phase = 'error'` with a Retry button that re-attempts submit without losing `answers` (AC 11)
-  - [ ] 4.6 Result phase: render `DNAResultCard`, `onContinue` → `router.push('/dashboard')`
+- [x] Task 4: Build `OnboardingFlow.tsx` — orchestration (AC: 1, 4, 5, 6, 9, 10, 11, 12, 15)
+  - [x] 4.1 State: `phase: 'checking' | 'disclaimer' | 'questions' | 'submitting' | 'result' | 'error'`, `current: number`, `answers: Record<string,{index:number}>`, `result: OnboardingResult | LearnerDNA | null`, `submitError: string | null`
+  - [x] 4.2 On mount: `phase = 'checking'` → call `getLearnerDna()`. `200` → route to `/dashboard` immediately (AC 12). `404` → `phase = 'disclaimer'`. Any other error → treat as `404` (fail open into the flow, do not hard-block the student on a transient network error)
+  - [x] 4.3 Disclaimer screen: DPDP-safe text (AC 1) + single "I Understand, Begin Assessment" button → `phase = 'questions'`. Do not persist disclaimer acknowledgment anywhere (no backend field exists for it — see Dev Notes gap)
+  - [x] 4.4 Question phase: render `QuestionCard` for `QUESTIONS[current]`, Back/Next per existing logic in current `page.tsx` (reuse, do not redesign the state machine — it already works)
+  - [x] 4.5 On last question's submit: `phase = 'submitting'` → `submitOnboarding(...)`. `201` → `result = response, phase = 'result'`. `409` → call `getLearnerDna()` and use that as `result`, `phase = 'result'` (AC 10). `422`/other → `submitError = message, phase = 'error'` with a Retry button that re-attempts submit without losing `answers` (AC 11)
+  - [x] 4.6 Result phase: render `DNAResultCard`, `onContinue` → `router.push('/dashboard')`
 
-- [ ] Task 5: Wire the route (AC: 15, 16)
-  - [ ] 5.1 Replace the body of `src/app/onboarding/page.tsx` with `'use client'; export default function OnboardingPage() { return <OnboardingFlow />; }` — delete the inline `QUESTIONS` array, state, and JSX from `page.tsx` once moved into `OnboardingFlow.tsx`/`QuestionCard.tsx`
-  - [ ] 5.2 Confirm the route stays at `apps/web/src/app/onboarding/page.tsx` (the `(dashboard)` route group is NOT used here — `/onboarding` is a top-level route, matching `middleware.ts`'s `PUBLIC_PATHS`/protected-route handling and Epic 2's route map)
+- [x] Task 5: Wire the route (AC: 15, 16)
+  - [x] 5.1 Replace the body of `src/app/onboarding/page.tsx` with `'use client'; export default function OnboardingPage() { return <OnboardingFlow />; }` — delete the inline `QUESTIONS` array, state, and JSX from `page.tsx` once moved into `OnboardingFlow.tsx`/`QuestionCard.tsx`
+  - [x] 5.2 Confirm the route stays at `apps/web/src/app/onboarding/page.tsx` (the `(dashboard)` route group is NOT used here — `/onboarding` is a top-level route, matching `middleware.ts`'s `PUBLIC_PATHS`/protected-route handling and Epic 2's route map)
 
-- [ ] Task 6: Middleware onboarding gate (AC: 13, 14)
-  - [ ] 6.1 Extend `updateSession()` in `src/lib/supabase/middleware.ts` to also return the `supabase` client instance it already constructs (add `supabase` to the returned object — purely additive, existing `supabaseResponse`/`user` fields unchanged)
-  - [ ] 6.2 In `src/middleware.ts`, after the existing auth check, add: if `user` exists and `pathname` starts with `/lesson` or `/upload`, query `supabase.from('learner_dna').select('user_id').eq('user_id', user.id).maybeSingle()`; if no row, `return NextResponse.redirect(new URL('/onboarding', request.url))`
-  - [ ] 6.3 Update `src/__tests__/middleware.test.ts`: extend `updateSessionMock` resolved values to include a `supabase` stub (`{ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: ... }) }) }) }) }`) for every existing test case so the 6 current tests keep passing; add new cases for `/lesson/*` and `/upload/*` with no `learner_dna` row (expect redirect to `/onboarding`) and with a row present (expect pass-through)
+- [x] Task 6: Middleware onboarding gate (AC: 13, 14)
+  - [x] 6.1 Extend `updateSession()` in `src/lib/supabase/middleware.ts` to also return the `supabase` client instance it already constructs (add `supabase` to the returned object — purely additive, existing `supabaseResponse`/`user` fields unchanged)
+  - [x] 6.2 In `src/middleware.ts`, after the existing auth check, add: if `user` exists and `pathname` starts with `/lesson` or `/upload`, query `supabase.from('learner_dna').select('user_id').eq('user_id', user.id).maybeSingle()`; if no row, `return NextResponse.redirect(new URL('/onboarding', request.url))`
+  - [x] 6.3 Update `src/__tests__/middleware.test.ts`: extend `updateSessionMock` resolved values to include a `supabase` stub (`{ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: ... }) }) }) }) }`) for every existing test case so the 6 current tests keep passing; add new cases for `/lesson/*` and `/upload/*` with no `learner_dna` row (expect redirect to `/onboarding`) and with a row present (expect pass-through)
 
-- [ ] Task 7: Tests (AC: all)
-  - [ ] 7.1 `OnboardingFlow` unit/RTL tests: disclaimer must render and block questions until acknowledged; 20-question happy path submits the correct batched payload shape; 409 path renders result from `getLearnerDna()` instead of an error; 422 path shows retry without clearing answers; mount-time 200 from `getLearnerDna()` skips straight to dashboard redirect
-  - [ ] 7.2 `QuestionCard` test: renders 4 options, calls `onSelect` with correct index, disabled state before selection
-  - [ ] 7.3 `DNAResultCard` test: renders `badge_labels` and full untruncated `profile_text`, never renders any of the 9 raw dimension-score field names
-  - [ ] 7.4 Middleware tests per 6.3
+- [x] Task 7: Tests (AC: all)
+  - [x] 7.1 `OnboardingFlow` unit/RTL tests: disclaimer must render and block questions until acknowledged; 20-question happy path submits the correct batched payload shape; 409 path renders result from `getLearnerDna()` instead of an error; 422 path shows retry without clearing answers; mount-time 200 from `getLearnerDna()` skips straight to dashboard redirect
+  - [x] 7.2 `QuestionCard` test: renders 4 options, calls `onSelect` with correct index, disabled state before selection
+  - [x] 7.3 `DNAResultCard` test: renders `badge_labels` and full untruncated `profile_text`, never renders any of the 9 raw dimension-score field names
+  - [x] 7.4 Middleware tests per 6.3
 
 ## Dev Notes
 
@@ -148,12 +148,75 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`, `jsdom` envir
 - [Source: apps/web/src/middleware.ts, apps/web/src/lib/supabase/middleware.ts, apps/web/src/__tests__/middleware.test.ts] (current auth-guard implementation + regression tests)
 - [Source: apps/web/src/components/dashboard/sections/HeroSection.tsx, apps/web/src/components/ui/button.tsx] (current brand design system reference implementation)
 
+### Review Findings
+
+**Adversarial review (Blind Hunter + Edge Case Hunter + Acceptance Auditor), 2026-07-04.**
+
+- [x] [Review][Patch] (resolved from Decision) AC16: `QuestionCard`'s 4 option buttons must be refactored to use the shared `Button` component (`className` overrides for `justify-start`/`h-auto`/text-left — Button forwards `className` last through `cn`/`twMerge`, so overrides win) instead of hand-rolled `<button>` elements.
+- [x] [Review][Patch] (resolved from Decision) Persist `answers`/`current` question index to `sessionStorage` so a refresh or tab close during the 20-question flow doesn't lose progress.
+- [x] [Review][Defer] `phase: "checking"` mount-time `getLearnerDna()` call has no timeout [apps/web/src/components/onboarding/OnboardingFlow.tsx] — deferred: root cause is project-wide (`lib/api.ts`'s shared axios instance has no default `timeout` configured at all, affecting every service); fixing it properly is out of this story's file list.
+- [x] [Review][Patch] Middleware silently swallows `learner_dna` Supabase query errors/exceptions (no `error` check, no try/catch) — a transient DB failure gets treated as "not onboarded" and wrongly redirects an already-onboarded user, and an unhandled rejection would crash middleware for all `/lesson`/`/upload` traffic. Inconsistent with this same story's own fail-open policy for `OnboardingFlow`'s mount check. [apps/web/src/middleware.ts]
+- [x] [Review][Patch] `ONBOARDING_GATED_PREFIXES` uses naive `pathname.startsWith(prefix)` with no path-segment boundary — would incorrectly sweep in a future sibling route like `/lessons` or `/lesson-plans`. No such route exists today (verified), but the guard is missing. [apps/web/src/middleware.ts]
+- [x] [Review][Patch] Error-phase "Retry" button has no `disabled`/`isLoading` guard, unlike the primary "Complete Assessment" button — minor double-submit race risk on rapid double-click. [apps/web/src/components/onboarding/OnboardingFlow.tsx]
+- [x] [Review][Patch] If the 409-recovery `getLearnerDna()` call itself fails, the user lands on a generic error whose only action is "Retry" — which will 409-loop forever since the record already exists server-side. No escape hatch. [apps/web/src/components/onboarding/OnboardingFlow.tsx]
+- [x] [Review][Patch] `DNAResultCard` trusts `badge_labels`/`profile_text` shape from the API with no runtime guard (`.length`/`.map()` on a value whose safety is TS-only). Add a defensive default. [apps/web/src/components/onboarding/DNAResultCard.tsx]
+- [x] [Review][Patch] `getStatus`/`getErrorDetail` use ad-hoc duck-typing (`"response" in err`) instead of `axios.isAxiosError` — any unrelated object with a `response` property would be misread as an HTTP error. [apps/web/src/components/onboarding/OnboardingFlow.tsx]
+- [x] [Review][Patch] No 401 handling anywhere in the flow — an expired/invalid session at mount or at final submit is treated as "not onboarded" (mount) or a generic unrecoverable failure (submit) instead of redirecting to `/signin`. [apps/web/src/components/onboarding/OnboardingFlow.tsx]
+- [x] [Review][Patch] Progress bar shows 0% on question 1 and never reaches 100% — off-by-one in `Math.round((current / TOTAL) * 100)` (bug carried over from the deleted legacy file, now re-authored in this diff). [apps/web/src/components/onboarding/OnboardingFlow.tsx]
+- [x] [Review][Patch] `QuestionCard` uses independent `aria-pressed` buttons instead of `role="radiogroup"`/`role="radio"` semantics for a mutually-exclusive single-choice question. [apps/web/src/components/onboarding/QuestionCard.tsx]
+- [x] [Review][Patch] Fragile test selector `screen.getAllByText(q.options[0])[0]` in the OnboardingFlow happy-path test helper — silently picks the first match instead of failing loud on an unexpected duplicate. Switch to plain `getByText`. [apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx]
+- [x] [Review][Patch] Mount `useEffect`'s `react-hooks/exhaustive-deps` suppression has no comment justifying the assumption that `useRouter()` is referentially stable. [apps/web/src/components/onboarding/OnboardingFlow.tsx]
+- [x] [Review][Patch] AC16: the "Back" button in `OnboardingFlow` is a hand-rolled `<button>`, not the shared `Button` component (every other action in the flow correctly uses it). [apps/web/src/components/onboarding/OnboardingFlow.tsx]
+- [x] [Review][Defer] DPDP `user_consents` gap for `consent_type='learner_dna'` [supabase/migrations/20260702000000_dpdp_user_consents.sql] — deferred, already flagged as an intentional cross-team decision in this story's own Dev Notes/Completion Notes (parallel to the fixed `attention_tracking` gap); needs Dev 3/Dev 1 coordination, not a frontend-only fix.
+- [x] [Review][Defer] No runtime API-response schema validation or error boundary anywhere in the route tree [apps/web/src/components/onboarding/DNAResultCard.tsx] — deferred, pre-existing project-wide practice gap (no error boundary exists anywhere else in the app either), broader than this story's file list.
+- [x] [Review][Defer] Middleware does a live, uncached Supabase round-trip on every `/lesson/**`/`/upload/**` request [apps/web/src/middleware.ts] — deferred, acceptable for Sprint 2 MVP scope; a real fix needs either a client-writable cookie (security regression on a security-relevant gate) or a backend JWT-claim change (out of scope for this frontend story).
+
+**Dismissed (3):** `/dashboard`/`/library`/`/settings` left ungated (this is exactly AC13 as written, not a defect) · `session_count`/`reassessment_due` fields unused in the UI (not required by any AC) · `answers` state typed `Record<string, number>` instead of the spec's `Record<string,{index:number}>` (auditor-confirmed behaviorally equivalent, no AC impact).
+
 ## Dev Agent Record
 
 ### Agent Model Used
 
+claude-sonnet-5
+
 ### Debug Log References
+
+None — no blocking failures. One test-authoring correction: initial `QuestionCard`/`DNAResultCard` tests used `@testing-library/jest-dom` matchers (`toBeInTheDocument`, `toHaveAttribute`), which aren't registered in `vitest.config.ts` (`setupFiles: []`) and aren't used anywhere else in this codebase's tests. Rewrote to plain DOM assertions (`.not.toBeNull()`, `.getAttribute(...)`) to match the existing convention (see `JargonHover.test.tsx`) instead of adding a new global test setup not requested by the story.
 
 ### Completion Notes List
 
+- All 7 tasks implemented and verified with tests; 22 new tests added across service/types/components/middleware, all passing, zero regressions (157/157 total suite passing).
+- `apps/web/src/app/onboarding/page.tsx` was a working 195-line monolith, not a stub (flagged in the story's Dev Notes) — reused its `QUESTIONS` content verbatim (moved to `components/onboarding/questions.ts`) and its Back/Next state-machine logic, rather than rewriting reviewed/approved content.
+- Backend contract confirmed against live `apps/api` code + passing tests, not the stale `docs/openapi-assessment.json`/epic-3 doc: submit is synchronous 201 with `{badge_labels, profile_text, session_count}`, not async 202. `OnboardingResult` added to `types/assessment.ts` accordingly.
+- Middleware gate implemented as a direct Supabase `learner_dna` RLS read (not a FastAPI call) inside `middleware.ts`, extending `updateSession()`'s return shape additively. All 6 pre-existing `middleware.test.ts` cases still pass with the extended mock shape; added 8 new cases for the onboarding gate (gated paths with/without a `learner_dna` row, and confirming dashboard/onboarding/library/settings are never gated).
+- 409 (already-submitted) and 422 (validation) submit paths both handled per AC 10/11: 409 transparently fetches and shows the existing DNA via `GET /api/assessment/user/dna`; 422/other shows a Retry that resubmits without losing collected answers.
+- Did **not** attempt to fix the DPDP `user_consents` gap for `consent_type='learner_dna'` (flagged in the story's Dev Notes as a real, pre-existing compliance gap parallel to the already-fixed `attention_tracking` one) — that needs a deliberate cross-team decision with Dev 3/Dev 1, not a frontend-only fix bolted onto this story. Raising it as a fast-follow.
+- `npx tsc --noEmit` clean. `npx eslint` on all touched files: 0 errors, 1 pre-existing warning in `lib/supabase/middleware.ts` (unused `options` var in a cookie handler I did not touch, outside this story's scope).
+- **Post-review update (2026-07-04):** 5-agent adversarial review found 14 real, fixable issues and 3 items needing a product/scope decision from the user. All 14 patches applied (see Change Log for the list); the 3 decisions resolved to: force `QuestionCard`'s option buttons into the shared `Button` component (patched), add `sessionStorage` persistence for in-flight answers (patched), and defer a project-wide axios-timeout fix (logged to `deferred-work.md`). Final suite: 170/170 passing.
+
 ### File List
+
+**New:**
+- `apps/web/src/services/onboarding.service.ts`
+- `apps/web/src/components/onboarding/questions.ts`
+- `apps/web/src/components/onboarding/QuestionCard.tsx`
+- `apps/web/src/components/onboarding/DNAResultCard.tsx`
+- `apps/web/src/components/onboarding/OnboardingFlow.tsx`
+- `apps/web/src/__tests__/services/onboarding.service.test.ts`
+- `apps/web/src/__tests__/components/onboarding/QuestionCard.test.tsx`
+- `apps/web/src/__tests__/components/onboarding/DNAResultCard.test.tsx`
+- `apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx`
+
+**Modified:**
+- `apps/web/src/types/assessment.ts` (added `OnboardingResult`)
+- `apps/web/src/__tests__/types/assessment.test.ts` (added `OnboardingResult` shape test)
+- `apps/web/src/services/index.ts` (export `onboarding.service`)
+- `apps/web/src/app/onboarding/page.tsx` (replaced monolith with thin `OnboardingFlow` wrapper)
+- `apps/web/src/lib/supabase/middleware.ts` (`updateSession` now also returns `supabase`)
+- `apps/web/src/middleware.ts` (added onboarding-completion gate for `/lesson/**`, `/upload/**`)
+- `apps/web/src/__tests__/middleware.test.ts` (updated mock shape + 8 new gate test cases)
+
+### Change Log
+
+- 2026-07-03: All 7 tasks completed. 22 new tests, 157/157 suite passing, tsc clean, lint clean (1 pre-existing unrelated warning).
+- 2026-07-04: 5-agent adversarial code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against the uncommitted diff. 3 decision-needed items resolved with the user (2 → patch, 1 → defer), 14 patches applied, 3 items deferred to `deferred-work.md`, 3 dismissed as spec-compliant/non-issues. Key fixes: middleware now fails open (not closed) on Supabase errors and uses an exact path-segment gate check instead of a naive `startsWith`; added 401 handling (redirect to `/signin`) at both mount and submit; added a terminal "Continue to Dashboard" escape hatch for the 409-then-DNA-fetch-also-fails case instead of an infinite Retry loop; switched to `axios.isAxiosError` instead of duck-typing; fixed the progress-bar off-by-one; `QuestionCard` now uses `role="radiogroup"`/`role="radio"` and the shared `Button` component for all 4 options; `OnboardingFlow`'s Back button now uses the shared `Button` too; added `sessionStorage` persistence for in-progress answers so a refresh no longer loses them. 13 new tests added for the fixes (170/170 suite passing), tsc clean, lint clean (same 1 pre-existing unrelated warning). Status → `done`.
