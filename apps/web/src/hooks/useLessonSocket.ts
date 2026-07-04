@@ -21,6 +21,10 @@ export function useLessonSocket(sessionId: string | null) {
     const sid = sessionId; // stable, non-null alias for use inside the nested async init()
 
     let cancelled = false;
+    // Deliberately synchronous: a consumer's first render after `sessionId`
+    // goes non-null must see 'connecting' immediately (no one-tick flash of
+    // 'closed' first) — this is asserted directly by useLessonSocket.test.ts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus('connecting'); // reflect the token fetch itself, not just the socket handshake
 
     function handleServerMessage(msg: ServerMessage): void {

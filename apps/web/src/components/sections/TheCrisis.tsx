@@ -35,7 +35,7 @@ export default function TheCrisis() {
                         </span>
                     </h2>
                     <p className="text-[1.1rem] text-slate-600 leading-[1.8]">
-                        Modern students aren't failing because the material is too hard. They're failing because passive consumption has destroyed their ability to focus deeply. Staring at a dense 50-page PDF doesn't work when your brain expects constant stimulation.
+                        Modern students aren&apos;t failing because the material is too hard. They&apos;re failing because passive consumption has destroyed their ability to focus deeply. Staring at a dense 50-page PDF doesn&apos;t work when your brain expects constant stimulation.
                     </p>
                 </motion.div>
 

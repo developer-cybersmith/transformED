@@ -40,11 +40,12 @@ export function SignInForm() {
 
             router.push("/dashboard");
             router.refresh();
-        } catch (err: any) {
+        } catch (err) {
             console.error("Login map error:", err);
             setError(
-                err.message ||
-                "Authentication failed. Please verify your credentials."
+                err instanceof Error && err.message
+                    ? err.message
+                    : "Authentication failed. Please verify your credentials."
             );
         } finally {
             setIsLoading(false);

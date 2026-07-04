@@ -54,10 +54,16 @@ export default function Hero() {
     useEffect(() => {
         const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         if (prefersReducedMotion) {
+            // Accessibility requires the final state to appear immediately with
+            // zero animation — deferring this past a microtask would risk a
+            // visible flash of the "idle" frame first, which is the exact
+            // motion this branch exists to prevent.
             const words = PASSAGES[0].text.split(" ");
+            /* eslint-disable react-hooks/set-state-in-effect */
             setInkedCount(words.length);
             setTypedAnswer(PASSAGES[0].answer);
             setPhase("retained");
+            /* eslint-enable react-hooks/set-state-in-effect */
             return;
         }
 
