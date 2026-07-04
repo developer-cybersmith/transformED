@@ -44,10 +44,10 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
     }
   }
 
-  // Result view — shown after API returns
+  // Result view — shown after API returns. Never surfaces overall_score or
+  // rubric_scores to the student (PRD: no rubric score shown in Phase 1) —
+  // only the encouraging, free-text feedback message.
   if (result) {
-    const score = Math.round(result.overall_score);
-    const isPassing = score >= 70;
     return (
       <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm">
         <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
@@ -55,27 +55,14 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
             <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider block mb-1">
               Teach It Back
             </span>
-            <p className="font-serif text-white text-2xl font-semibold">
-              {score}%
-              <span className={`ml-2 text-sm font-normal ${isPassing ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {isPassing ? 'Well done!' : 'Keep practising'}
-              </span>
+            <p className="font-serif text-white text-xl font-semibold">
+              Nice work!
             </p>
-          </div>
-
-          {/* Rubric breakdown */}
-          <div className="px-6 py-4 space-y-2">
-            {(Object.entries(result.rubric_scores) as [string, number][]).map(([key, val]) => (
-              <div key={key} className="flex items-center justify-between text-sm">
-                <span className="text-neutral-400 capitalize">{key}</span>
-                <span className="text-white font-medium">{Math.round(val)}%</span>
-              </div>
-            ))}
           </div>
 
           {/* Feedback */}
           {result.feedback && (
-            <div className="mx-6 mb-4 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm text-neutral-300">
+            <div className="mx-6 my-4 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm text-neutral-300">
               {result.feedback}
             </div>
           )}
@@ -117,6 +104,7 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
             onChange={(e) => setText(e.target.value)}
             placeholder="Type your explanation here…"
             rows={5}
+            autoFocus
             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3
                        text-white text-sm placeholder:text-neutral-600
                        focus:outline-none focus:border-[var(--accent-primary)]/50
@@ -139,7 +127,7 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
                        text-primary text-sm font-semibold transition-all
                        disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {isSubmitting ? 'Scoring…' : 'Submit'}
+            {isSubmitting ? 'Scoring…' : 'Submit & Continue'}
           </button>
         </div>
       </div>

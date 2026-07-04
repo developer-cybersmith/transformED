@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { QuizQuestion } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { submitQuiz, type QuizAnswer, type QuizResult } from '@/lib/assessment';
@@ -23,8 +23,13 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
 
   // Collect answers across all questions; submitted at the end
   const collectedAnswers = useRef<QuizAnswer[]>([]);
-  // Track when the current question became active for response_time_ms
-  const questionStartMs = useRef<number>(Date.now());
+  // Track when the current question became active for response_time_ms.
+  // Date.now() is impure and must not be called during render — set it in an
+  // effect keyed on questionIndex instead, covering both mount and advance.
+  const questionStartMs = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    questionStartMs.current = Date.now();
+  }, [questionIndex]);
 
   const question = questions[questionIndex];
   if (!question) return null;
@@ -43,7 +48,7 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
     const answer: QuizAnswer = {
       question_id: question.question_id,
       response_index: selectedIndex,
-      response_time_ms: Date.now() - questionStartMs.current,
+      response_time_ms: Date.now() - questionStartMs.current!,
     };
     collectedAnswers.current = [...collectedAnswers.current, answer];
     setSubmitted(true);
@@ -73,7 +78,6 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
       setQuestionIndex((i) => i + 1);
       setSelectedIndex(null);
       setSubmitted(false);
-      questionStartMs.current = Date.now();
     }
   }
 
