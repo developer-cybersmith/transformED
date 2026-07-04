@@ -8,7 +8,7 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-03 (S1-18 hero redesign + sitewide brand-consistency pass done and merged to `main` — see below. UI/UX redesign work now spans S1-15 through S1-18, all merged.) |
+| **Last Updated** | 2026-07-04 (S2-03 Onboarding Assessment Flow done, 5-agent code review passed, 14 patches applied. Full app-wide audit run same day — see §0 below.) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 |
 | **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 IN PROGRESS |
 
@@ -20,17 +20,25 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **10** | 0 | **4** |
-| Sprint 2 | Weeks 4–5 | 10 | **2** | 0 | **8** |
+| Sprint 2 | Weeks 4–5 | 10 | **3** | 0 | **7** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **19** | **1** | **35** |
+| **Total** | **10 weeks** | **55** | **20** | **1** | **34** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
 > **UI/UX redesign (S1-15 → S1-18) complete as of 2026-07-03.** Brand recolor, hero rebuild, and a sitewide typography/consistency pass are merged to `main`. Sprint 1 remainder (AvatarOverlay, upload/library/dashboard real-API wiring) and Sprint 2 items resume from here.
 
-> **⚠️ Important:** `src/components/lesson/InteractivePlayer.tsx` is a **320-line functioning mock player** (not a thin stub). It contains inline quiz, teach-back, and intervention UI using `MockLesson` types — not the frozen `LessonPackage` contract. It must be **replaced** by the real player stack (S1-01 through S1-06), not extended. Do not build on top of it.
+> **⚠️ Important:** `src/components/lesson/InteractivePlayer.tsx` is a **320-line functioning mock player** (not a thin stub). It contains inline quiz, teach-back, and intervention UI using `MockLesson` types — not the frozen `LessonPackage` contract. It must be **replaced** by the real player stack (S1-01 through S1-06), not extended. Do not build on top of it. (Confirmed 2026-07-04 audit: it is correctly NOT wired into the live `/lesson/[id]` route — `PlayerLoader → Player` is what actually renders.)
+
+## 0. App-Wide Audit (2026-07-04)
+
+A 5-agent parallel audit of the entire `apps/web` frontend was run after S2-03 shipped. Full findings, severity, and tracker cross-references are in **`docs/app-audit-2026-07-04.md`** — read that file before picking up any new task, since several findings affect in-flight or upcoming work:
+
+- **Critical, patched same day:** `/auth/callback` was missing from `middleware.ts`'s `PUBLIC_PATHS` — a regression from S1-13's allow-list→deny-list rewrite that broke ALL Google OAuth and email-confirmation sign-in. Also patched: an open-redirect risk via the callback's unvalidated `next` param, and banned "IQ/EQ/SQ" terminology that had leaked into the public `Footer.tsx` copy (CLAUDE.md compliance).
+- **Confirmed NOT bugs — expected gaps, already tracked:** the tutor WebSocket (`useLessonSocket`) not being consumed by the player is correct — its consumers (`AttentionMonitor` S3-02, `TutorInterventionCard` S3-03, `CESIndicator` S3-04) are still Sprint 3 NOT STARTED. Dashboard/library/upload/settings running on mock data is also expected (S1-09/S1-10 blocked on Dev 1's backend).
+- **Newly discovered, not yet in this tracker:** Settings tabs (`ProfileTab`/`LearningTab`/`PrivacyTab`) don't call the service layer at all (not even the mocks), and would need enum-value fixes even if wired up. A real player-sync bug exists — replaying a segment after seeking backward can silently freeze audio with no recovery. `AuthContext` still doesn't implement the `supabase.auth.onAuthStateChange` listener that Section 15's own risk table already prescribed for token-expiry mid-lesson. See the audit doc for the full list (categorized 🐛 new bug / 📅 known gap / 🆕 newly discovered / ⚠️ compliance).
 
 ---
 
@@ -65,7 +73,7 @@ apps/web/src/
 │   │       ├── layout.tsx                  ✓ EXISTS
 │   │       └── page.tsx                    ✓ EXISTS — stub, needs PlayerLoader
 │   ├── onboarding/
-│   │   └── page.tsx                        ✗ NOT CREATED — Sprint 2
+│   │   └── page.tsx                        ✓ DONE 2026-07-04 — S2-03
 │   ├── reports/
 │   │   └── page.tsx                        ✗ NOT CREATED — Sprint 3
 │   ├── pricing/
@@ -453,8 +461,8 @@ Public routes (no auth check):
 **Responsibility:** The core product experience. Loads LessonPackage from Supabase Storage. Renders PlayerLoader → Player. Full state machine: audio sync, slide advance, jargon hovers, segment boundaries, quiz/teachback modals, tutor cards.
 
 ### `/onboarding` — Learner DNA Onboarding
-**Status:** ✗ NOT CREATED — Sprint 2  
-**Responsibility:** 20-question multi-domain assessment (8 cognitive, 5 emotional, 7 self-direction). Progress bar. Legal disclaimer before questions start. Submit to `/api/onboarding/dna`. Show completion screen. Required gate before lesson access.
+**Status:** ✅ DONE 2026-07-04 (S2-03)  
+**Responsibility:** 20-question multi-domain assessment (8 cognitive, 5 emotional, 7 self-direction). Progress bar. Legal disclaimer before questions start. Submit to `/api/assessment/onboarding/submit` (corrected from this doc's original `/api/onboarding/dna` — see S2-03 entry). Show completion screen. Required gate before lesson access via middleware.
 
 ### `/reports` — Session Reports
 **Status:** ✗ NOT CREATED — Sprint 3  
@@ -522,9 +530,9 @@ Public routes (no auth check):
 ### Onboarding (Sprint 2)
 | Component | File | Status |
 |---|---|---|
-| Onboarding flow | `components/onboarding/OnboardingFlow.tsx` | ✗ Sprint 2 |
-| Question card | `components/onboarding/QuestionCard.tsx` | ✗ Sprint 2 |
-| DNA result card | `components/onboarding/DNAResultCard.tsx` | ✗ Sprint 2 |
+| Onboarding flow | `components/onboarding/OnboardingFlow.tsx` | ✅ DONE 2026-07-04 |
+| Question card | `components/onboarding/QuestionCard.tsx` | ✅ DONE 2026-07-04 |
+| DNA result card | `components/onboarding/DNAResultCard.tsx` | ✅ DONE 2026-07-04 |
 
 ### Reports (Sprint 3)
 | Component | File | Status |
@@ -1105,38 +1113,41 @@ interface TeachBackModalProps {
 
 ---
 
-### S2-03 — Onboarding Assessment Flow
+### S2-03 — Onboarding Assessment Flow — ✓ 2026-07-04
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/app/onboarding/page.tsx`, `src/components/onboarding/OnboardingFlow.tsx`, `src/components/onboarding/QuestionCard.tsx`, `src/components/onboarding/DNAResultCard.tsx`
+**Status:** ✅ DONE <!-- completed: 2026-07-04 --> — implemented via BMAD story `docs/stories/2-3-onboarding-assessment-flow.md` on branch `sprint2/s2-3-onboarding-flow`, 5-agent adversarial code review passed (14 patches applied), 170 tests passing.  
+**Files:** `src/app/onboarding/page.tsx`, `src/components/onboarding/{OnboardingFlow,QuestionCard,DNAResultCard,questions}.tsx/.ts`, `src/services/onboarding.service.ts`, `src/types/assessment.ts` (added `OnboardingResult`), `src/middleware.ts`, `src/lib/supabase/middleware.ts`
 
 20-question Learner DNA assessment. Required gate before first lesson.
 
 ```
 page.tsx → OnboardingFlow
+  → mount check: GET /api/assessment/user/dna (200 → already done, skip to /dashboard; 404 → continue)
   → LegalDisclaimer (shown once, must be acknowledged)
   → QuestionCard × 20 (one at a time, animated transition)
-  → POST /api/onboarding/dna
-  → DNAResultCard (shows dna_label + profile_narrative)
+  → POST /api/assessment/onboarding/submit
+  → DNAResultCard (shows badge_labels + profile_text)
   → redirect to /dashboard
 ```
 
-**HARD CONSTRAINTS:**
-- Legal disclaimer MUST be shown and acknowledged before question 1
-- Raw domain scores (`cognitive_score` etc.) are never in the API response — do not attempt to display them
-- No IQ, EQ, SQ labels anywhere in the UI
-- Only `dna_label` and `profile_narrative` are user-facing, and only after submission
+**Deviation from the original sketch above** (discovered during implementation — the real backend contract differs from this doc's original field names): the real, live, tested backend endpoint is `POST /api/assessment/onboarding/submit` (not `/api/onboarding/dna`), returning `{badge_labels: string[], profile_text: string, session_count: number}` — **not** `dna_label`/`profile_narrative`. `profile_text` already includes the DPDP disclaimer sentence server-side. See the story file's Dev Notes for the full contract-discrepancy writeup (the `_bmad-output/planning-artifacts/epic-3-assessment-dna.md` epic doc and `docs/openapi-assessment.json` are both stale on this point).
 
-**middleware.ts update (Sprint 2):** Add check: if `session.user` exists but `learner_dna.completed_at IS NULL`, redirect all `/lesson/**` and `/upload/**` requests to `/onboarding`.
+**HARD CONSTRAINTS (all met):**
+- Legal disclaimer shown and acknowledged before question 1 ✓
+- Raw domain scores never fetched/stored/rendered ✓
+- No IQ, EQ, SQ labels anywhere in the UI ✓
+- Only `badge_labels` and `profile_text` are user-facing, and only after submission ✓
+
+**middleware.ts update (Sprint 2):** ✓ done — gates `/lesson/**` and `/upload/**` on the presence of a `learner_dna` row (queried directly via Supabase, RLS-scoped), fails open on DB errors/exceptions. Does NOT gate `/dashboard`, `/onboarding`, `/library`, `/settings`.
 
 **Acceptance criteria:**
-- [ ] Legal disclaimer shown before questions
-- [ ] 20 questions rendered, one at a time with animated transition
-- [ ] Progress bar shows question X / 20
-- [ ] POST fires with all 20 responses batched
-- [ ] DNA result card shows `dna_label` and `profile_narrative` (not scores)
-- [ ] After result dismissed, user lands on /dashboard
-- [ ] Middleware blocks /lesson and /upload until onboarding complete
+- [x] Legal disclaimer shown before questions
+- [x] 20 questions rendered, one at a time with animated transition
+- [x] Progress bar shows question X / 20
+- [x] POST fires with all 20 responses batched
+- [x] DNA result card shows `badge_labels` and `profile_text` (not scores)
+- [x] After result dismissed, user lands on /dashboard
+- [x] Middleware blocks /lesson and /upload until onboarding complete
 
 ---
 
