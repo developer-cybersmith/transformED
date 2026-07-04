@@ -22,7 +22,7 @@ beforeEach(() => {
 
 describe('middleware — protected route coverage', () => {
   const PROTECTED_PATHS = ['/dashboard', '/library', '/upload', '/settings', '/onboarding', '/lesson/lsn_123'];
-  const PUBLIC_PATHS = ['/', '/signin', '/signup'];
+  const PUBLIC_PATHS = ['/', '/signin', '/signup', '/auth/callback'];
 
   it.each(PROTECTED_PATHS)('redirects %s to /signin when there is no session', async (path) => {
     updateSessionMock.mockResolvedValue({ supabaseResponse: 'pass-through', user: null });

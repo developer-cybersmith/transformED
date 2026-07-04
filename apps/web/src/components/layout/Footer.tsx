@@ -43,7 +43,7 @@ export default function Footer() {
                             </span>
                         </Link>
                         <p className="text-xs text-text-muted leading-relaxed max-w-[240px]">
-                            Human Intelligence Engine. An AI tutor that builds your private Learner DNA profile — not raw IQ, EQ, or SQ scores.
+                            Human Intelligence Engine. An AI tutor that builds your private Learner DNA profile — a descriptive picture of how you learn best.
                         </p>
                     </div>
 

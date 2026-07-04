@@ -7,7 +7,11 @@ import { updateSession } from "@/lib/supabase/middleware";
 // URL) and /onboarding, /lesson/[id] are separate top-level routes, all four
 // were silently unauthenticated. A deny-list also fails safe for any future
 // route that forgets to register itself here.
-const PUBLIC_PATHS = new Set(["/", "/signin", "/signup"]);
+//
+// /auth/callback MUST be public: it's the OAuth/email-confirmation code-exchange
+// handler that runs *before* any session cookie exists. Gating it here means the
+// handler never runs and every Google/email-link sign-in bounces back to /signin.
+const PUBLIC_PATHS = new Set(["/", "/signin", "/signup", "/auth/callback"]);
 
 export async function middleware(request: NextRequest) {
     const { supabaseResponse, user } = await updateSession(request);

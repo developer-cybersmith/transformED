@@ -4,11 +4,20 @@ import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
+// Only a same-origin relative path is a legitimate "next" — anything else (an
+// absolute URL, a protocol-relative "//host" URL, or a "@host" userinfo trick)
+// is an open-redirect attempt and falls back to the default.
+function safeNextPath(next: string | null): string {
+    if (!next || !next.startsWith('/') || next.startsWith('//')) {
+        return '/dashboard'
+    }
+    return next
+}
+
 export async function GET(request: Request) {
     const { searchParams, origin } = new URL(request.url)
     const code = searchParams.get('code')
-    // if "next" is in param, use it as the redirect URL
-    const next = searchParams.get('next') ?? '/dashboard'
+    const next = safeNextPath(searchParams.get('next'))
 
     if (code) {
         const cookieStore = await cookies()
