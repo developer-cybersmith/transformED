@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import { AudioTimeline } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
@@ -6,6 +6,8 @@ import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
 let playMock: ReturnType<typeof vi.fn>;
 let pauseMock: ReturnType<typeof vi.fn>;
+const originalPlay = window.HTMLMediaElement.prototype.play;
+const originalPause = window.HTMLMediaElement.prototype.pause;
 
 beforeEach(() => {
   playMock = vi.fn().mockResolvedValue(undefined);
@@ -14,6 +16,11 @@ beforeEach(() => {
   window.HTMLMediaElement.prototype.pause = pauseMock;
 
   usePlayerStore.getState().loadLesson(mockLessonPackage);
+});
+
+afterEach(() => {
+  window.HTMLMediaElement.prototype.play = originalPlay;
+  window.HTMLMediaElement.prototype.pause = originalPause;
 });
 
 describe('AudioTimeline — play/pause follows status', () => {

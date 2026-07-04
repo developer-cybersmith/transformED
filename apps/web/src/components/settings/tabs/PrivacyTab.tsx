@@ -23,8 +23,11 @@ export function PrivacyTab() {
     }, []);
 
     function updateSetting<K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) {
+        const previous = settings;
         setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
-        settingsService.updatePrivacy({ [key]: value } as Partial<PrivacySettings>);
+        settingsService.updatePrivacy({ [key]: value } as Partial<PrivacySettings>).catch(() => {
+            setSettings(previous);
+        });
     }
 
     if (isLoading || !settings) {

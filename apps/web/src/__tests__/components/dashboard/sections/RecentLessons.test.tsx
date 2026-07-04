@@ -45,4 +45,13 @@ describe('RecentLessons', () => {
     const img = container.querySelector('img');
     expect(img?.getAttribute('src')).toBe(LESSONS[0].thumbnailUrl);
   });
+
+  it('hides the thumbnail image instead of showing a broken-image icon when it fails to load', () => {
+    const { container } = render(<RecentLessons lessons={LESSONS} />);
+
+    const img = container.querySelector('img')!;
+    img.dispatchEvent(new Event('error'));
+
+    expect(img.style.display).toBe('none');
+  });
 });

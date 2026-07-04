@@ -58,4 +58,17 @@ describe('LearningTab', () => {
 
     expect(updatePreferencesMock).toHaveBeenCalledWith({ pace: 'moderate' });
   });
+
+  it('rolls back the optimistic pace change when updatePreferences fails', async () => {
+    updatePreferencesMock.mockRejectedValue(new Error('network error'));
+    const user = userEvent.setup();
+    render(<LearningTab />);
+    await waitFor(() => expect(screen.getByText('Accelerated')).not.toBeNull());
+
+    await user.click(screen.getByText('Moderate'));
+    await waitFor(() => expect(updatePreferencesMock).toHaveBeenCalledWith({ pace: 'moderate' }));
+
+    await waitFor(() => expect(screen.getByText('Accelerated').className).toContain('text-neutral-900'));
+    expect(screen.getByText('Moderate').className).toContain('text-neutral-500');
+  });
 });

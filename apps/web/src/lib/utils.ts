@@ -6,7 +6,10 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatTimeAgo(iso: string): string {
-    const diffMs = Date.now() - new Date(iso).getTime();
+    const timestamp = new Date(iso).getTime();
+    if (Number.isNaN(timestamp)) return "Unknown";
+
+    const diffMs = Date.now() - timestamp;
     const diffMinutes = Math.floor(diffMs / 60000);
 
     if (diffMinutes < 1) return "Just now";

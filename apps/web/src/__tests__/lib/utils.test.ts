@@ -20,4 +20,9 @@ describe('formatTimeAgo', () => {
     expect(formatTimeAgo(new Date(Date.now() - 24 * 60 * 60_000).toISOString())).toBe('1 day ago');
     expect(formatTimeAgo(new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString())).toBe('3 days ago');
   });
+
+  it('returns a fallback string instead of "NaN ... ago" for an invalid/empty date', () => {
+    expect(formatTimeAgo('not-a-date')).toBe('Unknown');
+    expect(formatTimeAgo('')).toBe('Unknown');
+  });
 });

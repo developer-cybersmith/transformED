@@ -119,6 +119,7 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
                     <img
                         src={lesson.thumbnailUrl}
                         alt={lesson.title}
+                        onError={(e) => { e.currentTarget.style.display = "none"; }}
                         className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-out"
                     />
                 )}

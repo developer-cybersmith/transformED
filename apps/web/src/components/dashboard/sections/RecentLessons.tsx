@@ -37,11 +37,12 @@ export function RecentLessons({ lessons }: { lessons: MockLesson[] }) {
                             className="group relative flex-shrink-0 w-[280px] sm:w-[320px] rounded-3xl overflow-hidden bg-white border border-neutral-100 shadow-sm hover:shadow-xl transition-all duration-500 cursor-pointer snap-start h-full"
                         >
                             {/* Thumbnail */}
-                            <div className="relative w-full h-40 sm:h-44 overflow-hidden">
+                            <div className="relative w-full h-40 sm:h-44 overflow-hidden bg-neutral-100">
                                 <div className="absolute inset-0 bg-neutral-900/10 group-hover:bg-neutral-900/0 transition-colors z-10 duration-500" />
                                 <img
                                     src={lesson.thumbnailUrl}
                                     alt={lesson.title}
+                                    onError={(e) => { e.currentTarget.style.display = "none"; }}
                                     className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-out"
                                 />
 

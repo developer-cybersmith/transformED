@@ -23,8 +23,11 @@ export function LearningTab() {
     }, []);
 
     function updatePreference<K extends keyof LearningPreferences>(key: K, value: LearningPreferences[K]) {
+        const previous = preferences;
         setPreferences((prev) => (prev ? { ...prev, [key]: value } : prev));
-        settingsService.updatePreferences({ [key]: value } as Partial<LearningPreferences>);
+        settingsService.updatePreferences({ [key]: value } as Partial<LearningPreferences>).catch(() => {
+            setPreferences(previous);
+        });
     }
 
     if (isLoading || !preferences) {

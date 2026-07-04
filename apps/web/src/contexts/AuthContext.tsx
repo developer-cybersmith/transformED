@@ -24,14 +24,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const supabaseRef = useRef(createClient());
+
+    // Lazy ref init: useRef(createClient()) would still evaluate createClient()
+    // on every render (React only keeps the first *value*, not the first *call*),
+    // needlessly constructing a new Supabase client each time. This pattern
+    // guarantees createClient() runs exactly once.
+    const supabaseRef = useRef<ReturnType<typeof createClient> | undefined>(undefined);
+    if (supabaseRef.current == null) {
+        supabaseRef.current = createClient();
+    }
+    const supabase = supabaseRef.current;
 
     const fetchSession = async () => {
         try {
             setIsLoading(true);
             setError(null);
 
-            const { data, error: fetchError } = await supabaseRef.current.auth.getUser();
+            const { data, error: fetchError } = await supabase.auth.getUser();
 
             if (fetchError || !data.user) throw fetchError;
 
@@ -53,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const logout = async () => {
         try {
-            await supabaseRef.current.auth.signOut();
+            await supabase.auth.signOut();
         } catch (err) {
             console.error("Logout failed", err);
         } finally {
@@ -66,24 +75,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     useEffect(() => {
-        // Deferred to a microtask: fetchSession's setState calls run before its
-        // first await, and calling it directly here would run them synchronously
-        // within the effect body (cascading-render lint warning). Queuing it as a
-        // callback instead matches the pattern of "subscribe, then setState from a
-        // callback" that effects are meant to follow.
-        Promise.resolve().then(fetchSession);
+        // Race guard: the mount-time getUser() call below is a real network round
+        // trip and can resolve *after* a live onAuthStateChange event (e.g. a
+        // SIGNED_OUT broadcast from another tab). Without this flag, that stale
+        // resolution would silently overwrite the more recent, authoritative state
+        // — e.g. showing a signed-out user as still logged in. Once any live event
+        // fires, this mount-time check's result is discarded if it hasn't landed yet.
+        let supersededByLiveEvent = false;
+
+        Promise.resolve().then(async () => {
+            try {
+                setIsLoading(true);
+                setError(null);
+
+                const { data, error: fetchError } = await supabase.auth.getUser();
+                if (supersededByLiveEvent) return;
+
+                if (fetchError || !data.user) throw fetchError;
+
+                setUser({
+                    id: data.user.id,
+                    email: data.user.email!,
+                    full_name: data.user.user_metadata?.full_name,
+                });
+            } catch (err) {
+                if (supersededByLiveEvent) return;
+                setUser(null);
+                setError(err instanceof Error ? err.message : "No active session or session expired.");
+            } finally {
+                if (!supersededByLiveEvent) setIsLoading(false);
+            }
+        });
 
         // getUser() above is the authoritative initial check — it revalidates the
         // JWT against Supabase's auth server. onAuthStateChange's session payload is
         // read from local storage without server revalidation, so its INITIAL_SESSION
-        // event is intentionally ignored here to avoid a race with fetchSession's
-        // result; only *subsequent* events (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED,
-        // ...) are acted on, keeping `user` live across tab-based sign-in/out and
-        // token refresh without requiring every consumer to call refreshSession().
+        // event is intentionally ignored here to avoid a race with the mount-time
+        // check's result; only *subsequent* events (SIGNED_IN, SIGNED_OUT,
+        // TOKEN_REFRESHED, ...) are acted on, keeping `user` live across tab-based
+        // sign-in/out and token refresh without requiring every consumer to call
+        // refreshSession().
         const {
             data: { subscription },
-        } = supabaseRef.current.auth.onAuthStateChange((event, session) => {
+        } = supabase.auth.onAuthStateChange((event, session) => {
             if (event === "INITIAL_SESSION") return;
+
+            supersededByLiveEvent = true;
 
             if (session?.user) {
                 setUser({
@@ -100,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return () => {
             subscription.unsubscribe();
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (

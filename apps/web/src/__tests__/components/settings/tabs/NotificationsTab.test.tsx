@@ -57,4 +57,18 @@ describe('NotificationsTab', () => {
 
     expect(updateNotificationsMock).toHaveBeenCalledWith({ lessonReady: false });
   });
+
+  it('rolls back the optimistic toggle when updateNotifications fails', async () => {
+    updateNotificationsMock.mockRejectedValue(new Error('network error'));
+    const user = userEvent.setup();
+    render(<NotificationsTab />);
+    const lessonReadyToggle = (await screen.findByText('Lesson Ready'))
+      .closest('div.flex.items-center.justify-between')
+      ?.querySelector('button');
+
+    await user.click(lessonReadyToggle!);
+    await waitFor(() => expect(updateNotificationsMock).toHaveBeenCalledWith({ lessonReady: false }));
+
+    await waitFor(() => expect(lessonReadyToggle?.getAttribute('aria-checked')).toBe('true'));
+  });
 });

@@ -57,6 +57,16 @@ describe('GET /auth/callback', () => {
     expect(response.headers.get('location')).toBe('https://app.example.com/dashboard');
   });
 
+  it('ignores a backslash-based bypass ("/\\evil.com", which browsers can normalize to a protocol-relative URL) and falls back to /dashboard', async () => {
+    exchangeCodeForSessionMock.mockResolvedValue({ error: null });
+
+    const response = await GET(
+      makeRequest('https://app.example.com/auth/callback?code=abc123&next=' + encodeURIComponent('/\\evil.com'))
+    );
+
+    expect(response.headers.get('location')).toBe('https://app.example.com/dashboard');
+  });
+
   it('ignores a "next" param that is not a relative path (e.g. a bare host) and falls back to /dashboard', async () => {
     exchangeCodeForSessionMock.mockResolvedValue({ error: null });
 

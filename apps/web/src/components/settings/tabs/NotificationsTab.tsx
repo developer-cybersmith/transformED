@@ -22,8 +22,11 @@ export function NotificationsTab() {
     }, []);
 
     function updateSetting<K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) {
+        const previous = settings;
         setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
-        settingsService.updateNotifications({ [key]: value } as Partial<NotificationSettings>);
+        settingsService.updateNotifications({ [key]: value } as Partial<NotificationSettings>).catch(() => {
+            setSettings(previous);
+        });
     }
 
     if (isLoading || !settings) {

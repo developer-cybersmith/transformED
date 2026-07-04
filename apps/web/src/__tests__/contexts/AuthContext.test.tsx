@@ -3,17 +3,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
-const { mockGetUser, mockSignOut, mockOnAuthStateChange, mockUnsubscribe } = vi.hoisted(() => ({
+const { mockGetUser, mockSignOut, mockOnAuthStateChange, mockUnsubscribe, mockCreateClient } = vi.hoisted(() => ({
   mockGetUser: vi.fn(),
   mockSignOut: vi.fn(),
   mockOnAuthStateChange: vi.fn(),
   mockUnsubscribe: vi.fn(),
+  mockCreateClient: vi.fn(),
 }));
 
 let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
 
 vi.mock('@/lib/supabase/client', () => ({
-  createClient: () => ({
+  createClient: mockCreateClient,
+}));
+
+beforeEach(() => {
+  mockCreateClient.mockReset();
+  mockCreateClient.mockImplementation(() => ({
     auth: {
       getUser: mockGetUser,
       signOut: mockSignOut,
@@ -22,8 +28,8 @@ vi.mock('@/lib/supabase/client', () => ({
         return { data: { subscription: { unsubscribe: mockUnsubscribe } } };
       },
     },
-  }),
-}));
+  }));
+});
 
 function Probe() {
   const { user, isLoading, error } = useAuth();
@@ -138,6 +144,49 @@ describe('AuthContext — live auth state subscription', () => {
     unmount();
 
     expect(mockUnsubscribe).toHaveBeenCalled();
+  });
+
+  it('does not let a slow, stale getUser() resolution overwrite a SIGNED_OUT event that arrived first', async () => {
+    let resolveGetUser: (value: { data: { user: typeof SUPABASE_USER }; error: null }) => void;
+    mockGetUser.mockReturnValue(
+      new Promise((resolve) => {
+        resolveGetUser = resolve;
+      })
+    );
+
+    renderWithProvider();
+
+    // A live SIGNED_OUT event arrives while the mount-time getUser() is still in flight.
+    act(() => {
+      authChangeCallback?.('SIGNED_OUT', null);
+    });
+    await waitFor(() => expect(screen.getByTestId('user').textContent).toBe('none'));
+
+    // The stale getUser() call now resolves with a (stale) user — it must NOT win.
+    await act(async () => {
+      resolveGetUser({ data: { user: SUPABASE_USER }, error: null });
+    });
+
+    expect(screen.getByTestId('user').textContent).toBe('none');
+  });
+
+  it('calls createClient exactly once across re-renders (lazy ref init, not on every render)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    const { rerender } = renderWithProvider();
+    await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+
+    rerender(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>
+    );
+    rerender(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>
+    );
+
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
   });
 });
 

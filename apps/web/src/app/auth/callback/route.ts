@@ -5,10 +5,11 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
 // Only a same-origin relative path is a legitimate "next" — anything else (an
-// absolute URL, a protocol-relative "//host" URL, or a "@host" userinfo trick)
-// is an open-redirect attempt and falls back to the default.
+// absolute URL, a protocol-relative "//host" URL, a "@host" userinfo trick, or
+// a backslash that browsers normalize to a protocol-relative "//host" URL) is
+// an open-redirect attempt and falls back to the default.
 function safeNextPath(next: string | null): string {
-    if (!next || !next.startsWith('/') || next.startsWith('//')) {
+    if (!next || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) {
         return '/dashboard'
     }
     return next

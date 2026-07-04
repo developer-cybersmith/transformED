@@ -44,4 +44,18 @@ describe('PrivacyTab', () => {
 
     expect(updatePrivacyMock).toHaveBeenCalledWith({ learningAnalytics: false });
   });
+
+  it('rolls back the optimistic toggle when updatePrivacy fails', async () => {
+    updatePrivacyMock.mockRejectedValue(new Error('network error'));
+    const user = userEvent.setup();
+    render(<PrivacyTab />);
+    const analyticsToggle = (await screen.findByText('Learning Analytics'))
+      .closest('div.flex.items-center.justify-between')
+      ?.querySelector('button');
+
+    await user.click(analyticsToggle!);
+    await waitFor(() => expect(updatePrivacyMock).toHaveBeenCalledWith({ learningAnalytics: false }));
+
+    await waitFor(() => expect(analyticsToggle?.getAttribute('aria-checked')).toBe('true'));
+  });
 });
