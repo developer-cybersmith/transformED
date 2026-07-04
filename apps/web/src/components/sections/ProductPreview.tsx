@@ -215,7 +215,7 @@ export default function ProductPreview() {
                                             <Brain className="w-4 h-4 text-primary" />
                                         </div>
                                         <div className="bg-white rounded-2xl rounded-tl-sm px-5 py-4 text-[0.9rem] text-slate-700 leading-relaxed border border-[#e2e8f0] shadow-sm">
-                                            This document is incredibly dense, but there's a pattern here. Let's pull out the noise and look at the core structure. What do you notice about how these main concepts connect?
+                                            This document is incredibly dense, but there&apos;s a pattern here. Let&apos;s pull out the noise and look at the core structure. What do you notice about how these main concepts connect?
                                         </div>
                                     </div>
                                     {/* Student */}
@@ -230,7 +230,7 @@ export default function ProductPreview() {
                                             <CheckCircle className="w-4 h-4 text-emerald-600" />
                                         </div>
                                         <div className="bg-white rounded-2xl rounded-tl-sm px-5 py-4 text-[0.9rem] text-slate-700 leading-relaxed border border-[#e2e8f0] max-w-md shadow-sm">
-                                            Exactly. When you map it out visually, it's so much easier to remember. Let's try applying this framework to the next chapter.
+                                            Exactly. When you map it out visually, it&apos;s so much easier to remember. Let&apos;s try applying this framework to the next chapter.
                                         </div>
                                     </div>
                                 </div>

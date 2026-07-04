@@ -34,7 +34,7 @@ export default function TransformationPromise() {
                         <span className="italic font-normal text-[2.25rem] sm:text-[2.75rem]">Self-Reliance</span>
                     </h2>
                     <p className="text-[1.1rem] text-slate-600 leading-[1.75]">
-                        We don't just build software that reads PDFs for you. We build a cognitive engine designed to fundamentally alter how you process information.
+                        We don&apos;t just build software that reads PDFs for you. We build a cognitive engine designed to fundamentally alter how you process information.
                     </p>
                 </motion.div>
 

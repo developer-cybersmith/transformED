@@ -15,6 +15,12 @@ export default function MouseAmbientGlow() {
     const smoothY = useSpring(mouseY, { damping: 100, stiffness: 20, mass: 3 });
 
     useEffect(() => {
+        // SSR-hydration-safe mount flag: server and pre-hydration client render
+        // must both produce `null` (window is undefined server-side), then this
+        // flips to true post-hydration to reveal the client-only glow. This is
+        // the standard mount-detection idiom and genuinely requires a setState
+        // call in an effect — there is no render-time equivalent.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setIsMounted(true);
         if (typeof window !== "undefined") {
             mouseX.set(window.innerWidth / 2);

@@ -63,11 +63,12 @@ export function SignUpForm() {
 
             // On success, redirect to dashboard.
             router.push("/dashboard");
-        } catch (err: any) {
+        } catch (err) {
             console.error("Registration error:", err);
             setError(
-                err.message ||
-                "Registration failed. Please try again."
+                err instanceof Error && err.message
+                    ? err.message
+                    : "Registration failed. Please try again."
             );
         } finally {
             setIsLoading(false);
@@ -98,7 +99,7 @@ export function SignUpForm() {
                     Check your email
                 </h2>
                 <p className="text-neutral-600 text-sm sm:text-base leading-relaxed mb-8">
-                    We've sent a confirmation link to <br /><span className="font-medium text-neutral-900 mt-1 inline-block">{submittedEmail}</span>.
+                    We&apos;ve sent a confirmation link to <br /><span className="font-medium text-neutral-900 mt-1 inline-block">{submittedEmail}</span>.
                     <br /><br />Please click the link to activate your account.
                 </p>
                 <Link href="/signin">

@@ -51,7 +51,7 @@ export default function SignInPage() {
 
                             <div className="pl-13 border-l-2 border-neutral-100 ml-5 py-2">
                                 <div className="bg-white rounded-2xl p-5 shadow-sm border border-neutral-100 text-neutral-800 font-medium italic">
-                                    "Before moving forward, explain the core idea in your own words."
+                                    &ldquo;Before moving forward, explain the core idea in your own words.&rdquo;
                                 </div>
                             </div>
 
