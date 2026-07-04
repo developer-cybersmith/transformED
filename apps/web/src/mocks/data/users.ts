@@ -19,10 +19,22 @@ export interface NotificationSettings {
     streakReminders: boolean;
 }
 
+// UI-only mock preferences. NOT the DPDP attention-tracking consent record —
+// that is tracked separately via the real `user_consents` table (see
+// supabase/migrations/20260702000000_dpdp_user_consents.sql and CLAUDE.md
+// §18). `focusDetection` here is a display preference for whether the toggle
+// shows on, not an authoritative consent grant.
+export interface PrivacySettings {
+    focusDetection: boolean;
+    learningAnalytics: boolean;
+    personalizedRecommendations: boolean;
+}
+
 export interface MockUser {
     profile: UserProfile;
     preferences: LearningPreferences;
     notifications: NotificationSettings;
+    privacy: PrivacySettings;
 }
 
 export const mockUser: MockUser = {
@@ -43,5 +55,10 @@ export const mockUser: MockUser = {
         lessonReady: true,
         weeklyProgress: true,
         streakReminders: false
+    },
+    privacy: {
+        focusDetection: true,
+        learningAnalytics: true,
+        personalizedRecommendations: true
     }
 };

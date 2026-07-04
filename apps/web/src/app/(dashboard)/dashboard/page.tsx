@@ -12,7 +12,7 @@ export default async function DashboardPage() {
     return (
         <div className="w-full max-w-[1400px] mx-auto pt-6 flex flex-col gap-10">
             {/* 1. Compact Hero Section */}
-            <HeroSection />
+            <HeroSection continueLessonId={dashboardData?.continueLearning?.id} />
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
 

@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-03 (Sprint 2 COMPLETE — all 7 tasks merged to main. Story 3-22: PostHog events (13 tests, DPDP Option C, migration 20260703010000); 345 Dev 3 unit tests pass; dev3-sprint2-task5 merged to main)
+**Last updated:** 2026-07-03 (Sprint 3 Task 3 DONE — Story 3-25: Learner DNA EMA fusion formula (29 tests, 9 dims, 5-agent review, 3 BLOCKERs resolved: AC6 impl fix + AC17/AC18 tests); 463 unit tests pass; dev3-sprint3-task3 ready for PR)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -15,10 +15,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 7 | 0 | 0 | 7 |
+| Sprint 3 | Weeks 6–7 | 7 | 3 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **40** | **26** | **0** | **14** |
+| **Total** | | **40** | **29** | **0** | **11** |
 
 Update this table each time a task is checked off below.
 
@@ -584,24 +584,26 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 
 > **Goal:** Full CES computation live, Learner DNA fusion + profile text, growth tracking.
 
-- [ ] **CES v1 formula implementation (5 weights as env vars)**
+- [x] **CES v1 formula implementation (5 weights as env vars)** — ✓ 2026-07-03
   - Create `apps/api/app/modules/assessment/ces.py`
   - Function signature: `compute_ces(quiz_accuracy, teachback_score, behavioral, head_pose, blink, settings) -> float`
   - Handle `teachback_score=None` (teach-back skipped): redistribute 0.25 weight proportionally — `quiz×0.467, behavioral×0.267, head_pose×0.160, blink×0.107`
   - All 5 inputs normalised to 0–1 before applying weights
-  - Result scaled to 0–100
+  - Result scaled to 0–100, clamped to [0.0, 100.0]
   - Weights loaded from `Settings` object (env vars `CES_WEIGHT_*`)
   - Dev 4 calls this function from the WebSocket handler on each `AttentionSignalMessage`
-  - **AC:** Unit tests cover: all-zeros → 0, all-ones → 100, mid-values produce correct weighted sum
+  - **AC:** 20 unit tests pass; 5-agent adversarial code review passed; Story 3-23 status: done
 
-- [ ] **Per-learner baseline computation**
+- [x] **Per-learner baseline computation** — ✓ 2026-07-03
   - After session 1: baseline CES = session 1 CES final
-  - From session 2+: rolling average of last 5 sessions' CES
-  - Store in Redis `session:{session_id}:ces_baseline`
-  - Use baseline to contextualise Learner DNA updates (delta direction)
-  - **AC:** After 3 test sessions, baseline reflects rolling average correctly
+  - From session 2+: rolling average of last 5 sessions' CES (window configurable via `CES_BASELINE_WINDOW`)
+  - Cached in Redis `user:{user_id}:ces_baseline` (TTL-based)
+  - `compute_and_store_ces_baseline(user_id, session_id, supabase, redis, settings)` returns `float | None`
+  - 25 unit tests pass; 5-agent adversarial review approved; 2 BLOCKERs fixed
+  - Story 3-24 at `docs/stories/3-24-ces-baseline-computation.md` — status: done
+  - Branch: `dev3-sprint3-task2` — merged to main via PR #59
 
-- [ ] **Learner DNA fusion formula live**
+- [x] **Learner DNA fusion formula live** — ✓ 2026-07-03
   - After each completed session, update `learner_dna` dimensions:
     - `persistence` ← score increases if student retried after low teachback score
     - `frustration_tolerance` ← decreases if distraction interventions were high
@@ -609,9 +611,13 @@ These exist in the current `router.py` stubs and **must be corrected** before go
     - `curiosity_index` ← increases proportional to jargon_hover events
     - `study_independence` ← decreases if help_seeking events > threshold
     - Cognitive dimensions (pattern_recognition, logical_deduction, processing_speed) ← updated from quiz accuracy + response_time_ms patterns
-  - Use exponential moving average: `new = 0.7 × old + 0.3 × session_signal` (weights configurable)
-  - Increment `session_count` on every update
-  - **AC:** After a simulated session, at least 3 Learner DNA dimensions update with correct direction
+  - `fuse_learner_dna(*, user_id, session_id, supabase, settings)` — EMA fusion, 9 dimensions
+  - EMA: `new = round(retain * old + (1 - retain) * signal, 4)` — `dna_ema_retain` env var (default 0.7)
+  - All 9 dimensions computed from quiz/teachback/events data; clamped [0.0, 100.0]
+  - Upserts `learner_dna` (9 dims + session_count); never touches badge_labels/profile_text
+  - 29 unit tests pass; 5-agent adversarial review approved; 3 BLOCKERs fixed (AC6 impl, AC17 test, AC18 test)
+  - Story 3-25 at `docs/stories/3-25-dna-fusion-formula.md` — status: done
+  - Branch: `dev3-sprint3-task3` — pushed to origin, PR pending
 
 - [ ] **GPT-4o-mini profile text generation**
   - Create `LEARNER_DNA_PROFILE_PROMPT` in `prompts.py`

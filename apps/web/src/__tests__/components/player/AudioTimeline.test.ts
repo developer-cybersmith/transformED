@@ -167,4 +167,20 @@ describe('processTimeUpdate — status guards (no-op cases)', () => {
 
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
   });
+
+  it('does not throw when the current segment has an empty timestamps array (malformed pipeline output)', () => {
+    const malformedLesson = {
+      ...mockLessonPackage,
+      segments: [
+        {
+          ...mockLessonPackage.segments[0],
+          narration: { ...mockLessonPackage.segments[0].narration, timestamps: [] },
+        },
+      ],
+    };
+    usePlayerStore.getState().loadLesson(malformedLesson);
+    usePlayerStore.setState({ status: 'PLAYING' });
+
+    expect(() => processTimeUpdate(5000)).not.toThrow();
+  });
 });

@@ -98,15 +98,6 @@ export function LibraryView({ initialData }: LibraryViewProps) {
 }
 
 function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: () => void, index: number }) {
-    // Generate deterministic placeholder
-    const thumbnails = [
-        "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&q=80&w=600&h=400",
-        "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=600&h=400",
-        "https://images.unsplash.com/photo-1605745341112-85968b19335b?auto=format&fit=crop&q=80&w=600&h=400",
-        "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600&h=400"
-    ];
-    const image = thumbnails[parseInt(lesson.id.replace(/\D/g, '') || '0') % thumbnails.length];
-
     const isProcessing = lesson.status === 'processing';
     const isFailed = lesson.status === 'failed';
     const isCompleted = lesson.status === 'completed';
@@ -126,8 +117,9 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
             <div className="relative w-full h-44 overflow-hidden bg-neutral-100 shrink-0">
                 {!isProcessing && !isFailed && (
                     <img
-                        src={image}
+                        src={lesson.thumbnailUrl}
                         alt={lesson.title}
+                        onError={(e) => { e.currentTarget.style.display = "none"; }}
                         className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-out"
                     />
                 )}
