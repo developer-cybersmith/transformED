@@ -16,9 +16,13 @@ export function RecentLessons({ lessons }: { lessons: MockLesson[] }) {
                 <h2 className="font-serif text-xl font-semibold tracking-tight text-neutral-900">
                     Recently Added Lessons
                 </h2>
-                <span className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors">
+                <button
+                    type="button"
+                    onClick={() => router.push("/library")}
+                    className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors"
+                >
                     View All
-                </span>
+                </button>
             </div>
 
             <div className="flex gap-6 overflow-x-auto pb-8 snap-x snap-mandatory scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">

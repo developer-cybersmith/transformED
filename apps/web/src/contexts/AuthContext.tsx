@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 type User = {
@@ -24,25 +24,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const supabaseRef = useRef(createClient());
 
     const fetchSession = async () => {
         try {
             setIsLoading(true);
             setError(null);
 
-            const supabase = createClient();
-            const { data, error } = await supabase.auth.getUser();
+            const { data, error: fetchError } = await supabaseRef.current.auth.getUser();
 
-            if (error || !data.user) throw error;
+            if (fetchError || !data.user) throw fetchError;
 
             setUser({
                 id: data.user.id,
                 email: data.user.email!,
                 full_name: data.user.user_metadata?.full_name
             });
-        } catch (err: any) {
-            console.log("No active session or session expired.");
+        } catch (err) {
             setUser(null);
+            // No active session or an expired one both land here — surface it as a
+            // real error message instead of only a console.log, so a genuine outage
+            // (vs. "you're just logged out") isn't silently indistinguishable.
+            setError(err instanceof Error ? err.message : "No active session or session expired.");
         } finally {
             setIsLoading(false);
         }
@@ -50,17 +53,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const logout = async () => {
         try {
-            const supabase = createClient();
-            await supabase.auth.signOut();
-            setUser(null);
-            window.location.href = "/signin";
+            await supabaseRef.current.auth.signOut();
         } catch (err) {
             console.error("Logout failed", err);
+        } finally {
+            // Fail closed: always clear local state and leave for /signin, even if the
+            // remote signOut() call itself failed. Staying "logged in" client-side
+            // after an intended logout is the wrong direction to fail in.
+            setUser(null);
+            window.location.href = "/signin";
         }
     };
 
     useEffect(() => {
-        fetchSession();
+        // Deferred to a microtask: fetchSession's setState calls run before its
+        // first await, and calling it directly here would run them synchronously
+        // within the effect body (cascading-render lint warning). Queuing it as a
+        // callback instead matches the pattern of "subscribe, then setState from a
+        // callback" that effects are meant to follow.
+        Promise.resolve().then(fetchSession);
+
+        // getUser() above is the authoritative initial check — it revalidates the
+        // JWT against Supabase's auth server. onAuthStateChange's session payload is
+        // read from local storage without server revalidation, so its INITIAL_SESSION
+        // event is intentionally ignored here to avoid a race with fetchSession's
+        // result; only *subsequent* events (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED,
+        // ...) are acted on, keeping `user` live across tab-based sign-in/out and
+        // token refresh without requiring every consumer to call refreshSession().
+        const {
+            data: { subscription },
+        } = supabaseRef.current.auth.onAuthStateChange((event, session) => {
+            if (event === "INITIAL_SESSION") return;
+
+            if (session?.user) {
+                setUser({
+                    id: session.user.id,
+                    email: session.user.email!,
+                    full_name: session.user.user_metadata?.full_name,
+                });
+            } else {
+                setUser(null);
+            }
+            setIsLoading(false);
+        });
+
+        return () => {
+            subscription.unsubscribe();
+        };
     }, []);
 
     return (

@@ -1,0 +1,40 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { RecentLessons } from '@/components/dashboard/sections/RecentLessons';
+import type { MockLesson } from '@/mocks/data/lessons';
+
+const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: pushMock }),
+}));
+
+const LESSONS: MockLesson[] = [
+  {
+    id: 'les_1',
+    title: 'SQL Injection Vectors',
+    chapterTitle: 'Chapter 3',
+    durationSeconds: 1500,
+    status: 'in_progress',
+    progressPercent: 72,
+    lastAccessed: new Date().toISOString(),
+    slides: [],
+    timeline: [],
+  },
+];
+
+beforeEach(() => {
+  pushMock.mockReset();
+});
+
+describe('RecentLessons', () => {
+  it('"View All" navigates to /library', async () => {
+    const user = userEvent.setup();
+    render(<RecentLessons lessons={LESSONS} />);
+
+    await user.click(screen.getByText('View All'));
+
+    expect(pushMock).toHaveBeenCalledWith('/library');
+  });
+});
