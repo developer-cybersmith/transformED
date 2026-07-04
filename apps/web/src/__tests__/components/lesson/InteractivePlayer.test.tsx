@@ -28,6 +28,7 @@ const tbLesson: MockLesson = {
   status: 'in_progress',
   progressPercent: 0,
   lastAccessed: '2026-06-26',
+  thumbnailUrl: 'https://images.unsplash.com/photo-real-thumbnail-1',
   slides: [],
   timeline: [
     { id: 'tb_1', type: 'teachback', timestamp: 0, prompt: 'Explain photosynthesis in your own words.' },

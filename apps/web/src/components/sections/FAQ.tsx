@@ -75,6 +75,7 @@ export default function FAQ() {
                     <div className="divide-y divide-[var(--color-border-soft)]">
                         {faqs.map(({ q, a }, i) => {
                             const isOpen = openIndex === i;
+                            const panelId = `faq-panel-${i}`;
                             return (
                                 <motion.div
                                     key={i}
@@ -85,6 +86,8 @@ export default function FAQ() {
                                 >
                                     <button
                                         onClick={() => setOpenIndex(isOpen ? null : i)}
+                                        aria-expanded={isOpen}
+                                        aria-controls={panelId}
                                         className="w-full flex items-center justify-between gap-4 py-5 text-left group"
                                     >
                                         <span
@@ -105,6 +108,9 @@ export default function FAQ() {
                                     <AnimatePresence initial={false}>
                                         {isOpen && (
                                             <motion.div
+                                                id={panelId}
+                                                role="region"
+                                                aria-label={q}
                                                 initial={{ height: 0, opacity: 0 }}
                                                 animate={{ height: "auto", opacity: 1 }}
                                                 exit={{ height: 0, opacity: 0 }}

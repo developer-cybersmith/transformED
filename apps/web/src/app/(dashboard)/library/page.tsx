@@ -21,7 +21,16 @@ export default async function LibraryPage() {
     );
 }
 
-async function LibraryDataFetcher() {
+export async function LibraryDataFetcher() {
     const response = await libraryService.getLibrary();
-    return <LibraryView initialData={response.data!} />;
+
+    if (!response.success || !response.data) {
+        return (
+            <div className="flex min-h-[40vh] w-full flex-col items-center justify-center gap-2 text-center text-neutral-400">
+                <p>We couldn&apos;t load your library right now.</p>
+            </div>
+        );
+    }
+
+    return <LibraryView initialData={response.data} />;
 }

@@ -52,6 +52,9 @@ export function processTimeUpdate(ms: number): void {
   updateAudioPosition(ms);
 
   const { timestamps } = segment.narration;
+  // Malformed/partial pipeline output — nothing to sync the slide/quiz boundary to.
+  if (timestamps.length === 0) return;
+
   const idx = binarySearchTimestamps(timestamps, ms);
   const targetSlideId = timestamps[idx].slide_id;
 
@@ -77,7 +80,13 @@ export function AudioTimeline() {
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
 
-  // Status drives audio — audio never drives status (S1-01 invariant)
+  // Status drives audio — audio never drives status (S1-01 invariant).
+  // Also re-runs on currentSegmentIndex: replaying a previously-quizzed segment
+  // (seek backward, let it reach its natural end) advances the segment via
+  // handleEnded without any status transition — status is PLAYING before and
+  // after. The <audio> element remounts on the new segment_id key, so without
+  // this dependency the new element would never receive a .play() call and
+  // playback would silently freeze despite the UI still showing "playing".
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -86,7 +95,7 @@ export function AudioTimeline() {
     } else {
       audio.pause();
     }
-  }, [status]);
+  }, [status, currentSegmentIndex]);
 
   // Apply pending seek from the store then clear it
   useEffect(() => {

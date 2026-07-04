@@ -17,6 +17,10 @@ export function useLesson(lessonId: string): UseLessonResult {
       const response = await lessonService.getLessonPackage(lessonId);
       return response.data;
     },
+    // Refocusing the browser tab must NOT refetch mid-lesson: the player treats
+    // any new object reference from this hook as a new lesson and resets its
+    // entire state machine (segment index, audio position, quizFiredForSegment).
+    { revalidateOnFocus: false },
   );
 
   return {

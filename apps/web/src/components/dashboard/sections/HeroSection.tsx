@@ -2,9 +2,16 @@
 
 import { motion } from "framer-motion";
 import { ArrowRight, UploadCloud, BookOpen } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
-export function HeroSection() {
+export interface HeroSectionProps {
+    continueLessonId?: string;
+}
+
+export function HeroSection({ continueLessonId }: HeroSectionProps) {
+    const router = useRouter();
+
     return (
         <motion.section
             initial={{ opacity: 0, y: 10 }}
@@ -37,11 +44,20 @@ export function HeroSection() {
                     </p>
 
                     <div className="flex items-center gap-4">
-                        <Button size="md" className="group rounded-2xl">
+                        <Button
+                            size="md"
+                            className="group rounded-2xl"
+                            onClick={() => router.push(continueLessonId ? `/lesson/${continueLessonId}` : "/upload")}
+                        >
                             Resume Journey
                             <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
                         </Button>
-                        <Button variant="outline" size="md" className="rounded-2xl border-neutral-200">
+                        <Button
+                            variant="outline"
+                            size="md"
+                            className="rounded-2xl border-neutral-200"
+                            onClick={() => router.push("/upload")}
+                        >
                             <UploadCloud className="w-4 h-4 mr-2 text-neutral-500" />
                             Upload PDF
                         </Button>
