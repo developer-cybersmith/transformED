@@ -42,6 +42,7 @@ A 5-agent parallel audit of the entire `apps/web` frontend was run after S2-03 s
 - **Still open — see audit doc for full list:** mock `/lesson/[id]` quiz/teachback submissions hitting the real backend with bogus IDs (needs backend session creation), landing-page brand-token cleanup (S4-01), accessibility pass (S4-04), and several dead-code/consistency nits.
 - **Also patched (`/bmad-code-review` gate on `sprint2/codebase-audit-fixes`, same day):** `AuthContext`'s stale-`getUser()`-vs-live-`SIGNED_OUT` race and its `useRef(createClient())` re-evaluation anti-pattern; `safeNextPath` backslash open-redirect bypass; optimistic-update rollback on failure for all 3 live settings tabs; graceful thumbnail fallback on image load failure. 88 new tests added across all patches; 201/201 passing.
 - **Process gap found and fixed (same day):** a status check found S2-03 (Onboarding Assessment Flow) — marked DONE above — had never actually been merged into `main`; the implementation commit was unpushed and its branch unmerged. Rebased onto current `main`, resolved cleanly (no conflicts despite heavy overlap with the audit-fix rounds above), verified (239/239 tests), and merged as PR #62 (`5c40db1`). See the S2-03 entry in §11 for the full writeup. Cross-referenced and corrected in `docs/master-tracker.md` too, where the corresponding "Onboarding assessment UI" and "Learner DNA profile display component" lines were still unchecked.
+- **Full tracker-vs-codebase verification pass (same day):** every task marked DONE in this file was checked against the actual repo — file existence, presence on `main`, and a read-through of the implementation against its own acceptance criteria. Sprint 0 and the core Sprint 1 player stack (state machine, AudioTimeline binary search, SlideRenderer image fallback, JargonHover wiring, WebSocket client, middleware deny-list + DNA gate) all verified genuinely real and correct. Two real problems found in S2-01/S2-02: **`TeachBackModal.tsx` was rendering a numeric score and full rubric breakdown to the student — a direct hard-constraint violation** — and neither `QuizOverlay.tsx` nor `TeachBackModal.tsx` had any test coverage at all despite being P0. Fixed same day: score/rubric display removed (encouraging message only), submit button and textarea `autoFocus` corrected to match the documented ACs, a pre-existing `react-hooks/purity` violation in `QuizOverlay.tsx` (`Date.now()` called during render) fixed via a `useEffect`, and 18 new tests added across both components. See the S2-01/S2-02 entries in §11 for details. 257/257 tests passing, `tsc`/`eslint` clean.
 
 ---
 
@@ -1045,8 +1046,10 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 
 ### S2-01 — QuizModal Component
 **Priority:** P0  
-**Status:** ✅ DONE <!-- completed: 2026-07-01 --> — shipped as `QuizOverlay.tsx` (name diverged from plan); further edits in progress, currently uncommitted  
-**Files created:** `src/components/player/QuizOverlay.tsx`
+**Status:** ✅ DONE <!-- completed: 2026-07-01 --> — shipped as `QuizOverlay.tsx` (name diverged from plan; also handles a `questions[]` array internally rather than one question per mount, a richer scope than originally planned)  
+**Files created:** `src/components/player/QuizOverlay.tsx`, `src/__tests__/components/player/QuizOverlay.test.tsx` (2026-07-04 — was previously shipped with zero test coverage, caught during a tracker-vs-codebase verification pass)
+
+**2026-07-04 fix (found during the same verification pass):** `questionStartMs` read `Date.now()` directly during render — an impure call the `react-hooks/purity` lint rule (correctly) rejects, since it can drift on re-render. Moved to a `useEffect` keyed on `questionIndex`, covering both initial mount and question-advance in one place (removed the redundant manual reset that used to live in `handleNext`). Also corrected the stale "further edits in progress, currently uncommitted" note above — the working tree was already clean; last real change landed inside the S1-18 merge commit.
 
 Triggered by `store.enterQuiz()` when segment boundary is crossed in AudioTimeline. Renders the `QuizQuestion` from `segment.quiz[]` as MCQ.
 
@@ -1074,20 +1077,22 @@ interface QuizModalProps {
 - Response time recorded client-side (`Date.now()` delta) but not shown to student
 
 **Acceptance criteria:**
-- [ ] Quiz fires at end of each segment, exactly once per segment per forward traversal
-- [ ] `quizFiredForSegment` Set prevents double-fire on seek
-- [ ] POST to assessment API fires on submit
-- [ ] Correct/incorrect feedback shown with explanation
-- [ ] "Continue" button always present after submitting
-- [ ] Audio confirmed paused during quiz (HTMLAudioElement.paused === true)
-- [ ] Mock mode: assessment.service uses mock response until Dev 3 API ready
+- [x] Quiz fires at end of each segment, exactly once per segment per forward traversal — covered by `player.machine.ts`'s `enterQuiz`/`quizFiredForSegment` tests, not re-tested here
+- [x] `quizFiredForSegment` Set prevents double-fire on seek — same as above
+- [x] POST to assessment API fires on submit — `QuizOverlay.test.tsx`, confirmed with the exact `{session_id, lesson_id, segment_id, answers[]}` payload
+- [x] Correct/incorrect feedback shown with explanation — tested
+- [x] "Continue" button always present after submitting, including when the API call rejects — tested
+- [ ] Audio confirmed paused during quiz (HTMLAudioElement.paused === true) — covered indirectly by `AudioTimeline`'s own "pauses when status is not PLAYING" test, not re-verified here
+- [x] Mock mode: assessment.service uses mock response until Dev 3 API ready — real endpoint (`/assessment/quiz`) is live per Dev 3, `lib/assessment.ts` calls it directly
 
 ---
 
 ### S2-02 — TeachBackModal Component
 **Priority:** P0  
-**Status:** ✅ DONE <!-- completed: 2026-07-01 --> — further edits in progress, currently uncommitted  
-**Files created:** `src/components/player/TeachBackModal.tsx`
+**Status:** ✅ DONE <!-- completed: 2026-07-01 --> — corrected 2026-07-04, see fix note below  
+**Files created:** `src/components/player/TeachBackModal.tsx`, `src/__tests__/components/player/TeachBackModal.test.tsx` (2026-07-04 — was previously shipped with zero test coverage)
+
+**🔴 2026-07-04 fix — real hard-constraint violation found during a tracker-vs-codebase verification pass:** the result view was rendering `{overall_score}%` in large text plus a full per-dimension rubric breakdown (`accuracy`/`completeness`/`clarity`, each as a percentage) directly to the student — a straight violation of this task's own "never show a rubric score" constraint and CLAUDE.md's "no clinical scores shown to students." No test existed to catch it. Fixed: result view now shows only `result.feedback` (the encouraging free-text message) plus a generic "Nice work!" heading — `overall_score` and `rubric_scores` are received from the API but never rendered. Two smaller AC misses fixed in the same pass: submit button read "Submit" (spec says "Submit & Continue"), and the textarea had no `autoFocus`. Also corrected the stale "further edits in progress, currently uncommitted" note — working tree was already clean.
 
 Follows QuizModal in the segment boundary flow. Student types a free-text explanation.
 
@@ -1107,12 +1112,12 @@ interface TeachBackModalProps {
 - Feedback display after scoring: show an encouraging message, NOT a score
 
 **Acceptance criteria:**
-- [ ] No timer present in the component (DOM inspection should show zero timer elements)
-- [ ] POST to `/api/assessment/teachback` fires on submit
-- [ ] Feedback shown as encouraging message, not a numeric score
-- [ ] "Skip" option present (allowed per PRD — never block progress)
-- [ ] Audio paused until `store.exitTeachBack()` fires
-- [ ] Textarea auto-focuses on modal open
+- [x] No timer present in the component (DOM inspection should show zero timer elements) — tested
+- [x] POST to `/api/assessment/teachback` fires on submit — tested with the exact `{session_id, lesson_id, segment_id, response_text}` payload, trimmed
+- [x] Feedback shown as encouraging message, not a numeric score — was FAILING until the 2026-07-04 fix above; now tested and enforced (asserts no `\d+%` text and no rubric dimension labels anywhere in the result view)
+- [x] "Skip" option present (allowed per PRD — never block progress) — tested
+- [ ] Audio paused until `store.exitTeachBack()` fires — covered indirectly by `AudioTimeline`'s own "pauses when status is not PLAYING" test, not re-verified here
+- [x] Textarea auto-focuses on modal open — was FAILING until the 2026-07-04 fix; now tested
 
 ---
 
