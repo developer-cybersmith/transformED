@@ -8,7 +8,7 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-04 (S2-03 Onboarding Assessment Flow done, 5-agent code review passed, 14 patches applied. Full app-wide audit run same day — see §0 below.) |
+| **Last Updated** | 2026-07-04 (S2-03 Onboarding Assessment Flow genuinely merged to `main` — PR #62 (`5c40db1`), after a status audit caught it sitting unmerged on its branch despite being marked done. App-wide audit fixes also merged — PR #61 (`a75535d`). See §0 and the S2-03 entry in §11 for the merge-gap writeup. Sprint 2 row below corrected: only 5 tasks are actually itemized in §11 (S2-01–S2-05), not 10.) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 |
 | **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 IN PROGRESS |
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **10** | 0 | **4** |
-| Sprint 2 | Weeks 4–5 | 10 | **3** | 0 | **7** |
+| Sprint 2 | Weeks 4–5 | 5 | **3** | 0 | **2** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **20** | **1** | **34** |
+| **Total** | **10 weeks** | **50** | **20** | **1** | **29** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -41,6 +41,7 @@ A 5-agent parallel audit of the entire `apps/web` frontend was run after S2-03 s
 - **Also patched same day:** `AuthContext` now implements the `supabase.auth.onAuthStateChange` listener that Section 15's own risk table already prescribed for token-expiry mid-lesson; the `useLesson` SWR hook no longer refetches (and silently resets the player mid-lesson) on browser tab-focus regain; dashboard's dead CTAs (Hero's "Resume Journey"/"Upload PDF", "View Path"/"View All") are now wired; `AudioTimeline`'s segment-replay freeze bug and empty-timestamps crash are fixed with its first-ever component-level tests; all 4 settings tabs (`ProfileTab`/`LearningTab`/`NotificationsTab`/`PrivacyTab`) now fetch/persist through `settingsService` instead of local dummy state, with `LearningTab`'s enum values corrected to match the real `LearningPreferences` type.
 - **Still open — see audit doc for full list:** mock `/lesson/[id]` quiz/teachback submissions hitting the real backend with bogus IDs (needs backend session creation), landing-page brand-token cleanup (S4-01), accessibility pass (S4-04), and several dead-code/consistency nits.
 - **Also patched (`/bmad-code-review` gate on `sprint2/codebase-audit-fixes`, same day):** `AuthContext`'s stale-`getUser()`-vs-live-`SIGNED_OUT` race and its `useRef(createClient())` re-evaluation anti-pattern; `safeNextPath` backslash open-redirect bypass; optimistic-update rollback on failure for all 3 live settings tabs; graceful thumbnail fallback on image load failure. 88 new tests added across all patches; 201/201 passing.
+- **Process gap found and fixed (same day):** a status check found S2-03 (Onboarding Assessment Flow) — marked DONE above — had never actually been merged into `main`; the implementation commit was unpushed and its branch unmerged. Rebased onto current `main`, resolved cleanly (no conflicts despite heavy overlap with the audit-fix rounds above), verified (239/239 tests), and merged as PR #62 (`5c40db1`). See the S2-03 entry in §11 for the full writeup. Cross-referenced and corrected in `docs/master-tracker.md` too, where the corresponding "Onboarding assessment UI" and "Learner DNA profile display component" lines were still unchecked.
 
 ---
 
@@ -1115,10 +1116,12 @@ interface TeachBackModalProps {
 
 ---
 
-### S2-03 — Onboarding Assessment Flow — ✓ 2026-07-04
+### S2-03 — Onboarding Assessment Flow — ✓ 2026-07-04 (merged to `main` 2026-07-04)
 **Priority:** P1  
 **Status:** ✅ DONE <!-- completed: 2026-07-04 --> — implemented via BMAD story `docs/stories/2-3-onboarding-assessment-flow.md` on branch `sprint2/s2-3-onboarding-flow`, 5-agent adversarial code review passed (14 patches applied), 170 tests passing.  
 **Files:** `src/app/onboarding/page.tsx`, `src/components/onboarding/{OnboardingFlow,QuestionCard,DNAResultCard,questions}.tsx/.ts`, `src/services/onboarding.service.ts`, `src/types/assessment.ts` (added `OnboardingResult`), `src/middleware.ts`, `src/lib/supabase/middleware.ts`
+
+**⚠️ Merge-gap correction (2026-07-04, later same day):** this task was marked DONE above the moment the story/review completed, but the implementation commit (`6066032`) was never pushed and the branch was never merged into `main` — a status audit found `apps/web/src/components/onboarding/` simply didn't exist in a fresh `main` checkout. The branch was rebased onto current `main` (which had since gained the codebase-audit-fixes rounds 1–8 and Dev 3's CES/DNA-fusion work), merged with zero conflicts, verified (239/239 tests, `tsc`/`eslint` clean), and landed as **PR #62 (`5c40db1`)**. "Done" in this tracker from now on should mean confirmed present via `git merge-base --is-ancestor <branch> main`, not just "story + review complete."
 
 20-question Learner DNA assessment. Required gate before first lesson.
 

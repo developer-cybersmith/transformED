@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-03 (Dev 2: S1-18 hero redesign + sitewide brand-consistency pass shipped and merged — new "Interruption" hero demo, Fraunces serif typography applied across every headline in the app (landing, auth, dashboard, settings, library, upload, lesson player), floating glass navbar, redesigned FAQ/FinalCTA, and a full lesson-player restyle onto the actual navy/gold brand tokens (was previously on a disconnected generic dark palette). Completes the S1-15→S1-18 UI/UX redesign arc; Sprint 1 remainder and Sprint 2 resume from here. Merged to main (`3d41df5`), no conflicts with Dev 3's concurrent onboarding/analytics API work (PR landed as `5927db7`). Dev 3 onboarding scoring + session report API + analytics ingestion (S3-18–S3-22) landed; Dev 4 Sprint 2+3 reverted to "code merged, pending integration test" — self-reported tracker not verified against live env; Dev 1 endpoints corrected to 501 stubs)
+**Last updated:** 2026-07-04 (Dev 2: app-wide `apps/web` audit run, 9 issues patched across 8 rounds incl. an `/auth/callback` regression that broke all OAuth/email sign-in, then a `/bmad-code-review` gate on that fix branch itself — merged to `main` as PR #61 (`a75535d`), 201/201 tests. Separately, Story 2-3 Onboarding Assessment Flow — previously checked off below as done — was discovered to have never actually been merged to `main` (implementation commit sat unpushed on its branch); rebased onto current `main`, merged clean, no conflicts — PR #62 (`5c40db1`), 239/239 tests. Both Sprint 2 checklist lines below corrected to reflect what's actually live on `main`, not just implemented-and-reviewed.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -146,8 +146,8 @@
 - [ ] Segment-end detection → CHECKING IN state — 🟡 PARTIALLY UNBLOCKED (2026-07-02), receive side only: `lib/ws/lessonSocket.ts` + `useLessonSocket.ts` now built on `sprint1/s1-07-websocket-client` (S1-07). `state_change` messages the *server* sends (including a transition to CHECKING_IN) now reach `store.setTutorState()` — Dev 4's FSM state is live in the player store. **Not yet wired:** the *send* side — nothing in the player currently calls `sendControl({type:'segment_complete'})` to tell the backend a segment ended and trigger CHECKING_IN in the first place; `LessonSocket.sendControl()` exists and is tested, but has no caller. The player UI reacting to CHECKING_IN once entered (a check-in prompt/screen) is also still separate, un-scoped work.
 - [x] Feedback display (praise + correction sentences) — ✓ 2026-07-02, `result.feedback` rendered in both `QuizOverlay.tsx` and `TeachBackModal.tsx`
 - [ ] Session report page v1 (quiz + teach-back scores)
-- [ ] Onboarding assessment UI (20 questions flow)
-- [ ] Learner DNA profile display component
+- [x] Onboarding assessment UI (20 questions flow) — ✓ merged to `main` 2026-07-04 (PR #62, `5c40db1`). Implemented as Story 2-3 via BMAD workflow, 5-agent review passed (14 patches), `OnboardingFlow.tsx`/`QuestionCard.tsx`/`questions.ts`. **Process gap caught and fixed same day:** this was implemented and reviewed on 2026-07-04 but the commit sat unpushed on `sprint2/s2-3-onboarding-flow` and was never merged — `main` genuinely had none of this code even though this line had already been checked off prematurely. Caught during a status audit, branch was rebased onto current `main` (auto-merged cleanly against the intervening audit-fixes and Dev 3 CES/DNA-fusion work) and merged for real. Lesson: don't mark a task done in this tracker until `git merge-base --is-ancestor <branch> main` confirms it, not just "story + review complete."
+- [x] Learner DNA profile display component — ✓ shipped as part of the same S2-03 merge above — `DNAResultCard.tsx` renders `badge_labels` + `profile_text` (no raw scores). Was listed as a separate not-started line item here but is functionally the same deliverable as the onboarding UI's result screen; folding it in rather than double-tracking.
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
 - [ ] Onboarding assessment scoring logic complete
@@ -284,7 +284,7 @@ avatar_intro/outro/static_url in lesson package      → All 4 devs (schema chan
 POST /api/assessment/quiz                            → Dev 3 ✅ live and implemented
 POST /api/assessment/teachback                       → Dev 3 ✅ live and implemented
 GET /api/assessment/session/{id}/report              → Dev 3 ⬜ Sprint 2 stub
-POST /api/assessment/onboarding/submit               → Dev 3 ⬜ Sprint 2 stub
+POST /api/assessment/onboarding/submit               → Dev 3 ✅ live and implemented — confirmed by Dev 2's S2-03 integration (2026-07-04), returns `{badge_labels, profile_text, session_count}`, not the `{dna_label, profile_narrative}` shape earlier docs assumed
 GET /api/sessions/latest (continue-learning card)    → Dev 4 ❌ not built, needs new endpoint
 WebSocket /ws/{session_id}                           → Dev 4 ✅ live
 WS message contract sign-off                         → Dev 2 ACTION: review docs/ws-message-contract.md
