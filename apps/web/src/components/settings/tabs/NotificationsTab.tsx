@@ -1,13 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Toggle } from "../Toggle";
+import { settingsService } from "@/services/settings.service";
+import type { NotificationSettings } from "@/mocks/data/users";
 
 export function NotificationsTab() {
-    const [lessonReady, setLessonReady] = useState(true);
-    const [weeklyProgress, setWeeklyProgress] = useState(true);
-    const [streakReminders, setStreakReminders] = useState(false);
-    const [productUpdates, setProductUpdates] = useState(false);
+    const [settings, setSettings] = useState<NotificationSettings | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        settingsService.getNotifications().then((response) => {
+            if (cancelled) return;
+            setSettings(response.data);
+            setIsLoading(false);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    function updateSetting<K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) {
+        setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
+        settingsService.updateNotifications({ [key]: value } as Partial<NotificationSettings>);
+    }
+
+    if (isLoading || !settings) {
+        return (
+            <div className="flex w-full max-w-3xl items-center justify-center pt-24 pb-24 text-sm text-neutral-400">
+                Loading notification settings…
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col gap-8 w-full max-w-3xl pt-8 pb-12">
@@ -23,7 +48,7 @@ export function NotificationsTab() {
                         <span className="font-medium text-neutral-900">Lesson Ready</span>
                         <span className="text-sm text-neutral-500">Get notified when your personalized lesson is ready.</span>
                     </div>
-                    <Toggle enabled={lessonReady} onChange={setLessonReady} />
+                    <Toggle enabled={settings.lessonReady} onChange={(v) => updateSetting("lessonReady", v)} />
                 </div>
 
                 <div className="flex items-center justify-between p-5 border-b border-neutral-100">
@@ -31,23 +56,15 @@ export function NotificationsTab() {
                         <span className="font-medium text-neutral-900">Weekly Progress</span>
                         <span className="text-sm text-neutral-500">Receive a weekly summary of your learning journey.</span>
                     </div>
-                    <Toggle enabled={weeklyProgress} onChange={setWeeklyProgress} />
-                </div>
-
-                <div className="flex items-center justify-between p-5 border-b border-neutral-100">
-                    <div className="flex flex-col gap-1">
-                        <span className="font-medium text-neutral-900">Streak Reminders</span>
-                        <span className="text-sm text-neutral-500">Helpful nudges to keep your daily streak alive.</span>
-                    </div>
-                    <Toggle enabled={streakReminders} onChange={setStreakReminders} />
+                    <Toggle enabled={settings.weeklyProgress} onChange={(v) => updateSetting("weeklyProgress", v)} />
                 </div>
 
                 <div className="flex items-center justify-between p-5">
                     <div className="flex flex-col gap-1">
-                        <span className="font-medium text-neutral-900">Product Updates</span>
-                        <span className="text-sm text-neutral-500">News about active features and platform improvements.</span>
+                        <span className="font-medium text-neutral-900">Streak Reminders</span>
+                        <span className="text-sm text-neutral-500">Helpful nudges to keep your daily streak alive.</span>
                     </div>
-                    <Toggle enabled={productUpdates} onChange={setProductUpdates} />
+                    <Toggle enabled={settings.streakReminders} onChange={(v) => updateSetting("streakReminders", v)} />
                 </div>
 
             </div>
