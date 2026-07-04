@@ -60,7 +60,8 @@ export default function FinalCTA() {
                         </a>
                     </div>
 
-                    <p className="mt-7 text-xs text-white/30 font-mono">
+                    {/* white/30 measured ~2.7:1 contrast against the navy background — below WCAG AA's 4.5:1 for small text */}
+                    <p className="mt-7 text-xs text-white/65 font-mono">
                         Free plan · No credit card · Takes 2 minutes
                     </p>
                 </motion.div>
