@@ -95,3 +95,9 @@ export interface LearnerDNA {
 export interface OnboardingDiagnosticSubmission {
   responses: OnboardingAnswer[];
 }
+
+export interface OnboardingResult {
+  badge_labels: string[];
+  profile_text: string; // always ends with the DPDP Act 2023 disclaimer sentence — never truncate
+  session_count: number;
+}
