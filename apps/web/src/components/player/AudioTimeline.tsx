@@ -1,30 +1,13 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import type { NarrationTimestamp } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 
-/**
- * Binary search: returns the index of the latest timestamp whose start_ms ≤ currentMs.
- * O(log n) — no linear scan.
- * Exported for unit testing.
- */
-export function binarySearchTimestamps(
-  timestamps: NarrationTimestamp[],
-  currentMs: number,
-): number {
-  let lo = 0, hi = timestamps.length - 1, result = 0;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (timestamps[mid].start_ms <= currentMs) {
-      result = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return result;
-}
+// Moved to lib/binarySearch.ts so stores/player.machine.ts (session-restore
+// slide resolution) can use it without a component → store → component cycle.
+// Re-exported here so existing imports from this module keep working.
+import { binarySearchTimestamps } from '@/lib/binarySearch';
+export { binarySearchTimestamps };
 
 /**
  * Core audio-tick handler. Reads Zustand store via getState() to avoid stale closures

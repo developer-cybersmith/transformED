@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-04 (S2-04 Session Report Page v1 implemented via full BMAD story workflow — corrected route (`/reports/[sessionId]`, avoiding a collision with an unrelated unbuilt "learning progression" page) and a real pre-existing type bug fixed (`SessionReport.ces_breakdown` key names never matched the live backend contract). See the S2-04 entry in §11 for the full writeup. Earlier same day: S2-03 Onboarding Assessment Flow genuinely merged to `main` — PR #62 (`5c40db1`), after a status audit caught it sitting unmerged despite being marked done; app-wide audit fixes merged — PR #61 (`a75535d`).) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 IN PROGRESS |
+| **Last Updated** | 2026-07-06 (S2-05 Player State Persistence implemented via full BMAD story workflow — **Sprint 2 is now complete, 5/5 done.** Found and fixed two real gaps not in the original sketch: restoring `currentSegmentIndex` without also resolving `currentSlideId` would leave the slide area blank until playback resumed; and saved progress was never cleared on lesson completion, which would have made Story 2-4's "Study Again" link silently resume near the end instead of restarting. See the S2-05 entry in §11.) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (COMPLETE) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 COMPLETE |
 
 ---
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **10** | 0 | **4** |
-| Sprint 2 | Weeks 4–5 | 5 | **4** | 0 | **1** |
+| Sprint 2 | Weeks 4–5 | 5 | **5** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **50** | **21** | **1** | **28** |
+| **Total** | **10 weeks** | **50** | **22** | **1** | **27** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1186,19 +1186,25 @@ page.tsx → OnboardingFlow
 
 ---
 
-### S2-05 — Player State Persistence (Session Restore)
+### S2-05 — Player State Persistence (Session Restore) — ✓ 2026-07-06
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
-**Files to modify:** `src/stores/player.machine.ts`
+**Status:** ✅ DONE <!-- completed: 2026-07-06 --> — implemented via BMAD story `docs/stories/2-5-player-state-persistence.md` on branch `sprint2/s2-5-player-state-persistence` — the last Sprint 2 item, Sprint 2 is now 5/5 done  
+**Files:** `src/lib/binarySearch.ts` (new — extracted from `AudioTimeline.tsx` to avoid a circular import), `src/components/player/AudioTimeline.tsx` (re-export only, no behavior change), `src/stores/player.machine.ts` (`saveProgress`, `restoreProgress`), `src/components/player/Player.tsx` (mount-effect wiring)
 
-On page refresh mid-lesson, restore: current segment index, current audio position, `quizFiredForSegment` set. Use `localStorage` for client-side persistence (key: `hie:session:{lesson_id}`). On player mount, check localStorage and seek audio to saved position.
+On page refresh mid-lesson, restores: current segment index, current audio position, `quizFiredForSegment` set. `localStorage` key `hie:session:{lesson_id}`, throttled writes (~2s, via a module-scoped timestamp reset per `loadLesson()` call) plus immediate checkpoint saves on `pause()`/`advanceSegment()`.
 
-Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only needs to restore the player position.
+**Real bug found and fixed during story-writing, not in the original sketch:** without also resolving `currentSlideId` on restore (via the same `binarySearchTimestamps` `AudioTimeline.tsx` already uses), jumping straight to a restored `currentSegmentIndex` would leave `currentSlideId` pointing at the previous segment's slide — since slide ids are segment-scoped, none of the new segment's slides would match, rendering a **blank slide area** until playback resumed and the next `timeupdate` tick corrected it. Fixed by resolving the correct slide as part of `restoreProgress` itself.
+
+**Real cross-feature interaction found and fixed:** without clearing saved progress in `endLesson()`, a student who finishes a lesson and clicks Story 2-4's "Study Again" link (routes back to `/lesson/{lesson_id}`) would have been silently resumed near the *end* of the lesson instead of restarting — directly undermining that just-shipped feature. `endLesson()` now removes the saved entry.
+
+Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only needed to restore the player position.
 
 **Acceptance criteria:**
-- [ ] Refresh on segment 2 restores to within ±3 seconds of last position
-- [ ] `quizFiredForSegment` persisted so quiz does not re-fire after restore
-- [ ] If stored session is > 24h old, discard it (use `stored_at` timestamp)
+- [x] Refresh on segment 2 restores to within ±3 seconds of last position (satisfied by the ~2s throttle plus checkpoint saves)
+- [x] `quizFiredForSegment` persisted so quiz does not re-fire after restore
+- [x] If stored session is > 24h old, discard it (use `stored_at` timestamp) — also discards and removes corrupted JSON, wrong-typed fields, and an out-of-bounds `segmentIndex` (e.g. lesson regenerated with fewer segments since the snapshot was saved)
+
+15 new tests (13 store-level, 2 `Player.tsx` restore-on-mount). Full suite: 300/300 passing. `tsc`/`eslint` clean.
 
 ---
 

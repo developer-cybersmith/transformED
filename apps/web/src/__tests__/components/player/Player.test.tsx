@@ -10,6 +10,7 @@ const originalPause = window.HTMLMediaElement.prototype.pause;
 beforeEach(() => {
   window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
   window.HTMLMediaElement.prototype.pause = vi.fn();
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -49,5 +50,32 @@ describe('Player — lesson complete (ENDED) screen', () => {
 
     expect(screen.queryByRole('link', { name: /session report/i })).toBeNull();
     expect(screen.getByRole('link', { name: /back to dashboard/i })).not.toBeNull();
+  });
+});
+
+describe('Player — restores saved progress on mount (S2-05)', () => {
+  it('restores segment index, slide, and quizFiredForSegment from a valid saved snapshot', () => {
+    localStorage.setItem(
+      `hie:session:${mockLessonPackage.lesson_id}`,
+      JSON.stringify({
+        segmentIndex: 1,
+        audioPositionMs: 80000, // within seg_1's sl_1_1 window (74000-148000)
+        quizFiredForSegment: ['seg_0'],
+        storedAt: Date.now(),
+      })
+    );
+
+    render(<Player lesson={mockLessonPackage} />);
+
+    const state = usePlayerStore.getState();
+    expect(state.currentSegmentIndex).toBe(1);
+    expect(state.currentSlideId).toBe('sl_1_1');
+    expect(state.quizFiredForSegment.has('seg_0')).toBe(true);
+  });
+
+  it('starts fresh at segment 0 when no saved snapshot exists', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
   });
 });
