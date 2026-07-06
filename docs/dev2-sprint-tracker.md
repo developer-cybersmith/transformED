@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-06 (S2-05 Player State Persistence implemented via full BMAD story workflow — **Sprint 2 is now complete, 5/5 done.** Found and fixed two real gaps not in the original sketch: restoring `currentSegmentIndex` without also resolving `currentSlideId` would leave the slide area blank until playback resumed; and saved progress was never cleared on lesson completion, which would have made Story 2-4's "Study Again" link silently resume near the end instead of restarting. See the S2-05 entry in §11.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (COMPLETE) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 COMPLETE |
+| **Last Updated** | 2026-07-06 (Sprint 2 status review found S2-06 "Segment-end detection → CHECKING_IN state" — tracked in `docs/master-tracker.md` since 2026-07-02 but missing from this file's own S2-xx numbering — had never been added here. Added as S2-06, investigated, and found not blocked but under-scoped in the prior tracker note: the WebSocket hook is not mounted anywhere in the live player and `tutorState` has zero UI readers, so the "just wire the send side" framing understated the real work. Sprint 2 is now 5/6, not 5/5. See §11 S2-06. Earlier same day: S2-05 Player State Persistence implemented via full BMAD story workflow, 7-patch review pass, merged as PR #66.) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 open, not blocked) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 IN PROGRESS (5/6) |
 
 ---
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **10** | 0 | **4** |
-| Sprint 2 | Weeks 4–5 | 5 | **5** | 0 | **0** |
+| Sprint 2 | Weeks 4–5 | 6 | **5** | 0 | **1** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **50** | **23** | **0** | **27** |
+| **Total** | **10 weeks** | **51** | **23** | **0** | **28** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1039,7 +1039,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** ✅ COMPLETE — 5/5 done (S2-01 through S2-05)  
+**Period:** Weeks 4–5 | **Status:** 🔵 5/6 done — S2-06 (segment-end → CHECKING_IN) newly added 2026-07-06, not blocked, not started  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1207,6 +1207,30 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 **5-agent adversarial review (2026-07-06) — 7 patches applied, merged as PR #66:** `isStoredProgress` now requires `segmentIndex` to be an integer and `audioPositionMs`/`storedAt` to be finite (closing a `1e400`-style JSON-overflow bypass of the 24h expiry check); every `localStorage` call in `saveProgress`/`restoreProgress`/`endLesson` is now wrapped in try/catch instead of throwing inside `Player.tsx`'s mount effect; `restoreProgress` now guards against a `lessonId` mismatch against the currently-loaded lesson; `enterQuiz()` now saves immediately so a tab closed mid-quiz can't lose the quiz-fired flag; added a dedicated `binarySearch.test.ts`. 4 findings deferred (quiz-fired content-identity validation, no user/account scoping, no multi-tab `storage` event listener, `Player.tsx`'s pre-existing mount-effect re-run behavior — see `_bmad-output/implementation-artifacts/deferred-work.md`), 2 dismissed as noise.
 
 24 new tests total (13 store-level + 2 `Player.tsx` restore-on-mount from initial implementation, plus 8 review-patch tests in `player.machine.test.ts` and 6 in the new `binarySearch.test.ts`). Full suite: 315/315 passing. `tsc`/`eslint` clean.
+
+---
+
+### S2-06 — Segment-End Detection → CHECKING_IN State
+**Priority:** P2  
+**Status:** 🔲 NOT STARTED — added 2026-07-06 (tracked in `docs/master-tracker.md`'s Dev 2 Sprint 2 checklist since 2026-07-02 but never had its own entry in this file's S2-xx numbering; brought in here after the user flagged it was missing from a Sprint 2 status review)  
+**Files likely touched:** `src/components/player/Player.tsx` or `PlayerLoader.tsx` (mount the socket), `src/components/player/AudioTimeline.tsx` (send on segment boundary), `src/stores/player.machine.ts` (`tutorState` already exists), a new CHECKING_IN UI component (none exists)
+
+**Investigated 2026-07-06 — found the actual gap is larger than the master tracker's 2026-07-02 note suggested.** That note read as "just wire the send side," implying the receive side was already live. Verified against the actual code:
+
+- `sendControl({type: 'segment_complete'})` — the exact mechanism needed — exists and is tested (`lessonSocket.ts`, `wireTypes.ts`, both from S1-07), but has **zero callers anywhere** in the codebase.
+- `useLessonSocket` (the hook that would open the connection and receive `state_change`) is built and unit-tested **in isolation only** — it is **not mounted anywhere in the live player** (`Player.tsx`, `PlayerLoader.tsx`). The lesson WebSocket never actually connects during a real session today, regardless of what the backend sends.
+- `tutorState` in `player.machine.ts` is written to via `setTutorState()` but has **zero readers** anywhere in the component tree — no CHECKING_IN screen or any other UI reacts to it. It's a dead field in production.
+- Quiz triggering today is entirely **client-local**: `AudioTimeline.tsx` detects the segment boundary directly and calls `store.enterQuiz()` — no round-trip to the backend tutor FSM happens at all.
+
+**Real scope to complete this (bigger than one line item):**
+1. Mount `useLessonSocket(sessionId)` live somewhere in the player tree — first time the socket would actually open during a real lesson.
+2. Call `sendControl({type: 'segment_complete'})` from `AudioTimeline.tsx`'s existing segment-boundary check.
+3. Design and build the CHECKING_IN UI reaction — no product spec exists yet for what a student should see here (a brief transition screen? nothing visible, pure backend bookkeeping?).
+4. **Architecture decision needed:** keep quiz-triggering client-authoritative (today's working behavior — `enterQuiz()` fires immediately, no latency, no WS dependency) and treat the WS round-trip as a parallel sync signal only; or make it server-authoritative (wait for the backend's `state_change` → QUIZZING before showing the quiz), which matches CLAUDE.md's documented 7-state tutor FSM more literally but introduces quiz-appearance latency and requires a graceful fallback if the WS is down or slow (extending S1-07's existing "never freeze the lesson if WS is unavailable" principle to also cover "the quiz must still fire").
+
+**Blocked assessment: NOT blocked.** Everything Dev 2 needs on the frontend side already exists and is tested (the WS client, the control-message types, the state-dispatch plumbing). Dev 4's backend tutor FSM logic for this exact transition is code-merged and unit-tested against a mocked Redis (per `docs/dev4-websocket-tutor-tracker.md`), pending only a live-Redis integration test — not a hard blocker, the same posture S2-04 was successfully built against for its own backend dependency. The only open questions are product/architecture decisions (#3 and #4 above), not cross-team waiting.
+
+**Recommendation:** given the real architectural decision buried in this "line item" and the fact that nothing here has ever been scoped into acceptance criteria, run this as a full BMAD story (`bmad-create-story` → `bmad-dev-story` → 5-agent review) rather than a quick patch — same rigor as S2-01 through S2-05.
 
 ---
 
