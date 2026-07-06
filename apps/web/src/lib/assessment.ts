@@ -1,4 +1,5 @@
 import { api } from './api';
+import type { SessionReport } from '@/types/assessment';
 
 // ── Quiz ──────────────────────────────────────────────────────────────────────
 
@@ -60,5 +61,12 @@ export interface TeachBackResult {
 
 export async function submitTeachBack(payload: TeachBackSubmitPayload): Promise<TeachBackResult> {
   const { data } = await api.post<TeachBackResult>('/assessment/teachback', payload);
+  return data;
+}
+
+// ── Session report ──────────────────────────────────────────────────────────
+
+export async function getSessionReport(sessionId: string): Promise<SessionReport> {
+  const { data } = await api.get<SessionReport>(`/assessment/session/${sessionId}/report`);
   return data;
 }

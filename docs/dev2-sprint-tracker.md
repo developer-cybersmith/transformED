@@ -8,7 +8,7 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-04 (S2-03 Onboarding Assessment Flow genuinely merged to `main` — PR #62 (`5c40db1`), after a status audit caught it sitting unmerged on its branch despite being marked done. App-wide audit fixes also merged — PR #61 (`a75535d`). See §0 and the S2-03 entry in §11 for the merge-gap writeup. Sprint 2 row below corrected: only 5 tasks are actually itemized in §11 (S2-01–S2-05), not 10.) |
+| **Last Updated** | 2026-07-04 (S2-04 Session Report Page v1 implemented via full BMAD story workflow — corrected route (`/reports/[sessionId]`, avoiding a collision with an unrelated unbuilt "learning progression" page) and a real pre-existing type bug fixed (`SessionReport.ces_breakdown` key names never matched the live backend contract). See the S2-04 entry in §11 for the full writeup. Earlier same day: S2-03 Onboarding Assessment Flow genuinely merged to `main` — PR #62 (`5c40db1`), after a status audit caught it sitting unmerged despite being marked done; app-wide audit fixes merged — PR #61 (`a75535d`).) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 |
 | **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 IN PROGRESS |
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **10** | 0 | **4** |
-| Sprint 2 | Weeks 4–5 | 5 | **3** | 0 | **2** |
+| Sprint 2 | Weeks 4–5 | 5 | **4** | 0 | **1** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **50** | **20** | **1** | **29** |
+| **Total** | **10 weeks** | **50** | **21** | **1** | **28** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -468,9 +468,9 @@ Public routes (no auth check):
 **Status:** ✅ DONE 2026-07-04 (S2-03)  
 **Responsibility:** 20-question multi-domain assessment (8 cognitive, 5 emotional, 7 self-direction). Progress bar. Legal disclaimer before questions start. Submit to `/api/assessment/onboarding/submit` (corrected from this doc's original `/api/onboarding/dna` — see S2-03 entry). Show completion screen. Required gate before lesson access via middleware.
 
-### `/reports` — Session Reports
-**Status:** ✗ NOT CREATED — Sprint 3  
-**Responsibility:** Session report for completed lesson. Quiz accuracy chart, teach-back scores, CES attention timeline, engagement summary. Links to lesson replay.
+### `/reports/[sessionId]` — Session Report
+**Status:** ✅ DONE 2026-07-04 (S2-04) — v1. Sprint 3 will expand it with an attention timeline chart once MediaPipe data exists.  
+**Responsibility:** Single-session report for a completed lesson session: quiz accuracy, teach-back outcome (as a label, never a raw score), CES (as a label), engagement summary, "Study Again" link. Note: the static `/reports` (no session id) — a separate, unbuilt, cross-session "learning progression" page already referenced by Sidebar/QuickActions nav — is NOT this page and remains out of scope/unbuilt.
 
 ### `/settings` — User Settings
 **Status:** ✓ Tabs exist (Profile, Account, Learning, Privacy, Notifications), Sprint 3: notifications real data  
@@ -1161,25 +1161,28 @@ page.tsx → OnboardingFlow
 
 ---
 
-### S2-04 — Session Report Page v1
+### S2-04 — Session Report Page v1 — ✓ 2026-07-04
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/app/reports/page.tsx`, `src/components/reports/SessionReport.tsx`
+**Status:** ✅ DONE <!-- completed: 2026-07-04 --> — implemented via BMAD story `docs/stories/2-4-session-report-page.md` on branch `sprint2/s2-4-session-report`  
+**Files:** `src/types/assessment.ts` (fixed `ces_breakdown` shape — real bug, see below), `src/lib/assessment.ts` (`getSessionReport`), `src/hooks/useSessionReport.ts` (new), `src/lib/utils.ts` (`formatCesLabel`/`formatTeachbackLabel`), `src/components/reports/SessionReport.tsx`, `src/app/reports/[sessionId]/page.tsx`, `src/components/player/Player.tsx` (ENDED screen wiring)
 
-Available after lesson completion. Shows:
-- Quiz accuracy (overall + by segment)
-- Teach-back attempt count + summary message
-- Overall engagement summary
-- CES score as descriptive label (not raw number in Phase 1)
-- "Study Again" button → routes back to /lesson/{id}
+**Route corrected from the original sketch** (resolved with the user before starting, see the story file's Context section for the full writeup): this task's original file target, `src/app/reports/page.tsx`, collides with an unrelated, unbuilt, cross-session "learning progression" analytics page already referenced by `Sidebar.tsx`/`QuickActions.tsx` nav links (backed by `reportsService.getReports()`/`mocks/data/reports.ts` — zero live callers, explicitly out of scope, untouched). This story's single-session report instead lives at **`src/app/reports/[sessionId]/page.tsx`**.
 
-Fetches `GET /api/session/{id}/report`. Mock response used until Dev 3 delivers API.
+**Real backend contract verified directly against `apps/api` before implementation** (not just trusted from docs): `GET /api/assessment/session/{session_id}/report` is live (`router.py:106-132`), not a stub — the original sketch's "Mock response used until Dev 3 delivers API" was already stale. **A real, pre-existing bug was found and fixed:** `types/assessment.ts`'s `SessionReport.ces_breakdown` used wrong key names (`quiz_accuracy`, nested `teachback_score`) that never matched the real, frozen backend contract's actual keys (`quiz`, `teachback`, `behavioral`, `head_pose`, `blink`) — caught because this type had zero live callers until this story gave it one.
+
+**Hard constraint extended from the TeachBackModal fix earlier this sprint:** `teachback_score` is also never shown as a raw number in this report — mapped to a qualitative label (`formatTeachbackLabel`) for the same reason CES is (CLAUDE.md: no clinical/rubric scores shown to students).
+
+**Known cross-team blocker, does not block this story:** nothing in `apps/api` currently creates a row in the `sessions` table `get_session_report` reads from (confirmed by grep — same gap already flagged in `docs/app-audit-2026-07-04.md` finding #5 re: quiz/teachback submissions). This story was built and tested entirely with mocked `useSessionReport`/`getSessionReport` responses; end-to-end manual QA against a real session isn't possible until that gap is closed by whoever owns session lifecycle (Dev 4).
 
 **Acceptance criteria:**
-- [ ] Report shows correct quiz accuracy percentages
-- [ ] CES shown as descriptive label, not raw float
-- [ ] Report accessible only to the lesson owner (enforced by API — frontend passes JWT)
-- [ ] Empty/error state if report not yet generated
+- [x] Report shows correct quiz accuracy percentage (single session-level number — the real API has no per-segment breakdown; "by segment" descoped, see story Dev Notes)
+- [x] CES shown as descriptive label, not raw float — regression-guarded test asserts no digit ever appears
+- [x] Teach-back shown as a descriptive label, not raw float — same regression guard
+- [x] Report accessible only to the lesson owner (enforced by API via existing JWT interceptor — no extra frontend work needed)
+- [x] Empty/error state if report not yet generated/fetch fails, with a link back to `/dashboard`
+- [x] `Player.tsx`'s lesson-complete screen links to the new report instead of the old "available in Sprint 2" placeholder
+
+29 new tests (4 type, 4 hook, 10 label-function, 7 component, 2 Player wiring + 2 fixed-in-place). Full suite: 276/276 passing. `tsc`/`eslint` clean.
 
 ---
 
@@ -1341,9 +1344,9 @@ Use a lightweight chart library (recharts or a canvas-based solution) — no D3 
 ### S3-06 — Reports Page
 **Priority:** P1  
 **Status:** 🔲 NOT STARTED  
-**Files:** `src/app/reports/page.tsx` (expand v1 from Sprint 2)
+**Files:** `src/app/reports/[sessionId]/page.tsx`, `src/components/reports/SessionReport.tsx` (route corrected 2026-07-04 during S2-04 — expand v1 from Sprint 2, not `src/app/reports/page.tsx`)
 
-Add: Attention timeline chart, quiz accuracy by segment chart, teach-back summary.
+Add: Attention timeline chart (once MediaPipe/attention data exists), teach-back summary detail. Note: "quiz accuracy by segment" is not buildable as scoped — the real backend's `GET /api/assessment/session/{id}/report` only returns one session-level `quiz_score`, no per-segment breakdown (see S2-04 Dev Notes) — would need a new/extended Dev 3 endpoint first.
 
 ---
 
