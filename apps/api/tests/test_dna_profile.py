@@ -1,7 +1,7 @@
 """
 Tests for Story 3-26 — Learner DNA Profile Text Generation (GPT-4o-mini).
 
-Test count: 28
+Test count: 29
 ACs covered: 1-19
 
 Modules under test:

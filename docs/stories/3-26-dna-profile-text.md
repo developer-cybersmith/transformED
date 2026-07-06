@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 baseline_commit: "ca36ff9"
 ---
 
@@ -251,8 +251,8 @@ badge_label are HTML-entity-escaped before the label appears in the prompt strin
   - [x] 3.23 `test_no_hardcoded_model_string_in_dna_profile` (AST scan)
 
 - [x] Task 4: Run full test suite — AC 19 — ✓ 2026-07-06
-  - [x] 4.1 `pytest -m unit tests/test_dna_profile.py` → 23/23 passed
-  - [x] 4.2 Full suite `pytest -m unit` → 500 passed, 0 new regressions (29 pre-existing failures in Dev4 modules unrelated to Task 4)
+  - [x] 4.1 `pytest -m unit tests/test_dna_profile.py` → 29/29 passed (post-review: 23 original + 6 new)
+  - [x] 4.2 Full suite `pytest -m unit` → 506 passed, 0 new regressions (29 pre-existing failures in Dev4 modules unrelated to Task 4)
 
 ---
 
@@ -518,9 +518,40 @@ the caller decides frequency.
 |------|--------|
 | 2026-07-06 | Story created — Sprint 3 Task 4 |
 | 2026-07-06 | Implementation complete — Tasks 1-4 done, 23 tests GREEN, status → review |
+| 2026-07-06 | Code review BLOCKERs addressed (R1-R11 + Option B) — 29 tests GREEN, 0 regressions, status → done |
 
 ---
 
 ## Senior Developer Review (AI)
 
-_To be filled after /bmad-code-review._
+**Review date:** 2026-07-06
+**Outcome:** Changes Requested
+**Layers run:** Story Quality, Blind Hunter (Security), Test Coverage / Edge Case Hunter, AC Completeness, Process Integrity
+**Summary:** 3 BLOCKERs (AC failures), 1 HIGH security, 2 additional security patches, 5 test-coverage patches, 1 decision needed. Process Integrity: all 13 rules PASS.
+
+### Review Follow-ups (AI)
+
+**Decision-needed:**
+- [x] [Review][Decision] R12: RESOLVED via Option B — `generate_dna_profile_text` now accepts `settings: Any` parameter; `refresh_dna_profile` forwards `settings=settings`. Dead parameter eliminated. — ✓ 2026-07-06
+
+**BLOCKERs — resolved:**
+- [x] [Review][Patch] R1: AC 10 — `OpenAILLMProvider(...)` moved inside try/except block; constructor failures now non-fatal (return None) — ✓ 2026-07-06
+- [x] [Review][Patch] R2: AC 11/AC 19 — `test_refresh_dna_profile_upsert_error_field_raises_503` added; `_supabase_mock(upsert_error=True)` path now covered — ✓ 2026-07-06
+- [x] [Review][Patch] R3: AC 2 — `test_learner_dna_profile_prompt_content` added; verifies IQ/EQ/SQ prohibition, second-person rule, no DPDP Act 2023 text in prompt — ✓ 2026-07-06
+
+**Security patches — resolved:**
+- [x] [Review][Patch] R4: SEC-HIGH — `bl.replace('\n', ' ').replace('\r', ' ')` added before HTML escape in `build_dna_profile_prompt`; `test_build_prompt_sanitizes_newlines_in_badge_labels` added — ✓ 2026-07-06
+- [x] [Review][Patch] R5: SEC-MEDIUM — `_safe_uid = str(user_id).replace('\n', ' ').replace('\r', ' ')` added; used in all 3 logger calls — ✓ 2026-07-06
+- [x] [Review][Patch] R6: SEC-LOW — `safe_err` now strips both `\n` and `\r` — ✓ 2026-07-06
+
+**Test-coverage patches — resolved:**
+- [x] [Review][Patch] R7: `on_conflict="user_id"` kwarg assertion added to upsert payload test — ✓ 2026-07-06
+- [x] [Review][Patch] R8: `messages[0]["content"] == LEARNER_DNA_PROFILE_PROMPT` assertion added to test 15 — ✓ 2026-07-06
+- [x] [Review][Patch] R9: `mock_llm_class.assert_called_once_with(lesson_id="dna-profile:u1")` added to test 16 — ✓ 2026-07-06
+- [x] [Review][Patch] R10: `test_dim_descriptor_boundary_55_is_developing` and `test_dim_descriptor_boundary_35_is_building` added — ✓ 2026-07-06
+- [x] [Review][Patch] R11: All DPDP_DISCLAIMER checks changed from `in` to `endswith` in tests 16, 20, 21 — ✓ 2026-07-06
+
+**Deferred (pre-existing / design):**
+- [x] [Review][Defer] R13: IDOR — `refresh_dna_profile` has no caller-identity guard; service-role client bypasses RLS — deferred, internal API contract (Dev 4 owns JWT auth, user_id from JWT-decoded sub)
+- [x] [Review][Defer] R14: dims NaN/Inf not validated before `_dim_descriptor` comparisons — deferred, upstream fusion (`dna_fusion.py`) is the validation boundary, not in AC scope
+- [x] [Review][Defer] R15: AST hardcoded-model scan covers only `dna_profile.py`, not `prompts.py` — deferred, behavioral test (test 15) already catches this regression path
