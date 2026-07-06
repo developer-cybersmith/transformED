@@ -18,6 +18,7 @@ interface PlayerProps {
 export default function Player({ lesson }: PlayerProps) {
   const loadLesson = usePlayerStore((s) => s.loadLesson);
   const status = usePlayerStore((s) => s.status);
+  const sessionId = usePlayerStore((s) => s.sessionId);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
 
@@ -80,16 +81,21 @@ export default function Player({ lesson }: PlayerProps) {
               <p className="text-neutral-400 text-sm">{lesson.metadata.title}</p>
             </div>
             <div className="flex flex-col items-center gap-3">
+              {sessionId && (
+                <Link
+                  href={`/reports/${sessionId}`}
+                  className="px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary
+                             text-sm font-semibold hover:brightness-105 transition-all"
+                >
+                  View Session Report
+                </Link>
+              )}
               <Link
                 href="/dashboard"
-                className="px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary
-                           text-sm font-semibold hover:brightness-105 transition-all"
+                className="text-neutral-400 hover:text-white text-sm transition-colors"
               >
                 Back to Dashboard
               </Link>
-              <p className="text-neutral-600 text-xs">
-                Session report available in Sprint 2
-              </p>
             </div>
           </div>
         )}
