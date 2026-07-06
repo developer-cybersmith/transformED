@@ -1,6 +1,6 @@
 ---
-status: ready-for-dev
-baseline_commit: ""
+status: review
+baseline_commit: "ca36ff9"
 ---
 
 # Story 3-26 — Learner DNA Profile Text Generation (GPT-4o-mini)
@@ -199,62 +199,60 @@ badge_label are HTML-entity-escaped before the label appears in the prompt strin
 
 ## Tasks
 
-- [ ] Task 1: Add DNA profile prompt + helpers to prompts.py
-  - [ ] 1.1 Add `LEARNER_DNA_PROFILE_PROMPT` constant after the `ONBOARDING_PROFILE_SYSTEM_PROMPT` block
-  - [ ] 1.2 Add `_dim_descriptor(value: float) -> str` private function
-  - [ ] 1.3 Add `_DIM_LABELS: dict[str, str]` mapping (9 dimension keys → human-readable labels)
-  - [ ] 1.4 Add `build_dna_profile_prompt(*, dims, session_count, badge_labels) -> str` function
-    - [ ] 1.4a Map each dim through `_dim_descriptor()` and `_DIM_LABELS`
-    - [ ] 1.4b Sanitize badge_labels: `label.replace("<", "&lt;").replace(">", "&gt;")`
-    - [ ] 1.4c Handle empty badge_labels → "No badges earned yet."
-    - [ ] 1.4d Handle session_count = 0 → "This is the student's first session."
-    - [ ] 1.4e Handle session_count > 0 → f"This is session {session_count} for the student."
-  - [ ] 1.5 Add `generate_dna_profile_text(*, dims, session_count, badge_labels, provider) -> Coroutine[str]`
-    - [ ] 1.5a Build messages list (system = LEARNER_DNA_PROFILE_PROMPT, user = build_dna_profile_prompt(...))
-    - [ ] 1.5b Call `provider.complete(messages=messages, model=settings.llm_mini)`
-    - [ ] 1.5c Return `f"{llm_text.strip()}\n\n{DPDP_DISCLAIMER}"`
+- [x] Task 1: Add DNA profile prompt + helpers to prompts.py — ✓ 2026-07-06
+  - [x] 1.1 Add `LEARNER_DNA_PROFILE_PROMPT` constant after the `ONBOARDING_PROFILE_SYSTEM_PROMPT` block
+  - [x] 1.2 Add `_dim_descriptor(value: float) -> str` private function
+  - [x] 1.3 Add `_DIM_LABELS: dict[str, str]` mapping (9 dimension keys → human-readable labels)
+  - [x] 1.4 Add `build_dna_profile_prompt(*, dims, session_count, badge_labels) -> str` function
+    - [x] 1.4a Map each dim through `_dim_descriptor()` and `_DIM_LABELS`
+    - [x] 1.4b Sanitize badge_labels: `label.replace("<", "&lt;").replace(">", "&gt;")`
+    - [x] 1.4c Handle empty badge_labels → "No badges earned yet."
+    - [x] 1.4d Handle session_count = 0 → "This is the student's first session."
+    - [x] 1.4e Handle session_count > 0 → f"This is session {session_count} for the student."
+  - [x] 1.5 Add `generate_dna_profile_text(*, dims, session_count, badge_labels, provider) -> Coroutine[str]`
+    - [x] 1.5a Build messages list (system = LEARNER_DNA_PROFILE_PROMPT, user = build_dna_profile_prompt(...))
+    - [x] 1.5b Call `provider.complete(messages=messages, model=settings.llm_mini)`
+    - [x] 1.5c Return `f"{llm_text.strip()}\n\n{DPDP_DISCLAIMER}"`
 
-- [ ] Task 2: Create apps/api/app/modules/assessment/dna_profile.py
-  - [ ] 2.1 Module docstring explaining separation from dna_fusion.py + no-LLM rule
-  - [ ] 2.2 `from __future__ import annotations` + imports (asyncio, logging, TYPE_CHECKING)
-  - [ ] 2.3 `__all__ = ["refresh_dna_profile"]`
-  - [ ] 2.4 Implement `refresh_dna_profile(*, user_id, dims, session_count, supabase, settings)`
-    - [ ] 2.4a Local imports inside function: `from fastapi import HTTPException, status`,
-      `from app.modules.assessment.prompts import generate_dna_profile_text`,
-      `from app.providers.llm.openai import OpenAILLMProvider`
-    - [ ] 2.4b Step 1 — read badge_labels from learner_dna (asyncio.to_thread, non-fatal failure)
-    - [ ] 2.4c Step 2 — `OpenAILLMProvider(lesson_id=f"dna-profile:{user_id}")`; call `generate_dna_profile_text`; on exception log WARNING + return None
-    - [ ] 2.4d Step 3 — upsert `{"user_id": user_id, "profile_text": profile_text}` on_conflict="user_id"; handle `.error` + exception → HTTPException(503)
-    - [ ] 2.4e `logger.info(...)` on success; return profile_text
+- [x] Task 2: Create apps/api/app/modules/assessment/dna_profile.py — ✓ 2026-07-06
+  - [x] 2.1 Module docstring explaining separation from dna_fusion.py + no-LLM rule
+  - [x] 2.2 `from __future__ import annotations` + imports (asyncio, logging, TYPE_CHECKING)
+  - [x] 2.3 `__all__ = ["refresh_dna_profile"]`
+  - [x] 2.4 Implement `refresh_dna_profile(*, user_id, dims, session_count, supabase, settings)`
+    - [x] 2.4a `OpenAILLMProvider` imported at MODULE LEVEL (not local) for test patchability; `from fastapi import HTTPException, status` and `from app.modules.assessment.prompts import generate_dna_profile_text` remain as local imports inside function
+    - [x] 2.4b Step 1 — read badge_labels from learner_dna (asyncio.to_thread, non-fatal failure)
+    - [x] 2.4c Step 2 — `OpenAILLMProvider(lesson_id=f"dna-profile:{user_id}")`; call `generate_dna_profile_text`; on exception log WARNING + return None
+    - [x] 2.4d Step 3 — upsert `{"user_id": user_id, "profile_text": profile_text}` on_conflict="user_id"; handle `.error` + exception → HTTPException(503)
+    - [x] 2.4e `logger.info(...)` on success; return profile_text
 
-- [ ] Task 3: Write apps/api/tests/test_dna_profile.py (RED → GREEN)
-  - [ ] 3.1 `test_dunder_all_exports_only_refresh_dna_profile`
-  - [ ] 3.2 `test_positional_args_raise_type_error`
-  - [ ] 3.3 `test_dim_descriptor_strong` — 82.0 → "strong"
-  - [ ] 3.4 `test_dim_descriptor_developing` — 62.0 → "developing"
-  - [ ] 3.5 `test_dim_descriptor_building` — 45.0 → "building"
-  - [ ] 3.6 `test_dim_descriptor_emerging` — 20.0 → "emerging"
-  - [ ] 3.7 `test_dim_descriptor_boundary_75_is_strong` — exactly 75.0 → "strong"
-  - [ ] 3.8 `test_build_prompt_contains_no_raw_floats` — assert no "." followed by digits in dim section
-  - [ ] 3.9 `test_build_prompt_with_badges_includes_badge_text`
-  - [ ] 3.10 `test_build_prompt_empty_badges_says_no_badges`
-  - [ ] 3.11 `test_build_prompt_sanitizes_injection_in_badge_labels`
-  - [ ] 3.12 `test_build_prompt_session_count_zero_says_first_session`
-  - [ ] 3.13 `test_build_prompt_session_count_positive`
-  - [ ] 3.14 `test_generate_profile_text_appends_dpdp_disclaimer`
-  - [ ] 3.15 `test_generate_profile_text_uses_llm_mini_from_settings`
-  - [ ] 3.16 `test_refresh_dna_profile_success_returns_profile_text`
-  - [ ] 3.17 `test_refresh_dna_profile_upsert_payload_only_has_user_id_and_profile_text`
-  - [ ] 3.18 `test_refresh_dna_profile_llm_failure_returns_none`
-  - [ ] 3.19 `test_refresh_dna_profile_upsert_failure_raises_503`
-  - [ ] 3.20 `test_refresh_dna_profile_badge_labels_read_failure_continues_with_empty`
-  - [ ] 3.21 `test_refresh_dna_profile_badge_labels_row_not_found_uses_empty`
-  - [ ] 3.22 `test_no_openai_import_in_dna_profile` (AST scan)
-  - [ ] 3.23 `test_no_hardcoded_model_string_in_dna_profile` (AST scan)
+- [x] Task 3: Write apps/api/tests/test_dna_profile.py (RED → GREEN) — ✓ 2026-07-06
+  - [x] 3.1 `test_dunder_all_exports_only_refresh_dna_profile`
+  - [x] 3.2 `test_positional_args_raise_type_error`
+  - [x] 3.3 `test_dim_descriptor_strong` — 82.0 → "strong"
+  - [x] 3.4 `test_dim_descriptor_developing` — 62.0 → "developing"
+  - [x] 3.5 `test_dim_descriptor_building` — 45.0 → "building"
+  - [x] 3.6 `test_dim_descriptor_emerging` — 20.0 → "emerging"
+  - [x] 3.7 `test_dim_descriptor_boundary_75_is_strong` — exactly 75.0 → "strong"
+  - [x] 3.8 `test_build_prompt_contains_no_raw_floats` — assert no "." followed by digits in dim section
+  - [x] 3.9 `test_build_prompt_with_badges_includes_badge_text`
+  - [x] 3.10 `test_build_prompt_empty_badges_says_no_badges`
+  - [x] 3.11 `test_build_prompt_sanitizes_injection_in_badge_labels`
+  - [x] 3.12 `test_build_prompt_session_count_zero_says_first_session`
+  - [x] 3.13 `test_build_prompt_session_count_positive`
+  - [x] 3.14 `test_generate_profile_text_appends_dpdp_disclaimer`
+  - [x] 3.15 `test_generate_profile_text_uses_llm_mini_from_settings`
+  - [x] 3.16 `test_refresh_dna_profile_success_returns_profile_text`
+  - [x] 3.17 `test_refresh_dna_profile_upsert_payload_only_has_user_id_and_profile_text`
+  - [x] 3.18 `test_refresh_dna_profile_llm_failure_returns_none`
+  - [x] 3.19 `test_refresh_dna_profile_upsert_failure_raises_503`
+  - [x] 3.20 `test_refresh_dna_profile_badge_labels_read_failure_continues_with_empty`
+  - [x] 3.21 `test_refresh_dna_profile_badge_labels_row_not_found_uses_empty`
+  - [x] 3.22 `test_no_openai_import_in_dna_profile` (AST scan — checks top-level PyPI `openai` only, allows `app.providers.llm.openai`)
+  - [x] 3.23 `test_no_hardcoded_model_string_in_dna_profile` (AST scan)
 
-- [ ] Task 4: Run full test suite — AC 19
-  - [ ] 4.1 `pytest -m unit tests/test_dna_profile.py` → all pass (≥ 20 tests)
-  - [ ] 4.2 Full suite `pytest -m unit` → 0 regressions
+- [x] Task 4: Run full test suite — AC 19 — ✓ 2026-07-06
+  - [x] 4.1 `pytest -m unit tests/test_dna_profile.py` → 23/23 passed
+  - [x] 4.2 Full suite `pytest -m unit` → 500 passed, 0 new regressions (29 pre-existing failures in Dev4 modules unrelated to Task 4)
 
 ---
 
@@ -495,11 +493,16 @@ the caller decides frequency.
 
 ### Debug Log
 
-_To be filled during implementation._
+- **`AttributeError: OpenAILLMProvider` in tests (7 tests failing)** — Story Dev Notes specified `OpenAILLMProvider` as a local import inside `refresh_dna_profile()`. However, `patch("app.modules.assessment.dna_profile.OpenAILLMProvider")` requires the name to exist at module level. Fix: moved `from app.providers.llm.openai import OpenAILLMProvider` to module level. AC 14 still satisfied — this is our provider abstraction, not the `openai` PyPI package.
+
+- **`AssertionError: openai ImportFrom found in dna_profile.py` (1 test failing)** — AST test `test_no_openai_import_in_dna_profile` used substring check `"openai" not in module` which incorrectly flagged `app.providers.llm.openai`. AC 14 means the PyPI `openai` package only. Fix: updated test to check `module.split(".")[0] != "openai"` (top-level package check only).
 
 ### Completion Notes
 
-_To be filled on completion._
+- 3 new functions + 1 constant added to `prompts.py`: `LEARNER_DNA_PROFILE_PROMPT`, `_dim_descriptor()`, `build_dna_profile_prompt()`, `generate_dna_profile_text()`. Reuses existing `DPDP_DISCLAIMER` — not redefined.
+- `dna_profile.py` created: single exported function `refresh_dna_profile()`. `OpenAILLMProvider` at module level (not local) for test patchability. `fastapi` and `prompts` imports remain local to avoid circular import risk.
+- 23 unit tests, all GREEN. AST scans verify no PyPI `openai` imports and no hardcoded model strings.
+- 500 existing tests still pass. 29 pre-existing failures all in Dev 4 modules (missing `langgraph`, missing env vars) — none introduced by this story.
 
 ### File List
 
@@ -514,6 +517,7 @@ _To be filled on completion._
 | Date | Change |
 |------|--------|
 | 2026-07-06 | Story created — Sprint 3 Task 4 |
+| 2026-07-06 | Implementation complete — Tasks 1-4 done, 23 tests GREEN, status → review |
 
 ---
 
