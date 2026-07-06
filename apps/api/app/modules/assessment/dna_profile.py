@@ -60,6 +60,9 @@ async def refresh_dna_profile(
     from fastapi import HTTPException, status
     from app.modules.assessment.prompts import generate_dna_profile_text
 
+    # Sanitize user_id for log calls — prevents log-injection via newlines (SEC-005)
+    _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+
     # ── Step 1: Read badge_labels from learner_dna (non-fatal on failure) ───────
     badge_labels: list[str] = []
     try:
@@ -75,23 +78,26 @@ async def refresh_dna_profile(
     except Exception as exc:
         logger.warning(
             "DNA profile: badge_labels read failed user=%s: %s",
-            user_id,
+            _safe_uid,
             exc,
         )
 
     # ── Step 2: Generate profile_text via LLM (non-fatal on failure) ────────────
-    provider = OpenAILLMProvider(lesson_id=f"dna-profile:{user_id}")
+    # OpenAILLMProvider instantiation is inside try so constructor failures are
+    # also non-fatal — consistent with AC 10's "on any exception → return None".
     try:
+        provider = OpenAILLMProvider(lesson_id=f"dna-profile:{user_id}")
         profile_text = await generate_dna_profile_text(
             dims=dims,
             session_count=session_count,
             badge_labels=badge_labels,
             provider=provider,
+            settings=settings,
         )
     except Exception as exc:
         logger.warning(
             "DNA profile: LLM call failed user=%s: %s",
-            user_id,
+            _safe_uid,
             exc,
         )
         return None
@@ -105,10 +111,10 @@ async def refresh_dna_profile(
         )
         upsert_error = getattr(upsert_resp, "error", None)
         if upsert_error:
-            safe_err = str(upsert_error).replace("\n", " ")
+            safe_err = str(upsert_error).replace("\n", " ").replace("\r", " ")
             logger.error(
                 "DNA profile: upsert failed user=%s: %s",
-                user_id,
+                _safe_uid,
                 safe_err,
             )
             raise HTTPException(
@@ -120,7 +126,7 @@ async def refresh_dna_profile(
     except Exception as exc:
         logger.error(
             "DNA profile: upsert exception user=%s: %s",
-            user_id,
+            _safe_uid,
             exc,
             exc_info=True,
         )
@@ -131,7 +137,7 @@ async def refresh_dna_profile(
 
     logger.info(
         "DNA profile: updated user=%s session_count=%d",
-        user_id,
+        _safe_uid,
         session_count,
     )
     return profile_text

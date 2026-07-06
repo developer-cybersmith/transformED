@@ -210,7 +210,8 @@ def build_dna_profile_prompt(
     dims_block = "\n".join(dim_lines)
 
     safe_badges = [
-        bl.replace("<", "&lt;").replace(">", "&gt;") for bl in badge_labels
+        bl.replace("\n", " ").replace("\r", " ").replace("<", "&lt;").replace(">", "&gt;")
+        for bl in badge_labels
     ]
     badges_block = (
         f"Earned badges: {', '.join(safe_badges)}" if safe_badges else "No badges earned yet."
@@ -236,14 +237,15 @@ async def generate_dna_profile_text(
     session_count: int,
     badge_labels: list[str],
     provider: Any,
+    settings: Any,
 ) -> str:
     """Generate a 2-3 sentence Learner DNA profile and append the DPDP disclaimer.
 
     Maps dimension values to descriptive bands before passing to the LLM — no raw
     numeric scores are ever sent to the model.
     Uses settings.llm_mini (GPT-4o-mini) via the provider interface.
+    `settings` must be passed by the caller — do not call get_settings() here.
     """
-    settings = get_settings()
     messages: list[dict[str, str]] = [
         {"role": "system", "content": LEARNER_DNA_PROFILE_PROMPT},
         {
