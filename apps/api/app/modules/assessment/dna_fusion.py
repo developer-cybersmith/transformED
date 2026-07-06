@@ -352,6 +352,22 @@ async def fuse_learner_dna(
             detail="Could not update learner profile.",
         )
 
+    # ── Step 6: Write growth tracking events (non-fatal) ──────────────────────
+    from app.modules.assessment.dna_growth import record_dna_growth  # local import
+    old_dims_for_growth: dict[str, float | None] = {
+        dim: (float(old_row[dim]) if old_row.get(dim) is not None else None)
+        for dim in _NINE_DIMENSIONS
+    }
+    try:
+        await record_dna_growth(
+            session_id=session_id,
+            old_dims=old_dims_for_growth,
+            new_dims=new_dims,
+            supabase=supabase,
+        )
+    except Exception as exc:
+        logger.warning("DNA fusion: growth tracking failed session=%s: %s", session_id, exc)
+
     logger.info(
         "DNA fusion: updated user=%s session=%s session_count=%d",
         user_id,

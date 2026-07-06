@@ -1,6 +1,6 @@
 ---
-status: ready-for-dev
-baseline_commit: ""
+status: review
+baseline_commit: "b03b8cdf1386750b9bf28df30b7e436f43d7df02"
 ---
 
 # Story 3-27 — Learner DNA Growth Tracking (delta per dimension per session)
@@ -222,53 +222,53 @@ from returning `new_dims`. Verified by test that patches `record_dna_growth` to 
 
 ## Tasks
 
-- [ ] Task 1: Create apps/api/app/modules/assessment/dna_growth.py
-  - [ ] 1.1 Module docstring: separation from dna_fusion.py, no-LLM rule, analytics-only purpose
-  - [ ] 1.2 `from __future__ import annotations` + imports (asyncio, logging, Any)
-  - [ ] 1.3 `__all__ = ["record_dna_growth"]`
-  - [ ] 1.4 Implement `record_dna_growth(*, session_id, old_dims, new_dims, supabase) -> int`
-    - [ ] 1.4a Early-exit: if `not new_dims`, return `0` without touching DB (AC 9)
-    - [ ] 1.4b Build `_safe_sid` for log injection prevention (AC 10)
-    - [ ] 1.4c Build rows list: iterate `new_dims.items()`, compute `old_val`, `delta` (AC 3, 5)
-    - [ ] 1.4d Single bulk `asyncio.to_thread` insert all rows (AC 4)
-    - [ ] 1.4e Check `resp.error` truthy → WARNING + return 0 (AC 7)
-    - [ ] 1.4f Log INFO on success, return inserted count (AC 8)
-    - [ ] 1.4g `except Exception` → WARNING + return 0 (AC 6)
+- [x] Task 1: Create apps/api/app/modules/assessment/dna_growth.py — ✓ 2026-07-06
+  - [x] 1.1 Module docstring: separation from dna_fusion.py, no-LLM rule, analytics-only purpose
+  - [x] 1.2 `from __future__ import annotations` + imports (asyncio, logging, Any)
+  - [x] 1.3 `__all__ = ["record_dna_growth"]`
+  - [x] 1.4 Implement `record_dna_growth(*, session_id, old_dims, new_dims, supabase) -> int`
+    - [x] 1.4a Early-exit: if `not new_dims`, return `0` without touching DB (AC 9)
+    - [x] 1.4b Build `_safe_sid` for log injection prevention (AC 10)
+    - [x] 1.4c Build rows list: iterate `new_dims.items()`, compute `old_val`, `delta` (AC 3, 5)
+    - [x] 1.4d Single bulk `asyncio.to_thread` insert all rows (AC 4)
+    - [x] 1.4e Check `resp.error` truthy → WARNING + return 0 (AC 7)
+    - [x] 1.4f Log INFO on success, return inserted count (AC 8)
+    - [x] 1.4g `except Exception` → WARNING + return 0 (AC 6)
 
-- [ ] Task 2: Modify apps/api/app/modules/assessment/dna_fusion.py — add Step 6
-  - [ ] 2.1 After the `learner_dna` upsert try/except block, add Step 6 comment block
-  - [ ] 2.2 Build `old_dims_for_growth` dict from `old_row` (AC 13)
-  - [ ] 2.3 Add local import `from app.modules.assessment.dna_growth import record_dna_growth` (AC 12)
-  - [ ] 2.4 `await record_dna_growth(session_id=session_id, old_dims=old_dims_for_growth, new_dims=new_dims, supabase=supabase)` (AC 11)
-  - [ ] 2.5 Verify: `fuse_learner_dna()` return value and existing behaviour unchanged (AC 14)
-  - [ ] 2.6 Verify: existing 29 tests in `test_dna_fusion.py` still pass (0 regressions)
+- [x] Task 2: Modify apps/api/app/modules/assessment/dna_fusion.py — add Step 6 — ✓ 2026-07-06
+  - [x] 2.1 After the `learner_dna` upsert try/except block, add Step 6 comment block
+  - [x] 2.2 Build `old_dims_for_growth` dict from `old_row` (AC 13)
+  - [x] 2.3 Add local import `from app.modules.assessment.dna_growth import record_dna_growth` (AC 12)
+  - [x] 2.4 `await record_dna_growth(session_id=session_id, old_dims=old_dims_for_growth, new_dims=new_dims, supabase=supabase)` (AC 11)
+  - [x] 2.5 Verify: `fuse_learner_dna()` return value and existing behaviour unchanged (AC 14)
+  - [x] 2.6 Verify: existing 29 tests in `test_dna_fusion.py` still pass (0 regressions)
 
-- [ ] Task 3: Write apps/api/tests/test_dna_growth.py (RED → GREEN)
-  - [ ] 3.1 `test_dunder_all_exports_only_record_dna_growth`
-  - [ ] 3.2 `test_positional_args_raise_type_error`
-  - [ ] 3.3 `test_record_dna_growth_inserts_9_rows_for_all_dims`
-  - [ ] 3.4 `test_record_dna_growth_uses_single_bulk_insert` — verify insert called once
-  - [ ] 3.5 `test_record_dna_growth_payload_structure` — all 4 keys present + correct types
-  - [ ] 3.6 `test_record_dna_growth_delta_computed_correctly` — `round(new - old, 4)`
-  - [ ] 3.7 `test_record_dna_growth_delta_precision_4_decimal_places`
-  - [ ] 3.8 `test_record_dna_growth_old_value_none_first_session` — `old_value=None`, `delta=None`
-  - [ ] 3.9 `test_record_dna_growth_mixed_old_some_none` — some dims have old, some don't
-  - [ ] 3.10 `test_record_dna_growth_event_type_is_dna_update` — all rows have correct event_type
-  - [ ] 3.11 `test_record_dna_growth_session_id_in_all_rows`
-  - [ ] 3.12 `test_record_dna_growth_empty_new_dims_returns_zero_no_db_call`
-  - [ ] 3.13 `test_record_dna_growth_db_exception_returns_zero`
-  - [ ] 3.14 `test_record_dna_growth_insert_error_field_returns_zero`
-  - [ ] 3.15 `test_record_dna_growth_returns_inserted_count`
-  - [ ] 3.16 `test_fuse_learner_dna_calls_record_dna_growth_after_upsert`
-  - [ ] 3.17 `test_fuse_learner_dna_growth_failure_does_not_prevent_return` (AC 18)
-  - [ ] 3.18 `test_fuse_learner_dna_old_dims_for_growth_none_on_first_session`
-  - [ ] 3.19 `test_no_openai_import_in_dna_growth` (AST scan — AC 15)
-  - [ ] 3.20 `test_no_hardcoded_model_string_in_dna_growth` (AC 16)
+- [x] Task 3: Write apps/api/tests/test_dna_growth.py (RED → GREEN) — ✓ 2026-07-06
+  - [x] 3.1 `test_dunder_all_exports_only_record_dna_growth`
+  - [x] 3.2 `test_positional_args_raise_type_error`
+  - [x] 3.3 `test_record_dna_growth_inserts_9_rows_for_all_dims`
+  - [x] 3.4 `test_record_dna_growth_uses_single_bulk_insert` — verify insert called once
+  - [x] 3.5 `test_record_dna_growth_payload_structure` — all 4 keys present + correct types
+  - [x] 3.6 `test_record_dna_growth_delta_computed_correctly` — `round(new - old, 4)`
+  - [x] 3.7 `test_record_dna_growth_delta_precision_4_decimal_places`
+  - [x] 3.8 `test_record_dna_growth_old_value_none_first_session` — `old_value=None`, `delta=None`
+  - [x] 3.9 `test_record_dna_growth_mixed_old_some_none` — some dims have old, some don't
+  - [x] 3.10 `test_record_dna_growth_event_type_is_dna_update` — all rows have correct event_type
+  - [x] 3.11 `test_record_dna_growth_session_id_in_all_rows`
+  - [x] 3.12 `test_record_dna_growth_empty_new_dims_returns_zero_no_db_call`
+  - [x] 3.13 `test_record_dna_growth_db_exception_returns_zero`
+  - [x] 3.14 `test_record_dna_growth_insert_error_field_returns_zero`
+  - [x] 3.15 `test_record_dna_growth_returns_inserted_count`
+  - [x] 3.16 `test_fuse_learner_dna_calls_record_dna_growth_after_upsert`
+  - [x] 3.17 `test_fuse_learner_dna_growth_failure_does_not_prevent_return` (AC 14)
+  - [x] 3.18 `test_fuse_learner_dna_old_dims_for_growth_none_on_first_session`
+  - [x] 3.19 `test_no_openai_import_in_dna_growth` (AST scan — AC 15)
+  - [x] 3.20 `test_no_hardcoded_model_string_in_dna_growth` (AC 16)
 
-- [ ] Task 4: Run full test suite — AC 17
-  - [ ] 4.1 `pytest -m unit tests/test_dna_growth.py` → ≥ 20/20 passed
-  - [ ] 4.2 `pytest -m unit tests/test_dna_fusion.py` → 29/29 passed (0 regressions)
-  - [ ] 4.3 Full suite `pytest -m unit` → 0 new regressions
+- [x] Task 4: Run full test suite — AC 17 — ✓ 2026-07-06
+  - [x] 4.1 `pytest -m unit tests/test_dna_growth.py` → 20/20 passed
+  - [x] 4.2 `pytest -m unit tests/test_dna_fusion.py` → 29/29 passed (0 regressions)
+  - [x] 4.3 Full suite `pytest -m unit` → 0 new regressions (pre-existing Dev 4 failures unchanged)
 
 ---
 
@@ -539,22 +539,33 @@ that exactly 9 rows were in the insert payload.
 
 ### Debug Log
 
-*(fill during implementation)*
+- Test 17 `test_fuse_learner_dna_growth_failure_does_not_prevent_return` failed initially because
+  Step 6 in `dna_fusion.py` had no try/except guard. Fixed by wrapping `await record_dna_growth(...)`
+  in try/except per AC 14 ("non-fatal"). `record_dna_growth` is internally non-fatal, but the
+  integration guard is belt-and-suspenders.
 
 ### Completion Notes
 
-*(fill after implementation)*
+- 20/20 new tests GREEN, 29/29 `test_dna_fusion.py` regression tests GREEN (49/49 total)
+- Pre-existing Dev 4 failures (test_tutor_graph, test_tutor_service, 9× test_websocket_session)
+  unchanged — confirmed by git stash verification
+- `record_dna_growth` is always non-fatal internally (returns 0 on any exception)
+- Step 6 in `fuse_learner_dna` adds belt-and-suspenders try/except so growth tracking can never
+  propagate exceptions to the session-end handler
+- Local import pattern (`from app.modules.assessment.dna_growth import record_dna_growth` inside
+  `fuse_learner_dna`) prevents circular import risk at module load time
 
 ### File List
 
 | File | Action |
 |------|--------|
-| `apps/api/app/modules/assessment/dna_growth.py` | CREATE |
-| `apps/api/app/modules/assessment/dna_fusion.py` | MODIFY — add Step 6 only |
-| `apps/api/tests/test_dna_growth.py` | CREATE |
+| `apps/api/app/modules/assessment/dna_growth.py` | CREATED — 70 lines, `record_dna_growth` |
+| `apps/api/app/modules/assessment/dna_fusion.py` | MODIFIED — Step 6 added (~14 lines) |
+| `apps/api/tests/test_dna_growth.py` | CREATED — 20 unit tests |
 
 ### Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-07-06 | Story created — Sprint 3 Task 5 |
+| 2026-07-06 | Implementation complete — 20/20 tests GREEN, 0 regressions |
