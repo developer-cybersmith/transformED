@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-03 (Sprint 3 Task 3 DONE — Story 3-25: Learner DNA EMA fusion formula (29 tests, 9 dims, 5-agent review, 3 BLOCKERs resolved: AC6 impl fix + AC17/AC18 tests); 463 unit tests pass; dev3-sprint3-task3 ready for PR)
+**Last updated:** 2026-07-06 (Sprint 3 Task 4 DONE — Story 3-26: GPT-4o-mini Learner DNA profile text generation (29 tests, LEARNER_DNA_PROFILE_PROMPT, _dim_descriptor, build_dna_profile_prompt, generate_dna_profile_text, refresh_dna_profile; 5-agent review APPROVED, all 3 BLOCKERs + 11 patches resolved); 506 unit tests pass; dev3-sprint3-task4 pushed to origin)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -15,10 +15,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 7 | 3 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 | 7 | 4 | 0 | 3 |
 | Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **40** | **29** | **0** | **11** |
+| **Total** | | **40** | **30** | **0** | **10** |
 
 Update this table each time a task is checked off below.
 
@@ -619,13 +619,16 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Story 3-25 at `docs/stories/3-25-dna-fusion-formula.md` — status: done
   - Branch: `dev3-sprint3-task3` — pushed to origin, PR pending
 
-- [ ] **GPT-4o-mini profile text generation**
+- [x] **GPT-4o-mini profile text generation** — ✓ 2026-07-06
   - Create `LEARNER_DNA_PROFILE_PROMPT` in `prompts.py`
   - Input: all 9 dimension values + session_count + badge_labels
   - Output: 2–3 sentence descriptive profile (no IQ/EQ/SQ/clinical language, no raw numbers)
   - Must include DPDP Act 2023 disclaimer as a fixed suffix on the response
   - Regenerate `profile_text` after every Learner DNA update (or when session_count is a multiple of 3)
   - **AC:** Profile text describes learning style naturally; spot-check confirms no clinical language
+  - Story 3-26 at `docs/stories/3-26-dna-profile-text.md` — status: done
+  - 29 unit tests GREEN; 5-agent adversarial review APPROVED; all 3 BLOCKERs + R4-R11 security/test patches resolved
+  - Branch: `dev3-sprint3-task4` — pushed to origin, PR pending
 
 - [ ] **Growth tracking (delta per dimension per session)**
   - After each `learner_dna` upsert, write a `session_events` row:
