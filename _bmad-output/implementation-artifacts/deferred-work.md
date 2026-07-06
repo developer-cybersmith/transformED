@@ -1,5 +1,12 @@
 # Deferred Work
 
+## Deferred from: code review of 2-5-player-state-persistence (2026-07-06)
+
+- **`quizFiredForSegment` restore is validated only by index-bounds, not segment-ID identity** [`apps/web/src/stores/player.machine.ts`] — if the same `lesson_id` is later regenerated with different segment content that still satisfies the bounds check against the new `segments.length`, previously-fired quiz IDs could be restored and suppress quizzes the student never actually completed in the new content. Would need content-identity validation (e.g. hashing segment IDs) beyond this story's scope.
+- **Saved progress has no user/account scoping** [`apps/web/src/stores/player.machine.ts`] — keyed only by `lesson_id`; on a shared/public device, a second student opening the same lesson after the first left mid-session would silently inherit the first student's segment/position/quiz-fired state. `player.machine.ts` doesn't track `user_id` anywhere today — needs a product/architecture decision, not a one-line patch.
+- **No `storage` event listener for multi-tab conflicts** [`apps/web/src/stores/player.machine.ts`] — two tabs with the same lesson open independently write to the same `hie:session:{lesson_id}` key with no conflict detection; whichever tab saves last silently wins, potentially clobbering further-along progress from the other tab. A real fix needs a `storage` event listener plus conflict-resolution UX.
+- **`Player.tsx`'s mount effect re-runs on any `lesson` prop reference change, not just a genuine lesson change** [`apps/web/src/components/player/Player.tsx`] — re-surfaced during this story's review (originally flagged in Story 2-4's review): React StrictMode's dev-only double-invoke, or a future non-memoized lesson source, would re-run both `loadLesson` and (as of this story) `restoreProgress` unnecessarily. Pre-existing `loadLesson` mount-effect design, not introduced by this story.
+
 ## Deferred from: code review of 2-4-session-report-page (2026-07-04)
 
 - **`Player.tsx`'s mount effect unconditionally calls `loadLesson(lesson)`, resetting `status` to `IDLE`** [`apps/web/src/components/player/Player.tsx`] — any remount with a new `lesson` object reference (not just the initial mount) silently reverts an `ENDED` state and its session-report link. Pre-existing effect design, not introduced by this story; the new `Player.test.tsx` documents and works around it (sets `status: 'ENDED'` after `render()`, not before) rather than fixing the underlying effect, which needs broader consideration than a UI story's scope.

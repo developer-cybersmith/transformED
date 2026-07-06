@@ -18,13 +18,21 @@ interface StoredProgress {
   storedAt: number;
 }
 
+function safeRemove(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Storage inaccessible — nothing more to do, the stale entry just lingers.
+  }
+}
+
 function isStoredProgress(value: unknown): value is StoredProgress {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
   return (
-    typeof v.segmentIndex === 'number' &&
-    typeof v.audioPositionMs === 'number' &&
-    typeof v.storedAt === 'number' &&
+    typeof v.segmentIndex === 'number' && Number.isInteger(v.segmentIndex) &&
+    typeof v.audioPositionMs === 'number' && Number.isFinite(v.audioPositionMs) && v.audioPositionMs >= 0 &&
+    typeof v.storedAt === 'number' && Number.isFinite(v.storedAt) &&
     Array.isArray(v.quizFiredForSegment) &&
     v.quizFiredForSegment.every((id) => typeof id === 'string')
   );
@@ -189,6 +197,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const next = new Set(quizFiredForSegment);
     next.add(segment.segment_id);
     set({ status: 'QUIZ', quizFiredForSegment: next });
+    // Immediate, not throttled — audio is paused for the quiz so no further
+    // updateAudioPosition ticks will fire to flush this update; closing the
+    // tab here must not lose it (would re-fire an already-answered quiz).
+    get().saveProgress();
   },
 
   exitQuiz: () => {
@@ -220,7 +232,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // near the end instead of starting fresh.
     const { lesson } = get();
     if (typeof window !== 'undefined' && lesson) {
-      localStorage.removeItem(`hie:session:${lesson.lesson_id}`);
+      try {
+        localStorage.removeItem(`hie:session:${lesson.lesson_id}`);
+      } catch {
+        // Storage inaccessible (private browsing, disabled by policy) — not
+        // fatal, the lesson still ends normally.
+      }
     }
     set({ status: 'ENDED' });
   },
@@ -246,37 +263,53 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       quizFiredForSegment: Array.from(quizFiredForSegment),
       storedAt: Date.now(),
     };
-    localStorage.setItem(`hie:session:${lesson.lesson_id}`, JSON.stringify(payload));
-    lastSavedAt = Date.now();
+    try {
+      localStorage.setItem(`hie:session:${lesson.lesson_id}`, JSON.stringify(payload));
+      lastSavedAt = Date.now();
+    } catch {
+      // Storage inaccessible (Safari private browsing, quota exceeded) —
+      // degrade gracefully, playback must not break because a save failed.
+    }
   },
 
   restoreProgress: (lessonId) => {
     if (typeof window === 'undefined') return false;
     const key = `hie:session:${lessonId}`;
-    const raw = localStorage.getItem(key);
+
+    let raw: string | null;
+    try {
+      raw = localStorage.getItem(key);
+    } catch {
+      return false;
+    }
     if (!raw) return false;
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      localStorage.removeItem(key);
+      safeRemove(key);
       return false;
     }
 
     if (!isStoredProgress(parsed)) {
-      localStorage.removeItem(key);
+      safeRemove(key);
       return false;
     }
 
     if (Date.now() - parsed.storedAt > MAX_STORED_AGE_MS) {
-      localStorage.removeItem(key);
+      safeRemove(key);
       return false;
     }
 
     const { lesson } = get();
-    if (!lesson || parsed.segmentIndex < 0 || parsed.segmentIndex >= lesson.segments.length) {
-      localStorage.removeItem(key);
+    // Only meaningful when called after loadLesson() for this exact lesson —
+    // a mismatch means the caller is out of order, not that this entry is
+    // stale/corrupt, so it's left alone rather than deleted.
+    if (!lesson || lesson.lesson_id !== lessonId) return false;
+
+    if (parsed.segmentIndex < 0 || parsed.segmentIndex >= lesson.segments.length) {
+      safeRemove(key);
       return false;
     }
 

@@ -4,7 +4,7 @@ baseline_commit: "5efda8140a2d89f88cc01b8e3845bbf05978e924"
 
 # Story 2-5: Player State Persistence (Session Restore)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -77,6 +77,24 @@ Story 2-4's `SessionReport.tsx` "Study Again" button links to `/lesson/{lesson_i
   - [x] 6.3 `npx eslint .` — 0 errors, 37 pre-existing warnings unchanged
   - [x] 6.4 Updated `docs/dev2-sprint-tracker.md` S2-05 entry to DONE; Sprint 2 dashboard row now 5/5 done, header updated to reflect Sprint 2 complete
 
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2/s2-5-player-state-persistence` vs `main`, 2026-07-06.
+
+- [x] [Review][Patch] `isStoredProgress` accepts a non-integer `segmentIndex` (e.g. `1.5`) — passes the bounds check, then `lesson.segments[1.5]` is `undefined` and the very next line crashes dereferencing `segment.narration` [apps/web/src/stores/player.machine.ts] — fixed: `isStoredProgress` now requires `Number.isInteger(segmentIndex)`
+- [x] [Review][Patch] `audioPositionMs` has no finiteness/non-negative check — a corrupted/tampered value (including `Infinity` from an out-of-range JSON numeric literal like `1e400`) flows unchecked into `binarySearchTimestamps` and `requestSeek` → `audio.currentTime` [apps/web/src/stores/player.machine.ts] — fixed: `isStoredProgress` now requires `Number.isFinite(audioPositionMs) && audioPositionMs >= 0`
+- [x] [Review][Patch] `storedAt` has no finiteness check — an `Infinity` value (same `1e400`-style overflow) makes `Date.now() - storedAt` evaluate to `-Infinity`, always `<= MAX_STORED_AGE_MS`, silently defeating the 24h expiry [apps/web/src/stores/player.machine.ts] — fixed: `isStoredProgress` now requires `Number.isFinite(storedAt)`
+- [x] [Review][Patch] Every `localStorage` call (`setItem` in `saveProgress`, `getItem`/`removeItem` in `restoreProgress`, `removeItem` in `endLesson`) is unguarded — Safari private-browsing or a storage-quota error throws synchronously; `restoreProgress` runs inside `Player.tsx`'s mount `useEffect`, where an uncaught throw is an effect-cycle exception, not just a swallowed DOM-callback error [apps/web/src/stores/player.machine.ts] — fixed: every call wrapped in try/catch (new `safeRemove` helper for the shared removal path), degrading gracefully instead of throwing
+- [x] [Review][Patch] `restoreProgress(lessonId)` never checks that `lessonId` matches the currently-loaded `lesson.lesson_id` — only validates `segmentIndex` bounds against whatever lesson happens to be loaded. Today's only caller keeps them in sync by construction, but the action itself has no guard against a future/mis-ordered caller applying lesson A's snapshot onto lesson B [apps/web/src/stores/player.machine.ts] — fixed: explicit `lesson.lesson_id !== lessonId` guard added, returns `false` without touching storage (a mismatch means the caller is out of order, not that the entry is stale)
+- [x] [Review][Patch] `enterQuiz()` updates `quizFiredForSegment` in memory but nothing flushes it to `localStorage` — the only writers are `pause()`, `advanceSegment()`, and the throttled `updateAudioPosition()` tick, which stops firing once audio pauses for the quiz. Closing the tab mid-quiz loses that update; on restore, `processTimeUpdate`'s boundary check re-fires the quiz for a segment the student already answered [apps/web/src/stores/player.machine.ts] — fixed: `enterQuiz()` now calls `saveProgress()` immediately (unthrottled), matching `pause()`/`advanceSegment()`
+- [x] [Review][Patch] AC #12 asked for a dedicated `binarySearch.test.ts` (or the existing test cases moved there) for the newly-extracted function — neither happened; the ~20 existing `binarySearchTimestamps` tests still only exercise it via the re-export from `AudioTimeline.tsx`. Functional coverage isn't lost, but the letter of the AC wasn't met [apps/web/src/__tests__/lib/binarySearch.test.ts] — fixed: added `apps/web/src/__tests__/lib/binarySearch.test.ts` with direct unit tests (boundary, mid-slot, single-timestamp, and an exhaustive linear-scan cross-check) importing from `@/lib/binarySearch`
+- [x] [Review][Defer] `quizFiredForSegment` is validated only by index-bounds against the currently-loaded lesson, not by segment-ID identity — if the same `lesson_id` is later regenerated with different segment content that happens to still satisfy the bounds check, previously-fired quiz IDs could be restored and suppress quizzes the student never actually completed in the new content [apps/web/src/stores/player.machine.ts] — deferred, would need content-identity validation (e.g. hashing segment IDs) beyond this story's scope; inherent trade-off of a v1 keyed-by-lesson-id-only design
+- [x] [Review][Defer] Saved progress has no user/account scoping — keyed only by `lesson_id`, so on a shared/public device, Student B opening the same lesson after Student A left mid-session would silently inherit Student A's segment/position/quiz-fired state [apps/web/src/stores/player.machine.ts] — deferred, `player.machine.ts` doesn't track `user_id` anywhere today; fixing this needs a product/architecture decision, not a one-line patch, and the tracker's own task sketch never specified user-scoping
+- [x] [Review][Defer] No `storage` event listener — two tabs with the same lesson open independently write to the same `hie:session:{lesson_id}` key with no conflict detection; whichever tab saves last wins, silently clobbering further-along progress from the other tab [apps/web/src/stores/player.machine.ts] — deferred, a real fix needs a `storage` event listener plus conflict-resolution UX, a bigger feature than this story's stated ACs
+- [x] [Review][Defer] `Player.tsx`'s mount effect (`[lesson, loadLesson]` deps) re-runs `loadLesson` + now also `restoreProgress` on any `lesson` prop reference change, not just a genuine lesson change (e.g. React StrictMode's dev-only double-invoke, or a future non-memoized lesson source) [apps/web/src/components/player/Player.tsx] — deferred, this is `loadLesson`'s own pre-existing mount-effect behavior (not introduced by this story) already acknowledged as a gap during Story 2-4's review; independently re-surfaced by two review layers (Blind Hunter and the Acceptance Auditor) in this pass
+
+**Dismissed as noise/false-positive (2):** an unbounded `quizFiredForSegment` array length — negligible real-world risk since a legitimate session's array is implicitly bounded by the lesson's own segment count, and reaching an absurd size requires deliberate localStorage tampering, not any normal failure mode. The module-scoped `lastSavedAt` throttle variable being "a global singleton instead of store state" — this was a deliberate, documented design choice (see Debug Log above): resetting it in `loadLesson()` specifically prevents a stale timestamp from a prior, unrelated lesson session from suppressing a new session's first save, and this app has exactly one store instance in one browser tab, so the "multiple realms" concern the reviewer raised doesn't apply here.
+
 ## Dev Notes
 
 ### Files this story touches
@@ -120,6 +138,9 @@ Claude Sonnet 5 (claude-sonnet-5)
 - RED confirmed for every task before implementation: existing `AudioTimeline.test.ts` passed unmodified after Task 1's extraction (no RED needed there — pure refactor); `saveProgress is not a function`/`restoreProgress is not a function` for Tasks 2–4's 13 new store tests; missing-restore-effect for Task 5's 1 new `Player.test.tsx` test (the "starts fresh" case passed trivially since that's the pre-existing default behavior).
 - A real cross-test-leakage risk was designed around, not just discovered by accident: the throttle's `lastSavedAt` bookkeeping is a module-scoped variable, not Zustand state, so it would otherwise persist across tests within the same file (and across unrelated lessons in production). Resolved by resetting it inside `loadLesson()` itself — a real design improvement (a newly loaded lesson shouldn't inherit stale save-timing from a previous, unrelated session), not merely a test workaround.
 - Fake timers (`vi.useFakeTimers()`/`vi.setSystemTime()`) used throughout the new store tests to make the ~2s throttle window and the 24h staleness check deterministic.
+- Review-patch pass (2026-07-06): RED confirmed for each of the 7 patch findings via new failing tests before implementing the fix (non-integer `segmentIndex`, negative/non-finite `audioPositionMs`, non-finite `storedAt`, thrown `localStorage` calls in all 3 actions, `lessonId` mismatch guard, `enterQuiz()` immediate save, direct `binarySearchTimestamps` unit tests) — all GREEN after the corresponding fix.
+- A spy-leak cascading-failure bug in my own test authoring was found and fixed: `vi.spyOn(Storage.prototype, 'setItem'/'getItem').mockImplementation(...)` inside a test whose own assertion failed (before the try/catch existed) left the mock active for every subsequent test in the file, since the test's manual `mockRestore()` never ran. Fixed by adding a global `afterEach(() => vi.restoreAllMocks())` as a safety net.
+- A test-validity bug was also found and fixed: testing "non-finite `storedAt`/`audioPositionMs`" via `JSON.stringify({ storedAt: Infinity, ... })` doesn't actually exercise the vulnerability, because `JSON.stringify` silently converts `Infinity`/`NaN` to `null` per the JSON spec. Rewrote both tests to construct the raw JSON string directly with a `1e400`-style literal (valid JSON syntax that `JSON.parse` converts to `Infinity`), accurately simulating the real corrupted-storage attack vector the Edge Case Hunter identified.
 
 ### Completion Notes List
 
@@ -130,21 +151,26 @@ Claude Sonnet 5 (claude-sonnet-5)
 - Reused the existing `requestSeek` mechanism for applying a restored position — no second seek pathway was introduced.
 - The `window === 'undefined'` SSR guards in `saveProgress`/`restoreProgress`/`endLesson` are not directly test-covered — not testable in this project's jsdom-based Vitest environment, consistent with how other SSR guards are handled elsewhere in this codebase. Documented in Task 2.1.
 - All 6 tasks completed in strict RED → GREEN order; no task was marked done without its tests actually passing first.
+- Applied all 7 `[Review][Patch]` findings from the 5-agent code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor): hardened `isStoredProgress` with `Number.isInteger`/`Number.isFinite`/non-negative checks, wrapped every `localStorage` call across `saveProgress`/`restoreProgress`/`endLesson` in try/catch (new `safeRemove` helper), added the `lessonId !== lesson.lesson_id` mismatch guard in `restoreProgress`, made `enterQuiz()` save immediately instead of relying on a throttled tick that stops firing once audio pauses, and added a dedicated `binarySearch.test.ts`. The 4 remaining findings were explicitly deferred (see Review Findings above and `_bmad-output/implementation-artifacts/deferred-work.md`) as out of this story's scope; 2 were dismissed as noise/false-positives.
 
 ### File List
 
 **Files CREATED:**
 - `apps/web/src/lib/binarySearch.ts`
+- `apps/web/src/__tests__/lib/binarySearch.test.ts` (review-patch pass)
 
 **Files MODIFIED:**
 - `apps/web/src/components/player/AudioTimeline.tsx` — `binarySearchTimestamps` now re-exported from `lib/binarySearch.ts` (no behavior change)
-- `apps/web/src/stores/player.machine.ts` — added `saveProgress`, `restoreProgress`, throttle bookkeeping (`lastSavedAt`, reset in `loadLesson`), hooks in `updateAudioPosition`/`pause`/`advanceSegment`/`endLesson`
-- `apps/web/src/__tests__/stores/player.machine.test.ts` — 13 new tests (reused existing `makeLesson` fixture), `localStorage.clear()` added to the existing `beforeEach`
+- `apps/web/src/stores/player.machine.ts` — added `saveProgress`, `restoreProgress`, throttle bookkeeping (`lastSavedAt`, reset in `loadLesson`), hooks in `updateAudioPosition`/`pause`/`advanceSegment`/`endLesson`; review-patch pass added `safeRemove` helper, hardened `isStoredProgress` (integer/finite/non-negative checks), try/catch around every `localStorage` call, `lessonId` mismatch guard in `restoreProgress`, immediate save in `enterQuiz()`
+- `apps/web/src/__tests__/stores/player.machine.test.ts` — 13 new tests from initial implementation + 8 new review-patch tests (spy-based `localStorage` failure tests, integer/finite/mismatch validation tests, `enterQuiz()` immediate-save test); global `afterEach(() => vi.restoreAllMocks())` safety net added; `localStorage.clear()` added to the existing `beforeEach`
 - `apps/web/src/components/player/Player.tsx` — mount effect now calls `restoreProgress(lesson.lesson_id)` immediately after `loadLesson`
 - `apps/web/src/__tests__/components/player/Player.test.tsx` — 2 new tests (restore happy path, no-saved-snapshot case), `localStorage.clear()` added to the existing `beforeEach`
 - `docs/dev2-sprint-tracker.md` — S2-05 marked done, Sprint 2 dashboard row now 5/5, header updated to reflect Sprint 2 complete
+- `_bmad-output/implementation-artifacts/deferred-work.md` — 4 deferred findings from this story's review appended
 
 ### Change Log
 
 - 2026-07-06: Story created — Sprint 2 Task 5 (last Sprint 2 item), `sprint2/s2-5-player-state-persistence` branch
 - 2026-07-06: All 6 tasks implemented in RED→GREEN order; 15 new tests; 300/300 full suite passing; `tsc`/`eslint` clean; story marked `review`
+- 2026-07-06: 5-agent adversarial review run (Blind Hunter, Edge Case Hunter, Acceptance Auditor); 7 patch findings, 4 deferred, 2 dismissed as noise
+- 2026-07-06: All 7 patch findings applied in RED→GREEN order; 9 new tests (8 in `player.machine.test.ts`, 6 in new `binarySearch.test.ts`); full `apps/web` suite 315/315 passing; `tsc`/`eslint` clean; story marked `done`
