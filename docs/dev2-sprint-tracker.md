@@ -1039,7 +1039,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 IN PROGRESS  
+**Period:** Weeks 4–5 | **Status:** ✅ COMPLETE — 5/5 done (S2-01 through S2-05)  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1204,7 +1204,9 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 - [x] `quizFiredForSegment` persisted so quiz does not re-fire after restore
 - [x] If stored session is > 24h old, discard it (use `stored_at` timestamp) — also discards and removes corrupted JSON, wrong-typed fields, and an out-of-bounds `segmentIndex` (e.g. lesson regenerated with fewer segments since the snapshot was saved)
 
-15 new tests (13 store-level, 2 `Player.tsx` restore-on-mount). Full suite: 300/300 passing. `tsc`/`eslint` clean.
+**5-agent adversarial review (2026-07-06) — 7 patches applied, merged as PR #66:** `isStoredProgress` now requires `segmentIndex` to be an integer and `audioPositionMs`/`storedAt` to be finite (closing a `1e400`-style JSON-overflow bypass of the 24h expiry check); every `localStorage` call in `saveProgress`/`restoreProgress`/`endLesson` is now wrapped in try/catch instead of throwing inside `Player.tsx`'s mount effect; `restoreProgress` now guards against a `lessonId` mismatch against the currently-loaded lesson; `enterQuiz()` now saves immediately so a tab closed mid-quiz can't lose the quiz-fired flag; added a dedicated `binarySearch.test.ts`. 4 findings deferred (quiz-fired content-identity validation, no user/account scoping, no multi-tab `storage` event listener, `Player.tsx`'s pre-existing mount-effect re-run behavior — see `_bmad-output/implementation-artifacts/deferred-work.md`), 2 dismissed as noise.
+
+24 new tests total (13 store-level + 2 `Player.tsx` restore-on-mount from initial implementation, plus 8 review-patch tests in `player.machine.test.ts` and 6 in the new `binarySearch.test.ts`). Full suite: 315/315 passing. `tsc`/`eslint` clean.
 
 ---
 
