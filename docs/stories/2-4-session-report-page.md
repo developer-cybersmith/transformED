@@ -4,7 +4,7 @@ baseline_commit: "9ccf7e6e8bca395bce33128e84138ba9f84cdf53"
 
 # Story 2-4: Session Report Page v1
 
-Status: review
+Status: done
 
 ## Story
 
@@ -72,6 +72,24 @@ The tracker's own sketch said "Fetches `GET /api/session/{id}/report`. Mock resp
   - [x] 6.2 `npx tsc --noEmit` clean
   - [x] 6.3 `npx eslint .` — 0 errors, 37 pre-existing warnings unchanged (no regression)
   - [x] 6.4 Updated `docs/dev2-sprint-tracker.md` S2-04 entry to DONE
+
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2/s2-4-session-report` vs `main`, 2026-07-04.
+
+- [x] [Review][Patch] `getSessionReport` interpolates `sessionId` into the URL without `encodeURIComponent` [apps/web/src/lib/assessment.ts] — fixed, wrapped in `encodeURIComponent`, test added
+- [x] [Review][Patch] `Player.tsx`'s "View Session Report" link can render `/reports/undefined` if `sessionId` is falsy when `status` reaches `ENDED` [apps/web/src/components/player/Player.tsx] — fixed, link only renders when `sessionId` is truthy, test added
+- [x] [Review][Patch] `formatCesLabel`/`formatTeachbackLabel` have no guard against `NaN`/out-of-range input — malformed data silently renders as the lowest band instead of surfacing an error [apps/web/src/lib/utils.ts] — fixed, both now return "Unknown" for non-finite or out-of-0-100-range input, tests added
+- [x] [Review][Patch] `formatDuration` in `SessionReport.tsx` has no `Number.isFinite` guard — non-finite `duration_minutes` renders literal `"NaN minutes studied"` [apps/web/src/components/reports/SessionReport.tsx] — fixed, returns "Unknown study time" fallback, test added
+- [x] [Review][Patch] `SessionReport.tsx` formats `completed_at` via `new Date(...).toLocaleString()` with no validity check — a malformed date string renders literal `"Invalid Date"` to the student, unlike `formatTimeAgo`'s existing `Number.isNaN` guard in the same codebase [apps/web/src/components/reports/SessionReport.tsx] — fixed, added `formatCompletedAt` helper with the same guard idiom as `formatTimeAgo`, omits the line entirely on invalid input, test added
+- [x] [Review][Patch] `useSessionReport` calls `useSWR` with no options object, so SWR's default `shouldRetryOnError: true` applies — given the documented cross-team blocker (no real `sessions` row can exist yet), every real visit to this page will retry an indefinitely-failing fetch on a growing backoff for as long as the tab stays open [apps/web/src/hooks/useSessionReport.ts] — fixed, passed `{ shouldRetryOnError: false }`, test added
+- [x] [Review][Patch] AC11 violation: the loading state is plain text ("Loading your session report…") with no skeleton or spinner element, unlike `PlayerLoader.tsx`'s `PlayerSkeleton` (`animate-pulse` + placeholder blocks) that this AC asked to match "where reasonable" [apps/web/src/components/reports/SessionReport.tsx] — fixed, rebuilt `LoadingState` as an `animate-pulse` skeleton matching `PlayerSkeleton`'s visual language (header + 4 card placeholders), `data-testid` preserved so existing test still passes
+- [x] [Review][Patch] No test exists for `src/app/reports/[sessionId]/page.tsx` itself (only the inner `SessionReport` component and `useSessionReport` hook are tested) — a regression in the async `params` unwrapping would go uncaught [apps/web/src/app/reports/[sessionId]/page.tsx] — fixed, added a smoke test calling the async Server Component directly and asserting the resolved `sessionId` is passed through
+- [x] [Review][Defer] `Player.tsx`'s mount effect calls `loadLesson(lesson)` unconditionally, which resets `status` to `IDLE` — any remount with a new `lesson` object reference (not just the initial mount) silently reverts an `ENDED` state and its session-report link [apps/web/src/components/player/Player.tsx] — deferred, pre-existing behavior not introduced by this story; the new `Player.test.tsx` documents and works around it rather than fixing the underlying effect design, which needs broader consideration than this UI story's scope
+- [x] [Review][Defer] `ces_score: 0.0` is returned by the backend both when CES was never calculated (`ces_final IS NULL`) and when a session is genuinely fully disengaged — `formatCesLabel(0)` cannot distinguish these and shows "Room to Grow" for both [apps/web/src/lib/utils.ts] — deferred, this is a backend contract characteristic (story 3-19 AC 4, already adversarially reviewed and merged) with no distinguishing signal in the response; not fixable frontend-only, would need a Dev 3 contract change
+- [x] [Review][Defer] A student can navigate directly to `/reports/{sessionId}` for a session whose `ended_at` is still `NULL` (in progress or never closed) and see an internally inconsistent report (zero duration/no timestamp alongside possibly non-zero quiz/intervention data) [apps/web/src/components/reports/SessionReport.tsx] — deferred, low real-world likelihood in the current flow (the only in-app entry point is the post-`ENDED` player link), acceptable for v1; a "session still in progress" state could be added later if this proves to matter
+
+**Dismissed as noise/false-positive (7):** a claimed quiz-score unit mismatch (0–1 vs 0–100) — Blind Hunter flagged an unrelated, unasserted pre-existing test fixture value; the real backend contract (verified independently by the Acceptance Auditor against live `router.py` and by this story's own research against `docs/stories/3-19-session-report-api.md`) is unambiguously 0–100, matching this component's rendering. A claimed missing authorization check/IDOR — the backend enforces per-user ownership via SEC-006 (404 for both nonexistent and wrong-owner sessions) and the shared `api` client already attaches the JWT automatically; this is AC13's explicit, intentional design, not a gap. A claimed under-verified frozen-type change — the only two consumers of `SessionReport.ces_breakdown` in the entire codebase were confirmed during this story's own research (this file and its test). A claimed inconsistent 404-vs-403 error messaging — explicitly by design per AC12/SEC-006. A claimed drift between two independent CES/teach-back score-banding implementations — verified false; `TeachBackModal.tsx` has no score-banding logic of any kind, only a static message and server-provided feedback text. Two Acceptance Auditor precision notes (AC14's cited mock pattern not being the closest real precedent; the CES/teach-back "no clinical score" rule being a reasonable extension of CLAUDE.md rather than a verbatim quote) — both explicitly confirmed by the auditor itself as non-issues.
 
 ## Dev Notes
 
@@ -182,17 +200,22 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `apps/web/src/__tests__/hooks/useSessionReport.test.ts`
 - `apps/web/src/__tests__/components/reports/SessionReport.test.tsx`
 - `apps/web/src/__tests__/components/player/Player.test.tsx`
+- `apps/web/src/__tests__/lib/assessment.test.ts` — added during review-patch pass, covers `getSessionReport`'s URL encoding
+- `apps/web/src/__tests__/app/reports/sessionId-page.test.tsx` — added during review-patch pass, route smoke test
 
 **Files MODIFIED:**
 - `apps/web/src/types/assessment.ts` — fixed `SessionReport.ces_breakdown` shape (real bug)
 - `apps/web/src/__tests__/types/assessment.test.ts` — fixed stale fixture using the wrong key names; added an exact-5-keys regression test
-- `apps/web/src/lib/assessment.ts` — added `getSessionReport`
-- `apps/web/src/lib/utils.ts` — added `formatCesLabel`, `formatTeachbackLabel`
-- `apps/web/src/__tests__/lib/utils.test.ts` — added tests for both new label functions
-- `apps/web/src/components/player/Player.tsx` — ENDED screen now links to `/reports/{sessionId}` instead of the "available in Sprint 2" placeholder
+- `apps/web/src/lib/assessment.ts` — added `getSessionReport`; review-patch: URL-encode `sessionId`
+- `apps/web/src/lib/utils.ts` — added `formatCesLabel`, `formatTeachbackLabel`; review-patch: both guard against `NaN`/out-of-range input
+- `apps/web/src/__tests__/lib/utils.test.ts` — added tests for both new label functions; review-patch: added `Unknown`-fallback tests
+- `apps/web/src/components/player/Player.tsx` — ENDED screen now links to `/reports/{sessionId}` instead of the "available in Sprint 2" placeholder; review-patch: link only renders when `sessionId` is truthy
+- `apps/web/src/components/reports/SessionReport.tsx` — review-patch: real `animate-pulse` skeleton loading state (AC11 fix), `formatDuration`/`formatCompletedAt` guards against non-finite/invalid input
+- `apps/web/src/hooks/useSessionReport.ts` — review-patch: `{ shouldRetryOnError: false }` to stop indefinite retry against a permanently-failing report
 - `docs/dev2-sprint-tracker.md` — S2-04 marked done, dashboard counts updated, `/reports/[sessionId]` primary-page entry corrected, S3-06 follow-up task's file path and scope corrected
 
 ### Change Log
 
 - 2026-07-04: Story created — Sprint 2 Task 4, `sprint2/s2-4-session-report` branch, route/contract corrections resolved with user before implementation
 - 2026-07-04: All 6 tasks implemented in RED→GREEN order; 29 new tests; 276/276 full suite passing; `tsc`/`eslint` clean; story marked `review`
+- 2026-07-04: 5-agent adversarial review run (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 8 patch findings, 3 deferred (pre-existing/cross-team, logged to `deferred-work.md`), 7 dismissed as false positives (verified against the real backend contract and codebase). All 8 patches applied in RED→GREEN order; 9 new tests; 285/285 full suite passing; `tsc`/`eslint` clean; story marked `done`

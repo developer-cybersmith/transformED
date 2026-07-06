@@ -12,9 +12,17 @@ function LoadingState() {
   return (
     <div
       data-testid="session-report-loading"
-      className="flex w-full max-w-2xl mx-auto items-center justify-center pt-24 pb-24 text-sm text-neutral-400"
+      className="flex flex-col gap-8 w-full max-w-2xl mx-auto pt-8 pb-12 animate-pulse"
     >
-      Loading your session report…
+      <div className="flex flex-col gap-2">
+        <div className="h-7 w-48 rounded bg-neutral-100" />
+        <div className="h-4 w-32 rounded bg-neutral-100" />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-24 rounded-2xl bg-neutral-100" />
+        ))}
+      </div>
     </div>
   );
 }
@@ -39,12 +47,19 @@ function ErrorState() {
 }
 
 function formatDuration(minutes: number): string {
+  if (!Number.isFinite(minutes) || minutes < 0) return 'Unknown study time';
   const whole = Math.round(minutes);
   return `${whole} minute${whole === 1 ? '' : 's'} studied`;
 }
 
 function formatInterventions(count: number): string {
   return `${count} focus check-in${count === 1 ? '' : 's'}`;
+}
+
+function formatCompletedAt(isoString: string): string | null {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 export function SessionReport({ sessionId }: SessionReportProps) {
@@ -59,12 +74,9 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight">
           Session Report
         </h2>
-        {report.completed_at && (
+        {report.completed_at && formatCompletedAt(report.completed_at) && (
           <p className="text-neutral-500 mt-1">
-            {new Date(report.completed_at).toLocaleString(undefined, {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            })}
+            {formatCompletedAt(report.completed_at)}
           </p>
         )}
       </div>

@@ -27,7 +27,7 @@ describe('useSessionReport', () => {
   it('does not fetch when sessionId is empty', () => {
     renderHook(() => useSessionReport(''));
 
-    expect(useSWRMock).toHaveBeenCalledWith(null, expect.any(Function));
+    expect(useSWRMock).toHaveBeenCalledWith(null, expect.any(Function), expect.anything());
   });
 
   it('keys the SWR cache by sessionId', () => {
@@ -35,7 +35,18 @@ describe('useSessionReport', () => {
 
     expect(useSWRMock).toHaveBeenCalledWith(
       'session-report:sess_1',
-      expect.any(Function)
+      expect.any(Function),
+      expect.anything()
+    );
+  });
+
+  it('does not retry indefinitely on error — a permanently 404ing session must not hammer the backend', () => {
+    renderHook(() => useSessionReport('sess_1'));
+
+    expect(useSWRMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Function),
+      expect.objectContaining({ shouldRetryOnError: false })
     );
   });
 

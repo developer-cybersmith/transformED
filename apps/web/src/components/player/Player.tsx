@@ -81,13 +81,15 @@ export default function Player({ lesson }: PlayerProps) {
               <p className="text-neutral-400 text-sm">{lesson.metadata.title}</p>
             </div>
             <div className="flex flex-col items-center gap-3">
-              <Link
-                href={`/reports/${sessionId}`}
-                className="px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary
-                           text-sm font-semibold hover:brightness-105 transition-all"
-              >
-                View Session Report
-              </Link>
+              {sessionId && (
+                <Link
+                  href={`/reports/${sessionId}`}
+                  className="px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary
+                             text-sm font-semibold hover:brightness-105 transition-all"
+                >
+                  View Session Report
+                </Link>
+              )}
               <Link
                 href="/dashboard"
                 className="text-neutral-400 hover:text-white text-sm transition-colors"

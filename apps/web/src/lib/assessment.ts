@@ -67,6 +67,8 @@ export async function submitTeachBack(payload: TeachBackSubmitPayload): Promise<
 // ── Session report ──────────────────────────────────────────────────────────
 
 export async function getSessionReport(sessionId: string): Promise<SessionReport> {
-  const { data } = await api.get<SessionReport>(`/assessment/session/${sessionId}/report`);
+  const { data } = await api.get<SessionReport>(
+    `/assessment/session/${encodeURIComponent(sessionId)}/report`
+  );
   return data;
 }

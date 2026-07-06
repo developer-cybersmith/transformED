@@ -97,4 +97,28 @@ describe('SessionReport', () => {
     expect(container.textContent).not.toMatch(/duration_minutes/);
     expect(container.textContent).not.toMatch(/interventions_count/);
   });
+
+  it('never renders "NaN minutes studied" for a non-finite duration_minutes', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, duration_minutes: NaN },
+      isLoading: false,
+      error: undefined,
+    });
+
+    const { container } = render(<SessionReport sessionId="sess_1" />);
+
+    expect(container.textContent).not.toMatch(/NaN/);
+  });
+
+  it('never renders literal "Invalid Date" for a malformed completed_at', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, completed_at: 'not-a-real-date' },
+      isLoading: false,
+      error: undefined,
+    });
+
+    const { container } = render(<SessionReport sessionId="sess_1" />);
+
+    expect(container.textContent).not.toMatch(/Invalid Date/);
+  });
 });

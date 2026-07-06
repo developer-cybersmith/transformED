@@ -43,4 +43,11 @@ describe('Player — lesson complete (ENDED) screen', () => {
     const link = screen.getByRole('link', { name: /back to dashboard/i });
     expect(link.getAttribute('href')).toBe('/dashboard');
   });
+
+  it('does not render a report link to /reports/undefined when sessionId is empty', () => {
+    renderEnded('');
+
+    expect(screen.queryByRole('link', { name: /session report/i })).toBeNull();
+    expect(screen.getByRole('link', { name: /back to dashboard/i })).not.toBeNull();
+  });
 });

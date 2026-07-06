@@ -44,6 +44,12 @@ describe('formatCesLabel — never returns a raw number, only a descriptive labe
       expect(formatCesLabel(score)).not.toMatch(/\d/);
     }
   });
+
+  it('returns "Unknown" instead of silently banding NaN or out-of-range input as the lowest band', () => {
+    expect(formatCesLabel(NaN)).toBe('Unknown');
+    expect(formatCesLabel(-10)).toBe('Unknown');
+    expect(formatCesLabel(150)).toBe('Unknown');
+  });
 });
 
 describe('formatTeachbackLabel — never returns a raw number, only a descriptive label', () => {
@@ -64,5 +70,11 @@ describe('formatTeachbackLabel — never returns a raw number, only a descriptiv
     for (const score of [0, 12.5, 59.9, 60, 79.9, 80, 100]) {
       expect(formatTeachbackLabel(score)).not.toMatch(/\d/);
     }
+  });
+
+  it('returns "Unknown" instead of silently banding NaN or out-of-range input as the lowest band', () => {
+    expect(formatTeachbackLabel(NaN)).toBe('Unknown');
+    expect(formatTeachbackLabel(-10)).toBe('Unknown');
+    expect(formatTeachbackLabel(150)).toBe('Unknown');
   });
 });

@@ -1,5 +1,11 @@
 # Deferred Work
 
+## Deferred from: code review of 2-4-session-report-page (2026-07-04)
+
+- **`Player.tsx`'s mount effect unconditionally calls `loadLesson(lesson)`, resetting `status` to `IDLE`** [`apps/web/src/components/player/Player.tsx`] — any remount with a new `lesson` object reference (not just the initial mount) silently reverts an `ENDED` state and its session-report link. Pre-existing effect design, not introduced by this story; the new `Player.test.tsx` documents and works around it (sets `status: 'ENDED'` after `render()`, not before) rather than fixing the underlying effect, which needs broader consideration than a UI story's scope.
+- **`ces_score: 0.0` is ambiguous between "never calculated" and "genuinely fully disengaged"** [`apps/web/src/lib/utils.ts:formatCesLabel`] — the backend returns `0.0` for both `ces_final IS NULL` and an authentically low-CES session (story 3-19 AC 4, already adversarially reviewed and merged), with no distinguishing field in the response. Not fixable frontend-only; would need a Dev 3 contract change.
+- **A student can view `/reports/{sessionId}` for a session whose `ended_at` is still `NULL`** [`apps/web/src/components/reports/SessionReport.tsx`] — shows an internally inconsistent report (zero duration/no timestamp alongside possibly non-zero quiz/intervention data). Low real-world likelihood given the only in-app entry point is the post-`ENDED` player link; acceptable for v1. Consider a "session still in progress" state if this proves to matter in practice.
+
 ## Deferred from: code review of 2-3-onboarding-assessment-flow (2026-07-04)
 
 - **DPDP `user_consents` gap for `consent_type='learner_dna'`** [`supabase/migrations/20260702000000_dpdp_user_consents.sql`] — the schema already supports a `learner_dna` consent record (added in Story 3-17 alongside `attention_tracking`), but nothing anywhere — frontend or `process_onboarding()` backend service — ever writes that row. Same class of gap CLAUDE.md §18 already flagged and fixed for `attention_tracking`. Needs a deliberate decision with Dev 3/Dev 1 (policy_version, insertion point), not a frontend-only fix.
