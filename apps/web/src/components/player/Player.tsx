@@ -24,6 +24,10 @@ export default function Player({ lesson }: PlayerProps) {
 
   useEffect(() => {
     loadLesson(lesson);
+    // Must run after loadLesson's synchronous set() so state.lesson is
+    // populated before restoreProgress validates the saved segmentIndex
+    // against this lesson's actual bounds.
+    usePlayerStore.getState().restoreProgress(lesson.lesson_id);
   }, [lesson, loadLesson]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;

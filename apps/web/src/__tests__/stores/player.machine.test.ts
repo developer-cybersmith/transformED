@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { usePlayerStore } from '@/stores/player.machine';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 
@@ -76,6 +76,15 @@ beforeEach(() => {
     tutorState: 'IDLE',
     quizFiredForSegment: new Set(),
   });
+  localStorage.clear();
+});
+
+// Guarantee any Storage.prototype spy is restored even if a test's own
+// assertion throws before reaching its own mockRestore() call — otherwise a
+// failing "does not throw" test permanently breaks localStorage for every
+// test that runs after it in this file.
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -298,5 +307,312 @@ describe('setTutorState', () => {
   it('mirrors tutor FSM state from WebSocket', () => {
     usePlayerStore.getState().setTutorState('TEACHING');
     expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+});
+
+// ── Session persistence (S2-05) ─────────────────────────────────────────────
+
+const STORAGE_KEY = 'hie:session:lesson_test_1';
+
+describe('saveProgress', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('writes the correct key and shape to localStorage', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.setState({ currentSegmentIndex: 1, audioPositionMs: 4200, quizFiredForSegment: new Set(['seg_0']) });
+
+    usePlayerStore.getState().saveProgress();
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(stored).toEqual({
+      segmentIndex: 1,
+      audioPositionMs: 4200,
+      quizFiredForSegment: ['seg_0'],
+      storedAt: 1_000_000,
+    });
+  });
+
+  it('is a no-op when no lesson is loaded', () => {
+    usePlayerStore.getState().saveProgress();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('throttles automatic saves triggered by updateAudioPosition — rapid calls within ~2s only write once', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    usePlayerStore.getState().updateAudioPosition(1000);
+    const firstWrite = localStorage.getItem(STORAGE_KEY);
+    expect(firstWrite).not.toBeNull();
+
+    vi.setSystemTime(1_000_500); // 500ms later — inside the throttle window
+    usePlayerStore.getState().updateAudioPosition(1500);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).audioPositionMs).toBe(1000); // unchanged — throttled
+
+    vi.setSystemTime(1_002_500); // 2.5s after the first write — outside the window
+    usePlayerStore.getState().updateAudioPosition(2500);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).audioPositionMs).toBe(2500); // now written
+  });
+
+  it('pause() saves immediately, bypassing the throttle', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().updateAudioPosition(1000); // primes the throttle window
+
+    vi.setSystemTime(1_000_100); // 100ms later — still inside the throttle window
+    usePlayerStore.setState({ audioPositionMs: 3000 });
+    usePlayerStore.getState().pause();
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).audioPositionMs).toBe(3000);
+  });
+
+  it('advanceSegment() saves immediately, bypassing the throttle', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().updateAudioPosition(1000); // primes the throttle window
+
+    vi.setSystemTime(1_000_100);
+    usePlayerStore.getState().advanceSegment();
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(stored.segmentIndex).toBe(1);
+  });
+
+  it('enterQuiz() saves immediately — closing the tab mid-quiz must not lose the quizFiredForSegment update', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+
+    usePlayerStore.getState().enterQuiz();
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(stored.quizFiredForSegment).toContain('seg_0');
+  });
+
+  it('does not throw when localStorage.setItem throws (e.g. Safari private browsing / quota exceeded)', () => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    expect(() => usePlayerStore.getState().saveProgress()).not.toThrow();
+
+    spy.mockRestore();
+  });
+});
+
+describe('restoreProgress', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('restores segmentIndex, audioPositionMs, quizFiredForSegment, and seeks via requestSeek', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      segmentIndex: 1,
+      audioPositionMs: 6000, // within segment 1's second slide window (5000-10000)
+      quizFiredForSegment: ['seg_0'],
+      storedAt: Date.now(),
+    }));
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(true);
+    const state = usePlayerStore.getState();
+    expect(state.currentSegmentIndex).toBe(1);
+    expect(state.audioPositionMs).toBe(6000);
+    expect(state.seekRequestMs).toBe(6000);
+    expect(state.quizFiredForSegment.has('seg_0')).toBe(true);
+  });
+
+  it('resolves currentSlideId correctly for the restored position (not left at segment 0\'s slide)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      segmentIndex: 1,
+      audioPositionMs: 6000, // segment 1's timestamps: sl_1_0 (0-5000), sl_1_1 (5000-10000)
+      quizFiredForSegment: [],
+      storedAt: Date.now(),
+    }));
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_1_1');
+  });
+
+  it('returns false and does nothing when no entry exists', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    const before = usePlayerStore.getState().currentSegmentIndex;
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(false);
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(before);
+  });
+
+  it('returns false and removes the entry when the JSON is corrupted', () => {
+    localStorage.setItem(STORAGE_KEY, 'not-valid-json{{{');
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false and removes the entry when fields have the wrong type', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      segmentIndex: 'not-a-number',
+      audioPositionMs: 6000,
+      quizFiredForSegment: [],
+      storedAt: Date.now(),
+    }));
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false and removes the entry when stored more than 24h ago', () => {
+    vi.useFakeTimers();
+    const now = 1_000_000_000;
+    vi.setSystemTime(now);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      segmentIndex: 1,
+      audioPositionMs: 6000,
+      quizFiredForSegment: [],
+      storedAt: now - (25 * 60 * 60 * 1000), // 25 hours ago
+    }));
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false and removes the entry when segmentIndex is out of bounds for the currently loaded lesson', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      segmentIndex: 5, // lesson only has 3 segments (default makeLesson())
+      audioPositionMs: 1000,
+      quizFiredForSegment: [],
+      storedAt: Date.now(),
+    }));
+    usePlayerStore.getState().loadLesson(makeLesson(3));
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false and removes the entry when segmentIndex is not an integer (corrupted/tampered)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      segmentIndex: 1.5,
+      audioPositionMs: 1000,
+      quizFiredForSegment: [],
+      storedAt: Date.now(),
+    }));
+    usePlayerStore.getState().loadLesson(makeLesson(3));
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false and removes the entry when audioPositionMs is negative', () => {
+    usePlayerStore.getState().loadLesson(makeLesson(3));
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      segmentIndex: 0, audioPositionMs: -100, quizFiredForSegment: [], storedAt: Date.now(),
+    }));
+
+    expect(usePlayerStore.getState().restoreProgress('lesson_test_1')).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false and removes the entry when audioPositionMs is non-finite (e.g. a 1e400-style JSON literal)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson(3));
+
+    localStorage.setItem(
+      STORAGE_KEY,
+      '{"segmentIndex":0,"audioPositionMs":1e400,"quizFiredForSegment":[],"storedAt":' + Date.now() + '}'
+    );
+
+    expect(usePlayerStore.getState().restoreProgress('lesson_test_1')).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false and removes the entry when storedAt is non-finite (would otherwise defeat the 24h expiry check)', () => {
+    // JSON.stringify would sanitize a literal Infinity to null before it ever
+    // reaches storage — the real attack vector is a raw numeric literal like
+    // 1e400, which is valid JSON syntax and JSON.parse converts to Infinity.
+    localStorage.setItem(
+      STORAGE_KEY,
+      '{"segmentIndex":0,"audioPositionMs":1000,"quizFiredForSegment":[],"storedAt":1e400}'
+    );
+    usePlayerStore.getState().loadLesson(makeLesson(3));
+
+    const restored = usePlayerStore.getState().restoreProgress('lesson_test_1');
+
+    expect(restored).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('returns false without removing anything when lessonId does not match the currently loaded lesson', () => {
+    localStorage.setItem('hie:session:other_lesson', JSON.stringify({
+      segmentIndex: 0, audioPositionMs: 1000, quizFiredForSegment: [], storedAt: Date.now(),
+    }));
+    usePlayerStore.getState().loadLesson(makeLesson(3)); // loads lesson_test_1
+
+    const restored = usePlayerStore.getState().restoreProgress('other_lesson');
+
+    expect(restored).toBe(false);
+    // The entry is for a different lesson than what's loaded — must not be deleted.
+    expect(localStorage.getItem('hie:session:other_lesson')).not.toBeNull();
+  });
+
+  it('does not throw when localStorage.getItem throws (e.g. Safari private browsing / quota)', () => {
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    expect(() => usePlayerStore.getState().restoreProgress('lesson_test_1')).not.toThrow();
+    expect(usePlayerStore.getState().restoreProgress('lesson_test_1')).toBe(false);
+
+    spy.mockRestore();
+  });
+});
+
+describe('endLesson clears saved progress', () => {
+  it('removes the localStorage entry so re-entering a completed lesson (e.g. "Study Again") starts fresh', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().saveProgress();
+    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+
+    usePlayerStore.getState().endLesson();
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('does not throw when localStorage.removeItem throws', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    const spy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+
+    expect(() => usePlayerStore.getState().endLesson()).not.toThrow();
+
+    spy.mockRestore();
   });
 });
