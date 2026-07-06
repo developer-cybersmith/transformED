@@ -8,8 +8,8 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-06 (Sprint 2 status review found S2-06 "Segment-end detection → CHECKING_IN state" — tracked in `docs/master-tracker.md` since 2026-07-02 but missing from this file's own S2-xx numbering — had never been added here. Added as S2-06, investigated, and found not blocked but under-scoped in the prior tracker note: the WebSocket hook is not mounted anywhere in the live player and `tutorState` has zero UI readers, so the "just wire the send side" framing understated the real work. Sprint 2 is now 5/6, not 5/5. See §11 S2-06. Earlier same day: S2-05 Player State Persistence implemented via full BMAD story workflow, 7-patch review pass, merged as PR #66.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 open, not blocked) |
+| **Last Updated** | 2026-07-06 (S2-06 "Segment-end detection → CHECKING_IN state" investigated further while starting its BMAD story: traced the actual WS code path and found the receive side is genuinely blocked — no code path anywhere broadcasts a real `state_change` transition (`from != to`), only the reconnect-sync path does, always with `from == to`. **Escalated to Dev 4** with a specific ask (broadcast on real transitions inside `dispatch_event()`). Send side remains unblocked and can proceed independently. Holding per user instruction pending Dev 4's reply — branch `sprint2/s2-6-segment-checkin` created, no commits yet. See §11 S2-06 for the full write-up and escalation message.) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
 | **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 IN PROGRESS (5/6) |
 
 ---
@@ -1212,8 +1212,8 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 
 ### S2-06 — Segment-End Detection → CHECKING_IN State
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED — added 2026-07-06 (tracked in `docs/master-tracker.md`'s Dev 2 Sprint 2 checklist since 2026-07-02 but never had its own entry in this file's S2-xx numbering; brought in here after the user flagged it was missing from a Sprint 2 status review)  
-**Files likely touched:** `src/components/player/Player.tsx` or `PlayerLoader.tsx` (mount the socket), `src/components/player/AudioTimeline.tsx` (send on segment boundary), `src/stores/player.machine.ts` (`tutorState` already exists), a new CHECKING_IN UI component (none exists)
+**Status:** 🔴 PARTIALLY BLOCKED — escalated to Dev 4 2026-07-06, holding on the receive-side half. Added 2026-07-06 (tracked in `docs/master-tracker.md`'s Dev 2 Sprint 2 checklist since 2026-07-02 but never had its own entry in this file's S2-xx numbering; brought in here after the user flagged it was missing from a Sprint 2 status review). Branch `sprint2/s2-6-segment-checkin` created; BMAD story creation paused at the escalation, not yet resumed.  
+**Files likely touched:** `src/components/player/Player.tsx` or `PlayerLoader.tsx` (mount the socket), `src/components/player/AudioTimeline.tsx` (send on segment boundary), `src/stores/player.machine.ts` (`tutorState` already exists), a new CHECKING_IN UI component (none exists, blocked)
 
 **Investigated 2026-07-06 — found the actual gap is larger than the master tracker's 2026-07-02 note suggested.** That note read as "just wire the send side," implying the receive side was already live. Verified against the actual code:
 
@@ -1221,16 +1221,49 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 - `useLessonSocket` (the hook that would open the connection and receive `state_change`) is built and unit-tested **in isolation only** — it is **not mounted anywhere in the live player** (`Player.tsx`, `PlayerLoader.tsx`). The lesson WebSocket never actually connects during a real session today, regardless of what the backend sends.
 - `tutorState` in `player.machine.ts` is written to via `setTutorState()` but has **zero readers** anywhere in the component tree — no CHECKING_IN screen or any other UI reacts to it. It's a dead field in production.
 - Quiz triggering today is entirely **client-local**: `AudioTimeline.tsx` detects the segment boundary directly and calls `store.enterQuiz()` — no round-trip to the backend tutor FSM happens at all.
+- `usePlayerStore.sessionId` (client-generated `crypto.randomUUID()` from `loadLesson()`) is already the value `QuizOverlay.tsx`/`TeachBackModal.tsx` send as `session_id` to the assessment API — confirmed this is the correct value to pass to `useLessonSocket(sessionId)` too, no new session concept needed.
 
-**Real scope to complete this (bigger than one line item):**
-1. Mount `useLessonSocket(sessionId)` live somewhere in the player tree — first time the socket would actually open during a real lesson.
-2. Call `sendControl({type: 'segment_complete'})` from `AudioTimeline.tsx`'s existing segment-boundary check.
-3. Design and build the CHECKING_IN UI reaction — no product spec exists yet for what a student should see here (a brief transition screen? nothing visible, pure backend bookkeeping?).
-4. **Architecture decision needed:** keep quiz-triggering client-authoritative (today's working behavior — `enterQuiz()` fires immediately, no latency, no WS dependency) and treat the WS round-trip as a parallel sync signal only; or make it server-authoritative (wait for the backend's `state_change` → QUIZZING before showing the quiz), which matches CLAUDE.md's documented 7-state tutor FSM more literally but introduces quiz-appearance latency and requires a graceful fallback if the WS is down or slow (extending S1-07's existing "never freeze the lesson if WS is unavailable" principle to also cover "the quiz must still fire").
+**🔴 Escalation raised to Dev 4, 2026-07-06 — corrects an earlier wrong assumption in this same investigation.** My first pass (see the now-superseded note below) assumed the receive side was "not blocked, just pending a live-Redis integration test," based on `docs/master-tracker.md`'s characterization of Dev 4's FSM work. Before writing the story, I traced the actual code path per BMAD's "read every file you're integrating with, don't trust the doc" discipline, and that assumption was wrong:
 
-**Blocked assessment: NOT blocked.** Everything Dev 2 needs on the frontend side already exists and is tested (the WS client, the control-message types, the state-dispatch plumbing). Dev 4's backend tutor FSM logic for this exact transition is code-merged and unit-tested against a mocked Redis (per `docs/dev4-websocket-tutor-tracker.md`), pending only a live-Redis integration test — not a hard blocker, the same posture S2-04 was successfully built against for its own backend dependency. The only open questions are product/architecture decisions (#3 and #4 above), not cross-team waiting.
+```
+websocket.py: _handle_tutor_event()  →  service.py: advance_tutor_state()  →  graph.py: dispatch_event()
+```
 
-**Recommendation:** given the real architectural decision buried in this "line item" and the fact that nothing here has ever been scoped into acceptance criteria, run this as a full BMAD story (`bmad-create-story` → `bmad-dev-story` → 5-agent review) rather than a quick patch — same rigor as S2-01 through S2-05.
+None of these three ever call `manager.send()`. Confirmed by reading all three files directly — the FSM's internal state mutates (Redis `tutor_state:{session_id}` gets updated) but the connected client is never told. The **only** live emitter of `state_change` anywhere in the codebase is the reconnect-sync path in `websocket.py`'s `ConnectionManager.connect()`, and it always sends `from_state == to_state` (a sync, not a transition) — exactly as `docs/ws-message-contract.md` (Dev 4's own doc, "pending Dev 2 sign-off") already states: *"Real `from != to` transition frames are not yet pushed over WS by any reviewed path."* This is not a testing gap — the broadcast call doesn't exist in the code.
+
+**Message sent to Dev 4** (verbatim, for the record):
+
+> Subject: Need `state_change` broadcast on real FSM transitions (not just reconnect-sync) — blocking S2-06
+>
+> Working on segment-end detection → CHECKING_IN state for the player (S2-06). Traced the WS code path: when a client sends a flow event like `segment_complete`, the FSM transitions internally but nothing broadcasts the new state back to the client (`websocket.py:_handle_tutor_event` → `service.py:advance_tutor_state` → `graph.py:dispatch_event` — none call `manager.send()`). The only place `state_change` is ever sent is the reconnect-sync path, and that's always `from_state == to_state`. Matches what `docs/ws-message-contract.md` already documents.
+>
+> I can wire the frontend to send `segment_complete` on segment end today — no blocker there. But there's no way for the player to learn the backend actually moved TEACHING → CHECKING_IN, since it's never pushed.
+>
+> **Ask:** add a broadcast inside `dispatch_event()` (or wherever the FSM's state actually mutates) that fires whenever `from_state != to_state`:
+> ```python
+> await manager.send(session_id, {
+>     "type": "state_change",
+>     "payload": {"session_id": session_id, "from_state": from_state, "to_state": to_state},
+> })
+> ```
+> This is already a frozen `ws.ts` shape — no contract change needed on your end beyond emitting it on real transitions too.
+>
+> Before I scope my side, I'd want to know: (1) does this fire for every transition or just ones you've integration-tested so far, (2) rough latency from `segment_complete` received → `state_change` sent, since I need to decide whether the quiz can safely wait on it or stay client-triggered with this as a sync signal only, (3) does the mocked-Redis unit-test path exercise the broadcast too, or is that separate from the live-Redis path.
+
+**Split scope while waiting:**
+- **Send side — NOT blocked, can start any time:** mount `useLessonSocket(sessionId)` live in the player, call `sendControl({type: 'segment_complete'})` from `AudioTimeline.tsx`'s existing segment-boundary check. This also has real value independent of CHECKING_IN — it increments `session:{session_id}:segment_index` server-side (`service.py:advance_tutor_state`), which feeds `_segment_intervention_messages`' segment lookup for Sprint 3's intervention system.
+- **Receive side — blocked on Dev 4's reply.** Building a CHECKING_IN UI with nothing live to trigger it would be building against a signal that can't arrive yet.
+
+**Holding per user instruction (2026-07-06):** BMAD story creation for S2-06 paused here, pending Dev 4's response. Branch `sprint2/s2-6-segment-checkin` exists but has no commits yet.
+
+<details>
+<summary>Superseded 2026-07-06 note (kept for the record — this was the assumption before verifying the actual backend code, corrected within the same investigation)</summary>
+
+~~**Blocked assessment: NOT blocked.** Everything Dev 2 needs on the frontend side already exists and is tested (the WS client, the control-message types, the state-dispatch plumbing). Dev 4's backend tutor FSM logic for this exact transition is code-merged and unit-tested against a mocked Redis (per `docs/dev4-websocket-tutor-tracker.md`), pending only a live-Redis integration test — not a hard blocker, the same posture S2-04 was successfully built against for its own backend dependency. The only open questions are product/architecture decisions, not cross-team waiting.~~ **Corrected above: the backend never broadcasts a real transition at all, regardless of Redis being live or mocked. This is a missing feature, not a pending test.**
+
+</details>
+
+**Recommendation:** given the real architectural decision buried in this "line item" and the fact that nothing here has ever been scoped into acceptance criteria, run this as a full BMAD story (`bmad-create-story` → `bmad-dev-story` → 5-agent review) rather than a quick patch — same rigor as S2-01 through S2-05, once Dev 4 unblocks the receive side (or a decision is made to ship the send-side half alone in the meantime).
 
 ---
 
