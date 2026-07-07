@@ -41,7 +41,7 @@ def _page_text(pdfium_page: Any) -> str:
     """Extract raw text from a pypdfium2 page (empty string if none)."""
     try:
         textpage = pdfium_page.get_textpage()
-        text: str = textpage.get_text_range()
+        text: str = textpage.get_text_bounded()
         return text or ""
     except Exception:  # noqa: BLE001
         return ""
@@ -244,7 +244,9 @@ def extract_pdf(pdf_path: str, img_dir: str, ocr_threshold: int) -> dict[str, An
                 ocr_parts.append(_ocr_page_text(pdfium_page, img_dir, page_idx + 1))
         finally:
             pdf_doc_ocr.close()
-        raw_text = "\n\n".join(ocr_parts)
+        ocr_text = "\n\n".join(ocr_parts)
+        if ocr_text.strip():
+            raw_text = ocr_text
 
     return {
         "raw_text": raw_text,
