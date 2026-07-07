@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-06-28T00:00:00Z
-last_updated: 2026-07-01T12:00:00Z
+last_updated: 2026-07-07T00:00:00Z
 project: HIE
 project_key: NOKEY
 tracking_system: file-system
@@ -50,7 +50,7 @@ development_status:
   1-2-pdf-extraction-node-pdfplumber-docling-tesseract-ocr: done
   1-3-structure-detection-node-rule-based-llm-validation: done
   1-4-semantic-chunking-node: done
-  1-5-embeddings-pgvector-storage-node: backlog
+  1-5-embeddings-pgvector-storage-node: done
   epic-1-retrospective: optional
 
   # ── Epic 2: Content Generation Pipeline ──────────────────────────────────────

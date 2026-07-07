@@ -467,14 +467,133 @@ async def chunk_node(state: PipelineState) -> PipelineState:
 
 
 async def embed_node(state: PipelineState) -> PipelineState:
-    """Node 4: Generate and store vector embeddings for all chunks."""
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] embed_node: embedding %d chunks", lesson_id, len(state.get("chunks", [])))
-    await _update_job_progress(lesson_id, 22.0, "embed")
+    """Node 4: Generate vector embeddings for all chunks and store in pgvector.
 
-    # TODO: openai.embeddings.create(model="text-embedding-3-small", input=texts)
-    # TODO: bulk upsert to Supabase pgvector table (lesson_embeddings)
-    return {**state, "embeddings_stored": True, "progress_pct": 28.0}
+    Reads chapter_id from the chunk_node checkpoint, queries chunks with
+    embedding IS NULL, batches them (≤2048 per OpenAI call), writes the
+    1536-dim vectors back to chunks.embedding, marks books.status='ready',
+    and writes its own checkpoint.
+
+    Embeddings are generated ONCE at ingestion — never regenerated for stored
+    content (CLAUDE.md rule). The `embedding IS NULL` filter makes retries safe.
+    """
+    from datetime import datetime, timezone
+
+    from app.config import get_settings
+    from app.core.db import get_supabase
+    from app.providers.embeddings.openai import OpenAIEmbeddingsProvider
+
+    lesson_id: str = state["lesson_id"]
+    book_id: str = state.get("book_id") or ""
+    logger.info("[%s] embed_node: starting", lesson_id)
+
+    supabase = get_supabase()
+    settings = get_settings()
+
+    # ── Idempotency: return cached output if this node already completed ──────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+
+    if "embed" in node_outputs:
+        cached = node_outputs["embed"]
+        logger.info(
+            "[%s] embed_node: cache hit — %d chunks already embedded",
+            lesson_id, cached.get("chunk_count", 0),
+        )
+        return {**state, "embeddings_stored": True}
+
+    # ── Get chapter_id from chunk_node checkpoint ─────────────────────────────
+    chapter_id: str = (node_outputs.get("chunk") or {}).get("chapter_id", "")
+    if not chapter_id:
+        raise RuntimeError(
+            f"embed_node: no chapter_id in chunk checkpoint for lesson_id={lesson_id}. "
+            "Ensure chunk_node ran successfully before embed_node."
+        )
+
+    # ── Query chunks that still need embeddings ───────────────────────────────
+    chunks_resp = (
+        supabase.table("chunks")
+        .select("chunk_id, content")
+        .eq("chapter_id", chapter_id)
+        .is_("embedding", "null")
+        .order("chunk_index")
+        .execute()
+    )
+    chunks: list[dict[str, Any]] = chunks_resp.data or []
+
+    if chunks:
+        provider = OpenAIEmbeddingsProvider(lesson_id=lesson_id)
+        _BATCH_SIZE = 2048
+        total_tokens = 0
+        batch_count = 0
+        ingested_at = datetime.now(tz=timezone.utc).isoformat()
+        metadata: dict[str, Any] = {
+            "model": settings.embedding_model,
+            "dimensions": settings.embedding_dimensions,
+            "ingested_at": ingested_at,
+        }
+
+        for i in range(0, len(chunks), _BATCH_SIZE):
+            batch = chunks[i : i + _BATCH_SIZE]
+            texts = [c["content"] for c in batch if c.get("content", "").strip()]
+
+            embeddings, batch_tokens = await provider.embed_texts(texts)
+            if len(embeddings) != len(texts):
+                raise RuntimeError(
+                    f"embed_node: OpenAI returned {len(embeddings)} embeddings for "
+                    f"{len(texts)} texts in lesson_id={lesson_id} — batch index {i}"
+                )
+            total_tokens += batch_tokens
+            batch_count += 1
+
+            for chunk, embedding in zip(batch, embeddings):
+                try:
+                    supabase.table("chunks").update({
+                        "embedding": embedding,
+                        "embedding_metadata": metadata,
+                    }).eq("chunk_id", chunk["chunk_id"]).execute()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"embed_node: failed to write embedding for chunk_id={chunk['chunk_id']} "
+                        f"lesson_id={lesson_id}"
+                    ) from exc
+
+        logger.info(
+            "[%s] embed_node: embedded %d chunks in %d batches (%d tokens total)",
+            lesson_id, len(chunks), batch_count, total_tokens,
+        )
+    else:
+        logger.info(
+            "[%s] embed_node: no unembedded chunks found for chapter_id=%s (all already done)",
+            lesson_id, chapter_id,
+        )
+
+    # ── Mark book as ready ────────────────────────────────────────────────────
+    if book_id:
+        try:
+            supabase.table("books").update({"status": "ready"}).eq("book_id", book_id).execute()
+            logger.info("[%s] embed_node: books.status=ready for book_id=%s", lesson_id, book_id)
+        except Exception as exc:
+            logger.warning(
+                "[%s] embed_node: failed to mark book_id=%s ready: %s",
+                lesson_id, book_id, exc,
+            )
+
+    # ── Checkpoint ────────────────────────────────────────────────────────────
+    embed_cache: dict[str, Any] = {"chunk_count": len(chunks), "chapter_id": chapter_id}
+    supabase.table("lesson_jobs").update({
+        "last_node": "embed",
+        "node_outputs": {**node_outputs, "embed": embed_cache},
+    }).eq("lesson_id", lesson_id).execute()
+
+    await _update_job_progress(lesson_id, 28.0, "embed")
+    return {**state, "embeddings_stored": True}
 
 
 async def lesson_planner_node(state: PipelineState) -> PipelineState:

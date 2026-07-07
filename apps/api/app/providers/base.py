@@ -112,6 +112,32 @@ class ImageProvider(ABC):
         ...
 
 
+class EmbeddingsProvider(ABC):
+    """Abstract interface for text embedding generation.
+
+    Embeddings are computed ONCE at ingestion and never regenerated for stored
+    content (CLAUDE.md rule).  Phase 2 RAG tutor query-embedding is permitted
+    (embed the student's question at query time — not stored content).
+    """
+
+    @abstractmethod
+    async def embed_texts(
+        self,
+        texts: list[str],
+    ) -> tuple[list[list[float]], int]:
+        """Embed a batch of texts and return their vector representations.
+
+        Args:
+            texts: List of text strings to embed (max 2048 per call for OpenAI).
+
+        Returns:
+            A 2-tuple of:
+            - ``list[list[float]]``: One embedding vector per input text.
+            - ``int``: Total tokens consumed (for cost tracking).
+        """
+        ...
+
+
 class AvatarProvider(ABC):
     """Abstract interface for avatar intro/outro video clips.
 

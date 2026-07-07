@@ -3,8 +3,9 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-06-26
+**Last updated:** 2026-07-07
 **Sprint 0 status:** 12/12 COMPLETE ✅
+**Sprint 1 status:** 10/10 COMPLETE ✅
 
 ---
 
@@ -15,12 +16,12 @@
 | Sprint | Period | Tasks | Done | Partial | Not Started |
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
-| Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 1 | 0 | 9 |
+| Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 14 | 0 | 0 | 14 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **52** | **14** | **1** | **37** |
+| **Totals** | | **52** | **23** | **1** | **28** |
 
 ---
 
@@ -382,7 +383,7 @@ Every node must:
   - `wait = (2^attempt) + random.random()`; retries 429/5xx; never retries 400/401/403/404/422
   - **AC:** Applied to all LLM/provider calls in Sprint 1+ nodes; backoff formula matches PRD §14 ✅
 
-- [ ] **S1-2 PyMuPDF text + image + layout extraction node**
+- [x] **S1-2 PyMuPDF text + image + layout extraction node** — ✓ 2026-07-07
   - `apps/api/app/modules/content/pipeline/nodes/extract_text.py`
   - 1. Accept `state["pdf_path"]` (Supabase Storage signed URL)
   - 2. Open with `fitz.open()`; iterate pages; extract text blocks with bounding boxes
@@ -391,28 +392,28 @@ Every node must:
   - 5. Return `{"raw_pages": [...], "page_count": N}` → checkpoint write on success
   - **AC:** All text, images, and layout blocks extracted from a test PDF; `books.page_count` written; node is idempotent (second run skips if `last_node >= extract_text`)
 
-- [ ] **S1-3 pdfplumber table extraction node**
+- [x] **S1-3 pdfplumber table extraction node** — ✓ 2026-07-07
   - `apps/api/app/modules/content/pipeline/nodes/extract_tables.py`
   - 1. Run `pdfplumber.open()` against same PDF as S1-2
   - 2. Detect tables per page; serialize to list-of-dicts (JSON-serializable)
   - 3. Merge table data into `raw_pages` from S1-2
   - **AC:** Tables extracted from a known table-heavy PDF; serializable to JSON; merged correctly into extraction output
 
-- [ ] **S1-4 Tesseract OCR fallback node**
+- [x] **S1-4 Tesseract OCR fallback node** — ✓ 2026-07-07
   - `apps/api/app/modules/content/pipeline/nodes/ocr_fallback.py`
   - 1. Check text yield from S1-2: if `chars_per_page < OCR_TEXT_YIELD_THRESHOLD` (env var, default 50), invoke OCR
   - 2. Run `pytesseract.image_to_string()` in-container
   - 3. Replace low-yield pages with OCR text; merge back into state
   - **AC:** Scanned PDF with <50 chars/page triggers OCR; text-based PDF skips entirely; env var controls threshold
 
-- [ ] **S1-5 Structure detection — rule-based**
+- [x] **S1-5 Structure detection — rule-based** — ✓ 2026-07-07
   - `apps/api/app/modules/content/pipeline/nodes/structure_detect.py`
   - 1. Analyse font sizes, TOC entries, numbering patterns (regex) across pages
   - 2. Produce `DocumentStructure` with `chapters[]`, each with `sections[]`
   - Hierarchy: **Chapter → Section → Topic** — never full-book single structure (PRD §5 principle 6)
   - **AC:** Chapter boundaries correctly identified in 3 test PDFs of varying layout styles
 
-- [ ] **S1-6 Structure detection — GPT-4o-mini LLM validation**
+- [x] **S1-6 Structure detection — GPT-4o-mini LLM validation** — ✓ 2026-07-07
   - `apps/api/app/modules/content/pipeline/nodes/structure_detect.py` (second pass in same file)
   - Model: `settings.llm_mini` (env var `LLM_MINI`)
   - 1. Feed rule-based `DocumentStructure` + first/last lines of each detected chapter to LLM
@@ -420,7 +421,7 @@ Every node must:
   - 3. Write corrected structure to `lesson_jobs.node_outputs["structure_detect"]`
   - **AC:** LLM corrects at least one misdetection in a known-hard test PDF; output validates as `DocumentStructure`; `@with_retry(max_attempts=3)` applied; Langfuse span records token count
 
-- [ ] **S1-7 Semantic chunking (chapter → section → topic)**
+- [x] **S1-7 Semantic chunking (chapter → section → topic)** — ✓ 2026-07-07
   - `apps/api/app/modules/content/pipeline/nodes/chunk.py`
   - 1. Consume corrected `DocumentStructure` from S1-6
   - 2. Split each section into topic-level chunks; target ≤800 tokens each
@@ -428,7 +429,7 @@ Every node must:
   - Never create a full-book single chunk (PRD §5 principle 6)
   - **AC:** A 20-page chapter produces ≥3 chunks; no chunk exceeds 800 tokens; all chunks written to DB with correct FKs
 
-- [ ] **S1-8 text-embedding-3-small + pgvector storage**
+- [x] **S1-8 text-embedding-3-small + pgvector storage** — ✓ 2026-07-07
   - `apps/api/app/modules/content/pipeline/nodes/embed.py`
   - Model: `text-embedding-3-small` (fixed — not configurable)
   - 1. Batch all chunks (max 2048 per API call)
@@ -437,7 +438,7 @@ Every node must:
   - **Embeddings computed ONCE at ingestion — never regenerated for stored content (PRD rule)**
   - **AC:** All chunks have `embedding IS NOT NULL` after node; HNSW index on `chunks.embedding` used in search query; re-run skips checkpoint
 
-- [ ] **S1-9 `lesson_jobs` table + ARQ job enqueue**
+- [x] **S1-9 `lesson_jobs` table + ARQ job enqueue** — ✓ 2026-07-07
   - `apps/api/app/workers/jobs/content_pipeline.py`, `apps/api/app/modules/content/router.py`
   - 1. `POST /api/content/lessons` creates `books` row, `lessons` row (`status='generating'`), `lesson_jobs` row (`status='pending'`)
   - 2. Enqueues ARQ job with `lesson_id` + `job_id`
@@ -446,7 +447,7 @@ Every node must:
   - 5. ARQ failure: `status = 'failed'`, `error = str(exc)`
   - **AC:** `lesson_jobs` row transitions correctly through all 4 states; ARQ `max_tries=3` matches PRD §14
 
-- [ ] **S1-10 `POST /lessons` endpoint live**
+- [x] **S1-10 `POST /lessons` endpoint live** — ✓ 2026-07-07
   - `apps/api/app/modules/content/router.py`
   - 1. Accept multipart PDF; validate file type (MIME + magic bytes)
   - 2. Store PDF to Supabase Storage; set `lessons.source_file_path`

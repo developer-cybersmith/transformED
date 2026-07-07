@@ -7,9 +7,24 @@ without a real .env file or deployed secrets. These are test stubs only.
 
 from __future__ import annotations
 
+import sys
+from unittest.mock import MagicMock
 import os
 
 import pytest
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _stub_openai_package() -> None:
+    """Stub the openai pip package so provider modules import without a real install.
+
+    embed_node and OpenAIEmbeddingsProvider do `from openai import AsyncOpenAI`
+    inside function/class bodies. Without this stub the import fails when the
+    openai package is not installed in the test environment.
+    """
+    stub = MagicMock()
+    sys.modules.setdefault("openai", stub)
+    sys.modules.setdefault("openai.AsyncOpenAI", stub.AsyncOpenAI)
 
 
 @pytest.fixture(autouse=True, scope="session")

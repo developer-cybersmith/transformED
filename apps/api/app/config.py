@@ -152,6 +152,18 @@ class Settings(BaseSettings):
         description="tiktoken encoding name used for token counting (must match embedding model)",
     )
 
+    # ── Embeddings (Node 4) ───────────────────────────────────────────────────
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="OpenAI embedding model — outputs 1536-dim vectors; fixed for Sprint 1. "
+                    "Stored embeddings are NEVER regenerated (CLAUDE.md rule).",
+    )
+    embedding_dimensions: int = Field(
+        default=1536,
+        description="Output vector dimensions of the embedding model. "
+                    "Must match the model; stored in embedding_metadata per chunk.",
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

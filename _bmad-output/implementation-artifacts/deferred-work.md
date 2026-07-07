@@ -258,3 +258,20 @@ And expose a distinct client status string if the frontend needs to differentiat
 **Detail:** TODO comment references `DalleImageProvider`. DALL-E 3 was shut down May 2026. Correct provider chain: GPT Image 1 Mini → Imagen 4 Fast → text-only fallback.
 
 **When to fix:** Story 2.5 (`image-generator-node-gpt-image-1-mini-imagen-4-fast-text-only`).
+
+---
+
+## Deferred from: code review of 1-5-embeddings-pgvector-storage-node (2026-07-07)
+
+- **W1 — IDOR: lesson_id/chapter_id ownership not re-validated inside embed_node** [`graph.py`] — pre-existing pattern for all pipeline nodes; ownership validation belongs at ARQ job dispatch layer, not inside nodes.
+- **W2 — TOCTOU race on idempotency check** [`graph.py`] — ARQ prevents concurrent execution of the same job; architectural lock needed if parallel workers are ever added for the same lesson.
+- **W3 — Unbounded chunk SELECT with no LIMIT/pagination** [`graph.py`] — bounded by chapter size in practice; add Supabase row-level pagination in Sprint 2 for large-book support.
+- **W4 — Cost ceiling checked after each batch completes (one-batch overshoot ~$0.02)** [`openai.py`] — matches pattern of all other pipeline nodes; pre-add cost estimation before loop in Sprint 2.
+- **W5 — IDOR on book_id in books.status update** [`graph.py`] — same as W1, pre-existing pattern.
+- **W6 — Internal UUIDs in RuntimeError messages** [`graph.py`] — background worker context, not HTTP response path; sanitize in Sprint 2 hardening pass.
+- **W7 — Langfuse generation span not covered by tests (AC12)** [`openai.py`] — provider fully mocked in tests; add provider-level Langfuse integration test in Sprint 2.
+- **W8 — EmbeddingsProvider ABC contract not unit-tested** [`providers/base.py`] — verified at import time in production; add contract test in Sprint 2.
+- **W9 — config.py `embedding_model` field only tested via mock** [`config.py`] — add `Settings()` instantiation test in Sprint 2 config test pass.
+- **W10 — `_BATCH_SIZE = 2048` magic number** [`graph.py`] — add `embedding_batch_size: int` to Settings in Sprint 2 cleanup.
+- **W11 — `_EMBED_COST_PER_1K_USD = 0.00002` hardcoded pricing** [`openai.py`] — add `embedding_cost_per_1k_tokens: float` to Settings in Sprint 2.
+- **W12 — `openai.py` filename shadows `openai` pip package** [`providers/embeddings/openai.py`] — rename to `openai_provider.py` in Sprint 2; caused sys.modules stub workaround in tests.
