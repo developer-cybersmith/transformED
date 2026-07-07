@@ -137,7 +137,7 @@
         "audio_url": { "type": "string" },
         "audio_provider": {
           "type": "string",
-          "enum": ["elevenlabs", "azure", "browser"]
+          "enum": ["sarvam", "azure", "browser"]
         },
         "timestamps": {
           "type": "array",

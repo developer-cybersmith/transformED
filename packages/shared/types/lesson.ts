@@ -5,7 +5,7 @@
 export type LessonStatus = 'generating' | 'ready' | 'failed';
 
 export type ComplexityLevel = 'low' | 'medium' | 'high';
-export type AudioProvider = 'elevenlabs' | 'azure' | 'browser';
+export type AudioProvider = 'sarvam' | 'azure' | 'browser';
 export type QuizType = 'mcq' | 'concept_check';
 export type QuizDifficulty = 'easy' | 'medium' | 'hard';
 
