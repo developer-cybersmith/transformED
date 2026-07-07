@@ -358,6 +358,7 @@ async def fuse_learner_dna(
         dim: (float(old_row[dim]) if old_row.get(dim) is not None else None)
         for dim in _NINE_DIMENSIONS
     }
+    _safe_sid_growth = str(session_id).replace("\n", " ").replace("\r", " ")
     try:
         await record_dna_growth(
             session_id=session_id,
@@ -366,7 +367,7 @@ async def fuse_learner_dna(
             supabase=supabase,
         )
     except Exception as exc:
-        logger.warning("DNA fusion: growth tracking failed session=%s: %s", session_id, exc)
+        logger.warning("DNA fusion: growth tracking failed session=%s: %s", _safe_sid_growth, exc)
 
     logger.info(
         "DNA fusion: updated user=%s session=%s session_count=%d",

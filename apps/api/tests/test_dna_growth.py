@@ -2,7 +2,7 @@
 Unit tests for apps/api/app/modules/assessment/dna_growth.py
 Story 3-27 — Learner DNA Growth Tracking (delta per dimension per session)
 
-Test count: 20
+Test count: 21
 Coverage:
   AC 1  — __all__ exports only record_dna_growth
   AC 2  — keyword-only signature; positional args raise TypeError
@@ -521,6 +521,32 @@ def test_fuse_learner_dna_old_dims_for_growth_none_on_first_session():
     # All 9 dimensions must have old_value=None (no prior row)
     for dim in NINE_DIMS:
         assert old_dims[dim] is None, f"Expected old_dims[{dim}] to be None, got {old_dims[dim]}"
+
+
+# ── AC 10: log injection prevention (_safe_sid) ──────────────────────────────
+
+@pytest.mark.unit
+def test_record_dna_growth_session_id_sanitized_in_logs(caplog):
+    """AC 10 — _safe_sid strips \\n and \\r before all logger calls."""
+    from app.modules.assessment.dna_growth import record_dna_growth
+    import logging
+
+    supabase = _supabase_mock_growth(inserted_count=9)
+    with caplog.at_level(logging.INFO, logger="app.modules.assessment.dna_growth"):
+        result = asyncio.get_event_loop().run_until_complete(
+            record_dna_growth(
+                session_id="evil\nsession\rid",
+                old_dims=_all_old_dims(),
+                new_dims=_all_new_dims(),
+                supabase=supabase,
+            )
+        )
+    assert result == 9
+    assert len(caplog.records) > 0, "Expected at least one log record from dna_growth"
+    for record in caplog.records:
+        msg = record.getMessage()
+        assert "\n" not in msg, f"Raw newline found in log: {msg!r}"
+        assert "\r" not in msg, f"Raw CR found in log: {msg!r}"
 
 
 # ── AC 15: no openai import (AST scan) ───────────────────────────────────────

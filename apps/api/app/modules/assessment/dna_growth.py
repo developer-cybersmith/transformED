@@ -13,7 +13,6 @@ No LLM calls. No model strings. Pure analytics write.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -65,22 +64,10 @@ async def record_dna_growth(
             },
         })
 
-    try:
-        resp = await asyncio.to_thread(
-            lambda: supabase.table("session_events").insert(rows).execute()
-        )
-        insert_error = getattr(resp, "error", None)
-        if insert_error:
-            safe_err = str(insert_error).replace("\n", " ").replace("\r", " ")
-            logger.warning(
-                "DNA growth: insert error session=%s: %s",
-                _safe_sid,
-                safe_err,
-            )
-            return 0
-        inserted = len(resp.data or [])
-        logger.info("DNA growth: inserted %d rows session=%s", inserted, _safe_sid)
-        return inserted
-    except Exception as exc:
-        logger.warning("DNA growth: insert exception session=%s: %s", _safe_sid, exc)
-        return 0
+    from app.modules.analytics.service import write_system_events  # local import (avoids circular)
+    count = await write_system_events(rows=rows, supabase=supabase)
+    if count > 0:
+        logger.info("DNA growth: inserted %d rows session=%s", count, _safe_sid)
+    else:
+        logger.warning("DNA growth: insert failed session=%s", _safe_sid)
+    return count

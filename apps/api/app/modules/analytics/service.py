@@ -103,6 +103,39 @@ async def ingest_events(
     return {"ingested": len(rows)}
 
 
+async def write_system_events(
+    *,
+    rows: list[dict],
+    supabase: Any,
+) -> int:
+    """Insert system-generated session_events rows. Non-fatal.
+
+    For backend services (e.g. DNA growth tracking) writing analytics events
+    that are not user-triggered and require no ownership check.
+
+    Args:
+        rows: List of dicts with keys: session_id, event_type, payload.
+        supabase: Synchronous supabase-py v2 client.
+
+    Returns:
+        Number of rows inserted. 0 on any failure.
+    """
+    if not rows:
+        return 0
+    try:
+        resp = await asyncio.to_thread(
+            lambda: supabase.table("session_events").insert(rows).execute()
+        )
+        if getattr(resp, "error", None):
+            safe_err = str(resp.error).replace("\n", " ").replace("\r", " ")
+            logger.warning("analytics: system_events insert error: %s", safe_err)
+            return 0
+        return len(resp.data or [])
+    except Exception as exc:
+        logger.warning("analytics: system_events insert exception: %s", exc)
+        return 0
+
+
 async def get_session_summary(
     *,
     session_id: str,
