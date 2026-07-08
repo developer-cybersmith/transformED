@@ -3,7 +3,8 @@ Unit tests for stub contracts — tracks which endpoints are live vs. 501.
 
 Verifies that:
 - Live endpoints return non-501 (POST /quiz, POST /teachback, POST /onboarding/submit,
-  GET /session/{id}/report, POST /api/analytics/events)
+  GET /session/{id}/report, POST /api/analytics/events,
+  GET /api/analytics/session/{id}/summary)
 - The one remaining stub (GET /user/dna) still returns 501
 - Pydantic models have exactly the required fields (no banned fields)
 - No STT-related field names (transcript, duration_seconds) exist
@@ -209,7 +210,7 @@ def test_learner_dna_response_no_raw_scores() -> None:
         )
 
 
-# ── Analytics contract test (Story 3-20) ─────────────────────────────────────
+# ── Analytics contract tests (Story 3-20 + Story 3-21) ───────────────────────
 
 
 @pytest.mark.unit
@@ -236,4 +237,21 @@ def test_analytics_events_endpoint_is_live_not_501() -> None:
     assert response.status_code != 501, (
         f"Analytics events endpoint returned 501 — implementation is missing. "
         "Story 3-20 requires this endpoint to be live."
+    )
+
+
+@pytest.mark.unit
+def test_analytics_summary_endpoint_is_live_not_501() -> None:
+    """GET /api/analytics/session/{id}/summary must NOT return 501 (implemented in Sprint 2, Story 3-21).
+
+    The endpoint is now live — it delegates to get_session_summary() in analytics/service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_analytics_summary_endpoint.py.
+    """
+    _mock_supabase = MagicMock()
+    with patch("app.core.db.get_supabase", return_value=_mock_supabase):
+        response = analytics_client.get("/api/analytics/session/sess-stub-check/summary")
+    assert response.status_code != 501, (
+        f"Analytics summary endpoint returned {response.status_code} — expected non-501. "
+        "Story 3-21 requires this endpoint to be live."
     )
