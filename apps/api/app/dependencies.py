@@ -7,6 +7,7 @@ import from this single module.
 
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -47,8 +48,9 @@ def get_jwks_client() -> PyJWKClient:
       the first verification after a cold start touches the network.
     """
     settings = get_settings()
+    base_url = settings.supabase_url.rstrip("/")
     return PyJWKClient(
-        f"{settings.supabase_url}/auth/v1/.well-known/jwks.json",
+        f"{base_url}/auth/v1/.well-known/jwks.json",
         cache_keys=True,
     )
 
@@ -74,18 +76,32 @@ async def get_current_user(
     )
 
     try:
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-    except jwt.PyJWKClientError:
-        # Unrecognized `kid`, or the JWKS endpoint was unreachable — never a 500; a
-        # client presenting a token we can't resolve a key for is indistinguishable
-        # from an invalid token.
+        # get_signing_key_from_jwt does a blocking network call on a cache miss
+        # (urllib under the hood, up to PyJWKClient's own 30s default timeout) —
+        # dispatched off the event loop so a slow/unresponsive JWKS endpoint stalls
+        # only this request, not every other concurrent request on this worker.
+        signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, token)
+    except (jwt.PyJWTError, ValueError):
+        # Broad on purpose: get_signing_key_from_jwt can raise several sibling
+        # exceptions that are NOT PyJWKClientError specifically — jwt.DecodeError
+        # (malformed token header), jwt.PyJWKSetError (empty/malformed JWKS response),
+        # or json.JSONDecodeError (non-JSON response body, a plain ValueError, not
+        # even a PyJWT exception). All of these mean "can't resolve a usable key for
+        # this token" and must map to 401, never an uncaught 500.
         raise credentials_exception from None
 
     try:
+        # audience="authenticated": Supabase GoTrue issues this literal, stable value
+        # in every session token's `aud` claim — not project-specific, so not a
+        # settings field. PyJWT's verify_aud requires an audience kwarg whenever the
+        # payload carries a non-empty `aud` (which Supabase tokens always do); without
+        # this, every real token was rejected with InvalidAudienceError regardless of
+        # a correct signature — the exact bug Story 4-17 exists to fix.
         payload: dict[str, Any] = jwt.decode(
             token,
             signing_key.key,
             algorithms=[signing_key.algorithm_name],
+            audience="authenticated",
             options={"require": ["sub", "exp", "iat"]},
         )
     except jwt.ExpiredSignatureError:

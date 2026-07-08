@@ -1,5 +1,11 @@
 # Deferred Work
 
+## Deferred from: code review of 4-17-jwt-es256-verification (2026-07-08)
+
+- **No negative-caching for an unrecognized `kid`** [`apps/api/app/dependencies.py`] — `PyJWKClient.get_signing_key()`'s retry-with-refresh path forces a real network fetch to the JWKS endpoint on every request carrying a `kid` that never matches any published key, bypassing the Tier-1 300s JWK-set cache entirely (confirmed by reading `jwks_client.py`'s source). A genuine DoS/latency vector under a flood of garbage tokens. Needs a rate-limiting or negative-cache design decision bigger than this story's scope; AC4 only required the happy-path (matching-`kid`) caching guarantee, which is met.
+- **Per-`kid` signing-key cache has no time-based expiration** [`apps/api/app/dependencies.py`] — only LRU eviction (confirmed via `PyJWKClient`'s own docstring). A rotated/compromised Supabase signing key stays trusted for the life of the backend process, with no forced-refresh path short of a restart. Inherent trade-off of the `cache_keys=True` design this story's own ACs mandated, not a new bug; worth documenting as a known limitation for Dev 4.
+- **`test_jwks_client_is_cached_across_calls` manipulates the real, process-wide `get_jwks_client` singleton's cache** [`apps/api/tests/test_auth.py`] — calls `cache_clear()` on the actual production `@lru_cache` rather than an isolated fake. Currently safe (guarded by try/finally; every other test uses dependency-override fakes), but fragile if a future test exercises the real singleton without the same discipline. A broader autouse reset fixture would be more robust but isn't blocking.
+
 ## Deferred from: code review of 2-5-player-state-persistence (2026-07-06)
 
 - **`quizFiredForSegment` restore is validated only by index-bounds, not segment-ID identity** [`apps/web/src/stores/player.machine.ts`] — if the same `lesson_id` is later regenerated with different segment content that still satisfies the bounds check against the new `segments.length`, previously-fired quiz IDs could be restored and suppress quizzes the student never actually completed in the new content. Would need content-identity validation (e.g. hashing segment IDs) beyond this story's scope.
