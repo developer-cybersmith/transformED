@@ -70,6 +70,13 @@ Failing:
 
 ---
 
+### Review Findings (dev4/s1 adversarial review — 2026-07-08)
+
+- [ ] [Review][Patch] Flaky timing in `test_start_lesson_ready_listener_returns_cancellable_task` [`tests/test_lesson_ready_pubsub.py`] — polling loop `for _ in range(10): if mock_pubsub.psubscribe.await_count: break; await asyncio.sleep(0)` is non-deterministic under load. Replace with a `pytest-asyncio` fixture that drives the event loop until the task awaits `psubscribe` via a `threading.Event` or by awaiting the task's next suspension point explicitly.
+- [x] [Review][Defer] `test_lesson_ready_integration.py` green status unverifiable from diff alone [`tests/test_lesson_ready_integration.py`] — deferred, pre-existing; run `pytest tests/test_lesson_ready_integration.py` to confirm before merging Sprint 1 integration branch.
+
+---
+
 ## Dev Notes
 
 ### File to change

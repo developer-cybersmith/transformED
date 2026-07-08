@@ -266,6 +266,8 @@ MAX_DISTRACTION_PER_SESSION=3
   - `process_attention_signal` must: validate signal shape, store in Redis window, call `compute_ces()` (stub in Sprint 1, real in Sprint 3)
   - Implement `handle_ping()` → sends `{ "type": "pong" }` (already done in websocket.py — verify)
   - **AC:** Sending `{ "type": "attention_signal", ... }` via mock WS client produces no errors; sending `{ "type": "ping" }` returns `{ "type": "pong" }`
+  - **🔒 SECURITY NOTE (2026-07-08 — pending 4-dev team decision):** The WS endpoint `/ws/{session_id}` performs **no authentication**. Any client that knows a `session_id` can drive the tutor FSM for another student's session — including firing `lesson_complete` (ends their lesson), `quiz_failed`, or `teachback_failed`. This applies to all 9 `_TUTOR_CLIENT_EVENTS` plus `session_start` and `attention_signal`. Related open branch: `fix/4-17-jwt-es256-verification`. Must be resolved before any real-student deployment. Options: (a) require a signed query-param token on WS connect; (b) verify `session_id` ownership against the JWT `sub` claim via a Redis lookup on first message; (c) treat all WS events as server-authoritative and reject client-claimed outcomes. **Do not merge to production main without a team decision on this.**
+  - **⚠️ Review finding (2026-07-08):** AC for `ping → pong` has no test. `websocket.py` dispatches `send_json({"type":"pong"})` on `ping` but no test in any test file sends a `ping` and asserts the `pong` response. Requires a `TestClient` WebSocket test. Add before cross-dev integration.
 
 <!-- CHECK:arq_lesson_ready -->
 - [Completed] **Lesson progress push (ARQ pub/sub → WebSocket)** ✅ 2026-06-29
@@ -327,6 +329,9 @@ MAX_DISTRACTION_PER_SESSION=3
   - Add test: mock Redis, call each node, assert TTL is set on every write
   - Verify reconnecting client reads correct state from Redis
   - **AC:** After server restart (Redis survives), WS reconnect reads the pre-restart state correctly
+  - **⚠️ Review findings (2026-07-08):**
+    - **[Patch]** "Add test: mock Redis, call each node, assert TTL is set on every write" — only TEACHING is covered via `test_session_start_persists_teaching_state`. Nodes `idle`, `checking_in`, `quizzing`, `teach_back`, `intervening`, `session_end` have no TTL assertions. Partial AC.
+    - **[Deferred → s2-4]** "WS reconnect reads pre-restart state" — `_init_session_state` always overwrites `tutor_state` to IDLE on every `connect()`, which would destroy pre-restart state for reconnecting clients. This AC is re-scoped to Sprint 2 `session_restore` (s2-4). Sprint 1 scope ends at: state persists with 24h TTL and all `redis.set` calls use `ex=`. The conditional-init behaviour ("skip if state already exists") is Sprint 2 work.
 
 ---
 
@@ -352,7 +357,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** 14 passing tests, one per transition; each guard rule has a separate blocked-case test
 
 <!-- CHECK:quizzing_teachback_flow -->
-- [Not Started] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow**
+- [Completed] **CHECKING_IN → QUIZZING → TEACH_BACK → TEACHING flow**
   - Implement trigger: when WS client sends `{ "type": "segment_complete" }` → `segment_complete` event
   - Implement trigger: when WS client sends `{ "type": "quiz_failed" }` → `quiz_failed` event
   - Implement trigger: when WS client sends `{ "type": "teachback_complete" }` → `teachback_complete` event

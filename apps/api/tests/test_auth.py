@@ -36,7 +36,7 @@ from app.dependencies import CurrentUser
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-_SECRET = "test-jwt-secret"
+_SECRET = "test-jwt-secret-padded-to-32-bytes!!"  # PyJWT ≥2.9 enforces 32-byte minimum for HS256
 _PAST_EPOCH = 1_700_000_000        # 2023-11-14 — provably in the past
 _FUTURE_EPOCH = 4_102_444_800      # 2100-01-01 — provably in the future
 _DROP = object()                   # sentinel: omit a claim from the minted token
@@ -127,7 +127,7 @@ def test_expired_token_returns_401() -> None:
 @pytest.mark.unit
 def test_wrong_secret_returns_401() -> None:
     """AC 4: token signed with a different secret → InvalidSignatureError → 401."""
-    resp = _client.get("/protected", headers=_auth(_token(secret="a-completely-different-secret")))
+    resp = _client.get("/protected", headers=_auth(_token(secret="a-completely-different-secret!!!")))
     assert resp.status_code == 401
 
 

@@ -86,6 +86,15 @@ from `(current_state, event)`, that one node persists, then `→ END`. No self-l
 
 ---
 
+### Review Findings (dev4/s1 adversarial review — 2026-07-08)
+
+- [ ] [Review][Patch] `teachback_failed` → INTERVENING increments distraction counter incorrectly [`apps/api/app/modules/tutor/state_machine/graph.py`] — `dispatch_event(sid, "teachback_failed")` passes no `intervention_type`; `intervening_node` defaults to `"distraction"`, incrementing `tutor_distraction_count` and setting a 2-min cooldown. Teach-back failure is NOT a distraction — it should not consume from the 3-distraction cap. Fix: pass `intervention_type="teachback_failed"` in the dispatch, and handle it in `intervening_node` without touching the distraction counter.
+- [ ] [Review][Patch] No test for idempotent `session_start` from non-IDLE state [`apps/api/tests/test_tutor_graph.py`] — if a client sends `session_start` twice (reconnect mid-session), the second dispatch hits `route_from_teaching` with event `"session_start"`, which is unhandled and defaults to staying TEACHING. No test verifies this no-op is correct and that Redis state/counters are unchanged. Add `test_session_start_from_teaching_is_noop`.
+- [x] [Review][Defer] `_is_in_teachback()` guard is tested in isolation (Group D) but is dead code in the new entry-router topology [`apps/api/app/modules/tutor/state_machine/graph.py:128`] — deferred, pre-existing; the TEACH_BACK guard is now enforced via `route_from_teach_back` in the entry router. Tests D1/D2 cover the function but it is never called from routing. Recommend removing the function or documenting it as a utility-only helper in Sprint 2.
+- [x] [Review][Defer] `fatigue_detected` dispatched with `intervention_type=None` incorrectly uses distraction defaults [`apps/api/app/modules/tutor/state_machine/graph.py:159`] — deferred, flagged in s2-3 commit; owned by Sprint 2 `full_state_machine` task.
+
+---
+
 ## Dev Notes
 
 ### graph.py — exact shape (from Architect)
