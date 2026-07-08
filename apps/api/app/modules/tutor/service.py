@@ -110,6 +110,37 @@ async def start_session(session_id: str) -> None:
     await dispatch_event(session_id, "session_start")
 
 
+# Lifecycle events a CLIENT may drive via WebSocket. distraction_detected / fatigue_detected are
+# excluded on purpose — those come from the server-side CES engine, not the client; session_reset is
+# admin-only; session_start has its own handler.
+_CLIENT_DRIVABLE_EVENTS = frozenset(
+    {
+        "segment_complete",
+        "checkin_complete",
+        "low_checkin_score",
+        "quiz_trigger",
+        "quiz_complete",
+        "quiz_failed",
+        "teachback_complete",
+        "teachback_failed",
+        "lesson_complete",
+    }
+)
+
+
+async def advance_tutor_state(session_id: str, event: str) -> None:
+    """Dispatch a client-driven lifecycle *event* into the tutor FSM.
+
+    Allow-listed: rejects any event a client must not be able to drive (server/engine/admin events).
+    """
+    if event not in _CLIENT_DRIVABLE_EVENTS:
+        raise ValueError(f"event not client-drivable: {event!r}")
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(session_id, event)
+
+
 async def process_attention_signal(
     session_id: str,
     signal: dict[str, Any],
