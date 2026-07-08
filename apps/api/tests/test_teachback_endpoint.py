@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.dependencies import get_current_user
 from app.modules.assessment.router import router
@@ -98,6 +98,20 @@ def _mock_settings(monkeypatch) -> None:
     mock_settings = MagicMock()
     mock_settings.ces_weight_teachback = 0.25
     monkeypatch.setattr("app.modules.assessment.service.get_settings", lambda: mock_settings)
+
+
+@pytest.fixture(autouse=True)
+def _mock_analytics_consent(monkeypatch) -> None:
+    """Suppress the analytics-consent DB lookup for all teachback endpoint tests.
+
+    grade_teachback() calls get_analytics_consent() which makes an extra supabase.table("users")
+    call. Patching it here keeps supabase side_effect lists clean and isolates consent
+    behaviour to test_posthog_events.py where it is tested exhaustively.
+    """
+    monkeypatch.setattr(
+        "app.modules.assessment.service.get_analytics_consent",
+        AsyncMock(return_value=False),
+    )
 
 
 @pytest.fixture
