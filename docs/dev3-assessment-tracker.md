@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-02 (Story 3-18 done — Sprint 2 Task 1: Onboarding assessment scoring, POST /api/assessment/onboarding/submit implemented; 43/43 tests GREEN; 5-agent code review complete, 7 BLOCKERs fixed; PR open on dev3-sprint2-task1)
+**Last updated:** 2026-07-03 (Sprint 2 Task 3 done — Story 3-20: Analytics Events Ingestion (POST /api/analytics/events, 46 tests); jargon_hover + all 9 event types → session_events; 5-agent BMAD review, 6 BLOCKERs fixed)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 ---
@@ -14,11 +14,11 @@
 |--------|--------|-------|------|---------|-------------|
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 | 7 | 1 | 0 | 6 |
+| Sprint 2 | Weeks 4–5 | 7 | 4 | 0 | 3 |
 | Sprint 3 | Weeks 6–7 | 7 | 0 | 0 | 7 |
 | Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **40** | **20** | **0** | **20** |
+| **Total** | | **40** | **23** | **0** | **17** |
 
 Update this table each time a task is checked off below.
 
@@ -534,7 +534,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `test_compute_dimension_scores_all_max/min/index_1` + upsert payload assertions confirm coverage ✓
   - **AC:** All 9 dimensions populated and within bounds (covered by merged Story 3-18)
 
-- [ ] **Session report generation API live**
+- [x] **Session report generation API live** — ✓ 2026-07-02
   - Implement `GET /api/assessment/session/{id}/report`
   - Flow:
     1. Verify session ownership
@@ -545,17 +545,18 @@ These exist in the current `router.py` stubs and **must be corrected** before go
     6. Return `SessionReport` with CES breakdown by component
   - **AC:** Full session report returned with all fields populated for a completed session
 
-- [ ] **Jargon hover usage event tracking**
-  - Frontend fires `POST /api/analytics/events` with `event_type: "jargon_hover"` and `payload: {term: string, session_id, segment_id}`
-  - Implement event ingestion to write to `session_events` table
-  - **AC:** After hovering a jargon term in player, row exists in `session_events` with `event_type = "jargon_hover"`
+- [x] **Jargon hover usage event tracking** — ✓ 2026-07-03
+  - Story 3-20: `docs/stories/3-20-analytics-events-ingestion.md` — status: in-progress (review complete, PR open) ✓
+  - `POST /api/analytics/events` implemented; jargon_hover + all event types → `session_events` table ✓
+  - Ownership check: HTTP 403 for cross-user or non-existent sessions; identical detail (no enumeration oracle) ✓
+  - **AC:** After hovering a jargon term in player, row exists in `session_events` with `event_type = "jargon_hover"` ✓
 
-- [ ] **Session events instrumentation (tab_switch, retry_after_fail, etc.)**
-  - Implement `POST /api/analytics/events` batch endpoint fully
-  - Validate event_type is one of the known set (soft validation — log unknown types but don't reject)
-  - Known event types: `tab_switch`, `retry_after_fail`, `jargon_hover`, `quiz_skip`, `teachback_skip`, `intervention_acknowledged`, `segment_complete`, `session_start`, `session_end`
-  - Write all events to `session_events` via bulk insert
-  - **AC:** Batch of 10 events writes 10 rows to DB in a single transaction
+- [x] **Session events instrumentation (tab_switch, retry_after_fail, etc.)** — ✓ 2026-07-03
+  - All 9 event types accepted; unknown types logged at WARNING (soft validation, never rejected) ✓
+  - Single bulk insert per batch; `client_timestamp_ms` stored in payload JSONB as `_client_ts_ms` ✓
+  - 5-agent adversarial BMAD review — 6 BLOCKERs + 6 IMPROVEMENTs all fixed; 194/194 unit tests GREEN ✓
+  - Branch: `dev3-sprint2-task3`; PR open ✓
+  - **AC:** Batch of 10 events writes 10 rows to DB in a single transaction ✓
 
 - [ ] **Basic analytics module (per-session aggregations)**
   - Implement `GET /api/analytics/session/{id}/summary`

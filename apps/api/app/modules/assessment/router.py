@@ -107,15 +107,18 @@ async def submit_teachback(
     response_model=SessionReport,
     summary="Get the complete assessment report for a session",
 )
-async def get_session_report(
+async def get_session_report_endpoint(
     session_id: str,
     current_user: CurrentUser,
 ) -> SessionReport:
-    """Return the final CES breakdown and scores for a completed session.
-
-    TODO (Sprint 2): Query session_reports table.
-    """
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    """Return the final CES breakdown and scores for a completed session."""
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import get_session_report
+    return await get_session_report(
+        session_id=session_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.get(
