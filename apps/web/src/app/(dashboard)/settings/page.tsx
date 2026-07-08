@@ -14,7 +14,7 @@ export default function SettingsPage() {
                     animate={{ opacity: 1, y: 0 }}
                     className="flex items-center gap-3"
                 >
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 border border-blue-100 text-blue-700 text-xs font-medium">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--accent-secondary)] text-[var(--accent-primary)] text-xs font-medium">
                         <Sparkles className="w-3.5 h-3.5" />
                         <span>Scholar Journey: Guided Learner</span>
                     </div>

@@ -8,7 +8,7 @@ export function ProfileTab() {
             <div className="flex flex-col md:flex-row gap-8 items-start">
                 {/* Profile Avatar / Photo */}
                 <div className="relative flex-shrink-0 group">
-                    <div className="w-32 h-32 rounded-2xl bg-gradient-to-tr from-blue-100 to-indigo-50 p-1 flex items-center justify-center shadow-sm">
+                    <div className="w-32 h-32 rounded-2xl bg-gradient-to-tr from-[var(--color-light-bg)] to-[var(--color-soft-panel)] p-1 flex items-center justify-center shadow-sm">
                         <div className="w-full h-full rounded-xl bg-white flex items-center justify-center overflow-hidden relative">
                             {/* Dummy Image Placeholder */}
                             <img
@@ -43,15 +43,15 @@ export function ProfileTab() {
                     </div>
 
                     {/* Learning Stage Badge */}
-                    <div className="mt-2 p-5 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-100 flex items-center justify-between">
+                    <div className="mt-2 p-5 rounded-xl bg-[var(--accent-secondary)] flex items-center justify-between">
                         <div className="flex flex-col gap-1">
-                            <span className="text-sm text-blue-600 font-medium flex items-center gap-1.5">
+                            <span className="text-sm text-[var(--accent-primary)] font-medium flex items-center gap-1.5">
                                 <Sparkles className="w-4 h-4" /> Current Stage
                             </span>
-                            <span className="text-lg font-semibold text-blue-900">Guided Learner</span>
+                            <span className="text-lg font-semibold text-[var(--accent-primary)]">Guided Learner</span>
                         </div>
                         <div className="text-right">
-                            <button suppressHydrationWarning className="text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors">
+                            <button suppressHydrationWarning className="text-sm font-medium text-[var(--accent-primary)] hover:underline transition-colors">
                                 View Journey Map
                             </button>
                         </div>

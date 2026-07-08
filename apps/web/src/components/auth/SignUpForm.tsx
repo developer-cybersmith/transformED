@@ -78,7 +78,7 @@ export function SignUpForm() {
         supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: `${window.location.origin}/dashboard`
+                redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`
             }
         });
     };
@@ -225,7 +225,7 @@ export function SignUpForm() {
                     href="/signin"
                     className="font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] transition-colors"
                 >
-                    <br />Continue learning &rarr;
+                    Continue learning &rarr;
                 </Link>
             </p>
         </motion.div>

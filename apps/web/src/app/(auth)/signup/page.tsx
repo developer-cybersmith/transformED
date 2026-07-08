@@ -24,10 +24,10 @@ export default function SignUpPage() {
                         </span>
                     </Link>
 
-                    <div className="border-l-4 border-[var(--accent-primary)] pl-6 mb-8">
+                    <div className="border-l-4 border-[var(--accent-secondary)] pl-6 mb-8">
                         <h1 className="text-4xl md:text-5xl lg:text-5xl font-semibold tracking-tight mb-4 leading-[1.15]">
                             Stop Consuming.<br />
-                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-secondary)]">Start Becoming.</span>
+                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-[var(--accent-secondary)]">Start Becoming.</span>
                         </h1>
                         <p className="text-lg text-neutral-400 leading-relaxed max-w-md">
                             Build the capacity to think independently. Move away from shallow distraction toward deep, guided mastery.

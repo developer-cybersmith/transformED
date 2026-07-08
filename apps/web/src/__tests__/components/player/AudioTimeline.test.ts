@@ -80,8 +80,8 @@ describe('processTimeUpdate — slide sync', () => {
     usePlayerStore.getState().loadLesson(mockLessonPackage);
     usePlayerStore.setState({ status: 'PLAYING', currentSlideId: 'sl_0_0' });
 
-    // mockLessonPackage seg_0: sl_0_0 at 0–15000ms, sl_0_1 at 15000–30000ms
-    processTimeUpdate(16000); // into sl_0_1 range
+    // mockLessonPackage seg_0: sl_0_0 at 0–35000ms, sl_0_1 at 35000–92000ms
+    processTimeUpdate(40000); // into sl_0_1 range
 
     expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
   });
@@ -110,8 +110,8 @@ describe('processTimeUpdate — segment boundary + quiz guard', () => {
     usePlayerStore.getState().loadLesson(mockLessonPackage);
     usePlayerStore.setState({ status: 'PLAYING' });
 
-    // seg_0 ends at 30000ms
-    processTimeUpdate(30000);
+    // seg_0 ends at 92000ms
+    processTimeUpdate(92000);
 
     expect(usePlayerStore.getState().status).toBe('QUIZ');
     expect(usePlayerStore.getState().quizFiredForSegment.has('seg_0')).toBe(true);

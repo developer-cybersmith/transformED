@@ -151,7 +151,7 @@ export default function Features() {
                     opacity: [0, 0.08, 0]
                 }}
                 transition={{ duration: 18, repeat: Infinity, ease: "linear", delay: 2 }}
-                className="absolute bottom-1/3 left-0 w-[600px] h-[300px] bg-gradient-to-r from-transparent via-sky-400/20 to-transparent blur-[100px] pointer-events-none -z-10"
+                className="absolute bottom-1/3 left-0 w-[600px] h-[300px] bg-gradient-to-r from-transparent via-[var(--accent-secondary)]/20 to-transparent blur-[100px] pointer-events-none -z-10"
             />
         </section>
     );

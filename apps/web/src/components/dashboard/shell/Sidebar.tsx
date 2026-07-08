@@ -28,7 +28,7 @@ export function Sidebar() {
             <div className="pt-10 pb-8 px-8 relative z-10 flex items-center justify-between">
                 <Link href="/" className="flex items-center gap-3 inline-block group">
                     <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg transition-transform duration-300 group-hover:scale-105 object-contain" />
-                    <span className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-secondary)] transition-all duration-300">
+                    <span className="text-xl font-bold tracking-tight text-[var(--accent-primary)] transition-all duration-300">
                         HIE
                     </span>
                 </Link>
@@ -43,7 +43,7 @@ export function Sidebar() {
                                 {isActive && (
                                     <motion.div
                                         layoutId="activeNavBackground"
-                                        className="absolute inset-0 bg-gradient-to-r from-[var(--accent-primary)]/10 to-[var(--accent-secondary)]/5 rounded-full"
+                                        className="absolute inset-0 bg-[var(--accent-primary)]/8 rounded-full"
                                         initial={{ opacity: 0 }}
                                         animate={{ opacity: 1 }}
                                         exit={{ opacity: 0 }}
@@ -57,10 +57,15 @@ export function Sidebar() {
                                         ? "text-[var(--accent-primary-hover)] font-medium"
                                         : "text-neutral-500 hover:text-neutral-800 hover:bg-black/5"
                                 )}>
-                                    <item.icon className={cn(
-                                        "w-5 h-5 transition-transform duration-300 group-hover:scale-110",
-                                        isActive ? "text-[var(--accent-primary)]" : "text-neutral-400 group-hover:text-neutral-600"
-                                    )} />
+                                    <div className={cn(
+                                        "flex items-center justify-center w-8 h-8 rounded-lg shrink-0 transition-colors duration-300",
+                                        isActive && "bg-[var(--accent-secondary)]"
+                                    )}>
+                                        <item.icon className={cn(
+                                            "w-5 h-5 transition-transform duration-300 group-hover:scale-110",
+                                            isActive ? "text-[var(--accent-primary)]" : "text-neutral-400 group-hover:text-neutral-600"
+                                        )} />
+                                    </div>
                                     <span className="text-[15px]">{item.name}</span>
                                 </div>
                             </Link>
@@ -80,7 +85,7 @@ export function Sidebar() {
                                 {isActive && (
                                     <motion.div
                                         layoutId="activeNavBackground"
-                                        className="absolute inset-0 bg-gradient-to-r from-[var(--accent-primary)]/10 to-[var(--accent-secondary)]/5 rounded-full"
+                                        className="absolute inset-0 bg-[var(--accent-primary)]/8 rounded-full"
                                         initial={{ opacity: 0 }}
                                         animate={{ opacity: 1 }}
                                         exit={{ opacity: 0 }}
@@ -93,10 +98,15 @@ export function Sidebar() {
                                         ? "text-[var(--accent-primary-hover)] font-medium"
                                         : "text-neutral-500 hover:text-neutral-800 hover:bg-black/5"
                                 )}>
-                                    <item.icon className={cn(
-                                        "w-5 h-5 transition-transform duration-300 group-hover:rotate-12",
-                                        isActive ? "text-[var(--accent-primary)]" : "text-neutral-400 group-hover:text-neutral-600"
-                                    )} />
+                                    <div className={cn(
+                                        "flex items-center justify-center w-8 h-8 rounded-lg shrink-0 transition-colors duration-300",
+                                        isActive && "bg-[var(--accent-secondary)]"
+                                    )}>
+                                        <item.icon className={cn(
+                                            "w-5 h-5 transition-transform duration-300 group-hover:rotate-12",
+                                            isActive ? "text-[var(--accent-primary)]" : "text-neutral-400 group-hover:text-neutral-600"
+                                        )} />
+                                    </div>
                                     <span className="text-[15px]">{item.name}</span>
                                 </div>
                             </Link>

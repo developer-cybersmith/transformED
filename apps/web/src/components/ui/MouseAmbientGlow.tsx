@@ -35,7 +35,7 @@ export default function MouseAmbientGlow() {
     return (
         <div className="fixed inset-0 pointer-events-none overflow-hidden hidden md:block -z-10">
             <motion.div
-                className="absolute w-[800px] h-[800px] -ml-[400px] -mt-[400px] rounded-full blur-[80px] bg-[radial-gradient(circle_at_center,rgba(47,128,237,0.12)_0%,transparent_60%)]"
+                className="absolute w-[800px] h-[800px] -ml-[400px] -mt-[400px] rounded-full blur-[80px] bg-[radial-gradient(circle_at_center,rgba(7,23,44,0.12)_0%,transparent_60%)]"
                 style={{
                     x: smoothX,
                     y: smoothY,

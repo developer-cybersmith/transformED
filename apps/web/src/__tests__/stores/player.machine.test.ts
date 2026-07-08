@@ -221,7 +221,7 @@ describe('quizFiredForSegment — double-fire prevention', () => {
     usePlayerStore.getState().play();
     usePlayerStore.getState().enterQuiz();
     // Simulate seek backward
-    usePlayerStore.getState().seek(0);
+    usePlayerStore.getState().requestSeek(0);
     expect(usePlayerStore.getState().quizFiredForSegment.has('seg_0')).toBe(true);
   });
 });
@@ -273,10 +273,15 @@ describe('full 3-segment lesson traversal', () => {
     store.exitTeachBack(); // advances to seg 2, status → PLAYING
     expect(usePlayerStore.getState().currentSegmentIndex).toBe(2);
 
-    // Segment 2 — last
+    // Segment 2 — last: exitTeachBack() resumes PLAYING on the last segment
+    // (does not jump straight to ENDED) — remaining audio plays out and
+    // AudioTimeline's handleEnded() calls endLesson() when it actually finishes.
     store.enterQuiz();
     store.exitQuiz();
-    store.exitTeachBack(); // no seg 3 → ENDED
+    store.exitTeachBack();
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+
+    store.endLesson(); // simulates handleEnded() firing once the last segment's audio finishes
     expect(usePlayerStore.getState().status).toBe('ENDED');
   });
 });

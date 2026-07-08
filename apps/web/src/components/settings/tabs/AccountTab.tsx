@@ -16,7 +16,7 @@ export function AccountTab() {
                 {/* Current Plan block */}
                 <div className="flex items-center justify-between p-6 rounded-2xl bg-white border border-neutral-100 shadow-sm">
                     <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                        <div className="w-12 h-12 rounded-xl bg-[var(--color-light-bg)] text-[var(--accent-primary)] flex items-center justify-center">
                             <Wallet className="w-6 h-6" />
                         </div>
                         <div className="flex flex-col">

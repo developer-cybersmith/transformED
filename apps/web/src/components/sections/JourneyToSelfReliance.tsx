@@ -47,8 +47,8 @@ function PhaseTimelineNode({ step, i }: { step: typeof journeySteps[0], i: numbe
             <div className="w-full sm:w-[calc(50%-3rem)] pl-16 sm:pl-0 sm:text-right mb-4 sm:mb-0">
                 {isEven && (
                     <>
-                        <p className="text-primary font-mono text-sm mb-2 transition-colors">{step.stage}</p>
-                        <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-sky-300 transition-colors duration-300">{step.title}</h3>
+                        <p className="text-[var(--accent-secondary)] font-mono text-sm mb-2 transition-colors">{step.stage}</p>
+                        <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
                         <p className="text-slate-400 leading-relaxed text-[0.95rem]">{step.desc}</p>
                     </>
                 )}
@@ -66,8 +66,8 @@ function PhaseTimelineNode({ step, i }: { step: typeof journeySteps[0], i: numbe
             <div className="w-full sm:w-[calc(50%-3rem)] pl-16 sm:pl-0">
                 {!isEven && (
                     <>
-                        <p className="text-primary font-mono text-sm mb-2 transition-colors">{step.stage}</p>
-                        <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-sky-300 transition-colors duration-300">{step.title}</h3>
+                        <p className="text-[var(--accent-secondary)] font-mono text-sm mb-2 transition-colors">{step.stage}</p>
+                        <h3 className="text-xl lg:text-2xl font-bold mb-3 group-hover:text-[var(--accent-secondary)] transition-colors duration-300">{step.title}</h3>
                         <p className="text-slate-400 leading-relaxed text-[0.95rem]">{step.desc}</p>
                     </>
                 )}
@@ -88,7 +88,7 @@ export default function JourneyToSelfReliance() {
     return (
         <section ref={sectionRef} className="py-24 lg:py-32 bg-slate-900 text-white relative overflow-hidden">
             {/* Background ambiance */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-full bg-[radial-gradient(ellipse_at_top,rgba(47,128,237,0.15),transparent_70%)] pointer-events-none" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-4xl h-full bg-[radial-gradient(ellipse_at_top,rgba(198,164,92,0.15),transparent_70%)] pointer-events-none" />
 
             <div className="max-w-5xl mx-auto px-6 lg:px-8 relative z-10">
                 <motion.div
@@ -114,7 +114,7 @@ export default function JourneyToSelfReliance() {
                     {/* The Animated Fill Line */}
                     <motion.div
                         style={{ height: lineHeight }}
-                        className="absolute left-[24px] sm:left-1/2 top-0 w-[2px] bg-gradient-to-b from-primary via-sky-400 to-emerald-400 sm:-translate-x-1/2 z-0"
+                        className="absolute left-[24px] sm:left-1/2 top-0 w-[2px] bg-gradient-to-b from-[var(--accent-secondary)] via-[#E8D08D] to-emerald-400 sm:-translate-x-1/2 z-0"
                     />
 
                     <div className="space-y-16 lg:space-y-24">

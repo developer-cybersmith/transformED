@@ -23,7 +23,7 @@ export function LearningTab() {
                 <div className="flex flex-col gap-4 border-b border-neutral-100 pb-8">
                     <div className="flex flex-col gap-1.5">
                         <h3 className="text-base font-medium flex items-center gap-2 text-neutral-900">
-                            <Gauge className="w-4 h-4 text-blue-500" /> Learning Pace
+                            <Gauge className="w-4 h-4 text-[var(--accent-primary)]" /> Learning Pace
                         </h3>
                         <p className="text-sm text-neutral-500">How quickly new concepts are introduced.</p>
                     </div>
@@ -42,7 +42,7 @@ export function LearningTab() {
                 <div className="flex flex-col gap-4 border-b border-neutral-100 pb-8">
                     <div className="flex flex-col gap-1.5">
                         <h3 className="text-base font-medium flex items-center gap-2 text-neutral-900">
-                            <MessageSquare className="w-4 h-4 text-blue-500" /> Explanation Style
+                            <MessageSquare className="w-4 h-4 text-[var(--accent-primary)]" /> Explanation Style
                         </h3>
                         <p className="text-sm text-neutral-500">Depth and terminology used in explanations.</p>
                     </div>
@@ -61,7 +61,7 @@ export function LearningTab() {
                 <div className="flex flex-col gap-4 border-b border-neutral-100 pb-8">
                     <div className="flex flex-col gap-1.5">
                         <h3 className="text-base font-medium flex items-center gap-2 text-neutral-900">
-                            <Zap className="w-4 h-4 text-blue-500" /> Tutor Intervention Frequency
+                            <Zap className="w-4 h-4 text-[var(--accent-primary)]" /> Tutor Intervention Frequency
                         </h3>
                         <p className="text-sm text-neutral-500">How often the tutor steps in to guide you actively.</p>
                     </div>
@@ -80,7 +80,7 @@ export function LearningTab() {
                 <div className="flex flex-col gap-4 pb-4">
                     <div className="flex flex-col gap-1.5">
                         <h3 className="text-base font-medium flex items-center gap-2 text-neutral-900">
-                            <Layout className="w-4 h-4 text-blue-500" /> Preferred Learning Style
+                            <Layout className="w-4 h-4 text-[var(--accent-primary)]" /> Preferred Learning Style
                         </h3>
                         <p className="text-sm text-neutral-500">The primary format for presenting new concepts.</p>
                     </div>

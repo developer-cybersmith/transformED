@@ -10,8 +10,20 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.config import get_settings
-from app.modules.assessment.prompts import score_teachback
-from app.modules.assessment.schemas import QuizAnswer, QuizResult, TeachbackResult
+from app.modules.assessment.onboarding_questions import (
+    ALL_NINE_DIMENSIONS,
+    BADGE_THRESHOLD,
+    BADGE_THRESHOLDS,
+    QUESTION_SUBDIMENSION_MAP,
+)
+from app.modules.assessment.prompts import generate_onboarding_profile, score_teachback
+from app.modules.assessment.schemas import (
+    OnboardingAnswer,
+    OnboardingResult,
+    QuizAnswer,
+    QuizResult,
+    TeachbackResult,
+)
 from app.providers.llm.openai import OpenAILLMProvider
 
 logger = logging.getLogger(__name__)
@@ -298,7 +310,8 @@ async def grade_teachback(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user or to a different lesson (IDOR).
+        HTTPException 404: Session belongs to a different user (SEC-006 enumeration prevention).
+        HTTPException 403: session.lesson_id does not match request lesson_id (IDOR guard).
         HTTPException 409: Duplicate teach-back attempt (unique constraint).
         HTTPException 500: DB insert fails for a non-duplicate reason.
     """
@@ -431,10 +444,11 @@ async def grade_teachback(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Duplicate teach-back attempt detected.",
             )
+        safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')
         logger.error(
             "teachback_attempts insert failed: session=%s error=%s",
             session_id,
-            insert_error,
+            safe_err,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -458,4 +472,146 @@ async def grade_teachback(
         overall_score=float(result.score),
         ces_contribution=ces_contribution,
         feedback=feedback,
+    )
+
+
+# ── Onboarding scoring ─────────────────────────────────────────────────────────
+
+
+def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, float]:
+    """Compute 9 learner_dna sub-dimension scores from 20 onboarding responses.
+
+    Formula per question: normalized = (selected_index / 3) * 100
+    Formula per dimension: dim_score = round(mean(normalized_values), 2)
+
+    Returns dict mapping each of the 9 sub-dimension names to a 0-100 float.
+    """
+    bucket: dict[str, list[float]] = {dim: [] for dim in ALL_NINE_DIMENSIONS}
+    for ans in responses:
+        subdim = QUESTION_SUBDIMENSION_MAP.get(ans.question_id)
+        if subdim is None:
+            continue
+        normalized = (ans.selected_index / 3) * 100
+        bucket[subdim].append(normalized)
+    return {
+        dim: round(sum(vals) / len(vals), 2) if vals else 0.0
+        for dim, vals in bucket.items()
+    }
+
+
+def _compute_badge_labels(scores: dict[str, float]) -> list[str]:
+    """Return plain-English badge labels for sub-dimensions scoring >= BADGE_THRESHOLD.
+
+    No IQ/EQ/SQ language — labels come from BADGE_THRESHOLDS (CLAUDE.md rule).
+    """
+    return [
+        BADGE_THRESHOLDS[dim]
+        for dim in ALL_NINE_DIMENSIONS
+        if scores.get(dim, 0.0) >= BADGE_THRESHOLD
+    ]
+
+
+async def process_onboarding(
+    *,
+    responses: list[OnboardingAnswer],
+    user_id: str,
+    supabase: Any,
+) -> OnboardingResult:
+    """Process 20 onboarding answers: score, upsert learner_dna, generate profile.
+
+    Steps:
+    1. Compute 9 sub-dimension scores.
+    2. Compute badge labels (scores >= 70).
+    3. Bulk-insert rows to onboarding_responses.
+    4. Generate GPT-4o-mini profile_text (DPDP disclaimer appended).
+    5. Upsert learner_dna with scores, badges, profile_text, and session_count=0.
+    6. Return OnboardingResult (no raw scores to frontend).
+
+    The supabase client is synchronous; all DB calls are wrapped in asyncio.to_thread.
+
+    Args:
+        responses: 20 validated OnboardingAnswer objects.
+        user_id: User UUID from JWT (for DB writes).
+        supabase: Synchronous Supabase client from app.core.db.get_supabase().
+
+    Raises:
+        HTTPException 409: onboarding_responses insert hits unique constraint (duplicate submission).
+        HTTPException 500: Non-duplicate DB insert failure.
+    """
+    # Step 1 — Compute dimension scores
+    scores = _compute_dimension_scores(responses)
+
+    # Step 2 — Compute badge labels
+    badge_labels = _compute_badge_labels(scores)
+
+    # Step 3 — Bulk-insert onboarding_responses rows
+    rows = [
+        {
+            "user_id": user_id,
+            "question_id": ans.question_id,
+            "response_value": ans.selected_index,
+            "dimension_tag": ans.dimension,
+            "response_time_ms": ans.response_time_ms,
+        }
+        for ans in responses
+    ]
+    insert_resp = await asyncio.to_thread(
+        lambda: supabase.table("onboarding_responses").insert(rows).execute()
+    )
+    insert_error = getattr(insert_resp, "error", None)
+    if insert_error:
+        err_str = str(insert_error).lower()
+        if "duplicate" in err_str or "unique" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Onboarding already submitted — duplicate responses detected.",
+            )
+        safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')
+        logger.error(
+            "onboarding_responses insert failed: user=%s error=%s",
+            user_id,
+            safe_err,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist onboarding responses.",
+        )
+
+    # Step 4 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
+    provider = OpenAILLMProvider(lesson_id="onboarding")
+    profile_text = await generate_onboarding_profile(
+        badge_labels=badge_labels,
+        provider=provider,
+    )
+
+    # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
+    dna_row: dict[str, Any] = {
+        "user_id": user_id,
+        "badge_labels": badge_labels,
+        "session_count": 0,
+        "profile_text": profile_text,
+        **scores,
+    }
+    upsert_resp = await asyncio.to_thread(
+        lambda: supabase.table("learner_dna")
+        .upsert(dna_row, on_conflict="user_id")
+        .execute()
+    )
+    upsert_error = getattr(upsert_resp, "error", None)
+    if upsert_error:
+        safe_upsert_err = str(upsert_error).replace('\n', ' ').replace('\r', ' ')
+        logger.error(
+            "learner_dna upsert failed: user=%s error=%s",
+            user_id,
+            safe_upsert_err,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist learner profile.",
+        )
+
+    return OnboardingResult(
+        badge_labels=badge_labels,
+        profile_text=profile_text,
+        session_count=0,
     )

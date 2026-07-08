@@ -88,8 +88,13 @@ build/
 wheels/
 pip-wheel-metadata/
 .installed.cfg
-lib/
-lib64/
+# Anchored to repo root — unanchored "lib/"/"lib64/" would also match
+# apps/web/src/lib/ (Next.js source) and apps/web/src/__tests__/lib/,
+# silently hiding real frontend files from git. Neither exists at the
+# repo root in this monorepo layout, so anchoring is a no-op for the
+# legacy-Python-build-artifact case this was meant for.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
