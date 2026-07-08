@@ -52,14 +52,65 @@ export function processTimeUpdate(ms: number): void {
   }
 }
 
+// ── Audio buffer/error handlers — exported for pure-function unit testing ─────
+
+/**
+ * Schedules setBuffering(true) after 2000ms if not already scheduled.
+ * Idempotent: calling twice before the timer fires is a no-op.
+ */
+export function handleAudioWaiting(
+  bufferTimerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+  setBuffering: (b: boolean) => void,
+): void {
+  if (bufferTimerRef.current !== null) return;
+  bufferTimerRef.current = setTimeout(() => {
+    bufferTimerRef.current = null;
+    setBuffering(true);
+  }, 2000);
+}
+
+/**
+ * Cancels any pending buffer timer and clears the buffering state.
+ * Called on onCanPlay / onPlaying.
+ */
+export function handleAudioResume(
+  bufferTimerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+  setBuffering: (b: boolean) => void,
+): void {
+  if (bufferTimerRef.current !== null) {
+    clearTimeout(bufferTimerRef.current);
+    bufferTimerRef.current = null;
+  }
+  setBuffering(false);
+}
+
+/**
+ * Clears buffer timer, clears buffering state, and sets audioError.
+ * Called on onError.
+ */
+export function handleAudioError(
+  bufferTimerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+  setBuffering: (b: boolean) => void,
+  setAudioError: (b: boolean) => void,
+): void {
+  handleAudioResume(bufferTimerRef, setBuffering);
+  setAudioError(true);
+}
+
+// ── AudioTimeline component ───────────────────────────────────────────────────
+
 export function AudioTimeline() {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const bufferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const status = usePlayerStore((s) => s.status);
   const lesson = usePlayerStore((s) => s.lesson);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const seekRequestMs = usePlayerStore((s) => s.seekRequestMs);
   const playbackRate = usePlayerStore((s) => s.playbackRate);
+  const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
+  const setBuffering = usePlayerStore((s) => s.setBuffering);
+  const setAudioError = usePlayerStore((s) => s.setAudioError);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
 
@@ -103,6 +154,18 @@ export function AudioTimeline() {
     e.currentTarget.playbackRate = usePlayerStore.getState().playbackRate;
   }
 
+  // Clear buffer/error state on segment change to prevent stale state bleeding into new segment
+  useEffect(() => {
+    return () => {
+      if (bufferTimerRef.current !== null) {
+        clearTimeout(bufferTimerRef.current);
+        bufferTimerRef.current = null;
+      }
+      setBuffering(false);
+      setAudioError(false);
+    };
+  }, [segment?.segment_id, setBuffering, setAudioError]);
+
   function handleTimeUpdate(e: React.SyntheticEvent<HTMLAudioElement>) {
     processTimeUpdate(e.currentTarget.currentTime * 1000);
   }
@@ -143,15 +206,20 @@ export function AudioTimeline() {
   if (!segment) return null;
 
   return (
-    // key={segment.segment_id} — forces remount on segment change, resetting src + currentTime
+    // key includes audioRetryCount — changing it forces remount on retry
     <audio
-      key={segment.segment_id}
+      key={`${segment.segment_id}-${audioRetryCount}`}
       ref={audioRef}
       src={segment.narration.audio_url}
       preload="metadata"
       onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}
       onEnded={handleEnded}
+      onWaiting={() => handleAudioWaiting(bufferTimerRef, setBuffering)}
+      onStalled={() => handleAudioWaiting(bufferTimerRef, setBuffering)}
+      onCanPlay={() => handleAudioResume(bufferTimerRef, setBuffering)}
+      onPlaying={() => handleAudioResume(bufferTimerRef, setBuffering)}
+      onError={() => handleAudioError(bufferTimerRef, setBuffering, setAudioError)}
       aria-label={`Narration: ${segment.title}`}
       className="sr-only"
     />
