@@ -14,6 +14,54 @@ interface PlayerProps {
   lesson: LessonPackage;
 }
 
+function BufferingOverlay() {
+  return (
+    <div
+      data-testid="buffering-overlay"
+      aria-live="polite"
+      className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none z-10"
+    >
+      <span className="sr-only">Audio buffering, please wait</span>
+      <svg
+        className="animate-spin w-10 h-10 text-white/70"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden
+      >
+        <circle
+          className="opacity-25"
+          cx="12" cy="12" r="10"
+          stroke="currentColor"
+          strokeWidth="4"
+        />
+        <path
+          className="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function AudioErrorNotification({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      data-testid="audio-error-notification"
+      role="alert"
+      className="flex items-center justify-between px-6 py-3 bg-red-900/60 border-t border-red-700/50 text-white text-sm shrink-0"
+    >
+      <span>Audio failed to load.</span>
+      <button
+        onClick={onRetry}
+        className="ml-4 px-4 py-1.5 bg-white/10 hover:bg-white/20 rounded-full text-sm font-medium transition-colors"
+      >
+        Try Again
+      </button>
+    </div>
+  );
+}
+
 // Default export required by next/dynamic
 export default function Player({ lesson }: PlayerProps) {
   const loadLesson = usePlayerStore((s) => s.loadLesson);
@@ -21,6 +69,9 @@ export default function Player({ lesson }: PlayerProps) {
   const sessionId = usePlayerStore((s) => s.sessionId);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
+  const isBuffering = usePlayerStore((s) => s.isBuffering);
+  const audioError = usePlayerStore((s) => s.audioError);
+  const retryAudio = usePlayerStore((s) => s.retryAudio);
 
   useEffect(() => {
     loadLesson(lesson);
@@ -47,6 +98,9 @@ export default function Player({ lesson }: PlayerProps) {
             jargon={segment.jargon}
           />
         ))}
+
+        {/* Buffering spinner overlay — shown after 2s audio stall, hidden while paused */}
+        {isBuffering && status !== 'PAUSED' && <BufferingOverlay />}
 
         {/* Lesson metadata shown before any slide is active */}
         {!currentSlideId && (
@@ -104,6 +158,9 @@ export default function Player({ lesson }: PlayerProps) {
           </div>
         )}
       </div>
+
+      {/* Audio error notification — shown on audio load failure */}
+      {audioError && <AudioErrorNotification onRetry={retryAudio} />}
 
       <PlayerControls />
     </div>

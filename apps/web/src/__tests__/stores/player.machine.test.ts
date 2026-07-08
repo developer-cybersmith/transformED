@@ -75,6 +75,9 @@ beforeEach(() => {
     audioPositionMs: 0,
     tutorState: 'IDLE',
     quizFiredForSegment: new Set(),
+    isBuffering: false,
+    audioError: false,
+    audioRetryCount: 0,
   });
   localStorage.clear();
 });
@@ -614,5 +617,72 @@ describe('endLesson clears saved progress', () => {
     expect(() => usePlayerStore.getState().endLesson()).not.toThrow();
 
     spy.mockRestore();
+  });
+});
+
+// ── S1-11: buffering + audio error state ─────────────────────────────────────
+
+describe('setBuffering', () => {
+  it('2a: setBuffering(true) sets isBuffering to true', () => {
+    usePlayerStore.getState().setBuffering(true);
+    expect(usePlayerStore.getState().isBuffering).toBe(true);
+  });
+
+  it('2a: setBuffering(false) clears isBuffering', () => {
+    usePlayerStore.setState({ isBuffering: true });
+    usePlayerStore.getState().setBuffering(false);
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+});
+
+describe('setAudioError', () => {
+  it('2b: setAudioError(true) sets audioError to true', () => {
+    usePlayerStore.getState().setAudioError(true);
+    expect(usePlayerStore.getState().audioError).toBe(true);
+  });
+
+  it('2b: setAudioError(false) clears audioError', () => {
+    usePlayerStore.setState({ audioError: true });
+    usePlayerStore.getState().setAudioError(false);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+});
+
+describe('retryAudio', () => {
+  it('2c: retryAudio() sets audioError to false', () => {
+    usePlayerStore.setState({ audioError: true });
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
+  it('2c: retryAudio() increments audioRetryCount by 1', () => {
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().audioRetryCount).toBe(1);
+  });
+
+  it('2d: retryAudio() called twice → audioRetryCount === 2', () => {
+    usePlayerStore.getState().retryAudio();
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().audioRetryCount).toBe(2);
+  });
+});
+
+describe('loadLesson resets buffering state', () => {
+  it('2e: loadLesson resets isBuffering to false', () => {
+    usePlayerStore.setState({ isBuffering: true });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+
+  it('2e: loadLesson resets audioError to false', () => {
+    usePlayerStore.setState({ audioError: true });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
+  it('2e: loadLesson resets audioRetryCount to 0', () => {
+    usePlayerStore.setState({ audioRetryCount: 3 });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().audioRetryCount).toBe(0);
   });
 });

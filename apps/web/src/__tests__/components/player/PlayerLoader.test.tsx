@@ -106,3 +106,52 @@ describe('PlayerLoader', () => {
     expect(screen.queryByTestId('player-skeleton')).toBeNull();
   });
 });
+
+// ── S1-11: lesson parse error state ──────────────────────────────────────────
+
+describe('PlayerLoader — parse error state', () => {
+  it('7a: renders LessonParseErrorState when lesson has empty segments array', () => {
+    // Valid JSON returned but fails isValidLessonPackage check (segments.length === 0)
+    mockUseLesson.mockReturnValue({
+      lesson: {
+        ...mockLessonPackage,
+        segments: [],
+      } as typeof mockLessonPackage,
+      isLoading: false,
+      error: null,
+    });
+
+    render(<PlayerLoader lessonId="lesson_1" />);
+
+    expect(screen.getByTestId('lesson-parse-error')).toBeDefined();
+    expect(screen.queryByTestId('player-stub')).toBeNull();
+    expect(screen.queryByTestId('player-skeleton')).toBeNull();
+    expect(screen.queryByTestId('lesson-error')).toBeNull();
+  });
+
+  it('7b: renders LessonParseErrorState when lesson_id is missing', () => {
+    mockUseLesson.mockReturnValue({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      lesson: { segments: [{}], metadata: { title: 'x' } } as any,
+      isLoading: false,
+      error: null,
+    });
+
+    render(<PlayerLoader lessonId="lesson_1" />);
+
+    expect(screen.getByTestId('lesson-parse-error')).toBeDefined();
+  });
+
+  it('7c: does NOT render LessonParseErrorState for a valid lesson package', () => {
+    mockUseLesson.mockReturnValue({
+      lesson: mockLessonPackage,
+      isLoading: false,
+      error: null,
+    });
+
+    render(<PlayerLoader lessonId="lesson_mock_1" />);
+
+    expect(screen.queryByTestId('lesson-parse-error')).toBeNull();
+    expect(screen.getByTestId('player-stub')).toBeDefined();
+  });
+});

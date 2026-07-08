@@ -61,6 +61,10 @@ export interface PlayerStore {
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
   quizFiredForSegment: Set<string>;
+  isBuffering: boolean;
+  audioError: boolean;
+  /** Incremented by retryAudio() to force <audio> remount via key prop change. */
+  audioRetryCount: number;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
@@ -92,6 +96,10 @@ export interface PlayerStore {
   saveProgress: () => void;
   /** Restore saved progress for lessonId (must be called after loadLesson). Returns true if a valid, fresh snapshot was applied. */
   restoreProgress: (lessonId: string) => boolean;
+  setBuffering: (b: boolean) => void;
+  setAudioError: (b: boolean) => void;
+  /** Clears audioError and increments audioRetryCount to force <audio> remount. */
+  retryAudio: () => void;
 }
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -107,6 +115,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   playbackRate: 1.0,
   tutorState: 'IDLE',
   quizFiredForSegment: new Set<string>(),
+  isBuffering: false,
+  audioError: false,
+  audioRetryCount: 0,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -124,6 +135,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       playbackRate: 1.0,
       tutorState: 'IDLE',
       quizFiredForSegment: new Set<string>(),
+      isBuffering: false,
+      audioError: false,
+      audioRetryCount: 0,
     });
   },
 
@@ -185,6 +199,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       // Keep previous audioDurationMs until loadedmetadata fires on the new element —
       // avoids a flash where the seek bar is disabled between segments.
       seekRequestMs: null,
+      audioError: false,
     });
     get().saveProgress();
   },
@@ -327,5 +342,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     get().requestSeek(parsed.audioPositionMs);
 
     return true;
+  },
+
+  setBuffering: (b) => {
+    set({ isBuffering: b });
+  },
+
+  setAudioError: (b) => {
+    set({ audioError: b });
+  },
+
+  retryAudio: () => {
+    set((state) => ({ audioError: false, isBuffering: false, audioRetryCount: state.audioRetryCount + 1 }));
   },
 }));
