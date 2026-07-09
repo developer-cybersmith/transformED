@@ -840,11 +840,13 @@ dependencies = [
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "slowapi" },
     { name = "supabase" },
+    { name = "tiktoken" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -859,6 +861,7 @@ requires-dist = [
     { name = "docling", specifier = ">=2.0.0,<3.0.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.22.0" },
     { name = "langchain-openai", specifier = ">=0.1.0" },
     { name = "langfuse", specifier = ">=2.0.0" },
     { name = "langgraph", specifier = "==1.2.6" },
@@ -880,6 +883,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.4.0" },
     { name = "slowapi", specifier = ">=0.1.9" },
     { name = "supabase", specifier = ">=2.4.0" },
+    { name = "tiktoken", specifier = ">=0.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29.0" },
 ]
 provides-extras = ["dev"]
