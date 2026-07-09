@@ -79,12 +79,18 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             book_id=book_id,
         )
 
-        # ── 4a. Persist final package ─────────────────────────────────────────
+        # ── 4a. Mark job completed ────────────────────────────────────────────
+        # Schema note: lesson_jobs has NO lesson_package/progress_pct columns and
+        # its status CHECK allows only pending/running/completed/failed — the
+        # previous write ('ready' + lesson_package) failed with PGRST204 at the
+        # end of every otherwise-successful run. The full LessonPackage is
+        # persisted to lessons.content by package_builder (S2-11).
+        from datetime import datetime, timezone
+
         supabase.table("lesson_jobs").update(
             {
-                "status": "ready",
-                "progress_pct": 100.0,
-                "lesson_package": lesson_package,
+                "status": "completed",
+                "completed_at": datetime.now(tz=timezone.utc).isoformat(),
             }
         ).eq("lesson_id", lesson_id).execute()
 

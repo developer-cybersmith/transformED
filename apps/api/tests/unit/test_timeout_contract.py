@@ -88,3 +88,48 @@ async def test_cancelled_job_marks_lesson_failed_and_reraises() -> None:
         f"(calls seen: {status_mock.await_args_list})"
     )
     assert "cancelled" in failed_calls[0].kwargs.get("error", "")
+
+
+# Columns that exist on lesson_jobs in the frozen initial schema; its status
+# CHECK allows only pending/running/completed/failed.
+_LESSON_JOBS_COLUMNS = {
+    "job_id", "lesson_id", "status", "last_node", "node_outputs",
+    "error", "attempt", "cost_usd", "started_at", "completed_at", "created_at",
+}
+_LESSON_JOBS_STATUSES = {"pending", "running", "completed", "failed"}
+
+
+async def test_successful_job_completion_write_is_schema_valid() -> None:
+    """Regression (live E2E 2026-07-10): the completion write used to send
+    status='ready' + lesson_package/progress_pct — none valid for lesson_jobs —
+    so every otherwise-successful run failed at the finish line (PGRST204)."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase = MagicMock()
+    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={"user_id": "u1", "source_file_path": "p", "book_id": "b1"}
+    )
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch(
+            "app.modules.content.pipeline.graph.run_pipeline",
+            new=AsyncMock(return_value={}),
+        ),
+        patch("app.core.redis.get_redis", return_value=MagicMock(publish=AsyncMock())),
+        patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock()),
+    ):
+        result = await job_mod.content_pipeline_job({}, "lesson-ok")
+
+    assert result["lesson_id"] == "lesson-ok"
+    update_payloads = [
+        c.args[0] for c in supabase.table.return_value.update.call_args_list
+    ]
+    completion = [p for p in update_payloads if p.get("status") == "completed"]
+    assert completion, f"no status='completed' write (payloads: {update_payloads})"
+    for payload in update_payloads:
+        illegal = set(payload) - _LESSON_JOBS_COLUMNS
+        assert not illegal, f"write uses nonexistent lesson_jobs columns: {illegal}"
+        if "status" in payload:
+            assert payload["status"] in _LESSON_JOBS_STATUSES, payload["status"]
+    assert "completed_at" in completion[0]
