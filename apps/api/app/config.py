@@ -163,6 +163,32 @@ class Settings(BaseSettings):
         description="Output vector dimensions of the embedding model. "
                     "Must match the model; stored in embedding_metadata per chunk.",
     )
+    embed_batch_token_budget: int = Field(
+        default=100_000,
+        description="Max tokens per OpenAI embeddings request batch (API hard cap is 300k). "
+                    "Batches are packed by chunk token_count up to this budget (Story 2-0 AC-6).",
+    )
+
+    # ── ARQ / pipeline timeouts (Story 2-0 AC-5) ──────────────────────────────
+    # Invariant (contract-tested): arq_job_timeout_s >= extract_timeout_cap_s + 300
+    # so the extract subprocess timeout ALWAYS fires before ARQ cancels the job,
+    # letting extract_node's own cleanup (killpg) run instead of orphaning the child.
+    arq_job_timeout_s: int = Field(
+        default=1800,
+        description="ARQ job_timeout for the whole 15-node pipeline (seconds)",
+    )
+    extract_timeout_cap_s: int = Field(
+        default=1500,
+        description="Hard cap on the PDF-extraction subprocess timeout (seconds)",
+    )
+    extract_timeout_base_s: int = Field(
+        default=120,
+        description="Base extraction timeout before the per-page allowance is added (seconds)",
+    )
+    extract_timeout_per_page_s: float = Field(
+        default=1.3,
+        description="Per-page allowance added to the extraction timeout (seconds/page)",
+    )
 
 
 @lru_cache(maxsize=1)

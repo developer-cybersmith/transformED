@@ -62,11 +62,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_redis(settings.redis_url)
     logger.info("Redis connection pool initialised")
 
-    # ARQ pool (separate ArqRedis client — used only for job enqueue)
+    # ARQ pool (separate ArqRedis client — used only for job enqueue).
+    # default_queue_name MUST match WorkerSettings.queue_name — both sides
+    # import PIPELINE_QUEUE so the names cannot drift (AC-1, Story 2-0).
     from arq import create_pool
 
-    app.state.arq_redis = await create_pool(_build_arq_redis_settings())
-    logger.info("ARQ Redis pool initialised")
+    from app.core.queues import PIPELINE_QUEUE
+
+    app.state.arq_redis = await create_pool(
+        _build_arq_redis_settings(),
+        default_queue_name=PIPELINE_QUEUE,
+    )
+    logger.info("ARQ Redis pool initialised (queue=%s)", PIPELINE_QUEUE)
+
+    # Supabase client + storage-bucket assertion (AC-7, Story 2-0).
+    # Buckets are provisioned by migration 20260710000000_storage_buckets.sql;
+    # a missing bucket must fail the deploy here, not the first upload.
+    from app.core.db import init_supabase
+
+    sb = init_supabase(settings)
+    required_buckets = {"source-pdfs", "lesson-images", "lesson-audio", "avatar-clips"}
+    try:
+        buckets = await asyncio.to_thread(sb.storage.list_buckets)
+    except Exception as exc:  # fail fast — a broken storage API is a broken deploy
+        raise RuntimeError(f"Could not list Supabase storage buckets: {exc}") from exc
+    existing_buckets = {
+        b.name if hasattr(b, "name") else b["name"] for b in buckets
+    }
+    missing_buckets = required_buckets - existing_buckets
+    if missing_buckets:
+        raise RuntimeError(
+            f"Missing storage buckets: {missing_buckets} — apply migrations"
+        )
+    logger.info("Storage buckets verified: %s", sorted(required_buckets))
 
     # lesson_ready pub/sub listener (bridges ARQ worker -> WebSocket clients)
     from app.core.pubsub import start_lesson_ready_listener

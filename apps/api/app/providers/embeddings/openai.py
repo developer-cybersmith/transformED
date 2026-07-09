@@ -9,6 +9,7 @@ regenerated for stored content (CLAUDE.md rule).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -25,6 +26,15 @@ _PROVIDER_KEY = "openai"
 
 # text-embedding-3-small pricing (USD per 1K tokens, as of June 2026)
 _EMBED_COST_PER_1K_USD = 0.00002
+
+
+def _safe_trace(call: Callable[[], Any]) -> Any | None:
+    """Run a Langfuse tracing call; observability failures must NEVER fail the pipeline."""
+    try:
+        return call()
+    except Exception:
+        logger.debug("Langfuse tracing call failed — ignored", exc_info=True)
+        return None
 
 
 class OpenAIEmbeddingsProvider(EmbeddingsProvider):
@@ -58,18 +68,20 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — embeddings call rejected"
             )
 
-        trace = self._langfuse.trace(
-            name="embed.texts",
-            metadata={
-                "model": self._model,
-                "batch_size": len(texts),
-                "lesson_id": self._lesson_id,
-            },
-        )
-        generation = trace.generation(
-            name="openai.embeddings",
-            model=self._model,
-            input=f"{len(texts)} texts",
+        # Langfuse 4.x (OTel-based): one generation-type observation per call.
+        # Tracing is best-effort — the OpenAI call must never fail because of it.
+        generation = _safe_trace(
+            lambda: self._langfuse.start_observation(
+                name="openai.embeddings",
+                as_type="generation",
+                model=self._model,
+                input=f"{len(texts)} texts",
+                metadata={
+                    "model": self._model,
+                    "batch_size": len(texts),
+                    "lesson_id": self._lesson_id,
+                },
+            )
         )
 
         try:
@@ -80,19 +92,34 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
             embeddings: list[list[float]] = [item.embedding for item in response.data]
             total_tokens: int = response.usage.total_tokens
 
-            generation.end(
-                output=f"{len(embeddings)} embeddings × {len(embeddings[0]) if embeddings else 0} dims",
-                usage={"input": total_tokens, "output": 0},
-            )
+            if generation is not None:
+                _safe_trace(
+                    lambda: generation.update(
+                        output=(
+                            f"{len(embeddings)} embeddings × "
+                            f"{len(embeddings[0]) if embeddings else 0} dims"
+                        ),
+                        usage_details={"input": total_tokens, "output": 0},
+                    )
+                )
 
+            # Cost accumulation reads response.usage directly — never depends on tracing.
             await self._maybe_accumulate_cost(total_tokens)
             await record_success(_PROVIDER_KEY)
             return embeddings, total_tokens
 
         except Exception as exc:
-            generation.end(level="ERROR", status_message=str(exc))
+            if generation is not None:
+                error_message = str(exc)
+                _safe_trace(
+                    lambda: generation.update(level="ERROR", status_message=error_message)
+                )
             await record_failure(_PROVIDER_KEY)
             raise
+
+        finally:
+            if generation is not None:
+                _safe_trace(generation.end)
 
     async def _maybe_accumulate_cost(self, total_tokens: int) -> None:
         if self._lesson_id is None:

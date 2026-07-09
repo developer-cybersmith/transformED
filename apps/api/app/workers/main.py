@@ -21,6 +21,7 @@ from arq.connections import RedisSettings
 
 from app.config import get_settings
 from app.core.langfuse import get_langfuse
+from app.core.queues import PIPELINE_QUEUE
 from app.workers.jobs.content_pipeline import content_pipeline_job
 
 logger = logging.getLogger(__name__)
@@ -105,8 +106,12 @@ class WorkerSettings:
     """Maximum number of concurrent jobs per worker process.
     Content pipeline is CPU/IO intensive â€” keep low to avoid OOM."""
 
-    job_timeout: int = 600
-    """Maximum wall-clock seconds a job may run before ARQ kills it (10 min)."""
+    job_timeout: int = get_settings().arq_job_timeout_s
+    """Maximum wall-clock seconds a job may run before ARQ cancels it.
+
+    Settings-driven (ARQ_JOB_TIMEOUT_S, default 1800).  Contract: must stay
+    >= settings.extract_timeout_cap_s + 300 so the extract node's subprocess
+    cleanup is always reachable before ARQ cancellation (AC-5, Story 2-0)."""
 
     keep_result_seconds: int = 86_400
     """How long to keep job results in Redis (24 h)."""
@@ -122,5 +127,5 @@ class WorkerSettings:
     on_shutdown = shutdown
 
     # â”€â”€ Queue names â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    queue_name: str = "hie:pipeline"
+    queue_name: str = PIPELINE_QUEUE
 

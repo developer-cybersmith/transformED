@@ -62,16 +62,31 @@ def _make_jobs_table(node_outputs: dict[str, Any]) -> MagicMock:
     return t
 
 
-def _make_chunks_table(chunks: list[dict[str, Any]]) -> MagicMock:
+def _make_chunks_table(pages: list[list[dict[str, Any]]]) -> MagicMock:
+    """Chunks-table mock for the paginated IS-NULL select (AC-6b).
+
+    Each ``.execute()`` on the select chain consumes the next entry of
+    ``pages``; once exhausted it returns [] — mirroring the real DB where
+    embedded rows drop out of the IS-NULL filter (so the completion check
+    after writeback sees nothing left).
+    """
     t = MagicMock()
+    queue: list[list[dict[str, Any]]] = [list(p) for p in pages]
+
+    def _execute() -> MagicMock:
+        resp = MagicMock()
+        resp.data = queue.pop(0) if queue else []
+        return resp
+
     (
         t.select.return_value
         .eq.return_value
         .is_.return_value
         .order.return_value
-        .execute.return_value.data
-    ) = chunks
-    t.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        .range.return_value
+        .execute.side_effect
+    ) = _execute
+    t.upsert.return_value.execute.return_value = MagicMock()
     return t
 
 
@@ -84,17 +99,24 @@ def _make_books_table() -> MagicMock:
 def _make_supabase(
     node_outputs: dict[str, Any] | None = None,
     chunks: list[dict[str, Any]] | None = None,
+    chunk_pages: list[list[dict[str, Any]]] | None = None,
 ) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
-    """Return (supabase, jobs_table, chunks_table, books_table)."""
+    """Return (supabase, jobs_table, chunks_table, books_table).
+
+    ``chunks`` is a convenience for the common single-page fetch; pass
+    ``chunk_pages`` explicitly to script multi-page / completion-check flows.
+    """
     if node_outputs is None:
         node_outputs = _DEFAULT_NODE_OUTPUTS
-    if chunks is None:
-        chunks = [
-            {"chunk_id": FAKE_CHUNK_ID_1, "content": "first chunk text"},
-            {"chunk_id": FAKE_CHUNK_ID_2, "content": "second chunk text"},
-        ]
+    if chunk_pages is None:
+        if chunks is None:
+            chunks = [
+                {"chunk_id": FAKE_CHUNK_ID_1, "content": "first chunk text", "chunk_index": 0},
+                {"chunk_id": FAKE_CHUNK_ID_2, "content": "second chunk text", "chunk_index": 1},
+            ]
+        chunk_pages = [chunks]
     jobs = _make_jobs_table(node_outputs)
-    chk = _make_chunks_table(chunks)
+    chk = _make_chunks_table(chunk_pages)
     bks = _make_books_table()
 
     sb = MagicMock()
@@ -123,6 +145,20 @@ def _make_provider(
     return p
 
 
+def _configure_settings(
+    mock_settings: MagicMock,
+    model: str = "text-embedding-3-small",
+    dimensions: int = 1536,
+    token_budget: int = 100_000,
+) -> None:
+    """Real values for every settings field embed_node touches — the AC-6
+    token-budget packing does arithmetic on embed_batch_token_budget."""
+    cfg = mock_settings.return_value
+    cfg.embedding_model = model
+    cfg.embedding_dimensions = dimensions
+    cfg.embed_batch_token_budget = token_budget
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -141,8 +177,7 @@ async def test_embed_node_happy_path() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider) as mock_cls,
     ):
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
-        mock_settings.return_value.embedding_dimensions = 1536
+        _configure_settings(mock_settings)
         result = await embed_node({**_BASE_STATE})
 
     assert result["embeddings_stored"] is True
@@ -159,8 +194,17 @@ async def test_embed_node_happy_path() -> None:
     # ORDER BY chunk_index applied (P8)
     chk.select.return_value.eq.return_value.is_.return_value.order.assert_called_with("chunk_index")
 
-    # chunks.update called once per chunk (2 total)
-    assert chk.update.call_count == 2
+    # Paginated select uses .range() starting at the first page (AC-6b)
+    range_mock = chk.select.return_value.eq.return_value.is_.return_value.order.return_value.range
+    assert range_mock.call_args_list[0].args == (0, 999)
+
+    # AC-6d: ONE bulk upsert for the whole batch, keyed on chunk_id
+    chk.update.assert_not_called()
+    chk.upsert.assert_called_once()
+    rows = chk.upsert.call_args.args[0]
+    assert chk.upsert.call_args.kwargs.get("on_conflict") == "chunk_id"
+    assert [r["chunk_id"] for r in rows] == [FAKE_CHUNK_ID_1, FAKE_CHUNK_ID_2]
+    assert all(r["embedding"] == _FAKE_EMBEDDING for r in rows)
 
     # books.update called with status=ready, keyed on book_id
     bks.update.assert_called_once_with({"status": "ready"})
@@ -217,7 +261,7 @@ async def test_embed_node_no_unembedded_chunks() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
     ):
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
+        _configure_settings(mock_settings)
         result = await embed_node({**_BASE_STATE})
 
     assert result["embeddings_stored"] is True
@@ -235,10 +279,14 @@ async def test_embed_node_no_unembedded_chunks() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_embed_node_multiple_chunks_one_batch() -> None:
-    """5 chunks fit in one batch (< 2048) → provider called exactly once."""
+    """5 small chunks fit within the token budget → provider called exactly once,
+    all 5 rows written in a single bulk upsert."""
     from app.modules.content.pipeline.graph import embed_node
 
-    chunks = [{"chunk_id": f"c{i}", "content": f"text {i}"} for i in range(5)]
+    chunks = [
+        {"chunk_id": f"c{i}", "content": f"text {i}", "chunk_index": 0, "token_count": 100}
+        for i in range(5)
+    ]
     sb, jobs, chk, bks = _make_supabase(chunks=chunks)
 
     async def embed_side_effect(texts: list[str]) -> tuple[list[list[float]], int]:
@@ -253,13 +301,13 @@ async def test_embed_node_multiple_chunks_one_batch() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
     ):
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
-        mock_settings.return_value.embedding_dimensions = 1536
+        _configure_settings(mock_settings)
         result = await embed_node({**_BASE_STATE})
 
     assert result["embeddings_stored"] is True
     assert provider.embed_texts.await_count == 1
-    assert chk.update.call_count == 5  # one update per chunk
+    chk.upsert.assert_called_once()
+    assert len(chk.upsert.call_args.args[0]) == 5  # one bulk write for all 5 chunks
 
 
 @pytest.mark.unit
@@ -303,7 +351,7 @@ async def test_embed_node_embedding_metadata_written() -> None:
     from app.modules.content.pipeline.graph import embed_node
 
     sb, jobs, chk, bks = _make_supabase(
-        chunks=[{"chunk_id": FAKE_CHUNK_ID_1, "content": "text"}]
+        chunks=[{"chunk_id": FAKE_CHUNK_ID_1, "content": "text", "chunk_index": 0}]
     )
     provider = _make_provider(embeddings=[_FAKE_EMBEDDING], total_tokens=50)
 
@@ -314,13 +362,12 @@ async def test_embed_node_embedding_metadata_written() -> None:
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
     ):
         # Use a non-default model name to prove the value flows from settings (P11)
-        mock_settings.return_value.embedding_model = "test-model-xyz"
-        mock_settings.return_value.embedding_dimensions = 768
+        _configure_settings(mock_settings, model="test-model-xyz", dimensions=768)
         await embed_node({**_BASE_STATE})
 
-    update_payload = chk.update.call_args[0][0]
-    assert update_payload["embedding"] == _FAKE_EMBEDDING
-    meta = update_payload["embedding_metadata"]
+    rows = chk.upsert.call_args.args[0]
+    assert rows[0]["embedding"] == _FAKE_EMBEDDING
+    meta = rows[0]["embedding_metadata"]
     assert meta["model"] == "test-model-xyz"
     assert meta["dimensions"] == 768
     assert "ingested_at" in meta
@@ -340,7 +387,7 @@ async def test_embed_node_skips_books_update_when_no_book_id() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=AsyncMock()),
     ):
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
+        _configure_settings(mock_settings)
         result = await embed_node({**_BASE_STATE, "book_id": ""})
 
     assert result["embeddings_stored"] is True
@@ -362,8 +409,7 @@ async def test_embed_node_progress_reported() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", mock_progress),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=AsyncMock()),
     ):
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
-        mock_settings.return_value.embedding_dimensions = 1536
+        _configure_settings(mock_settings)
         await embed_node({**_BASE_STATE})
 
     mock_progress.assert_awaited_once()
@@ -375,12 +421,17 @@ async def test_embed_node_progress_reported() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_embed_node_batch_split_2049_chunks() -> None:
-    """2049 chunks split into 2 batches (2048 + 1) — embed_texts called twice (P10)."""
+async def test_embed_node_batch_split_by_token_budget() -> None:
+    """P10 rework (AC-6c): batches packed by token budget, not chunk count —
+    a workload exceeding embed_batch_token_budget splits into multiple API calls."""
     from app.modules.content.pipeline.graph import embed_node
 
-    # 2049 non-empty chunks to force two API calls
-    chunks = [{"chunk_id": f"c{i}", "content": f"text {i}"} for i in range(2049)]
+    # 60k + 50k > 100k budget → c0 alone; 50k + 30k = 80k ≤ 100k → c1+c2 together.
+    chunks = [
+        {"chunk_id": "c0", "content": "big text 0", "chunk_index": 0, "token_count": 60_000},
+        {"chunk_id": "c1", "content": "big text 1", "chunk_index": 0, "token_count": 50_000},
+        {"chunk_id": "c2", "content": "big text 2", "chunk_index": 0, "token_count": 30_000},
+    ]
     sb, jobs, chk, bks = _make_supabase(chunks=chunks)
 
     call_sizes: list[int] = []
@@ -398,14 +449,51 @@ async def test_embed_node_batch_split_2049_chunks() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
     ):
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
-        mock_settings.return_value.embedding_dimensions = 1536
+        _configure_settings(mock_settings, token_budget=100_000)
         result = await embed_node({**_BASE_STATE})
 
     assert result["embeddings_stored"] is True
     assert provider.embed_texts.await_count == 2
-    assert call_sizes == [2048, 1]
-    assert chk.update.call_count == 2049
+    assert call_sizes == [1, 2]
+    # One bulk upsert per batch
+    assert chk.upsert.call_count == 2
+    upserted_ids = [r["chunk_id"] for call in chk.upsert.call_args_list for r in call.args[0]]
+    assert upserted_ids == ["c0", "c1", "c2"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_embed_node_oversized_single_chunk_still_embedded() -> None:
+    """AC-6c edge: a single chunk larger than the whole token budget still forms
+    its own batch (at least 1 chunk per batch) instead of an infinite loop / skip."""
+    from app.modules.content.pipeline.graph import embed_node
+
+    chunks = [
+        {"chunk_id": "huge", "content": "x" * 100, "chunk_index": 0, "token_count": 250_000},
+        {"chunk_id": "tiny", "content": "y", "chunk_index": 0, "token_count": 5},
+    ]
+    sb, jobs, chk, bks = _make_supabase(chunks=chunks)
+
+    call_sizes: list[int] = []
+
+    async def embed_side_effect(texts: list[str]) -> tuple[list[list[float]], int]:
+        call_sizes.append(len(texts))
+        return ([_FAKE_EMBEDDING] * len(texts), 10)
+
+    provider = AsyncMock()
+    provider.embed_texts.side_effect = embed_side_effect
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+        patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
+    ):
+        _configure_settings(mock_settings, token_budget=100_000)
+        result = await embed_node({**_BASE_STATE})
+
+    assert result["embeddings_stored"] is True
+    assert call_sizes == [1, 1]  # huge chunk alone, tiny chunk in the next batch
 
 
 @pytest.mark.unit
@@ -415,7 +503,7 @@ async def test_embed_node_provider_retry_on_429() -> None:
     from app.modules.content.pipeline.graph import embed_node
 
     sb, jobs, chk, bks = _make_supabase(
-        chunks=[{"chunk_id": FAKE_CHUNK_ID_1, "content": "text"}]
+        chunks=[{"chunk_id": FAKE_CHUNK_ID_1, "content": "text", "chunk_index": 0}]
     )
 
     call_count = 0
@@ -436,8 +524,7 @@ async def test_embed_node_provider_retry_on_429() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
     ):
-        mock_settings.return_value.embedding_model = "text-embedding-3-small"
-        mock_settings.return_value.embedding_dimensions = 1536
+        _configure_settings(mock_settings)
         # The retry is implemented inside OpenAIEmbeddingsProvider (@with_retry).
         # In unit tests the provider is mocked, so we simulate retry at the call site:
         # first call raises, second call (same provider mock) succeeds.

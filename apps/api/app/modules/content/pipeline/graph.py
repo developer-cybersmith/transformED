@@ -106,6 +106,22 @@ class PipelineState(TypedDict, total=False):
 # ── Node implementations ──────────────────────────────────────────────────────
 
 
+def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:
+    """AC-5: page-aware timeout for the PDF-extraction subprocess.
+
+    ``page_estimate`` is a byte heuristic (~30 kB/page) that overestimates the
+    page count for text-heavy PDFs — overestimating is safe (longer timeout).
+    The result never exceeds the hard cap nor ``arq_job_timeout_s - 300`` so
+    the subprocess timeout ALWAYS fires before ARQ cancels the whole job.
+    """
+    page_estimate = max(1, pdf_size_bytes // 30_000)
+    return min(
+        settings.extract_timeout_base_s + settings.extract_timeout_per_page_s * page_estimate,
+        float(settings.extract_timeout_cap_s),
+        float(settings.arq_job_timeout_s - 300),
+    )
+
+
 async def extract_node(state: PipelineState) -> PipelineState:
     """Node 1: Extract raw text, font blocks, and images from the source PDF.
 
@@ -117,6 +133,7 @@ async def extract_node(state: PipelineState) -> PipelineState:
     import asyncio
     import json
     import os
+    import signal
     import sys
     import tempfile
 
@@ -170,6 +187,14 @@ async def extract_node(state: PipelineState) -> PipelineState:
         with open(local_pdf, "wb") as fh:
             fh.write(pdf_bytes)
 
+        # AC-5: settings-driven, page-aware timeout (replaces the fixed 600 s).
+        extract_timeout = _compute_extract_timeout(len(pdf_bytes), settings)
+
+        # start_new_session=True puts the child in its own process group so a
+        # single killpg reaps it AND any grandchildren (tesseract, docling).
+        spawn_kwargs: dict[str, Any] = (
+            {"start_new_session": True} if sys.platform != "win32" else {}
+        )
         proc = await asyncio.create_subprocess_exec(  # noqa: S603
             sys.executable,
             "-m", "app.modules.content.pipeline.nodes.extract_subprocess",
@@ -178,17 +203,32 @@ async def extract_node(state: PipelineState) -> PipelineState:
             str(settings.ocr_text_yield_threshold),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **spawn_kwargs,
         )
-        # P2: 600-second hard limit — prevents scanned PDFs / Tesseract from
-        # blocking an ARQ worker coroutine indefinitely.
+        # AC-5: cleanup lives in try/finally — an except-TimeoutError block
+        # never runs when ARQ cancels the job (CancelledError), which is how
+        # 4 GB tesseract orphans survived. finally reaps the child on EVERY
+        # exit path: success, timeout, and cancellation.
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()  # reap child so event loop releases pipe FDs
-            raise RuntimeError(
-                f"PDF extraction timed out after 600s for lesson_id={lesson_id}"
-            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=extract_timeout
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"PDF extraction timed out after {extract_timeout:.0f}s "
+                    f"for lesson_id={lesson_id}"
+                ) from None
+        finally:
+            if proc.returncode is None:
+                try:
+                    if sys.platform != "win32":
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    else:
+                        proc.kill()
+                except ProcessLookupError:
+                    pass  # child already dead — nothing to reap
+                await proc.wait()  # reap child so event loop releases pipe FDs
 
         if proc.returncode != 0:
             raise RuntimeError(
@@ -332,8 +372,20 @@ async def structure_node(state: PipelineState) -> PipelineState:
             model=settings.llm_mini,
             response_format=DocumentStructure,
         )
-        sections_list = [s.model_dump() for s in result.sections]
-        logger.info("[%s] structure_node: LLM produced %d sections", lesson_id, len(sections_list))
+        # AC-4 data-loss guard: the prompt only shows the LLM the first 6000
+        # chars of raw_text, so its sections can silently drop everything past
+        # that window. Only adopt the LLM output when its bodies cover ≥ 90%
+        # of the full raw text; otherwise keep the rule-based sections.
+        llm_total = sum(len(s.body or "") for s in result.sections)
+        if llm_total < 0.9 * len(raw_text):
+            logger.warning(
+                "[%s] structure_node: LLM sections cover %d/%d chars (< 90%%) — "
+                "rejecting LLM output, keeping rule-based sections",
+                lesson_id, llm_total, len(raw_text),
+            )
+        else:
+            sections_list = [s.model_dump() for s in result.sections]
+            logger.info("[%s] structure_node: LLM produced %d sections", lesson_id, len(sections_list))
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] structure_node: LLM validation failed — using rule-based fallback",
@@ -470,13 +522,17 @@ async def embed_node(state: PipelineState) -> PipelineState:
     """Node 4: Generate vector embeddings for all chunks and store in pgvector.
 
     Reads chapter_id from the chunk_node checkpoint, queries chunks with
-    embedding IS NULL, batches them (≤2048 per OpenAI call), writes the
-    1536-dim vectors back to chunks.embedding, marks books.status='ready',
-    and writes its own checkpoint.
+    embedding IS NULL (paginated past PostgREST's 1000-row cap), filters
+    empty-content chunks ONCE (so embeddings can never misalign with rows),
+    batches by token budget (settings.embed_batch_token_budget — OpenAI's
+    request cap is 300k tokens), bulk-upserts the 1536-dim vectors back to
+    chunks.embedding, verifies nothing embeddable is left NULL, marks
+    books.status='ready', and writes its own checkpoint.
 
     Embeddings are generated ONCE at ingestion — never regenerated for stored
     content (CLAUDE.md rule). The `embedding IS NULL` filter makes retries safe.
     """
+    import asyncio
     from datetime import datetime, timezone
 
     from app.config import get_settings
@@ -517,19 +573,43 @@ async def embed_node(state: PipelineState) -> PipelineState:
         )
 
     # ── Query chunks that still need embeddings ───────────────────────────────
-    chunks_resp = (
-        supabase.table("chunks")
-        .select("chunk_id, content")
-        .eq("chapter_id", chapter_id)
-        .is_("embedding", "null")
-        .order("chunk_index")
-        .execute()
-    )
-    chunks: list[dict[str, Any]] = chunks_resp.data or []
+    # AC-6(b): paginate with .range() — PostgREST silently caps a select at
+    # 1000 rows, so books > 1000 chunks would otherwise be half-embedded then
+    # checkpointed as complete.
+    _PAGE_SIZE = 1000
 
-    if chunks:
+    def _fetch_unembedded_chunks() -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            page_resp = (
+                supabase.table("chunks")
+                .select("chunk_id, content, token_count, chunk_index")
+                .eq("chapter_id", chapter_id)
+                .is_("embedding", "null")
+                .order("chunk_index")
+                .range(offset, offset + _PAGE_SIZE - 1)
+                .execute()
+            )
+            page: list[dict[str, Any]] = page_resp.data or []
+            rows.extend(page)
+            if len(page) < _PAGE_SIZE:
+                return rows
+            offset += _PAGE_SIZE
+
+    chunks: list[dict[str, Any]] = _fetch_unembedded_chunks()
+
+    # AC-6(a): filter empty-content chunks ONCE — the SAME list feeds both
+    # embed_texts and the writeback pairing, so misalignment is impossible.
+    embeddable = [c for c in chunks if (c.get("content") or "").strip()]
+    if len(embeddable) < len(chunks):
+        logger.info(
+            "[%s] embed_node: skipping %d empty-content chunks (embedding stays NULL)",
+            lesson_id, len(chunks) - len(embeddable),
+        )
+
+    if embeddable:
         provider = OpenAIEmbeddingsProvider(lesson_id=lesson_id)
-        _BATCH_SIZE = 2048
         total_tokens = 0
         batch_count = 0
         ingested_at = datetime.now(tz=timezone.utc).isoformat()
@@ -539,39 +619,80 @@ async def embed_node(state: PipelineState) -> PipelineState:
             "ingested_at": ingested_at,
         }
 
-        for i in range(0, len(chunks), _BATCH_SIZE):
-            batch = chunks[i : i + _BATCH_SIZE]
-            texts = [c["content"] for c in batch if c.get("content", "").strip()]
+        # AC-6(c): pack consecutive chunks by token budget — a fixed 2048-chunk
+        # batch can exceed OpenAI's 300k-token request cap.
+        budget: int = settings.embed_batch_token_budget
+        batches: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        current_tokens = 0
+        for c in embeddable:
+            est = c.get("token_count") or max(1, len(c["content"]) // 4)
+            if current and current_tokens + est > budget:
+                batches.append(current)
+                current = []
+                current_tokens = 0
+            current.append(c)  # at least 1 chunk per batch, even if est > budget
+            current_tokens += est
+        if current:
+            batches.append(current)
 
+        for batch_idx, batch in enumerate(batches):
+            texts = [c["content"] for c in batch]
             embeddings, batch_tokens = await provider.embed_texts(texts)
             if len(embeddings) != len(texts):
                 raise RuntimeError(
                     f"embed_node: OpenAI returned {len(embeddings)} embeddings for "
-                    f"{len(texts)} texts in lesson_id={lesson_id} — batch index {i}"
+                    f"{len(texts)} texts in lesson_id={lesson_id} — batch index {batch_idx}"
                 )
             total_tokens += batch_tokens
             batch_count += 1
 
-            for chunk, embedding in zip(batch, embeddings):
-                try:
-                    supabase.table("chunks").update({
-                        "embedding": embedding,
-                        "embedding_metadata": metadata,
-                    }).eq("chunk_id", chunk["chunk_id"]).execute()
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"embed_node: failed to write embedding for chunk_id={chunk['chunk_id']} "
-                        f"lesson_id={lesson_id}"
-                    ) from exc
+            # AC-6(d): ONE bulk upsert per batch instead of per-chunk round-trips.
+            # The upsert MUST echo chapter_id/content/chunk_index: Postgres
+            # validates NOT NULL on the candidate tuple BEFORE ON CONFLICT
+            # arbitration, so omitting them fails with 23502 even though every
+            # chunk_id already exists and only the UPDATE arm would run.
+            rows = [
+                {
+                    "chunk_id": c["chunk_id"],
+                    "chapter_id": chapter_id,
+                    "content": c["content"],
+                    "chunk_index": c["chunk_index"],
+                    "embedding": embedding,
+                    "embedding_metadata": metadata,
+                }
+                for c, embedding in zip(batch, embeddings)
+            ]
+            try:
+                await asyncio.to_thread(
+                    lambda rows=rows: supabase.table("chunks")
+                    .upsert(rows, on_conflict="chunk_id")
+                    .execute()
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"embed_node: failed to bulk-write {len(rows)} embeddings "
+                    f"(batch index {batch_idx}) for lesson_id={lesson_id}"
+                ) from exc
 
         logger.info(
             "[%s] embed_node: embedded %d chunks in %d batches (%d tokens total)",
-            lesson_id, len(chunks), batch_count, total_tokens,
+            lesson_id, len(embeddable), batch_count, total_tokens,
         )
     else:
         logger.info(
             "[%s] embed_node: no unembedded chunks found for chapter_id=%s (all already done)",
             lesson_id, chapter_id,
+        )
+
+    # ── Completion check (AC-6b): never checkpoint a half-embedded book ───────
+    remaining = [
+        c for c in _fetch_unembedded_chunks() if (c.get("content") or "").strip()
+    ]
+    if remaining:
+        raise RuntimeError(
+            f"embed_node: {len(remaining)} chunks still unembedded after writeback "
+            f"for lesson_id={lesson_id} chapter_id={chapter_id} — refusing to checkpoint"
         )
 
     # ── Mark book as ready ────────────────────────────────────────────────────
@@ -586,7 +707,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
             )
 
     # ── Checkpoint ────────────────────────────────────────────────────────────
-    embed_cache: dict[str, Any] = {"chunk_count": len(chunks), "chapter_id": chapter_id}
+    embed_cache: dict[str, Any] = {"chunk_count": len(embeddable), "chapter_id": chapter_id}
     supabase.table("lesson_jobs").update({
         "last_node": "embed",
         "node_outputs": {**node_outputs, "embed": embed_cache},

@@ -55,6 +55,7 @@ async def get_current_user(
             token,
             settings.supabase_jwt_secret,
             algorithms=["HS256"],
+            audience="authenticated",
             options={"require": ["sub", "exp", "iat"]},
         )
     except jwt.ExpiredSignatureError:

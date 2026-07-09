@@ -83,6 +83,20 @@ def _base_state() -> dict[str, Any]:
     }
 
 
+def _configure_settings(mock_settings: MagicMock) -> None:
+    """Real numeric values for every settings field extract_node touches.
+
+    The AC-5 dynamic timeout does arithmetic + min() on these — MagicMock
+    attributes would produce garbage timeouts, so they must be real numbers.
+    """
+    cfg = mock_settings.return_value
+    cfg.ocr_text_yield_threshold = 50
+    cfg.extract_timeout_base_s = 120
+    cfg.extract_timeout_per_page_s = 1.3
+    cfg.extract_timeout_cap_s = 1500
+    cfg.arq_job_timeout_s = 1800
+
+
 # ── Tests: content_pipeline_job DB query fix ─────────────────────────────────
 
 
@@ -160,7 +174,7 @@ async def test_extract_node_happy_path() -> None:
         patch("asyncio.create_subprocess_exec", exec_mock),
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
-        mock_settings.return_value.ocr_text_yield_threshold = 50
+        _configure_settings(mock_settings)
         result = await extract_node(state)
 
     assert result["raw_text"] == "Chapter 1: Introduction\n\nThis is the text."
@@ -184,7 +198,7 @@ async def test_extract_node_writes_page_count() -> None:
         patch("asyncio.create_subprocess_exec", exec_mock),
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
-        mock_settings.return_value.ocr_text_yield_threshold = 50
+        _configure_settings(mock_settings)
         await extract_node(state)
 
     # books_mock captured via sb.table.side_effect
@@ -210,7 +224,7 @@ async def test_extract_node_writes_checkpoint() -> None:
         patch("asyncio.create_subprocess_exec", exec_mock),
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
-        mock_settings.return_value.ocr_text_yield_threshold = 50
+        _configure_settings(mock_settings)
         await extract_node(state)
 
     jobs_mock = sb.table("lesson_jobs")
@@ -271,7 +285,7 @@ async def test_extract_node_subprocess_failure_raises() -> None:
         patch("asyncio.create_subprocess_exec", failing_exec_mock),
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
-        mock_settings.return_value.ocr_text_yield_threshold = 50
+        _configure_settings(mock_settings)
         with pytest.raises(RuntimeError, match="PDF extraction subprocess failed"):
             await extract_node(state)
 
@@ -306,7 +320,7 @@ async def test_extract_node_uploads_images() -> None:
             patch("asyncio.create_subprocess_exec", exec_mock),
             patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         ):
-            mock_settings.return_value.ocr_text_yield_threshold = 50
+            _configure_settings(mock_settings)
             result = await extract_node(state)
 
         upload_calls = sb.storage.from_.return_value.upload.call_args_list
@@ -320,8 +334,10 @@ async def test_extract_node_uploads_images() -> None:
 
 @pytest.mark.unit
 async def test_extract_node_subprocess_timeout_raises() -> None:
-    """extract_node raises RuntimeError when subprocess exceeds 600-second timeout."""
+    """extract_node raises RuntimeError and reaps the child when the dynamic
+    (settings-driven) timeout fires — cleanup now lives in try/finally (AC-5)."""
     import asyncio as _asyncio
+    import sys as _sys
 
     from app.modules.content.pipeline.graph import extract_node
 
@@ -330,10 +346,11 @@ async def test_extract_node_subprocess_timeout_raises() -> None:
 
     timeout_proc = MagicMock()
     timeout_proc.returncode = None
+    timeout_proc.pid = 4242
     timeout_proc.kill = MagicMock()
     # Plain MagicMock (not AsyncMock) — wait_for is patched to raise before awaiting communicate().
     timeout_proc.communicate = MagicMock()
-    # wait() IS awaited (after kill) so it must be an AsyncMock.
+    # wait() IS awaited (in finally, after the kill) so it must be an AsyncMock.
     timeout_proc.wait = AsyncMock(return_value=None)
     timeout_exec_mock = AsyncMock(return_value=timeout_proc)
 
@@ -345,10 +362,49 @@ async def test_extract_node_subprocess_timeout_raises() -> None:
         patch("app.config.get_settings") as mock_settings,
         patch("asyncio.create_subprocess_exec", timeout_exec_mock),
         patch("asyncio.wait_for", side_effect=_raise_timeout),
+        # create=True: os.getpgid/os.killpg do not exist on Windows — without it
+        # patch() raises AttributeError on the dev platform (win32).
+        patch("os.getpgid", return_value=4242, create=True),
+        patch("os.killpg", create=True) as mock_killpg,
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
-        mock_settings.return_value.ocr_text_yield_threshold = 50
-        with pytest.raises(RuntimeError, match="timed out after 600s"):
+        _configure_settings(mock_settings)
+        with pytest.raises(RuntimeError, match="PDF extraction timed out after"):
             await extract_node(state)
 
-    timeout_proc.kill.assert_called_once()
+    # Child reaped: process-group SIGKILL on posix, proc.kill() on Windows.
+    if _sys.platform != "win32":
+        mock_killpg.assert_called_once()
+        timeout_proc.kill.assert_not_called()
+    else:
+        timeout_proc.kill.assert_called_once()
+    timeout_proc.wait.assert_awaited_once()
+
+
+@pytest.mark.unit
+async def test_extract_node_spawns_child_in_new_session_on_posix() -> None:
+    """AC-5: on posix the subprocess is spawned with start_new_session=True so
+    a single killpg can reap the whole process group (tesseract/docling children)."""
+    import sys as _sys
+
+    from app.modules.content.pipeline.graph import extract_node
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    exec_mock = _make_subprocess_mock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        await extract_node(state)
+
+    exec_mock.assert_awaited_once()
+    spawn_kwargs = exec_mock.await_args.kwargs
+    if _sys.platform != "win32":
+        assert spawn_kwargs.get("start_new_session") is True
+    else:
+        assert "start_new_session" not in spawn_kwargs

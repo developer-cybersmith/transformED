@@ -56,6 +56,17 @@ The Sprint 1 ingestion pipeline passes 87/87 unit tests but cannot run in produc
 - fakeredis (or constant-symmetry) queue round-trip test.
 - Runtime-deps contract test importing every provider module with NO sys.modules stubs (subprocess-isolated so the conftest stub can't mask it).
 
+## Dev Notes — cross-module flags (do not fix here)
+
+- **→ Dev 4 (AC-3 spillover):** `apps/api/app/modules/tutor/state_machine/graph.py:480` still calls the
+  removed langfuse v2 API `get_langfuse().trace(...)`. Its own try/except swallows the AttributeError, so
+  the FSM works but **all tutor dispatch tracing is silently a no-op under langfuse 4.x in production**.
+  `tests/test_tutor_graph.py:615` asserts `.trace` on a MagicMock stub, so the suite gives false confidence.
+  Migrate to `start_observation(...)`/`create_event(...)` in Dev 4's lane (same pattern as
+  `providers/llm/openai.py` after this story).
+- **Storage note:** `avatar-clips` (heygen provider) was code-referenced but unprovisioned — now included in
+  the AC-7 migration and lifespan assertion as of this story.
+
 ## Out of scope (Tier 2/3 — separate stories)
 Page-scoped docling, per-page cache release, image pre-filter, parallel uploads, per-page OCR, checkpoint offload, page-ledger, multiprocessing shards.
 

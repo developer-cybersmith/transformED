@@ -12,6 +12,7 @@ Celery is BANNED per PRD §24 — this job uses ARQ exclusively.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -129,6 +130,27 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         await _update_lesson_status(supabase, lesson_id, "failed", error=error_msg)
         logger.exception("content_pipeline_job FAILED lesson_id=%s", lesson_id)
         raise  # Let ARQ retry
+
+    except asyncio.CancelledError:
+        # ARQ job_timeout or worker shutdown cancelled us — record the failure
+        # so the lesson row never sits in "running" forever (AC-5, Story 2-0).
+        # asyncio.shield lets the status write complete even though this task
+        # is already cancelled; the write itself is best-effort.
+        try:
+            await asyncio.shield(
+                _update_lesson_status(
+                    supabase,
+                    lesson_id,
+                    "failed",
+                    error="job cancelled (ARQ timeout or worker shutdown)",
+                )
+            )
+        except Exception:  # noqa: BLE001 — never mask the cancellation
+            logger.warning(
+                "Failed to record cancellation for lesson_id=%s", lesson_id
+            )
+        logger.warning("content_pipeline_job CANCELLED lesson_id=%s", lesson_id)
+        raise  # Cancellation must always propagate
 
     except Exception as exc:
         error_msg = str(exc)

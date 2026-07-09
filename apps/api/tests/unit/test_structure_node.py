@@ -52,8 +52,13 @@ def _make_supabase_mock(node_outputs: dict | None = None) -> MagicMock:
     return sb
 
 
-def _make_document_structure(n_sections: int = 2) -> Any:
-    """Return a DocumentStructure Pydantic instance for LLM mock responses."""
+def _make_document_structure(n_sections: int = 2, body: str | None = None) -> Any:
+    """Return a DocumentStructure Pydantic instance for LLM mock responses.
+
+    ``body`` (when given) is used verbatim for EVERY section so the mock
+    satisfies the AC-4 data-loss guard (total body chars ≥ 90% of raw_text) —
+    tests exercising LLM-adoption paths must pass the raw text here.
+    """
     from app.schemas import DocumentStructure, SectionBoundary
 
     sections = [
@@ -61,7 +66,7 @@ def _make_document_structure(n_sections: int = 2) -> Any:
             id=f"s{i}",
             title=f"Section {i}",
             level="section" if i > 0 else "chapter",
-            body=f"Body text for section {i}.",
+            body=body if body is not None else f"Body text for section {i}.",
             page_start=max(1, i + 1),
             page_end=max(1, i + 2),
         )
@@ -115,7 +120,8 @@ async def test_structure_node_happy_path() -> None:
 
     state = _base_state()
     sb = _make_supabase_mock(node_outputs={})
-    mock_doc_structure = _make_document_structure(2)
+    # Faithful bodies (full raw_text) so the AC-4 data-loss guard adopts the LLM output.
+    mock_doc_structure = _make_document_structure(2, body=RAW_TEXT_WITH_HEADINGS)
     mock_class, mock_instance, modules_patch = _make_provider_mock(
         complete_result=mock_doc_structure
     )
@@ -246,7 +252,8 @@ async def test_structure_node_writes_checkpoint() -> None:
 
     state = _base_state()
     sb = _make_supabase_mock(node_outputs={})
-    mock_doc_structure = _make_document_structure(1)
+    # Faithful body so the AC-4 guard adopts the LLM output before checkpointing.
+    mock_doc_structure = _make_document_structure(1, body=RAW_TEXT_WITH_HEADINGS)
     mock_class, mock_instance, modules_patch = _make_provider_mock(
         complete_result=mock_doc_structure
     )
