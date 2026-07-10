@@ -1,5 +1,6 @@
 # Story 2-0 — Pipeline Integration Fixes (Tier 1: unblock green E2E)
 
+**Status:** done (5-agent review passed 2026-07-10 — 2 decisions resolved, 21 patches applied, 7 deferred)
 **Sprint:** 2 (pre-work — blocks all Sprint 2 stories)
 **Owner:** Dev 1
 **Branch:** `sprint2/s2-0-pipeline-integration-fixes`
