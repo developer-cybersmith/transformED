@@ -205,6 +205,14 @@ async def test_embed_node_happy_path() -> None:
     assert chk.upsert.call_args.kwargs.get("on_conflict") == "chunk_id"
     assert [r["chunk_id"] for r in rows] == [FAKE_CHUNK_ID_1, FAKE_CHUNK_ID_2]
     assert all(r["embedding"] == _FAKE_EMBEDDING for r in rows)
+    # AC-6d upsert SHAPE: the NOT-NULL echo columns (chapter_id/content/
+    # chunk_index) must be present — Postgres validates NOT NULL on the
+    # candidate tuple BEFORE ON CONFLICT arbitration, so dropping them
+    # fails prod with 23502 even though only the UPDATE arm runs.
+    assert set(rows[0]) >= {
+        "chunk_id", "chapter_id", "content", "chunk_index",
+        "embedding", "embedding_metadata",
+    }
 
     # books.update called with status=ready, keyed on book_id
     bks.update.assert_called_once_with({"status": "ready"})
@@ -371,6 +379,11 @@ async def test_embed_node_embedding_metadata_written() -> None:
     assert meta["model"] == "test-model-xyz"
     assert meta["dimensions"] == 768
     assert "ingested_at" in meta
+    # AC-6d upsert SHAPE: NOT-NULL echo columns must survive (see happy path)
+    assert set(rows[0]) >= {
+        "chunk_id", "chapter_id", "content", "chunk_index",
+        "embedding", "embedding_metadata",
+    }
 
 
 @pytest.mark.unit
@@ -426,11 +439,12 @@ async def test_embed_node_batch_split_by_token_budget() -> None:
     a workload exceeding embed_batch_token_budget splits into multiple API calls."""
     from app.modules.content.pipeline.graph import embed_node
 
-    # 60k + 50k > 100k budget → c0 alone; 50k + 30k = 80k ≤ 100k → c1+c2 together.
+    # Sizes stay under the 8000-token per-input cap so only the BUDGET drives
+    # the split: 6k + 5k > 10k budget → c0 alone; 5k + 3k = 8k ≤ 10k → c1+c2.
     chunks = [
-        {"chunk_id": "c0", "content": "big text 0", "chunk_index": 0, "token_count": 60_000},
-        {"chunk_id": "c1", "content": "big text 1", "chunk_index": 0, "token_count": 50_000},
-        {"chunk_id": "c2", "content": "big text 2", "chunk_index": 0, "token_count": 30_000},
+        {"chunk_id": "c0", "content": "big text 0", "chunk_index": 0, "token_count": 6_000},
+        {"chunk_id": "c1", "content": "big text 1", "chunk_index": 0, "token_count": 5_000},
+        {"chunk_id": "c2", "content": "big text 2", "chunk_index": 0, "token_count": 3_000},
     ]
     sb, jobs, chk, bks = _make_supabase(chunks=chunks)
 
@@ -449,7 +463,7 @@ async def test_embed_node_batch_split_by_token_budget() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
         patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
     ):
-        _configure_settings(mock_settings, token_budget=100_000)
+        _configure_settings(mock_settings, token_budget=10_000)
         result = await embed_node({**_BASE_STATE})
 
     assert result["embeddings_stored"] is True
@@ -463,14 +477,15 @@ async def test_embed_node_batch_split_by_token_budget() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_embed_node_oversized_single_chunk_still_embedded() -> None:
-    """AC-6c edge: a single chunk larger than the whole token budget still forms
-    its own batch (at least 1 chunk per batch) instead of an infinite loop / skip."""
+async def test_embed_node_batch_split_by_item_count_cap() -> None:
+    """AC-6c: OpenAI rejects requests with more than 2048 inputs regardless of
+    token totals — 2049 tiny chunks (far under the token budget) must split
+    into [2048, 1] batches by ITEM COUNT."""
     from app.modules.content.pipeline.graph import embed_node
 
     chunks = [
-        {"chunk_id": "huge", "content": "x" * 100, "chunk_index": 0, "token_count": 250_000},
-        {"chunk_id": "tiny", "content": "y", "chunk_index": 0, "token_count": 5},
+        {"chunk_id": f"c{i}", "content": f"t{i}", "chunk_index": i, "token_count": 1}
+        for i in range(2049)
     ]
     sb, jobs, chk, bks = _make_supabase(chunks=chunks)
 
@@ -478,7 +493,7 @@ async def test_embed_node_oversized_single_chunk_still_embedded() -> None:
 
     async def embed_side_effect(texts: list[str]) -> tuple[list[list[float]], int]:
         call_sizes.append(len(texts))
-        return ([_FAKE_EMBEDDING] * len(texts), 10)
+        return ([_FAKE_EMBEDDING] * len(texts), len(texts))
 
     provider = AsyncMock()
     provider.embed_texts.side_effect = embed_side_effect
@@ -493,7 +508,61 @@ async def test_embed_node_oversized_single_chunk_still_embedded() -> None:
         result = await embed_node({**_BASE_STATE})
 
     assert result["embeddings_stored"] is True
-    assert call_sizes == [1, 1]  # huge chunk alone, tiny chunk in the next batch
+    assert call_sizes == [2048, 1]
+    # One bulk upsert per batch; every chunk written exactly once, in order
+    assert chk.upsert.call_count == 2
+    upserted_ids = [r["chunk_id"] for call in chk.upsert.call_args_list for r in call.args[0]]
+    assert upserted_ids == [f"c{i}" for i in range(2049)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_embed_node_oversized_single_chunk_truncates_api_input() -> None:
+    """AC-6c edge: a chunk estimated over the ~8191-token per-input cap must
+    NOT be shipped whole (the API 400s the entire batch) and must NOT loop
+    forever — the API input is truncated to _MAX_EMBED_INPUT_TOKENS * 4 chars
+    while the DB writeback keeps the FULL original content."""
+    from app.modules.content.pipeline.graph import _MAX_EMBED_INPUT_TOKENS, embed_node
+
+    full_text = "x" * 50_000
+    chunks = [
+        {"chunk_id": "huge", "content": full_text, "chunk_index": 0, "token_count": 250_000},
+        {"chunk_id": "tiny", "content": "y", "chunk_index": 1, "token_count": 5},
+    ]
+    sb, jobs, chk, bks = _make_supabase(chunks=chunks)
+
+    sent_texts: list[list[str]] = []
+
+    async def embed_side_effect(texts: list[str]) -> tuple[list[list[float]], int]:
+        sent_texts.append(list(texts))
+        return ([_FAKE_EMBEDDING] * len(texts), 10)
+
+    provider = AsyncMock()
+    provider.embed_texts.side_effect = embed_side_effect
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+        patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider),
+    ):
+        _configure_settings(mock_settings, token_budget=100_000)
+        result = await embed_node({**_BASE_STATE})
+
+    # Node completed (no infinite loop) and embedded everything in one call:
+    # huge's estimate is clamped to the per-input cap, so huge + tiny fit
+    # inside the 100k budget together.
+    assert result["embeddings_stored"] is True
+    assert provider.embed_texts.await_count == 1
+    assert sent_texts[0][0] == "x" * (_MAX_EMBED_INPUT_TOKENS * 4)  # truncated
+    assert sent_texts[0][1] == "y"
+
+    # DB writeback carries the FULL original content — only the API input
+    # was truncated, chunks.content is never modified.
+    rows = {r["chunk_id"]: r for r in chk.upsert.call_args.args[0]}
+    assert rows["huge"]["content"] == full_text
+    assert rows["huge"]["embedding"] == _FAKE_EMBEDDING
+    assert rows["tiny"]["content"] == "y"
 
 
 @pytest.mark.unit

@@ -240,6 +240,122 @@ async def test_structure_guard_adopts_faithful_llm_output() -> None:
     assert sections[0]["body"] + sections[1]["body"] == LARGE_RAW_TEXT
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("raw_text", ["", "   \n\t  "])
+async def test_structure_guard_empty_raw_text_skips_llm_keeps_rule_based(
+    raw_text: str,
+) -> None:
+    """Review hardening: with empty/whitespace raw_text the < 90% length proxy
+    is vacuously false (llm_total < 0 never holds), so hallucinated LLM
+    sections would be adopted. The node must skip the LLM ENTIRELY and keep
+    the rule-based fallback section."""
+    from app.modules.content.pipeline.graph import structure_node
+
+    state = {
+        "lesson_id": FAKE_LESSON_ID,
+        "book_id": FAKE_BOOK_ID,
+        "raw_text": raw_text,
+        "font_blocks": [],
+        "progress_pct": 7.0,
+        "error": None,
+    }
+    sb = MagicMock()
+    sb.table.return_value = _make_jobs_table({})
+    # A hallucinating LLM would return non-empty sections for empty input
+    llm_result = _make_llm_sections(["hallucinated body that came from nowhere."])
+    instance = MagicMock()
+    instance.complete_structured = AsyncMock(return_value=llm_result)
+    fake_module = MagicMock()
+    fake_module.OpenAILLMProvider = MagicMock(return_value=instance)
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch.dict("sys.modules", {"app.providers.llm.openai": fake_module}),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        result = await structure_node(state)
+
+    # LLM never called — no tokens burned, no hallucination window
+    instance.complete_structured.assert_not_awaited()
+    # Rule-based fallback for headingless input: 1 chapter-level "Document" section
+    sections = result["sections"]
+    assert len(sections) == 1
+    assert sections[0]["title"] == "Document"
+    assert not any(s["title"].startswith("LLM Section") for s in sections)
+
+
+@pytest.mark.unit
+async def test_structure_guard_adopts_llm_output_at_exact_90_percent_boundary() -> None:
+    """Boundary pin: the guard rejects on STRICT less-than — LLM bodies
+    totalling EXACTLY 0.9 × len(raw_text) are adopted."""
+    from app.modules.content.pipeline.graph import structure_node
+
+    state = {
+        "lesson_id": FAKE_LESSON_ID,
+        "book_id": FAKE_BOOK_ID,
+        "raw_text": LARGE_RAW_TEXT,
+        "font_blocks": [],
+        "progress_pct": 7.0,
+        "error": None,
+    }
+    sb = MagicMock()
+    sb.table.return_value = _make_jobs_table({})
+    boundary_len = int(0.9 * len(LARGE_RAW_TEXT))
+    assert boundary_len == 0.9 * len(LARGE_RAW_TEXT), "fixture must hit the boundary exactly"
+    llm_result = _make_llm_sections([LARGE_RAW_TEXT[:boundary_len]])
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch.dict("sys.modules", _make_llm_provider_patch(llm_result)),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        result = await structure_node(state)
+
+    sections = result["sections"]
+    assert [s["title"] for s in sections] == ["LLM Section 0"]
+    assert len(sections[0]["body"]) == boundary_len
+
+
+@pytest.mark.unit
+async def test_structure_guard_duplicated_bodies_pass_length_proxy() -> None:
+    """Pinning test — KNOWN LIMITATION (Tier-3 #18): the AC-4 guard is a pure
+    LENGTH proxy. LLM output that duplicates the first half of raw_text twice
+    totals 100% of len(raw_text) while actually covering only 50% of the
+    content, and IS adopted. Fixing this needs content-aware coverage
+    (boundary-only structure LLM) — out of scope for Story 2-0."""
+    from app.modules.content.pipeline.graph import structure_node
+
+    state = {
+        "lesson_id": FAKE_LESSON_ID,
+        "book_id": FAKE_BOOK_ID,
+        "raw_text": LARGE_RAW_TEXT,
+        "font_blocks": [],
+        "progress_pct": 7.0,
+        "error": None,
+    }
+    sb = MagicMock()
+    sb.table.return_value = _make_jobs_table({})
+    half = len(LARGE_RAW_TEXT) // 2
+    # Same first half twice: length sums to len(raw_text), content covers half.
+    llm_result = _make_llm_sections([LARGE_RAW_TEXT[:half], LARGE_RAW_TEXT[:half]])
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch.dict("sys.modules", _make_llm_provider_patch(llm_result)),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        result = await structure_node(state)
+
+    # Documents (does not endorse) current behavior: duplicated bodies adopted.
+    assert [s["title"] for s in result["sections"]] == ["LLM Section 0", "LLM Section 1"]
+
+
 # ── AC-5: extract timeout formula ─────────────────────────────────────────────
 
 
@@ -269,6 +385,46 @@ def test_extract_timeout_always_fires_before_arq_cancels() -> None:
     s = _timeout_settings()
     for size in (0, 1, 30_000, 10**6, 10**7, 10**9, 10**12):
         assert _compute_extract_timeout(size, s) <= s.arq_job_timeout_s - 300
+
+
+@pytest.mark.unit
+def test_extract_timeout_never_below_one_second() -> None:
+    """Review hardening: a pathological env override (arq_job_timeout_s <= 300)
+    used to yield a 0/negative wait_for timeout. The result is clamped to >= 1s
+    for ANY input."""
+    from app.modules.content.pipeline.graph import _compute_extract_timeout
+
+    for arq_timeout in (300, 200, 100, 1):
+        for size in (0, 1, 30_000, 10**9):
+            timeout = _compute_extract_timeout(size, _timeout_settings(arq_job_timeout_s=arq_timeout))
+            assert timeout >= 1.0
+    # And the clamp floors exactly at 1.0 when arq − 300 goes non-positive
+    assert _compute_extract_timeout(10**9, _timeout_settings(arq_job_timeout_s=300)) == 1.0
+
+
+@pytest.mark.unit
+def test_settings_rejects_arq_timeout_below_extract_cap_plus_300() -> None:
+    """Review hardening: the AC-5 invariant (arq_job_timeout_s >=
+    extract_timeout_cap_s + 300) is now enforced at Settings construction —
+    a misconfigured env fails fast instead of silently orphaning extract
+    subprocesses. Required fields come from the conftest env stubs."""
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    with pytest.raises(ValidationError, match="arq_job_timeout_s"):
+        Settings(arq_job_timeout_s=600, extract_timeout_cap_s=1500)
+
+
+@pytest.mark.unit
+def test_settings_accepts_arq_timeout_at_exact_invariant_boundary() -> None:
+    """arq_job_timeout_s == extract_timeout_cap_s + 300 exactly is valid
+    (the invariant is >=, not >)."""
+    from app.config import Settings
+
+    s = Settings(arq_job_timeout_s=1800, extract_timeout_cap_s=1500)
+    assert s.arq_job_timeout_s == 1800
+    assert s.extract_timeout_cap_s == 1500
 
 
 # ── AC-5: orphan-proof cleanup on cancellation ────────────────────────────────

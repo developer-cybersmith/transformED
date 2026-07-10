@@ -33,7 +33,9 @@ def _safe_trace(call: Callable[[], Any]) -> Any | None:
     try:
         return call()
     except Exception:
-        logger.debug("Langfuse tracing call failed — ignored", exc_info=True)
+        # WARNING (not DEBUG): an observability outage must be visible in prod
+        # logs even though it never fails the pipeline.
+        logger.warning("Langfuse tracing call failed — ignored, pipeline continues", exc_info=True)
         return None
 
 
@@ -44,7 +46,16 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         settings = get_settings()
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
         self._model = settings.embedding_model
-        self._langfuse = get_langfuse()
+        # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to
+        # no-tracing, never crash the provider mid-job.
+        try:
+            self._langfuse = get_langfuse()
+        except Exception:
+            logger.warning(
+                "Langfuse init failed — tracing disabled for OpenAIEmbeddingsProvider",
+                exc_info=True,
+            )
+            self._langfuse = None
         self._lesson_id = lesson_id
 
     @with_retry(max_attempts=3)
@@ -70,19 +81,22 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
 
         # Langfuse 4.x (OTel-based): one generation-type observation per call.
         # Tracing is best-effort — the OpenAI call must never fail because of it.
-        generation = _safe_trace(
-            lambda: self._langfuse.start_observation(
-                name="openai.embeddings",
-                as_type="generation",
-                model=self._model,
-                input=f"{len(texts)} texts",
-                metadata={
-                    "model": self._model,
-                    "batch_size": len(texts),
-                    "lesson_id": self._lesson_id,
-                },
+        # self._langfuse is None when init failed (AC-3) — skip tracing entirely.
+        generation = None
+        if self._langfuse is not None:
+            generation = _safe_trace(
+                lambda: self._langfuse.start_observation(
+                    name="openai.embeddings",
+                    as_type="generation",
+                    model=self._model,
+                    input=f"{len(texts)} texts",
+                    metadata={
+                        "model": self._model,
+                        "batch_size": len(texts),
+                        "lesson_id": self._lesson_id,
+                    },
+                )
             )
-        )
 
         try:
             response = await self._client.embeddings.create(

@@ -275,3 +275,13 @@ And expose a distinct client status string if the frontend needs to differentiat
 - **W10 — `_BATCH_SIZE = 2048` magic number** [`graph.py`] — add `embedding_batch_size: int` to Settings in Sprint 2 cleanup.
 - **W11 — `_EMBED_COST_PER_1K_USD = 0.00002` hardcoded pricing** [`openai.py`] — add `embedding_cost_per_1k_tokens: float` to Settings in Sprint 2.
 - **W12 — `openai.py` filename shadows `openai` pip package** [`providers/embeddings/openai.py`] — rename to `openai_provider.py` in Sprint 2; caused sys.modules stub workaround in tests.
+
+## Deferred from: code review of 2-0-pipeline-integration-fixes (2026-07-10)
+
+- Upsert TOCTOU in embed writeback can resurrect deleted rows / clobber newer content — switch to UPDATE-only writeback via RPC (needs new migration). Tier-2/3.
+- Extract subprocess stdout fully buffered with no size cap — OOM amplification window grew with the 1500s timeout. Tier-3 #16 (checkpoint/artifact offload to Storage).
+- win32 kill path orphans grandchildren (proc.kill() only reaps direct child; no Job Object / taskkill /T). Dev-platform-only; prod is Linux.
+- JWT issuer + role claims unverified (audience now checked) — defense-in-depth hardening; requires coordinated change to token minting in tests/E2E.
+- embed_node concurrent-run duplicate OpenAI spend + offset-pagination race under concurrent writers — Tier-2 #15 Redis extraction/embed concurrency gate + keyset pagination.
+- lesson_package computed and returned but persisted nowhere until package_builder (S2-11) writes lessons.content — ARQ result key retains it for 24h only.
+- AC-4 structure guard is a length proxy — duplicated/padded LLM bodies can pass at ≥90% while dropping real content. Tier-3 #18 (boundary-only structure LLM with slice-from-source bodies).

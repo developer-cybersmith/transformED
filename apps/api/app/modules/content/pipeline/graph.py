@@ -113,12 +113,17 @@ def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:
     page count for text-heavy PDFs — overestimating is safe (longer timeout).
     The result never exceeds the hard cap nor ``arq_job_timeout_s - 300`` so
     the subprocess timeout ALWAYS fires before ARQ cancels the whole job.
+    Clamped to >= 1s: Settings validates the invariant, but this function also
+    receives ad-hoc settings objects — a 0/negative wait_for must be impossible.
     """
     page_estimate = max(1, pdf_size_bytes // 30_000)
-    return min(
-        settings.extract_timeout_base_s + settings.extract_timeout_per_page_s * page_estimate,
-        float(settings.extract_timeout_cap_s),
-        float(settings.arq_job_timeout_s - 300),
+    return max(
+        1.0,
+        min(
+            settings.extract_timeout_base_s + settings.extract_timeout_per_page_s * page_estimate,
+            float(settings.extract_timeout_cap_s),
+            float(settings.arq_job_timeout_s - 300),
+        ),
     )
 
 
@@ -228,7 +233,10 @@ async def extract_node(state: PipelineState) -> PipelineState:
                         proc.kill()
                 except ProcessLookupError:
                     pass  # child already dead — nothing to reap
-                await proc.wait()  # reap child so event loop releases pipe FDs
+                # shield: the kill above is sync and already happened; a second
+                # cancellation arriving here must not interrupt the reap, or
+                # the zombie holds pipe FDs until the worker exits.
+                await asyncio.shield(proc.wait())  # reap child so event loop releases pipe FDs
 
         if proc.returncode != 0:
             raise RuntimeError(
@@ -361,36 +369,48 @@ async def structure_node(state: PipelineState) -> PipelineState:
 
     # ── LLM validation ────────────────────────────────────────────────────────
     sections_list = rule_sections
-    try:
-        provider = OpenAILLMProvider(lesson_id=lesson_id)
-        messages = [
-            {"role": "system", "content": _STRUCTURE_SYSTEM_PROMPT},
-            {"role": "user", "content": _build_structure_prompt(raw_text, candidates)},
-        ]
-        result: DocumentStructure = await provider.complete_structured(
-            messages=messages,
-            model=settings.llm_mini,
-            response_format=DocumentStructure,
-        )
-        # AC-4 data-loss guard: the prompt only shows the LLM the first 6000
-        # chars of raw_text, so its sections can silently drop everything past
-        # that window. Only adopt the LLM output when its bodies cover ≥ 90%
-        # of the full raw text; otherwise keep the rule-based sections.
-        llm_total = sum(len(s.body or "") for s in result.sections)
-        if llm_total < 0.9 * len(raw_text):
-            logger.warning(
-                "[%s] structure_node: LLM sections cover %d/%d chars (< 90%%) — "
-                "rejecting LLM output, keeping rule-based sections",
-                lesson_id, llm_total, len(raw_text),
-            )
-        else:
-            sections_list = [s.model_dump() for s in result.sections]
-            logger.info("[%s] structure_node: LLM produced %d sections", lesson_id, len(sections_list))
-    except Exception:  # noqa: BLE001
+    # AC-4 hardening: with empty/whitespace raw_text the < 90% length proxy
+    # below is vacuously false (llm_total < 0 never holds), so hallucinated
+    # LLM sections would be adopted. Skip the LLM entirely — rule-based wins.
+    if not raw_text.strip():
         logger.warning(
-            "[%s] structure_node: LLM validation failed — using rule-based fallback",
+            "[%s] structure_node: raw_text is empty — skipping LLM validation, "
+            "keeping rule-based sections",
             lesson_id,
         )
+    else:
+        try:
+            provider = OpenAILLMProvider(lesson_id=lesson_id)
+            messages = [
+                {"role": "system", "content": _STRUCTURE_SYSTEM_PROMPT},
+                {"role": "user", "content": _build_structure_prompt(raw_text, candidates)},
+            ]
+            result: DocumentStructure = await provider.complete_structured(
+                messages=messages,
+                model=settings.llm_mini,
+                response_format=DocumentStructure,
+            )
+            # AC-4 data-loss guard: the prompt only shows the LLM the first 6000
+            # chars of raw_text, so its sections can silently drop everything past
+            # that window. Only adopt the LLM output when its bodies cover ≥ 90%
+            # of the full raw text; otherwise keep the rule-based sections.
+            # Known limitation (Tier-3 #18): a pure length proxy — duplicated or
+            # padded bodies totalling ≥ 90% of len(raw_text) still pass.
+            llm_total = sum(len(s.body or "") for s in result.sections)
+            if llm_total < 0.9 * len(raw_text):
+                logger.warning(
+                    "[%s] structure_node: LLM sections cover %d/%d chars (< 90%%) — "
+                    "rejecting LLM output, keeping rule-based sections",
+                    lesson_id, llm_total, len(raw_text),
+                )
+            else:
+                sections_list = [s.model_dump() for s in result.sections]
+                logger.info("[%s] structure_node: LLM produced %d sections", lesson_id, len(sections_list))
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[%s] structure_node: LLM validation failed — using rule-based fallback",
+                lesson_id,
+            )
 
     # ── Write checkpoint to lesson_jobs ───────────────────────────────────────
     structure_cache: dict[str, Any] = {"sections": sections_list}
@@ -518,6 +538,13 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     return {**state, "chunks": chunks, "progress_pct": 20.0}
 
 
+# OpenAI embeddings API hard limits (text-embedding-3-small):
+#   - max 2048 inputs per request (array limit) — a larger array 400s outright
+#   - ~8191 tokens per single input — one oversized input 400s the WHOLE batch
+_MAX_EMBED_BATCH_ITEMS = 2048
+_MAX_EMBED_INPUT_TOKENS = 8000  # safety margin under the ~8191-token model cap
+
+
 async def embed_node(state: PipelineState) -> PipelineState:
     """Node 4: Generate vector embeddings for all chunks and store in pgvector.
 
@@ -597,7 +624,8 @@ async def embed_node(state: PipelineState) -> PipelineState:
                 return rows
             offset += _PAGE_SIZE
 
-    chunks: list[dict[str, Any]] = _fetch_unembedded_chunks()
+    # Sync PostgREST round-trips must not block the ARQ event loop.
+    chunks: list[dict[str, Any]] = await asyncio.to_thread(_fetch_unembedded_chunks)
 
     # AC-6(a): filter empty-content chunks ONCE — the SAME list feeds both
     # embed_texts and the writeback pairing, so misalignment is impossible.
@@ -619,25 +647,42 @@ async def embed_node(state: PipelineState) -> PipelineState:
             "ingested_at": ingested_at,
         }
 
-        # AC-6(c): pack consecutive chunks by token budget — a fixed 2048-chunk
-        # batch can exceed OpenAI's 300k-token request cap.
+        # AC-6(c): pack consecutive chunks by token budget AND item count — a
+        # fixed 2048-chunk batch can exceed OpenAI's 300k-token request cap,
+        # and any request over _MAX_EMBED_BATCH_ITEMS inputs is rejected (400).
+        # Each batch entry is (chunk_row, api_text): a single chunk estimated
+        # over _MAX_EMBED_INPUT_TOKENS has ONLY its API input truncated —
+        # chunks.content in the DB is never modified.
         budget: int = settings.embed_batch_token_budget
-        batches: list[list[dict[str, Any]]] = []
-        current: list[dict[str, Any]] = []
+        batches: list[list[tuple[dict[str, Any], str]]] = []
+        current: list[tuple[dict[str, Any], str]] = []
         current_tokens = 0
         for c in embeddable:
-            est = c.get("token_count") or max(1, len(c["content"]) // 4)
-            if current and current_tokens + est > budget:
+            text: str = c["content"]
+            est = c.get("token_count") or max(1, len(text) // 4)
+            if est > _MAX_EMBED_INPUT_TOKENS:
+                logger.warning(
+                    "[%s] embed_node: chunk %s est %d tokens exceeds the "
+                    "%d-token per-input cap — truncating the API input "
+                    "(DB content unchanged)",
+                    lesson_id, c.get("chunk_id"), est, _MAX_EMBED_INPUT_TOKENS,
+                )
+                text = text[: _MAX_EMBED_INPUT_TOKENS * 4]  # ~4 chars/token
+                est = _MAX_EMBED_INPUT_TOKENS
+            if current and (
+                current_tokens + est > budget
+                or len(current) >= _MAX_EMBED_BATCH_ITEMS
+            ):
                 batches.append(current)
                 current = []
                 current_tokens = 0
-            current.append(c)  # at least 1 chunk per batch, even if est > budget
+            current.append((c, text))  # at least 1 chunk per batch, even if est > budget
             current_tokens += est
         if current:
             batches.append(current)
 
         for batch_idx, batch in enumerate(batches):
-            texts = [c["content"] for c in batch]
+            texts = [text for _, text in batch]
             embeddings, batch_tokens = await provider.embed_texts(texts)
             if len(embeddings) != len(texts):
                 raise RuntimeError(
@@ -656,12 +701,12 @@ async def embed_node(state: PipelineState) -> PipelineState:
                 {
                     "chunk_id": c["chunk_id"],
                     "chapter_id": chapter_id,
-                    "content": c["content"],
+                    "content": c["content"],  # FULL content, even when API input was truncated
                     "chunk_index": c["chunk_index"],
                     "embedding": embedding,
                     "embedding_metadata": metadata,
                 }
-                for c, embedding in zip(batch, embeddings)
+                for (c, _), embedding in zip(batch, embeddings)
             ]
             try:
                 await asyncio.to_thread(
@@ -687,7 +732,9 @@ async def embed_node(state: PipelineState) -> PipelineState:
 
     # ── Completion check (AC-6b): never checkpoint a half-embedded book ───────
     remaining = [
-        c for c in _fetch_unembedded_chunks() if (c.get("content") or "").strip()
+        c
+        for c in await asyncio.to_thread(_fetch_unembedded_chunks)
+        if (c.get("content") or "").strip()
     ]
     if remaining:
         raise RuntimeError(

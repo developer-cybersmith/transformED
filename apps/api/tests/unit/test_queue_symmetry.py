@@ -9,6 +9,7 @@ never silently drift again.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -64,16 +65,32 @@ def test_enqueue_pool_uses_pipeline_queue() -> None:
     assert "from app.core.queues import PIPELINE_QUEUE" in lifespan_src
 
 
-def test_enqueue_default_matches_worker_queue_via_arq_settings() -> None:
-    """arq-level check without live Redis: constructing ArqRedis with the
-    app's default_queue_name makes .enqueue_job target exactly the key the
-    worker polls (WorkerSettings.queue_name)."""
-    from arq.connections import ArqRedis
+def test_worker_source_references_pipeline_queue() -> None:
+    """Consume side, source-level: WorkerSettings.queue_name must be assigned
+    the shared constant in the source text — mirror of the enqueue-side grep
+    above. A literal like queue_name = "hie:pipeline" would still satisfy the
+    runtime equality test, but drifts silently the moment either side edits
+    the string; this pins the *reference*, not just today's value.
+    """
+    worker_py = Path(__file__).resolve().parents[2] / "app" / "workers" / "main.py"
+    source = worker_py.read_text(encoding="utf-8")
 
-    pool = ArqRedis.__new__(ArqRedis)  # no Redis connection needed
-    pool.default_queue_name = PIPELINE_QUEUE  # what create_pool(...) sets
+    assert "queue_name: str = PIPELINE_QUEUE" in source, (
+        "WorkerSettings.queue_name must reference PIPELINE_QUEUE, "
+        "not duplicate the queue-name literal"
+    )
+    # The constant must come from the single source of truth, not a local copy.
+    assert "from app.core.queues import PIPELINE_QUEUE" in source
 
-    assert pool.default_queue_name == WorkerSettings.queue_name
+
+def test_fakeredis_available_in_ci() -> None:
+    """The round-trip proof below must never silently skip in CI — if the CI
+    env var is set, fakeredis has to be installed."""
+    if os.environ.get("CI"):
+        assert HAS_FAKEREDIS, (
+            "fakeredis is not importable in CI — the AC-1 queue round-trip "
+            "test would silently skip; add fakeredis to the test dependencies"
+        )
 
 
 @pytest.mark.skipif(not HAS_FAKEREDIS, reason="fakeredis not installed")

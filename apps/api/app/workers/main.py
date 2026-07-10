@@ -29,16 +29,22 @@ logger = logging.getLogger(__name__)
 
 async def startup(ctx: dict) -> None:  # type: ignore[type-arg]
     """Initialise shared resources for ARQ worker processes."""
+    import asyncio
+
     from app.core.db import init_supabase
     from app.core.redis import init_redis
+    from app.core.storage import assert_required_buckets
 
     settings = get_settings()
 
     # Initialise Redis connection pool (separate from the arq pool)
     await init_redis(settings.redis_url)
 
-    # Initialise Supabase client
-    init_supabase(settings)
+    # Initialise Supabase client + storage-bucket assertion (AC-7 + D1):
+    # a worker deployed against a missing/public bucket must fail at
+    # startup, not on the first upload mid-pipeline.
+    sb = init_supabase(settings)
+    await asyncio.to_thread(assert_required_buckets, sb)
 
     # Initialise Langfuse singleton so the first pipeline trace isn't delayed
     get_langfuse()

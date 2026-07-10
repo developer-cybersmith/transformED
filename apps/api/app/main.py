@@ -75,26 +75,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("ARQ Redis pool initialised (queue=%s)", PIPELINE_QUEUE)
 
-    # Supabase client + storage-bucket assertion (AC-7, Story 2-0).
+    # Supabase client + storage-bucket assertion (AC-7, Story 2-0 + D1).
     # Buckets are provisioned by migration 20260710000000_storage_buckets.sql;
-    # a missing bucket must fail the deploy here, not the first upload.
+    # a missing or public bucket must fail the deploy here, not the first upload.
     from app.core.db import init_supabase
+    from app.core.storage import assert_required_buckets
 
     sb = init_supabase(settings)
-    required_buckets = {"source-pdfs", "lesson-images", "lesson-audio", "avatar-clips"}
-    try:
-        buckets = await asyncio.to_thread(sb.storage.list_buckets)
-    except Exception as exc:  # fail fast — a broken storage API is a broken deploy
-        raise RuntimeError(f"Could not list Supabase storage buckets: {exc}") from exc
-    existing_buckets = {
-        b.name if hasattr(b, "name") else b["name"] for b in buckets
-    }
-    missing_buckets = required_buckets - existing_buckets
-    if missing_buckets:
-        raise RuntimeError(
-            f"Missing storage buckets: {missing_buckets} — apply migrations"
-        )
-    logger.info("Storage buckets verified: %s", sorted(required_buckets))
+    await asyncio.to_thread(assert_required_buckets, sb)
 
     # lesson_ready pub/sub listener (bridges ARQ worker -> WebSocket clients)
     from app.core.pubsub import start_lesson_ready_listener

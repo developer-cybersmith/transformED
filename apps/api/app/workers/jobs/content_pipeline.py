@@ -27,7 +27,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
     1. Mark lesson_jobs status → "running"
     2. Fetch source PDF path from lesson_jobs table
     3. Run LangGraph pipeline (run_pipeline)
-    4. On success: mark status → "ready", send WebSocket "lesson_ready" event
+    4. On success: mark status → "completed", send WebSocket "lesson_ready" event
     5. On failure: mark status → "failed", log error, re-raise for ARQ retry
 
     Args:
@@ -35,7 +35,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         lesson_id: UUID string of the lesson to process.
 
     Returns:
-        Dict with ``{"lesson_id": ..., "status": "ready", "package_summary": {...}}``
+        Dict with ``{"lesson_id": ..., "status": "completed", "package_summary": {...}}``
         on success.  ARQ stores this as the job result.
 
     Raises:
@@ -117,7 +117,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         logger.info("content_pipeline_job COMPLETE lesson_id=%s", lesson_id)
         return {
             "lesson_id": lesson_id,
-            "status": "ready",
+            "status": "completed",
             "package_summary": {
                 "slides_count": len(lesson_package.get("slides", [])),
                 "quiz_count": len(lesson_package.get("quiz_questions", [])),
@@ -129,9 +129,14 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # RuntimeError includes cost ceiling exceeded — mark as specific status
         error_msg = str(exc)
         if "cost ceiling" in error_msg:
-            await _update_lesson_status(supabase, lesson_id, "cost_limit_exceeded", error=error_msg)
+            # lesson_jobs.status CHECK allows only pending/running/completed/failed —
+            # a 'cost_limit_exceeded' literal is silently rejected and the row sticks
+            # at 'running'. Record 'failed' with a distinguishing error prefix instead.
+            # Full downshift-and-complete cost-ceiling behavior is S2-13.
+            error = f"cost_ceiling_exceeded: {error_msg}"[:2000]
+            await _update_lesson_status(supabase, lesson_id, "failed", error=error)
             logger.warning("content_pipeline_job COST_LIMIT lesson_id=%s: %s", lesson_id, error_msg)
-            return {"lesson_id": lesson_id, "status": "cost_limit_exceeded", "error": error_msg}
+            return {"lesson_id": lesson_id, "status": "failed", "error": error}
 
         await _update_lesson_status(supabase, lesson_id, "failed", error=error_msg)
         logger.exception("content_pipeline_job FAILED lesson_id=%s", lesson_id)
@@ -151,7 +156,10 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
                     error="job cancelled (ARQ timeout or worker shutdown)",
                 )
             )
-        except Exception:  # noqa: BLE001 — never mask the cancellation
+        except BaseException:  # noqa: BLE001 — a re-delivered cancellation is
+            # BaseException, not Exception: a second cancel arriving while the
+            # shielded write runs must not mask the original cancellation (we
+            # still re-raise the outer CancelledError below).
             logger.warning(
                 "Failed to record cancellation for lesson_id=%s", lesson_id
             )

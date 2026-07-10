@@ -190,6 +190,18 @@ class Settings(BaseSettings):
         description="Per-page allowance added to the extraction timeout (seconds/page)",
     )
 
+    @model_validator(mode="after")
+    def _extract_timeout_must_fit_inside_arq_timeout(self) -> "Settings":
+        required = self.extract_timeout_cap_s + 300
+        if self.arq_job_timeout_s < required:
+            raise ValueError(
+                f"arq_job_timeout_s ({self.arq_job_timeout_s}) must be >= "
+                f"extract_timeout_cap_s + 300 ({required}) so the extract "
+                "subprocess timeout fires before ARQ cancels the job. "
+                "Check ARQ_JOB_TIMEOUT_S / EXTRACT_TIMEOUT_CAP_S env vars."
+            )
+        return self
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
