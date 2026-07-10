@@ -103,6 +103,14 @@ excerpt time (206–216 s) exceeded the old formula's 183.7 s grant — live E2E
 Environment note: docling's default OCR engine (rapidocr) is broken in this env; converter is built with
 `do_ocr=False`, which is correct by design — our per-page Tesseract pass owns OCR, docling owns table structure.
 
+**Full-book stress run (2026-07-10, lesson b141427f, beyond-AC bonus):** the complete 1,120-page /
+46.7 MB source book uploaded through the full stack → `completed` in **66 min** with **1,379/1,379 chunks
+embedded** and `books.status='ready'`, zero manual intervention (session env: EXTRACT_TIMEOUT_CAP_S=5400,
+ARQ_JOB_TIMEOUT_S=5700). Exercised at scale: >1000-row embed pagination (1,379 chunks), token-budget
+batching, 545-image upload storm on hardened retry (5 attempts / exp. backoff / concurrency 4 — attempt 1
+at 3 attempts / concurrency 8 failed on storage rate-limiting at image #545), bounded RSS throughout.
+Baseline: unprocessable (orphaned 4 GB subprocess killed at 22 min, job stuck 'running' forever).
+
 **Live E2E (2026-07-10, lesson 0e4debe8):** 41-page excerpt uploaded through FastAPI+ARQ+Supabase+OpenAI →
 `lesson_jobs.status='completed'` in **8.3 min wall** (extract ~5.5 min contended, structure→chunk→embed ~2.8 min);
 `page_count=41`, **52/52 chunks embedded**, `books.status='ready'`. First attempt failed on a transient

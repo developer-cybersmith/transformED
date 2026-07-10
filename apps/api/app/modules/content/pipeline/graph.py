@@ -108,7 +108,13 @@ class PipelineState(TypedDict, total=False):
 # AC-5 (Story 2-0b): max simultaneous Supabase image uploads per extract run.
 # Uploads are blocking HTTP calls run via asyncio.to_thread — the semaphore
 # bounds thread/connection pressure while keeping big-image pages parallel.
-_IMAGE_UPLOAD_CONCURRENCY = 8
+# Tuned 4 (from 8) after the 1120-page live run: a 545-image sustained storm
+# at 8-way rate-limited Supabase Storage into persistent failures.
+_IMAGE_UPLOAD_CONCURRENCY = 4
+# Upload retry: 5 attempts, exponential backoff 1→8 s (+ jitter) rides out
+# rate-limit windows that a 545-image book provokes; a 3×1.5 s retry did not.
+_IMAGE_UPLOAD_ATTEMPTS = 5
+_IMAGE_UPLOAD_BACKOFF_BASE_S = 1.0
 
 
 def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:
@@ -143,6 +149,7 @@ async def extract_node(state: PipelineState) -> PipelineState:
     import asyncio
     import json
     import os
+    import random
     import signal
     import sys
     import tempfile
@@ -273,7 +280,7 @@ async def extract_node(state: PipelineState) -> PipelineState:
             with open(local_path, "rb") as imgf:
                 payload = imgf.read()
             last_exc: Exception | None = None
-            for attempt in range(3):
+            for attempt in range(_IMAGE_UPLOAD_ATTEMPTS):
                 try:
                     supabase.storage.from_("lesson-images").upload(
                         path=storage_path,
@@ -284,12 +291,18 @@ async def extract_node(state: PipelineState) -> PipelineState:
                 except Exception as exc:  # noqa: BLE001 — storage3 raises mixed types
                     last_exc = exc
                     logger.warning(
-                        "[%s] extract_node: image upload attempt %d/3 failed for %s: %s",
-                        lesson_id, attempt + 1, storage_path, exc,
+                        "[%s] extract_node: image upload attempt %d/%d failed for %s: %s",
+                        lesson_id, attempt + 1, _IMAGE_UPLOAD_ATTEMPTS, storage_path, exc,
                     )
-                    time.sleep(0.5 * (2 ** attempt))  # 0.5s, 1s — inside the thread
+                    if attempt < _IMAGE_UPLOAD_ATTEMPTS - 1:
+                        # 1s, 2s, 4s, 8s + jitter — inside the thread
+                        time.sleep(
+                            _IMAGE_UPLOAD_BACKOFF_BASE_S * (2 ** attempt)
+                            + random.random()
+                        )
             raise RuntimeError(
-                f"extract_node: image upload failed after 3 attempts for {storage_path}"
+                f"extract_node: image upload failed after "
+                f"{_IMAGE_UPLOAD_ATTEMPTS} attempts for {storage_path}"
             ) from last_exc
 
         async def _bounded_upload(local_path: str, storage_path: str) -> None:

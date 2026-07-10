@@ -366,7 +366,9 @@ async def test_extract_node_uploads_run_concurrently_bounded_by_semaphore(
 
     The instrumented upload sleeps briefly inside its worker thread and tracks
     an active-concurrency high-water mark: serial execution would peg it at 1;
-    an unbounded gather with 12 images would exceed the Semaphore(8) cap.
+    an unbounded gather with 12 images would exceed the semaphore cap.
+    (Bound tuned 8→4 after the 1120-page live run rate-limited a 545-image
+    storm — assert the range, not a magic number.)
     """
     import threading
     import time
@@ -376,7 +378,7 @@ async def test_extract_node_uploads_run_concurrently_bounded_by_semaphore(
         extract_node,
     )
 
-    assert _IMAGE_UPLOAD_CONCURRENCY == 8
+    assert 2 <= _IMAGE_UPLOAD_CONCURRENCY <= 8
 
     state = _base_state()
     sb = _make_supabase_mock(node_outputs={})
@@ -440,15 +442,15 @@ async def test_extract_node_upload_failure_fails_node(tmp_path: Any) -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.config.get_settings") as mock_settings,
         patch("asyncio.create_subprocess_exec", exec_mock),
-        patch("time.sleep"),  # skip retry backoff in tests
+        patch("time.sleep"), patch("random.random", return_value=0.0),  # skip retry backoff in tests
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         _configure_settings(mock_settings)
-        with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+        with pytest.raises(RuntimeError, match="failed after 5 attempts"):
             await extract_node(state)
 
-    # All 3 retry attempts were made against the persistently failing image.
-    assert failing_attempts["count"] == 3
+    # All 5 retry attempts were made against the persistently failing image.
+    assert failing_attempts["count"] == 5
 
     # The node failed before writing its checkpoint.
     jobs_mock = sb.table("lesson_jobs")
@@ -479,7 +481,7 @@ async def test_extract_node_upload_transient_blip_recovers(tmp_path: Any) -> Non
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.config.get_settings") as mock_settings,
         patch("asyncio.create_subprocess_exec", exec_mock),
-        patch("time.sleep"),
+        patch("time.sleep"), patch("random.random", return_value=0.0),
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         _configure_settings(mock_settings)
