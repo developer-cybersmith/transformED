@@ -182,12 +182,16 @@ class Settings(BaseSettings):
         description="Hard cap on the PDF-extraction subprocess timeout (seconds)",
     )
     extract_timeout_base_s: int = Field(
-        default=120,
+        default=180,
         description="Base extraction timeout before the per-page allowance is added (seconds)",
     )
     extract_timeout_per_page_s: float = Field(
-        default=1.3,
-        description="Per-page allowance added to the extraction timeout (seconds/page)",
+        default=3.0,
+        description="Per-page allowance added to the extraction timeout (seconds/page). "
+                    "Calibrated 2026-07-10 against a real 41-page table-bearing PDF: "
+                    "page-scoped docling extraction measured 206-216s while the old "
+                    "120 + 1.3s/page formula granted only 183.7s — table pages cost "
+                    "docling ML time the flat rate must absorb.",
     )
 
     @model_validator(mode="after")

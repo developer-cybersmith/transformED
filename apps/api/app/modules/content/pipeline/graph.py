@@ -105,6 +105,11 @@ class PipelineState(TypedDict, total=False):
 
 # ── Node implementations ──────────────────────────────────────────────────────
 
+# AC-5 (Story 2-0b): max simultaneous Supabase image uploads per extract run.
+# Uploads are blocking HTTP calls run via asyncio.to_thread — the semaphore
+# bounds thread/connection pressure while keeping big-image pages parallel.
+_IMAGE_UPLOAD_CONCURRENCY = 8
+
 
 def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:
     """AC-5: page-aware timeout for the PDF-extraction subprocess.
@@ -141,6 +146,7 @@ async def extract_node(state: PipelineState) -> PipelineState:
     import signal
     import sys
     import tempfile
+    import time
 
     from app.config import get_settings
     from app.core.db import get_supabase
@@ -250,20 +256,59 @@ async def extract_node(state: PipelineState) -> PipelineState:
         image_files: list[dict[str, Any]] = result.get("image_files", [])
         font_blocks: list[dict[str, Any]] = result.get("font_blocks", [])
 
-        # ── Upload extracted images to Supabase Storage ────────────────────────
+        # ── Upload extracted images to Supabase Storage (AC-5: concurrent) ────
+        # Blocking Supabase calls run in threads via asyncio.to_thread, bounded
+        # by a Semaphore so a figure-heavy chapter can't spawn unbounded
+        # threads/connections. No return_exceptions on gather: one failed
+        # upload propagates and fails the node exactly as the serial loop did.
+        upload_sem = asyncio.Semaphore(_IMAGE_UPLOAD_CONCURRENCY)
+
+        def _upload_image(local_path: str, storage_path: str) -> None:
+            # File read + HTTP call both blocking — keep them inside the thread.
+            # Bounded retry: under 8-way concurrent bursts the Storage API can
+            # return a transient empty/non-JSON response that storage3 surfaces
+            # as JSONDecodeError (observed live 2026-07-10 — 20-image excerpt
+            # upload failed on one blip). Retries smooth transient errors; a
+            # persistent failure still raises and fails the node.
+            with open(local_path, "rb") as imgf:
+                payload = imgf.read()
+            last_exc: Exception | None = None
+            for attempt in range(3):
+                try:
+                    supabase.storage.from_("lesson-images").upload(
+                        path=storage_path,
+                        file=payload,
+                        file_options={"content-type": "image/png", "upsert": "true"},
+                    )
+                    return
+                except Exception as exc:  # noqa: BLE001 — storage3 raises mixed types
+                    last_exc = exc
+                    logger.warning(
+                        "[%s] extract_node: image upload attempt %d/3 failed for %s: %s",
+                        lesson_id, attempt + 1, storage_path, exc,
+                    )
+                    time.sleep(0.5 * (2 ** attempt))  # 0.5s, 1s — inside the thread
+            raise RuntimeError(
+                f"extract_node: image upload failed after 3 attempts for {storage_path}"
+            ) from last_exc
+
+        async def _bounded_upload(local_path: str, storage_path: str) -> None:
+            async with upload_sem:
+                await asyncio.to_thread(_upload_image, local_path, storage_path)
+
+        # Entries are appended in input (idx) order and gather preserves the
+        # order of its input list, so storage_images stays deterministic.
+        upload_coros: list[Any] = []
         storage_images: list[dict[str, Any]] = []
         for idx, img_info in enumerate(image_files):
             local_path: str = img_info["local_path"]
             page_num: int = img_info["page"]
             storage_path = f"{lesson_id}/p{page_num}_{idx}.png"
             if os.path.exists(local_path):
-                with open(local_path, "rb") as imgf:
-                    supabase.storage.from_("lesson-images").upload(
-                        path=storage_path,
-                        file=imgf.read(),
-                        file_options={"content-type": "image/png", "upsert": "true"},
-                    )
+                upload_coros.append(_bounded_upload(local_path, storage_path))
                 storage_images.append({"page": page_num, "path": storage_path, "caption": ""})
+        if upload_coros:
+            await asyncio.gather(*upload_coros)
 
     # ── Write books.page_count ────────────────────────────────────────────────
     if book_id:  # P6: don't skip when page_count=0 — that's valid information
@@ -281,6 +326,12 @@ async def extract_node(state: PipelineState) -> PipelineState:
         "page_count": page_count,
         "font_blocks": font_blocks,
     }
+    # Story 2-0b additive observability keys — defensive .get: the subprocess
+    # change lands in a parallel lane, so BOTH old JSON (keys absent) and new
+    # JSON (keys present) must checkpoint cleanly.
+    for _extra_key in ("tables_detected", "docling_pages"):
+        if _extra_key in result:
+            extract_cache[_extra_key] = result[_extra_key]
     try:
         supabase.table("lesson_jobs").update({
             "last_node": "extract",

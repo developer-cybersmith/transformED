@@ -81,6 +81,35 @@ No hardcoded model strings. Existing extract output contract (`raw_text`, `page_
 Checkpoint offload to Storage, page-ledger provenance contract, structure-LLM boundary-only rework,
 multiprocessing page shards, region renders via pdfium crop, extraction concurrency gate.
 
+## Dev Notes — AC-7 measured results (2026-07-10, dev machine, WSL venv, uncontended)
+
+Harness: `scratchpad/time_extract.py` — in-process `extract_pdf(pdf, tmpdir, ocr_threshold=50)`,
+SIGALRM kill-switch (mini 120 s, excerpt 400 s; never tripped).
+
+| PDF | Baseline (pre-Tier-2) | Measured (Tier 2) | AC-7 target |
+|-----|----------------------|-------------------|-------------|
+| /tmp/mini.pdf (3p, no tables) | ~7 s | **4.9–8.2 s cold, 0.98 s warm** | ≤ 15 s ✅ |
+| /tmp/excerpt.pdf (41p, tables) | **DNF ≥ 600 s** | **203.5–215.5 s** (3 independent measurements: impl lane 203.5, measure stage 206.1, reviewers 212.9/215.5) | ≤ 240 s ✅ |
+
+Excerpt detail: `tables_detected=2` (pages 8, 14 0-indexed — pdfplumber flags two ruled sidebar boxes),
+`docling_pages=[7,8,9,13,14,15]` (exactly the two ±1-expanded runs; 35 non-run pages byte-verbatim),
+100+ tiny images pre-filtered before render (20 kept), max RSS 1.95 GB (was ~4 GB), exit 0.
+
+Review fixes applied post-measurement: `image_placeholder=""` in the docling export (confirmed data-loss
+bug — default `<!-- image -->` placeholder overwrote Tesseract OCR text on scanned pages inside run
+expansions); extraction timeout recalibrated (base 120→180 s, per-page 1.3→3.0 s) because the measured
+excerpt time (206–216 s) exceeded the old formula's 183.7 s grant — live E2E would have timed out.
+
+Environment note: docling's default OCR engine (rapidocr) is broken in this env; converter is built with
+`do_ocr=False`, which is correct by design — our per-page Tesseract pass owns OCR, docling owns table structure.
+
+**Live E2E (2026-07-10, lesson 0e4debe8):** 41-page excerpt uploaded through FastAPI+ARQ+Supabase+OpenAI →
+`lesson_jobs.status='completed'` in **8.3 min wall** (extract ~5.5 min contended, structure→chunk→embed ~2.8 min);
+`page_count=41`, **52/52 chunks embedded**, `books.status='ready'`. First attempt failed on a transient
+Storage blip during the 8-way concurrent image upload (storage3 JSONDecodeError on an empty response) —
+fixed with 3-attempt exponential-backoff retry inside the upload thread (graph.py `_upload_image`);
+persistent failures still fail the node. Baseline for this same PDF: never finished (DNF ≥ 600 s in extract).
+
 ## Definition of Done
 - All ACs tested; full unit suite green.
 - AC-7 timings recorded with real numbers in Dev Notes.

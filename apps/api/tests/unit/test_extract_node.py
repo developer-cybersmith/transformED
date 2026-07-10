@@ -332,6 +332,259 @@ async def test_extract_node_uploads_images() -> None:
         os.unlink(img_path)
 
 
+# ── Tests: AC-5 (Story 2-0b) parallel image uploads ──────────────────────────
+
+
+def _write_fake_images(dir_path: str, n: int) -> list[dict[str, Any]]:
+    """Create n minimal PNG files on disk and return subprocess-style image_files."""
+    import os
+
+    image_files: list[dict[str, Any]] = []
+    for i in range(n):
+        path = os.path.join(dir_path, f"img_{i}.png")
+        with open(path, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+        image_files.append({"page": i + 1, "local_path": path})
+    return image_files
+
+
+def _stdout_with_images(image_files: list[dict[str, Any]], **extra: Any) -> bytes:
+    return json.dumps({
+        "raw_text": "Chapter 1: Introduction",
+        "page_count": len(image_files) or 1,
+        "image_files": image_files,
+        "font_blocks": [],
+        **extra,
+    }).encode()
+
+
+@pytest.mark.unit
+async def test_extract_node_uploads_run_concurrently_bounded_by_semaphore(
+    tmp_path: Any,
+) -> None:
+    """AC-5: uploads overlap (not serial) but never exceed _IMAGE_UPLOAD_CONCURRENCY.
+
+    The instrumented upload sleeps briefly inside its worker thread and tracks
+    an active-concurrency high-water mark: serial execution would peg it at 1;
+    an unbounded gather with 12 images would exceed the Semaphore(8) cap.
+    """
+    import threading
+    import time
+
+    from app.modules.content.pipeline.graph import (
+        _IMAGE_UPLOAD_CONCURRENCY,
+        extract_node,
+    )
+
+    assert _IMAGE_UPLOAD_CONCURRENCY == 8
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    image_files = _write_fake_images(str(tmp_path), 12)
+    exec_mock = _make_subprocess_mock(stdout=_stdout_with_images(image_files))
+
+    lock = threading.Lock()
+    active = 0
+    high_water = 0
+
+    def _slow_upload(*args: Any, **kwargs: Any) -> None:
+        nonlocal active, high_water
+        with lock:
+            active += 1
+            high_water = max(high_water, active)
+        time.sleep(0.05)  # hold the slot so overlapping uploads are observable
+        with lock:
+            active -= 1
+
+    sb.storage.from_.return_value.upload.side_effect = _slow_upload
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        result = await extract_node(state)
+
+    assert len(result["extracted_images"]) == 12
+    assert high_water > 1, "uploads ran strictly serially — AC-5 requires overlap"
+    assert high_water <= _IMAGE_UPLOAD_CONCURRENCY, (
+        f"semaphore bound violated: {high_water} concurrent uploads > {_IMAGE_UPLOAD_CONCURRENCY}"
+    )
+
+
+@pytest.mark.unit
+async def test_extract_node_upload_failure_fails_node(tmp_path: Any) -> None:
+    """AC-5: a PERSISTENTLY failing upload is retried 3x with backoff, then
+    propagates out of gather and fails the node (no return_exceptions — no
+    silent image loss). Retry added after the 2026-07-10 live run where one of
+    20 concurrent uploads got a transient non-JSON storage response."""
+    from app.modules.content.pipeline.graph import extract_node
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    image_files = _write_fake_images(str(tmp_path), 5)
+    exec_mock = _make_subprocess_mock(stdout=_stdout_with_images(image_files))
+
+    failing_attempts = {"count": 0}
+
+    def _failing_upload(*args: Any, **kwargs: Any) -> None:
+        if kwargs.get("path", "").endswith("p3_2.png"):
+            failing_attempts["count"] += 1
+            raise RuntimeError("storage 503: upload failed")
+
+    sb.storage.from_.return_value.upload.side_effect = _failing_upload
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("time.sleep"),  # skip retry backoff in tests
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+            await extract_node(state)
+
+    # All 3 retry attempts were made against the persistently failing image.
+    assert failing_attempts["count"] == 3
+
+    # The node failed before writing its checkpoint.
+    jobs_mock = sb.table("lesson_jobs")
+    assert not jobs_mock.update.call_args_list, "checkpoint must not be written on upload failure"
+
+
+@pytest.mark.unit
+async def test_extract_node_upload_transient_blip_recovers(tmp_path: Any) -> None:
+    """AC-5 retry: an upload that fails once then succeeds must NOT fail the
+    node — the retry absorbs transient storage blips."""
+    from app.modules.content.pipeline.graph import extract_node
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    image_files = _write_fake_images(str(tmp_path), 3)
+    exec_mock = _make_subprocess_mock(stdout=_stdout_with_images(image_files))
+
+    blip = {"fired": False}
+
+    def _blip_once(*args: Any, **kwargs: Any) -> None:
+        if kwargs.get("path", "").endswith("_0.png") and not blip["fired"]:
+            blip["fired"] = True
+            raise RuntimeError("storage transient: empty response")
+
+    sb.storage.from_.return_value.upload.side_effect = _blip_once
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("time.sleep"),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        result = await extract_node(state)
+
+    assert blip["fired"], "the transient failure path was never exercised"
+    assert result["progress_pct"] == 7.0  # node completed normally
+
+
+@pytest.mark.unit
+async def test_extract_node_storage_images_order_is_deterministic(tmp_path: Any) -> None:
+    """AC-5: storage_images preserves subprocess input (idx) order even when
+    upload completion order is scrambled by concurrency."""
+    import time
+
+    from app.modules.content.pipeline.graph import extract_node
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    image_files = _write_fake_images(str(tmp_path), 6)
+    exec_mock = _make_subprocess_mock(stdout=_stdout_with_images(image_files))
+
+    completion_order: list[str] = []
+
+    def _scrambling_upload(*args: Any, **kwargs: Any) -> None:
+        path: str = kwargs["path"]
+        idx = int(path.rsplit("_", 1)[1].removesuffix(".png"))
+        time.sleep(0.05 * (6 - idx))  # earlier images finish LAST
+        completion_order.append(path)
+
+    sb.storage.from_.return_value.upload.side_effect = _scrambling_upload
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        result = await extract_node(state)
+
+    expected_paths = [f"{FAKE_LESSON_ID}/p{i + 1}_{i}.png" for i in range(6)]
+    assert [img["path"] for img in result["extracted_images"]] == expected_paths
+    assert completion_order != expected_paths, (
+        "uploads completed in input order — sleep scrambling did not exercise concurrency"
+    )
+
+
+@pytest.mark.unit
+async def test_extract_node_checkpoints_new_additive_keys_when_present() -> None:
+    """Story 2-0b: tables_detected/docling_pages from the new subprocess JSON
+    shape are plumbed into the extract checkpoint (additive — old shape has
+    neither, covered by test_extract_node_writes_checkpoint)."""
+    from app.modules.content.pipeline.graph import extract_node
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    exec_mock = _make_subprocess_mock(
+        stdout=_stdout_with_images([], tables_detected=2, docling_pages=[4, 5, 6])
+    )
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        await extract_node(state)
+
+    jobs_mock = sb.table("lesson_jobs")
+    payload = jobs_mock.update.call_args_list[0].args[0]
+    cache = payload["node_outputs"]["extract"]
+    assert cache["tables_detected"] == 2
+    assert cache["docling_pages"] == [4, 5, 6]
+    # Existing contract keys untouched.
+    assert set(cache) >= {"raw_text", "extracted_images", "page_count", "font_blocks"}
+
+
+@pytest.mark.unit
+async def test_extract_node_old_subprocess_json_shape_still_checkpoints() -> None:
+    """Old-shape subprocess JSON (no tables_detected/docling_pages) must keep
+    working — the subprocess change lands in a concurrent lane."""
+    from app.modules.content.pipeline.graph import extract_node
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    exec_mock = _make_subprocess_mock()  # canned SUBPROCESS_STDOUT lacks new keys
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        result = await extract_node(state)
+
+    assert result["raw_text"] == "Chapter 1: Introduction\n\nThis is the text."
+    jobs_mock = sb.table("lesson_jobs")
+    cache = jobs_mock.update.call_args_list[0].args[0]["node_outputs"]["extract"]
+    assert "tables_detected" not in cache
+    assert "docling_pages" not in cache
+
+
 @pytest.mark.unit
 async def test_extract_node_subprocess_timeout_raises() -> None:
     """extract_node raises RuntimeError and reaps the child when the dynamic
