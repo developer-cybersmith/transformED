@@ -967,12 +967,25 @@ def _get_section_body(section: dict[str, Any], *, lesson_id: str, section_id: st
     return body[:max_chars]
 
 
-async def _read_phase1_checkpoint(lesson_id: str, key: str) -> dict[str, Any] | None:
+# Only these 2 of 6 economy nodes are checkpointed/progress-instrumented so
+# far (S2-1/S2-2) — used to compute an honest progress denominator instead of
+# assuming all 6 (Story 2-1b review finding: a 6xN denominator with only 2
+# node types ever incrementing the counter can never show more than ~33%).
+_PHASE1_INSTRUMENTED_NODES: tuple[str, ...] = ("summarise_segment", "segment_complexity")
+
+
+async def _read_phase1_checkpoint(
+    lesson_id: str, key: str, *, required_keys: tuple[str, ...]
+) -> dict[str, Any] | None:
     """Story 2-1b: read a Phase 1 economy-node per-section checkpoint, if any.
 
     Read-only — no race risk here (only the write side needs the atomic RPC
-    merge below; a concurrent dispatch reading a stale/missing value just
-    means an occasional redundant LLM call, never lost data).
+    merge below). Uses `.maybe_single()` (not `.single()`, which raises on 0
+    rows) so a missing `lesson_jobs` row degrades to a cache-miss instead of
+    crashing every one of the concurrent dispatches reading it. `required_keys`
+    validates the cached shape before trusting it — a malformed or
+    schema-drifted checkpoint value is treated as a cache-miss (logged), not
+    forwarded downstream unchecked.
     """
     from app.core.db import get_supabase
 
@@ -981,11 +994,22 @@ async def _read_phase1_checkpoint(lesson_id: str, key: str) -> dict[str, Any] | 
         supabase.table("lesson_jobs")
         .select("node_outputs")
         .eq("lesson_id", lesson_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (resp.data or {}).get("node_outputs") or {}
-    return node_outputs.get(key)
+    node_outputs: dict[str, Any] = ((resp.data or {}) if resp else {}).get("node_outputs") or {}
+    cached = node_outputs.get(key)
+    if cached is None:
+        return None
+    if not isinstance(cached, dict) or any(k not in cached for k in required_keys):
+        logger.warning(
+            "[%s] checkpoint %s failed shape validation (expected keys %s) — treating as cache-miss",
+            lesson_id,
+            key,
+            required_keys,
+        )
+        return None
+    return cached
 
 
 async def _write_phase1_checkpoint(lesson_id: str, key: str, value: dict[str, Any]) -> None:
@@ -997,6 +1021,11 @@ async def _write_phase1_checkpoint(lesson_id: str, key: str, value: dict[str, An
     because they run strictly sequentially) would lose concurrent sibling
     dispatches' writes here — up to 6xN Send()-dispatched calls can be
     writing to the same `lesson_jobs` row at once.
+
+    The RPC raises if `lesson_id` matches no `lesson_jobs` row (Story 2-1b
+    review finding — the prior version silently no-op'd, losing the
+    checkpoint while the LLM call had already been billed). That's an
+    invariant violation worth failing loudly on, not swallowing here.
     """
     from app.core.db import get_supabase
 
@@ -1007,28 +1036,42 @@ async def _write_phase1_checkpoint(lesson_id: str, key: str, value: dict[str, An
     ).execute()
 
 
-async def _increment_phase1_progress(lesson_id: str, total_expected: int | None) -> None:
-    """Story 2-1b AC-4: Phase 1 progress visibility via a Redis counter.
+async def _increment_phase1_progress(lesson_id: str, checkpoint_key: str, total_expected: int | None) -> None:
+    """Story 2-1b AC-4: Phase 1 progress visibility via a Redis set.
 
     `progress_pct` cannot be written by economy nodes directly — concurrent
     writes to a non-reducer `PipelineState` key raise LangGraph's
     `InvalidUpdateError` (see Story 2-1's review findings). This uses its own
-    channel instead, incremented once per completed dispatch (cache hit or
-    real completion) — mirrors `cost_tracker.accumulate_cost()`'s atomic
-    `INCRBYFLOAT` pattern.
+    channel instead.
+
+    Uses SADD (membership by `checkpoint_key`), not INCR — review finding:
+    a plain counter double-counts on an ARQ retry, since a cache-hit on an
+    already-checkpointed section would increment it again on top of its
+    original increment before the crash. SADD is idempotent: re-adding the
+    same `checkpoint_key` on retry doesn't grow the set, so SCARD always
+    reflects the true number of distinct completed sections regardless of
+    how many times a given one has been (re-)visited.
+
+    Wrapped in try/except — mirrors `_update_job_progress`'s established
+    convention (a non-critical progress write must never crash an
+    already-billed, already-checkpointed dispatch).
     """
     from app.core.redis import get_redis
 
-    redis = get_redis()
-    key = f"job:{lesson_id}:phase1_completed"
-    completed = await redis.incr(key)
-    await redis.expire(key, 86_400)
-    logger.info(
-        "[%s] Phase 1 progress: %s/%s dispatches complete",
-        lesson_id,
-        completed,
-        total_expected if total_expected is not None else "?",
-    )
+    try:
+        redis = get_redis()
+        set_key = f"job:{lesson_id}:phase1_completed_keys"
+        await redis.sadd(set_key, checkpoint_key)
+        await redis.expire(set_key, 86_400)
+        completed = await redis.scard(set_key)
+        logger.info(
+            "[%s] Phase 1 progress: %s/%s sections complete",
+            lesson_id,
+            completed,
+            total_expected if total_expected is not None else "?",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("[%s] Failed to update Phase 1 progress counter for %s", lesson_id, checkpoint_key)
 
 
 async def summarise_segment_node(state: PipelineState) -> PipelineState:
@@ -1048,10 +1091,10 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
 
     # Story 2-1b: idempotency guard — an ARQ retry after a crash mid-fan-out
     # must not re-bill an already-completed section.
-    cached = await _read_phase1_checkpoint(lesson_id, checkpoint_key)
+    cached = await _read_phase1_checkpoint(lesson_id, checkpoint_key, required_keys=("segment_id", "summary"))
     if cached is not None:
         logger.info("[%s] summarise_segment_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
-        await _increment_phase1_progress(lesson_id, state.get("_total_sections"))
+        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"segment_summaries": [cached]}
 
     settings = get_settings()
@@ -1070,13 +1113,13 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
         # message.parsed = None — degrade this one section rather than crash
         # the whole fan-out (Story 2-1 review finding).
         logger.warning("[%s] summarise_segment_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
-        await _increment_phase1_progress(lesson_id, state.get("_total_sections"))
+        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"segment_summaries": []}
     summary_text = _cap_words(response.summary, 100)
 
     result = {"segment_id": section_id, "summary": summary_text}
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
-    await _increment_phase1_progress(lesson_id, state.get("_total_sections"))
+    await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"segment_summaries": [result]}
 
@@ -1143,10 +1186,23 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     logger.info("[%s] segment_complexity_node: %s", lesson_id, section_id)
 
     # Story 2-1b: idempotency guard — see summarise_segment_node for rationale.
-    cached = await _read_phase1_checkpoint(lesson_id, checkpoint_key)
+    cached = await _read_phase1_checkpoint(
+        lesson_id,
+        checkpoint_key,
+        required_keys=(
+            "segment_id",
+            "level",
+            "cognitive_load",
+            "abstraction_level",
+            "prerequisite_concepts",
+            "narration_style",
+            "quiz_difficulty",
+            "intervention_sensitivity",
+        ),
+    )
     if cached is not None:
         logger.info("[%s] segment_complexity_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
-        await _increment_phase1_progress(lesson_id, state.get("_total_sections"))
+        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"complexity_scores": [cached]}
 
     settings = get_settings()
@@ -1167,7 +1223,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     response = await provider.complete_structured(messages, settings.llm_mini, _SegmentComplexityLLM)
     if response is None:
         logger.warning("[%s] segment_complexity_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
-        await _increment_phase1_progress(lesson_id, state.get("_total_sections"))
+        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"complexity_scores": []}
 
     score: dict[str, Any] = {
@@ -1184,7 +1240,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     }
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, score)
-    await _increment_phase1_progress(lesson_id, state.get("_total_sections"))
+    await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"complexity_scores": [score]}
 
@@ -1308,8 +1364,11 @@ def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
         )
     base = {k: state[k] for k in _FAN_OUT_STATE_KEYS if k in state}
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
-    # AC-4) report "X/6N" — cheap (one int), unlike spreading full state.
-    base["_total_sections"] = len(sections) * len(_ECONOMY_NODES)
+    # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
+    # Uses _PHASE1_INSTRUMENTED_NODES (currently 2 of 6), not len(_ECONOMY_NODES)
+    # — review finding: a 6xN denominator with only 2 node types ever
+    # incrementing the counter can never show more than ~33% complete.
+    base["_total_sections"] = len(sections) * len(_PHASE1_INSTRUMENTED_NODES)
     return [
         Send(node_name, {**base, "_section": section, "_section_index": idx})
         for idx, section in enumerate(sections)

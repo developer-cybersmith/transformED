@@ -489,12 +489,12 @@ Every node must:
   - Output: `SegmentComplexity` Pydantic model; `intervention_sensitivity` clamped into [0.0, 1.0] with a warning log if the LLM returned an out-of-range value (never silently trusted)
   - **AC:** Output validates against `app.schemas.SegmentComplexity` ✓; field ranges enforced ✓ — tested (`test_phase1_economy_nodes.py`, AC-2) ✅
 
-- [x] **S2-1b Phase 1 economy node checkpoint/idempotency** — ✓ 2026-07-13 (deferred from Story 2-1's code review)
+- [x] **S2-1b Phase 1 economy node checkpoint/idempotency** — ✓ 2026-07-13 (deferred from Story 2-1's code review; itself reviewed and patched same day)
   - `docs/stories/2-1b-phase1-checkpoint-idempotency.md`
-  - Per-section checkpoint via `merge_lesson_job_node_output()` (new Postgres function, `supabase/migrations/20260713020000_lesson_job_node_output_merge_fn.sql`) — atomic server-side JSONB merge, not the client-side read-modify-write Phase A nodes use (unsafe under Story 2-1's concurrent `Send()` dispatch)
-  - Phase 1 progress visibility via a Redis counter (`job:{lesson_id}:phase1_completed`), since `progress_pct` can't be written by economy nodes directly (concurrent writes to a non-reducer `PipelineState` key raise `InvalidUpdateError`)
+  - Per-section checkpoint via `merge_lesson_job_node_output()` (Postgres function, `supabase/migrations/20260713020000_lesson_job_node_output_merge_fn.sql`) — atomic server-side JSONB merge, not the client-side read-modify-write Phase A nodes use (unsafe under Story 2-1's concurrent `Send()` dispatch). **Review caught and fixed a critical finding here:** the function had no access control — Supabase auto-exposes every Postgres function as a public RPC endpoint, so any caller could have overwritten another user's `lesson_jobs` row (cross-tenant IDOR, RLS bypass). Fixed: revoked `anon`/`authenticated`/`public` execute, granted only `service_role`; also hardened `search_path` and made a missing-row write raise instead of silently no-op'ing.
+  - Phase 1 progress visibility via a Redis **set** (`job:{lesson_id}:phase1_completed_keys`, SADD/SCARD) — not a plain INCR counter, which review found would double-count a section re-visited on ARQ retry; SADD is idempotent per checkpoint key
   - Applied to `summarise_segment_node`/`segment_complexity_node` (S2-1/S2-2, the only 2 of 6 economy nodes implemented so far) — S2-3 through S2-6 must adopt the same pattern when built
-  - **AC:** simulated retry after partial completion makes 0 duplicate LLM calls for already-completed sections ✓ — tested (`test_phase1_checkpoint_idempotency.py`, 7 tests) ✅
+  - **AC:** simulated retry after partial completion makes 0 duplicate LLM calls for already-completed sections ✓ — tested (`test_phase1_checkpoint_idempotency.py`, 9 tests incl. a real `asyncio.gather` concurrency test) ✅
 
 - [ ] **S2-3 `quiz_generator` node**
   - `apps/api/app/modules/content/pipeline/nodes/quiz_generator.py`

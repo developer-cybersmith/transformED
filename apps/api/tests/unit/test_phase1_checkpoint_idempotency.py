@@ -29,14 +29,16 @@ SECTION_2 = {"title": "Interleaving", "body": "prose about interleaving practice
 
 
 def _make_jobs_table(node_outputs: dict[str, Any]) -> MagicMock:
-    """Mirrors test_pipeline_tier1.py's helper: a lesson_jobs table mock whose
-    .select(...).eq(...).single().execute() returns the given node_outputs,
-    and whose .update(...) can be inspected afterward."""
+    """A lesson_jobs table mock whose .select(...).eq(...).maybe_single().execute()
+    returns the given node_outputs. `.maybe_single()` (not `.single()`, which
+    raises on 0 rows) is what _read_phase1_checkpoint uses — see its docstring.
+    No `.update(...)` mock here: checkpoint writes go through `.rpc()`
+    exclusively (Story 2-1b review finding — a lingering `.update()` mock
+    with no corresponding assertion was dead scaffolding)."""
     t = MagicMock()
-    t.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+    t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
         "node_outputs": node_outputs
     }
-    t.update.return_value.eq.return_value.execute.return_value = MagicMock()
     return t
 
 
@@ -140,9 +142,60 @@ class TestCheckpointWriteOnSuccess:
         assert rpc_params["p_key"] == f"summarise_segment:{section_id}"
         assert rpc_params["p_value"]["summary"] == "A fresh summary."
 
-        # AC-5: a client-side node_outputs blob update must NOT also happen —
-        # that's the exact race this story exists to remove.
+        # Dev Notes / AC-2: a client-side node_outputs blob update must NOT
+        # also happen — that's the exact race this story exists to remove
+        # (review finding: this assertion was previously mislabeled "AC-5",
+        # which is actually about test_phase1_economy_nodes.py's behavior
+        # staying unchanged, not the write mechanism).
         mock_jobs_table.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_dispatches_for_different_sections_write_independent_rpc_calls(self) -> None:
+        """Review finding: the original test suite never exercised real
+        concurrency despite that being the stated justification for the RPC.
+        A mock can't prove server-side atomicity, but it CAN prove there is
+        no client-side shared/mutable buffer for concurrent dispatches to
+        race on — `_write_phase1_checkpoint` passes each call's key/value
+        straight through to `.rpc()` with no local read-modify-write step at
+        all, so concurrent asyncio tasks calling it cannot clobber each
+        other's params (unlike the old read-modify-write pattern this design
+        replaces). Runs 3 sections through summarise_segment_node via
+        asyncio.gather and asserts 3 distinct, uncorrupted RPC calls.
+        """
+        import asyncio
+
+        from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
+
+        sections = [SECTION_0, SECTION_1, SECTION_2]
+        mock_jobs_table = _make_jobs_table({})
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        mock_provider = AsyncMock()
+
+        async def _fake_complete_structured(messages, model, schema):
+            # Distinguish which section this call is for via the prompt body,
+            # so concurrent calls can be told apart in the assertions below.
+            body = messages[1]["content"]
+            return type("Summary", (), {"summary": f"Summary for: {body[:20]}"})()
+
+        mock_provider.complete_structured.side_effect = _fake_complete_structured
+
+        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
+        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+            await asyncio.gather(
+                *[
+                    summarise_segment_node(_base_state(_section=s, _section_index=i))
+                    for i, s in enumerate(sections)
+                ]
+            )
+
+        assert mock_supabase.rpc.call_count == 3
+        written_keys = {call.args[1]["p_key"] for call in mock_supabase.rpc.call_args_list}
+        expected_keys = {f"summarise_segment:{_derive_section_id(s, i)}" for i, s in enumerate(sections)}
+        assert written_keys == expected_keys, "concurrent dispatches must each write their own distinct key"
 
 
 class TestSimulatedRetry:
@@ -192,15 +245,17 @@ class TestSimulatedRetry:
 
 class TestPhase1ProgressVisibility:
     @pytest.mark.asyncio
-    async def test_completing_a_dispatch_increments_redis_progress_counter(self) -> None:
+    async def test_completing_a_dispatch_adds_to_redis_progress_set(self) -> None:
         """AC-4: progress_pct can't be written by economy nodes directly
         (concurrent writes to a non-reducer PipelineState key raise
         InvalidUpdateError — see Story 2-1's review findings), so Phase 1
-        progress visibility must go through a separate channel: a Redis
-        counter incremented once per completed dispatch (cache hit or real
-        completion), independent of the graph's PipelineState channel.
+        progress visibility must go through a separate channel: a Redis SET
+        of completed checkpoint keys (SADD, counted via SCARD) — not a plain
+        INCR counter, which would double-count a section re-visited on an
+        ARQ retry (review finding). SADD is idempotent: re-adding the same
+        key is a no-op.
         """
-        from app.modules.content.pipeline.graph import summarise_segment_node
+        from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
 
         mock_jobs_table = _make_jobs_table({})
         mock_supabase = MagicMock()
@@ -218,14 +273,21 @@ class TestPhase1ProgressVisibility:
             state = _base_state(_total_sections=3)
             await summarise_segment_node(state)
 
-        mock_redis.incr.assert_called_once()
-        incr_key = mock_redis.incr.call_args[0][0]
-        assert incr_key == f"job:{FAKE_LESSON_ID}:phase1_completed"
+        mock_redis.sadd.assert_called_once()
+        set_key, member = mock_redis.sadd.call_args[0][0], mock_redis.sadd.call_args[0][1]
+        assert set_key == f"job:{FAKE_LESSON_ID}:phase1_completed_keys"
+        assert member == f"summarise_segment:{_derive_section_id(SECTION_0, 0)}"
+        mock_redis.scard.assert_called_once_with(set_key)
 
     @pytest.mark.asyncio
-    async def test_cache_hit_also_increments_progress_counter(self) -> None:
-        """A cache-hit completion still counts toward Phase 1 progress — it's
-        a completed dispatch either way, cached or freshly computed.
+    async def test_retry_revisiting_a_cached_section_does_not_double_count(self) -> None:
+        """Review finding: an INCR-based counter double-counts on ARQ retry —
+        re-visiting an already-checkpointed section on retry must NOT inflate
+        the progress count past the true number of distinct completed
+        sections. SADD's idempotency (same member added twice = no growth)
+        is what this test actually verifies, in place of the old INCR-based
+        test that (per the review) locked in the double-counting bug as
+        "correct."
         """
         from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
 
@@ -235,15 +297,22 @@ class TestPhase1ProgressVisibility:
         mock_supabase = MagicMock()
         mock_supabase.table.return_value = mock_jobs_table
 
+        # A real Redis SADD returns 0 when the member already exists — assert
+        # the node doesn't misinterpret that as "not completed."
         mock_redis = AsyncMock()
+        mock_redis.sadd.return_value = 0
+        mock_redis.scard.return_value = 1
 
         with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
             "app.core.redis.get_redis", return_value=mock_redis
         ):
             state = _base_state(_total_sections=3)
-            await summarise_segment_node(state)
+            result = await summarise_segment_node(state)
 
-        mock_redis.incr.assert_called_once()
+        mock_redis.sadd.assert_called_once_with(
+            f"job:{FAKE_LESSON_ID}:phase1_completed_keys", f"summarise_segment:{section_id}"
+        )
+        assert result["segment_summaries"] == [cached_summary]
 
 
 class TestExistingStory21TestsUnaffected:
