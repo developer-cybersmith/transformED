@@ -955,6 +955,12 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     return {**state, "slide_images": slide_images, "progress_pct": 93.0}
 
 
+# [DEV1-SPRINT2-PENDING] This still builds a flat ad-hoc dict, not the frozen
+# LessonPackage shape (packages/shared/lesson_package.schema.json /
+# app/schemas/lesson.py). Story S2-11 replaces this with a schema-validated
+# segments[] package. Do not build a parallel real-content path elsewhere
+# against this stub shape -- it will be reconciled when Sprint 2 lands.
+# Ping Dev 1 (developer1-cybersmith) before changing this shape.
 async def package_builder_node(state: PipelineState) -> PipelineState:
     """Node 15: Assemble all outputs into the final lesson JSON package."""
     lesson_id = state["lesson_id"]

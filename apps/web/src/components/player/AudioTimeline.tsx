@@ -9,6 +9,10 @@ import { usePlayerStore } from '@/stores/player.machine';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 export { binarySearchTimestamps };
 
+// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
+// package_builder (Story S2-11, not yet built). Do not build a parallel
+// real-content path here -- this will be reconciled when Sprint 2 lands.
+// Ping Dev 1 (developer1-cybersmith) before changing this shape.
 /**
  * Core audio-tick handler. Reads Zustand store via getState() to avoid stale closures
  * in the onTimeUpdate callback (fires at ~30 Hz). Exported for unit testing.

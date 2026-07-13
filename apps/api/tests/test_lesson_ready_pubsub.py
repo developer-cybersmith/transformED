@@ -83,6 +83,11 @@ async def test_publish_channel_uses_session_id(mocker) -> None:
     """publish() is called with channel ``lesson_ready:{session_id}``."""
     lesson_id = "lesson-abc-123"
     session_id = "lesson-abc-123"  # fallback: session_id == lesson_id when not in row
+    # [DEV1-SPRINT2-PENDING] Fixture encodes today's flat package_builder_node
+    # stub shape, not the frozen LessonPackage from Dev 1's real package_builder
+    # (Story S2-11, not yet built). Do not build a parallel real-content path
+    # against this fixture shape -- it will be reconciled when Sprint 2 lands.
+    # Ping Dev 1 (developer1-cybersmith) before changing this shape.
     lesson_package: dict = {
         "lesson_plan": {"title": "Test Lesson"},
         "slides": [],
@@ -107,6 +112,11 @@ async def test_publish_channel_uses_session_id(mocker) -> None:
 async def test_publish_message_has_correct_ws_shape(mocker) -> None:
     """Published JSON has session_id + lesson_id in payload; no flat 'title'."""
     lesson_id = "lesson-def-456"
+    # [DEV1-SPRINT2-PENDING] Fixture encodes today's flat package_builder_node
+    # stub shape, not the frozen LessonPackage from Dev 1's real package_builder
+    # (Story S2-11, not yet built). Do not build a parallel real-content path
+    # against this fixture shape -- it will be reconciled when Sprint 2 lands.
+    # Ping Dev 1 (developer1-cybersmith) before changing this shape.
     lesson_package: dict = {
         "lesson_plan": {"title": "My Lesson"},
         "slides": [{"id": 1}],
@@ -290,6 +300,11 @@ async def test_routing_reaches_correct_client_when_session_id_differs(mocker) ->
     lesson_id = "lesson-uuid-999"
     session_id = "ws-session-uuid-111"  # genuinely different routing key
 
+    # [DEV1-SPRINT2-PENDING] Fixture encodes today's flat package_builder_node
+    # stub shape, not the frozen LessonPackage from Dev 1's real package_builder
+    # (Story S2-11, not yet built). Do not build a parallel real-content path
+    # against this fixture shape -- it will be reconciled when Sprint 2 lands.
+    # Ping Dev 1 (developer1-cybersmith) before changing this shape.
     lesson_package: dict = {
         "lesson_plan": {"title": "Regression Lesson"},
         "slides": [],

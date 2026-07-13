@@ -71,6 +71,12 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # the upload route stores it (Sprint 2 — Dev 4 coordinates)
         session_id: str = lesson_row.get("session_id") or lesson_id
 
+        # [DEV1-SPRINT2-PENDING] lesson_package here is today's flat stub shape
+        # from package_builder_node, not the frozen LessonPackage from Dev 1's
+        # real package_builder (Story S2-11, not yet built). It is republished
+        # verbatim below with no schema validation. Do not build a parallel
+        # real-content path here -- this will be reconciled when Sprint 2 lands.
+        # Ping Dev 1 (developer1-cybersmith) before changing this shape.
         # ── 3. Run LangGraph pipeline ─────────────────────────────────────────
         lesson_package = await run_pipeline(
             lesson_id=lesson_id,
