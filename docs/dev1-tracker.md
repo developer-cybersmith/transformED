@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 14 | 0 | 0 | 14 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 19 | 0 | 0 | 19 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **52** | **23** | **1** | **28** |
+| **Totals** | | **57** | **23** | **1** | **33** |
 
 ---
 
@@ -80,6 +80,7 @@
 | `apps/api/app/modules/content/pipeline/nodes/tts_node.py` | TTS: Sarvam → Azure → Browser *(S2-9)* |
 | `apps/api/app/modules/content/pipeline/nodes/image_generator.py` | Images: GPT Image 1 Mini → Imagen 4 Fast → text-only *(S2-10)* |
 | `apps/api/app/modules/content/pipeline/nodes/package_builder.py` | Assemble + write JSONB LessonPackage *(S2-11)* |
+| `supabase/migrations/{new-timestamp}_add_lesson_tier.sql` | `lessons.tier` column, enum-constrained *(S2-LM2)* |
 | `apps/api/app/modules/admin/router.py` | Admin: job status, costs, retry trigger *(S3-4)* |
 | `apps/api/tests/unit/test_lesson_schema.py` | Pydantic ↔ JSON schema round-trip tests (22 tests) ✅ S0-12 |
 | `apps/api/tests/unit/test_langfuse_core.py` | Singleton + flush contract tests (4 tests) ✅ S0-9 |
@@ -190,6 +191,7 @@ Redis keys Dev 1 WRITES:
 | `status` | `text` | NOT NULL, DEFAULT `'generating'`, CHECK IN (`'generating'`, `'ready'`, `'failed'`) | Pipeline state visible to frontend via polling |
 | `content` | `jsonb` | nullable | Full `LessonPackage` JSONB written by `package_builder`; `NULL` until pipeline completes |
 | `source_file_path` | `text` | nullable | Supabase Storage path to the source PDF |
+| `tier` | `text` | **PENDING — S2-LM2, not yet migrated.** Planned: NOT NULL DEFAULT `'T2'`, CHECK IN (`'T1'`,`'T2'`,`'T3'`) | Learner Mode content-depth tier; drives slide count + content depth in `lesson_planner`/`slide_generator` (S2-LM4/S2-LM5) |
 | `created_at` | `timestamptz` | NOT NULL DEFAULT now() | Row creation time |
 | `updated_at` | `timestamptz` | NOT NULL DEFAULT now(), auto-trigger | Auto-updated on any write |
 
@@ -461,12 +463,15 @@ Every node must:
 ## Sprint 2 — Weeks 4–5 (Due: ~2026-07-16)
 
 > **Goal:** All 11 generation nodes producing a valid `LessonPackage` JSONB from an ingested chapter.
+> **Added 2026-07-13 — Learner Mode (tier-aware lessons) is now in scope for Sprint 2**, inserted between Phase 1 and Phase 2 below (S2-LM1 through S2-LM5). This was previously undocumented anywhere in this tracker or `CLAUDE.md` — see `docs/stories/2-1-phase1-economy-nodes.md` context for how the gap was found. Positioned here (not as a separate future "feature sprint") because S2-LM4/S2-LM5 directly amend S2-7/S2-8's acceptance criteria — a Learner Mode "feature sprint" bolted on *after* Sprint 2 would mean re-opening `lesson_planner`/`slide_generator` a second time.
 
 > **Cost ceiling rule:** Every node that calls a provider must call `cost_tracker.accumulate_cost()` immediately after. On `check_ceiling()` returning `True`, downshift to cheapest available provider, complete the lesson, flag in admin — never abort.
 > **Circuit breaker:** Call `is_circuit_open(provider_key)` before every external provider call. Wire in Sprint 2 — don't wait for Sprint 3.
 
 **Phase 1 Economy nodes** (S2-1 through S2-6) run in parallel per segment. **All must complete before Phase 2 starts.**
-**Phase 2 Premium nodes** (S2-7, S2-8) sequential — consume Phase 1 outputs.
+**Learner Mode infra** (S2-LM1 through S2-LM3) — contract, migration, endpoint. Independent of Phase 1; must complete before Phase 2 starts (S2-7 needs `tier` to read).
+**Phase 2 Premium nodes** (S2-7, S2-8) sequential — consume Phase 1 outputs **and** `state["tier"]` from S2-LM3.
+**Learner Mode tier logic** (S2-LM4, S2-LM5) — lands together with S2-7/S2-8, not as a later rework pass.
 **Phase 3 Media nodes** (S2-9, S2-10, S2-11) sequential after Phase 2.
 
 - [ ] **S2-1 `summarise_segment` node**
@@ -511,6 +516,44 @@ Every node must:
   - Phase 1 — parallel
   - Output: narration script string; conversational tone; respects `complexity.narration_style`
   - **AC:** Script readable at ≤15 words/sec; tone matches `narration_style` from `SegmentComplexity`
+
+---
+
+### Learner Mode (tier-aware lessons) — inserted between Phase 1 and Phase 2
+
+> Tier values: **T1** (full depth, 20–25 slides), **T2** (standard, 12–15 slides), **T3** (critical-topics-only / refresher, 6–8 slides). Default `T2` for any lesson that doesn't specify a tier (keeps existing frontend mocks/tests, which assume no tier, working unmodified).
+
+- [ ] **S2-LM1 Add `tier` field to the lesson package contract + Pydantic**
+  - `packages/shared/lesson_package.schema.json`, `packages/shared/types/lesson.ts`, `apps/api/app/schemas/lesson.py` (`LessonMetadata.tier`)
+  - **FROZEN CONTRACT CHANGE — requires the 4-developer PR review per `CLAUDE.md` §16 / Interface Contracts before merge. Do not implement S2-LM3/S2-LM4/S2-LM5 against a local draft of this field — get the shape agreed first.**
+  - `tier: Literal["T1", "T2", "T3"]` added to `LessonMetadata`; JSON schema and TS type updated in the same PR (never let them drift).
+  - **AC:** All three artifacts (JSON schema, TS type, Pydantic model) agree byte-for-byte on the enum values; existing `LessonPackage` test fixtures updated (either given an explicit tier or the model defaults `T2`) so no existing round-trip test breaks; 4-dev sign-off recorded in the PR description.
+
+- [ ] **S2-LM2 Add `tier` column to `lessons` table**
+  - New file under `supabase/migrations/` — assign a real, correctly-ordered timestamp prefix at creation time; do not reuse or backdate an existing migration's timestamp, and never modify an already-applied migration (`20260611000000_initial_schema.sql`, `20260625000000_chunks_inline_embedding.sql`, etc. stay untouched).
+  - `tier text NOT NULL DEFAULT 'T2' CHECK (tier IN ('T1','T2','T3'))` on `public.lessons`.
+  - Independent of S2-LM1 — can be built in parallel, not sequentially after it.
+  - **AC:** Migration applies cleanly against the current schema; CHECK constraint rejects any value outside `T1/T2/T3`; existing rows (pre-migration) backfill to the `T2` default without a manual data migration step.
+
+- [ ] **S2-LM3 Accept & validate `tier` param in `POST /lessons`; thread into the ARQ job**
+  - `apps/api/app/modules/content/router.py`, `apps/api/app/workers/jobs/content_pipeline.py`, `PipelineState` in `apps/api/app/modules/content/pipeline/graph.py` (add a `tier: str` field alongside the existing input keys)
+  - **Depends on S2-LM1 (enum values) and S2-LM2 (column to persist to).**
+  - Optional multipart field `tier`, defaulting to `"T2"` when omitted (existing Sprint 1 upload flow and frontend mocks must keep working unchanged); invalid value → `422`, not a silent fallback.
+  - Written to `lessons.tier` at creation time; passed through the ARQ job payload into `PipelineState["tier"]` so S2-7/S2-8 can read it without a second DB round-trip.
+  - **AC:** Omitting `tier` behaves exactly as before this story (defaults `T2`); an invalid tier string returns `422`; `PipelineState["tier"]` is populated by the time `lesson_planner` runs.
+
+- [ ] **S2-LM4 Tier-aware slide count in `lesson_planner` + `slide_generator`**
+  - Amends **S2-7** and **S2-8** directly — build this together with those two nodes' base implementation, not as a follow-up rework pass.
+  - Slide/segment budget by tier: **T1: 20–25**, **T2: 12–15**, **T3: 6–8**.
+  - `lesson_planner` reads `state["tier"]` and targets the corresponding slide-count range when producing `LessonMetadata`/segment structure; `slide_generator` respects the resulting per-segment slide budget it's handed — it does not re-derive tier logic independently.
+  - **AC:** For a fixed test chapter, three separate pipeline runs (T1/T2/T3) each produce a total slide count inside that tier's range; `slide_generator` never exceeds the budget `lesson_planner` set for a segment.
+
+- [ ] **S2-LM5 Tier-aware content-depth prompt variants (T3 = critical topics only / refresher)** ⚠️ scope needs team confirmation
+  - Amends **S2-7** (`lesson_planner`)'s prompt — and *possibly* the Phase 1 economy nodes (`quiz_generator`, `narration_generator`) if "content depth" is meant to vary per-segment rather than only at the outline level. **This ambiguity is not resolved by the source task list — confirm with the team before implementing:** does T3 only change what `lesson_planner` selects as "critical topics," or does it also mean shallower quizzes/narration per segment?
+  - Default interpretation until confirmed: only `lesson_planner`'s outline-generation prompt gets a tier-conditioned variant (T3 prompt explicitly asks for critical-topics-only / refresher framing); Phase 1 economy nodes are unaffected by tier.
+  - **AC (pending confirmation):** T3 lesson plans visibly omit non-critical sub-topics a T1/T2 plan for the same chapter would include; a reviewer can distinguish a T3 outline from a T1 outline for the same source chapter without reading tier metadata.
+
+---
 
 - [ ] **S2-7 `lesson_planner` node**
   - `apps/api/app/modules/content/pipeline/nodes/lesson_planner.py`
