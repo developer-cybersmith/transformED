@@ -135,16 +135,37 @@ _LESSON_JOBS_COLUMNS = {
 _LESSON_JOBS_STATUSES = {"pending", "running", "completed", "failed"}
 
 
+def _make_multi_table_supabase_mock() -> tuple[MagicMock, dict[str, MagicMock]]:
+    """A supabase mock that returns a DISTINCT MagicMock per table name, so
+    .update() calls can be correctly attributed to lesson_jobs vs lessons
+    instead of being conflated by a single shared MagicMock.return_value."""
+    tables: dict[str, MagicMock] = {}
+
+    def _table(name: str) -> MagicMock:
+        if name not in tables:
+            tables[name] = MagicMock()
+        return tables[name]
+
+    supabase = MagicMock()
+    supabase.table.side_effect = _table
+    _table("lessons").select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={"user_id": "u1", "source_file_path": "p", "book_id": "b1"}
+    )
+    return supabase, tables
+
+
 async def test_successful_job_completion_write_is_schema_valid() -> None:
     """Regression (live E2E 2026-07-10): the completion write used to send
     status='ready' + lesson_package/progress_pct — none valid for lesson_jobs —
-    so every otherwise-successful run failed at the finish line (PGRST204)."""
+    so every otherwise-successful run failed at the finish line (PGRST204).
+
+    Also regression (live E2E 2026-07-13, flagged to Dev 1): GET
+    /api/content/lessons/{id} reads lessons.status, not lesson_jobs.status —
+    confirmed a completed job left lessons.status stuck at 'generating'
+    forever because nothing ever wrote to the lessons table at all."""
     from app.workers.jobs import content_pipeline as job_mod
 
-    supabase = MagicMock()
-    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"user_id": "u1", "source_file_path": "p", "book_id": "b1"}
-    )
+    supabase, tables = _make_multi_table_supabase_mock()
 
     with (
         patch("app.core.db.get_supabase", return_value=supabase),
@@ -158,9 +179,7 @@ async def test_successful_job_completion_write_is_schema_valid() -> None:
         result = await job_mod.content_pipeline_job({}, "lesson-ok")
 
     assert result["lesson_id"] == "lesson-ok"
-    update_payloads = [
-        c.args[0] for c in supabase.table.return_value.update.call_args_list
-    ]
+    update_payloads = [c.args[0] for c in tables["lesson_jobs"].update.call_args_list]
     completion = [p for p in update_payloads if p.get("status") == "completed"]
     assert completion, f"no status='completed' write (payloads: {update_payloads})"
     for payload in update_payloads:
@@ -169,6 +188,10 @@ async def test_successful_job_completion_write_is_schema_valid() -> None:
         if "status" in payload:
             assert payload["status"] in _LESSON_JOBS_STATUSES, payload["status"]
     assert "completed_at" in completion[0]
+
+    lessons_payloads = [c.args[0] for c in tables["lessons"].update.call_args_list]
+    ready_writes = [p for p in lessons_payloads if p.get("status") == "ready"]
+    assert ready_writes, f"lessons.status was never set to 'ready' (payloads: {lessons_payloads})"
 
 
 @pytest.mark.parametrize(
@@ -191,13 +214,15 @@ async def test_failure_paths_write_schema_valid_status(
     CHECK accepts. Regression: the cost-ceiling path used to write the illegal
     'cost_limit_exceeded' — silently rejected, row stuck at 'running' forever.
     Full downshift-and-complete ceiling behavior is S2-13; until then the path
-    records 'failed' with a distinguishing error prefix and does NOT retry."""
+    records 'failed' with a distinguishing error prefix and does NOT retry.
+
+    Also regression (live E2E 2026-07-13, flagged to Dev 1): a failed job's
+    lesson_jobs.status went to 'failed' correctly, but lessons.status —
+    what GET /api/content/lessons/{id} actually reads — was never updated at
+    all, so the polling endpoint kept reporting 'running' forever."""
     from app.workers.jobs import content_pipeline as job_mod
 
-    supabase = MagicMock()
-    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"user_id": "u1", "source_file_path": "p", "book_id": "b1"}
-    )
+    supabase, tables = _make_multi_table_supabase_mock()
 
     with (
         patch("app.core.db.get_supabase", return_value=supabase),
@@ -215,9 +240,7 @@ async def test_failure_paths_write_schema_valid_status(
             assert result["status"] == "failed"
             assert result["error"].startswith(error_prefix)
 
-    update_payloads = [
-        c.args[0] for c in supabase.table.return_value.update.call_args_list
-    ]
+    update_payloads = [c.args[0] for c in tables["lesson_jobs"].update.call_args_list]
     failed = [p for p in update_payloads if p.get("status") == "failed"]
     assert failed, f"no status='failed' write (payloads: {update_payloads})"
     for payload in update_payloads:
@@ -227,3 +250,7 @@ async def test_failure_paths_write_schema_valid_status(
             assert payload["status"] in _LESSON_JOBS_STATUSES, payload["status"]
     if error_prefix is not None:
         assert failed[0]["error"].startswith(error_prefix), failed[0]["error"]
+
+    lessons_payloads = [c.args[0] for c in tables["lessons"].update.call_args_list]
+    lessons_failed = [p for p in lessons_payloads if p.get("status") == "failed"]
+    assert lessons_failed, f"lessons.status was never set to 'failed' (payloads: {lessons_payloads})"

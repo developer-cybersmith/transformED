@@ -94,6 +94,16 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             }
         ).eq("lesson_id", lesson_id).execute()
 
+        # CROSS-TEAM NOTE (2026-07-13, flagged to Dev 1 — this file's owner):
+        # GET /api/content/lessons/{id} (router.py) reads lessons.status, NOT
+        # lesson_jobs.status — but nothing in this job ever wrote to `lessons`.
+        # Confirmed via live testing: a completed/failed job left lessons.status
+        # stuck at its initial 'generating' forever, so the polling endpoint
+        # could never report 'ready' or 'failed' to the client for ANY lesson.
+        # No completed_at here — `lessons` (initial_schema.sql, frozen) has no
+        # such column, only created_at/updated_at (updated_at is trigger-managed).
+        supabase.table("lessons").update({"status": "ready"}).eq("lesson_id", lesson_id).execute()
+
         # ── 4b. Notify client via Redis pub/sub ──────────────────────────────
         import json
         from app.core.redis import get_redis
@@ -176,13 +186,27 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+# lesson_jobs.status ('pending'|'running'|'completed'|'failed') -> the
+# lessons.status this helper is ever called with ('generating'|'failed' only
+# — 'completed' is written directly at the pipeline's success site instead).
+_LESSON_JOBS_TO_LESSONS_STATUS: dict[str, str] = {
+    "running": "generating",
+    "failed": "failed",
+}
+
+
 async def _update_lesson_status(
     supabase: Any,
     lesson_id: str,
     status: str,
     error: str | None = None,
 ) -> None:
-    """Update lesson_jobs.status (and optionally error) in Supabase."""
+    """Update lesson_jobs.status (and optionally error), and mirror onto
+    lessons.status — GET /api/content/lessons/{id} (router.py) reads lessons,
+    not lesson_jobs, so both must be kept in sync (CROSS-TEAM NOTE 2026-07-13,
+    flagged to Dev 1: confirmed via live testing that lessons.status was never
+    written here at all, so the polling endpoint could never report anything
+    but the initial 'generating', for any lesson, success or failure)."""
     try:
         payload: dict[str, Any] = {"status": status}
         if error:
@@ -191,3 +215,14 @@ async def _update_lesson_status(
         supabase.table("lesson_jobs").update(payload).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
         logger.warning("Failed to update lesson status for lesson_id=%s status=%s", lesson_id, status)
+
+    lessons_status = _LESSON_JOBS_TO_LESSONS_STATUS.get(status)
+    if lessons_status is None:
+        return
+    try:
+        # lessons has no `error` column (initial_schema.sql) — the error detail
+        # lives on lesson_jobs.error only; router.py's get_lesson() already
+        # reads it from there when lessons.status == 'failed'.
+        supabase.table("lessons").update({"status": lessons_status}).eq("lesson_id", lesson_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to update lessons.status for lesson_id=%s status=%s", lesson_id, lessons_status)
