@@ -36,7 +36,7 @@ This story implements the six Phase 1 "economy" nodes, all running on `settings.
 - Model: `settings.llm_mini`. One call per section via `complete_structured()` (or `complete()` + parse) against a small `SegmentSummary` schema (`segment_id`, `summary`).
 - Summary is 2-3 sentences, **≤100 words** (validated, not just prompted — reject/truncate/retry on violation, log if truncated).
 - Output written to `state["segment_summaries"]`, keyed by section index/id so `lesson_planner` can align it back to structure.
-- Wrapped in `_safe_trace()` (Langfuse), `is_circuit_open("openai_mini")` checked before the call, `cost_tracker.accumulate_cost()` called immediately after each response.
+- Calls go through `OpenAILLMProvider(lesson_id).complete_structured(...)` — this already internally checks `is_circuit_open("openai")` (the provider's hardcoded circuit key, not per-model) and accumulates cost via `response.usage` before returning. **Nodes must NOT re-implement circuit-breaker or cost-accumulation checks themselves** — that would duplicate (and could diverge from) the provider's own logic. `_safe_trace()`-wrapped Langfuse spans are also already handled inside the provider.
 - **Test:** word-count enforcement (accepts ≤100, rejects/handles >100); per-section fan-out produces exactly N summaries for N sections; cost tracker invoked once per call.
 
 ### AC-2 `segment_complexity` (S2-2)
@@ -67,10 +67,10 @@ This story implements the six Phase 1 "economy" nodes, all running on `settings.
 - Narration tone/style matches `SegmentComplexity.narration_style` (from AC-2's output for the same section) — the prompt must include the corresponding complexity's `narration_style` field, not generate narration blind to complexity.
 - **Test:** pacing guard rejects/flags a script that is too dense for its word budget; narration prompt construction includes `narration_style` sourced from the matching section's complexity output.
 
-### AC-7 Cost ceiling + circuit breaker wiring (cross-cutting, S2-13 partial)
-- Every provider call across all 6 nodes: `is_circuit_open("openai_mini")` checked before the call; `cost_tracker.accumulate_cost()` called immediately after; `cost_tracker.check_ceiling()` checked before each node's batch of calls begins.
+### AC-7 Cost ceiling wiring (cross-cutting, S2-13 partial)
+- Circuit-breaker checks and per-call cost accumulation are **already handled inside `OpenAILLMProvider.complete_structured()`** (verified: `apps/api/app/providers/llm/openai.py` — `is_circuit_open("openai")` at the top of the method, `_maybe_accumulate_cost()` after a successful response) — nodes do not call these directly. The only node-level responsibility is `cost_tracker.check_ceiling(lesson_id)` checked before each node's batch of per-section calls begins, so a lesson that's already over budget doesn't start a 6th (or Nth) fan-out call.
 - On ceiling breach mid-node: downshift is not available for `llm_mini` (already the cheapest tier) — the node must complete the lesson using best-effort/degraded output (e.g. skip remaining sections) and cause the pipeline to terminate with `status="failed"`, error prefixed `"cost_ceiling_exceeded: "` (never a bare `"cost_limit_exceeded"` literal — rule 25, CLAUDE.md).
-- **Test:** simulated ceiling breach mid-fan-out results in a `failed` status with the correct error prefix, not a stranded `running` row.
+- **Test:** simulated ceiling breach mid-fan-out results in a `failed` status with the correct error prefix, not a stranded `running` row; a node never calls `is_circuit_open`/`accumulate_cost` itself (regression guard against re-duplicating provider-layer logic).
 
 ## Tracker Cross-Reference Notes (`docs/dev1-tracker.md`)
 

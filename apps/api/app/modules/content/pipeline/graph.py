@@ -30,12 +30,28 @@ Architecture constraints
 from __future__ import annotations
 
 import logging
-from typing import Any, TypedDict
+import operator
+from typing import Annotated, Any, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+from langgraph.types import Send
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# Story 2-1 AC-0: the six Phase 1 "economy" nodes. Each is fanned out once per
+# `state["sections"]` entry via Send() and must ALL complete before Phase 2
+# (lesson_planner) starts — violating this silently 5xs pipeline cost by
+# feeding lesson_planner raw chapter text instead of cheap summaries.
+_ECONOMY_NODES: list[str] = [
+    "summarise_segment",
+    "quiz_generator",
+    "segment_complexity",
+    "jargon_extractor",
+    "intervention_messages",
+    "narration_generator",
+]
 
 
 # ── Pipeline State ────────────────────────────────────────────────────────────
@@ -72,22 +88,32 @@ class PipelineState(TypedDict, total=False):
     slides: list[dict[str, Any]]  # [{id, title, body, speaker_notes, layout}]
 
     # Node 7: summarise_segment
-    segment_summaries: list[dict[str, Any]]  # [{segment_id, summary}]
+    # Annotated with operator.add: each Send() dispatch (one per section) returns
+    # a single-item list; LangGraph concatenates them across the parallel fan-out
+    # rather than the default "last write wins" (which would silently drop all
+    # but one section's output — see Story 2-1 AC-0).
+    segment_summaries: Annotated[list[dict[str, Any]], operator.add]  # [{segment_id, summary}]
 
     # Node 8: quiz_generator
-    quiz_questions: list[dict[str, Any]]  # [{id, question, options, correct, explanation}]
+    quiz_questions: Annotated[list[dict[str, Any]], operator.add]  # [{id, question, options, correct, explanation}]
 
     # Node 9: segment_complexity
-    complexity_scores: list[dict[str, Any]]  # [{segment_id, flesch_kincaid, grade_level}]
+    complexity_scores: Annotated[list[dict[str, Any]], operator.add]  # [{segment_id, flesch_kincaid, grade_level}]
 
     # Node 10: jargon_extractor
-    glossary: list[dict[str, Any]]  # [{term, definition, segment_id}]
+    glossary: Annotated[list[dict[str, Any]], operator.add]  # [{term, definition, segment_id}]
 
     # Node 11: intervention_messages
-    intervention_prompts: list[dict[str, Any]]  # [{trigger, message, type}]
+    intervention_prompts: Annotated[list[dict[str, Any]], operator.add]  # [{trigger, message, type}]
 
     # Node 12: narration_generator
-    narration_scripts: list[dict[str, Any]]  # [{slide_id, script}]
+    narration_scripts: Annotated[list[dict[str, Any]], operator.add]  # [{slide_id, script}]
+
+    # Set by the Send() fan-out router for each dispatched Phase 1 node call —
+    # NOT part of the accumulated/reduced state, just the single-section payload
+    # for that one dispatched invocation.
+    _section: dict[str, Any]
+    _section_index: int
 
     # Node 13: tts_node
     audio_assets: list[dict[str, Any]]  # [{slide_id, audio_url, timestamps}]
@@ -829,23 +855,38 @@ async def embed_node(state: PipelineState) -> PipelineState:
 
 
 async def lesson_planner_node(state: PipelineState) -> PipelineState:
-    """Node 5: Generate a structured lesson plan from the document chunks.
+    """Node 5 (Phase 2 Premium): generate a structured lesson plan.
 
     Uses llm_lesson_planner model (gpt-4o by default, PRD §6.4).
-    """
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] lesson_planner_node: generating lesson plan", lesson_id)
-    await _update_job_progress(lesson_id, 30.0, "lesson_planner")
 
-    # TODO: OpenAILLMProvider(lesson_id).complete_structured(messages, model, LessonPlan)
+    AC-0 SCOPE NOTE (Story 2-1): this node's real GPT-4o generation logic is
+    S2-7, a separate story — not implemented here. What Story 2-1 requires is
+    that the graph wiring actually DELIVERS `state["segment_summaries"]` to
+    this node (proving Phase 1 completed and its output is consumable) rather
+    than the node running with zero Phase 1 data available at all, which was
+    the bug this story's AC-0 fixes. `total_segments` reflects the real input
+    count as a wiring-proof signal; `title`/`objectives`/`segments` remain
+    placeholders until S2-7 lands.
+    """
     from app.config import get_settings
     settings = get_settings()
-    _model = settings.llm_lesson_planner  # noqa: F841 (used in TODO)
+    _model = settings.llm_lesson_planner  # noqa: F841 (used by S2-7, not yet implemented)
 
+    lesson_id = state["lesson_id"]
+    segment_summaries = state.get("segment_summaries", [])
+    logger.info(
+        "[%s] lesson_planner_node: generating lesson plan from %d segment summaries",
+        lesson_id,
+        len(segment_summaries),
+    )
+    await _update_job_progress(lesson_id, 30.0, "lesson_planner")
+
+    # TODO (S2-7): OpenAILLMProvider(lesson_id).complete_structured(messages, model, LessonPlan)
     lesson_plan: dict[str, Any] = {
         "title": "TODO: LLM-generated title",
         "objectives": [],
         "segments": [],
+        "total_segments": len(segment_summaries),
         "total_duration_min": 0,
     }
     return {**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}
@@ -865,70 +906,156 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     return {**state, "slides": slides, "progress_pct": 48.0}
 
 
-async def summarise_segment_node(state: PipelineState) -> PipelineState:
-    """Node 7: Generate a short intro summary for each lesson segment."""
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] summarise_segment_node", lesson_id)
-    await _update_job_progress(lesson_id, 50.0, "summarise_segment")
+class _SegmentSummaryLLM(BaseModel):
+    """Internal structured-output shape for summarise_segment_node — not part
+    of the frozen lesson contract, just the LLM response parsing target."""
 
-    # TODO: parallel LLM calls per segment using llm_mini
-    segment_summaries: list[dict[str, Any]] = []
-    return {**state, "segment_summaries": segment_summaries, "progress_pct": 54.0}
+    summary: str
+
+
+def _cap_words(text: str, max_words: int) -> str:
+    """Truncate *text* to at most *max_words* words, logging if it had to."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    logger.warning("summary exceeded %d words (got %d) — truncating", max_words, len(words))
+    return " ".join(words[:max_words])
+
+
+async def summarise_segment_node(state: PipelineState) -> PipelineState:
+    """Node 7 (Story 2-1 AC-1): generate a 2-3 sentence, <=100 word summary
+    for one section. Send()-dispatched once per section (see AC-0) — this is
+    what `lesson_planner` (S2-7) consumes INSTEAD of raw chapter text (the
+    single most cost-critical constraint in the whole pipeline).
+    """
+    from app.config import get_settings
+    from app.providers.llm.openai import OpenAILLMProvider
+
+    lesson_id = state["lesson_id"]
+    section = state["_section"]
+    section_id = section.get("title") or f"section_{state.get('_section_index', 0)}"
+    logger.info("[%s] summarise_segment_node: %s", lesson_id, section_id)
+
+    settings = get_settings()
+    provider = OpenAILLMProvider(lesson_id)
+    messages = [
+        {
+            "role": "system",
+            "content": "Summarise the following section in 2-3 sentences, no more than 100 words.",
+        },
+        {"role": "user", "content": section.get("body", "")[:6000]},
+    ]
+    response = await provider.complete_structured(messages, settings.llm_mini, _SegmentSummaryLLM)
+    summary_text = _cap_words(response.summary, 100)
+
+    return {"segment_summaries": [{"segment_id": section_id, "summary": summary_text}]}
 
 
 async def quiz_generator_node(state: PipelineState) -> PipelineState:
-    """Node 8: Generate MCQs for each lesson segment."""
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] quiz_generator_node", lesson_id)
-    await _update_job_progress(lesson_id, 56.0, "quiz_generator")
+    """Node 8: Generate MCQs for one section (Send()-dispatched, see AC-0).
 
-    # TODO: OpenAILLMProvider(lesson_id).complete_structured(messages, llm_mini, QuizSet)
-    quiz_questions: list[dict[str, Any]] = []
-    return {**state, "quiz_questions": quiz_questions, "progress_pct": 60.0}
+    Still a stub (S2-3, not yet implemented) — return shape is fan-out-safe:
+    only this node's own reduced key, no **state spread / progress_pct (a
+    concurrent write to a non-reducer key across parallel dispatches raises
+    LangGraph's InvalidUpdateError).
+    """
+    lesson_id = state["lesson_id"]
+    logger.info("[%s] quiz_generator_node: %s", lesson_id, state.get("_section", {}).get("title"))
+
+    # TODO (S2-3): OpenAILLMProvider(lesson_id).complete_structured(messages, llm_mini, QuizSet)
+    return {"quiz_questions": []}
+
+
+def _clamp(value: float, lo: float, hi: float, *, label: str) -> float:
+    """Clamp *value* into [lo, hi], logging when the LLM produced an
+    out-of-range value rather than silently trusting it (Story 2-1 AC-2)."""
+    if not (lo <= value <= hi):
+        logger.warning("%s=%.4f out of range [%.1f, %.1f] — clamping", label, value, lo, hi)
+        return max(lo, min(hi, value))
+    return value
 
 
 async def segment_complexity_node(state: PipelineState) -> PipelineState:
-    """Node 9: Score each segment's reading complexity."""
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] segment_complexity_node", lesson_id)
-    await _update_job_progress(lesson_id, 62.0, "segment_complexity")
+    """Node 9 (Story 2-1 AC-2): score one section's reading complexity.
 
-    # TODO: textstat.flesch_reading_ease() + LLM grade-level estimation
-    complexity_scores: list[dict[str, Any]] = []
-    return {**state, "complexity_scores": complexity_scores, "progress_pct": 65.0}
+    Send()-dispatched once per section (see AC-0) — reads `state["_section"]`,
+    not `state["sections"]`. Returns only its own reduced key (fan-out-safe,
+    see quiz_generator_node's docstring for why).
+    """
+    from app.config import get_settings
+    from app.providers.llm.openai import OpenAILLMProvider
+    from app.schemas.lesson import SegmentComplexity
+
+    lesson_id = state["lesson_id"]
+    section = state["_section"]
+    section_id = section.get("title") or f"section_{state.get('_section_index', 0)}"
+    logger.info("[%s] segment_complexity_node: %s", lesson_id, section_id)
+
+    settings = get_settings()
+    provider = OpenAILLMProvider(lesson_id)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Score this section's reading complexity for an adaptive learning "
+                "platform. Return level (low/medium/high), cognitive_load, "
+                "abstraction_level, prerequisite_concepts, narration_style, "
+                "quiz_difficulty, and intervention_sensitivity (a float in [0.0, 1.0])."
+            ),
+        },
+        {"role": "user", "content": section.get("body", "")[:6000]},
+    ]
+    response = await provider.complete_structured(messages, settings.llm_mini, SegmentComplexity)
+
+    score: dict[str, Any] = {
+        "segment_id": section_id,
+        "level": response.level,
+        "cognitive_load": response.cognitive_load,
+        "abstraction_level": response.abstraction_level,
+        "prerequisite_concepts": response.prerequisite_concepts,
+        "narration_style": response.narration_style,
+        "quiz_difficulty": response.quiz_difficulty,
+        "intervention_sensitivity": _clamp(
+            float(response.intervention_sensitivity), 0.0, 1.0, label="intervention_sensitivity"
+        ),
+    }
+
+    return {"complexity_scores": [score]}
 
 
 async def jargon_extractor_node(state: PipelineState) -> PipelineState:
-    """Node 10: Extract domain jargon and generate definitions."""
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] jargon_extractor_node", lesson_id)
-    await _update_job_progress(lesson_id, 66.0, "jargon_extractor")
+    """Node 10 (S2-4, not yet implemented): extract jargon for one section.
 
-    # TODO: OpenAILLMProvider(lesson_id).complete_structured(messages, llm_mini, Glossary)
-    glossary: list[dict[str, Any]] = []
-    return {**state, "glossary": glossary, "progress_pct": 69.0}
+    Send()-dispatched per section (AC-0) — stub return is fan-out-safe (own
+    reduced key only, see quiz_generator_node's docstring for why).
+    """
+    lesson_id = state["lesson_id"]
+    logger.info("[%s] jargon_extractor_node: %s", lesson_id, state.get("_section", {}).get("title"))
+
+    # TODO (S2-4): OpenAILLMProvider(lesson_id).complete_structured(messages, llm_mini, Glossary)
+    return {"glossary": []}
 
 
 async def intervention_messages_node(state: PipelineState) -> PipelineState:
-    """Node 11: Pre-generate intervention prompts based on complexity + jargon."""
+    """Node 11 (S2-5, not yet implemented): pre-generate intervention prompts
+    for one section. Send()-dispatched per section (AC-0) — fan-out-safe stub.
+    """
     lesson_id = state["lesson_id"]
-    logger.info("[%s] intervention_messages_node", lesson_id)
-    await _update_job_progress(lesson_id, 70.0, "intervention_messages")
+    logger.info("[%s] intervention_messages_node: %s", lesson_id, state.get("_section", {}).get("title"))
 
-    # TODO: generate distraction, fatigue, encouragement message variants
-    intervention_prompts: list[dict[str, Any]] = []
-    return {**state, "intervention_prompts": intervention_prompts, "progress_pct": 73.0}
+    # TODO (S2-5): generate distraction, confusion, fatigue message variants (3x3)
+    return {"intervention_prompts": []}
 
 
 async def narration_generator_node(state: PipelineState) -> PipelineState:
-    """Node 12: Write narration scripts for each slide."""
+    """Node 12 (S2-6, not yet implemented): write a narration script for one
+    section. Send()-dispatched per section (AC-0) — fan-out-safe stub.
+    """
     lesson_id = state["lesson_id"]
-    logger.info("[%s] narration_generator_node: %d slides", lesson_id, len(state.get("slides", [])))
-    await _update_job_progress(lesson_id, 74.0, "narration_generator")
+    logger.info("[%s] narration_generator_node: %s", lesson_id, state.get("_section", {}).get("title"))
 
-    # TODO: OpenAILLMProvider(lesson_id).complete for each slide with speaker-voice prompt
-    narration_scripts: list[dict[str, Any]] = []
-    return {**state, "narration_scripts": narration_scripts, "progress_pct": 78.0}
+    # TODO (S2-6): OpenAILLMProvider(lesson_id).complete with speaker-voice prompt
+    return {"narration_scripts": []}
 
 
 async def tts_node(state: PipelineState) -> PipelineState:
@@ -988,6 +1115,21 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # ── Graph construction ────────────────────────────────────────────────────────
 
 
+def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
+    """Story 2-1 AC-0 router: dispatch every Phase 1 economy node once per
+    `state["sections"]` entry. Each dispatched call receives a copy of the
+    accumulated state plus `_section`/`_section_index` for that one section —
+    it must NOT loop over `state["sections"]` itself (that would silently
+    redo the whole chapter N times over instead of one section per call).
+    """
+    sections = state.get("sections", [])
+    return [
+        Send(node_name, {**state, "_section": section, "_section_index": idx})
+        for idx, section in enumerate(sections)
+        for node_name in _ECONOMY_NODES
+    ]
+
+
 def _build_pipeline_graph() -> Any:
     """Build and compile the content pipeline StateGraph.
 
@@ -1016,20 +1158,25 @@ def _build_pipeline_graph() -> Any:
     graph.add_node("image_generator", image_generator_node)
     graph.add_node("package_builder", package_builder_node)
 
-    # Linear pipeline edges
+    # Linear pipeline edges (Phase A + fan-out/join Phase B.1 → B.2 → B.3)
     graph.set_entry_point("extract")
     graph.add_edge("extract", "structure")
     graph.add_edge("structure", "chunk")
     graph.add_edge("chunk", "embed")
-    graph.add_edge("embed", "lesson_planner")
+
+    # Story 2-1 AC-0: embed fans out to all 6 Phase 1 economy nodes, once per
+    # section, via Send() — replacing the old direct embed -> lesson_planner
+    # edge that let lesson_planner run with zero segment summaries available
+    # (the exact 5x-cost-overrun bug this AC fixes).
+    graph.add_conditional_edges("embed", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
+
+    # Join: lesson_planner only runs once ALL fanned-out economy-node dispatches
+    # (6 nodes x N sections) have completed for this superstep.
+    for node_name in _ECONOMY_NODES:
+        graph.add_edge(node_name, "lesson_planner")
+
     graph.add_edge("lesson_planner", "slide_generator")
-    graph.add_edge("slide_generator", "summarise_segment")
-    graph.add_edge("summarise_segment", "quiz_generator")
-    graph.add_edge("quiz_generator", "segment_complexity")
-    graph.add_edge("segment_complexity", "jargon_extractor")
-    graph.add_edge("jargon_extractor", "intervention_messages")
-    graph.add_edge("intervention_messages", "narration_generator")
-    graph.add_edge("narration_generator", "tts_node")
+    graph.add_edge("slide_generator", "tts_node")
     graph.add_edge("tts_node", "image_generator")
     graph.add_edge("image_generator", "package_builder")
     graph.add_edge("package_builder", END)
