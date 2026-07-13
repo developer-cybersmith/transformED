@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Mail, Lock, ArrowRight } from "lucide-react";
@@ -12,9 +12,14 @@ import { createClient } from "@/lib/supabase/client";
 
 export function SignInForm() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const supabase = createClient();
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState("");
+    const [error, setError] = useState(
+        searchParams.get("error") === "auth_callback_failed"
+            ? "Sign-in failed. Please try again or use email and password."
+            : ""
+    );
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -35,11 +40,12 @@ export function SignInForm() {
 
             router.push("/dashboard");
             router.refresh();
-        } catch (err: any) {
+        } catch (err) {
             console.error("Login map error:", err);
             setError(
-                err.message ||
-                "Authentication failed. Please verify your credentials."
+                err instanceof Error && err.message
+                    ? err.message
+                    : "Authentication failed. Please verify your credentials."
             );
         } finally {
             setIsLoading(false);
@@ -50,7 +56,7 @@ export function SignInForm() {
         supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: `${window.location.origin}/dashboard`
+                redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`
             }
         });
     };
@@ -63,7 +69,7 @@ export function SignInForm() {
             className="bg-white/80 backdrop-blur-xl rounded-[2rem] p-8 sm:p-10 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.1)] border border-neutral-100"
         >
             <div className="mb-10">
-                <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
+                <h2 className="font-serif text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
                     Continue Learning
                 </h2>
                 <p className="text-neutral-500 text-sm">
@@ -94,12 +100,9 @@ export function SignInForm() {
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <Label htmlFor="password">Password</Label>
-                            <Link
-                                href="/forgot-password"
-                                className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] transition-colors"
-                            >
+                            <span className="text-sm font-medium text-neutral-400 cursor-not-allowed">
                                 Forgot password?
-                            </Link>
+                            </span>
                         </div>
                         <Input
                             id="password"

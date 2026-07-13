@@ -21,6 +21,7 @@ export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockL
                 status: 'in_progress',
                 progressPercent: 0,
                 lastAccessed: new Date().toISOString(),
+                thumbnailUrl: "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&q=80&w=600&h=400",
                 slides: [
                     {
                         id: "slide_1",
@@ -61,6 +62,8 @@ export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockL
 
 export const getLessonPackageById = async (lessonId: string): Promise<ApiResponse<LessonPackage>> => {
     await randomDelay(800, 1500);
+    const known = mockLessons.find(l => l.id === lessonId);
+    if (!known) return createErrorResponse('Lesson not found');
     return createSuccessResponse(
         { ...mockLessonPackage, lesson_id: lessonId },
         'Lesson package retrieved successfully',

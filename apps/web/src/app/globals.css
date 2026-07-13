@@ -1,18 +1,19 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-background: #ffffff;
-  --color-foreground: #0f172a;
-  --color-primary: #2F80ED;
-  --color-primary-dark: #1a6dd4;
-  --color-accent: #3FA9F5;
-  --color-light-bg: #F7FBFF;
-  --color-soft-panel: #EAF5FF;
-  --color-border-soft: #D8EAF8;
-  --color-text-secondary: #64748b;
-  --color-text-muted: #94a3b8;
+  --color-background: #F9F9F9;
+  --color-foreground: #07172C;
+  --color-primary: #07172C;
+  --color-primary-dark: #040D19;
+  --color-accent: #C6A45C;
+  --color-light-bg: #F3F5F8;
+  --color-soft-panel: #EDEFF3;
+  --color-border-soft: #DDE1E6;
+  --color-text-secondary: #6B6D6F;
+  --color-text-muted: #9A9C9E;
   --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
   --font-display: var(--font-outfit), system-ui, -apple-system, sans-serif;
+  --font-serif: var(--font-fraunces), Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
 
   --animate-aurora: aurora 60s linear infinite;
 
@@ -28,10 +29,10 @@
 }
 
 :root {
-  --accent-primary: #2F80ED;
-  --accent-primary-hover: #1a6dd4;
-  --accent-primary-rgb: 47, 128, 237;
-  --accent-secondary: #3FA9F5;
+  --accent-primary: #07172C;
+  --accent-primary-hover: #040D19;
+  --accent-primary-rgb: 7, 23, 44;
+  --accent-secondary: #C6A45C;
 }
 
 html {
@@ -46,8 +47,8 @@ body {
 }
 
 ::selection {
-  background-color: rgba(47, 128, 237, 0.15);
-  color: #1a365d;
+  background-color: rgba(198, 164, 92, 0.25);
+  color: #07172C;
 }
 
 /* Smooth scrollbar */
@@ -56,14 +57,14 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: #EDEFF3;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #C7CDD4;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #797B7D;
 }

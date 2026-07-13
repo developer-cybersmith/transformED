@@ -84,7 +84,7 @@ export default function CognitiveVisualization({ activePhase }: { activePhase: n
                             <motion.path
                                 key={`pulse-${i}`}
                                 d={d}
-                                className="stroke-sky-300"
+                                className="stroke-[var(--accent-primary)]"
                                 strokeWidth="4"
                                 fill="none"
                                 strokeLinecap="round"
@@ -140,7 +140,7 @@ export default function CognitiveVisualization({ activePhase }: { activePhase: n
                                     className={cn(
                                         "w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center transition-colors duration-700 shadow-sm border",
                                         isActive
-                                            ? "bg-white border-primary/20 shadow-[0_8px_20px_rgba(47,128,237,0.12)] text-primary"
+                                            ? "bg-white border-primary/20 shadow-[0_8px_20px_rgba(7,23,44,0.12)] text-primary"
                                             : "bg-[#f8fafc] border-[#cbd5e1]/40 text-slate-400"
                                     )}
                                 >

@@ -32,7 +32,7 @@ _STRICT = ConfigDict(extra="forbid")
 
 LessonStatus = Literal["generating", "ready", "failed"]
 ComplexityLevel = Literal["low", "medium", "high"]
-AudioProvider = Literal["elevenlabs", "azure", "browser"]  # frozen — see lesson_package.schema.json
+AudioProvider = Literal["sarvam", "azure", "browser"]  # frozen — see lesson_package.schema.json
 QuizType = Literal["mcq", "concept_check"]
 QuizDifficulty = Literal["easy", "medium", "hard"]
 

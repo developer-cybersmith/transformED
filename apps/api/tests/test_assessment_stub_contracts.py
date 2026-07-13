@@ -1,10 +1,11 @@
 """
-Unit tests for assessment module stub contracts.
+Unit tests for stub contracts — tracks which endpoints are live vs. 501.
 
 Verifies that:
-- The 3 remaining stub endpoints (report, dna, onboarding) return HTTP 501 NOT_IMPLEMENTED
-  (POST /quiz implemented Sprint 1 — see test_quiz_endpoint.py)
-  (POST /teachback implemented Sprint 1 — see test_teachback_endpoint.py)
+- Live endpoints return non-501 (POST /quiz, POST /teachback, POST /onboarding/submit,
+  GET /session/{id}/report, POST /api/analytics/events,
+  GET /api/analytics/session/{id}/summary)
+- The one remaining stub (GET /user/dna) still returns 501
 - Pydantic models have exactly the required fields (no banned fields)
 - No STT-related field names (transcript, duration_seconds) exist
 - LearnerDNA response does not expose raw numeric dimension scores
@@ -14,11 +15,14 @@ These tests use @pytest.mark.unit and do NOT require any external services.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from app.dependencies import get_current_user
+from app.modules.analytics.router import router as analytics_router
 from app.modules.assessment.router import (
     LearnerDNA,
     OnboardingDiagnosticSubmission,
@@ -40,6 +44,12 @@ _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
 _app.include_router(router, prefix="/api/assessment")
 client = TestClient(_app, raise_server_exceptions=False)
+
+# Analytics contract test client (separate app — analytics module)
+_analytics_app = FastAPI()
+_analytics_app.dependency_overrides[get_current_user] = _fake_user
+_analytics_app.include_router(analytics_router, prefix="/api/analytics")
+analytics_client = TestClient(_analytics_app, raise_server_exceptions=False)
 
 # Minimal valid payloads for POST endpoints
 _QUIZ_PAYLOAD = {
@@ -89,32 +99,47 @@ def test_teachback_endpoint_is_live_not_501() -> None:
 
 
 @pytest.mark.unit
-def test_report_endpoint_returns_501() -> None:
-    """GET /api/assessment/session/{session_id}/report must return HTTP 501."""
+def test_report_endpoint_is_live_not_501() -> None:
+    """GET /api/assessment/session/{session_id}/report must NOT return 501 (implemented in Sprint 2).
+
+    The endpoint is now live — it delegates to get_session_report() in service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_session_report_endpoint.py.
+    """
     response = client.get("/api/assessment/session/test-id/report")
-    assert response.status_code == 501, (
-        f"Expected 501, got {response.status_code}. "
-        "Session report endpoint must remain a stub until Sprint 2."
+    assert response.status_code != 501, (
+        f"Session report endpoint returned 501 — implementation is missing. "
+        "Sprint 2 requires this endpoint to be live."
     )
 
 
 @pytest.mark.unit
-def test_dna_endpoint_returns_501() -> None:
-    """GET /api/assessment/user/dna must return HTTP 501 NOT_IMPLEMENTED."""
+def test_dna_endpoint_is_live_not_501() -> None:
+    """GET /api/assessment/user/dna must NOT return HTTP 501 (implemented in Sprint 2, Story 3-22).
+
+    The endpoint is now live — it delegates to get_learner_dna_data() in service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_posthog_events.py (AC 17).
+    """
     response = client.get("/api/assessment/user/dna")
-    assert response.status_code == 501, (
-        f"Expected 501, got {response.status_code}. "
-        "Learner DNA endpoint must remain a stub until Sprint 2."
+    assert response.status_code != 501, (
+        f"Learner DNA endpoint returned 501 — implementation is missing. "
+        "Story 3-22 requires this endpoint to be live."
     )
 
 
 @pytest.mark.unit
-def test_onboarding_endpoint_returns_501() -> None:
-    """POST /api/assessment/onboarding/submit must return HTTP 501 NOT_IMPLEMENTED."""
+def test_onboarding_endpoint_is_live_not_501() -> None:
+    """POST /api/assessment/onboarding/submit must NOT return 501 (implemented in Sprint 2, Story 3-18).
+
+    The endpoint is now live — it delegates to process_onboarding() in service.py.
+    Without a real Supabase/Redis session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_onboarding_endpoint.py.
+    """
     response = client.post("/api/assessment/onboarding/submit", json=_ONBOARDING_PAYLOAD)
-    assert response.status_code == 501, (
-        f"Expected 501, got {response.status_code}. "
-        "Onboarding diagnostic endpoint must remain a stub until Sprint 1."
+    assert response.status_code != 501, (
+        f"Onboarding endpoint returned 501 — implementation is missing. "
+        "Story 3-18 requires this endpoint to be live."
     )
 
 
@@ -188,3 +213,50 @@ def test_learner_dna_response_no_raw_scores() -> None:
             f"LearnerDNA has banned field(s) {matching} that expose raw scores. "
             "Per CLAUDE.md: descriptive text only, no IQ/EQ/SQ language."
         )
+
+
+# ── Analytics contract tests (Story 3-20 + Story 3-21) ───────────────────────
+
+
+@pytest.mark.unit
+def test_analytics_events_endpoint_is_live_not_501() -> None:
+    """POST /api/analytics/events must NOT return 501 (implemented in Sprint 2, Story 3-20).
+
+    The endpoint is now live — it delegates to ingest_events() in analytics/service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_analytics_events_endpoint.py.
+    """
+    _mock_supabase = MagicMock()
+    with patch("app.core.db.get_supabase", return_value=_mock_supabase):
+        response = analytics_client.post(
+            "/api/analytics/events",
+            json={
+                "events": [{
+                    "session_id": "sess-stub-check",
+                    "event_type": "segment_complete",
+                    "payload": {},
+                    "client_timestamp_ms": 1_700_000_000_000,
+                }]
+            },
+        )
+    assert response.status_code != 501, (
+        f"Analytics events endpoint returned 501 — implementation is missing. "
+        "Story 3-20 requires this endpoint to be live."
+    )
+
+
+@pytest.mark.unit
+def test_analytics_summary_endpoint_is_live_not_501() -> None:
+    """GET /api/analytics/session/{id}/summary must NOT return 501 (implemented in Sprint 2, Story 3-21).
+
+    The endpoint is now live — it delegates to get_session_summary() in analytics/service.py.
+    Without a real Supabase session it will return 4xx/5xx, but never 501.
+    Full contract tests live in test_analytics_summary_endpoint.py.
+    """
+    _mock_supabase = MagicMock()
+    with patch("app.core.db.get_supabase", return_value=_mock_supabase):
+        response = analytics_client.get("/api/analytics/session/sess-stub-check/summary")
+    assert response.status_code != 501, (
+        f"Analytics summary endpoint returned {response.status_code} — expected non-501. "
+        "Story 3-21 requires this endpoint to be live."
+    )

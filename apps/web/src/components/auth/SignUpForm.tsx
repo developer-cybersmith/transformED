@@ -63,11 +63,12 @@ export function SignUpForm() {
 
             // On success, redirect to dashboard.
             router.push("/dashboard");
-        } catch (err: any) {
+        } catch (err) {
             console.error("Registration error:", err);
             setError(
-                err.message ||
-                "Registration failed. Please try again."
+                err instanceof Error && err.message
+                    ? err.message
+                    : "Registration failed. Please try again."
             );
         } finally {
             setIsLoading(false);
@@ -78,7 +79,7 @@ export function SignUpForm() {
         supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: `${window.location.origin}/dashboard`
+                redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`
             }
         });
     };
@@ -94,11 +95,11 @@ export function SignUpForm() {
                 <div className="mx-auto w-16 h-16 bg-[var(--accent-primary)]/10 rounded-full flex items-center justify-center mb-6">
                     <Mail className="w-8 h-8 text-[var(--accent-primary)]" />
                 </div>
-                <h2 className="text-2xl font-semibold tracking-tight text-neutral-900 mb-3">
+                <h2 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-3">
                     Check your email
                 </h2>
                 <p className="text-neutral-600 text-sm sm:text-base leading-relaxed mb-8">
-                    We've sent a confirmation link to <br /><span className="font-medium text-neutral-900 mt-1 inline-block">{submittedEmail}</span>.
+                    We&apos;ve sent a confirmation link to <br /><span className="font-medium text-neutral-900 mt-1 inline-block">{submittedEmail}</span>.
                     <br /><br />Please click the link to activate your account.
                 </p>
                 <Link href="/signin">
@@ -118,7 +119,7 @@ export function SignUpForm() {
             className="bg-white/80 backdrop-blur-xl rounded-[2rem] p-6 sm:p-8 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.1)] border border-neutral-100"
         >
             <div className="mb-4 text-center lg:text-left">
-                <h2 className="text-2xl font-semibold tracking-tight text-neutral-900 mb-1">
+                <h2 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-1">
                     Join HIE
                 </h2>
                 <p className="text-neutral-500 text-sm">
@@ -225,7 +226,7 @@ export function SignUpForm() {
                     href="/signin"
                     className="font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] transition-colors"
                 >
-                    <br />Continue learning &rarr;
+                    Continue learning &rarr;
                 </Link>
             </p>
         </motion.div>

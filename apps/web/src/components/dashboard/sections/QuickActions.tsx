@@ -10,8 +10,8 @@ const actions = [
         title: "Upload PDF",
         description: "Analyze and structure a new document.",
         icon: UploadCloud,
-        color: "text-blue-500",
-        bg: "bg-blue-50 border-blue-100",
+        color: "text-[var(--accent-primary)]",
+        bg: "bg-[var(--color-light-bg)] border-[var(--color-border-soft)]",
         href: "/upload",
     },
     {

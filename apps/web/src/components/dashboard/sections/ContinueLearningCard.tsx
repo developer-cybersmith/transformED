@@ -5,6 +5,7 @@ import { Play, Clock, LayoutGrid } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MockLesson } from "@/mocks/data/lessons";
 import { useRouter } from "next/navigation";
+import { formatTimeAgo } from "@/lib/utils";
 
 export function ContinueLearningCard({ lesson }: { lesson: MockLesson | null }) {
     const router = useRouter();
@@ -21,12 +22,16 @@ export function ContinueLearningCard({ lesson }: { lesson: MockLesson | null }) 
     return (
         <div className="mb-0">
             <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold tracking-tight text-neutral-900">
+                <h2 className="font-serif text-xl font-semibold tracking-tight text-neutral-900">
                     Continue Learning
                 </h2>
-                <span className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors">
+                <button
+                    type="button"
+                    onClick={() => router.push("/library")}
+                    className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors"
+                >
                     View Path
-                </span>
+                </button>
             </div>
 
             <motion.div
@@ -90,11 +95,19 @@ export function ContinueLearningCard({ lesson }: { lesson: MockLesson | null }) 
 
                 <div className="flex items-center gap-6 relative z-10 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 border-neutral-100 pt-6 md:pt-0 mt-2 md:mt-0">
                     <div className="text-sm text-neutral-400">
-                        Last opened 2 hours ago
+                        Last opened {formatTimeAgo(lesson.lastAccessed)}
                     </div>
-                    <div className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-[var(--accent-primary)] text-white shadow hover:bg-[var(--accent-primary)]/90 h-10 px-8 py-2 rounded-2xl shrink-0">
+                    <Button
+                        variant="primary"
+                        size="md"
+                        className="rounded-2xl shrink-0"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/lesson/${lesson.id}`);
+                        }}
+                    >
                         <Play className="w-4 h-4 mr-2 fill-current" /> Resume
-                    </div>
+                    </Button>
                 </div>
 
             </motion.div>

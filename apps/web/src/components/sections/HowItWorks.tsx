@@ -65,7 +65,7 @@ function ProcessVisual() {
 
             {/* Glowing background orbs */}
             <div className="absolute top-[10%] left-[20%] w-64 h-64 bg-primary/15 rounded-full blur-3xl opacity-60"></div>
-            <div className="absolute bottom-[10%] right-[20%] w-64 h-64 bg-sky-400/15 rounded-full blur-3xl opacity-60"></div>
+            <div className="absolute bottom-[10%] right-[20%] w-64 h-64 bg-[var(--accent-secondary)]/15 rounded-full blur-3xl opacity-60"></div>
 
             <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 500 500" fill="none">
                 {paths.map((d, i) => (
@@ -116,7 +116,7 @@ function ProcessVisual() {
                         {/* Card UI */}
                         <div className={cn(
                             "w-[56px] h-[56px] sm:w-[68px] sm:h-[68px] rounded-2xl flex items-center justify-center transition-all bg-white shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-[#e2e8f0]",
-                            node.isPrimary && "w-[64px] h-[64px] sm:w-[80px] sm:h-[80px] rounded-[1.25rem] bg-gradient-to-tr from-primary to-primary-dark shadow-[0_8px_32px_rgba(47,128,237,0.35)] border-transparent"
+                            node.isPrimary && "w-[64px] h-[64px] sm:w-[80px] sm:h-[80px] rounded-[1.25rem] bg-gradient-to-tr from-primary to-primary-dark shadow-[0_8px_32px_rgba(7,23,44,0.35)] border-transparent"
                         )}>
                             <node.icon className={cn("w-6 h-6 sm:w-7 sm:h-7", node.isPrimary ? "text-white w-7 h-7 sm:w-8 sm:h-8" : "text-primary")} />
                         </div>
@@ -149,8 +149,9 @@ export default function HowItWorks() {
                             <p className="text-sm font-semibold text-primary mb-2 tracking-wide uppercase">
                                 The Cognitive Pipeline
                             </p>
-                            <h2 className="text-3xl sm:text-[2.25rem] font-bold text-foreground font-display tracking-tight leading-tight">
-                                From cognitive overload to complete mastery.
+                            <h2 className="font-serif text-foreground tracking-tight leading-[1.1]">
+                                <span className="block font-semibold text-3xl sm:text-[2.25rem]">From cognitive overload</span>
+                                <span className="block italic font-normal text-text-secondary text-[1.55rem] sm:text-[1.85rem] mt-0.5">to complete mastery.</span>
                             </h2>
                         </motion.div>
 

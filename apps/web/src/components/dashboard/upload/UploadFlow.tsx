@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { UploadCloud, CheckCircle, AlertCircle, Loader2, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { uploadGenerationService } from "@/services/uploadGeneration.service";
+import { Button } from "@/components/ui/button";
 
 export function UploadFlow() {
     const [file, setFile] = useState<File | null>(null);
@@ -81,7 +82,13 @@ export function UploadFlow() {
                 });
             });
 
-            return () => unsubscribe();
+            // Tear down the connection too, not just this subscription — the
+            // singleton's generation loop otherwise keeps running in the
+            // background after navigating away mid-generation.
+            return () => {
+                unsubscribe();
+                uploadGenerationService.disconnect();
+            };
         }
     }, [uploadState, file]);
 
@@ -106,15 +113,23 @@ export function UploadFlow() {
                     <div className="w-20 h-20 bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500">
                         <UploadCloud className="w-10 h-10" />
                     </div>
-                    <h3 className="text-2xl font-semibold tracking-tight text-neutral-900 mb-2">
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-2">
                         Drop your course material here
                     </h3>
                     <p className="text-neutral-500 max-w-sm mb-8">
                         Upload a PDF document. HIE will automatically structure it, synthesize audio narratives, and generate an interactive journey.
                     </p>
-                    <div className="px-6 py-3 bg-neutral-900 text-white rounded-full font-medium transition-transform group-hover:-translate-y-1 shadow-md">
+                    <Button
+                        variant="primary"
+                        size="md"
+                        onClick={(e) => {
+                            e.stopPropagation(); // the dropzone container already handles the click
+                            inputRef.current?.click();
+                        }}
+                        className="rounded-full bg-neutral-900 text-white shadow-md hover:bg-neutral-800 group-hover:-translate-y-1"
+                    >
                         Browse Files
-                    </div>
+                    </Button>
                 </motion.div>
             )}
 
@@ -148,7 +163,7 @@ export function UploadFlow() {
                         <span className="text-sm font-semibold text-[var(--accent-primary)] uppercase tracking-widest">{statusMessage}</span>
                     </div>
 
-                    <h3 className="text-2xl font-bold tracking-tight text-neutral-900 mb-3">Architecting your lesson...</h3>
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-3">Architecting your lesson...</h3>
                     <p className="text-neutral-500 max-w-sm leading-relaxed">
                         Establishing intelligence matrix, compiling timeline sequences, and synthesizing audio overlays.
                     </p>
@@ -169,20 +184,24 @@ export function UploadFlow() {
                             <CheckCircle className="w-12 h-12" />
                         </div>
                     </div>
-                    <h3 className="text-3xl font-bold tracking-tight text-neutral-900 mb-3">Generation Complete</h3>
+                    <h3 className="font-serif text-3xl font-semibold tracking-tight text-neutral-900 mb-3">Generation Complete</h3>
                     <p className="text-neutral-500 text-lg mb-10 max-w-md">Your uploaded material has been successfully transformed into a dynamic, interactive lesson.</p>
-                    <button
+                    <Button
+                        variant="primary"
+                        size="lg"
                         onClick={() => router.push(`/lesson/${lessonId}`)}
-                        className="px-8 py-4 bg-neutral-900 text-white rounded-2xl shadow-[0_8px_20px_-8px_rgba(0,0,0,0.3)] flex items-center gap-3 font-semibold hover:-translate-y-1 hover:shadow-[0_12px_24px_-8px_rgba(0,0,0,0.4)] transition-all"
+                        className="gap-3 rounded-2xl bg-neutral-900 text-white shadow-[0_8px_20px_-8px_rgba(0,0,0,0.3)] hover:-translate-y-1 hover:bg-neutral-800 hover:shadow-[0_12px_24px_-8px_rgba(0,0,0,0.4)]"
                     >
                         <Play className="w-5 h-5 fill-current" /> Begin Lesson
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => setUploadState('idle')}
-                        className="mt-6 text-sm font-semibold text-neutral-400 hover:text-neutral-600 transition-colors"
+                        className="mt-6 text-neutral-400 hover:text-neutral-600 hover:bg-transparent"
                     >
                         Generate Another
-                    </button>
+                    </Button>
                 </motion.div>
             )}
 
@@ -196,14 +215,16 @@ export function UploadFlow() {
                     <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-8">
                         <AlertCircle className="w-12 h-12" />
                     </div>
-                    <h3 className="text-2xl font-bold text-neutral-900 mb-3">Generation Failed</h3>
+                    <h3 className="font-serif text-2xl font-semibold text-neutral-900 mb-3">Generation Failed</h3>
                     <p className="text-neutral-500 mb-10 max-w-sm">{errorMessage}</p>
-                    <button
+                    <Button
+                        variant="primary"
+                        size="md"
                         onClick={() => setUploadState('idle')}
-                        className="px-8 py-3 bg-red-500 text-white rounded-2xl font-semibold hover:bg-red-600 transition-colors shadow-md"
+                        className="rounded-2xl bg-red-500 text-white shadow-md hover:bg-red-600"
                     >
                         Try Again
-                    </button>
+                    </Button>
                 </motion.div>
             )}
 

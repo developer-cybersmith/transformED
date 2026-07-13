@@ -29,11 +29,12 @@ export default function TransformationPromise() {
                     transition={{ duration: 0.6 }}
                     className="text-center max-w-3xl mx-auto mb-16"
                 >
-                    <h2 className="text-[2.25rem] sm:text-[2.75rem] font-bold text-slate-900 font-display tracking-tight leading-[1.1] mb-6">
-                        The Shift to Self-Reliance
+                    <h2 className="font-serif text-slate-900 tracking-tight leading-[1.1] mb-6">
+                        <span className="font-semibold text-[2.25rem] sm:text-[2.75rem]">The Shift to </span>
+                        <span className="italic font-normal text-[2.25rem] sm:text-[2.75rem]">Self-Reliance</span>
                     </h2>
                     <p className="text-[1.1rem] text-slate-600 leading-[1.75]">
-                        We don't just build software that reads PDFs for you. We build a cognitive engine designed to fundamentally alter how you process information.
+                        We don&apos;t just build software that reads PDFs for you. We build a cognitive engine designed to fundamentally alter how you process information.
                     </p>
                 </motion.div>
 
@@ -50,7 +51,7 @@ export default function TransformationPromise() {
                                 <BrainCog className="w-6 h-6 text-slate-500" />
                             </div>
                             <div>
-                                <h3 className="text-xl font-bold text-slate-900">Overwhelmed</h3>
+                                <h3 className="text-xl font-serif font-semibold text-slate-900">Overwhelmed</h3>
                                 <p className="text-sm text-slate-500 font-medium">The default modern state</p>
                             </div>
                         </div>
@@ -86,14 +87,14 @@ export default function TransformationPromise() {
                         className="bg-white rounded-3xl p-8 lg:p-10 border border-primary/20 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative overflow-hidden group transition-shadow duration-300"
                     >
                         <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.03] to-transparent pointer-events-none" />
-                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-sky-400" />
+                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-[var(--accent-secondary)]" />
 
                         <div className="flex items-center gap-4 mb-8 relative">
                             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center transition-transform duration-300">
                                 <Target className="w-6 h-6 text-primary" />
                             </div>
                             <div>
-                                <h3 className="text-xl font-bold text-slate-900">Self-Reliant Scholar</h3>
+                                <h3 className="text-xl font-serif font-semibold text-slate-900">Self-Reliant Scholar</h3>
                                 <p className="text-sm text-primary font-bold">The HIE state</p>
                             </div>
                         </div>
@@ -132,7 +133,7 @@ export default function TransformationPromise() {
                     opacity: [0, 0.1, 0]
                 }}
                 transition={{ duration: 22, repeat: Infinity, ease: "linear", delay: 5 }}
-                className="absolute bottom-0 left-1/4 w-[500px] h-[500px] bg-sky-300/10 rounded-full blur-[120px] pointer-events-none -z-10"
+                className="absolute bottom-0 left-1/4 w-[500px] h-[500px] bg-[var(--accent-secondary)]/10 rounded-full blur-[120px] pointer-events-none -z-10"
             />
         </section>
     );

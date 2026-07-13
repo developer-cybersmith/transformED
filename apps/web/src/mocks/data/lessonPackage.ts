@@ -6,95 +6,126 @@ export const mockLessonPackage: LessonPackage = {
   chapter_id: 'chap_1',
   created_at: '2026-06-26T00:00:00Z',
   metadata: {
-    title: 'Introduction to Artificial Intelligence',
-    subject: 'Computer Science',
+    title: 'SQL Injection — How Attackers Break In',
+    subject: 'Web Security',
     total_segments: 2,
-    estimated_duration_mins: 15,
+    estimated_duration_mins: 5,
     complexity_level: 'medium',
   },
   segments: [
     {
       segment_id: 'seg_0',
       segment_index: 0,
-      title: 'What is AI?',
-      summary: 'Introduction to artificial intelligence concepts and history.',
+      title: 'What is SQL Injection?',
+      summary:
+        'Learn how SQL injection works by watching a live attack on a vulnerable login form using a quote character to trigger a SQL syntax error.',
       complexity: {
-        level: 'low',
-        cognitive_load: 'low',
+        level: 'medium',
+        cognitive_load: 'medium',
         abstraction_level: 'concrete',
-        prerequisite_concepts: [],
+        prerequisite_concepts: ['basic SQL SELECT/WHERE', 'how login forms work'],
         narration_style: 'explanatory',
-        quiz_difficulty: 'easy',
-        intervention_sensitivity: 0.3,
+        quiz_difficulty: 'medium',
+        intervention_sensitivity: 0.4,
       },
       slides: [
         {
           slide_id: 'sl_0_0',
-          title: 'Defining AI',
-          bullets: ['AI simulates human intelligence', 'First coined in 1956', 'Broad field with many subdomains'],
+          // 0:00 – 0:35 of the audio (intro + password guess attempt)
+          title: 'What is SQL Injection?',
+          bullets: [
+            'SQL injection is one of the most common attack methods on the web',
+            'Attackers insert malicious SQL code through form inputs',
+            "First attempt: guessing the password — doesn't work",
+          ],
           image_url: null,
           fallback_image_url: null,
         },
         {
           slide_id: 'sl_0_1',
-          title: 'Types of AI',
-          bullets: ['Narrow AI: task-specific systems', 'General AI: human-level reasoning (theoretical)', 'Superintelligence: beyond human ability'],
+          // 0:35 – 1:32 of the audio (quote char → crash → code reveal)
+          title: 'The Quote Character Crash',
+          bullets: [
+            "Adding a trailing quote character crashes the application",
+            'The app logs show a SQL syntax error — the query broke',
+            "The quote is inserted directly into the SQL string and terminates it early",
+            'This proves the input is not sanitised — the app is vulnerable',
+          ],
           image_url: null,
           fallback_image_url: null,
         },
       ],
       narration: {
-        script: 'Artificial intelligence is the simulation of human intelligence processes by computer systems.',
-        audio_url: 'https://cdn.hie.ai/mock/seg_0.mp3',
+        script:
+          "Welcome to the Hacksplaining video tutorial series. In this video, we will learn about SQL injection. First, let's try guessing the password — that didn't work. Now let's add a quote character. The application crashed with an SQL syntax error. This is what the code looks like behind the scenes — the quote is inserted directly into the SQL string and terminates the query early.",
+        audio_url: '/What-Is-SQL-Injection.mp3',
         audio_provider: 'azure',
         timestamps: [
-          { slide_id: 'sl_0_0', start_ms: 0, end_ms: 15000 },
-          { slide_id: 'sl_0_1', start_ms: 15000, end_ms: 30000 },
+          { slide_id: 'sl_0_0', start_ms: 0,     end_ms: 35000 },
+          { slide_id: 'sl_0_1', start_ms: 35000,  end_ms: 92000 },
         ],
       },
       quiz: [
         {
           question_id: 'q_0_0',
           type: 'mcq',
-          question: 'What year was the term "Artificial Intelligence" first coined?',
-          options: ['1945', '1950', '1956', '1969'],
+          question:
+            'What does a SQL syntax error in the login logs indicate about the application?',
+          options: [
+            'The server ran out of memory',
+            "The user's password is incorrect",
+            'User input is being inserted directly into a SQL query without sanitisation',
+            'The database connection timed out',
+          ],
           correct_index: 2,
-          explanation: 'The term "Artificial Intelligence" was coined by John McCarthy in 1956 at the Dartmouth Conference.',
-          difficulty: 'easy',
+          explanation:
+            "A SQL syntax error triggered by a quote character in a login form means the input is concatenated directly into a SQL query — a classic sign of SQL injection vulnerability.",
+          difficulty: 'medium',
         },
       ],
-      teachback_prompt: 'Explain what Artificial Intelligence is in your own words, and give one example of a narrow AI system you use today.',
+      teachback_prompt:
+        'Explain in your own words: why does adding a single quote character to a login field crash a vulnerable application? What does the error reveal about how the application is built?',
       jargon: [
-        { term: 'Narrow AI', definition: 'An AI system designed to perform a specific task, like image recognition or language translation.' },
+        {
+          term: 'SQL Injection',
+          definition:
+            'An attack where malicious SQL code is inserted into an input field, manipulating the database query the server runs.',
+        },
+        {
+          term: 'SQL Syntax Error',
+          definition:
+            'An error thrown when a SQL statement is malformed — often caused by an unescaped special character like a quote in user input.',
+        },
       ],
       interventions: {
         distraction: [
-          "It looks like you might be distracted. Let's refocus — this concept is foundational.",
-          "Quick check-in: are you still with me? Take a deep breath and let's continue.",
-          "Stay focused — you're almost through this segment. You've got this.",
+          "Stay focused — the next part shows exactly how the attack succeeds. You'll want to see this.",
+          "Quick check-in: are you still with me? The quote character trick is the key insight here.",
+          "Almost through Part 1. Stick with it — the bypass technique coming next is the payoff.",
         ],
         confusion: [
-          "Seems like this might be confusing. The key idea is that AI mimics human thinking using data and algorithms.",
-          "Don't worry if this feels abstract at first. It will make more sense as we see real examples.",
-          "Let's recap: AI is about making machines perform tasks that normally require human intelligence.",
+          "The core idea: when a quote from user input breaks the SQL query structure, the attacker controls the query.",
+          "Think of it like this — the app is building a sentence using your input. A quote character ends the sentence early and lets an attacker write the rest.",
+          "Let's recap: vulnerable apps paste your input straight into SQL. A quote breaks the syntax. That error is the red flag.",
         ],
         fatigue: [
-          "You've been studying for a while. Take a 2-minute break if you need it — then come back refreshed.",
-          "Your focus is dipping. A quick stretch will reset your attention.",
-          "Listen to your body — short breaks improve retention. Resume when you're ready.",
+          "You've been at this for a bit. Take a 2-minute break and come back fresh for the attack demo.",
+          "Short break? The bypass technique in Part 2 is worth seeing clearly.",
+          "Listen to your body — a quick stretch now means better focus for the final segment.",
         ],
       },
     },
     {
       segment_id: 'seg_1',
       segment_index: 1,
-      title: 'Machine Learning Basics',
-      summary: 'How machines learn from data to make predictions.',
+      title: 'Bypassing Authentication & Prevention',
+      summary:
+        'See a complete SQL injection bypass using the double-dash comment trick, and learn why parameterised queries stop the attack cold.',
       complexity: {
         level: 'medium',
-        cognitive_load: 'medium',
+        cognitive_load: 'high',
         abstraction_level: 'conceptual',
-        prerequisite_concepts: ['What is AI?'],
+        prerequisite_concepts: ['SQL injection basics', 'SQL syntax error'],
         narration_style: 'explanatory',
         quiz_difficulty: 'medium',
         intervention_sensitivity: 0.5,
@@ -102,71 +133,118 @@ export const mockLessonPackage: LessonPackage = {
       slides: [
         {
           slide_id: 'sl_1_0',
-          title: 'What is Machine Learning?',
-          bullets: ['ML is a subset of AI', 'Systems learn from data, not explicit rules', 'Three types: supervised, unsupervised, reinforcement'],
+          // Maps to 1:32 – 2:10 of audio (crafted password → access granted)
+          title: 'The Double-Dash Bypass',
+          bullets: [
+            "A Double-Dash Comment (--) tells the database to ignore everything after it",
+            "The attacker appends -- to their input, cutting off the password check",
+            "We gained access without knowing the correct credentials",
+            "The database never verifies the real password — authentication is bypassed",
+          ],
           image_url: null,
           fallback_image_url: null,
         },
         {
           slide_id: 'sl_1_1',
-          title: 'How Learning Works',
-          bullets: ['Input data → Model training → Predictions', 'More data = better accuracy', 'Models improve over time'],
+          // Maps to 2:10 – 2:38 of audio (prevention + conclusion)
+          title: 'Preventing SQL Injection',
+          bullets: [
+            'SQL Injection is one of the most prevalent vulnerabilities on the internet',
+            'Always use a Parameterised Query — never concatenate user input into SQL',
+            'If you fix only one vulnerability this year, fix SQL Injection first',
+          ],
           image_url: null,
           fallback_image_url: null,
         },
       ],
       narration: {
-        script: 'Machine learning is a subset of artificial intelligence that enables systems to learn from data.',
-        audio_url: 'https://cdn.hie.ai/mock/seg_1.mp3',
+        script:
+          "Now let's try a specifically crafted password — and we're in. The double dashes caused the database to ignore the rest of the SQL statement, so we were authenticated without the real password. SQL injection is one of the most prevalent vulnerabilities on the internet. Use parameterised queries to protect yourself.",
+        audio_url: '/What-Is-SQL-Injection.mp3',
         audio_provider: 'azure',
         timestamps: [
-          { slide_id: 'sl_1_0', start_ms: 0, end_ms: 15000 },
-          { slide_id: 'sl_1_1', start_ms: 15000, end_ms: 30000 },
+          // Relative to segment audio start (same file replays from 0ms for testing)
+          // Quiz fires at 148s — leaves ~10s of audio after teach-back before handleEnded fires
+          { slide_id: 'sl_1_0', start_ms: 0,      end_ms: 74000  },
+          { slide_id: 'sl_1_1', start_ms: 74000,  end_ms: 148000 },
         ],
       },
       quiz: [
         {
           question_id: 'q_1_0',
           type: 'mcq',
-          question: 'Which of the following best describes machine learning?',
+          question:
+            'Why does entering `-- ` (double dash) in a password field bypass SQL authentication?',
           options: [
-            'Programming a computer with explicit rules for every situation',
-            'Training a system to learn patterns from data',
-            'Connecting a computer to the internet',
-            'Using a calculator for complex math',
+            'It encrypts the password before sending it',
+            'It triggers a server-side admin override',
+            'It comments out the rest of the SQL query, skipping the password check',
+            'It causes a timeout that auto-approves the login',
           ],
-          correct_index: 1,
-          explanation: 'Machine learning trains systems to identify patterns in data, rather than following pre-programmed rules.',
+          correct_index: 2,
+          explanation:
+            '`--` is the SQL single-line comment syntax. When injected into the query, it causes the database to ignore everything after it — including the password comparison — so the attacker is authenticated without valid credentials.',
           difficulty: 'medium',
         },
       ],
-      teachback_prompt: 'Explain the difference between traditional programming and machine learning. Use an example from your daily life.',
+      teachback_prompt:
+        "Explain the double-dash SQL injection attack: what does `--` do in SQL, why does it bypass a password check, and what is the correct fix a developer should apply?",
       jargon: [
-        { term: 'Supervised Learning', definition: 'Training a model on labelled data where the correct answers are provided.' },
-        { term: 'Unsupervised Learning', definition: 'Training a model on unlabelled data to find hidden patterns.' },
+        {
+          term: 'Double-Dash Comment',
+          definition:
+            'In SQL, `--` marks the start of a single-line comment. Everything after it on the same line is ignored by the database engine.',
+        },
+        {
+          term: 'Parameterised Query',
+          definition:
+            'A SQL query where user input is passed as a separate parameter, never concatenated into the query string — completely preventing SQL injection.',
+        },
       ],
       interventions: {
         distraction: [
-          "Looks like your attention drifted. This segment covers how machines actually learn — the heart of modern AI.",
-          "Let's refocus. Machine learning is one of the most in-demand skills in tech right now.",
-          "Almost there. Refocus for the final minutes of this segment.",
+          "This is the most important part — the actual attack and the fix. Stay focused.",
+          "The double-dash trick is what most SQL injection attacks in the real world use. Don't miss this.",
+          "Last stretch. The prevention advice here is what you'll carry into your own projects.",
         ],
         confusion: [
-          "If the learning types are confusing, just remember: supervised = teacher helps, unsupervised = figure it out alone.",
-          "Take your time with this. The training loop concept clicks for most learners on the second example.",
-          "Let's slow down: data goes in, the model finds patterns, predictions come out. That's the core loop.",
+          "The key: `--` tells the database 'ignore everything after this line'. The attacker uses it to erase the password check.",
+          "Think of `--` as a pair of scissors that cuts the query in half. The attacker controls where the cut happens.",
+          "To prevent this: never build SQL strings by concatenating input. Use `?` placeholders in prepared statements instead.",
         ],
         fatigue: [
-          "This is the last segment. You're almost at the quiz — push through and you'll have completed the lesson!",
-          "Nearly there. One more concept and you're done.",
-          "Your effort is paying off. Stay with it for just a few more minutes.",
+          "This is the final segment. The fix is simple once you see the attack — push through.",
+          "Almost done. The parameterised query concept coming up is the single most valuable thing to take from this lesson.",
+          "You've made it to the last slide. One more minute and you've completed the lesson.",
         ],
       },
     },
   ],
   glossary: [
-    { term: 'Artificial Intelligence', definition: 'The simulation of human intelligence processes by computer systems.' },
-    { term: 'Machine Learning', definition: 'A subset of AI where systems learn from data rather than explicit programming.' },
-    { term: 'Algorithm', definition: 'A set of rules or instructions that a computer follows to solve a problem.' },
+    {
+      term: 'SQL Injection',
+      definition:
+        'An attack technique where malicious SQL statements are inserted into a login form or other input field, allowing attackers to manipulate the database query.',
+    },
+    {
+      term: 'SQL Syntax Error',
+      definition:
+        'An error thrown by the database when a SQL statement is malformed. In a vulnerable app, triggering this with a quote character reveals the injection point.',
+    },
+    {
+      term: 'Double-Dash Comment',
+      definition:
+        'The `--` sequence in SQL begins a single-line comment, causing the database to ignore everything that follows on that line.',
+    },
+    {
+      term: 'Parameterised Query',
+      definition:
+        'A prepared SQL statement that treats user input as a data value, never as executable SQL. The correct defence against SQL injection.',
+    },
+    {
+      term: 'Authentication Bypass',
+      definition:
+        'Gaining access to a system without valid credentials, typically by exploiting a vulnerability in the login logic.',
+    },
   ],
 };

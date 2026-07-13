@@ -4,3 +4,4 @@ export * from './lesson.service';
 export * from './library.service';
 export * from './reports.service';
 export * from './settings.service';
+export * from './onboarding.service';

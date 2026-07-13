@@ -26,11 +26,16 @@ export default function TheCrisis() {
                     className="text-center max-w-3xl mx-auto mb-20"
                 >
                     <p className="text-rose-500 font-semibold tracking-wider uppercase text-sm mb-4">The Learning Crisis</p>
-                    <h2 className="text-[2.5rem] sm:text-[3rem] font-bold text-slate-900 font-display tracking-tight leading-[1.1] mb-6">
-                        We are conditioned to scroll, not to think.
+                    <h2 className="font-serif text-slate-900 tracking-tight leading-[1.08] mb-6">
+                        <span className="block font-semibold text-[2.5rem] sm:text-[3rem]">
+                            We are conditioned to scroll,
+                        </span>
+                        <span className="block italic font-normal text-slate-500 text-[1.9rem] sm:text-[2.3rem] mt-1">
+                            not to think.
+                        </span>
                     </h2>
                     <p className="text-[1.1rem] text-slate-600 leading-[1.8]">
-                        Modern students aren't failing because the material is too hard. They're failing because passive consumption has destroyed their ability to focus deeply. Staring at a dense 50-page PDF doesn't work when your brain expects constant stimulation.
+                        Modern students aren&apos;t failing because the material is too hard. They&apos;re failing because passive consumption has destroyed their ability to focus deeply. Staring at a dense 50-page PDF doesn&apos;t work when your brain expects constant stimulation.
                     </p>
                 </motion.div>
 
@@ -66,7 +71,7 @@ export default function TheCrisis() {
                             >
                                 <item.icon className="w-6 h-6 text-slate-400 group-hover:text-primary transition-colors duration-300" />
                             </motion.div>
-                            <h3 className="text-xl font-bold text-slate-900 mb-3">{item.title}</h3>
+                            <h3 className="text-xl font-serif font-semibold text-slate-900 mb-3">{item.title}</h3>
                             <p className="text-slate-600 leading-relaxed text-[0.95rem]">
                                 {item.desc}
                             </p>
