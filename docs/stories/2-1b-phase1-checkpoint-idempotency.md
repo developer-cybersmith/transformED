@@ -1,6 +1,6 @@
 # Story 2-1b — Phase 1 Economy Node Checkpoint/Idempotency
 
-**Status:** not started
+**Status:** implemented, pending code review
 **Sprint:** 2
 **Owner:** Dev 1
 **Branch:** `sprint2/phase-b-generation-nodes` (shared Sprint 2 branch)
@@ -18,7 +18,7 @@ This also blocks S2-3 through S2-6 (the remaining four economy nodes) from inher
 2. Each node writes its per-section result to that same key on success, following the existing Phase A checkpoint-write pattern (see `embed_node`'s checkpoint write for the established convention).
 3. A simulated ARQ retry (job cancelled after 2 of 3 sections complete for a node, then re-invoked) results in exactly 0 additional LLM calls for the 2 already-completed sections and exactly 1 call for the remaining section.
 4. Progress visibility during Phase 1 fan-out: `lesson_jobs` (or a Redis-backed alternative, given `progress_pct` can't be a shared graph-state channel under concurrent `Send()` writes — see Story 2-1's Review Findings) reflects how many of the `6 × N` dispatched calls have completed, not just the pre/post Phase-1 progress percentages already in place.
-5. Existing Story 2-1 tests (`test_phase1_economy_nodes.py`) continue to pass unmodified — this story only adds idempotency, it does not change the nodes' external behavior when no cache hit exists.
+5. Existing Story 2-1 tests (`test_phase1_economy_nodes.py`) continue to pass with node **behavior** unchanged when no cache hit exists — this story only adds idempotency, it does not change what the nodes produce. **Correction during implementation:** "unmodified" (as originally written) turned out to be unachievable — those tests never mocked Supabase/Redis (no dependency on either existed yet), so adding the checkpoint read/write and progress counter required adding an `autouse` fixture that mocks both as a permanent cache-miss/no-op. The tests' *assertions* and *intent* are unchanged; their *mocking setup* needed updating for the new dependency.
 
 ## Dev Notes
 

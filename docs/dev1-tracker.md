@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 1 | 1 | 18 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 2 | 1 | 17 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **24** | **2** | **32** |
+| **Totals** | | **58** | **25** | **2** | **31** |
 
 ---
 
@@ -489,11 +489,12 @@ Every node must:
   - Output: `SegmentComplexity` Pydantic model; `intervention_sensitivity` clamped into [0.0, 1.0] with a warning log if the LLM returned an out-of-range value (never silently trusted)
   - **AC:** Output validates against `app.schemas.SegmentComplexity` ✓; field ranges enforced ✓ — tested (`test_phase1_economy_nodes.py`, AC-2) ✅
 
-- [ ] **S2-1b Phase 1 economy node checkpoint/idempotency** — added 2026-07-13 (deferred from Story 2-1's code review)
+- [x] **S2-1b Phase 1 economy node checkpoint/idempotency** — ✓ 2026-07-13 (deferred from Story 2-1's code review)
   - `docs/stories/2-1b-phase1-checkpoint-idempotency.md`
-  - Per-section checkpoint (`node_outputs[f"{node_name}:{section_id}"]`) so ARQ retry doesn't re-bill already-completed sections — none of the 6 economy nodes have this yet (they were free stubs until Story 2-1; S2-1/S2-2 are now real, billed calls with no idempotency guard)
-  - **Blocks:** should land before S2-3 through S2-6 add four more billed nodes with the same gap
-  - **AC:** see story file — simulated retry after partial completion makes 0 duplicate LLM calls for already-completed sections
+  - Per-section checkpoint via `merge_lesson_job_node_output()` (new Postgres function, `supabase/migrations/20260713020000_lesson_job_node_output_merge_fn.sql`) — atomic server-side JSONB merge, not the client-side read-modify-write Phase A nodes use (unsafe under Story 2-1's concurrent `Send()` dispatch)
+  - Phase 1 progress visibility via a Redis counter (`job:{lesson_id}:phase1_completed`), since `progress_pct` can't be written by economy nodes directly (concurrent writes to a non-reducer `PipelineState` key raise `InvalidUpdateError`)
+  - Applied to `summarise_segment_node`/`segment_complexity_node` (S2-1/S2-2, the only 2 of 6 economy nodes implemented so far) — S2-3 through S2-6 must adopt the same pattern when built
+  - **AC:** simulated retry after partial completion makes 0 duplicate LLM calls for already-completed sections ✓ — tested (`test_phase1_checkpoint_idempotency.py`, 7 tests) ✅
 
 - [ ] **S2-3 `quiz_generator` node**
   - `apps/api/app/modules/content/pipeline/nodes/quiz_generator.py`

@@ -19,7 +19,7 @@ in-function imports — see test_pipeline_tier1.py's module docstring).
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -32,6 +32,32 @@ import app.providers.llm.openai as openai_provider_module  # noqa: E402
 FAKE_LESSON_ID = "20202020-2020-2020-2020-202020202020"
 FAKE_USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 FAKE_BOOK_ID = "11111111-1111-1111-1111-111111111111"
+
+
+@pytest.fixture(autouse=True)
+def _no_checkpoint_infra():
+    """Story 2-1b added a per-section checkpoint (Supabase read/write) and a
+    Redis progress counter to summarise_segment_node/segment_complexity_node.
+    This file's tests predate that and don't care about checkpoint behavior
+    (that's test_phase1_checkpoint_idempotency.py's job) — auto-mock both as
+    a permanent cache-miss / no-op so these tests keep exercising only what
+    they originally intended, per Story 2-1's AC-5 ("this story only adds
+    idempotency, it does not change external behavior when no cache hit
+    exists" — the tests needed this mocking added since real Supabase/Redis
+    calls didn't exist when they were first written).
+    """
+    mock_jobs_table = MagicMock()
+    mock_jobs_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+        "node_outputs": {}
+    }
+    mock_supabase = MagicMock()
+    mock_supabase.table.return_value = mock_jobs_table
+    mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+    with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+        "app.core.redis.get_redis", return_value=AsyncMock()
+    ):
+        yield
 
 THREE_SECTIONS: list[dict[str, Any]] = [
     {"title": "Spaced Repetition", "body": "prose about spaced repetition. " * 20, "page_start": 1, "page_end": 3},
