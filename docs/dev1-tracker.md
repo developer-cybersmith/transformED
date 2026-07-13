@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 19 | 0 | 0 | 19 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 1 | 1 | 18 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **57** | **23** | **1** | **33** |
+| **Totals** | | **58** | **24** | **2** | **32** |
 
 ---
 
@@ -474,19 +474,26 @@ Every node must:
 **Learner Mode tier logic** (S2-LM4, S2-LM5) — lands together with S2-7/S2-8, not as a later rework pass.
 **Phase 3 Media nodes** (S2-9, S2-10, S2-11) sequential after Phase 2.
 
-- [ ] **S2-1 `summarise_segment` node**
-  - `apps/api/app/modules/content/pipeline/nodes/summarise_segment.py`
+- [ ] **S2-1 `summarise_segment` node** ⚠️ PARTIAL — 2026-07-13
+  - `apps/api/app/modules/content/pipeline/graph.py::summarise_segment_node` (NOT a separate `nodes/summarise_segment.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale)
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel with S2-2 through S2-6
-  - Produces 2–3 sentence summary per segment → consumed by `lesson_planner` instead of raw chapter text
-  - **AC:** Summary ≤100 words; `lesson_planner` (S2-7) consumes summaries not raw text — 5× token savings enforced
+  - Phase 1 — dispatched via `Send()`, once per section (graph-level fan-out, see AC-0 below)
+  - ✓ Produces a 2–3 sentence, ≤100-word summary per section, calling `OpenAILLMProvider.complete_structured()` — real implementation, tested (`test_phase1_economy_nodes.py`, AC-1)
+  - ✗ `lesson_planner` (S2-7) does not yet actually consume these summaries for real generation — it's still a stub that only reads `len(segment_summaries)` to prove the wiring works. The 5×-token-savings half of this AC is not yet realized (blocked on S2-7, not yet started)
+  - **AC:** Summary ≤100 words ✓; `lesson_planner` (S2-7) consumes summaries not raw text — 5× token savings enforced ✗ (pending S2-7)
 
-- [ ] **S2-2 `segment_complexity` node**
-  - `apps/api/app/modules/content/pipeline/nodes/segment_complexity.py`
+- [x] **S2-2 `segment_complexity` node** — ✓ 2026-07-13
+  - `apps/api/app/modules/content/pipeline/graph.py::segment_complexity_node` (NOT a separate `nodes/segment_complexity.py` file — see note above)
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: `SegmentComplexity` Pydantic model; `intervention_sensitivity` must be in [0.0, 1.0]
-  - **AC:** Output validates against `app.schemas.SegmentComplexity`; field ranges enforced
+  - Phase 1 — dispatched via `Send()`, once per section
+  - Output: `SegmentComplexity` Pydantic model; `intervention_sensitivity` clamped into [0.0, 1.0] with a warning log if the LLM returned an out-of-range value (never silently trusted)
+  - **AC:** Output validates against `app.schemas.SegmentComplexity` ✓; field ranges enforced ✓ — tested (`test_phase1_economy_nodes.py`, AC-2) ✅
+
+- [ ] **S2-1b Phase 1 economy node checkpoint/idempotency** — added 2026-07-13 (deferred from Story 2-1's code review)
+  - `docs/stories/2-1b-phase1-checkpoint-idempotency.md`
+  - Per-section checkpoint (`node_outputs[f"{node_name}:{section_id}"]`) so ARQ retry doesn't re-bill already-completed sections — none of the 6 economy nodes have this yet (they were free stubs until Story 2-1; S2-1/S2-2 are now real, billed calls with no idempotency guard)
+  - **Blocks:** should land before S2-3 through S2-6 add four more billed nodes with the same gap
+  - **AC:** see story file — simulated retry after partial completion makes 0 duplicate LLM calls for already-completed sections
 
 - [ ] **S2-3 `quiz_generator` node**
   - `apps/api/app/modules/content/pipeline/nodes/quiz_generator.py`

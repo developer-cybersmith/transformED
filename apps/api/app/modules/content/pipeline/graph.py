@@ -1,20 +1,28 @@
 """
 Content pipeline LangGraph graph.
 
-Node order (14 nodes)
----------------------
+Node order (15 nodes) — corrected 2026-07-13, Story 2-1 AC-0
+--------------------------------------------------------------
  1. extract               PDF → raw text + images
  2. structure             Raw text → sections/chapters
  3. chunk                 Sections → token-sized chunks
  4. embed                 Chunks → vector embeddings (stored in Supabase pgvector)
- 5. lesson_planner        Chunks → lesson plan (learning objectives, structure)
- 6. slide_generator       Lesson plan → slide deck JSON
- 7. summarise_segment     Each segment → short summary for narration intro
- 8. quiz_generator        Each segment → multiple-choice questions
- 9. segment_complexity    Each segment → complexity / readability score
-10. jargon_extractor      Each segment → glossary of technical terms
-11. intervention_messages Complexity + jargon → proactive intervention prompts
-12. narration_generator   Slides + summaries → narration scripts
+
+ Phase 1 (economy, `settings.llm_mini`) — Send()-dispatched once per section,
+ ALL must complete before Phase 2 starts (violating this silently 5xs cost):
+ 5. summarise_segment     Each section → short summary — consumed by lesson_planner
+                          INSTEAD of raw chapter text
+ 6. quiz_generator        Each section → multiple-choice questions
+ 7. segment_complexity    Each section → complexity / readability score
+ 8. jargon_extractor      Each section → glossary of technical terms
+ 9. intervention_messages Complexity + jargon → proactive intervention prompts
+10. narration_generator   Each section → narration script
+
+ Phase 2 (premium, sequential — starts only after ALL Phase 1 completes):
+11. lesson_planner        Segment summaries (NOT raw text) → lesson plan
+12. slide_generator       Lesson plan → slide deck JSON
+
+ Phase 3 (media, sequential):
 13. tts_node              Narration scripts → audio + word timestamps
 14. image_generator       Slide content → AI-generated illustration URLs
 15. package_builder       All outputs → final lesson JSON package
@@ -23,7 +31,9 @@ Architecture constraints
 ------------------------
 - MemorySaver for in-process checkpointing (PostgresSaver is BANNED per PRD §24)
 - All AI calls go through provider abstractions (never direct API calls here)
-- After each node: update lesson_jobs.progress and write checkpoint to DB
+- After each Phase A node: update lesson_jobs.progress and write checkpoint to DB.
+  Phase 1 economy nodes do NOT yet have an equivalent per-section checkpoint —
+  see docs/stories/2-1b-phase1-checkpoint-idempotency.md (deferred, tracked).
 - Cost ceiling checked by providers — RuntimeError raised if exceeded
 """
 
@@ -922,6 +932,40 @@ def _cap_words(text: str, max_words: int) -> str:
     return " ".join(words[:max_words])
 
 
+def _derive_section_id(section: dict[str, Any], index: int) -> str:
+    """Build a segment_id that's always unique per section.
+
+    Combining the section's own index (which never repeats within a chapter)
+    with its title (for human readability) prevents two same-titled or
+    blank-titled sections (e.g. two "Introduction" sections) from colliding —
+    `operator.add` concatenates Phase 1 outputs with no dedup, so a collision
+    here means `lesson_planner` receives two summaries/scores sharing one key
+    (Story 2-1 review finding).
+    """
+    title = section.get("title") or "section"
+    return f"section_{index}_{title}"
+
+
+def _get_section_body(section: dict[str, Any], *, lesson_id: str, section_id: str, max_chars: int = 6000) -> str:
+    """Return the section body, capped to *max_chars* for the LLM prompt.
+
+    Logs when truncation happens — previously silent, unlike `_cap_words`'s
+    logged truncation of the LLM's *output* (Story 2-1 review finding: the
+    asymmetry meant a long section's summary/score could be based on only its
+    first ~6000 characters with zero trace of that happening).
+    """
+    body = section.get("body", "")
+    if len(body) > max_chars:
+        logger.warning(
+            "[%s] section %s body truncated to %d chars (was %d) before LLM call",
+            lesson_id,
+            section_id,
+            max_chars,
+            len(body),
+        )
+    return body[:max_chars]
+
+
 async def summarise_segment_node(state: PipelineState) -> PipelineState:
     """Node 7 (Story 2-1 AC-1): generate a 2-3 sentence, <=100 word summary
     for one section. Send()-dispatched once per section (see AC-0) — this is
@@ -933,19 +977,26 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
-    section_id = section.get("title") or f"section_{state.get('_section_index', 0)}"
+    section_id = _derive_section_id(section, state.get("_section_index", 0))
     logger.info("[%s] summarise_segment_node: %s", lesson_id, section_id)
 
     settings = get_settings()
     provider = OpenAILLMProvider(lesson_id)
+    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     messages = [
         {
             "role": "system",
             "content": "Summarise the following section in 2-3 sentences, no more than 100 words.",
         },
-        {"role": "user", "content": section.get("body", "")[:6000]},
+        {"role": "user", "content": body},
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _SegmentSummaryLLM)
+    if response is None:
+        # A content-policy refusal (or a failed function-call parse) leaves
+        # message.parsed = None — degrade this one section rather than crash
+        # the whole fan-out (Story 2-1 review finding).
+        logger.warning("[%s] summarise_segment_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
+        return {"segment_summaries": []}
     summary_text = _cap_words(response.summary, 100)
 
     return {"segment_summaries": [{"segment_id": section_id, "summary": summary_text}]}
@@ -960,7 +1011,7 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     LangGraph's InvalidUpdateError).
     """
     lesson_id = state["lesson_id"]
-    logger.info("[%s] quiz_generator_node: %s", lesson_id, state.get("_section", {}).get("title"))
+    logger.info("[%s] quiz_generator_node: %s", lesson_id, state["_section"].get("title"))
 
     # TODO (S2-3): OpenAILLMProvider(lesson_id).complete_structured(messages, llm_mini, QuizSet)
     return {"quiz_questions": []}
@@ -975,6 +1026,27 @@ def _clamp(value: float, lo: float, hi: float, *, label: str) -> float:
     return value
 
 
+class _SegmentComplexityLLM(BaseModel):
+    """Internal structured-output shape for segment_complexity_node.
+
+    Deliberately looser than `app.schemas.lesson.SegmentComplexity` — no
+    ge=0.0/le=1.0 constraint on `intervention_sensitivity`. Story 2-1 review
+    finding: the frozen model's Field constraint made Pydantic raise
+    ValidationError INSIDE `complete_structured()` for any out-of-range LLM
+    output, before this node's `_clamp()` guard ever ran — the guard was dead
+    code against the real provider. Parsing here always succeeds; clamping
+    happens explicitly below, so the guard is actually reachable.
+    """
+
+    level: str
+    cognitive_load: str
+    abstraction_level: str
+    prerequisite_concepts: list[str]
+    narration_style: str
+    quiz_difficulty: str
+    intervention_sensitivity: float
+
+
 async def segment_complexity_node(state: PipelineState) -> PipelineState:
     """Node 9 (Story 2-1 AC-2): score one section's reading complexity.
 
@@ -984,15 +1056,15 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     """
     from app.config import get_settings
     from app.providers.llm.openai import OpenAILLMProvider
-    from app.schemas.lesson import SegmentComplexity
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
-    section_id = section.get("title") or f"section_{state.get('_section_index', 0)}"
+    section_id = _derive_section_id(section, state.get("_section_index", 0))
     logger.info("[%s] segment_complexity_node: %s", lesson_id, section_id)
 
     settings = get_settings()
     provider = OpenAILLMProvider(lesson_id)
+    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     messages = [
         {
             "role": "system",
@@ -1003,9 +1075,12 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
                 "quiz_difficulty, and intervention_sensitivity (a float in [0.0, 1.0])."
             ),
         },
-        {"role": "user", "content": section.get("body", "")[:6000]},
+        {"role": "user", "content": body},
     ]
-    response = await provider.complete_structured(messages, settings.llm_mini, SegmentComplexity)
+    response = await provider.complete_structured(messages, settings.llm_mini, _SegmentComplexityLLM)
+    if response is None:
+        logger.warning("[%s] segment_complexity_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
+        return {"complexity_scores": []}
 
     score: dict[str, Any] = {
         "segment_id": section_id,
@@ -1030,7 +1105,7 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
     reduced key only, see quiz_generator_node's docstring for why).
     """
     lesson_id = state["lesson_id"]
-    logger.info("[%s] jargon_extractor_node: %s", lesson_id, state.get("_section", {}).get("title"))
+    logger.info("[%s] jargon_extractor_node: %s", lesson_id, state["_section"].get("title"))
 
     # TODO (S2-4): OpenAILLMProvider(lesson_id).complete_structured(messages, llm_mini, Glossary)
     return {"glossary": []}
@@ -1041,7 +1116,7 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
     for one section. Send()-dispatched per section (AC-0) — fan-out-safe stub.
     """
     lesson_id = state["lesson_id"]
-    logger.info("[%s] intervention_messages_node: %s", lesson_id, state.get("_section", {}).get("title"))
+    logger.info("[%s] intervention_messages_node: %s", lesson_id, state["_section"].get("title"))
 
     # TODO (S2-5): generate distraction, confusion, fatigue message variants (3x3)
     return {"intervention_prompts": []}
@@ -1052,7 +1127,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     section. Send()-dispatched per section (AC-0) — fan-out-safe stub.
     """
     lesson_id = state["lesson_id"]
-    logger.info("[%s] narration_generator_node: %s", lesson_id, state.get("_section", {}).get("title"))
+    logger.info("[%s] narration_generator_node: %s", lesson_id, state["_section"].get("title"))
 
     # TODO (S2-6): OpenAILLMProvider(lesson_id).complete with speaker-voice prompt
     return {"narration_scripts": []}
@@ -1115,16 +1190,34 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # ── Graph construction ────────────────────────────────────────────────────────
 
 
+# Only these keys are forwarded into each Send() dispatch (plus _section /
+# _section_index below) — NOT the full accumulated state. Review finding:
+# spreading **state would copy raw_text/chunks/embeddings into every one of
+# the 6xN dispatched payloads, which is real memory pressure for a large book.
+_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id")
+
+
 def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     """Story 2-1 AC-0 router: dispatch every Phase 1 economy node once per
-    `state["sections"]` entry. Each dispatched call receives a copy of the
-    accumulated state plus `_section`/`_section_index` for that one section —
-    it must NOT loop over `state["sections"]` itself (that would silently
-    redo the whole chapter N times over instead of one section per call).
+    `state["sections"]` entry. Each dispatched call receives a small slice of
+    state (see `_FAN_OUT_STATE_KEYS`) plus `_section`/`_section_index` for that
+    one section — nodes must NOT loop over `state["sections"]` themselves
+    (that would silently redo the whole chapter N times over instead of one
+    section per call).
     """
     sections = state.get("sections", [])
+    if not sections:
+        # Review decision (2026-07-13): fail fast rather than let the graph
+        # silently end after `embed` with no lesson_package and no error —
+        # a lesson genuinely cannot be built from zero content.
+        raise RuntimeError(
+            f"lesson_id={state.get('lesson_id')}: structure_node produced zero "
+            "sections — cannot generate a lesson from empty content. Check "
+            "extraction/OCR output for this book."
+        )
+    base = {k: state[k] for k in _FAN_OUT_STATE_KEYS if k in state}
     return [
-        Send(node_name, {**state, "_section": section, "_section_index": idx})
+        Send(node_name, {**base, "_section": section, "_section_index": idx})
         for idx, section in enumerate(sections)
         for node_name in _ECONOMY_NODES
     ]
@@ -1168,6 +1261,11 @@ def _build_pipeline_graph() -> Any:
     # section, via Send() — replacing the old direct embed -> lesson_planner
     # edge that let lesson_planner run with zero segment summaries available
     # (the exact 5x-cost-overrun bug this AC fixes).
+    # NOTE: the _ECONOMY_NODES list passed here is for graph introspection /
+    # visualization only (e.g. compiled.get_graph().edges in tests) — it does
+    # NOT constrain what _fan_out_phase1_economy_nodes can actually dispatch at
+    # runtime. The router always returns Send() objects, never one of these
+    # literal strings, so this is not an enforced allow-list.
     graph.add_conditional_edges("embed", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
 
     # Join: lesson_planner only runs once ALL fanned-out economy-node dispatches

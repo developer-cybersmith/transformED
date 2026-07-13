@@ -160,6 +160,11 @@ class TestAC0GraphOrdering:
 
         assert "lesson_planner_node" in call_log, "lesson_planner was never invoked"
         planner_index = call_log.index("lesson_planner_node")
+        assert call_log.count("lesson_planner_node") == 1, (
+            f"lesson_planner_node ran {call_log.count('lesson_planner_node')} times — "
+            f"expected exactly 1 (a bug causing it to run once per fanned-out dispatch, "
+            f"e.g. 18x, would silently multiply Phase 2's premium-model cost)"
+        )
         for economy_node in ECONOMY_NODE_NAMES:
             occurrences = [i for i, n in enumerate(call_log) if n == economy_node]
             assert occurrences, f"{economy_node} was never invoked"
@@ -172,6 +177,17 @@ class TestAC0GraphOrdering:
                 f"{len(THREE_SECTIONS)} sections — expected one call per section (Send() fan-out), "
                 f"not once for the whole chapter"
             )
+
+    def test_empty_sections_raises_clear_error(self) -> None:
+        """Review finding (2026-07-13, decision: fail fast): an empty
+        state["sections"] must not let the pipeline silently end after embed
+        with no lesson_package and no failed status — it must raise clearly
+        so content_pipeline_job can mark the job failed.
+        """
+        from app.modules.content.pipeline.graph import _fan_out_phase1_economy_nodes
+
+        with pytest.raises(RuntimeError, match="zero sections"):
+            _fan_out_phase1_economy_nodes(_base_state(sections=[]))
 
     @pytest.mark.asyncio
     async def test_lesson_planner_does_not_require_raw_text_or_chunks(self) -> None:
@@ -213,7 +229,7 @@ class TestAC1SummariseSegment:
 
     @pytest.mark.asyncio
     async def test_single_invocation_makes_exactly_one_provider_call(self) -> None:
-        from app.modules.content.pipeline.graph import summarise_segment_node
+        from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
 
         mock_provider = AsyncMock()
         mock_provider.complete_structured.return_value = type(
@@ -229,7 +245,24 @@ class TestAC1SummariseSegment:
             f"complete_structured call, got {mock_provider.complete_structured.call_count}"
         )
         assert len(result["segment_summaries"]) == 1
-        assert result["segment_summaries"][0]["segment_id"] == THREE_SECTIONS[0]["title"]
+        assert result["segment_summaries"][0]["segment_id"] == _derive_section_id(THREE_SECTIONS[0], 0)
+
+    @pytest.mark.asyncio
+    async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
+        """A content-policy refusal (or failed function-call parse) leaves
+        message.parsed = None — complete_structured returning None must
+        degrade this one section, not raise an unhandled AttributeError.
+        """
+        from app.modules.content.pipeline.graph import summarise_segment_node
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = None
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await summarise_segment_node(state)
+
+        assert result["segment_summaries"] == []
 
     @pytest.mark.asyncio
     async def test_rejects_summary_over_100_words(self) -> None:
@@ -258,7 +291,7 @@ class TestAC1SummariseSegment:
 class TestAC2SegmentComplexity:
     @pytest.mark.asyncio
     async def test_output_validates_against_segment_complexity_schema(self) -> None:
-        from app.modules.content.pipeline.graph import segment_complexity_node
+        from app.modules.content.pipeline.graph import _derive_section_id, segment_complexity_node
         from app.schemas.lesson import SegmentComplexity
 
         mock_output = SegmentComplexity(
@@ -279,7 +312,7 @@ class TestAC2SegmentComplexity:
 
         assert len(result["complexity_scores"]) == 1
         score = result["complexity_scores"][0]
-        assert score["segment_id"] == THREE_SECTIONS[0]["title"]
+        assert score["segment_id"] == _derive_section_id(THREE_SECTIONS[0], 0)
         # The complexity fields (everything but the segment_id correlation key)
         # must round-trip through the frozen SegmentComplexity model without
         # error — segment_id itself is NOT part of that model (it lives on the
@@ -288,11 +321,16 @@ class TestAC2SegmentComplexity:
         SegmentComplexity.model_validate({k: v for k, v in score.items() if k != "segment_id"})
 
     @pytest.mark.asyncio
-    async def test_out_of_range_intervention_sensitivity_is_rejected_not_silently_clamped(self) -> None:
+    async def test_out_of_range_intervention_sensitivity_is_rejected_not_silently_clamped(self, caplog) -> None:
         """An LLM response with intervention_sensitivity=1.4 must not silently
         pass through — the node must reject/clamp-with-logging, never trust
-        the raw value into state unchanged.
+        the raw value into state unchanged. Also verifies the clamp is not
+        silent: a warning must actually be logged (review finding — the prior
+        version of this test only checked the final value, not that logging
+        occurred).
         """
+        import logging
+
         from app.modules.content.pipeline.graph import segment_complexity_node
 
         bad_dict = {
@@ -305,17 +343,73 @@ class TestAC2SegmentComplexity:
             "intervention_sensitivity": 1.4,
         }
         mock_provider = AsyncMock()
-        # Simulate the provider returning a dict/object with an out-of-range value
-        # (structured-output providers can still surface invalid values that
-        # violate the response_format's own constraints under model drift).
+        # _SegmentComplexityLLM has no ge/le constraint (that's the point — see
+        # its docstring), so this out-of-range value parses without raising,
+        # exercising the real code path rather than a hand-built non-Pydantic mock.
         mock_provider.complete_structured.return_value = type("Bad", (), bad_dict)()
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
-            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
-            result = await segment_complexity_node(state)
+            with caplog.at_level(logging.WARNING):
+                state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+                result = await segment_complexity_node(state)
 
         score = result["complexity_scores"][0]
         assert 0.0 <= score["intervention_sensitivity"] <= 1.0, (
             f"intervention_sensitivity={score['intervention_sensitivity']} escaped the "
             f"[0.0, 1.0] guard — AC-2 requires reject/clamp, not pass-through"
         )
+        assert any("out of range" in r.message for r in caplog.records), (
+            "clamping intervention_sensitivity must log a warning — the guard "
+            "must not be silent, per this test's own name"
+        )
+
+    @pytest.mark.asyncio
+    async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
+        from app.modules.content.pipeline.graph import segment_complexity_node
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = None
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await segment_complexity_node(state)
+
+        assert result["complexity_scores"] == []
+
+    @pytest.mark.asyncio
+    async def test_duplicate_section_titles_do_not_collide_on_segment_id(self) -> None:
+        """Two sections sharing a title (e.g. two "Introduction" sections in
+        different chapters) must NOT produce the same segment_id — otherwise
+        operator.add's no-dedup concatenation gives lesson_planner two scores
+        under one ambiguous key (review finding).
+        """
+        from app.modules.content.pipeline.graph import segment_complexity_node
+
+        duplicate_title_sections = [
+            {"title": "Introduction", "body": "First introduction section body."},
+            {"title": "Introduction", "body": "Second, different introduction section body."},
+        ]
+        mock_output = type(
+            "Bad",
+            (),
+            {
+                "level": "low",
+                "cognitive_load": "low",
+                "abstraction_level": "concrete",
+                "prerequisite_concepts": [],
+                "narration_style": "casual",
+                "quiz_difficulty": "easy",
+                "intervention_sensitivity": 0.2,
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            results = [
+                await segment_complexity_node(_base_state(_section=s, _section_index=i))
+                for i, s in enumerate(duplicate_title_sections)
+            ]
+
+        ids = [r["complexity_scores"][0]["segment_id"] for r in results]
+        assert ids[0] != ids[1], f"duplicate-titled sections collided on segment_id: {ids}"
