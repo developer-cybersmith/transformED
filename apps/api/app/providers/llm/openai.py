@@ -12,6 +12,7 @@ Responsibilities
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -35,13 +36,33 @@ _COST_PER_1K: dict[str, dict[str, float]] = {
 }
 
 
+def _safe_trace(call: Callable[[], Any]) -> Any | None:
+    """Run a Langfuse tracing call; observability failures must NEVER fail the pipeline."""
+    try:
+        return call()
+    except Exception:
+        # WARNING (not DEBUG): an observability outage must be visible in prod
+        # logs even though it never fails the pipeline.
+        logger.warning("Langfuse tracing call failed — ignored, pipeline continues", exc_info=True)
+        return None
+
+
 class OpenAILLMProvider(LLMProvider):
     """Production LLM provider backed by OpenAI."""
 
     def __init__(self, lesson_id: str | None = None) -> None:
         settings = get_settings()
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self._langfuse = get_langfuse()
+        # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to
+        # no-tracing, never crash the provider mid-job.
+        try:
+            self._langfuse = get_langfuse()
+        except Exception:
+            logger.warning(
+                "Langfuse init failed — tracing disabled for OpenAILLMProvider",
+                exc_info=True,
+            )
+            self._langfuse = None
         self._lesson_id = lesson_id
 
     @with_retry(max_attempts=3)
@@ -55,8 +76,20 @@ class OpenAILLMProvider(LLMProvider):
         if await is_circuit_open(_PROVIDER_KEY):
             raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
 
-        trace = self._langfuse.trace(name="llm.complete", metadata={"model": model, "lesson_id": self._lesson_id})
-        generation = trace.generation(name="openai.chat", model=model, input=messages)
+        # Langfuse 4.x (OTel-based): one generation-type observation per call.
+        # Tracing is best-effort — the OpenAI call must never fail because of it.
+        # self._langfuse is None when init failed (AC-3) — skip tracing entirely.
+        generation = None
+        if self._langfuse is not None:
+            generation = _safe_trace(
+                lambda: self._langfuse.start_observation(
+                    name="openai.chat",
+                    as_type="generation",
+                    model=model,
+                    input=messages,
+                    metadata={"model": model, "lesson_id": self._lesson_id},
+                )
+            )
 
         try:
             response: ChatCompletion = await self._client.chat.completions.create(
@@ -66,23 +99,35 @@ class OpenAILLMProvider(LLMProvider):
             )
             content = response.choices[0].message.content or ""
 
-            # Langfuse token tracking
+            # Cost accumulation reads response.usage directly — never depends on tracing.
             if response.usage:
-                generation.end(
-                    output=content,
-                    usage={
-                        "input": response.usage.prompt_tokens,
-                        "output": response.usage.completion_tokens,
-                    },
-                )
+                if generation is not None:
+                    _safe_trace(
+                        lambda: generation.update(
+                            output=content,
+                            usage_details={
+                                "input": response.usage.prompt_tokens,
+                                "output": response.usage.completion_tokens,
+                            },
+                        )
+                    )
                 await self._maybe_accumulate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
 
             await record_success(_PROVIDER_KEY)
             return content
 
-        except Exception:
+        except Exception as exc:
+            if generation is not None:
+                error_message = str(exc)
+                _safe_trace(
+                    lambda: generation.update(level="ERROR", status_message=error_message)
+                )
             await record_failure(_PROVIDER_KEY)
             raise
+
+        finally:
+            if generation is not None:
+                _safe_trace(generation.end)
 
     @with_retry(max_attempts=3)
     async def complete_structured(
@@ -96,11 +141,22 @@ class OpenAILLMProvider(LLMProvider):
         if await is_circuit_open(_PROVIDER_KEY):
             raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
 
-        trace = self._langfuse.trace(
-            name="llm.complete_structured",
-            metadata={"model": model, "response_format": response_format.__name__, "lesson_id": self._lesson_id},
-        )
-        generation = trace.generation(name="openai.chat.structured", model=model, input=messages)
+        # self._langfuse is None when init failed (AC-3) — skip tracing entirely.
+        generation = None
+        if self._langfuse is not None:
+            generation = _safe_trace(
+                lambda: self._langfuse.start_observation(
+                    name="openai.chat.structured",
+                    as_type="generation",
+                    model=model,
+                    input=messages,
+                    metadata={
+                        "model": model,
+                        "response_format": response_format.__name__,
+                        "lesson_id": self._lesson_id,
+                    },
+                )
+            )
 
         try:
             # Use OpenAI's beta structured-output parse helper
@@ -112,22 +168,35 @@ class OpenAILLMProvider(LLMProvider):
             )
             parsed = response.choices[0].message.parsed
 
+            # Cost accumulation reads response.usage directly — never depends on tracing.
             if response.usage:
-                generation.end(
-                    output=str(parsed),
-                    usage={
-                        "input": response.usage.prompt_tokens,
-                        "output": response.usage.completion_tokens,
-                    },
-                )
+                if generation is not None:
+                    _safe_trace(
+                        lambda: generation.update(
+                            output=str(parsed),
+                            usage_details={
+                                "input": response.usage.prompt_tokens,
+                                "output": response.usage.completion_tokens,
+                            },
+                        )
+                    )
                 await self._maybe_accumulate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
 
             await record_success(_PROVIDER_KEY)
             return parsed
 
-        except Exception:
+        except Exception as exc:
+            if generation is not None:
+                error_message = str(exc)
+                _safe_trace(
+                    lambda: generation.update(level="ERROR", status_message=error_message)
+                )
             await record_failure(_PROVIDER_KEY)
             raise
+
+        finally:
+            if generation is not None:
+                _safe_trace(generation.end)
 
     async def _maybe_accumulate_cost(self, model: str, input_tokens: int, output_tokens: int) -> None:
         """Accumulate cost for the current lesson if a lesson_id is set."""

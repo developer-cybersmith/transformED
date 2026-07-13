@@ -1,0 +1,124 @@
+# Story 2-0b — Page-Scoped Docling + Extraction Performance (Tier 2)
+
+**Status:** in-progress
+**Sprint:** 2 (pre-work — unblocks realistic PDF ingestion for all Sprint 2 stories)
+**Owner:** Dev 1
+**Branch:** `sprint2/s2-0b-page-scoped-docling`
+**Source:** Deep analysis Tier-2 plan (`learning-docs/PIPELINE-DEEP-ANALYSIS.md` §4, items 9–15). All three
+independent redesign strategies converged on page-scoped docling as the core fix.
+
+## Context
+
+Extraction currently runs whole-document docling ML conversion whenever ANY page contains a table
+(`extract_subprocess.py:229`), making table-bearing PDFs of any real size unextractable: measured 2.3 s/page
+without docling vs DNF at the timeout with it (41-page excerpt of a real textbook never finished; 1120-page
+book hopeless). Tier 1 (Story 2-0) made these failures clean; this story makes them not happen.
+Baseline measurements to beat, on this dev machine with the same PDFs:
+- `/tmp/mini.pdf` (3 pages, no tables): extract ≈ 7 s
+- 41-page excerpt (`/tmp/excerpt.pdf`, contains ≥1 table): extract DNF ≥ 600 s
+- full book (1120 pages): DNF (measured 22 min still running before kill)
+
+## Acceptance Criteria
+
+### AC-1 Table-page detection (cheap trigger)
+- The per-page pdfplumber pass records `table_page_idxs: list[int]` (0-indexed) using `page.find_tables()`
+  (detection only), replacing the current `extract_tables()` boolean trigger.
+- The single document-wide `has_tables` flag is removed.
+- **Test:** synthetic 3-page PDF with a table on page 1 only → `table_page_idxs == [1]`; table-free PDF → `[]`.
+
+### AC-2 Page-scoped docling conversion
+- Table pages are grouped into contiguous runs, each run expanded by ±1 page (multi-page-table guard),
+  clamped to document bounds, and overlapping runs merged.
+- For each run, a temporary sub-PDF is built via `pypdfium2 PdfDocument.new().import_pages(...)` and converted
+  by docling; ONE `DocumentConverter` instance is created lazily per subprocess invocation and reused across runs.
+- Docling markdown REPLACES only the corresponding pages' text in `page_texts` (per-page splice using docling's
+  page provenance); all non-run pages keep their pypdfium2 text verbatim. The whole-document replacement
+  (`raw_text = md_text`) is removed — `page_texts` stays the canonical source joined at the end.
+- Docling failure for a run: log warning, fall back to serializing that run's `pdfplumber` table rows as GitHub
+  markdown tables appended to the affected pages' text; NEVER crash extraction, NEVER silently drop tables.
+- Output JSON gains `"tables_detected": int` and `"docling_pages": list[int]` for observability.
+- **Tests:** grouping/expansion/merge pure-function tests (single page → 3-page run; adjacent runs merge;
+  bounds clamped); splice test (docling output lands only on run pages; other pages byte-identical);
+  docling-failure fallback test (table rows appear as markdown, extraction succeeds).
+
+### AC-3 Per-page memory release
+- Inside the main page loop: `plumb_page.flush_cache()` (and `close()` where the pdfplumber version exposes it)
+  and `pdfium_page.close()` every iteration, so RSS stays O(1 page) instead of growing to ~4 GB.
+- **Test:** loop-body test asserting the release calls happen per page (mock-based; RSS assertion is E2E scope).
+
+### AC-4 Image pre-filter before rendering
+- Skip images whose bbox area < 5% of page area OR whose rendered size would be < 10,000 px² at 300 DPI,
+  BEFORE any page render; skip the full-page 300 DPI render entirely when no image on the page survives the
+  filter. Thresholds module-level constants; skipped counts logged. The 300 DPI floor for KEPT images is untouched.
+- **Test:** page with only a tiny logo → no render call; page with a half-page figure → rendered at 300 DPI.
+
+### AC-5 Parallel image uploads (worker side)
+- In `extract_node` (graph.py), the per-image Supabase uploads run concurrently via `asyncio.gather` with
+  `asyncio.to_thread` under a `Semaphore(8)`; a single failed upload fails the node as before (no silent loss).
+- **Test:** N images → uploads overlap (call ordering not serial), semaphore bound respected, one failure raises.
+
+### AC-6 Per-page OCR decision
+- Replace the whole-document average-chars trigger: OCR runs ONLY for pages where `len(page_text.strip()) <
+  ocr_text_yield_threshold`; OCR output replaces only that page's text and only when non-empty. The second full
+  `PdfDocument` reopen for OCR is removed (reuse the open document).
+- Mixed books (text + scanned pages) OCR exactly their scanned pages; fully-digital books trigger zero OCR.
+- **Test:** 3-page doc with one empty-text page → OCR called once, that page only; good pages byte-identical.
+
+### AC-7 Performance acceptance (measured, not estimated)
+- Direct `extract_pdf()` timing on this dev machine (WSL venv, uncontended):
+  - `/tmp/mini.pdf` (3p): ≤ 15 s (no regression)
+  - `/tmp/excerpt.pdf` (41p, tables): **≤ 240 s** (was DNF ≥ 600 s)
+- Live E2E: the 41-page excerpt uploaded through the full stack (FastAPI + ARQ + Supabase + OpenAI) reaches
+  `lesson_jobs.status='completed'` with all non-empty chunks embedded.
+- **Test:** timing harness script recorded in the story's Dev Notes with actual numbers (not CI-enforced).
+
+## Constraints (unchanged, non-negotiable)
+No fitz/PyMuPDF. Parsing stays in the isolated subprocess. 300 DPI floor for kept images. ARQ only.
+No hardcoded model strings. Existing extract output contract (`raw_text`, `page_count`, `image_files`,
+`font_blocks`) preserved — new keys are additive.
+
+## Out of scope (Tier 3)
+Checkpoint offload to Storage, page-ledger provenance contract, structure-LLM boundary-only rework,
+multiprocessing page shards, region renders via pdfium crop, extraction concurrency gate.
+
+## Dev Notes — AC-7 measured results (2026-07-10, dev machine, WSL venv, uncontended)
+
+Harness: `scratchpad/time_extract.py` — in-process `extract_pdf(pdf, tmpdir, ocr_threshold=50)`,
+SIGALRM kill-switch (mini 120 s, excerpt 400 s; never tripped).
+
+| PDF | Baseline (pre-Tier-2) | Measured (Tier 2) | AC-7 target |
+|-----|----------------------|-------------------|-------------|
+| /tmp/mini.pdf (3p, no tables) | ~7 s | **4.9–8.2 s cold, 0.98 s warm** | ≤ 15 s ✅ |
+| /tmp/excerpt.pdf (41p, tables) | **DNF ≥ 600 s** | **203.5–215.5 s** (3 independent measurements: impl lane 203.5, measure stage 206.1, reviewers 212.9/215.5) | ≤ 240 s ✅ |
+
+Excerpt detail: `tables_detected=2` (pages 8, 14 0-indexed — pdfplumber flags two ruled sidebar boxes),
+`docling_pages=[7,8,9,13,14,15]` (exactly the two ±1-expanded runs; 35 non-run pages byte-verbatim),
+100+ tiny images pre-filtered before render (20 kept), max RSS 1.95 GB (was ~4 GB), exit 0.
+
+Review fixes applied post-measurement: `image_placeholder=""` in the docling export (confirmed data-loss
+bug — default `<!-- image -->` placeholder overwrote Tesseract OCR text on scanned pages inside run
+expansions); extraction timeout recalibrated (base 120→180 s, per-page 1.3→3.0 s) because the measured
+excerpt time (206–216 s) exceeded the old formula's 183.7 s grant — live E2E would have timed out.
+
+Environment note: docling's default OCR engine (rapidocr) is broken in this env; converter is built with
+`do_ocr=False`, which is correct by design — our per-page Tesseract pass owns OCR, docling owns table structure.
+
+**Full-book stress run (2026-07-10, lesson b141427f, beyond-AC bonus):** the complete 1,120-page /
+46.7 MB source book uploaded through the full stack → `completed` in **66 min** with **1,379/1,379 chunks
+embedded** and `books.status='ready'`, zero manual intervention (session env: EXTRACT_TIMEOUT_CAP_S=5400,
+ARQ_JOB_TIMEOUT_S=5700). Exercised at scale: >1000-row embed pagination (1,379 chunks), token-budget
+batching, 545-image upload storm on hardened retry (5 attempts / exp. backoff / concurrency 4 — attempt 1
+at 3 attempts / concurrency 8 failed on storage rate-limiting at image #545), bounded RSS throughout.
+Baseline: unprocessable (orphaned 4 GB subprocess killed at 22 min, job stuck 'running' forever).
+
+**Live E2E (2026-07-10, lesson 0e4debe8):** 41-page excerpt uploaded through FastAPI+ARQ+Supabase+OpenAI →
+`lesson_jobs.status='completed'` in **8.3 min wall** (extract ~5.5 min contended, structure→chunk→embed ~2.8 min);
+`page_count=41`, **52/52 chunks embedded**, `books.status='ready'`. First attempt failed on a transient
+Storage blip during the 8-way concurrent image upload (storage3 JSONDecodeError on an empty response) —
+fixed with 3-attempt exponential-backoff retry inside the upload thread (graph.py `_upload_image`);
+persistent failures still fail the node. Baseline for this same PDF: never finished (DNF ≥ 600 s in extract).
+
+## Definition of Done
+- All ACs tested; full unit suite green.
+- AC-7 timings recorded with real numbers in Dev Notes.
+- 5-agent code review before merge.

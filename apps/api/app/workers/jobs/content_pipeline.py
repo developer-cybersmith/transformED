@@ -12,6 +12,7 @@ Celery is BANNED per PRD §24 — this job uses ARQ exclusively.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -26,7 +27,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
     1. Mark lesson_jobs status → "running"
     2. Fetch source PDF path from lesson_jobs table
     3. Run LangGraph pipeline (run_pipeline)
-    4. On success: mark status → "ready", send WebSocket "lesson_ready" event
+    4. On success: mark status → "completed", send WebSocket "lesson_ready" event
     5. On failure: mark status → "failed", log error, re-raise for ARQ retry
 
     Args:
@@ -34,7 +35,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         lesson_id: UUID string of the lesson to process.
 
     Returns:
-        Dict with ``{"lesson_id": ..., "status": "ready", "package_summary": {...}}``
+        Dict with ``{"lesson_id": ..., "status": "completed", "package_summary": {...}}``
         on success.  ARQ stores this as the job result.
 
     Raises:
@@ -53,35 +54,43 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
     await _update_lesson_status(supabase, lesson_id, "running")
 
     try:
-        # ── 2. Fetch lesson metadata ──────────────────────────────────────────
-        result = supabase.table("lesson_jobs").select("*").eq("lesson_id", lesson_id).single().execute()
+        # ── 2. Fetch lesson metadata from lessons table ───────────────────────
+        result = (
+            supabase.table("lessons")
+            .select("user_id, source_file_path, book_id")
+            .eq("lesson_id", lesson_id)
+            .single()
+            .execute()
+        )
         lesson_row: dict[str, Any] = result.data or {}
 
         user_id: str = lesson_row.get("user_id", "")
+        source_pdf_path: str = lesson_row.get("source_file_path", "")
+        book_id: str = lesson_row.get("book_id", "")
         # session_id is the WebSocket routing key; falls back to lesson_id until
-        # the upload route stores it in lesson_jobs (Sprint 1)
-        session_id: str = lesson_row.get("session_id", lesson_id)
-        chapter_content: str = lesson_row.get("extracted_text", "")  # pre-extracted or empty
-
-        if not chapter_content and lesson_row.get("source_pdf_path"):
-            # PDF not yet extracted — extract inline
-            # TODO (Sprint 1): call PDF extraction utility
-            chapter_content = ""
-            logger.warning("lesson_id=%s has PDF path but no pre-extracted text — extraction TODO", lesson_id)
+        # the upload route stores it (Sprint 2 — Dev 4 coordinates)
+        session_id: str = lesson_row.get("session_id") or lesson_id
 
         # ── 3. Run LangGraph pipeline ─────────────────────────────────────────
         lesson_package = await run_pipeline(
             lesson_id=lesson_id,
-            chapter_content=chapter_content,
             user_id=user_id,
+            source_pdf_path=source_pdf_path,
+            book_id=book_id,
         )
 
-        # ── 4a. Persist final package ─────────────────────────────────────────
+        # ── 4a. Mark job completed ────────────────────────────────────────────
+        # Schema note: lesson_jobs has NO lesson_package/progress_pct columns and
+        # its status CHECK allows only pending/running/completed/failed — the
+        # previous write ('ready' + lesson_package) failed with PGRST204 at the
+        # end of every otherwise-successful run. The full LessonPackage is
+        # persisted to lessons.content by package_builder (S2-11).
+        from datetime import datetime, timezone
+
         supabase.table("lesson_jobs").update(
             {
-                "status": "ready",
-                "progress_pct": 100.0,
-                "lesson_package": lesson_package,
+                "status": "completed",
+                "completed_at": datetime.now(tz=timezone.utc).isoformat(),
             }
         ).eq("lesson_id", lesson_id).execute()
 
@@ -108,7 +117,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         logger.info("content_pipeline_job COMPLETE lesson_id=%s", lesson_id)
         return {
             "lesson_id": lesson_id,
-            "status": "ready",
+            "status": "completed",
             "package_summary": {
                 "slides_count": len(lesson_package.get("slides", [])),
                 "quiz_count": len(lesson_package.get("quiz_questions", [])),
@@ -120,13 +129,42 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # RuntimeError includes cost ceiling exceeded — mark as specific status
         error_msg = str(exc)
         if "cost ceiling" in error_msg:
-            await _update_lesson_status(supabase, lesson_id, "cost_limit_exceeded", error=error_msg)
+            # lesson_jobs.status CHECK allows only pending/running/completed/failed —
+            # a 'cost_limit_exceeded' literal is silently rejected and the row sticks
+            # at 'running'. Record 'failed' with a distinguishing error prefix instead.
+            # Full downshift-and-complete cost-ceiling behavior is S2-13.
+            error = f"cost_ceiling_exceeded: {error_msg}"[:2000]
+            await _update_lesson_status(supabase, lesson_id, "failed", error=error)
             logger.warning("content_pipeline_job COST_LIMIT lesson_id=%s: %s", lesson_id, error_msg)
-            return {"lesson_id": lesson_id, "status": "cost_limit_exceeded", "error": error_msg}
+            return {"lesson_id": lesson_id, "status": "failed", "error": error}
 
         await _update_lesson_status(supabase, lesson_id, "failed", error=error_msg)
         logger.exception("content_pipeline_job FAILED lesson_id=%s", lesson_id)
         raise  # Let ARQ retry
+
+    except asyncio.CancelledError:
+        # ARQ job_timeout or worker shutdown cancelled us — record the failure
+        # so the lesson row never sits in "running" forever (AC-5, Story 2-0).
+        # asyncio.shield lets the status write complete even though this task
+        # is already cancelled; the write itself is best-effort.
+        try:
+            await asyncio.shield(
+                _update_lesson_status(
+                    supabase,
+                    lesson_id,
+                    "failed",
+                    error="job cancelled (ARQ timeout or worker shutdown)",
+                )
+            )
+        except BaseException:  # noqa: BLE001 — a re-delivered cancellation is
+            # BaseException, not Exception: a second cancel arriving while the
+            # shielded write runs must not mask the original cancellation (we
+            # still re-raise the outer CancelledError below).
+            logger.warning(
+                "Failed to record cancellation for lesson_id=%s", lesson_id
+            )
+        logger.warning("content_pipeline_job CANCELLED lesson_id=%s", lesson_id)
+        raise  # Cancellation must always propagate
 
     except Exception as exc:
         error_msg = str(exc)

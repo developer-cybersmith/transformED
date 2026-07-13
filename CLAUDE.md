@@ -25,7 +25,7 @@
 | Image | **GPT Image 1 Mini → Imagen 4 Fast → text-only** | DALL-E 3 DEAD (shut down May 2026). |
 | Embeddings | **text-embedding-3-small** | Chunk content: embed at ingestion only, never regenerate. Phase 2 RAG tutor embeds student questions at query time — this is permitted. |
 | OCR | **Tesseract** (in-container) | Azure Doc Intelligence removed |
-| PDF | **PyMuPDF + pdfplumber** | |
+| PDF | **pypdfium2 + pdftext + pdfplumber (table detection only) + docling (table markdown)** | PyMuPDF/fitz BANNED — AGPL-3.0. pypdfium2 (Apache 2.0) for text + rendering; pdftext (Apache 2.0) for font/layout metadata; pdfplumber (MIT) retained only to trigger docling on table pages |
 | Attention | **MediaPipe Face Landmarker WASM** | WebGazer REJECTED |
 | Lesson player | **Custom React audio-timeline state machine** | Reveal.js REJECTED |
 | Realtime | **Native FastAPI WebSockets** | |
@@ -178,7 +178,7 @@ Applied and frozen migrations (do not alter):
 - Attention capture requires explicit consent (modal + users.attention_consent flag)
 - DPDP Act 2023 compliance — Learner DNA disclaimer required, no clinical claims
 - **DPDP consent gap:** `users.attention_consent` boolean is insufficient — a `user_consents` audit table (columns: user_id, consent_type, policy_version, consented_at) is required before any attention data is collected. Sprint 2 priority.
-- PDF security: parse user-uploaded PDFs in an isolated subprocess — calling `fitz.open()` directly in the main FastAPI process is a security risk with untrusted files
+- PDF security: parse user-uploaded PDFs in an isolated subprocess — calling PDF parsers (pypdfium2, pdfplumber, docling) directly in the main FastAPI process is a security risk with untrusted files. `fitz.open()` / PyMuPDF must never appear in the codebase at all (AGPL-3.0 banned)
 - Kimi/Qwen deferred — China-hosted data residency risk
 
 ## Development Rules
@@ -187,6 +187,8 @@ Applied and frozen migrations (do not alter):
 - No PostgresSaver — custom lesson_jobs + MemorySaver
 - No direct provider calls in business logic — go through providers/
 - Pin LangGraph version — never auto-upgrade
+- Never import `fitz` / `pymupdf` / `pymupdf4llm` / `borb` — all AGPL-3.0; PDF extraction uses `pypdfium2` + `pdftext` instead
+- PDF image extraction must render at **300 DPI** minimum (not 150 DPI) — use `page.render(scale=300/72)` in pypdfium2
 - No raw IQ/EQ/SQ claims — branded as "Learner DNA"
 - No clinical scores shown to students — descriptive profile only
 - Never gate lesson progress on teach-back score in MVP

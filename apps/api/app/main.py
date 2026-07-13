@@ -16,12 +16,12 @@ import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import get_settings
 from app.core.langfuse import get_langfuse
+from app.core.rate_limit import limiter
 from app.core.redis import close_redis, init_redis
 from app.core.websocket import ws_router
 from app.modules.admin.router import router as admin_router
@@ -34,8 +34,20 @@ from app.modules.tutor.router import router as tutor_router
 
 logger = logging.getLogger(__name__)
 
-# -- Rate limiter (module-level so middleware can reference it) ----------------
-limiter = Limiter(key_func=get_remote_address, default_limits=["10/second"])
+
+def _build_arq_redis_settings() -> "RedisSettings":
+    from urllib.parse import urlparse
+
+    from arq.connections import RedisSettings
+
+    parsed = urlparse(get_settings().redis_url)
+    return RedisSettings(
+        host=parsed.hostname or "localhost",
+        port=parsed.port or 6379,
+        password=parsed.password or None,
+        database=int(parsed.path.lstrip("/") or "0"),
+        ssl=parsed.scheme == "rediss",
+    )
 
 
 @asynccontextmanager
@@ -43,12 +55,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage startup / shutdown of shared resources."""
     settings = get_settings()
 
-    # -- Startup ---------------------------------------------------------------
+    # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("Starting HIE API...")
 
-    # Redis
+    # Redis (app-level redis-py pool)
     await init_redis(settings.redis_url)
     logger.info("Redis connection pool initialised")
+
+    # ARQ pool (separate ArqRedis client — used only for job enqueue).
+    # default_queue_name MUST match WorkerSettings.queue_name — both sides
+    # import PIPELINE_QUEUE so the names cannot drift (AC-1, Story 2-0).
+    from arq import create_pool
+
+    from app.core.queues import PIPELINE_QUEUE
+
+    app.state.arq_redis = await create_pool(
+        _build_arq_redis_settings(),
+        default_queue_name=PIPELINE_QUEUE,
+    )
+    logger.info("ARQ Redis pool initialised (queue=%s)", PIPELINE_QUEUE)
+
+    # Supabase client + storage-bucket assertion (AC-7, Story 2-0 + D1).
+    # Buckets are provisioned by migration 20260710000000_storage_buckets.sql;
+    # a missing or public bucket must fail the deploy here, not the first upload.
+    from app.core.db import init_supabase
+    from app.core.storage import assert_required_buckets
+
+    sb = init_supabase(settings)
+    await asyncio.to_thread(assert_required_buckets, sb)
 
     # lesson_ready pub/sub listener (bridges ARQ worker -> WebSocket clients)
     from app.core.pubsub import start_lesson_ready_listener
@@ -57,7 +91,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _pubsub_task = await start_lesson_ready_listener(ws_manager)
     logger.info("lesson_ready pub/sub listener started")
 
-    # Langfuse - initialise singleton so the first trace isn't delayed
+    # Langfuse — initialise singleton so the first trace isn't delayed
     get_langfuse()
     logger.info("Langfuse host: %s", settings.langfuse_host)
 
@@ -73,7 +107,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # -- Shutdown --------------------------------------------------------------
+    # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("Shutting down HIE API...")
 
     # Cancel pub/sub listener before closing the shared Redis pool
@@ -83,6 +117,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except asyncio.CancelledError:
         pass
     logger.info("lesson_ready pub/sub listener stopped")
+
+    if hasattr(app.state, "arq_redis"):
+        await app.state.arq_redis.close()
+        logger.info("ARQ Redis pool closed")
 
     try:
         await close_redis()
@@ -108,7 +146,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # -- Middleware ------------------------------------------------------------
+    # ── Middleware ────────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -117,11 +155,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # -- Rate limiting ---------------------------------------------------------
+    # ── Rate limiting ─────────────────────────────────────────────────────────
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
-    # -- Module routers --------------------------------------------------------
+    # ── Module routers ────────────────────────────────────────────────────────
     app.include_router(auth_router,       prefix="/api/auth")
     app.include_router(content_router,    prefix="/api/content")
     app.include_router(media_router,      prefix="/api/media")
@@ -130,10 +168,10 @@ def create_app() -> FastAPI:
     app.include_router(tutor_router,      prefix="/api/tutor")
     app.include_router(admin_router,      prefix="/api/admin")
 
-    # -- WebSocket router ------------------------------------------------------
+    # ── WebSocket router ──────────────────────────────────────────────────────
     app.include_router(ws_router)
 
-    # -- Health endpoint -------------------------------------------------------
+    # ── Health endpoint ───────────────────────────────────────────────────────
     @app.get("/health", tags=["ops"], summary="Liveness probe")
     async def health(request: Request) -> dict[str, str]:  # noqa: RUF029
         return {"status": "ok", "version": app.version}
@@ -143,4 +181,3 @@ def create_app() -> FastAPI:
 
 # Module-level app instance consumed by uvicorn
 app = create_app()
-

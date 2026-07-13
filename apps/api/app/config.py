@@ -167,6 +167,80 @@ class Settings(BaseSettings):
         description="Maximum number of distraction interventions per session before escalating",
     )
 
+    # ── PDF extraction ────────────────────────────────────────────────────────
+    ocr_text_yield_threshold: int = Field(
+        default=50,
+        description="Min chars/page from pdfplumber before Tesseract OCR fallback (env: OCR_TEXT_YIELD_THRESHOLD)",
+    )
+
+    # ── Chunking (Node 3) ─────────────────────────────────────────────────────
+    chunk_target_tokens: int = Field(
+        default=512,
+        description="Target token count per chunk for the chunking node (cl100k_base tokens)",
+    )
+    chunk_overlap_tokens: int = Field(
+        default=64,
+        description="Token overlap between consecutive chunks to preserve context continuity",
+    )
+    embedding_tokenizer: str = Field(
+        default="cl100k_base",
+        description="tiktoken encoding name used for token counting (must match embedding model)",
+    )
+
+    # ── Embeddings (Node 4) ───────────────────────────────────────────────────
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="OpenAI embedding model — outputs 1536-dim vectors; fixed for Sprint 1. "
+                    "Stored embeddings are NEVER regenerated (CLAUDE.md rule).",
+    )
+    embedding_dimensions: int = Field(
+        default=1536,
+        description="Output vector dimensions of the embedding model. "
+                    "Must match the model; stored in embedding_metadata per chunk.",
+    )
+    embed_batch_token_budget: int = Field(
+        default=100_000,
+        description="Max tokens per OpenAI embeddings request batch (API hard cap is 300k). "
+                    "Batches are packed by chunk token_count up to this budget (Story 2-0 AC-6).",
+    )
+
+    # ── ARQ / pipeline timeouts (Story 2-0 AC-5) ──────────────────────────────
+    # Invariant (contract-tested): arq_job_timeout_s >= extract_timeout_cap_s + 300
+    # so the extract subprocess timeout ALWAYS fires before ARQ cancels the job,
+    # letting extract_node's own cleanup (killpg) run instead of orphaning the child.
+    arq_job_timeout_s: int = Field(
+        default=1800,
+        description="ARQ job_timeout for the whole 15-node pipeline (seconds)",
+    )
+    extract_timeout_cap_s: int = Field(
+        default=1500,
+        description="Hard cap on the PDF-extraction subprocess timeout (seconds)",
+    )
+    extract_timeout_base_s: int = Field(
+        default=180,
+        description="Base extraction timeout before the per-page allowance is added (seconds)",
+    )
+    extract_timeout_per_page_s: float = Field(
+        default=3.0,
+        description="Per-page allowance added to the extraction timeout (seconds/page). "
+                    "Calibrated 2026-07-10 against a real 41-page table-bearing PDF: "
+                    "page-scoped docling extraction measured 206-216s while the old "
+                    "120 + 1.3s/page formula granted only 183.7s — table pages cost "
+                    "docling ML time the flat rate must absorb.",
+    )
+
+    @model_validator(mode="after")
+    def _extract_timeout_must_fit_inside_arq_timeout(self) -> "Settings":
+        required = self.extract_timeout_cap_s + 300
+        if self.arq_job_timeout_s < required:
+            raise ValueError(
+                f"arq_job_timeout_s ({self.arq_job_timeout_s}) must be >= "
+                f"extract_timeout_cap_s + 300 ({required}) so the extract "
+                "subprocess timeout fires before ARQ cancels the job. "
+                "Check ARQ_JOB_TIMEOUT_S / EXTRACT_TIMEOUT_CAP_S env vars."
+            )
+        return self
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
