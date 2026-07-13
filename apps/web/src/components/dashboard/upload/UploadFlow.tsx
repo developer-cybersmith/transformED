@@ -4,11 +4,15 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { UploadCloud, CheckCircle, AlertCircle, Loader2, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { uploadService, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
+import { uploadService, extractErrorMessage, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
 import { Button } from "@/components/ui/button";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+// ~20 minutes at one poll per POLL_INTERVAL_MS — chapter generation can take up to
+// ~15 minutes (CLAUDE.md §9), so this is a backstop against a stuck/dead worker,
+// not a realistic ceiling for a healthy pipeline run.
+const MAX_POLL_ATTEMPTS = 240;
 
 export function UploadFlow() {
     const [file, setFile] = useState<File | null>(null);
@@ -63,38 +67,63 @@ export function UploadFlow() {
         if (uploadState !== 'processing' || !file) return;
 
         let cancelled = false;
-        let pollHandle: ReturnType<typeof setInterval> | undefined;
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         let consecutiveFailures = 0;
+        let attempts = 0;
 
-        const stopPolling = () => {
-            if (pollHandle !== undefined) clearInterval(pollHandle);
+        // Self-rescheduling (setTimeout after each poll settles) rather than
+        // setInterval — guarantees polls never overlap, so a slow response can
+        // never race a faster later one and clobber an already-reached terminal
+        // state.
+        const scheduleNextPoll = (id: string) => {
+            timeoutHandle = setTimeout(() => pollStatus(id), POLL_INTERVAL_MS);
         };
 
         const pollStatus = async (id: string) => {
+            if (cancelled) return;
+            attempts += 1;
+
             try {
                 const status = await uploadService.getLessonStatus(id);
-                consecutiveFailures = 0;
                 if (cancelled) return;
+                consecutiveFailures = 0;
 
                 if (status.status === 'ready') {
-                    stopPolling();
                     setUploadState('completed');
                     setLessonId(status.lesson_id);
-                } else if (status.status === 'failed') {
-                    stopPolling();
+                    return;
+                }
+                if (status.status === 'failed') {
                     setUploadState('error');
                     setErrorMessage(status.error ?? 'Lesson generation failed — please try again.');
-                } else {
-                    setStatusMessage('Processing...');
+                    return;
                 }
-            } catch {
-                consecutiveFailures += 1;
-                if (cancelled) return;
-                if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-                    stopPolling();
+                if (status.status !== 'queued' && status.status !== 'running') {
+                    console.warn(`Unexpected lesson status: ${status.status}`);
+                }
+                if (attempts >= MAX_POLL_ATTEMPTS) {
                     setUploadState('error');
-                    setErrorMessage('Lost connection while checking lesson status — please try again.');
+                    setErrorMessage('Lesson generation is taking longer than expected — please try again later.');
+                    return;
                 }
+                setStatusMessage('Processing...');
+                scheduleNextPoll(id);
+            } catch (err) {
+                if (cancelled) return;
+                const httpStatus = (err as { response?: { status?: number } })?.response?.status;
+                const isClientError = typeof httpStatus === 'number' && httpStatus >= 400 && httpStatus < 500;
+                consecutiveFailures += 1;
+
+                if (isClientError || consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES || attempts >= MAX_POLL_ATTEMPTS) {
+                    setUploadState('error');
+                    setErrorMessage(
+                        isClientError
+                            ? 'Lesson not found — please try uploading again.'
+                            : 'Lost connection while checking lesson status — please try again.'
+                    );
+                    return;
+                }
+                scheduleNextPoll(id);
             }
         };
 
@@ -103,18 +132,17 @@ export function UploadFlow() {
             .then((res) => {
                 if (cancelled) return;
                 setStatusMessage('Processing...');
-                pollHandle = setInterval(() => pollStatus(res.lesson_id), POLL_INTERVAL_MS);
                 pollStatus(res.lesson_id);
             })
             .catch((err) => {
                 if (cancelled) return;
                 setUploadState('error');
-                setErrorMessage(err?.response?.data?.detail ?? 'Upload failed — please try again.');
+                setErrorMessage(extractErrorMessage(err, 'Upload failed — please try again.'));
             });
 
         return () => {
             cancelled = true;
-            stopPolling();
+            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         };
     }, [uploadState, file]);
 

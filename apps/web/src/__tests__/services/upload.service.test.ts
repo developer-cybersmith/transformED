@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({
   api: { post: postMock, get: getMock },
 }));
 
-import { uploadService, MAX_UPLOAD_SIZE_BYTES } from '@/services/upload.service';
+import { uploadService, extractErrorMessage } from '@/services/upload.service';
 
 beforeEach(() => {
   postMock.mockReset();
@@ -29,7 +29,9 @@ describe('uploadService.uploadLesson', () => {
     expect(url).toBe('content/lessons');
     expect(body).toBeInstanceOf(FormData);
     expect(body.get('file')).toBe(file);
-    expect(config?.headers?.['Content-Type']).toBe('multipart/form-data');
+    // No explicit Content-Type — axios/the browser must generate the multipart
+    // boundary itself; forcing the header here would strip it.
+    expect(config?.headers?.['Content-Type']).toBeUndefined();
     expect(data).toEqual(responseData);
   });
 
@@ -68,8 +70,20 @@ describe('uploadService.getLessonStatus', () => {
   });
 });
 
-describe('MAX_UPLOAD_SIZE_BYTES', () => {
-  it('is 50MB, matching the backend limit', () => {
-    expect(MAX_UPLOAD_SIZE_BYTES).toBe(50 * 1024 * 1024);
+describe('extractErrorMessage', () => {
+  it('returns a string detail as-is', () => {
+    const err = { response: { data: { detail: 'File is not a valid PDF' } } };
+    expect(extractErrorMessage(err, 'fallback')).toBe('File is not a valid PDF');
+  });
+
+  it('extracts msg from FastAPI\'s array-shaped 422 validation detail', () => {
+    const err = { response: { data: { detail: [{ loc: ['body', 'file'], msg: 'field required', type: 'value_error.missing' }] } } };
+    expect(extractErrorMessage(err, 'fallback')).toBe('field required');
+  });
+
+  it('falls back when detail is missing or an empty array', () => {
+    expect(extractErrorMessage({ response: { data: {} } }, 'fallback')).toBe('fallback');
+    expect(extractErrorMessage({ response: { data: { detail: [] } } }, 'fallback')).toBe('fallback');
+    expect(extractErrorMessage(new Error('network blip'), 'fallback')).toBe('fallback');
   });
 });

@@ -4,6 +4,10 @@ Items deferred from code review — not urgent for current sprint but should be 
 
 ---
 
+## Deferred from: code review of 1-8-upload-real-api (2026-07-13)
+
+- **No `AbortController`-based request cancellation on unmount** [`apps/web/src/services/upload.service.ts`, `apps/web/src/components/dashboard/upload/UploadFlow.tsx`] — no other service in the codebase cancels in-flight requests either; this is the first long-lived polling loop, so an orphaned `getLessonStatus`/`uploadLesson` call keeps running server-side after the user navigates away. Client-side effects are already suppressed via a `cancelled` flag, so the harm is a wasted network call, not a leak or correctness bug. Better addressed as a standalone cross-service story than bolted onto this one.
+
 ## Deferred from: code review of 2-5-player-state-persistence (2026-07-06)
 
 - **`quizFiredForSegment` restore is validated only by index-bounds, not segment-ID identity** [`apps/web/src/stores/player.machine.ts`] — if the same `lesson_id` is later regenerated with different segment content that still satisfies the bounds check against the new `segments.length`, previously-fired quiz IDs could be restored and suppress quizzes the student never actually completed in the new content. Would need content-identity validation (e.g. hashing segment IDs) beyond this story's scope.

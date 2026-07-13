@@ -18,6 +18,10 @@ vi.mock('@/services/upload.service', () => ({
     uploadLesson: uploadLessonMock,
     getLessonStatus: getLessonStatusMock,
   },
+  extractErrorMessage: (err: unknown, fallback: string) => {
+    const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+    return typeof detail === 'string' ? detail : fallback;
+  },
   MAX_UPLOAD_SIZE_BYTES: 50 * 1024 * 1024,
 }));
 
@@ -118,6 +122,30 @@ describe('UploadFlow', () => {
 
     await screen.findByText('Invalid PDF');
     expect(getLessonStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('stays in "processing" (no percentage/stage text) when a poll returns a non-terminal status', async () => {
+    uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
+    getLessonStatusMock.mockResolvedValue({ lesson_id: 'lsn_42', status: 'running', title: null, error: null, created_at: null, completed_at: null });
+
+    render(<UploadFlow />);
+    dropAFile();
+
+    await waitFor(() => expect(getLessonStatusMock).toHaveBeenCalledTimes(1));
+    await screen.findByText('Processing...');
+    expect(screen.queryByText('Begin Lesson')).toBeNull();
+    expect(screen.queryByText('Generation Failed')).toBeNull();
+  });
+
+  it('fails fast on a 4xx poll error instead of retrying like a transient failure', async () => {
+    uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
+    getLessonStatusMock.mockRejectedValue({ response: { status: 404 } });
+
+    render(<UploadFlow />);
+    dropAFile();
+
+    await screen.findByText(/lesson not found/i);
+    expect(getLessonStatusMock).toHaveBeenCalledTimes(1);
   });
 
   it('tolerates transient poll failures but surfaces an error after 3 consecutive failures', async () => {
