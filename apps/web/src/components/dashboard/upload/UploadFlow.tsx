@@ -4,15 +4,17 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { UploadCloud, CheckCircle, AlertCircle, Loader2, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { uploadGenerationService } from "@/services/uploadGeneration.service";
+import { uploadService, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
 import { Button } from "@/components/ui/button";
+
+const POLL_INTERVAL_MS = 5000;
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 
 export function UploadFlow() {
     const [file, setFile] = useState<File | null>(null);
     const [dragActive, setDragActive] = useState(false);
     const [uploadState, setUploadState] = useState<'idle' | 'processing' | 'completed' | 'error'>('idle');
     const [statusMessage, setStatusMessage] = useState<string>('');
-    const [progress, setProgress] = useState<number>(0);
     const [errorMessage, setErrorMessage] = useState<string>('');
     const [lessonId, setLessonId] = useState<string>('');
 
@@ -46,50 +48,74 @@ export function UploadFlow() {
     };
 
     const handleFile = (selectedFile: File) => {
+        if (selectedFile.size > MAX_UPLOAD_SIZE_BYTES) {
+            setFile(null);
+            setErrorMessage('File exceeds the 50MB limit — please upload a smaller PDF.');
+            setUploadState('error');
+            return;
+        }
         setFile(selectedFile);
         setUploadState('processing');
-        setStatusMessage('Initializing synthesis matrix...');
-        setProgress(0);
+        setStatusMessage('Uploading...');
     };
 
     useEffect(() => {
-        if (uploadState === 'processing' && file) {
-            // Initiate backend socket link
-            uploadGenerationService.connect();
+        if (uploadState !== 'processing' || !file) return;
 
-            const unsubscribe = uploadGenerationService.subscribe((event) => {
-                if (event.type === 'generation_progress') {
-                    setStatusMessage(event.payload.message);
-                    setProgress(event.payload.progress);
-                } else if (event.type === 'lesson_ready') {
+        let cancelled = false;
+        let pollHandle: ReturnType<typeof setInterval> | undefined;
+        let consecutiveFailures = 0;
+
+        const stopPolling = () => {
+            if (pollHandle !== undefined) clearInterval(pollHandle);
+        };
+
+        const pollStatus = async (id: string) => {
+            try {
+                const status = await uploadService.getLessonStatus(id);
+                consecutiveFailures = 0;
+                if (cancelled) return;
+
+                if (status.status === 'ready') {
+                    stopPolling();
                     setUploadState('completed');
-                    setLessonId(event.payload.lesson_id);
-                } else if (event.type === 'error') {
+                    setLessonId(status.lesson_id);
+                } else if (status.status === 'failed') {
+                    stopPolling();
                     setUploadState('error');
-                    setErrorMessage(event.payload.message);
+                    setErrorMessage(status.error ?? 'Lesson generation failed — please try again.');
+                } else {
+                    setStatusMessage('Processing...');
                 }
+            } catch {
+                consecutiveFailures += 1;
+                if (cancelled) return;
+                if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+                    stopPolling();
+                    setUploadState('error');
+                    setErrorMessage('Lost connection while checking lesson status — please try again.');
+                }
+            }
+        };
+
+        uploadService
+            .uploadLesson(file)
+            .then((res) => {
+                if (cancelled) return;
+                setStatusMessage('Processing...');
+                pollHandle = setInterval(() => pollStatus(res.lesson_id), POLL_INTERVAL_MS);
+                pollStatus(res.lesson_id);
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                setUploadState('error');
+                setErrorMessage(err?.response?.data?.detail ?? 'Upload failed — please try again.');
             });
 
-            // Start Mock Engine - we catch any immediate synchronous throws but 
-            // the pipeline will mostly emit errors over the socket event bus.
-            uploadGenerationService.startGeneration(file).catch(err => {
-                setUploadState(prev => {
-                    if (prev !== 'error' && prev !== 'completed') {
-                        setErrorMessage(err.message);
-                        return 'error';
-                    }
-                    return prev;
-                });
-            });
-
-            // Tear down the connection too, not just this subscription — the
-            // singleton's generation loop otherwise keeps running in the
-            // background after navigating away mid-generation.
-            return () => {
-                unsubscribe();
-                uploadGenerationService.disconnect();
-            };
-        }
+        return () => {
+            cancelled = true;
+            stopPolling();
+        };
     }, [uploadState, file]);
 
     return (
@@ -142,20 +168,10 @@ export function UploadFlow() {
                     transition={{ duration: 0.6 }}
                     className="w-full relative z-10 bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-16 shadow-2xl border border-neutral-100 flex flex-col items-center justify-center min-h-[400px] text-center"
                 >
-                    {/* Pulsing Outer Glow */}
+                    {/* Pulsing Outer Glow + indeterminate spinner — the backend reports no percentage/stage data */}
                     <div className="relative w-40 h-40 mb-10 flex items-center justify-center">
                         <div className="absolute inset-0 bg-[var(--accent-primary)]/20 rounded-full blur-2xl animate-pulse" />
-                        <svg className="w-full h-full -rotate-90 relative z-10" viewBox="0 0 100 100">
-                            <circle className="text-neutral-100" strokeWidth="4" stroke="currentColor" fill="transparent" r="46" cx="50" cy="50" />
-                            <circle
-                                className="text-[var(--accent-primary)] transition-all duration-700 ease-out"
-                                strokeWidth="4" strokeDasharray={289} strokeDashoffset={289 - (progress / 100) * 289}
-                                strokeLinecap="round" stroke="currentColor" fill="transparent" r="46" cx="50" cy="50"
-                            />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
-                            <span className="text-3xl font-bold text-neutral-900">{progress}%</span>
-                        </div>
+                        <Loader2 className="w-16 h-16 text-[var(--accent-primary)] animate-spin relative z-10" />
                     </div>
 
                     <div className="inline-flex items-center gap-3 px-4 py-2 bg-neutral-50 rounded-full border border-neutral-100 mb-5 shadow-inner">
