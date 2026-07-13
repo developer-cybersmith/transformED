@@ -45,8 +45,11 @@ This story implements the six Phase 1 "economy" nodes, all running on `settings.
 - **Test:** valid LLM output round-trips through `SegmentComplexity.model_validate`; out-of-range `intervention_sensitivity` (e.g. 1.4) is rejected, not silently clamped without logging.
 
 ### AC-3 `quiz_generator` (S2-3)
-- Model: `settings.llm_mini`. Output validates against `app.schemas.lesson.QuizQuestion` list — **exactly 4 options** per question (`Field(min_length=4)` on `options`, and the node must also cap at 4, not just floor), `correct_index` in `range(len(options))`, `min_length=4` enforced on `question`/`explanation` text (per AC wording — treat "min_length=4" as the non-empty-content guard, not just the options-count rule already covered above).
-- **Test:** malformed LLM output (`correct_index` out of range, <4 or >4 options) is rejected/retried, not silently passed through to the lesson package.
+- Model: `settings.llm_mini`. Output validates against `app.schemas.lesson.QuizQuestion` list.
+- **Schema gap to guard against:** `QuizQuestion.options` is `Field(min_length=4)` in `app/schemas/lesson.py` — a **minimum only**, no maximum. Pydantic validation alone will NOT reject a 5- or 6-option response. The node must independently enforce **exactly 4 options** (truncate/reject/retry on LLM output with ≠4), since the PRD and tracker both require exactly 4 and the frozen schema doesn't close that gap.
+- `correct_index` must be in `range(len(options))` after the exactly-4 guard is applied (validate range against the final 4-item list, not a pre-truncation list).
+- `question` and `explanation` must be non-empty strings — reject/regenerate on blank content.
+- **Test:** LLM output with 5+ options is rejected or truncated to exactly 4 (not silently passed through with 5); `correct_index` out of range is rejected/retried; blank `question`/`explanation` is rejected.
 
 ### AC-4 `jargon_extractor` (S2-4)
 - Model: `settings.llm_mini`. Output validates against `app.schemas.lesson.JargonEntry` list. No empty `term` or `definition` strings survive into `state["glossary"]`.
@@ -68,6 +71,12 @@ This story implements the six Phase 1 "economy" nodes, all running on `settings.
 - Every provider call across all 6 nodes: `is_circuit_open("openai_mini")` checked before the call; `cost_tracker.accumulate_cost()` called immediately after; `cost_tracker.check_ceiling()` checked before each node's batch of calls begins.
 - On ceiling breach mid-node: downshift is not available for `llm_mini` (already the cheapest tier) — the node must complete the lesson using best-effort/degraded output (e.g. skip remaining sections) and cause the pipeline to terminate with `status="failed"`, error prefixed `"cost_ceiling_exceeded: "` (never a bare `"cost_limit_exceeded"` literal — rule 25, CLAUDE.md).
 - **Test:** simulated ceiling breach mid-fan-out results in a `failed` status with the correct error prefix, not a stranded `running` row.
+
+## Tracker Cross-Reference Notes (`docs/dev1-tracker.md`)
+
+- **File layout — tracker is stale, follow the actual Sprint 1 convention instead.** The tracker's "Files to Create" table (lines 72-82) lists one file per node (`nodes/summarise_segment.py`, `nodes/segment_complexity.py`, etc.). That's not what Sprint 1 actually did: all 15 node functions (`extract_node` through `package_builder_node`) are defined directly in `apps/api/app/modules/content/pipeline/graph.py` (1121 lines). `nodes/` only holds extracted helper modules (`chunking.py`, `extract_subprocess.py`, `structure_detection.py`) for logic too large to inline. **This story adds the six economy-node functions directly to `graph.py`**, consistent with the established pattern — do not create six new files under `nodes/` on the tracker's say-so.
+- **AC-0 (graph reordering) has no corresponding tracker task.** The tracker's Sprint 2 section correctly states the required architecture ("Phase 1 ... ALL must complete before Phase 2 starts") but doesn't call out that the current stub graph violates it. That's addressed here as AC-0 since it blocks S2-1 through S2-6 from being meaningful; no tracker edit needed since the underlying tasks (S2-1..S2-6) aren't yet checked off.
+- **S2-1's own AC as written in the tracker** ("Summary ≤100 words; lesson_planner (S2-7) consumes summaries not raw text") is a forward-reference to S2-7 — S2-7 is out of scope for this story; AC-0 here only guarantees the wiring is in place for S2-7 to consume correctly later, it does not implement `lesson_planner` itself.
 
 ## Dev Notes — cross-module flags (do not fix here)
 
