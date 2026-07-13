@@ -858,7 +858,12 @@ async def get_learner_dna_data(
         .maybe_single()
         .execute()
     )
-    if resp.data is None:
+    # CROSS-TEAM NOTE (2026-07-13, flagged to Dev 3 — this module's owner): the
+    # Supabase client's .maybe_single().execute() returns None directly (not a
+    # response object with .data = None) when zero rows match — the original
+    # `resp.data is None` check crashed with AttributeError for exactly the
+    # expected "not onboarded yet" case, 500ing instead of the intended 404.
+    if resp is None or resp.data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",

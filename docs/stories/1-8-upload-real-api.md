@@ -62,3 +62,7 @@ A working `lesson_ready` WS push **does** exist (`apps/api/app/core/pubsub.py` +
 - [x] [Review][Dismiss] `consecutiveFailures` reset before the `cancelled` check — cosmetic ordering issue, explicitly harmless (effect teardown makes it moot)
 - [x] [Review][Dismiss] "12 new/updated tests, tsc clean" claim in the tracker lacks attached CI evidence — already verified true earlier in this session (323/323 tests passing, `tsc --noEmit` clean)
 - [x] [Review][Dismiss] Two-phase status message ("Uploading..." then "Processing...") deviates from AC-2's literal "static message" wording — acceptable: improves UX, doesn't reintroduce fabricated percentage/stage data (the actual spec intent)
+
+### Post-review finding (live end-to-end testing, 2026-07-13)
+
+- [x] [Bug] `POST /api/content/lessons` 422'd against the real running backend — the shared axios instance (`apps/web/src/lib/api.ts`) set a hardcoded default `Content-Type: application/json` header on every request. Axios only auto-generates a multipart boundary when no `Content-Type` is already present, so this default silently overrode it: the browser sent `Content-Type: application/json` with a raw `FormData` body (no boundary), and FastAPI couldn't parse the `file` field at all. Fixed by removing the default — axios still auto-sets `application/json` for plain-object JSON bodies with no header present, so no other call site is affected. 327/327 web tests still pass.
