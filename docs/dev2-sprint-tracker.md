@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-06 (S2-06 "Segment-end detection → CHECKING_IN state" investigated further while starting its BMAD story: traced the actual WS code path and found the receive side is genuinely blocked — no code path anywhere broadcasts a real `state_change` transition (`from != to`), only the reconnect-sync path does, always with `from == to`. **Escalated to Dev 4** with a specific ask (broadcast on real transitions inside `dispatch_event()`). Send side remains unblocked and can proceed independently. Holding per user instruction pending Dev 4's reply — branch `sprint2/s2-6-segment-checkin` created, no commits yet. See §11 S2-06 for the full write-up and escalation message.) |
+| **Last Updated** | 2026-07-13 (`main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS · Sprint 2 IN PROGRESS (5/6) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/6) |
 
 ---
 
@@ -19,12 +19,12 @@
 | Sprint | Period | Total Tasks | Done | Partial | Not Started |
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 14 | **10** | 0 | **4** |
+| Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
 | Sprint 2 | Weeks 4–5 | 6 | **5** | 0 | **1** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **51** | **23** | **0** | **28** |
+| **Total** | **10 weeks** | **51** | **24** | **0** | **27** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -845,10 +845,15 @@ The component must find exact term matches (case-insensitive), wrap in `<Tooltip
 
 ---
 
-### S1-08 — Upload Flow — Real API Integration
+### S1-08 — Upload Flow — Real API Integration — ✓ 2026-07-13
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED  
-**Files to modify:** `src/services/upload.service.ts`, `src/components/dashboard/upload/UploadFlow.tsx`
+**Status:** ✅ DONE — see `docs/stories/1-8-upload-real-api.md` for the full corrected story  
+**Files modified:** `src/services/upload.service.ts`, `src/components/dashboard/upload/UploadFlow.tsx`
+
+**This story's original sketch below was wrong** — written before Dev 1's backend existed, it assumed `POST /api/pipeline/submit` returning `{lesson_id, session_id}` with 14 named pipeline stages streamed over `/ws/{session_id}`. The real backend (merged to `main` at `d38f357`) has none of that: `POST /api/content/lessons` → `{lesson_id, job_id, status}`, and `GET /api/content/lessons/{id}` → flat `queued|running|ready|failed` only. There is no `generation_progress` WS message anywhere in the codebase. Implemented against the real contract instead: multipart upload + 5s status polling, no percentage/stage display (matches `S1-09`'s "not percentage — just Processing..." pattern). The mock WebSocket layer (`uploadGeneration.service.ts`, `lib/websocket/*`) was deleted as dead code. 12 new/updated tests, `tsc` clean.
+
+<details>
+<summary>Original (incorrect) sketch — kept for history</summary>
 
 Replace mock in `upload.service.ts` with real call to `POST /api/pipeline/submit`:
 
@@ -871,6 +876,8 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 - [ ] On `lesson_ready`: `router.push('/lesson/{lesson_id}')` fires automatically
 - [ ] On `error` event: error card with specific error message + "Try Again" button
 - [ ] File size validation (max 50MB) on client before upload attempt
+
+</details>
 
 ---
 

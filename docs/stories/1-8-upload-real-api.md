@@ -1,6 +1,6 @@
 # Story 1-8 — Upload Flow: Real API Integration
 
-**Status:** in progress
+**Status:** done — 2026-07-13
 **Sprint:** 1 (remainder item, resumed in Sprint 2 timeframe)
 **Owner:** Dev 2
 **Branch:** `sprint1/s1-8-upload-real-api`
