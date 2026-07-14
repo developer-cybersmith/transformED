@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 import operator
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -1000,7 +1000,11 @@ _PHASE1_INSTRUMENTED_NODES: tuple[str, ...] = (
 
 
 async def _read_phase1_checkpoint(
-    lesson_id: str, key: str, *, required_keys: tuple[str, ...]
+    lesson_id: str,
+    key: str,
+    *,
+    required_keys: tuple[str, ...],
+    extra_validate: Callable[[dict[str, Any]], bool] | None = None,
 ) -> dict[str, Any] | None:
     """Story 2-1b: read a Phase 1 economy-node per-section checkpoint, if any.
 
@@ -1011,6 +1015,17 @@ async def _read_phase1_checkpoint(
     validates the cached shape before trusting it — a malformed or
     schema-drifted checkpoint value is treated as a cache-miss (logged), not
     forwarded downstream unchecked.
+
+    `extra_validate` (2026-07-14 review finding — Edge Case Hunter): key
+    *presence* alone doesn't guarantee a cached value still satisfies the
+    invariants the writing node enforced (e.g. exactly 4 quiz options, exactly
+    3 intervention messages per category) — a future code change or a
+    hand-edited row could leave a checkpoint with the right keys but a stale
+    shape, and it would be returned to the caller unchecked, bypassing the
+    truncate/pad guards that exist specifically to prevent that shape from
+    ever reaching state. Callers that need stronger validation than key
+    presence pass a predicate here; a cache-miss (not a crash) is the failure
+    mode, consistent with `required_keys`' own shape-validation branch below.
     """
     from app.core.db import get_supabase
 
@@ -1032,6 +1047,13 @@ async def _read_phase1_checkpoint(
             lesson_id,
             key,
             required_keys,
+        )
+        return None
+    if extra_validate is not None and not extra_validate(cached):
+        logger.warning(
+            "[%s] checkpoint %s failed invariant validation — treating as cache-miss",
+            lesson_id,
+            key,
         )
         return None
     return cached
@@ -1167,12 +1189,40 @@ class _QuizQuestionLLM(BaseModel):
     difficulty: str
 
 
+def _quiz_data_is_valid_shape(cached: dict[str, Any]) -> bool:
+    """2026-07-14 review finding (Edge Case Hunter): a cached quiz checkpoint
+    having the right keys doesn't guarantee `data["options"]` still has
+    exactly 4 entries or `correct_index` is still in range — validate the
+    same invariants the write path enforces before trusting a cache hit."""
+    data = cached.get("data")
+    if not isinstance(data, dict):
+        return False
+    options = data.get("options")
+    if not isinstance(options, list) or len(options) != 4:
+        return False
+    correct_index = data.get("correct_index")
+    return isinstance(correct_index, int) and 0 <= correct_index < len(options)
+
+
 async def quiz_generator_node(state: PipelineState) -> PipelineState:
     """Node 8 (Story 2-1 AC-3): generate one MCQ for one section.
 
     Send()-dispatched once per section (see AC-0). Returns only this node's
     own reduced key (fan-out-safe — a concurrent write to a non-reducer key
     across parallel dispatches raises LangGraph's InvalidUpdateError).
+
+    Output shape (2026-07-14 review finding — Acceptance Auditor, decision
+    resolved same day): `{"segment_id": ..., "data": {...QuizQuestion fields}}`
+    — nested, not flat. `QuizQuestion` is a frozen schema with `extra="forbid"`
+    and no `segment_id` field, so a flat dict with `segment_id` mixed in fails
+    `QuizQuestion.model_validate()` without a strip step first (contradicting
+    AC-3's "output validates against QuizQuestion" text as directly as
+    written). But `state["quiz_questions"]` is built via `operator.add` across
+    concurrent Send() dispatches completing in arbitrary order — segment_id
+    can't simply be dropped either, or `package_builder` (S2-11) has no way
+    to know which segment a question belongs to once results are merged.
+    Nesting satisfies both: `entry["segment_id"]` for correlation,
+    `QuizQuestion.model_validate(entry["data"])` for zero-reshaping validation.
     """
     from app.config import get_settings
     from app.providers.llm.openai import OpenAILLMProvider
@@ -1187,16 +1237,8 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     cached = await _read_phase1_checkpoint(
         lesson_id,
         checkpoint_key,
-        required_keys=(
-            "segment_id",
-            "question_id",
-            "type",
-            "question",
-            "options",
-            "correct_index",
-            "explanation",
-            "difficulty",
-        ),
+        required_keys=("segment_id", "data"),
+        extra_validate=_quiz_data_is_valid_shape,
     )
     if cached is not None:
         logger.info("[%s] quiz_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
@@ -1211,9 +1253,9 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             "role": "system",
             "content": (
                 "Write one multiple-choice question testing understanding of "
-                "this section. Provide exactly 4 answer options, the 0-based "
-                "index of the correct option, a brief explanation, and a "
-                "difficulty (easy/medium/hard)."
+                "this section. Provide exactly 4 distinct answer options, the "
+                "0-based index of the correct option, a brief explanation, and "
+                "a difficulty (easy/medium/hard)."
                 + _UNTRUSTED_CONTENT_GUARD
             ),
         },
@@ -1251,17 +1293,29 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     if not question_text or not explanation_text:
         return await _reject("blank question/explanation")
 
+    # 2026-07-14 review finding (Edge Case Hunter): nothing previously stopped
+    # a degenerate option set (all 4 identical, or the correct answer's own
+    # text blank while distractors are populated) from shipping as a
+    # nonsensical MCQ. Reject rather than fabricate a fix — mirrors this
+    # node's existing degrade-not-fabricate pattern for every other guard.
+    if len(set(options)) < len(options):
+        return await _reject("duplicate option text")
+    if not options[correct_index].strip():
+        return await _reject("correct option text is blank")
+
     difficulty = response.difficulty if response.difficulty in ("easy", "medium", "hard") else "medium"
 
     result: dict[str, Any] = {
         "segment_id": section_id,
-        "question_id": f"quiz_{section_id}",
-        "type": "mcq",
-        "question": question_text,
-        "options": options,
-        "correct_index": correct_index,
-        "explanation": explanation_text,
-        "difficulty": difficulty,
+        "data": {
+            "question_id": f"quiz_{section_id}",
+            "type": "mcq",
+            "question": question_text,
+            "options": options,
+            "correct_index": correct_index,
+            "explanation": explanation_text,
+            "difficulty": difficulty,
+        },
     }
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
@@ -1389,11 +1443,26 @@ class _JargonListLLM(BaseModel):
     terms: list[_JargonEntryLLM]
 
 
+def _valid_jargon_checkpoint(cached: dict[str, Any]) -> bool:
+    # 2026-07-14 review finding (P3): key-presence alone doesn't prove every
+    # cached entry still has the nested {segment_id, data: {term, definition}} shape.
+    terms = cached.get("terms")
+    if not isinstance(terms, list):
+        return False
+    return all(
+        isinstance(t, dict) and isinstance(t.get("data"), dict) and "term" in t["data"] and "definition" in t["data"]
+        for t in terms
+    )
+
+
 async def jargon_extractor_node(state: PipelineState) -> PipelineState:
     """Node 10 (Story 2-1 AC-4): extract jargon/technical terms for one section.
 
     Send()-dispatched once per section (see AC-0). Returns only this node's
     own reduced key (fan-out-safe, see quiz_generator_node's docstring).
+
+    Output shape is nested per entry (`{"segment_id": ..., "data": {"term",
+    "definition"}}`) — same reasoning as `quiz_generator_node`'s docstring.
     """
     from app.config import get_settings
     from app.providers.llm.openai import OpenAILLMProvider
@@ -1405,7 +1474,9 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
     logger.info("[%s] jargon_extractor_node: %s", lesson_id, section_id)
 
     # Story 2-1b: idempotency guard — see summarise_segment_node for rationale.
-    cached = await _read_phase1_checkpoint(lesson_id, checkpoint_key, required_keys=("terms",))
+    cached = await _read_phase1_checkpoint(
+        lesson_id, checkpoint_key, required_keys=("terms",), extra_validate=_valid_jargon_checkpoint
+    )
     if cached is not None:
         logger.info("[%s] jargon_extractor_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
@@ -1432,6 +1503,11 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"glossary": []}
 
+    # Output shape is nested (`{"segment_id": ..., "data": {"term", "definition"}}`)
+    # — 2026-07-14 review finding, same reasoning as `quiz_generator_node`'s
+    # docstring: `JargonEntry` is frozen with `extra="forbid"` and no
+    # `segment_id` field, but `state["glossary"]` is a flat operator.add'd
+    # list across sections, so segment_id can't be dropped either.
     entries: list[dict[str, Any]] = []
     dropped = 0
     for entry in response.terms:
@@ -1440,7 +1516,7 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
         if not term or not definition:
             dropped += 1
             continue
-        entries.append({"term": term, "definition": definition, "segment_id": section_id})
+        entries.append({"segment_id": section_id, "data": {"term": term, "definition": definition}})
     if dropped:
         logger.warning(
             "[%s] jargon_extractor_node: %s — dropped %d entries with empty term/definition",
@@ -1468,7 +1544,9 @@ class _SegmentInterventionsLLM(BaseModel):
     fatigue: list[str]
 
 
-def _exactly_three(messages: list[str], *, lesson_id: str, section_id: str, label: str) -> list[str]:
+def _exactly_three(
+    messages: list[str], *, lesson_id: str, section_id: str, label: str
+) -> tuple[list[str], bool]:
     """Force *messages* to exactly 3 non-empty entries (Story 2-1 AC-5).
 
     Truncates on >3; pads by repeating the last usable message (or a generic
@@ -1476,10 +1554,15 @@ def _exactly_three(messages: list[str], *, lesson_id: str, section_id: str, labe
     intervention type at runtime would silently disable that trigger for the
     whole lesson (PRD §10: pre-generated messages are the ENTIRE supply, no
     LLM call exists at intervention runtime to fall back on).
+
+    Returns `(messages, was_padded)` — 2026-07-14 review finding (decision
+    resolved same day): padded output must not be checkpointed as if it were
+    a clean success (see `intervention_messages_node`), so callers need to
+    know padding occurred, not just the final always-exactly-3 list.
     """
     cleaned = [m.strip() for m in messages if m.strip()]
     if len(cleaned) == 3:
-        return cleaned
+        return cleaned, False
     if len(cleaned) > 3:
         logger.warning(
             "[%s] intervention_messages_node: %s — %s had %d messages, truncating to 3",
@@ -1488,7 +1571,7 @@ def _exactly_three(messages: list[str], *, lesson_id: str, section_id: str, labe
             label,
             len(cleaned),
         )
-        return cleaned[:3]
+        return cleaned[:3], False
     logger.warning(
         "[%s] intervention_messages_node: %s — %s had only %d usable messages, padding to 3",
         lesson_id,
@@ -1499,7 +1582,18 @@ def _exactly_three(messages: list[str], *, lesson_id: str, section_id: str, labe
     fallback = cleaned[-1] if cleaned else "Let's take a moment to refocus."
     while len(cleaned) < 3:
         cleaned.append(fallback)
-    return cleaned
+    return cleaned, True
+
+
+def _valid_interventions_checkpoint(cached: dict[str, Any]) -> bool:
+    # 2026-07-14 review finding (P3): key-presence alone doesn't prove the
+    # cached value still has exactly 3 messages per category.
+    data = cached.get("data")
+    if not isinstance(data, dict):
+        return False
+    return all(
+        isinstance(data.get(k), list) and len(data[k]) == 3 for k in ("distraction", "confusion", "fatigue")
+    )
 
 
 async def intervention_messages_node(state: PipelineState) -> PipelineState:
@@ -1509,7 +1603,18 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
     These messages are the ENTIRE supply of intervention text for the tutor
     runtime (PRD §10) — no LLM call exists at intervention time, so a section
     that fails here must still produce exactly 3x3 usable messages, not an
-    empty/partial result that would leave a trigger type silently disabled.
+    empty/partial result that would leave a trigger type silently disabled
+    (2026-07-14 review finding — a total LLM refusal previously returned an
+    empty list here, bypassing the pad-to-3 guarantee this node otherwise
+    goes out of its way to provide).
+
+    Output shape is nested (`{"segment_id": ..., "data": {...}}`), same
+    reasoning as `quiz_generator_node`'s docstring.
+
+    Degraded output (any category needed padding) is NOT checkpointed
+    (2026-07-14 review finding, decision resolved same day) — a transient bad
+    LLM response should get a fresh attempt on the next ARQ retry rather than
+    permanently supplying padded/generic messages for the lesson's lifetime.
     """
     from app.config import get_settings
     from app.providers.llm.openai import OpenAILLMProvider
@@ -1522,7 +1627,10 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
 
     # Story 2-1b: idempotency guard — see summarise_segment_node for rationale.
     cached = await _read_phase1_checkpoint(
-        lesson_id, checkpoint_key, required_keys=("segment_id", "distraction", "confusion", "fatigue")
+        lesson_id,
+        checkpoint_key,
+        required_keys=("segment_id", "data"),
+        extra_validate=_valid_interventions_checkpoint,
     )
     if cached is not None:
         logger.info("[%s] intervention_messages_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
@@ -1550,19 +1658,47 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
         {"role": "user", "content": body},
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _SegmentInterventionsLLM)
+    # 2026-07-14 review finding (Blind Hunter, CRITICAL): a total refusal
+    # (response is None) must still go through the same guaranteed-3x3 pad
+    # logic as a partial response — this is the CRITICAL entire runtime
+    # supply of intervention text with zero LLM fallback, so an empty list
+    # here silently disables all three trigger types for this section.
+    raw_distraction = list(response.distraction) if response is not None else []
+    raw_confusion = list(response.confusion) if response is not None else []
+    raw_fatigue = list(response.fatigue) if response is not None else []
     if response is None:
-        logger.warning("[%s] intervention_messages_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
-        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"intervention_prompts": []}
+        logger.warning(
+            "[%s] intervention_messages_node: %s — LLM returned no parsed response, "
+            "still producing a padded 3x3 fallback (CRITICAL — no runtime LLM fallback exists)",
+            lesson_id,
+            section_id,
+        )
+
+    distraction, distraction_padded = _exactly_three(
+        raw_distraction, lesson_id=lesson_id, section_id=section_id, label="distraction"
+    )
+    confusion, confusion_padded = _exactly_three(
+        raw_confusion, lesson_id=lesson_id, section_id=section_id, label="confusion"
+    )
+    fatigue, fatigue_padded = _exactly_three(
+        raw_fatigue, lesson_id=lesson_id, section_id=section_id, label="fatigue"
+    )
+    was_degraded = distraction_padded or confusion_padded or fatigue_padded
 
     result: dict[str, Any] = {
         "segment_id": section_id,
-        "distraction": _exactly_three(list(response.distraction), lesson_id=lesson_id, section_id=section_id, label="distraction"),
-        "confusion": _exactly_three(list(response.confusion), lesson_id=lesson_id, section_id=section_id, label="confusion"),
-        "fatigue": _exactly_three(list(response.fatigue), lesson_id=lesson_id, section_id=section_id, label="fatigue"),
+        "data": {"distraction": distraction, "confusion": confusion, "fatigue": fatigue},
     }
 
-    await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+    if was_degraded:
+        logger.warning(
+            "[%s] intervention_messages_node: %s — output required padding, skipping checkpoint "
+            "so the next retry gets a fresh LLM attempt instead of permanent degraded messages",
+            lesson_id,
+            section_id,
+        )
+    else:
+        await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"intervention_prompts": [result]}
@@ -1662,11 +1798,23 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         return {"narration_scripts": []}
 
     script = response.script.strip()
+    # 2026-07-14 review finding (Edge Case Hunter): unlike quiz_generator_node
+    # (question/explanation) and jargon_extractor_node (term/definition),
+    # nothing previously rejected a blank script — it would pass the pacing
+    # guard trivially (word_count=0) and be checkpointed/shipped as-is.
+    if not script:
+        logger.warning("[%s] narration_generator_node: %s — blank script, rejecting", lesson_id, section_id)
+        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
+        return {"narration_scripts": []}
     word_count = len(script.split())
     # Known complexity's narration_style wins over the LLM's own guess when
     # available (AC-6) — the LLM was only asked to honor it in tone, its own
     # `response.narration_style` field is not authoritative in that case.
-    narration_style = known_narration_style or response.narration_style
+    # 2026-07-14 review finding (Edge Case Hunter): neither source is
+    # guaranteed non-empty (a blank string is falsy, same as None) — fall
+    # back to a sane default rather than checkpoint an empty narration_style,
+    # mirroring quiz_generator_node's difficulty enum-clamp pattern.
+    narration_style = (known_narration_style or response.narration_style or "").strip() or "conversational"
 
     # AC-6 pacing guard: average spoken rate ~2.5 words/sec; the AC's hard
     # cap is 15 words/sec. A section with an explicit target speaking
@@ -1676,15 +1824,25 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # finding 2026-07-14 — the prior version derived its "duration" from the
     # same 2.5 wps constant it then checked against, so it could never flag
     # anything). Sections with no page metadata either still just log.
-    target_duration_sec = section.get("target_duration_sec")
-    if not target_duration_sec:
+    #
+    # 2026-07-14 review finding (Edge Case Hunter): `if not target_duration_sec:`
+    # treated an explicit `target_duration_sec: 0` the same as "absent",
+    # silently falling back to the page-count estimate instead of rejecting a
+    # pathological (infinite-implied-rate) explicit zero. Use `is not None`
+    # throughout so `0` is handled as a real (if degenerate) value.
+    explicit_target = section.get("target_duration_sec")
+    if explicit_target is not None:
+        target_duration_sec: float | None = explicit_target
+    else:
         page_start = section.get("page_start")
         page_end = section.get("page_end")
         if page_start is not None and page_end is not None:
             page_count = max(1, page_end - page_start + 1)
             target_duration_sec = page_count * _DEFAULT_SECONDS_PER_PAGE
+        else:
+            target_duration_sec = None
 
-    if target_duration_sec:
+    if target_duration_sec is not None:
         implied_rate = word_count / target_duration_sec if target_duration_sec > 0 else float("inf")
         if implied_rate > 15:
             logger.warning(
@@ -1693,7 +1851,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
                 lesson_id,
                 section_id,
                 implied_rate,
-                "explicit" if section.get("target_duration_sec") else "estimated (page-count-based)",
+                "explicit" if explicit_target is not None else "estimated (page-count-based)",
                 target_duration_sec,
             )
             await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
@@ -1828,13 +1986,41 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
         )
 
     lesson_id = state.get("lesson_id")
-    if lesson_id:
-        from app.core.cost_tracker import check_ceiling
+    if not lesson_id:
+        # 2026-07-14 review finding (Blind Hunter + Edge Case Hunter,
+        # independently): `if lesson_id:` previously SKIPPED the AC-7
+        # cost-ceiling gate entirely for a state with a missing/empty
+        # lesson_id, proceeding to dispatch as if the check had passed. A
+        # malformed/partially-initialized state is itself a bug — fail
+        # closed (raise) rather than silently bypass the gate.
+        raise RuntimeError(
+            "_fan_out_phase1_economy_nodes: state missing lesson_id — cannot enforce AC-7 cost ceiling"
+        )
 
-        if await check_ceiling(lesson_id):
-            raise RuntimeError(
-                f"cost ceiling exceeded before Phase 1 economy-node dispatch for lesson_id={lesson_id}"
-            )
+    from app.core.cost_tracker import check_ceiling
+
+    try:
+        over_ceiling = await check_ceiling(lesson_id)
+    except Exception:  # noqa: BLE001
+        # 2026-07-14 review finding (Edge Case Hunter): the ceiling check
+        # itself has no failure guard, unlike this file's established
+        # convention for non-critical infra checks (_increment_phase1_progress
+        # wraps its Redis access for the same reason — "a non-critical write
+        # must never crash an already-committed dispatch"). A transient
+        # failure here (e.g. Redis outage) must not raise an opaque exception
+        # that bypasses content_pipeline_job's dedicated cost_ceiling_exceeded:
+        # handling — fail open (assume not over ceiling) and log loudly.
+        logger.warning(
+            "[%s] check_ceiling() failed — failing open (assuming not over ceiling)",
+            lesson_id,
+            exc_info=True,
+        )
+        over_ceiling = False
+
+    if over_ceiling:
+        raise RuntimeError(
+            f"cost ceiling exceeded before Phase 1 economy-node dispatch for lesson_id={lesson_id}"
+        )
 
     if len(sections) > _MAX_PHASE1_SECTIONS:
         logger.warning(

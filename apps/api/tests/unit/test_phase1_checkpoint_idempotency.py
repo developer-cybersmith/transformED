@@ -114,13 +114,15 @@ class TestCheckpointCacheHit:
         section_id = _derive_section_id(SECTION_0, 0)
         cached_quiz = {
             "segment_id": section_id,
-            "question_id": f"quiz_{section_id}",
-            "type": "mcq",
-            "question": "Already-computed question?",
-            "options": ["A", "B", "C", "D"],
-            "correct_index": 0,
-            "explanation": "Already-computed explanation.",
-            "difficulty": "medium",
+            "data": {
+                "question_id": f"quiz_{section_id}",
+                "type": "mcq",
+                "question": "Already-computed question?",
+                "options": ["A", "B", "C", "D"],
+                "correct_index": 0,
+                "explanation": "Already-computed explanation.",
+                "difficulty": "medium",
+            },
         }
         mock_jobs_table = _make_jobs_table({f"quiz_generator:{section_id}": cached_quiz})
 
@@ -142,7 +144,9 @@ class TestCheckpointCacheHit:
         from app.modules.content.pipeline.graph import _derive_section_id, jargon_extractor_node
 
         section_id = _derive_section_id(SECTION_0, 0)
-        cached_terms = [{"term": "Encoding", "definition": "Already-computed definition.", "segment_id": section_id}]
+        cached_terms = [
+            {"segment_id": section_id, "data": {"term": "Encoding", "definition": "Already-computed definition."}}
+        ]
         mock_jobs_table = _make_jobs_table({f"jargon_extractor:{section_id}": {"terms": cached_terms}})
 
         mock_supabase = MagicMock()
@@ -165,9 +169,11 @@ class TestCheckpointCacheHit:
         section_id = _derive_section_id(SECTION_0, 0)
         cached_interventions = {
             "segment_id": section_id,
-            "distraction": ["d1", "d2", "d3"],
-            "confusion": ["c1", "c2", "c3"],
-            "fatigue": ["f1", "f2", "f3"],
+            "data": {
+                "distraction": ["d1", "d2", "d3"],
+                "confusion": ["c1", "c2", "c3"],
+                "fatigue": ["f1", "f2", "f3"],
+            },
         }
         mock_jobs_table = _make_jobs_table({f"intervention_messages:{section_id}": cached_interventions})
 

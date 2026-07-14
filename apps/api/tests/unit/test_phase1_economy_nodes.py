@@ -490,11 +490,13 @@ class TestAC3QuizGenerator:
         assert len(result["quiz_questions"]) == 1
         q = result["quiz_questions"][0]
         assert q["segment_id"] == _derive_section_id(THREE_SECTIONS[0], 0)
-        assert len(q["options"]) == 4
+        assert len(q["data"]["options"]) == 4
         # AC-3: "Output validates against app.schemas.lesson.QuizQuestion list."
-        # QuizQuestion has extra="forbid" and no segment_id field, so this
-        # must strip that correlation key first (mirrors AC-4/AC-5's pattern).
-        QuizQuestion.model_validate({k: v for k, v in q.items() if k != "segment_id"})
+        # Output is nested (2026-07-14 review finding, decision resolved same
+        # day): {"segment_id": ..., "data": {...}} — segment_id lives outside
+        # the QuizQuestion-shaped sub-object, so data validates with ZERO
+        # stripping (the AC's literal "no reshaping" requirement, actually met).
+        QuizQuestion.model_validate(q["data"])
 
     @pytest.mark.asyncio
     async def test_five_options_are_truncated_to_exactly_four_not_passed_through(self) -> None:
@@ -519,9 +521,63 @@ class TestAC3QuizGenerator:
             result = await quiz_generator_node(state)
 
         assert len(result["quiz_questions"]) == 1
-        assert len(result["quiz_questions"][0]["options"]) == 4, (
+        assert len(result["quiz_questions"][0]["data"]["options"]) == 4, (
             "5-option LLM output must be truncated to exactly 4, not passed through"
         )
+
+    @pytest.mark.asyncio
+    async def test_duplicate_options_are_rejected(self) -> None:
+        """2026-07-14 review finding (Edge Case Hunter, decision resolved same
+        day): all 4 options being identical text must not ship as a
+        nonsensical MCQ."""
+        from app.modules.content.pipeline.graph import quiz_generator_node
+
+        mock_output = type(
+            "Quiz",
+            (),
+            {
+                "question": "Which is a memory technique?",
+                "options": ["Spaced repetition", "Spaced repetition", "Spaced repetition", "Spaced repetition"],
+                "correct_index": 0,
+                "explanation": "A is correct.",
+                "difficulty": "easy",
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert result["quiz_questions"] == []
+
+    @pytest.mark.asyncio
+    async def test_blank_correct_option_text_is_rejected(self) -> None:
+        """2026-07-14 review finding (Edge Case Hunter, decision resolved same
+        day): the correct option's own text being blank while distractors are
+        populated must not ship."""
+        from app.modules.content.pipeline.graph import quiz_generator_node
+
+        mock_output = type(
+            "Quiz",
+            (),
+            {
+                "question": "Which is a memory technique?",
+                "options": ["   ", "B", "C", "D"],
+                "correct_index": 0,
+                "explanation": "A is correct.",
+                "difficulty": "easy",
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert result["quiz_questions"] == []
 
     @pytest.mark.asyncio
     async def test_too_few_options_is_rejected(self) -> None:
@@ -636,7 +692,10 @@ class TestAC4JargonExtractor:
 
         assert len(result["glossary"]) == 1
         entry = result["glossary"][0]
-        JargonEntry.model_validate({k: v for k, v in entry.items() if k != "segment_id"})
+        # Nested output (2026-07-14 review finding, decision resolved same
+        # day): {"segment_id": ..., "data": {"term", "definition"}} — validates
+        # with zero stripping.
+        JargonEntry.model_validate(entry["data"])
 
     @pytest.mark.asyncio
     async def test_empty_term_or_definition_is_filtered_out(self) -> None:
@@ -663,7 +722,7 @@ class TestAC4JargonExtractor:
         assert len(result["glossary"]) == 1, (
             f"expected only the one valid entry to survive, got {result['glossary']}"
         )
-        assert result["glossary"][0]["term"] == "Encoding"
+        assert result["glossary"][0]["data"]["term"] == "Encoding"
 
     @pytest.mark.asyncio
     async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
@@ -706,7 +765,9 @@ class TestAC5InterventionMessages:
 
         assert len(result["intervention_prompts"]) == 1
         prompts = result["intervention_prompts"][0]
-        SegmentInterventions.model_validate({k: v for k, v in prompts.items() if k != "segment_id"})
+        # Nested output (2026-07-14 review finding, decision resolved same
+        # day) — validates with zero stripping.
+        SegmentInterventions.model_validate(prompts["data"])
 
     @pytest.mark.asyncio
     async def test_output_shape_pins_what_package_builder_will_assign_verbatim(self) -> None:
@@ -734,11 +795,18 @@ class TestAC5InterventionMessages:
             result = await intervention_messages_node(state)
 
         prompts = result["intervention_prompts"][0]
-        assert set(prompts.keys()) == {"segment_id", "distraction", "confusion", "fatigue"}, (
-            f"intervention_messages_node's output shape changed to {set(prompts.keys())} — "
-            f"package_builder_node (S2-11) will need to assign this dict's "
-            f"distraction/confusion/fatigue keys verbatim to Segment.interventions; "
-            f"an unreviewed shape change here breaks that future integration silently"
+        assert set(prompts.keys()) == {"segment_id", "data"}, (
+            f"intervention_messages_node's top-level output shape changed to "
+            f"{set(prompts.keys())} — package_builder_node (S2-11) will need "
+            f"segment_id for correlation and data for the SegmentInterventions "
+            f"payload; an unreviewed shape change here breaks that future "
+            f"integration silently"
+        )
+        assert set(prompts["data"].keys()) == {"distraction", "confusion", "fatigue"}, (
+            f"intervention_messages_node's data shape changed to {set(prompts['data'].keys())} — "
+            f"package_builder_node (S2-11) will need to assign this dict verbatim to "
+            f"Segment.interventions; an unreviewed shape change here breaks that "
+            f"future integration silently"
         )
 
     @pytest.mark.asyncio
@@ -766,12 +834,20 @@ class TestAC5InterventionMessages:
             result = await intervention_messages_node(state)
 
         prompts = result["intervention_prompts"][0]
-        assert len(prompts["distraction"]) == 3
-        assert len(prompts["confusion"]) == 3
-        assert len(prompts["fatigue"]) == 3
+        assert len(prompts["data"]["distraction"]) == 3
+        assert len(prompts["data"]["confusion"]) == 3
+        assert len(prompts["data"]["fatigue"]) == 3
 
     @pytest.mark.asyncio
-    async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
+    async def test_llm_refusal_still_produces_guaranteed_3x3_fallback(self) -> None:
+        """2026-07-14 review finding (Blind Hunter, CRITICAL, fixed): a total
+        LLM refusal previously returned an empty list here, bypassing the
+        pad-to-3 guarantee this node otherwise provides — silently disabling
+        all three trigger types for the section (PRD §10: this is the ENTIRE
+        runtime supply, no LLM fallback exists at intervention time). A
+        refusal must still produce exactly 3x3 messages via the same padding
+        path as a partial response.
+        """
         from app.modules.content.pipeline.graph import intervention_messages_node
 
         mock_provider = AsyncMock()
@@ -781,7 +857,68 @@ class TestAC5InterventionMessages:
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
             result = await intervention_messages_node(state)
 
-        assert result["intervention_prompts"] == []
+        assert len(result["intervention_prompts"]) == 1, (
+            "a total LLM refusal must still yield a guaranteed 3x3 fallback, not an empty list"
+        )
+        prompts = result["intervention_prompts"][0]["data"]
+        assert len(prompts["distraction"]) == 3
+        assert len(prompts["confusion"]) == 3
+        assert len(prompts["fatigue"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_degraded_padded_output_is_not_checkpointed(self) -> None:
+        """2026-07-14 review finding (decision resolved same day): padded
+        output must not be checkpointed as if it were a clean success — a
+        transient bad LLM response should get a fresh attempt on the next ARQ
+        retry, not permanently supply padded/generic messages.
+        """
+        from app.modules.content.pipeline.graph import intervention_messages_node
+
+        mock_output = type(
+            "Interventions",
+            (),
+            {
+                "distraction": ["d1", "d2"],  # too few -> padding required
+                "confusion": ["c1", "c2", "c3"],
+                "fatigue": ["f1", "f2", "f3"],
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+        mock_supabase = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider), patch(
+            "app.core.db.get_supabase", return_value=mock_supabase
+        ):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            await intervention_messages_node(state)
+
+        mock_supabase.rpc.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clean_3x3_output_is_checkpointed(self) -> None:
+        """Counterpart to the degraded-output test above — a genuinely clean
+        3x3 response (no padding needed) must still be checkpointed normally."""
+        from app.modules.content.pipeline.graph import intervention_messages_node
+
+        mock_output = type(
+            "Interventions",
+            (),
+            {"distraction": ["d1", "d2", "d3"], "confusion": ["c1", "c2", "c3"], "fatigue": ["f1", "f2", "f3"]},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+        mock_supabase = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider), patch(
+            "app.core.db.get_supabase", return_value=mock_supabase
+        ):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            await intervention_messages_node(state)
+
+        mock_supabase.rpc.assert_called_once()
 
 
 # ── AC-6: narration_generator ───────────────────────────────────────────────
@@ -895,10 +1032,11 @@ class TestAC6NarrationGenerator:
         )
 
     @pytest.mark.asyncio
-    async def test_no_target_duration_does_not_reject(self) -> None:
-        """Without an explicit target_duration_sec, AC-6's fallback is to log
-        the estimated duration, not reject — this is the common case today
-        since sections don't yet carry a target duration.
+    async def test_no_explicit_target_duration_falls_back_to_page_count_estimate(self) -> None:
+        """THREE_SECTIONS[0] carries page_start/page_end, so without an
+        explicit target_duration_sec the page-count-based estimate (~90s/page)
+        applies — this section's estimate (3 pages x 90s = 270s) comfortably
+        covers a 200-word script (~0.7 wps), so it must not reject.
         """
         from app.modules.content.pipeline.graph import narration_generator_node
 
@@ -915,6 +1053,98 @@ class TestAC6NarrationGenerator:
             result = await narration_generator_node(state)
 
         assert len(result["narration_scripts"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_target_duration_and_no_page_range_does_not_reject(self) -> None:
+        """2026-07-14 review finding (Acceptance Auditor, fixed): the prior
+        'no target duration' test used THREE_SECTIONS[0], which HAS
+        page_start/page_end, so it only ever exercised the page-count-estimate
+        branch, never the genuinely-unguarded fallback (neither
+        target_duration_sec nor page range present) — this test constructs a
+        section with neither, so the true no-estimate `else: logger.info(...)`
+        branch actually runs.
+        """
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        section_no_metadata = {"title": "No Metadata Section", "body": "prose with no page metadata. " * 20}
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "formal", "script": " ".join(["word"] * 200)},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=section_no_metadata, _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert len(result["narration_scripts"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_explicit_zero_target_duration_is_not_treated_as_absent(self) -> None:
+        """2026-07-14 review finding (Edge Case Hunter, fixed): `target_duration_sec: 0`
+        is a falsy Python value but a semantically real (pathological,
+        infinite-implied-rate) explicit duration — it must be treated as such
+        and rejected, not silently fall back to the page-count estimate.
+        """
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        section_zero_duration = {**THREE_SECTIONS[0], "target_duration_sec": 0}
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "formal", "script": " ".join(["word"] * 10)},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=section_zero_duration, _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"] == [], (
+            "target_duration_sec=0 implies an infinite words/sec rate and must be "
+            "rejected, not silently treated as 'absent' and estimated from page count"
+        )
+
+    @pytest.mark.asyncio
+    async def test_blank_script_is_rejected(self) -> None:
+        """2026-07-14 review finding (Edge Case Hunter, fixed): unlike
+        quiz_generator_node/jargon_extractor_node, nothing previously rejected
+        a blank script — it trivially passed the pacing guard (word_count=0).
+        """
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type("Narration", (), {"narration_style": "formal", "script": "   "})()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"] == []
+
+    @pytest.mark.asyncio
+    async def test_narration_style_falls_back_to_default_when_both_sources_blank(self) -> None:
+        """2026-07-14 review finding (Edge Case Hunter, fixed): neither a
+        missing segment_complexity checkpoint nor a blank LLM-self-reported
+        narration_style should ever result in an empty narration_style being
+        checkpointed — falls back to a sane default (mirrors
+        quiz_generator_node's difficulty enum-clamp pattern).
+        """
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type("Narration", (), {"narration_style": "   ", "script": "A valid script."})()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"][0]["narration_style"] == "conversational"
 
     @pytest.mark.asyncio
     async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
@@ -972,6 +1202,40 @@ class TestAC7CostCeiling:
         ):
             with pytest.raises(RuntimeError, match="zero sections"):
                 await _fan_out_phase1_economy_nodes(_base_state(sections=[]))
+
+    @pytest.mark.asyncio
+    async def test_missing_lesson_id_fails_closed_not_skipped(self) -> None:
+        """2026-07-14 review finding (Blind Hunter + Edge Case Hunter,
+        independently, fixed): `if lesson_id:` previously SKIPPED the AC-7
+        ceiling gate entirely for a falsy lesson_id, proceeding to dispatch
+        as if the check had passed. Must fail closed (raise) instead.
+        """
+        from app.modules.content.pipeline.graph import _fan_out_phase1_economy_nodes
+
+        with patch(
+            "app.core.cost_tracker.check_ceiling",
+            new=AsyncMock(side_effect=AssertionError("check_ceiling must not be called with no lesson_id")),
+        ):
+            with pytest.raises(RuntimeError, match="lesson_id"):
+                await _fan_out_phase1_economy_nodes(_base_state(lesson_id=None))
+
+    @pytest.mark.asyncio
+    async def test_check_ceiling_failure_fails_open_and_dispatches(self) -> None:
+        """2026-07-14 review finding (Edge Case Hunter, fixed): a transient
+        failure of check_ceiling() itself (e.g. a Redis outage) must not
+        crash the fan-out with an opaque exception — fail open (assume not
+        over ceiling) and proceed, consistent with this file's established
+        convention for non-critical infra checks.
+        """
+        from app.modules.content.pipeline.graph import _fan_out_phase1_economy_nodes
+
+        with patch(
+            "app.core.cost_tracker.check_ceiling",
+            new=AsyncMock(side_effect=ConnectionError("redis unavailable")),
+        ):
+            dispatches = await _fan_out_phase1_economy_nodes(_base_state())
+
+        assert len(dispatches) == len(THREE_SECTIONS) * len(ECONOMY_NODE_NAMES)
 
     @pytest.mark.asyncio
     async def test_section_count_is_capped_to_bound_fan_out_dos_exposure(self) -> None:
