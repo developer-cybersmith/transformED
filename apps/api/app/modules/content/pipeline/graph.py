@@ -40,6 +40,7 @@ Architecture constraints
 from __future__ import annotations
 
 import logging
+import math
 import operator
 from typing import Annotated, Any, Callable, TypedDict
 
@@ -865,23 +866,50 @@ async def embed_node(state: PipelineState) -> PipelineState:
     return {**state, "embeddings_stored": True}
 
 
+class _LessonPlanSegmentLLM(BaseModel):
+    """Internal structured-output shape for one outline entry in
+    lesson_planner_node's response — deliberately has no `summary` field: the
+    ORIGINAL segment_summaries text is carried forward verbatim (Story 2-6
+    AC-3/Task 2.6), never re-paraphrased by the LLM, so there is nothing for
+    it to fabricate a summary from."""
+
+    segment_id: str
+    title: str
+    duration_min: float
+
+
+class _LessonPlanLLM(BaseModel):
+    """Internal structured-output shape for lesson_planner_node — deliberately
+    loose (no extra="forbid", no length constraints) so this node's own
+    degrade-not-fabricate guards (AC-6) run before any strict validation,
+    mirroring _SegmentComplexityLLM's and _QuizQuestionLLM's rationale."""
+
+    title: str
+    subject: str
+    objectives: list[str]
+    complexity_level: str
+    segments: list[_LessonPlanSegmentLLM]
+
+
 async def lesson_planner_node(state: PipelineState) -> PipelineState:
-    """Node 5 (Phase 2 Premium): generate a structured lesson plan.
+    """Node 5 (Phase 2 Premium, Story 2-6/S2-7): generate a structured lesson
+    plan from Phase 1's segment summaries.
 
-    Uses llm_lesson_planner model (gpt-4o by default, PRD §6.4).
+    Input is `state["segment_summaries"]` ONLY — never raw_text/sections/
+    chapter_content (AC-1, the single most cost-critical constraint in the
+    whole pipeline: violating it silently 5xs generation cost). One
+    pedagogical segment per input summary, 1:1 (AC-2) — no merge/split logic
+    in this story. Tier-agnostic: `state` has no `tier` key post-revert (see
+    docs/stories/2-2-learner-mode-infra.md's Change Log) — tier-aware slide
+    counts are S2-LM4, a separate future story.
 
-    AC-0 SCOPE NOTE (Story 2-1): this node's real GPT-4o generation logic is
-    S2-7, a separate story — not implemented here. What Story 2-1 requires is
-    that the graph wiring actually DELIVERS `state["segment_summaries"]` to
-    this node (proving Phase 1 completed and its output is consumable) rather
-    than the node running with zero Phase 1 data available at all, which was
-    the bug this story's AC-0 fixes. `total_segments` reflects the real input
-    count as a wiring-proof signal; `title`/`objectives`/`segments` remain
-    placeholders until S2-7 lands.
+    Idempotent via the Phase-A checkpoint pattern (AC-5) — Phase 2 is a single
+    sequential dispatch, not Send()-fanned-out, so Story 2-1b's atomic RPC
+    merge (built for concurrent Phase 1 writes) is unnecessary machinery here.
     """
     from app.config import get_settings
-    settings = get_settings()
-    _model = settings.llm_lesson_planner  # noqa: F841 (used by S2-7, not yet implemented)
+    from app.core.db import get_supabase
+    from app.providers.llm.openai import OpenAILLMProvider
 
     lesson_id = state["lesson_id"]
     segment_summaries = state.get("segment_summaries", [])
@@ -890,16 +918,165 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         lesson_id,
         len(segment_summaries),
     )
-    await _update_job_progress(lesson_id, 30.0, "lesson_planner")
 
-    # TODO (S2-7): OpenAILLMProvider(lesson_id).complete_structured(messages, model, LessonPlan)
+    # 2026-07-14 review finding (Edge Case Hunter): an empty segment_summaries
+    # list previously trivially passed the segment-count guard (0 == 0),
+    # letting the LLM fabricate a plausible-sounding plan for a chapter it
+    # received zero real content for. Reject before ever calling the LLM.
+    if not segment_summaries:
+        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received zero segment_summaries")
+
+    # 2026-07-14 review finding (Edge Case Hunter): a malformed segment_summaries
+    # entry (missing segment_id/summary) previously raised a raw, context-free
+    # KeyError deep in a dict comprehension — every other guard in this node
+    # raises a contextual RuntimeError; this one should too.
+    for s in segment_summaries:
+        if "segment_id" not in s or "summary" not in s:
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: malformed segment_summaries entry missing "
+                f"segment_id/summary: {s!r}"
+            )
+
+    supabase = get_supabase()
+
+    # ── Idempotency: return cached output if this node already completed ──────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+
+    if "lesson_planner" in node_outputs:
+        cached = node_outputs["lesson_planner"]
+        logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
+        await _update_job_progress(lesson_id, 38.0, "lesson_planner")
+        return {**state, "lesson_plan": cached, "progress_pct": 38.0}
+
+    settings = get_settings()
+    provider = OpenAILLMProvider(lesson_id)
+
+    summaries_text = "\n".join(
+        f"- segment_id={s['segment_id']}: {s['summary']}" for s in segment_summaries
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Produce a lesson plan outline from the section summaries below. "
+                "Return an overall title, subject, 2-5 learning objectives, an "
+                "overall complexity_level (low/medium/high), and return EXACTLY "
+                "one outline segment per summary provided, echoing back each "
+                "summary's segment_id UNCHANGED — do not invent, merge, split, "
+                "omit, or reorder segment_ids. For each segment, provide a short "
+                "title and an estimated duration_min (minutes of narration/slide "
+                "time for that segment)."
+                + _UNTRUSTED_CONTENT_GUARD
+            ),
+        },
+        {"role": "user", "content": summaries_text},
+    ]
+
+    response = await provider.complete_structured(messages, settings.llm_lesson_planner, _LessonPlanLLM)
+    if response is None:
+        logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
+        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response")
+
+    # ── AC-6 degrade-not-fabricate guards — no per-section redundancy exists
+    # for this premium node, so a wrong response is rejected wholesale rather
+    # than patched piecemeal. ─────────────────────────────────────────────────
+    input_ids = [s["segment_id"] for s in segment_summaries]
+    input_id_set = set(input_ids)
+    response_ids = [seg.segment_id for seg in response.segments]
+
+    if len(response.segments) != len(segment_summaries):
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: lesson_planner segment count mismatch — "
+            f"expected {len(segment_summaries)}, got {len(response.segments)}"
+        )
+
+    unknown_ids = [sid for sid in response_ids if sid not in input_id_set]
+    if unknown_ids:
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: lesson_planner returned unknown segment_id(s): {unknown_ids}"
+        )
+
+    if len(set(response_ids)) != len(response_ids):
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: lesson_planner returned duplicate segment_id(s) in {response_ids}"
+        )
+
+    if not response.title.strip() or not response.subject.strip():
+        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner returned a blank title/subject")
+
+    if any(not seg.title.strip() for seg in response.segments):
+        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner returned a blank segment title")
+
+    # 2026-07-14 review finding (Edge Case Hunter): objectives/duration_min
+    # weren't validated at all, inconsistent with this same guard block's
+    # philosophy for title/subject/segment-title — reject empty objectives
+    # and any non-positive/non-finite duration_min (a degenerate value would
+    # otherwise silently corrupt total_duration_min for the whole plan).
+    if not response.objectives or all(not o.strip() for o in response.objectives):
+        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner returned no usable objectives")
+
+    for seg in response.segments:
+        if not (seg.duration_min > 0) or not math.isfinite(seg.duration_min):
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: lesson_planner segment {seg.segment_id!r} has an "
+                f"invalid duration_min={seg.duration_min!r}"
+            )
+
+    # 2026-07-14 review finding (Blind Hunter): complexity_level was accepted
+    # as an unvalidated free-form string. Clamp to the documented enum rather
+    # than reject outright — mirrors quiz_generator_node's difficulty-clamp
+    # pattern for the same class of "LLM enum drift" field.
+    complexity_level = response.complexity_level.strip().lower()
+    if complexity_level not in ("low", "medium", "high"):
+        logger.warning(
+            "[%s] lesson_planner_node: complexity_level=%r not in low/medium/high — clamping to 'medium'",
+            lesson_id,
+            response.complexity_level,
+        )
+        complexity_level = "medium"
+
+    # 2026-07-14 review finding (Edge Case Hunter): the LLM's returned segment
+    # order was trusted directly, even though the guards above only prove the
+    # *set* of segment_ids matches 1:1 — a validly-shuffled response would
+    # silently reorder the plan away from the chapter's actual section order.
+    # Assemble by iterating segment_summaries (the authoritative input order),
+    # looking up each LLM segment by segment_id, not the reverse.
+    llm_segment_by_id = {seg.segment_id: seg for seg in response.segments}
+    summary_by_id = {s["segment_id"]: s["summary"] for s in segment_summaries}
+    segments_out = [
+        {
+            "segment_id": s["segment_id"],
+            "title": llm_segment_by_id[s["segment_id"]].title.strip(),
+            "summary": summary_by_id[s["segment_id"]],
+            "duration_min": llm_segment_by_id[s["segment_id"]].duration_min,
+        }
+        for s in segment_summaries
+    ]
+    total_duration_min = sum(seg.duration_min for seg in response.segments)
+
     lesson_plan: dict[str, Any] = {
-        "title": "TODO: LLM-generated title",
-        "objectives": [],
-        "segments": [],
-        "total_segments": len(segment_summaries),
-        "total_duration_min": 0,
+        "title": response.title.strip(),
+        "subject": response.subject.strip(),
+        "objectives": list(response.objectives),
+        "complexity_level": complexity_level,
+        "total_segments": len(segments_out),
+        "total_duration_min": total_duration_min,
+        "segments": segments_out,
     }
+
+    supabase.table("lesson_jobs").update({
+        "last_node": "lesson_planner",
+        "node_outputs": {**node_outputs, "lesson_planner": lesson_plan},
+    }).eq("lesson_id", lesson_id).execute()
+
+    await _update_job_progress(lesson_id, 38.0, "lesson_planner")
     return {**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}
 
 

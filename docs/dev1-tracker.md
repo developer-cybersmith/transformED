@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-07-14
+**Last updated:** 2026-07-15
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) starts next — see Sprint 2 section below. Frontend/assessment/tutor teams should keep building against `apps/web/src/mocks/data/lessonPackage.ts` and test fixtures until `package_builder` (S2-11) lands; do not build a parallel real-content path.
 
@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 7 | 3 | 10 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 7 | 4 | 9 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **30** | **4** | **24** |
+| **Totals** | | **58** | **30** | **5** | **23** |
 
 ---
 
@@ -46,7 +46,7 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph wired (node functions not yet created) |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7). Still stubs: `slide_generator_node` (S2-8) onward. |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
 | `apps/api/app/schemas/__init__.py` | **EMPTY — awaiting `lesson.py` (S0-12)** |
 | `apps/api/app/workers/main.py` | ARQ `WorkerSettings` entry point |
@@ -76,7 +76,6 @@
 | `apps/api/app/modules/content/pipeline/nodes/jargon_extractor.py` | Jargon extraction — GPT-4o-mini *(S2-4)* |
 | `apps/api/app/modules/content/pipeline/nodes/intervention_messages.py` | Pre-generate 3×3 interventions — GPT-4o-mini *(S2-5)* |
 | `apps/api/app/modules/content/pipeline/nodes/narration_generator.py` | Narration scripts — GPT-4o-mini *(S2-6)* |
-| `apps/api/app/modules/content/pipeline/nodes/lesson_planner.py` | Lesson planning — GPT-4o *(S2-7)* |
 | `apps/api/app/modules/content/pipeline/nodes/slide_generator.py` | Slide generation — GPT-4o *(S2-8)* |
 | `apps/api/app/modules/content/pipeline/nodes/tts_node.py` | TTS: Sarvam → Azure → Browser *(S2-9)* |
 | `apps/api/app/modules/content/pipeline/nodes/image_generator.py` | Images: GPT Image 1 Mini → Imagen 4 Fast → text-only *(S2-10)* |
@@ -569,13 +568,17 @@ Every node must:
 
 ---
 
-- [ ] **S2-7 `lesson_planner` node**
-  - `apps/api/app/modules/content/pipeline/nodes/lesson_planner.py`
-  - Model: `settings.llm_lesson_planner` (`LLM_LESSON_PLANNER`) — highest cost node
-  - **Phase 2 Premium — starts ONLY after ALL Phase 1 nodes complete for ALL segments**
-  - Input: segment summaries from S2-1 — **NOT raw chapter text** (5× token savings; violating this is a silent cost overrun)
-  - Use `complete_structured()` with Pydantic response model to guarantee schema
-  - **AC:** Input confirmed as summaries; output passes `LessonMetadata` validation; Langfuse span records token count and `token_cost_usd`
+- [ ] **S2-7 `lesson_planner` node** ⚠️ PARTIAL — 2026-07-14/15
+  - `apps/api/app/modules/content/pipeline/graph.py::lesson_planner_node` (NOT a separate `nodes/lesson_planner.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale; the placeholder row above is removed)
+  - Model: `settings.llm_lesson_planner` (`LLM_LESSON_PLANNER`) — highest cost node so far
+  - **Phase 2 Premium — starts ONLY after ALL Phase 1 nodes complete for ALL segments** — already true via the existing graph wiring (Story 2-1 AC-0), unchanged by this task
+  - ✓ Input is `state["segment_summaries"]` ONLY — never raw chapter text/sections; enforced structurally and by a dedicated regression test (`test_prompt_never_includes_raw_chapter_text_or_sections`) that plants raw text in state alongside summaries and asserts it never reaches the prompt
+  - ✓ `complete_structured()` used with an internal Pydantic response model (`_LessonPlanLLM`/`_LessonPlanSegmentLLM`); degrade-not-fabricate guards (segment count/ID match, no duplicates, non-blank title/subject/objectives, valid `duration_min`, `complexity_level` clamped to low/medium/high) all reviewed via a real 3-layer `/bmad-code-review` and patched
+  - ✓ Idempotency checkpoint added (Phase-A read-then-write style, not Story 2-1b's atomic RPC — correct choice for this single-sequential-dispatch node)
+  - ✗ **Output does NOT yet pass literal `LessonMetadata.model_validate()`** — it's a deliberately richer internal dict (adds `objectives`/`segments` outline, which `LessonMetadata` — `extra="forbid"` — has no room for) that is field-name-compatible with `LessonMetadata` for the fields they share (`title`/`subject`/`total_segments`/`complexity_level`). Projecting into a real `LessonMetadata` instance is `package_builder`'s job (S2-11, not yet built), matching the same "shape now, validate later" pattern `quiz_generator_node`'s output already uses for `QuizQuestion`.
+  - ✗ **Langfuse span does not record an explicit `token_cost_usd` field** — `complete_structured()`'s existing tracing records `usage_details` (input/output token counts) on the generation span, and cost IS accumulated via `cost_tracker.accumulate_cost()`/`check_ceiling()`, but the two aren't joined into one named `token_cost_usd` field on the span itself. This is a pre-existing gap shared by every node using `complete_structured()`, not something specific to `lesson_planner` — flag for whoever next touches the provider's tracing, not a lesson_planner-specific fix.
+  - Tier-aware slide-count targets (Epic 1's node-11 spec) are explicitly NOT part of this task — `state` has no `tier` key post-revert (Story 2-2); deferred to S2-LM4 once S2-LM1's 4-dev sign-off unblocks tier plumbing again.
+  - **AC:** Input confirmed as summaries ✓ (tested); output passes `LessonMetadata` validation ✗ (deferred to S2-11); Langfuse span records `token_cost_usd` ✗ (pre-existing provider-wide gap) — see `docs/stories/2-6-lesson-planner-node.md` for the full story, including a 3-layer adversarial code review (7 patches applied, 4 pre-existing risks deferred, 297/297 tests passing)
 
 - [ ] **S2-8 `slide_generator` node**
   - `apps/api/app/modules/content/pipeline/nodes/slide_generator.py`

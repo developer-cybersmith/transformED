@@ -239,8 +239,17 @@ class TestAC0GraphOrdering:
         segment_summaries populated but raw_text/chunks entirely absent, and
         must actually read segment_summaries (not ignore them) — proving the
         graph wiring delivers Phase 1 output where lesson_planner can consume
-        it. NOTE: this only asserts AC-0 (wiring/consumption), not full content
-        generation — real GPT-4o lesson planning is S2-7, a separate story.
+        it.
+
+        UPDATED for Story 2-6 (S2-7): lesson_planner_node now does real
+        settings.llm_lesson_planner generation (previously a wiring-proof stub
+        that echoed len(segment_summaries) with zero LLM/DB calls) — this test
+        now mocks OpenAILLMProvider like every other node's test in this file
+        does, matching the real call path. Full generation-logic coverage
+        (guards, checkpointing, prompt content) lives in the dedicated
+        test_lesson_planner_node.py — this test's own job stays AC-0's
+        original, narrower claim: the graph wiring delivers Phase 1 output to
+        this node.
         """
         from app.modules.content.pipeline.graph import lesson_planner_node
 
@@ -251,7 +260,20 @@ class TestAC0GraphOrdering:
         assert "raw_text" not in state
         assert "chunks" not in state
 
-        result = await lesson_planner_node(state)
+        mock_response = MagicMock()
+        mock_response.title = "Test Plan"
+        mock_response.subject = "Test Subject"
+        mock_response.complexity_level = "medium"
+        mock_response.objectives = ["Objective 1"]
+        mock_response.segments = [
+            MagicMock(segment_id=s["segment_id"], title=f"Outline: {s['segment_id']}", duration_min=5.0)
+            for s in summaries
+        ]
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_response
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            result = await lesson_planner_node(state)
 
         assert result["lesson_plan"]["total_segments"] == len(summaries), (
             "lesson_planner_node did not read state['segment_summaries'] — "

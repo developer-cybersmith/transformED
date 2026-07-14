@@ -4,7 +4,7 @@ baseline_commit: 4942b63e31a41a4d1b1693e8a628973446e07168
 
 # Story 2.6: `lesson_planner` Node — Real Structured Generation (S2-7)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -22,48 +22,35 @@ This story implements the REAL generation logic for `lesson_planner_node` — tr
 2. **One pedagogical segment per input summary (1:1, no merge/split in this story)** — the LLM is asked to produce exactly one outline entry per `segment_summaries` entry, echoing back the same `segment_id`s it was given (not inventing new ones). Merging/splitting sections into differently-bounded pedagogical segments (mentioned as a future possibility in Story 2-1's Dev Notes) is explicitly OUT of scope here — keeps this story's validation surface small and matches the "tier-agnostic single density" scope decision above.
 3. **Output shape is internal (not the frozen `LessonMetadata`/`Segment` contract) but field-name-compatible with it** — `state["lesson_plan"]` becomes a dict: `{"title": str, "subject": str, "objectives": list[str], "complexity_level": str, "total_segments": int, "total_duration_min": float, "segments": [{"segment_id": str, "title": str, "summary": str, "duration_min": float}, ...]}`. `title`/`subject`/`complexity_level`/`total_segments` (renamed from the schema's `estimated_duration_mins` to `total_duration_min` at the plan level — see Dev Notes) share field names with `app.schemas.lesson.LessonMetadata` so a future `package_builder` (S2-11) can build `LessonMetadata` from this dict with minimal reshaping, mirroring how `quiz_generator_node`'s output dict is already shaped for zero-reshaping `QuizQuestion.model_validate()`.
 4. **Model call follows the established provider pattern exactly** — `OpenAILLMProvider(lesson_id).complete_structured(messages, settings.llm_lesson_planner, <internal Pydantic model>)`. Cost accumulation, cost-ceiling enforcement, circuit-breaker check, Langfuse tracing, and retry (`@with_retry(max_attempts=3)`) are ALL already handled transparently inside `complete_structured()` (see Dev Notes) — this node must NOT duplicate any of that logic itself.
-5. **Idempotency checkpoint, matching the Phase A pattern (not Story 2-1b's Phase-1 pattern)** — on entry, read `lesson_jobs.node_outputs`; if `"lesson_planner"` key already exists, return the cached value and skip the LLM call (no re-billing on ARQ retry). On success, write `{"last_node": "lesson_planner", "node_outputs": {**node_outputs, "lesson_planner": <cache>}}` via a plain client-side read-modify-write — Phase 2 is sequential (single dispatch, not `Send()`-fanned-out), so the atomic RPC merge built for Phase 1's concurrency (`_write_phase1_checkpoint`) is unnecessary machinery here; reuse the simpler pattern `embed_node`/`chunk_node` already use.
+5. **Idempotency checkpoint, matching the Phase A pattern (not Story 2-1b's Phase-1 pattern)** — on entry, read `lesson_jobs.node_outputs`; if `"lesson_planner"` key already exists, return the cached value and skip the LLM call. On success, write `{"last_node": "lesson_planner", "node_outputs": {**node_outputs, "lesson_planner": <cache>}}` via a plain client-side read-modify-write — Phase 2 is sequential (single dispatch, not `Send()`-fanned-out), so the atomic RPC merge built for Phase 1's concurrency (`_write_phase1_checkpoint`) is unnecessary machinery here; reuse the simpler pattern `embed_node`/`chunk_node` already use. **Caveat (added 2026-07-14 review):** this closes re-billing for a retry that starts strictly AFTER a prior attempt's checkpoint write succeeded — a crash/timeout between a successful (billed) LLM call and that checkpoint write still re-bills on the next retry (the exact same accepted tradeoff `embed_node` already carries). Not a "no re-billing, full stop" guarantee.
 6. **Degrade-not-fabricate guards, matching Story 2-1's established house style**: if the LLM returns fewer/more `segments` entries than `segment_summaries` had, or references a `segment_id` not present in the input, or returns a blank `title`/`subject`/segment `title`, log a warning and reject the whole response (raise, do not checkpoint, let ARQ retry) rather than silently padding/truncating — unlike Phase 1's economy nodes, there is no per-section redundancy here; a partially-wrong lesson plan can't be safely patched piecemeal the way one bad quiz question can be dropped from a list.
 7. **`total_duration_min` is computed by SUMMING the LLM's per-segment `duration_min` values, not asked for as a separate top-level number** — prevents the top-level total and the per-segment breakdown from silently disagreeing (an LLM asked for both independently has no self-consistency guarantee).
 8. All existing tests continue to pass unmodified.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Internal structured-output models (AC: 3, 4)
-  - [ ] 1.1 In `apps/api/app/modules/content/pipeline/graph.py`, near the other internal `_...LLM` models (e.g. `_SegmentSummaryLLM`, `_QuizQuestionLLM`), add:
-        ```python
-        class _LessonPlanSegmentLLM(BaseModel):
-            segment_id: str
-            title: str
-            duration_min: float
+- [x] Task 1: Internal structured-output models (AC: 3, 4)
+  - [x] 1.1 Added `_LessonPlanSegmentLLM` and `_LessonPlanLLM` immediately before `lesson_planner_node` in `graph.py` (co-located with the node they serve, same as `_QuizQuestionLLM`/`quiz_generator_node`).
+  - [x] 1.2 Both loose (no `extra="forbid"`, no length constraints) as specified.
 
-        class _LessonPlanLLM(BaseModel):
-            title: str
-            subject: str
-            objectives: list[str]
-            complexity_level: str
-            segments: list[_LessonPlanSegmentLLM]
-        ```
-  - [ ] 1.2 These are deliberately NOT the frozen `LessonMetadata`/`Segment` models — no `extra="forbid"`, no field-count constraints — so this node's own guard logic (Task 3) runs before any strict validation, mirroring `_SegmentComplexityLLM`'s and `_QuizQuestionLLM`'s documented rationale for staying loose.
+- [x] Task 2: Replace the `lesson_planner_node` stub body (AC: 1, 2, 4, 5)
+  - [x] 2.1 Idempotency checkpoint read added, mirroring `embed_node` exactly.
+  - [x] 2.2 Prompt built: system message states the task + echoes-segment_id instruction + `_UNTRUSTED_CONTENT_GUARD`; user message is the segment_summaries list only.
+  - [x] 2.3 `OpenAILLMProvider(lesson_id).complete_structured(messages, settings.llm_lesson_planner, _LessonPlanLLM)`; `response is None` → `raise RuntimeError`, no checkpoint.
+  - [x] 2.4 All four guards implemented: segment-count mismatch, unknown `segment_id`, duplicate `segment_id` (added defensively — not in the original AC text but a direct corollary of "echo back unchanged, no duplicates" and cheap to check), blank title/subject/segment-title.
+  - [x] 2.5 `total_duration_min = sum(seg.duration_min for seg in response.segments)`.
+  - [x] 2.6 `lesson_plan["segments"]` carries forward the original `summary` text via a `segment_id → summary` lookup built from `state["segment_summaries"]`.
+  - [x] 2.7 Checkpoint write added, matching AC-5 exactly.
+  - [x] 2.8 Returns `{**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}`.
+  - [x] 2.9 Stub's `TODO`/`_model = ... # noqa: F841` lines removed.
 
-- [ ] Task 2: Replace the `lesson_planner_node` stub body (AC: 1, 2, 4, 5)
-  - [ ] 2.1 Add the idempotency checkpoint read at the top of the function (AC-5) — mirror `embed_node`'s exact `supabase.table("lesson_jobs").select("node_outputs").eq("lesson_id", lesson_id).single().execute()` pattern (`apps/api/app/modules/content/pipeline/graph.py:678-693`). Cache hit → `return {**state, "lesson_plan": cached, "progress_pct": 38.0}`.
-  - [ ] 2.2 Build the prompt: system message states the task (produce a lesson plan outline from segment summaries), explicitly instructs "return exactly one segment per summary provided, echoing back each summary's `segment_id` unchanged" (AC-2), includes `_UNTRUSTED_CONTENT_GUARD` (segment summaries are themselves LLM output from untrusted section text — same guard class every other Phase 1 node's prompt already uses). User message: the `segment_summaries` list (id + text pairs), NOT raw `state["sections"]`/`state["chapter_content"]` (AC-1 — do not read those keys at all in this function).
-  - [ ] 2.3 Call `OpenAILLMProvider(lesson_id).complete_structured(messages, settings.llm_lesson_planner, _LessonPlanLLM)` (AC-4). If `response is None` (refusal/parse failure), log a warning and `raise RuntimeError(...)` — do NOT checkpoint, do NOT return a placeholder; let ARQ's job-level retry re-attempt (this premium call has no per-section redundancy to fall back on, unlike Phase 1).
-  - [ ] 2.4 Validate (AC-6): `len(response.segments) == len(segment_summaries)`; every `response.segments[i].segment_id` is a member of the input segment_id set with no duplicates; no blank `title`/`subject`/any segment `title`. On any violation: log a warning with specifics (counts, offending IDs) and raise — do not checkpoint a partial/wrong plan.
-  - [ ] 2.5 Compute `total_duration_min = sum(seg.duration_min for seg in response.segments)` (AC-7) — never ask the LLM for this number directly.
-  - [ ] 2.6 Assemble the `lesson_plan` dict per AC-3's exact shape, using each `_LessonPlanSegmentLLM`'s `segment_id` to look up and carry forward the ORIGINAL summary text from `state["segment_summaries"]` (not the LLM's own paraphrase, if any — the LLM model has no `summary` field to paraphrase into, by design, per Task 1.1).
-  - [ ] 2.7 Write the checkpoint (AC-5): `supabase.table("lesson_jobs").update({"last_node": "lesson_planner", "node_outputs": {**node_outputs, "lesson_planner": lesson_plan}}).eq("lesson_id", lesson_id).execute()`.
-  - [ ] 2.8 Return `{**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}` — unchanged from the stub's existing progress value.
-  - [ ] 2.9 Remove the stub's `# TODO (S2-7): ...` comment and the now-dead `_model = settings.llm_lesson_planner  # noqa: F841` placeholder line (the model is now actually used).
-
-- [ ] Task 3: Tests (AC: all)
-  - [ ] 3.1 Happy path: N segment summaries in → `lesson_plan` with N segments out, correct `total_segments`/`total_duration_min` (sum, not LLM-supplied), original summary text preserved verbatim per segment.
-  - [ ] 3.2 AC-1 regression guard: assert the prompt sent to `complete_structured` contains ONLY the segment summaries' text — never `state["chapter_content"]` or raw section bodies, even when both are present in `state` alongside `segment_summaries` (simulates the exact 5×-cost-overrun bug this constraint exists to prevent).
-  - [ ] 3.3 AC-2/AC-6 guards: LLM returns a mismatched segment count → rejected (raises, not checkpointed); LLM references an unknown `segment_id` → rejected; LLM returns a blank title/subject/segment-title → rejected.
-  - [ ] 3.4 AC-5 idempotency: pre-existing `node_outputs["lesson_planner"]` checkpoint → cache hit, zero calls to `complete_structured`.
-  - [ ] 3.5 AC-4: confirm `settings.llm_lesson_planner` (not `llm_mini` or any hardcoded string) is the model passed to `complete_structured`.
-  - [ ] 3.6 Full regression: `pytest tests/unit/` — 278/278 (current baseline) still passes with zero modifications to existing test files.
+- [x] Task 3: Tests (AC: all)
+  - [x] 3.1 `test_happy_path_produces_lesson_plan_matching_input_count` — `apps/api/tests/unit/test_lesson_planner_node.py`.
+  - [x] 3.2 `test_prompt_never_includes_raw_chapter_text_or_sections` — confirms `chapter_content`/`sections` text never reaches the prompt even when present in `state` alongside `segment_summaries`.
+  - [x] 3.3 `test_mismatched_segment_count_is_rejected_not_checkpointed`, `test_unknown_segment_id_is_rejected`, `test_blank_title_is_rejected`, `test_blank_segment_title_is_rejected` (plus `test_refusal_raises_and_does_not_checkpoint` for the `response is None` path — not originally enumerated in 3.3's text but the same "reject, don't checkpoint" guard family).
+  - [x] 3.4 `test_idempotency_cache_hit_skips_llm_call`, `test_successful_run_writes_checkpoint`.
+  - [x] 3.5 `test_model_used_is_settings_llm_lesson_planner`.
+  - [x] 3.6 Full regression: 288/288 passes — **not** zero modifications to existing test files as 3.6 originally assumed; see Dev Agent Record for the one necessary, foreseen exception (`test_phase1_economy_nodes.py`'s AC-0 test).
 
 ## Dev Notes
 
@@ -191,6 +178,44 @@ claude-sonnet-5
 
 ### Debug Log References
 
+- Red-green-refactor verified: `test_lesson_planner_node.py` written first against the still-stub `lesson_planner_node` — confirmed 10/10 failures (`AttributeError` on `app.providers.llm.openai` not yet imported into `sys.modules`, fixed by force-importing the submodule at test-file top, matching `test_phase1_economy_nodes.py`'s established convention), then implementation applied — 10/10 green.
+- Full-suite run after implementation surfaced exactly 1 pre-existing failure (not introduced by new code): `test_phase1_economy_nodes.py::TestAC0GraphOrdering::test_lesson_planner_does_not_require_raw_text_or_chunks` — this test predates any real generation logic and called `lesson_planner_node` with zero provider/DB mocking, which is fundamentally incompatible with a node that now makes a real (mocked-in-other-tests) LLM call. The test's OWN docstring flagged this exact eventuality ("NOTE: this only asserts AC-0... real GPT-4o lesson planning is S2-7, a separate story"). Updated it to mock `OpenAILLMProvider` like every other node's test in the file already does, preserving its original AC-0 assertion (`total_segments` reflects real `segment_summaries` input) — this is a foreseen, documented test update, not a silent regression.
+- One test-writing bug found and fixed during Task 3: `_update_job_progress` makes its OWN separate `.update()` call (`{"last_node", "status"}`) on the same mocked `lesson_jobs` table right after the checkpoint write — a test asserting on `mock.update.call_args` (the LAST call) was inspecting the wrong call. Fixed by filtering `call_args_list` for the call containing `"node_outputs"`.
+
 ### Completion Notes List
 
+- All 3 tasks / 15 subtasks complete. 297/297 unit tests pass after the code-review patch round (0 unintentional regressions; 1 pre-existing test intentionally updated — see Debug Log; 19 new tests total in `test_lesson_planner_node.py`, up from 10 after 9 more were added for the review-round patches).
+- Added one guard beyond the story's literal AC-6 text: duplicate `segment_id`s in the LLM response are also rejected (`test_mismatched_segment_count_is_rejected_not_checkpointed`'s sibling, `test_unknown_segment_id_is_rejected`, covers the unknown-ID case; a dedicated duplicate-ID check was added in the same guard block since "echo back unchanged" implies uniqueness and the check is nearly free once the ID set is already being built).
+- Scope boundary held exactly as planned: no `tier` parameter, no `state.get("tier")` read, no tier-conditioned segment-count target. `lesson_plan`'s output dict has no `tier` key — S2-LM4 (a separate future story, blocked on S2-LM1's still-outstanding 4-developer sign-off) will amend this function once tier plumbing is safe to reintroduce.
+- AC-1 is enforced both structurally (the function signature/body never references `state["sections"]` or `state["chapter_content"]`) and by a dedicated regression test (`test_prompt_never_includes_raw_chapter_text_or_sections`) that plants both raw-text keys in state alongside `segment_summaries` and asserts neither string appears in the actual prompt sent to `complete_structured`.
+- `slide_generator_node` (the very next node in the graph) was NOT touched — it remains today's `[]`-returning stub, correctly out of scope (S2-8, a separate story).
+- **Post-review patch round (2026-07-14):** applied all 6 code patches (empty-input guard, malformed-entry guard, `duration_min` validation, `objectives`/`complexity_level` validation with clamp, input-order-preserving assembly) plus 1 documentation-only fix (AC-5 wording). One test-helper bug found while adding patch tests: `_plan_llm_response()`'s default never set `.objectives`, so `MagicMock`'s default empty `__iter__` silently satisfied the NEW empty-objectives guard for every existing happy-path test — fixed by giving the helper an explicit default `objectives` list.
+
 ### File List
+
+- `apps/api/app/modules/content/pipeline/graph.py` (modified — `lesson_planner_node` real implementation + 2 new internal Pydantic models + 6 code-review patches + `math` import added)
+- `apps/api/tests/unit/test_lesson_planner_node.py` (new — 19 tests: 10 original + 9 for the code-review patches)
+- `apps/api/tests/unit/test_phase1_economy_nodes.py` (modified — updated 1 pre-existing test to mock the provider, per its own anticipated-eventuality docstring)
+- `docs/stories/2-6-lesson-planner-node.md` (this file — AC-5 wording corrected per review patch)
+
+## Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-07-14 | Story implemented (Tasks 1-3) via `bmad-dev-story`. `lesson_planner_node` now makes a real `settings.llm_lesson_planner` structured-output call with degrade-not-fabricate guards and a Phase-A-style idempotency checkpoint. 10 new tests; 1 pre-existing test updated (foreseen in its own docstring). 288/288 total passing. |
+| 2026-07-14 | 3-layer adversarial code review run (`/bmad-code-review`) — 0 decision-needed, 7 patch, 4 defer, 1 dismissed. All 7 patches applied same day: empty-input guard, malformed-entry guard, `duration_min` validation, `objectives`/`complexity_level` validation+clamp, input-order-preserving segment assembly, and an AC-5 wording correction. 9 new tests added for the patches. 297/297 total passing. |
+
+### Review Findings (2026-07-14 — 3-layer adversarial review via the actual `/bmad-code-review` skill: Blind Hunter, Edge Case Hunter, Acceptance Auditor)
+
+- [x] [Review][Patch] **FIXED 2026-07-14 — Empty `segment_summaries` silently produces a fully-checkpointed, fabricated empty lesson plan.** Added an explicit upfront guard: `lesson_planner_node` now raises `RuntimeError` immediately if `segment_summaries` is empty, before the LLM is ever called. [`graph.py::lesson_planner_node`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-14 — `duration_min` was accepted unbounded.** Added a guard rejecting any non-positive or non-finite (`NaN`/`inf`) `duration_min` per segment, raising before assembly/checkpoint. [`graph.py::lesson_planner_node`] (Blind Hunter + Edge Case Hunter, independently)
+- [x] [Review][Patch] **FIXED 2026-07-14 — `complexity_level` and `objectives` weren't validated.** `objectives` empty/all-blank → reject (matches the title/subject/segment-title guard philosophy). `complexity_level` not in `low/medium/high` → clamp to `"medium"` with a warning log, mirroring `quiz_generator_node`'s existing difficulty-clamp pattern (a deliberate choice: enum-drift fields get clamped elsewhere in this codebase, not rejected outright). [`graph.py::lesson_planner_node`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-14 — LLM-returned segment order was trusted instead of reconciled against `segment_summaries`' original order.** `segments_out` is now assembled by iterating `segment_summaries` (input order) and looking up each LLM segment by `segment_id` via a `segment_id → LLM segment` map, not by iterating `response.segments` directly. [`graph.py::lesson_planner_node`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-14 — A malformed `segment_summaries` entry raised a raw `KeyError`.** Added an upfront validation loop raising a contextual `RuntimeError(f"lesson_id={{lesson_id}}: malformed segment_summaries entry missing segment_id/summary: {{s!r}}")` for any entry missing either key. [`graph.py::lesson_planner_node`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-14 — AC-5's text overclaimed "no re-billing on ARQ retry" with no caveat.** Reworded AC-5 above to state the guarantee precisely: closes re-billing for retries starting after a prior checkpoint write succeeded; a crash between a successful LLM call and that write still re-bills (same accepted tradeoff `embed_node` already carries). Documentation-only fix, no code change. [`docs/stories/2-6-lesson-planner-node.md` AC-5] (Blind Hunter + Edge Case Hunter, independently)
+- [x] [Review][Defer] **Plain read-then-write checkpoint has a lost-update race if two executions of this node run concurrently for the same `lesson_id`** (e.g. an ARQ job-timeout-triggered retry racing an original invocation that's still in flight) — both cache-miss, both bill the LLM, last write wins with no lock/version check. This is the identical, already-accepted tradeoff `embed_node`/`chunk_node`/`structure_node` share (Phase A's whole checkpoint style, not novel to this node) — closing it properly needs an atomic RPC merge or optimistic-locking check (`WHERE last_node = ...`), a larger change than this story's scope. [`graph.py::lesson_planner_node`] (Blind Hunter + Edge Case Hunter, independently) — deferred, matches existing accepted Phase A risk.
+- [x] [Review][Defer] **A `segment_summaries` entry with a blank-but-present `summary` string flows through uncaught** — root cause is upstream in `summarise_segment_node` (Story 2-1), which only guards total refusal (`response is None`), not a blank-but-parsed summary. Pre-existing gap, out of this diff's scope. [`graph.py::summarise_segment_node`] (Edge Case Hunter) — deferred to whoever next touches Story 2-1's node.
+- [x] [Review][Defer] **`.single().execute()` has no explicit not-found/exception handling shown** — identical pattern already used unguarded by `embed_node`/`chunk_node`/`structure_node` throughout this file; not a regression specific to this diff. [`graph.py::lesson_planner_node`] (Blind Hunter) — deferred, codebase-wide pre-existing pattern.
+- [x] [Review][Defer] **No length/size bound on LLM-controlled `objectives`/`title`/`subject` before persistence** — theoretical storage-bloat/DoS vector; low severity given this endpoint already sits behind auth, per-user rate limiting, and the pipeline's own cost ceiling. [`graph.py::_LessonPlanLLM`] (Blind Hunter) — deferred, same risk class as Story 2-2's deferred unbounded-Form-field finding.
+
+**Dismissed (1):** the idempotency cache-hit branch also calls `_update_job_progress` (unlike `embed_node`'s cache-hit branch, which doesn't) — Acceptance Auditor's own conclusion: "harmless... not an AC violation," just a minor undocumented behavioral delta from the Dev Notes' "mirrors exactly" phrasing.

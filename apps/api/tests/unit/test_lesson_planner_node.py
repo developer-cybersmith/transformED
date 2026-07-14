@@ -1,0 +1,480 @@
+"""
+Unit tests for Story 2-6 (S2-7): lesson_planner_node real generation.
+
+Covers docs/stories/2-6-lesson-planner-node.md's ACs:
+- AC-1: input is segment_summaries only, never raw chapter text/sections.
+- AC-2/AC-6: 1:1 segment count, echoed segment_ids, degrade-not-fabricate guards.
+- AC-3: output dict shape.
+- AC-4: settings.llm_lesson_planner is the model passed to complete_structured.
+- AC-5: idempotency checkpoint (Phase-A style, not Story 2-1b's atomic RPC).
+- AC-7: total_duration_min is summed, never asked for directly.
+
+Patches "app.providers.llm.openai.OpenAILLMProvider" (the SOURCE module) and
+"app.core.db.get_supabase" — graph.py uses lazy in-function imports, so these
+are the correct patch targets (established convention, see
+test_phase1_economy_nodes.py's module docstring).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+# Force the submodule into sys.modules so patch("app.providers.llm.openai.OpenAILLMProvider", ...)
+# can resolve it — graph.py's lazy in-function imports mean nothing else
+# guarantees this import has already happened (same convention as
+# test_phase1_economy_nodes.py).
+import app.providers.llm.openai as openai_provider_module  # noqa: E402,F401
+
+FAKE_LESSON_ID = "30303030-3030-3030-3030-303030303030"
+
+SUMMARIES: list[dict[str, Any]] = [
+    {"segment_id": "sec_0", "summary": "Introduction to the topic."},
+    {"segment_id": "sec_1", "summary": "Core mechanics explained."},
+    {"segment_id": "sec_2", "summary": "Worked examples and pitfalls."},
+]
+
+
+def _base_state(**overrides: Any) -> dict[str, Any]:
+    state: dict[str, Any] = {
+        "lesson_id": FAKE_LESSON_ID,
+        "segment_summaries": SUMMARIES,
+        "progress_pct": 30.0,
+        "error": None,
+    }
+    state.update(overrides)
+    return state
+
+
+def _mock_supabase(node_outputs: dict[str, Any] | None = None) -> MagicMock:
+    sb = MagicMock()
+    jobs_mock = MagicMock()
+    jobs_mock.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+        "node_outputs": node_outputs or {}
+    }
+    jobs_mock.update.return_value.eq.return_value.execute.return_value = MagicMock()
+    sb.table.return_value = jobs_mock
+    return sb
+
+
+def _plan_llm_response(
+    segments: list[dict[str, Any]] | None = None,
+    title: str = "Understanding the Topic",
+    subject: str = "General Studies",
+    complexity_level: str = "medium",
+    objectives: list[str] | None = None,
+) -> MagicMock:
+    """Build a mock parsed `_LessonPlanLLM`-shaped response."""
+    if segments is None:
+        segments = [
+            {"segment_id": "sec_0", "title": "Getting Started", "duration_min": 4.0},
+            {"segment_id": "sec_1", "title": "How It Works", "duration_min": 6.0},
+            {"segment_id": "sec_2", "title": "Examples", "duration_min": 5.0},
+        ]
+    if objectives is None:
+        objectives = ["Understand the core concept", "Apply it to a worked example"]
+    response = MagicMock()
+    response.title = title
+    response.subject = subject
+    response.complexity_level = complexity_level
+    response.objectives = objectives
+    response.segments = [MagicMock(**seg) for seg in segments]
+    return response
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_happy_path_produces_lesson_plan_matching_input_count() -> None:
+    """AC-3/AC-7: N summaries in -> N-segment plan out, total_duration_min summed."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state())
+
+    plan = result["lesson_plan"]
+    assert plan["title"] == "Understanding the Topic"
+    assert plan["subject"] == "General Studies"
+    assert plan["complexity_level"] == "medium"
+    assert plan["total_segments"] == 3
+    assert plan["total_duration_min"] == pytest.approx(15.0), "must be summed, not LLM-supplied directly"
+    assert len(plan["segments"]) == 3
+    assert plan["segments"][0]["segment_id"] == "sec_0"
+    assert plan["segments"][0]["title"] == "Getting Started"
+    assert plan["segments"][0]["duration_min"] == 4.0
+    # Original summary text is preserved verbatim, not re-derived from the LLM.
+    assert plan["segments"][0]["summary"] == "Introduction to the topic."
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_prompt_never_includes_raw_chapter_text_or_sections() -> None:
+    """AC-1: even when chapter_content/sections are present in state alongside
+    segment_summaries, the prompt sent to the LLM must never include them —
+    this is the exact 5x-cost-overrun bug the constraint exists to prevent."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    state = _base_state(
+        chapter_content="RAW CHAPTER TEXT THAT MUST NEVER APPEAR IN THE PROMPT" * 50,
+        sections=[{"title": "sec_0", "body": "RAW SECTION BODY MUST NEVER APPEAR EITHER"}],
+    )
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await lesson_planner_node(state)
+
+    sent_messages = mock_provider.complete_structured.call_args.args[0]
+    full_prompt = "\n".join(m["content"] for m in sent_messages)
+    assert "RAW CHAPTER TEXT" not in full_prompt
+    assert "RAW SECTION BODY" not in full_prompt
+    for s in SUMMARIES:
+        assert s["summary"] in full_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_model_used_is_settings_llm_lesson_planner() -> None:
+    """AC-4: the model passed to complete_structured is settings.llm_lesson_planner,
+    never llm_mini or a hardcoded string."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        patch("app.config.get_settings") as mock_settings,
+    ):
+        mock_settings.return_value.llm_lesson_planner = "gpt-4o-custom-eval-candidate"
+        await lesson_planner_node(_base_state())
+
+    call_args = mock_provider.complete_structured.call_args
+    assert call_args.args[1] == "gpt-4o-custom-eval-candidate"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_mismatched_segment_count_is_rejected_not_checkpointed() -> None:
+    """AC-2/AC-6: LLM returns fewer segments than input summaries -> reject,
+    raise, and never write a checkpoint (no re-billing-safe partial plan)."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[
+            {"segment_id": "sec_0", "title": "Getting Started", "duration_min": 4.0},
+            {"segment_id": "sec_1", "title": "How It Works", "duration_min": 6.0},
+        ]  # only 2, input has 3
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="segment count"):
+            await lesson_planner_node(_base_state())
+
+    sb.table.return_value.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_unknown_segment_id_is_rejected() -> None:
+    """AC-2/AC-6: LLM invents a segment_id not present in the input -> reject."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[
+            {"segment_id": "sec_0", "title": "Getting Started", "duration_min": 4.0},
+            {"segment_id": "sec_1", "title": "How It Works", "duration_min": 6.0},
+            {"segment_id": "sec_99_invented", "title": "Made Up", "duration_min": 5.0},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="segment_id"):
+            await lesson_planner_node(_base_state())
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_blank_title_is_rejected() -> None:
+    """AC-6: a blank top-level title is rejected, not silently shipped."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(title="   ")
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="blank"):
+            await lesson_planner_node(_base_state())
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_blank_segment_title_is_rejected() -> None:
+    """AC-6: a blank per-segment title is rejected, not silently shipped."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[
+            {"segment_id": "sec_0", "title": "", "duration_min": 4.0},
+            {"segment_id": "sec_1", "title": "How It Works", "duration_min": 6.0},
+            {"segment_id": "sec_2", "title": "Examples", "duration_min": 5.0},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="blank"):
+            await lesson_planner_node(_base_state())
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_refusal_raises_and_does_not_checkpoint() -> None:
+    """A None response (refusal/parse failure) raises rather than shipping a
+    placeholder — no per-section redundancy exists for this premium node."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = None
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError):
+            await lesson_planner_node(_base_state())
+
+    sb.table.return_value.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_idempotency_cache_hit_skips_llm_call() -> None:
+    """AC-5: a pre-existing node_outputs['lesson_planner'] checkpoint is
+    returned as-is with zero calls to complete_structured."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    cached_plan = {
+        "title": "Cached Plan", "subject": "Cached Subject", "objectives": [],
+        "complexity_level": "medium", "total_segments": 3, "total_duration_min": 12.0,
+        "segments": [{"segment_id": "sec_0", "title": "Cached", "summary": "x", "duration_min": 4.0}],
+    }
+    mock_provider = AsyncMock()
+    sb = _mock_supabase(node_outputs={"lesson_planner": cached_plan})
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state())
+
+    assert result["lesson_plan"] == cached_plan
+    mock_provider.complete_structured.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_successful_run_writes_checkpoint() -> None:
+    """AC-5: a successful generation writes last_node + node_outputs."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await lesson_planner_node(_base_state())
+
+    # _update_job_progress makes its own separate, later .update() call (just
+    # {"last_node", "status"}) on the same mocked table — find the checkpoint
+    # write specifically rather than assuming it's the last call.
+    checkpoint_calls = [
+        call.args[0]
+        for call in sb.table.return_value.update.call_args_list
+        if "node_outputs" in call.args[0]
+    ]
+    assert len(checkpoint_calls) == 1, f"expected exactly one checkpoint write, got {checkpoint_calls}"
+    update_call = checkpoint_calls[0]
+    assert update_call["last_node"] == "lesson_planner"
+    assert "lesson_planner" in update_call["node_outputs"]
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-14 code review patches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_empty_segment_summaries_rejected_before_llm_call() -> None:
+    """Review finding (Edge Case Hunter): empty segment_summaries must reject
+    before ever calling the LLM, not trivially pass the count guard (0 == 0)."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="zero segment_summaries"):
+            await lesson_planner_node(_base_state(segment_summaries=[]))
+
+    mock_provider.complete_structured.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_malformed_segment_summaries_entry_raises_contextual_error() -> None:
+    """Review finding (Edge Case Hunter): a segment_summaries entry missing
+    segment_id/summary raises a contextual RuntimeError, not a raw KeyError."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="malformed segment_summaries"):
+            await lesson_planner_node(_base_state(segment_summaries=[{"segment_id": "sec_0"}]))
+
+    mock_provider.complete_structured.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_duration", [0.0, -1.0, float("nan"), float("inf")])
+async def test_invalid_duration_min_is_rejected(bad_duration: float) -> None:
+    """Review finding (Blind Hunter + Edge Case Hunter): a non-positive or
+    non-finite duration_min must be rejected, not silently summed."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[
+            {"segment_id": "sec_0", "title": "Getting Started", "duration_min": bad_duration},
+            {"segment_id": "sec_1", "title": "How It Works", "duration_min": 6.0},
+            {"segment_id": "sec_2", "title": "Examples", "duration_min": 5.0},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="duration_min"):
+            await lesson_planner_node(_base_state())
+
+    sb.table.return_value.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_empty_objectives_is_rejected() -> None:
+    """Review finding (Edge Case Hunter): an empty objectives list is rejected,
+    not silently checkpointed."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(objectives=[])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="objectives"):
+            await lesson_planner_node(_base_state())
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_complexity_level_clamped_to_medium_when_invalid() -> None:
+    """Review finding (Blind Hunter): an unrecognized complexity_level is
+    clamped to 'medium', mirroring quiz_generator_node's difficulty-clamp
+    pattern, rather than accepted verbatim or rejected outright."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(complexity_level="extremely-hard")
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state())
+
+    assert result["lesson_plan"]["complexity_level"] == "medium"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_segment_order_follows_input_not_llm_response_order() -> None:
+    """Review finding (Edge Case Hunter): the assembled plan's segment order
+    must follow segment_summaries' original order, even if the LLM returns
+    the same set of segment_ids in a shuffled order."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    # Shuffled relative to SUMMARIES' sec_0, sec_1, sec_2 order.
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[
+            {"segment_id": "sec_2", "title": "Examples", "duration_min": 5.0},
+            {"segment_id": "sec_0", "title": "Getting Started", "duration_min": 4.0},
+            {"segment_id": "sec_1", "title": "How It Works", "duration_min": 6.0},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state())
+
+    ordered_ids = [seg["segment_id"] for seg in result["lesson_plan"]["segments"]]
+    assert ordered_ids == ["sec_0", "sec_1", "sec_2"], (
+        f"segment order must follow segment_summaries input order, got {ordered_ids}"
+    )
