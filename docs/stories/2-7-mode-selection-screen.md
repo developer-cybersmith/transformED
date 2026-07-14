@@ -4,7 +4,7 @@ baseline_commit: "b5ea07b9a87f00ca5a0a2d30845cc56444aaae8e"
 
 # Story 2-7: Learner Mode Selection Screen
 
-Status: review
+Status: in-progress
 
 ## Story
 
@@ -89,6 +89,18 @@ Picking a card is both the selection and the confirmation — there is no separa
   - [x] 4.4 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean
 - [x] Task 5: Tracker update
   - [x] 5.1 Mark S2-07 in `docs/dev2-sprint-tracker.md` as done, update the Sprint 2 dashboard row and header
+
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2/s2-7-mode-selection` (commits `4c39d57`..`f501d48`) vs its parent `sprint1/s1-8-upload-real-api`, 2026-07-14.
+
+- [ ] [Review][Patch] `handleCancelModeSelection` doesn't reset `file`/`selectedTier` or clear the file input value — re-selecting the exact same file after cancelling never fires a `change` event (browsers don't re-fire `change` for an unchanged `FileList`), silently stranding the user on the idle screen [apps/web/src/components/dashboard/upload/UploadFlow.tsx]
+- [ ] [Review][Patch] No `focus-visible` styling on the tier-card buttons in `ModeSelection.tsx` — only `hover:` classes are defined, so a keyboard user tabbing to a card gets no visible focus indicator [apps/web/src/components/dashboard/upload/ModeSelection.tsx]
+- [ ] [Review][Patch] No focus management on transition into `'selecting-mode'` — when the `'idle'` screen's Browse-Files button unmounts (after its exit animation), focus drops to `document.body` instead of moving to the first tier card, forcing a keyboard user to re-tab from the top of the page [apps/web/src/components/dashboard/upload/UploadFlow.tsx, apps/web/src/components/dashboard/upload/ModeSelection.tsx]
+- [x] [Review][Defer] No drag-and-drop guard on the `'selecting-mode'` screen [apps/web/src/components/dashboard/upload/UploadFlow.tsx] — deferred, pre-existing pattern (processing/completed/error also lack a drop handler; only `'idle'` has one), this story just extends the same exposure to one more screen. Needs a broader "harden all non-idle screens against drop" pass, not a one-off fix here.
+- [x] [Review][Defer] Tier selection has no functional effect on generation yet [apps/web/src/components/dashboard/upload/UploadFlow.tsx] — deferred, correctly scoped away per this story's own "What NOT to do" (S2-09 wires the tier into the backend). Worth a look before the full Learner Mode feature is considered ready to ship: the screen's copy ("Choose a pace before HIE builds your lesson") already implies the choice matters, which is misleading until S2-09 lands.
+
+**Dismissed as noise/false-positive (2):** the `selectTier(user, label)` test helper's parameter signature differs cosmetically from the AC's literal `selectTier(tierLabel: string)` sketch — functionally identical, satisfies the acceptance intent, not a real deviation. The `data-selected-tier={selectedTier ?? undefined}` attribute added to the `'processing'` screen (to avoid an unused-variable lint warning) wasn't explicitly authorized by any AC but crosses no stated boundary — a defensible judgment call, not a rejection-worthy deviation.
 
 ## Dev Notes
 
