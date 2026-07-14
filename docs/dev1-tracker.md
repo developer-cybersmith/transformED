@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-07-13
+**Last updated:** 2026-07-14
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) starts next — see Sprint 2 section below. Frontend/assessment/tutor teams should keep building against `apps/web/src/mocks/data/lessonPackage.ts` and test fixtures until `package_builder` (S2-11) lands; do not build a parallel real-content path.
 
@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 2 | 1 | 17 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 6 | 2 | 12 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **25** | **2** | **31** |
+| **Totals** | | **58** | **29** | **3** | **26** |
 
 ---
 
@@ -496,34 +496,35 @@ Every node must:
   - Applied to `summarise_segment_node`/`segment_complexity_node` (S2-1/S2-2, the only 2 of 6 economy nodes implemented so far) — S2-3 through S2-6 must adopt the same pattern when built
   - **AC:** simulated retry after partial completion makes 0 duplicate LLM calls for already-completed sections ✓ — tested (`test_phase1_checkpoint_idempotency.py`, 9 tests incl. a real `asyncio.gather` concurrency test) ✅
 
-- [ ] **S2-3 `quiz_generator` node**
-  - `apps/api/app/modules/content/pipeline/nodes/quiz_generator.py`
+- [x] **S2-3 `quiz_generator` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::quiz_generator_node` (NOT a separate `nodes/quiz_generator.py` file — see Story 2-1's Tracker Cross-Reference Notes)
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: list of `QuizQuestion`; each must have exactly 4 options, `correct_index` in range, difficulty set
-  - **AC:** Output validates against `app.schemas.QuizQuestion`; `min_length=4` on options enforced; matches quiz schema in `lesson_package.schema.json`
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint (Story 2-1b pattern)
+  - Output: `QuizQuestion`-shaped dict; exactly-4-options guard (frozen schema only enforces a minimum), out-of-range `correct_index` and blank question/explanation rejected (degrade section, not fabricated)
+  - **AC:** Output validates against `app.schemas.QuizQuestion` (segment_id stripped first) ✓; `min_length=4` enforced by the node itself, not just the schema ✓ — tested (`test_phase1_economy_nodes.py`, AC-3; 5-agent review 2026-07-14 added the missing `QuizQuestion.model_validate` assertion) ✅
 
-- [ ] **S2-4 `jargon_extractor` node**
-  - `apps/api/app/modules/content/pipeline/nodes/jargon_extractor.py`
+- [x] **S2-4 `jargon_extractor` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::jargon_extractor_node`
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: list of `JargonEntry` with `term` + `definition`
-  - **AC:** Output validates against `app.schemas.JargonEntry`; no empty terms or definitions
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint
+  - Output: list of `JargonEntry`; empty term/definition entries filtered before reaching `state["glossary"]`
+  - **AC:** Output validates against `app.schemas.JargonEntry` ✓; no empty terms or definitions ✓ — tested (`test_phase1_economy_nodes.py`, AC-4) ✅
 
-- [ ] **S2-5 `intervention_messages` node**
-  - `apps/api/app/modules/content/pipeline/nodes/intervention_messages.py`
+- [x] **S2-5 `intervention_messages` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::intervention_messages_node`
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: `SegmentInterventions` — exactly 3 messages each for `distraction`, `confusion`, `fatigue`
-  - **CRITICAL:** Pre-generated at pipeline time. Zero GPT calls at intervention runtime (PRD §10).
-  - **AC:** 3×3 messages generated; validates against `app.schemas.SegmentInterventions`; runtime callers read from `LessonPackage.segments[n].interventions` — no LLM calls possible at runtime
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint
+  - Output: `SegmentInterventions` — exactly 3 messages each for `distraction`, `confusion`, `fatigue`, forced via truncate/pad guard (padding-by-duplication on <3 is a documented decision, see Story 2-1 AC-5 note — not a retry loop)
+  - **CRITICAL:** Pre-generated at pipeline time. Zero GPT calls at intervention runtime (PRD §10) — verified no such call exists in `modules/tutor/`.
+  - **AC:** 3×3 messages generated; validates against `app.schemas.SegmentInterventions` ✓; shape-pinning test added for future `package_builder_node` (S2-11) integration — tested (`test_phase1_economy_nodes.py`, AC-5) ✅
 
-- [ ] **S2-6 `narration_generator` node**
-  - `apps/api/app/modules/content/pipeline/nodes/narration_generator.py`
+- [x] **S2-6 `narration_generator` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::narration_generator_node`
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: narration script string; conversational tone; respects `complexity.narration_style`
-  - **AC:** Script readable at ≤15 words/sec; tone matches `narration_style` from `SegmentComplexity`
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint
+  - Output: narration script + `narration_style`; pacing guard rejects a script implying >15 words/sec against a target duration (explicit `target_duration_sec` or a page-count-based estimate, ~90s/page)
+  - **AC-6 note:** `narration_style` is sourced from `segment_complexity_node`'s checkpoint for the same section when it's already written (opportunistic cross-node read — the common case, since `Send()`-dispatched sibling calls don't resolve in lockstep); falls back to the LLM self-reporting a style only when complexity genuinely isn't available yet. This is a best-effort resolution of a real AC-0/AC-6 architectural conflict (Send() fan-out has no cross-node ordering guarantee) — see Story 2-1's AC-6 note for the full rationale; a guaranteed-every-run fix needs an AC-0 redesign, not done here.
+  - **AC:** Script readable at ≤15 words/sec ✓ (guard now fires in both the explicit- and estimated-duration cases — 5-agent review 2026-07-14 found the original no-target-duration branch was a mathematical no-op); tone matches `narration_style` from `SegmentComplexity` when available ✓ — tested (`test_phase1_economy_nodes.py`, AC-6) ✅
 
 ---
 
@@ -611,9 +612,11 @@ Every node must:
   - Triggered by `package_builder` (S2-11) on success
   - **AC:** Frontend receives `lesson_ready`; message passes TS discriminated-union type check; no shape mismatch with Dev 4 handler
 
-- [ ] **S2-13 Cost ceiling enforcement wired into all nodes**
+- [ ] **S2-13 Cost ceiling enforcement wired into all nodes** ⚠️ PARTIAL — 2026-07-14
   - `apps/api/app/core/cost_tracker.py` — wire into every LLM, TTS, image call
   - `MAX_LESSON_COST_USD = settings.max_lesson_cost_usd` (default `$3.00`)
+  - ✓ Story 2-1 AC-7 wired `check_ceiling()` as a single pre-dispatch gate in `_fan_out_phase1_economy_nodes` (graph.py) — a lesson already over budget never starts the Phase 1 fan-out. Per-call circuit-breaker/cost-accumulation already lives inside `OpenAILLMProvider.complete_structured()` (verified, not duplicated in nodes). Fan-out also capped at `_MAX_PHASE1_SECTIONS=60` (5-agent review 2026-07-14 — an unbounded section count made the pre-dispatch check blind to the cost the fan-out itself would incur).
+  - ✗ On breach this terminates the pipeline with `status="failed"` (`cost_ceiling_exceeded:` prefix) rather than the "downshift to cheapest providers, complete lesson, flag in admin, never abort" behavior this AC and CLAUDE.md §14 both describe — `llm_mini` has no cheaper tier to downshift to, so Story 2-1 explicitly chose terminate-and-flag for Phase 1 (see its AC-7 note); a true degraded-completion path is not implemented anywhere yet. Not wired into `lesson_planner`/`slide_generator`/`tts_node`/`image_generator` (S2-7 through S2-10, not yet built) or admin visibility (S3-4, not yet built).
   - On breach: downshift to cheapest providers; complete lesson; set `lesson_jobs.error = "cost_ceiling_exceeded"`
   - **AC:** A test run exceeding $3.00 mid-pipeline completes without crashing; admin panel shows the flag; cost tracked in `lesson_jobs.cost_usd`
 

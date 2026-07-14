@@ -54,8 +54,20 @@ def _no_checkpoint_infra():
     mock_supabase.table.return_value = mock_jobs_table
     mock_supabase.rpc.return_value.execute.return_value = MagicMock()
 
+    # Story 2-1 AC-7 added a cost_tracker.check_ceiling() call to
+    # _fan_out_phase1_economy_nodes -> get_cost() -> redis.get(). An
+    # unconfigured AsyncMock's .get() resolves to a MagicMock (not None or a
+    # numeric string), and get_cost() does float(raw) unconditionally when
+    # raw is not None — that would raise TypeError for every test in this
+    # file that reaches the router, not just AC-7's own tests. Pin .get() to
+    # None so get_cost() takes its documented "unknown -> 0.0" branch,
+    # matching this fixture's existing "no real infra" intent for every test
+    # EXCEPT TestAC7CostCeiling, which overrides this mock itself per-test.
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None
+
     with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-        "app.core.redis.get_redis", return_value=AsyncMock()
+        "app.core.redis.get_redis", return_value=mock_redis
     ):
         yield
 
@@ -204,16 +216,22 @@ class TestAC0GraphOrdering:
                 f"not once for the whole chapter"
             )
 
-    def test_empty_sections_raises_clear_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_sections_raises_clear_error(self) -> None:
         """Review finding (2026-07-13, decision: fail fast): an empty
         state["sections"] must not let the pipeline silently end after embed
         with no lesson_package and no failed status — it must raise clearly
         so content_pipeline_job can mark the job failed.
+
+        Story 2-1 AC-7 made this router async (it now awaits
+        cost_tracker.check_ceiling()) — this test awaits it accordingly. The
+        empty-sections check runs BEFORE the cost-ceiling check (see AC-7
+        docstring), so this still raises without touching cost_tracker at all.
         """
         from app.modules.content.pipeline.graph import _fan_out_phase1_economy_nodes
 
         with pytest.raises(RuntimeError, match="zero sections"):
-            _fan_out_phase1_economy_nodes(_base_state(sections=[]))
+            await _fan_out_phase1_economy_nodes(_base_state(sections=[]))
 
     @pytest.mark.asyncio
     async def test_lesson_planner_does_not_require_raw_text_or_chunks(self) -> None:
@@ -439,3 +457,637 @@ class TestAC2SegmentComplexity:
 
         ids = [r["complexity_scores"][0]["segment_id"] for r in results]
         assert ids[0] != ids[1], f"duplicate-titled sections collided on segment_id: {ids}"
+
+
+# ── AC-3: quiz_generator ────────────────────────────────────────────────────
+
+
+class TestAC3QuizGenerator:
+    @pytest.mark.asyncio
+    async def test_single_invocation_makes_exactly_one_provider_call(self) -> None:
+        from app.schemas.lesson import QuizQuestion
+        from app.modules.content.pipeline.graph import _derive_section_id, quiz_generator_node
+
+        mock_output = type(
+            "Quiz",
+            (),
+            {
+                "question": "What is spaced repetition?",
+                "options": ["A", "B", "C", "D"],
+                "correct_index": 1,
+                "explanation": "B is correct because...",
+                "difficulty": "medium",
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert mock_provider.complete_structured.call_count == 1
+        assert len(result["quiz_questions"]) == 1
+        q = result["quiz_questions"][0]
+        assert q["segment_id"] == _derive_section_id(THREE_SECTIONS[0], 0)
+        assert len(q["options"]) == 4
+        # AC-3: "Output validates against app.schemas.lesson.QuizQuestion list."
+        # QuizQuestion has extra="forbid" and no segment_id field, so this
+        # must strip that correlation key first (mirrors AC-4/AC-5's pattern).
+        QuizQuestion.model_validate({k: v for k, v in q.items() if k != "segment_id"})
+
+    @pytest.mark.asyncio
+    async def test_five_options_are_truncated_to_exactly_four_not_passed_through(self) -> None:
+        from app.modules.content.pipeline.graph import quiz_generator_node
+
+        mock_output = type(
+            "Quiz",
+            (),
+            {
+                "question": "Which is a memory technique?",
+                "options": ["A", "B", "C", "D", "E"],
+                "correct_index": 0,
+                "explanation": "A is correct.",
+                "difficulty": "easy",
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert len(result["quiz_questions"]) == 1
+        assert len(result["quiz_questions"][0]["options"]) == 4, (
+            "5-option LLM output must be truncated to exactly 4, not passed through"
+        )
+
+    @pytest.mark.asyncio
+    async def test_too_few_options_is_rejected(self) -> None:
+        from app.modules.content.pipeline.graph import quiz_generator_node
+
+        mock_output = type(
+            "Quiz",
+            (),
+            {
+                "question": "Which is a memory technique?",
+                "options": ["A", "B"],
+                "correct_index": 0,
+                "explanation": "A is correct.",
+                "difficulty": "easy",
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert result["quiz_questions"] == []
+
+    @pytest.mark.asyncio
+    async def test_out_of_range_correct_index_is_rejected(self) -> None:
+        from app.modules.content.pipeline.graph import quiz_generator_node
+
+        mock_output = type(
+            "Quiz",
+            (),
+            {
+                "question": "Which is a memory technique?",
+                "options": ["A", "B", "C", "D"],
+                "correct_index": 7,
+                "explanation": "A is correct.",
+                "difficulty": "easy",
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert result["quiz_questions"] == []
+
+    @pytest.mark.asyncio
+    async def test_blank_question_or_explanation_is_rejected(self) -> None:
+        from app.modules.content.pipeline.graph import quiz_generator_node
+
+        mock_output = type(
+            "Quiz",
+            (),
+            {
+                "question": "   ",
+                "options": ["A", "B", "C", "D"],
+                "correct_index": 0,
+                "explanation": "A is correct.",
+                "difficulty": "easy",
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert result["quiz_questions"] == []
+
+    @pytest.mark.asyncio
+    async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
+        from app.modules.content.pipeline.graph import quiz_generator_node
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = None
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await quiz_generator_node(state)
+
+        assert result["quiz_questions"] == []
+
+
+# ── AC-4: jargon_extractor ──────────────────────────────────────────────────
+
+
+class TestAC4JargonExtractor:
+    @pytest.mark.asyncio
+    async def test_output_validates_against_jargon_entry_schema(self) -> None:
+        from app.schemas.lesson import JargonEntry
+        from app.modules.content.pipeline.graph import jargon_extractor_node
+
+        mock_output = type(
+            "Jargon",
+            (),
+            {
+                "terms": [
+                    type("Entry", (), {"term": "Encoding", "definition": "Converting info into memory."})(),
+                ]
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await jargon_extractor_node(state)
+
+        assert len(result["glossary"]) == 1
+        entry = result["glossary"][0]
+        JargonEntry.model_validate({k: v for k, v in entry.items() if k != "segment_id"})
+
+    @pytest.mark.asyncio
+    async def test_empty_term_or_definition_is_filtered_out(self) -> None:
+        from app.modules.content.pipeline.graph import jargon_extractor_node
+
+        mock_output = type(
+            "Jargon",
+            (),
+            {
+                "terms": [
+                    type("Entry", (), {"term": "Encoding", "definition": "Converting info into memory."})(),
+                    type("Entry", (), {"term": "  ", "definition": "Has a blank term."})(),
+                    type("Entry", (), {"term": "Chunking", "definition": "   "})(),
+                ]
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await jargon_extractor_node(state)
+
+        assert len(result["glossary"]) == 1, (
+            f"expected only the one valid entry to survive, got {result['glossary']}"
+        )
+        assert result["glossary"][0]["term"] == "Encoding"
+
+    @pytest.mark.asyncio
+    async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
+        from app.modules.content.pipeline.graph import jargon_extractor_node
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = None
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await jargon_extractor_node(state)
+
+        assert result["glossary"] == []
+
+
+# ── AC-5: intervention_messages ─────────────────────────────────────────────
+
+
+class TestAC5InterventionMessages:
+    @pytest.mark.asyncio
+    async def test_output_validates_with_exactly_3x3_messages(self) -> None:
+        from app.schemas.lesson import SegmentInterventions
+        from app.modules.content.pipeline.graph import intervention_messages_node
+
+        mock_output = type(
+            "Interventions",
+            (),
+            {
+                "distraction": ["d1", "d2", "d3"],
+                "confusion": ["c1", "c2", "c3"],
+                "fatigue": ["f1", "f2", "f3"],
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await intervention_messages_node(state)
+
+        assert len(result["intervention_prompts"]) == 1
+        prompts = result["intervention_prompts"][0]
+        SegmentInterventions.model_validate({k: v for k, v in prompts.items() if k != "segment_id"})
+
+    @pytest.mark.asyncio
+    async def test_output_shape_pins_what_package_builder_will_assign_verbatim(self) -> None:
+        """AC-5's second test requirement: 'a snapshot test asserting the dict
+        shape matches what package_builder_node (S2-11, future) will assign
+        verbatim to Segment.interventions.' package_builder_node doesn't exist
+        yet (S2-11), so this pins the best available proxy today — the exact
+        key set intervention_messages_node produces — so a future S2-11
+        implementation has a concrete, tested contract to assign from, and any
+        accidental key rename/addition here is caught now rather than at S2-11
+        integration time (review finding, 2026-07-14).
+        """
+        from app.modules.content.pipeline.graph import intervention_messages_node
+
+        mock_output = type(
+            "Interventions",
+            (),
+            {"distraction": ["d1", "d2", "d3"], "confusion": ["c1", "c2", "c3"], "fatigue": ["f1", "f2", "f3"]},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await intervention_messages_node(state)
+
+        prompts = result["intervention_prompts"][0]
+        assert set(prompts.keys()) == {"segment_id", "distraction", "confusion", "fatigue"}, (
+            f"intervention_messages_node's output shape changed to {set(prompts.keys())} — "
+            f"package_builder_node (S2-11) will need to assign this dict's "
+            f"distraction/confusion/fatigue keys verbatim to Segment.interventions; "
+            f"an unreviewed shape change here breaks that future integration silently"
+        )
+
+    @pytest.mark.asyncio
+    async def test_off_count_messages_are_forced_to_exactly_three_each(self) -> None:
+        """CRITICAL (PRD §10): the runtime tutor never calls an LLM for
+        intervention text — these messages are the entire supply. A 2-message
+        or 5-message type must never survive into state; always exactly 3.
+        """
+        from app.modules.content.pipeline.graph import intervention_messages_node
+
+        mock_output = type(
+            "Interventions",
+            (),
+            {
+                "distraction": ["d1", "d2"],  # too few
+                "confusion": ["c1", "c2", "c3", "c4", "c5"],  # too many
+                "fatigue": ["f1", "f2", "f3"],  # exactly right
+            },
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await intervention_messages_node(state)
+
+        prompts = result["intervention_prompts"][0]
+        assert len(prompts["distraction"]) == 3
+        assert len(prompts["confusion"]) == 3
+        assert len(prompts["fatigue"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
+        from app.modules.content.pipeline.graph import intervention_messages_node
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = None
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await intervention_messages_node(state)
+
+        assert result["intervention_prompts"] == []
+
+
+# ── AC-6: narration_generator ───────────────────────────────────────────────
+
+
+class TestAC6NarrationGenerator:
+    @pytest.mark.asyncio
+    async def test_narration_style_sourced_from_matching_section_complexity_when_available(self) -> None:
+        """AC-6: 'the prompt must include the corresponding complexity's
+        narration_style field, not generate narration blind to complexity.'
+        Review finding (2026-07-14): the original implementation never read
+        segment_complexity's output at all. When segment_complexity_node's
+        checkpoint for the SAME section is already written (a real, common
+        case — Send()-dispatched sibling calls do not resolve in lockstep),
+        narration_generator_node must use that known narration_style, not the
+        LLM's own guess — this is the AC's actual requirement.
+        """
+        from app.modules.content.pipeline.graph import _derive_section_id, narration_generator_node
+
+        section_id = _derive_section_id(THREE_SECTIONS[0], 0)
+        known_complexity = {
+            "segment_id": section_id,
+            "narration_style": "formal-technical",
+        }
+        mock_jobs_table = MagicMock()
+
+        def _select_side_effect():
+            table = MagicMock()
+            table.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+                "node_outputs": {f"segment_complexity:{section_id}": known_complexity}
+            }
+            return table
+
+        mock_jobs_table.select.side_effect = lambda *a, **k: _select_side_effect()
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "energetic", "script": "Let's talk about spaced repetition."},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
+        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        script = result["narration_scripts"][0]
+        assert script["narration_style"] == "formal-technical", (
+            f"expected the known segment_complexity narration_style to win over the "
+            f"LLM's own guess ('energetic'), got {script['narration_style']!r}"
+        )
+        # The prompt sent to the LLM must reference the known style, per AC-6's
+        # "the prompt must include the corresponding complexity's narration_style field".
+        sent_messages = mock_provider.complete_structured.call_args.args[0]
+        system_content = sent_messages[0]["content"]
+        assert "formal-technical" in system_content, (
+            "AC-6 requires the prompt itself to include the matching section's "
+            "narration_style, not just the final result dict"
+        )
+
+    @pytest.mark.asyncio
+    async def test_single_invocation_produces_script_and_narration_style(self) -> None:
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "conversational", "script": "Let's talk about spaced repetition."},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert len(result["narration_scripts"]) == 1
+        script = result["narration_scripts"][0]
+        assert script["narration_style"] == "conversational"
+        assert script["script"]
+
+    @pytest.mark.asyncio
+    async def test_pacing_guard_rejects_script_too_dense_for_target_duration(self) -> None:
+        """A script whose word count implies >15 words/sec against an explicit
+        target_duration_sec must be rejected (AC-6 pacing guard).
+        """
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        dense_script = " ".join(["word"] * 200)  # 200 words
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "energetic", "script": dense_script},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        section_with_target = {**THREE_SECTIONS[0], "target_duration_sec": 10}  # 200/10 = 20 words/sec > 15
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=section_with_target, _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"] == [], (
+            "a script implying 20 words/sec against a 10s target duration must be rejected (cap 15/sec)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_target_duration_does_not_reject(self) -> None:
+        """Without an explicit target_duration_sec, AC-6's fallback is to log
+        the estimated duration, not reject — this is the common case today
+        since sections don't yet carry a target duration.
+        """
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "formal", "script": " ".join(["word"] * 200)},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert len(result["narration_scripts"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = None
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"] == []
+
+
+# ── AC-7: cost ceiling wiring ────────────────────────────────────────────────
+
+
+class TestAC7CostCeiling:
+    @pytest.mark.asyncio
+    async def test_ceiling_breach_before_fan_out_raises_cost_ceiling_runtime_error(self) -> None:
+        """A lesson already over budget must not start a new Phase 1 fan-out
+        at all. content_pipeline_job's except RuntimeError handler matches on
+        "cost ceiling" in the message to produce the cost_ceiling_exceeded:
+        error prefix — this test asserts the router raises that shape.
+        """
+        from app.modules.content.pipeline.graph import _fan_out_phase1_economy_nodes
+
+        with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)):
+            with pytest.raises(RuntimeError, match="cost ceiling"):
+                await _fan_out_phase1_economy_nodes(_base_state())
+
+    @pytest.mark.asyncio
+    async def test_ceiling_not_breached_dispatches_normally(self) -> None:
+        from app.modules.content.pipeline.graph import _fan_out_phase1_economy_nodes
+
+        with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+            dispatches = await _fan_out_phase1_economy_nodes(_base_state())
+
+        assert len(dispatches) == len(THREE_SECTIONS) * len(ECONOMY_NODE_NAMES)
+
+    @pytest.mark.asyncio
+    async def test_empty_sections_checked_before_cost_ceiling(self) -> None:
+        """Empty sections must raise its own "zero sections" error without
+        ever consulting cost_tracker — asserted by never patching check_ceiling
+        here (the fixture's redis.get=None default would make check_ceiling
+        return False anyway, but this proves ordering, not just outcome, by
+        making check_ceiling raise if it's ever called).
+        """
+        from app.modules.content.pipeline.graph import _fan_out_phase1_economy_nodes
+
+        with patch(
+            "app.core.cost_tracker.check_ceiling",
+            new=AsyncMock(side_effect=AssertionError("check_ceiling must not be called for empty sections")),
+        ):
+            with pytest.raises(RuntimeError, match="zero sections"):
+                await _fan_out_phase1_economy_nodes(_base_state(sections=[]))
+
+    @pytest.mark.asyncio
+    async def test_section_count_is_capped_to_bound_fan_out_dos_exposure(self) -> None:
+        """Review finding (2026-07-14, blind-hunter): AC-7's single pre-dispatch
+        ceiling check can't see the cost the fan-out it approves will itself
+        incur, and nothing bounded section count — an adversarial/oversized
+        upload could dispatch an unbounded number of concurrent LLM calls
+        approved by one near-$0 check. This asserts the cap actually applies.
+        """
+        from app.modules.content.pipeline.graph import _MAX_PHASE1_SECTIONS, _fan_out_phase1_economy_nodes
+
+        too_many_sections = [
+            {"title": f"Section {i}", "body": f"body {i}"} for i in range(_MAX_PHASE1_SECTIONS + 10)
+        ]
+        with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+            dispatches = await _fan_out_phase1_economy_nodes(_base_state(sections=too_many_sections))
+
+        assert len(dispatches) == _MAX_PHASE1_SECTIONS * len(ECONOMY_NODE_NAMES), (
+            f"expected fan-out capped at {_MAX_PHASE1_SECTIONS} sections x "
+            f"{len(ECONOMY_NODE_NAMES)} nodes, got {len(dispatches)} dispatches "
+            f"for {len(too_many_sections)} input sections"
+        )
+
+    @pytest.mark.asyncio
+    async def test_economy_node_functions_never_call_circuit_breaker_or_cost_accumulation_directly(self) -> None:
+        """AC-7 Test line: 'a node never calls is_circuit_open/accumulate_cost
+        itself (regression guard against re-duplicating provider-layer logic)'
+        — that's already handled inside OpenAILLMProvider.complete_structured().
+        Patches both with a spy that raises if called, then drives every
+        economy node through its normal LLM-call path.
+        """
+        from app.modules.content.pipeline.graph import (
+            intervention_messages_node,
+            jargon_extractor_node,
+            narration_generator_node,
+            quiz_generator_node,
+            segment_complexity_node,
+            summarise_segment_node,
+        )
+
+        def _forbidden(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("economy node called circuit-breaker/cost-accumulation logic directly")
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = None  # degrade-and-return path, cheapest to drive
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider), patch(
+            "app.core.circuit_breaker.is_circuit_open", side_effect=_forbidden
+        ), patch("app.core.cost_tracker.accumulate_cost", side_effect=_forbidden):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            for node in (
+                summarise_segment_node,
+                segment_complexity_node,
+                quiz_generator_node,
+                jargon_extractor_node,
+                intervention_messages_node,
+                narration_generator_node,
+            ):
+                await node(state)  # no AssertionError raised == the guard held
+
+
+class TestAC7CostCeilingEndToEnd:
+    @pytest.mark.asyncio
+    async def test_ceiling_breach_produces_failed_status_with_cost_ceiling_exceeded_prefix(self) -> None:
+        """AC-7 Test line: 'simulated ceiling breach mid-fan-out results in a
+        failed status with the correct error prefix, not a stranded running
+        row.' Drives content_pipeline_job's actual except-RuntimeError handler
+        (apps/api/app/workers/jobs/content_pipeline.py) with the real message
+        _fan_out_phase1_economy_nodes raises, confirming the 'cost ceiling'
+        substring match still routes to status='failed' with the
+        'cost_ceiling_exceeded:' prefix end-to-end, not just at the router
+        boundary (review finding, 2026-07-14 — no prior test crossed this
+        boundary).
+        """
+        from app.workers.jobs.content_pipeline import content_pipeline_job
+
+        mock_jobs_table = MagicMock()
+        update_calls: list[dict[str, Any]] = []
+
+        def _capture_update(payload: dict[str, Any]) -> MagicMock:
+            update_calls.append(payload)
+            m = MagicMock()
+            m.eq.return_value.execute.return_value = MagicMock()
+            return m
+
+        mock_jobs_table.update.side_effect = _capture_update
+        mock_lessons_table = MagicMock()
+        mock_lessons_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "user_id": FAKE_USER_ID,
+            "source_file_path": "fake/path.pdf",
+            "book_id": FAKE_BOOK_ID,
+        }
+
+        def _table(name: str) -> MagicMock:
+            return mock_jobs_table if name == "lesson_jobs" else mock_lessons_table
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.side_effect = _table
+
+        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+            "app.modules.content.pipeline.graph.run_pipeline",
+            new=AsyncMock(
+                side_effect=RuntimeError(
+                    f"cost ceiling exceeded before Phase 1 economy-node dispatch for lesson_id={FAKE_LESSON_ID}"
+                )
+            ),
+        ), patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock()):
+            # content_pipeline_job's cost-ceiling branch returns a dict rather
+            # than re-raising (unlike other RuntimeErrors, which propagate for
+            # ARQ retry) — see content_pipeline.py's except RuntimeError block.
+            result = await content_pipeline_job({}, FAKE_LESSON_ID)
+
+        assert result["status"] == "failed"
+        assert result["error"].startswith("cost_ceiling_exceeded:"), (
+            f"expected error prefixed 'cost_ceiling_exceeded:', got {result['error']!r}"
+        )
+        failed_updates = [c for c in update_calls if c.get("status") == "failed"]
+        assert failed_updates, "lesson_jobs.status was never updated to 'failed' — row would be stranded at 'running'"
+        assert failed_updates[-1]["error"].startswith("cost_ceiling_exceeded:")

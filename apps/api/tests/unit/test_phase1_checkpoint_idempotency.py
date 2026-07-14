@@ -104,6 +104,112 @@ class TestCheckpointCacheHit:
         mock_provider.complete_structured.assert_not_called()
         assert result["complexity_scores"] == [cached_score]
 
+    @pytest.mark.asyncio
+    async def test_quiz_generator_skips_llm_call_on_cache_hit(self) -> None:
+        """Story 2-1 AC-3 gained the same checkpoint pattern as AC-1/AC-2 —
+        review finding (2026-07-14): only summarise_segment/segment_complexity
+        had cache-hit coverage; this closes the gap for quiz_generator_node."""
+        from app.modules.content.pipeline.graph import _derive_section_id, quiz_generator_node
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        cached_quiz = {
+            "segment_id": section_id,
+            "question_id": f"quiz_{section_id}",
+            "type": "mcq",
+            "question": "Already-computed question?",
+            "options": ["A", "B", "C", "D"],
+            "correct_index": 0,
+            "explanation": "Already-computed explanation.",
+            "difficulty": "medium",
+        }
+        mock_jobs_table = _make_jobs_table({f"quiz_generator:{section_id}": cached_quiz})
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
+        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+            state = _base_state()
+            result = await quiz_generator_node(state)
+
+        mock_provider.complete_structured.assert_not_called()
+        assert result["quiz_questions"] == [cached_quiz]
+
+    @pytest.mark.asyncio
+    async def test_jargon_extractor_skips_llm_call_on_cache_hit(self) -> None:
+        from app.modules.content.pipeline.graph import _derive_section_id, jargon_extractor_node
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        cached_terms = [{"term": "Encoding", "definition": "Already-computed definition.", "segment_id": section_id}]
+        mock_jobs_table = _make_jobs_table({f"jargon_extractor:{section_id}": {"terms": cached_terms}})
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
+        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+            state = _base_state()
+            result = await jargon_extractor_node(state)
+
+        mock_provider.complete_structured.assert_not_called()
+        assert result["glossary"] == cached_terms
+
+    @pytest.mark.asyncio
+    async def test_intervention_messages_skips_llm_call_on_cache_hit(self) -> None:
+        from app.modules.content.pipeline.graph import _derive_section_id, intervention_messages_node
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        cached_interventions = {
+            "segment_id": section_id,
+            "distraction": ["d1", "d2", "d3"],
+            "confusion": ["c1", "c2", "c3"],
+            "fatigue": ["f1", "f2", "f3"],
+        }
+        mock_jobs_table = _make_jobs_table({f"intervention_messages:{section_id}": cached_interventions})
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
+        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+            state = _base_state()
+            result = await intervention_messages_node(state)
+
+        mock_provider.complete_structured.assert_not_called()
+        assert result["intervention_prompts"] == [cached_interventions]
+
+    @pytest.mark.asyncio
+    async def test_narration_generator_skips_llm_call_on_cache_hit(self) -> None:
+        from app.modules.content.pipeline.graph import _derive_section_id, narration_generator_node
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        cached_narration = {
+            "segment_id": section_id,
+            "script": "Already-computed script.",
+            "narration_style": "conversational",
+            "word_count": 3,
+        }
+        mock_jobs_table = _make_jobs_table({f"narration_generator:{section_id}": cached_narration})
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
+            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
+        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+            state = _base_state()
+            result = await narration_generator_node(state)
+
+        mock_provider.complete_structured.assert_not_called()
+        assert result["narration_scripts"] == [cached_narration]
+
 
 class TestCheckpointWriteOnSuccess:
     @pytest.mark.asyncio
