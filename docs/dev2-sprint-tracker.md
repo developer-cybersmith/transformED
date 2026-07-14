@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-13 (`main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/6) |
+| **Last Updated** | 2026-07-14 (added S2-07–S2-10: **Learner Mode** — a new tier-selection feature (T1 Deep / T2 Balanced / T3 Refresher) scoped into Sprint 2 per user instruction; no story/spec exists yet, none of the 4 tasks started. Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/10 done — S2-06 partially blocked, escalated to Dev 4; S2-07–S2-10 Learner Mode tasks added 2026-07-14, not started) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/10) |
 
 ---
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 6 | **5** | 0 | **1** |
+| Sprint 2 | Weeks 4–5 | 10 | **5** | 0 | **5** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **51** | **24** | **0** | **27** |
+| **Total** | **10 weeks** | **55** | **24** | **0** | **31** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1046,7 +1046,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 5/6 done — S2-06 (segment-end → CHECKING_IN) newly added 2026-07-06, not blocked, not started  
+**Period:** Weeks 4–5 | **Status:** 🔵 5/10 done — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. S2-07–S2-10 (Learner Mode tier selection — new feature) added 2026-07-14, not started  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1271,6 +1271,71 @@ None of these three ever call `manager.send()`. Confirmed by reading all three f
 </details>
 
 **Recommendation:** given the real architectural decision buried in this "line item" and the fact that nothing here has ever been scoped into acceptance criteria, run this as a full BMAD story (`bmad-create-story` → `bmad-dev-story` → 5-agent review) rather than a quick patch — same rigor as S2-01 through S2-05, once Dev 4 unblocks the receive side (or a decision is made to ship the send-side half alone in the meantime).
+
+---
+
+### S2-07 — Learner Mode Selection Screen
+**Priority:** High  
+**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
+**Files to create:** `src/components/dashboard/upload/ModeSelection.tsx` (or equivalent), wired into the upload flow between upload completion and generation start
+
+New feature: **Learner Mode** — student picks a tier before generation begins. Shown as a mode-selection screen immediately after upload, with 3 cards:
+- **T1 — Deep** (full-depth lesson, no time constraint)
+- **T2 — Balanced** (time-boxed depth)
+- **T3 — Refresher** (condensed review only)
+
+No spec/story exists yet for this feature — needs a BMAD story (`bmad-create-story`) before implementation per the Story-First Gate, including exact tier definitions/copy and how tier maps to pipeline behavior (Dev 1 owns that side).
+
+**Acceptance criteria:**
+- [ ] Screen renders after upload completes, before generation is triggered
+- [ ] 3 selectable cards: T1 Deep / T2 Balanced / T3 Refresher
+- [ ] A tier must be selected before the flow can proceed to generation
+
+---
+
+### S2-08 — Tier Disclaimers
+**Priority:** Medium  
+**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
+**Files to create:** inline warning component within `ModeSelection.tsx` (S2-07)
+
+Per-tier inline warning-style disclaimer shown on the mode selection screen:
+- **T1 (Deep):** no disclaimer
+- **T2 (Balanced):** time-deficit warning (content may be trimmed to fit the time box)
+- **T3 (Refresher):** refresher-only warning (assumes prior mastery, not a full first-pass lesson)
+
+**Acceptance criteria:**
+- [ ] T1 card shows no disclaimer
+- [ ] T2 card shows a time-deficit inline warning
+- [ ] T3 card shows a refresher-only inline warning
+- [ ] Disclaimers styled consistently with existing inline warning patterns (not a modal/toast)
+
+---
+
+### S2-09 — Wire Selected Tier into Lesson Creation
+**Priority:** Medium  
+**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
+**Files to modify:** upload/pipeline submit call site (currently `POST /api/content/lessons` per S1-08 — confirm exact field name with Dev 1, since the tier concept doesn't exist yet in the frozen request body), generation/progress screen
+
+Pass the tier chosen in S2-07 through to lesson creation, and surface it back to the student during generation.
+
+**Acceptance criteria:**
+- [ ] Selected tier included in the lesson-creation request body (field name/contract confirmed with Dev 1 first — not yet part of any frozen contract)
+- [ ] Chosen tier displayed on the generating/progress screen
+- [ ] No regression to S1-08's existing upload flow when Learner Mode is skipped/defaulted (if backend doesn't yet support tier, confirm fallback behavior)
+
+---
+
+### S2-10 — Tier Badge on Player + Session Report
+**Priority:** Low  
+**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
+**Files to modify:** `src/components/player/Player.tsx`, `src/components/reports/SessionReport.tsx`
+
+Small badge showing the lesson's tier and duration, e.g. `Deep · 45 min`.
+
+**Acceptance criteria:**
+- [ ] Badge visible in the lesson player (header/chrome area)
+- [ ] Same badge shown on the session report (S2-04)
+- [ ] Badge format: `{Tier label} · {duration} min`
 
 ---
 
