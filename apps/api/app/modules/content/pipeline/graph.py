@@ -1121,6 +1121,16 @@ async def _increment_phase1_progress(lesson_id: str, checkpoint_key: str, total_
         logger.warning("[%s] Failed to update Phase 1 progress counter for %s", lesson_id, checkpoint_key)
 
 
+def _summary_is_valid_shape(cached: dict[str, Any]) -> bool:
+    """2026-07-14 review finding (Blind Hunter + Edge Case Hunter,
+    independently): key-presence alone doesn't prove a cached `summary` still
+    satisfies AC-1's <=100-word cap — a stale/hand-edited checkpoint could
+    carry an oversized summary straight into `lesson_planner`'s cost-critical
+    input path unchecked. Mirrors `_quiz_data_is_valid_shape`'s re-validation."""
+    summary = cached.get("summary")
+    return isinstance(summary, str) and bool(summary.strip()) and len(summary.split()) <= 100
+
+
 async def summarise_segment_node(state: PipelineState) -> PipelineState:
     """Node 7 (Story 2-1 AC-1): generate a 2-3 sentence, <=100 word summary
     for one section. Send()-dispatched once per section (see AC-0) — this is
@@ -1138,7 +1148,12 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
 
     # Story 2-1b: idempotency guard — an ARQ retry after a crash mid-fan-out
     # must not re-bill an already-completed section.
-    cached = await _read_phase1_checkpoint(lesson_id, checkpoint_key, required_keys=("segment_id", "summary"))
+    cached = await _read_phase1_checkpoint(
+        lesson_id,
+        checkpoint_key,
+        required_keys=("segment_id", "summary"),
+        extra_validate=_summary_is_valid_shape,
+    )
     if cached is not None:
         logger.info("[%s] summarise_segment_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
@@ -1189,16 +1204,37 @@ class _QuizQuestionLLM(BaseModel):
     difficulty: str
 
 
+def _normalize_option(option: str) -> str:
+    """Normalize a quiz option for duplicate comparison — case/whitespace
+    variants (e.g. `"Spaced repetition"` vs `"Spaced repetition "` or
+    `"SPACED REPETITION"`) are near-duplicates, not distinct options, even
+    though `==` would treat them as different (2026-07-14 review finding,
+    Edge Case Hunter)."""
+    return option.strip().lower()
+
+
 def _quiz_data_is_valid_shape(cached: dict[str, Any]) -> bool:
     """2026-07-14 review finding (Edge Case Hunter): a cached quiz checkpoint
     having the right keys doesn't guarantee `data["options"]` still has
     exactly 4 entries or `correct_index` is still in range — validate the
-    same invariants the write path enforces before trusting a cache hit."""
+    same invariants the write path enforces before trusting a cache hit.
+
+    Also re-validates the duplicate-option and blank-option guards the write
+    path enforces (2026-07-14 review finding, second pass — Blind Hunter): a
+    legacy or hand-edited checkpoint with 4 identical/near-identical options,
+    or any blank option (not just a blank correct answer), previously passed
+    this shape check on length + index range alone and was served as a cache
+    hit, exactly the "stale shape survives a cache hit" threat this function
+    exists to defend against."""
     data = cached.get("data")
     if not isinstance(data, dict):
         return False
     options = data.get("options")
     if not isinstance(options, list) or len(options) != 4:
+        return False
+    if not all(isinstance(o, str) and o.strip() for o in options):
+        return False
+    if len({_normalize_option(o) for o in options}) < len(options):
         return False
     correct_index = data.get("correct_index")
     return isinstance(correct_index, int) and 0 <= correct_index < len(options)
@@ -1298,10 +1334,18 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     # text blank while distractors are populated) from shipping as a
     # nonsensical MCQ. Reject rather than fabricate a fix — mirrors this
     # node's existing degrade-not-fabricate pattern for every other guard.
-    if len(set(options)) < len(options):
+    #
+    # 2026-07-14 review finding, second pass (Blind Hunter + Edge Case Hunter,
+    # independently): the original guards only checked the CORRECT option for
+    # blankness (a blank distractor like options=["Answer A", "", "Answer C",
+    # "Answer D"] passed every check) and compared options with strict `==`
+    # (a trailing-whitespace or case-only near-duplicate slipped through).
+    # Now: every option must be non-blank, and duplicates are compared on
+    # normalized (`.strip().lower()`) form while the original text still ships.
+    if not all(o.strip() for o in options):
+        return await _reject("blank option text")
+    if len({_normalize_option(o) for o in options}) < len(options):
         return await _reject("duplicate option text")
-    if not options[correct_index].strip():
-        return await _reject("correct option text is blank")
 
     difficulty = response.difficulty if response.difficulty in ("easy", "medium", "hard") else "medium"
 
@@ -1354,6 +1398,17 @@ class _SegmentComplexityLLM(BaseModel):
     intervention_sensitivity: float
 
 
+def _complexity_is_valid_shape(cached: dict[str, Any]) -> bool:
+    """2026-07-14 review finding (Blind Hunter + Edge Case Hunter,
+    independently): key-presence alone doesn't prove a cached
+    `intervention_sensitivity` still satisfies the [0.0, 1.0] clamp this
+    node's write path enforces via `_clamp()` — a stale/hand-edited checkpoint
+    could carry an out-of-range value straight into `narration_generator_node`
+    and downstream CES-adjacent consumers unchecked."""
+    sensitivity = cached.get("intervention_sensitivity")
+    return isinstance(sensitivity, (int, float)) and 0.0 <= float(sensitivity) <= 1.0
+
+
 async def segment_complexity_node(state: PipelineState) -> PipelineState:
     """Node 9 (Story 2-1 AC-2): score one section's reading complexity.
 
@@ -1384,6 +1439,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
             "quiz_difficulty",
             "intervention_sensitivity",
         ),
+        extra_validate=_complexity_is_valid_shape,
     )
     if cached is not None:
         logger.info("[%s] segment_complexity_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
@@ -1446,11 +1502,23 @@ class _JargonListLLM(BaseModel):
 def _valid_jargon_checkpoint(cached: dict[str, Any]) -> bool:
     # 2026-07-14 review finding (P3): key-presence alone doesn't prove every
     # cached entry still has the nested {segment_id, data: {term, definition}} shape.
+    #
+    # 2026-07-14 review finding, second pass (Blind Hunter + Edge Case Hunter,
+    # independently): key presence alone also doesn't prove `term`/`definition`
+    # are still non-empty — a stale checkpoint with `{"term": "", "definition":
+    # ""}` passed this check and was served as a cache hit, reintroducing
+    # exactly the entries the write path's blank-filter exists to exclude. Now
+    # checks non-blank values too, not just key presence.
     terms = cached.get("terms")
     if not isinstance(terms, list):
         return False
     return all(
-        isinstance(t, dict) and isinstance(t.get("data"), dict) and "term" in t["data"] and "definition" in t["data"]
+        isinstance(t, dict)
+        and isinstance(t.get("data"), dict)
+        and isinstance(t["data"].get("term"), str)
+        and t["data"]["term"].strip()
+        and isinstance(t["data"].get("definition"), str)
+        and t["data"]["definition"].strip()
         for t in terms
     )
 
@@ -1588,11 +1656,21 @@ def _exactly_three(
 def _valid_interventions_checkpoint(cached: dict[str, Any]) -> bool:
     # 2026-07-14 review finding (P3): key-presence alone doesn't prove the
     # cached value still has exactly 3 messages per category.
+    #
+    # 2026-07-14 review finding, second pass (Blind Hunter + Edge Case Hunter,
+    # independently): count alone also doesn't prove each message is still
+    # non-blank — a stale checkpoint with 3 blank-but-present messages per
+    # category passed this check and was served as a cache hit, reintroducing
+    # exactly the entries `_exactly_three`'s write-path cleaning exists to
+    # exclude. Now checks every message is non-blank, not just the count.
     data = cached.get("data")
     if not isinstance(data, dict):
         return False
     return all(
-        isinstance(data.get(k), list) and len(data[k]) == 3 for k in ("distraction", "confusion", "fatigue")
+        isinstance(data.get(k), list)
+        and len(data[k]) == 3
+        and all(isinstance(m, str) and m.strip() for m in data[k])
+        for k in ("distraction", "confusion", "fatigue")
     )
 
 
@@ -1717,6 +1795,16 @@ class _NarrationScriptLLM(BaseModel):
 _DEFAULT_SECONDS_PER_PAGE: float = 90.0  # ~90s of narration per page — AC-6 fallback duration estimate
 
 
+def _narration_is_valid_shape(cached: dict[str, Any]) -> bool:
+    """2026-07-14 review finding (Blind Hunter + Edge Case Hunter,
+    independently): key-presence alone doesn't prove a cached `script` is
+    still non-blank — this node's write path added exactly that guard (see
+    below), but the read path trusted key presence alone until now, mirroring
+    the same gap `_quiz_data_is_valid_shape` closed for quiz checkpoints."""
+    script = cached.get("script")
+    return isinstance(script, str) and bool(script.strip())
+
+
 async def narration_generator_node(state: PipelineState) -> PipelineState:
     """Node 12 (Story 2-1 AC-6): write a narration script for one section.
 
@@ -1749,7 +1837,10 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
 
     # Story 2-1b: idempotency guard — see summarise_segment_node for rationale.
     cached = await _read_phase1_checkpoint(
-        lesson_id, checkpoint_key, required_keys=("segment_id", "script", "narration_style")
+        lesson_id,
+        checkpoint_key,
+        required_keys=("segment_id", "script", "narration_style"),
+        extra_validate=_narration_is_valid_shape,
     )
     if cached is not None:
         logger.info("[%s] narration_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
@@ -1762,7 +1853,13 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         f"segment_complexity:{section_id}",
         required_keys=("segment_id", "narration_style"),
     )
-    known_narration_style = known_complexity["narration_style"] if known_complexity else None
+    # 2026-07-14 review finding, second pass (Edge Case Hunter): the raw
+    # (unstripped) checkpoint value made a whitespace-only cached style (e.g.
+    # `" "`) truthy here while the FINAL `narration_style` written to state
+    # below falls back to "conversational" (that computation does `.strip()`)
+    # — a prompt/persisted-field divergence. Stripping here keeps "known" and
+    # "not known" consistent between the prompt and the persisted value.
+    known_narration_style = (known_complexity["narration_style"].strip() if known_complexity else "") or None
 
     settings = get_settings()
     provider = OpenAILLMProvider(lesson_id)
@@ -1779,17 +1876,30 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             "available — choose a narration_style yourself (e.g. conversational, "
             "formal, energetic) and return it."
         )
+    # 2026-07-14 review finding, second pass (Blind Hunter, DECISION resolved
+    # same day): `known_narration_style` is itself an LLM output from
+    # segment_complexity_node (untrusted, free-text `str`, no enum
+    # constraint) — every OTHER untrusted/LLM-derived value in these 6 nodes
+    # either stays in a user-role message (the section body, under
+    # `_UNTRUSTED_CONTENT_GUARD`) or is structurally validated before use
+    # (quiz options, message counts); this one alone was spliced into the
+    # SYSTEM-role message, which carries more implicit trust under most LLM
+    # safety conventions. Resolution: keep `narration_style` free text (no
+    # schema change to AC-2's already-shipped `segment_complexity_node`) but
+    # move the interpolation into the user-role message alongside the section
+    # body — same trust level as every other untrusted value, covered by the
+    # same guard.
     messages = [
         {
             "role": "system",
             "content": (
                 "Write a conversational narration script for this section, as "
                 "if a tutor is speaking it aloud to a learner. Keep it natural "
-                f"and paced for spoken delivery. {style_instruction}"
+                "and paced for spoken delivery."
                 f"{_UNTRUSTED_CONTENT_GUARD}"
             ),
         },
-        {"role": "user", "content": body},
+        {"role": "user", "content": f"{style_instruction}\n\n{body}"},
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _NarrationScriptLLM)
     if response is None:
@@ -1994,7 +2104,8 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
         # malformed/partially-initialized state is itself a bug — fail
         # closed (raise) rather than silently bypass the gate.
         raise RuntimeError(
-            "_fan_out_phase1_economy_nodes: state missing lesson_id — cannot enforce AC-7 cost ceiling"
+            "_fan_out_phase1_economy_nodes: invalid pipeline state — missing lesson_id, "
+            "cannot proceed to Phase 1 dispatch"
         )
 
     from app.core.cost_tracker import check_ceiling
@@ -2037,9 +2148,9 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     base = {k: state[k] for k in _FAN_OUT_STATE_KEYS if k in state}
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
-    # Uses _PHASE1_INSTRUMENTED_NODES (currently 2 of 6), not len(_ECONOMY_NODES)
-    # — review finding: a 6xN denominator with only 2 node types ever
-    # incrementing the counter can never show more than ~33% complete.
+    # Uses _PHASE1_INSTRUMENTED_NODES (all 6 as of Story 2-1 AC-3..AC-6), not
+    # len(_ECONOMY_NODES) — review finding: a 6xN denominator with fewer than
+    # 6 node types ever incrementing the counter can never reach 100%.
     base["_total_sections"] = len(sections) * len(_PHASE1_INSTRUMENTED_NODES)
     return [
         Send(node_name, {**base, "_section": section, "_section_index": idx})

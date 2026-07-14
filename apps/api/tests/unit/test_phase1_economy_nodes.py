@@ -978,9 +978,15 @@ class TestAC6NarrationGenerator:
         )
         # The prompt sent to the LLM must reference the known style, per AC-6's
         # "the prompt must include the corresponding complexity's narration_style field".
+        # 2026-07-14 review finding, second pass (Blind Hunter, DECISION resolved
+        # same day): `known_narration_style` is itself untrusted LLM output, so
+        # it's now interpolated into the USER-role message (alongside the
+        # section body, same trust level as every other untrusted value) rather
+        # than the system-role message — check the full prompt, not a specific
+        # message's role.
         sent_messages = mock_provider.complete_structured.call_args.args[0]
-        system_content = sent_messages[0]["content"]
-        assert "formal-technical" in system_content, (
+        full_prompt = "\n".join(m["content"] for m in sent_messages)
+        assert "formal-technical" in full_prompt, (
             "AC-6 requires the prompt itself to include the matching section's "
             "narration_style, not just the final result dict"
         )
