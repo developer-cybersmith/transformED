@@ -2,6 +2,14 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story-2.2 (2026-07-14, Learner Mode infra)
+
+- **Unbounded `tier` Form field is parsed before the file's streaming size guard** — a theoretical memory/CPU amplification vector (pair a tiny/invalid file with an oversized `tier` text field); framework-dependent (Starlette's own multipart limits may already bound this), not confirmed exploitable from the diff alone. Deferred — pre-existing multipart-parsing pattern in this endpoint, not introduced by tier specifically. [`apps/api/app/modules/content/router.py`]
+- **Migration's `ADD COLUMN ... NOT NULL ... CHECK (...)` in one statement takes an `ACCESS EXCLUSIVE` lock while validating existing rows** — fine at current table size; no zero-downtime split (`ADD COLUMN` + `NOT VALID CHECK` + `VALIDATE CONSTRAINT`) was used. Deferred — revisit if `lessons` grows large before a similar future migration. [`supabase/migrations/20260714020000_add_lesson_tier.sql`]
+- **`package_builder_node` doesn't read `state["tier"]` yet — a lesson requested with `tier=T1` is stored with `lessons.tier='T1'` but the generated package is currently indistinguishable from T2 output.** Explicitly out of scope for Story 2-2 per its Dev Notes (S2-LM4/S2-LM5 build the actual tier-conditioned generation logic). Deferred to those stories, as designed. [`apps/api/app/modules/content/pipeline/graph.py::package_builder_node`]
+- **JSON schema now requires `tier` on `LessonMetadata`, with no compatibility path for pre-Story-2-2 `lessons.content` JSONB once `package_builder` (S2-11) starts really building the frozen shape.** Currently unreachable (package_builder_node doesn't build the real shape yet). Deferred to S2-11. [`packages/shared/lesson_package.schema.json`]
+- **`test_no_existing_applied_migration_was_modified` only checks prior migration filenames still exist (`issubset`), not their content — wouldn't catch an in-place edit to an existing migration.** Deferred — test-quality nit, not a functional gap in Story 2-2's own change. [`apps/api/tests/unit/test_learner_mode_tier.py`]
+
 ## Deferred from: code review of story-2.1 (2026-07-14, AC-3..AC-7)
 
 - **`_MAX_PHASE1_SECTIONS` cap trims the `Send()` dispatch list but never trims `state["sections"]` itself** — sections beyond the cap remain visible in `state["sections"]` to any node reading that key directly. Deferred (user decision, 2026-07-14): no current node reads raw `state["sections"]` content post-cap (`lesson_planner_node` is still a stub reading only `segment_summaries`) — latent risk, not an active bug. Revisit once `lesson_planner` (S2-7) is actually built and its input assembly is known. [`graph.py::_fan_out_phase1_economy_nodes`]

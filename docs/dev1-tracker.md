@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 6 | 2 | 12 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 7 | 3 | 10 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **29** | **3** | **26** |
+| **Totals** | | **58** | **30** | **4** | **24** |
 
 ---
 
@@ -56,6 +56,7 @@
 | `railway.toml` | Railway service config |
 | `supabase/migrations/20260611000000_initial_schema.sql` | Initial DB schema — **APPLIED, NEVER MODIFY** |
 | `supabase/migrations/20260625000000_chunks_inline_embedding.sql` | Inline embeddings + books table — **APPLIED, NEVER MODIFY** |
+| `supabase/migrations/20260714020000_add_lesson_tier.sql` | `lessons.tier` column, enum-constrained ✅ S2-LM2 |
 
 ### Files to Create
 
@@ -80,7 +81,6 @@
 | `apps/api/app/modules/content/pipeline/nodes/tts_node.py` | TTS: Sarvam → Azure → Browser *(S2-9)* |
 | `apps/api/app/modules/content/pipeline/nodes/image_generator.py` | Images: GPT Image 1 Mini → Imagen 4 Fast → text-only *(S2-10)* |
 | `apps/api/app/modules/content/pipeline/nodes/package_builder.py` | Assemble + write JSONB LessonPackage *(S2-11)* |
-| `supabase/migrations/{new-timestamp}_add_lesson_tier.sql` | `lessons.tier` column, enum-constrained *(S2-LM2)* |
 | `apps/api/app/modules/admin/router.py` | Admin: job status, costs, retry trigger *(S3-4)* |
 | `apps/api/tests/unit/test_lesson_schema.py` | Pydantic ↔ JSON schema round-trip tests (22 tests) ✅ S0-12 |
 | `apps/api/tests/unit/test_langfuse_core.py` | Singleton + flush contract tests (4 tests) ✅ S0-9 |
@@ -191,7 +191,7 @@ Redis keys Dev 1 WRITES:
 | `status` | `text` | NOT NULL, DEFAULT `'generating'`, CHECK IN (`'generating'`, `'ready'`, `'failed'`) | Pipeline state visible to frontend via polling |
 | `content` | `jsonb` | nullable | Full `LessonPackage` JSONB written by `package_builder`; `NULL` until pipeline completes |
 | `source_file_path` | `text` | nullable | Supabase Storage path to the source PDF |
-| `tier` | `text` | **PENDING — S2-LM2, not yet migrated.** Planned: NOT NULL DEFAULT `'T2'`, CHECK IN (`'T1'`,`'T2'`,`'T3'`) | Learner Mode content-depth tier; drives slide count + content depth in `lesson_planner`/`slide_generator` (S2-LM4/S2-LM5) |
+| `tier` | `text` | NOT NULL DEFAULT `'T2'`, CHECK IN (`'T1'`,`'T2'`,`'T3'`) ✅ migrated S2-LM2 (2026-07-14) | Learner Mode content-depth tier. Column exists and is writable, but **nothing writes a non-default value yet** — `POST /lessons`'s `tier` param (S2-LM3) was implemented then reverted pending S2-LM1's 4-dev sign-off; drives slide count + content depth in `lesson_planner`/`slide_generator` (S2-LM4/S2-LM5, not started) |
 | `created_at` | `timestamptz` | NOT NULL DEFAULT now() | Row creation time |
 | `updated_at` | `timestamptz` | NOT NULL DEFAULT now(), auto-trigger | Auto-updated on any write |
 
@@ -533,23 +533,27 @@ Every node must:
 
 > Tier values: **T1** (full depth, 20–25 slides), **T2** (standard, 12–15 slides), **T3** (critical-topics-only / refresher, 6–8 slides). Default `T2` for any lesson that doesn't specify a tier (keeps existing frontend mocks/tests, which assume no tier, working unmodified).
 
-- [ ] **S2-LM1 Add `tier` field to the lesson package contract + Pydantic**
+- [ ] **S2-LM1 Add `tier` field to the lesson package contract + Pydantic** ⚠️ PARTIAL — 2026-07-14
   - `packages/shared/lesson_package.schema.json`, `packages/shared/types/lesson.ts`, `apps/api/app/schemas/lesson.py` (`LessonMetadata.tier`)
   - **FROZEN CONTRACT CHANGE — requires the 4-developer PR review per `CLAUDE.md` §16 / Interface Contracts before merge. Do not implement S2-LM3/S2-LM4/S2-LM5 against a local draft of this field — get the shape agreed first.**
-  - `tier: Literal["T1", "T2", "T3"]` added to `LessonMetadata`; JSON schema and TS type updated in the same PR (never let them drift).
-  - **AC:** All three artifacts (JSON schema, TS type, Pydantic model) agree byte-for-byte on the enum values; existing `LessonPackage` test fixtures updated (either given an explicit tier or the model defaults `T2`) so no existing round-trip test breaks; 4-dev sign-off recorded in the PR description.
+  - ✓ `tier: Literal["T1", "T2", "T3"]` added to `LessonMetadata`; JSON schema and TS type updated in the same commit, byte-for-byte agreeing enum values (Story 2-2, `docs/stories/2-2-learner-mode-infra.md`)
+  - ✓ Existing `LessonPackage`/frontend fixtures unaffected — Pydantic default (`"T2"`) meant zero backend fixtures needed updating; two frontend fixtures (`apps/web/src/mocks/data/lessonPackage.ts`, `apps/web/src/__tests__/stores/player.machine.test.ts`) needed `tier: 'T2'` added (caught by code review, fixed same day)
+  - ✗ **4-dev sign-off NOT yet recorded** — this is the blocking gap. S2-LM3 was implemented then **reverted** 2026-07-14 specifically because it got ahead of this sign-off (see Story 2-2's Change Log) — do not re-attempt S2-LM3/LM4/LM5 until this AC is actually satisfied.
+  - **AC:** JSON schema/TS/Pydantic agree byte-for-byte ✓; existing fixtures unaffected ✓; 4-dev sign-off recorded ✗ (blocking)
 
-- [ ] **S2-LM2 Add `tier` column to `lessons` table**
-  - New file under `supabase/migrations/` — assign a real, correctly-ordered timestamp prefix at creation time; do not reuse or backdate an existing migration's timestamp, and never modify an already-applied migration (`20260611000000_initial_schema.sql`, `20260625000000_chunks_inline_embedding.sql`, etc. stay untouched).
-  - `tier text NOT NULL DEFAULT 'T2' CHECK (tier IN ('T1','T2','T3'))` on `public.lessons`.
-  - Independent of S2-LM1 — can be built in parallel, not sequentially after it.
-  - **AC:** Migration applies cleanly against the current schema; CHECK constraint rejects any value outside `T1/T2/T3`; existing rows (pre-migration) backfill to the `T2` default without a manual data migration step.
+- [x] **S2-LM2 Add `tier` column to `lessons` table** — ✓ 2026-07-14
+  - `supabase/migrations/20260714020000_add_lesson_tier.sql` — timestamped after the true latest applied migration at the time (`20260713020000_lesson_job_node_output_merge_fn.sql`, Story 2-1b — corrects this task's own stale `20260710000000` reference)
+  - `tier text NOT NULL DEFAULT 'T2' CHECK (tier IN ('T1','T2','T3'))` on `public.lessons` — verified via static SQL-text test (`test_learner_mode_tier.py`, no live Postgres in this suite)
+  - Independent of S2-LM1 — built in parallel, not reverted alongside S2-LM3/LM4
+  - **AC:** Migration applies cleanly (additive, no existing migration touched) ✓; CHECK constraint rejects any value outside `T1/T2/T3` ✓; existing rows backfill to `T2` via `DEFAULT`, no manual step ✓ — tested ✅
 
-- [ ] **S2-LM3 Accept & validate `tier` param in `POST /lessons`; thread into the ARQ job**
+- [ ] **S2-LM3 Accept & validate `tier` param in `POST /lessons`; thread into the ARQ job** — implemented 2026-07-14, then **REVERTED same day** pending S2-LM1's 4-dev sign-off
   - `apps/api/app/modules/content/router.py`, `apps/api/app/workers/jobs/content_pipeline.py`, `PipelineState` in `apps/api/app/modules/content/pipeline/graph.py` (add a `tier: str` field alongside the existing input keys)
   - **Depends on S2-LM1 (enum values) and S2-LM2 (column to persist to).**
-  - Optional multipart field `tier`, defaulting to `"T2"` when omitted (existing Sprint 1 upload flow and frontend mocks must keep working unchanged); invalid value → `422`, not a silent fallback.
-  - Written to `lessons.tier` at creation time; passed through the ARQ job payload into `PipelineState["tier"]` so S2-7/S2-8 can read it without a second DB round-trip.
+  - Note (corrected by Story 2-2's Dev Notes): tier reaches the pipeline via the SAME `lessons`-table re-fetch `content_pipeline_job` already uses for `user_id`/`book_id`/`source_pdf_path` — not a new ARQ job-payload argument. This tracker's "thread into the ARQ job" wording is imprecise; update if this task is picked up again.
+  - Optional multipart field `tier`, defaulting to `"T2"` when omitted; invalid value → `422`, not a silent fallback — this behavior was implemented and passed a full 3-layer adversarial code review with no unresolved functional findings, but was reverted anyway per the explicit decision to honor S2-LM1's sign-off gate rather than accept the sequencing violation.
+  - **Re-pickup condition:** do not restart this task until S2-LM1's 4-dev sign-off is recorded.
+  - **AC:** not yet met — reverted, not abandoned.
   - **AC:** Omitting `tier` behaves exactly as before this story (defaults `T2`); an invalid tier string returns `422`; `PipelineState["tier"]` is populated by the time `lesson_planner` runs.
 
 - [ ] **S2-LM4 Tier-aware slide count in `lesson_planner` + `slide_generator`**

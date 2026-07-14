@@ -35,6 +35,7 @@ ComplexityLevel = Literal["low", "medium", "high"]
 AudioProvider = Literal["sarvam", "azure", "browser"]  # frozen — see lesson_package.schema.json
 QuizType = Literal["mcq", "concept_check"]
 QuizDifficulty = Literal["easy", "medium", "hard"]
+LessonTier = Literal["T1", "T2", "T3"]  # Story 2-2 — Learner Mode content-depth tier
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ class LessonMetadata(BaseModel):
     total_segments: Annotated[int, Field(ge=1)]
     estimated_duration_mins: Annotated[float, Field(ge=0)]
     complexity_level: str  # free string per schema; ComplexityLevel if constraining later
+    tier: LessonTier = "T2"  # Story 2-2 — defaults T2 so existing callers/fixtures are unaffected
 
 
 # ---------------------------------------------------------------------------

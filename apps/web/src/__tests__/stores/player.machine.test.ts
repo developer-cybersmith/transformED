@@ -16,6 +16,7 @@ function makeLesson(segmentCount = 3): LessonPackage {
       total_segments: segmentCount,
       estimated_duration_mins: 10,
       complexity_level: 'medium',
+      tier: 'T2',
     },
     segments: Array.from({ length: segmentCount }, (_, i) => ({
       segment_id: `seg_${i}`,

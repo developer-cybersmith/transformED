@@ -56,7 +56,8 @@
         "subject",
         "total_segments",
         "estimated_duration_mins",
-        "complexity_level"
+        "complexity_level",
+        "tier"
       ],
       "additionalProperties": false,
       "properties": {
@@ -64,7 +65,8 @@
         "subject": { "type": "string" },
         "total_segments": { "type": "integer", "minimum": 1 },
         "estimated_duration_mins": { "type": "number", "minimum": 0 },
-        "complexity_level": { "type": "string" }
+        "complexity_level": { "type": "string" },
+        "tier": { "type": "string", "enum": ["T1", "T2", "T3"], "default": "T2" }
       }
     },
     "SegmentComplexity": {
