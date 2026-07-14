@@ -6,6 +6,8 @@ import { UploadCloud, CheckCircle, AlertCircle, Loader2, Play } from "lucide-rea
 import { useRouter } from "next/navigation";
 import { uploadService, extractErrorMessage, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
 import { Button } from "@/components/ui/button";
+import { ModeSelection } from "@/components/dashboard/upload/ModeSelection";
+import type { LearnerTier } from "@/types/learnerMode";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
@@ -17,10 +19,11 @@ const MAX_POLL_ATTEMPTS = 240;
 export function UploadFlow() {
     const [file, setFile] = useState<File | null>(null);
     const [dragActive, setDragActive] = useState(false);
-    const [uploadState, setUploadState] = useState<'idle' | 'processing' | 'completed' | 'error'>('idle');
+    const [uploadState, setUploadState] = useState<'idle' | 'selecting-mode' | 'processing' | 'completed' | 'error'>('idle');
     const [statusMessage, setStatusMessage] = useState<string>('');
     const [errorMessage, setErrorMessage] = useState<string>('');
     const [lessonId, setLessonId] = useState<string>('');
+    const [selectedTier, setSelectedTier] = useState<LearnerTier | null>(null);
 
     const router = useRouter();
     const inputRef = useRef<HTMLInputElement>(null);
@@ -59,8 +62,17 @@ export function UploadFlow() {
             return;
         }
         setFile(selectedFile);
+        setUploadState('selecting-mode');
+    };
+
+    const handleTierSelect = (tier: LearnerTier) => {
+        setSelectedTier(tier);
         setUploadState('processing');
         setStatusMessage('Uploading...');
+    };
+
+    const handleCancelModeSelection = () => {
+        setUploadState('idle');
     };
 
     useEffect(() => {
@@ -187,6 +199,32 @@ export function UploadFlow() {
                 </motion.div>
             )}
 
+            {uploadState === 'selecting-mode' && (
+                <motion.div
+                    key="selecting-mode"
+                    initial={{ opacity: 0, y: 20, filter: "blur(10px)" }}
+                    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                    transition={{ duration: 0.6 }}
+                    className="w-full relative z-10 flex flex-col items-center"
+                >
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-2 text-center">
+                        How do you want to learn this?
+                    </h3>
+                    <p className="text-neutral-500 max-w-md text-center mb-8">
+                        Choose a pace before HIE builds your lesson.
+                    </p>
+                    <ModeSelection onSelect={handleTierSelect} />
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCancelModeSelection}
+                        className="mt-8 text-neutral-400 hover:text-neutral-600 hover:bg-transparent"
+                    >
+                        Choose a different file
+                    </Button>
+                </motion.div>
+            )}
+
             {uploadState === 'processing' && (
                 <motion.div
                     key="processing"
@@ -194,6 +232,9 @@ export function UploadFlow() {
                     animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.6 }}
+                    // data-selected-tier is not rendered as visible text — it's a forward-compatible
+                    // hook for the S2-10 tier-badge story, which decides where/how to surface it.
+                    data-selected-tier={selectedTier ?? undefined}
                     className="w-full relative z-10 bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-16 shadow-2xl border border-neutral-100 flex flex-col items-center justify-center min-h-[400px] text-center"
                 >
                     {/* Pulsing Outer Glow + indeterminate spinner — the backend reports no percentage/stage data */}

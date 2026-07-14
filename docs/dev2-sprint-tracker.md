@@ -9,8 +9,8 @@
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
 | **Last Updated** | 2026-07-14 (added S2-07–S2-10: **Learner Mode** — a new tier-selection feature (T1 Deep / T2 Balanced / T3 Refresher) scoped into Sprint 2 per user instruction; no story/spec exists yet, none of the 4 tasks started. Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/10 done — S2-06 partially blocked, escalated to Dev 4; S2-07–S2-10 Learner Mode tasks added 2026-07-14, not started) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/10) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (6/10 done — S2-06 partially blocked, escalated to Dev 4; S2-07 (Learner Mode mode-selection screen) done 2026-07-14; S2-08–S2-10 not started) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (6/10) |
 
 ---
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 10 | **5** | 0 | **5** |
+| Sprint 2 | Weeks 4–5 | 10 | **6** | 0 | **4** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **24** | **0** | **31** |
+| **Total** | **10 weeks** | **55** | **25** | **0** | **30** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1046,7 +1046,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 5/10 done — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. S2-07–S2-10 (Learner Mode tier selection — new feature) added 2026-07-14, not started  
+**Period:** Weeks 4–5 | **Status:** 🔵 6/10 done — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. Learner Mode: S2-07 (mode-selection screen) done 2026-07-14; S2-08–S2-10 not started  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1274,22 +1274,30 @@ None of these three ever call `manager.send()`. Confirmed by reading all three f
 
 ---
 
-### S2-07 — Learner Mode Selection Screen
+### S2-07 — Learner Mode Selection Screen — ✅ 2026-07-14
 **Priority:** High  
-**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
-**Files to create:** `src/components/dashboard/upload/ModeSelection.tsx` (or equivalent), wired into the upload flow between upload completion and generation start
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/2-7-mode-selection-screen.md` on branch `sprint2/s2-7-mode-selection` (branched from `sprint1/s1-8-upload-real-api`, not main — see branch note below), feeds into feature master `feature-learner-mode`  
+**Files created:** `src/types/learnerMode.ts`, `src/components/dashboard/upload/ModeSelection.tsx`, `src/__tests__/components/dashboard/upload/ModeSelection.test.tsx`  
+**Files modified:** `src/components/dashboard/upload/UploadFlow.tsx` (new `'selecting-mode'` state, `handleTierSelect`/`handleCancelModeSelection`), `src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` (existing tests updated to select a tier before the upload call fires — an intentional, in-scope behavior change, not a regression)
 
-New feature: **Learner Mode** — student picks a tier before generation begins. Shown as a mode-selection screen immediately after upload, with 3 cards:
-- **T1 — Deep** (full-depth lesson, no time constraint)
-- **T2 — Balanced** (time-boxed depth)
-- **T3 — Refresher** (condensed review only)
+**Branch note:** this task's branch — and the 3 remaining Learner Mode tasks (S2-08, S2-09, S2-10) — are cut from `sprint1/s1-8-upload-real-api` rather than `main`, since that branch carries real unmerged auth/upload backend fixes this feature builds directly on top of (`UploadFlow.tsx`). Task branches stay local; each merges into the dedicated feature master `feature-learner-mode` (not `sprint2-master`), which is what gets pushed and PR'd.
 
-No spec/story exists yet for this feature — needs a BMAD story (`bmad-create-story`) before implementation per the Story-First Gate, including exact tier definitions/copy and how tier maps to pipeline behavior (Dev 1 owns that side).
+New feature: **Learner Mode** — student picks a tier before generation begins. The mode-selection screen now appears right after a file is dropped/selected and size-validated, **before** the upload POST fires (not after upload completes — confirmed with the user; this lines up with S2-09 needing the tier known before that POST is made). 3 cards:
+- **Deep** (full-depth lesson, no time constraint)
+- **Balanced** (time-boxed depth)
+- **Refresher** (condensed review only)
+
+**Scope boundary (per story):** this task is the selection screen only. Tier disclaimers (S2-08), sending the tier to the backend (S2-09 — no field exists in `POST /api/content/lessons` yet, needs Dev 1 sign-off), and the tier badge on player/report (S2-10) are separate, not-yet-started follow-on tasks. `selectedTier` is captured in `UploadFlow.tsx` component state only (surfaced via a non-visible `data-selected-tier` attribute for S2-10 to pick up later) — not yet persisted or sent anywhere.
 
 **Acceptance criteria:**
-- [ ] Screen renders after upload completes, before generation is triggered
-- [ ] 3 selectable cards: T1 Deep / T2 Balanced / T3 Refresher
-- [ ] A tier must be selected before the flow can proceed to generation
+- [x] Screen renders after a file is selected/size-validated, before the upload POST fires
+- [x] 3 selectable cards, real `<button>`s: Deep / Balanced / Refresher, each with a one-line description
+- [x] Clicking a card is both the selection and the confirmation — captures the tier and immediately proceeds to upload (no separate "Continue" button)
+- [x] "Choose a different file" returns to the idle drop zone without ever calling the upload API
+- [x] Oversized-file rejection path unaffected (still short-circuits to the error state before reaching mode-selection)
+- [x] No regression to Story 1-8's upload/polling behavior once a tier is picked — byte-for-byte the same from that point on
+
+15 new/updated tests (4 new in `ModeSelection.test.tsx`, 11 in `UploadFlow.test.tsx` — 2 new, 9 updated to select a tier first). Full `apps/web` suite: 333/333 passing. `tsc --noEmit` clean. `eslint`: 0 errors, 38 warnings (37 pre-existing + 0 new — the one new warning this story would have introduced, an unread `selectedTier` state variable, was resolved by exposing it via a non-visible `data-selected-tier` attribute rather than left or suppressed).
 
 ---
 

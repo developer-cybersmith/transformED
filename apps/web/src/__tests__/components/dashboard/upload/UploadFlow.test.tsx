@@ -38,6 +38,17 @@ function dropAnOversizedFile() {
   fireEvent.change(input, { target: { files: [file] } });
 }
 
+async function selectTier(user: ReturnType<typeof userEvent.setup>, label: 'Deep' | 'Balanced' | 'Refresher' = 'Deep') {
+  const button = (await screen.findByText(label)).closest('button');
+  await user.click(button!);
+}
+
+/** Drops a valid file and immediately picks a tier — the pre-upload flow shared by every test that exercises the actual upload/polling behavior. */
+async function dropFileAndSelectTier(user: ReturnType<typeof userEvent.setup>, label: 'Deep' | 'Balanced' | 'Refresher' = 'Deep') {
+  dropAFile();
+  await selectTier(user, label);
+}
+
 beforeEach(() => {
   pushMock.mockReset();
   uploadLessonMock.mockReset();
@@ -63,13 +74,36 @@ describe('UploadFlow', () => {
     expect(uploadLessonMock).not.toHaveBeenCalled();
   });
 
+  it('dropping a valid file shows the mode-selection screen (all 3 tiers) before any upload call fires', async () => {
+    render(<UploadFlow />);
+
+    dropAFile();
+
+    await screen.findByText('Deep');
+    expect(screen.getByText('Balanced')).not.toBeNull();
+    expect(screen.getByText('Refresher')).not.toBeNull();
+    expect(uploadLessonMock).not.toHaveBeenCalled();
+  });
+
+  it('"Choose a different file" from the mode-selection screen returns to idle without ever uploading', async () => {
+    const user = userEvent.setup();
+    render(<UploadFlow />);
+
+    dropAFile();
+    await screen.findByText('Deep');
+    await user.click(screen.getByText('Choose a different file'));
+
+    expect(screen.getByText('Drop your course material here')).not.toBeNull();
+    expect(uploadLessonMock).not.toHaveBeenCalled();
+  });
+
   it('uploads, polls, and on "ready" shows "Begin Lesson" which navigates to the new lesson', async () => {
     const user = userEvent.setup();
     uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
     getLessonStatusMock.mockResolvedValue(READY_STATUS);
 
     render(<UploadFlow />);
-    dropAFile();
+    await dropFileAndSelectTier(user);
 
     await waitFor(() => expect(uploadLessonMock).toHaveBeenCalledWith(expect.any(File)));
     await screen.findByText('Begin Lesson');
@@ -84,7 +118,7 @@ describe('UploadFlow', () => {
     getLessonStatusMock.mockResolvedValue(READY_STATUS);
 
     render(<UploadFlow />);
-    dropAFile();
+    await dropFileAndSelectTier(user);
 
     await screen.findByText('Generate Another');
     await user.click(screen.getByText('Generate Another'));
@@ -105,7 +139,7 @@ describe('UploadFlow', () => {
     });
 
     render(<UploadFlow />);
-    dropAFile();
+    await dropFileAndSelectTier(user);
 
     await screen.findByText('Try Again');
     expect(screen.getByText('Cost ceiling exceeded')).not.toBeNull();
@@ -115,21 +149,23 @@ describe('UploadFlow', () => {
   });
 
   it('surfaces an error immediately when the upload POST itself is rejected', async () => {
+    const user = userEvent.setup();
     uploadLessonMock.mockRejectedValue({ response: { data: { detail: 'Invalid PDF' } } });
 
     render(<UploadFlow />);
-    dropAFile();
+    await dropFileAndSelectTier(user);
 
     await screen.findByText('Invalid PDF');
     expect(getLessonStatusMock).not.toHaveBeenCalled();
   });
 
   it('stays in "processing" (no percentage/stage text) when a poll returns a non-terminal status', async () => {
+    const user = userEvent.setup();
     uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
     getLessonStatusMock.mockResolvedValue({ lesson_id: 'lsn_42', status: 'running', title: null, error: null, created_at: null, completed_at: null });
 
     render(<UploadFlow />);
-    dropAFile();
+    await dropFileAndSelectTier(user);
 
     await waitFor(() => expect(getLessonStatusMock).toHaveBeenCalledTimes(1));
     await screen.findByText('Processing...');
@@ -138,22 +174,24 @@ describe('UploadFlow', () => {
   });
 
   it('fails fast on a 4xx poll error instead of retrying like a transient failure', async () => {
+    const user = userEvent.setup();
     uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
     getLessonStatusMock.mockRejectedValue({ response: { status: 404 } });
 
     render(<UploadFlow />);
-    dropAFile();
+    await dropFileAndSelectTier(user);
 
     await screen.findByText(/lesson not found/i);
     expect(getLessonStatusMock).toHaveBeenCalledTimes(1);
   });
 
   it('tolerates transient poll failures but surfaces an error after 3 consecutive failures', async () => {
+    const user = userEvent.setup();
     uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
     getLessonStatusMock.mockRejectedValue(new Error('network blip'));
 
     render(<UploadFlow />);
-    dropAFile();
+    await dropFileAndSelectTier(user);
 
     // 3 failures at a real 5s poll interval — this test genuinely waits ~10s of
     // wall-clock time for the 2nd and 3rd poll; kept real (no fake timers) because
