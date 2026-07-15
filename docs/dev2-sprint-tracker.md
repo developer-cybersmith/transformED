@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-15 (S1-09 Library Real Data Integration done, 5-agent reviewed, 8 patches applied — real `GET /api/content/lessons` wired, `LibraryView` rewritten around the real sparse data shape, a real server-side auth gap in `lib/api.ts` fixed with a new `lib/api.server.ts` (hardened to use `getUser()` not just `getSession()`), plus a re-entrancy/dedup fix on "Load more" and keyboard-accessible cards. Branch `sprint1/s1-9-library-real-api`, feeding feature master `feature-real-data-integration` (S1-10 Dashboard is next, same master). Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
+| **Last Updated** | 2026-07-15 (S1-10 Dashboard Real Data Integration done — Recent Lessons now wired to S1-09's real `lessonsService`, `dashboard/page.tsx` given a `Suspense` loading state matching `library/page.tsx`'s pattern, non-blocking error handling if the recent-lessons fetch fails. Continue-Learning/Learning Pulse stay mocked per explicit decision. Branch `sprint1/s1-10-dashboard-real-api` off `feature-real-data-integration`. Both of the two tasks the user asked to wire this session — S1-09 Library and S1-10 Dashboard — are now done. Previous update, same day: S1-09 Library Real Data Integration done, 5-agent reviewed, 8 patches applied — real `GET /api/content/lessons` wired, `LibraryView` rewritten around the real sparse data shape, a real server-side auth gap in `lib/api.ts` fixed with a new `lib/api.server.ts` (hardened to use `getUser()` not just `getSession()`), plus a re-entrancy/dedup fix on "Load more" and keyboard-accessible cards. Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (12/14) · Sprint 2 IN PROGRESS (5/6) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (13/14) · Sprint 2 IN PROGRESS (5/6) |
 
 ---
 
@@ -23,12 +23,12 @@
 | Sprint | Period | Total Tasks | Done | Partial | Not Started |
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 14 | **12** | 0 | **2** |
+| Sprint 1 | Weeks 2–3 | 14 | **13** | 0 | **1** |
 | Sprint 2 | Weeks 4–5 | 6 | **5** | 0 | **1** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **51** | **25** | **0** | **26** |
+| **Total** | **10 weeks** | **51** | **26** | **0** | **25** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -911,21 +911,22 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 
 ---
 
-### S1-10 — Dashboard Real Data Integration
+### S1-10 — Dashboard Real Data Integration — ✅ 2026-07-15
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
-**Files to modify:** `src/services/dashboard.service.ts`
+**Status:** ✅ DONE <!-- completed: 2026-07-15 --> — implemented via BMAD story `docs/stories/1-10-dashboard-real-data-integration.md` on branch `sprint1/s1-10-dashboard-real-api` (branched from `feature-real-data-integration`, which has S1-09 merged in)  
+**Files modified:** `src/services/dashboard.service.ts` (real `recentLessons` fetch via S1-09's `lessonsService`, new `recentLessonsError` field), `src/components/dashboard/sections/RecentLessons.tsx` (full rewrite for the real sparse shape), `src/app/(dashboard)/dashboard/page.tsx` (extracted `DashboardDataFetcher`, added `Suspense`, matching `library/page.tsx`'s pattern)
 
-Replace mock data with real API calls:
-- `GET /api/lessons?limit=3&sort=updated_at` for recent lessons
-- `GET /api/sessions/latest` for continue-learning card
-- Remove hardcoded streak / mastery data until Session Reports API is ready
+**Original sketch superseded, same reason as S1-09/S1-08:** assumed `GET /api/lessons?limit=3&sort=updated_at` and `GET /api/sessions/latest` — neither exists. `recentLessons` reuses S1-09's real `lessonsService.listLessons({limit: 5})`. **Continue-Learning and Learning Pulse stay mocked, per explicit decision this session** — confirmed via S1-09's backend research that no "latest session" endpoint or streak/mastery data exists anywhere in `apps/api`.
+
+**Non-blocking failure design:** a `recentLessons` fetch failure is caught, logged, and surfaced as an inline error on just the Recent Lessons widget (`recentLessonsError`) — the top-level response still resolves success, so Hero/Continue-Learning/Quick Actions/Learning Pulse (all separately mocked) keep rendering regardless.
 
 **Acceptance criteria:**
-- [ ] Recent lessons reflect actual user data
-- [ ] Continue-learning card shows most recent in-progress lesson (or empty state)
-- [ ] Loading skeletons shown during fetch
-- [ ] Error state shown on API failure (non-blocking — rest of dashboard still loads)
+- [x] Recent lessons reflect actual user data (`GET /api/content/lessons`, limit 5, via S1-09's `lessonsService`)
+- [x] Continue-learning card — descoped, stays mocked (no backend endpoint exists; see above)
+- [x] Loading state shown during fetch — `Suspense` + fallback, reusing `library/page.tsx`'s existing pattern
+- [x] Error state shown on Recent Lessons fetch failure, non-blocking — rest of the dashboard still loads
+
+10 new/updated tests across 3 files. Full `apps/web` suite: 356/356 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings. `HeroSection.tsx`/`ContinueLearningCard.tsx`/`QuickActions.tsx`/`LearningPulse.tsx` and all of S1-09's own files confirmed untouched.
 
 ---
 

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { HeroSection } from "@/components/dashboard/sections/HeroSection";
 import { ContinueLearningCard } from "@/components/dashboard/sections/ContinueLearningCard";
 import { QuickActions } from "@/components/dashboard/sections/QuickActions";
@@ -5,7 +6,19 @@ import { LearningPulse } from "@/components/dashboard/sections/LearningPulse";
 import { RecentLessons } from "@/components/dashboard/sections/RecentLessons";
 import { dashboardService } from "@/services/dashboard.service";
 
-export default async function DashboardPage() {
+export default function DashboardPage() {
+    return (
+        <Suspense fallback={
+            <div className="w-full flex-1 flex items-center justify-center text-neutral-400">
+                <div className="animate-pulse">Loading intelligence...</div>
+            </div>
+        }>
+            <DashboardDataFetcher />
+        </Suspense>
+    );
+}
+
+export async function DashboardDataFetcher() {
     const response = await dashboardService.getDashboard();
     const dashboardData = response.data;
 
@@ -42,7 +55,10 @@ export default async function DashboardPage() {
 
             {/* 5. Horizontal Modules Slider */}
             <div className="mt-4">
-                <RecentLessons lessons={dashboardData?.recentLessons || []} />
+                <RecentLessons
+                    lessons={dashboardData?.recentLessons || []}
+                    error={dashboardData?.recentLessonsError ?? null}
+                />
             </div>
         </div>
     );

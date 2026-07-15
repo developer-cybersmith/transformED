@@ -4,7 +4,7 @@ baseline_commit: "9d80ba0ac1d88126848062481fdc0cb2a1f521c1"
 
 # Story 1-10: Dashboard Real Data Integration
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -59,20 +59,20 @@ This is Sprint 1 task **S1-10** from `docs/dev2-sprint-tracker.md` — the secon
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Extend `DashboardData` + real fetch in `dashboard.service.ts` (AC: #1, #2)
-  - [ ] 1.1 RED — `getDashboard()` success/failure paths against the new shape
-  - [ ] 1.2 Implement (GREEN)
-- [ ] Task 2: Rewrite `RecentLessons.tsx` for real/sparse data + error prop (AC: #3)
-  - [ ] 2.1 RED — card rendering, click behavior, error state, empty state
-  - [ ] 2.2 Implement (GREEN)
-- [ ] Task 3: Wire `dashboard/page.tsx` — pass `recentLessonsError`, extract `DashboardDataFetcher` + `Suspense` (AC: #4, #5)
-  - [ ] 3.1 RED — new `dashboard/page.test.tsx` covering both cases
-  - [ ] 3.2 Implement (GREEN)
-- [ ] Task 4: Full verification (AC: #6, #7)
-  - [ ] 4.1 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean
-  - [ ] 4.2 Confirm `HeroSection.tsx`/`ContinueLearningCard.tsx`/`QuickActions.tsx`/`LearningPulse.tsx`/S1-09's own files are untouched (`git diff --stat`)
-- [ ] Task 5: Tracker update
-  - [ ] 5.1 Mark S1-10 in `docs/dev2-sprint-tracker.md` as done
+- [x] Task 1: Extend `DashboardData` + real fetch in `dashboard.service.ts` (AC: #1, #2)
+  - [x] 1.1 RED — `getDashboard()` success/failure paths against the new shape
+  - [x] 1.2 Implement (GREEN)
+- [x] Task 2: Rewrite `RecentLessons.tsx` for real/sparse data + error prop (AC: #3)
+  - [x] 2.1 RED — card rendering, click behavior, error state, empty state
+  - [x] 2.2 Implement (GREEN)
+- [x] Task 3: Wire `dashboard/page.tsx` — pass `recentLessonsError`, extract `DashboardDataFetcher` + `Suspense` (AC: #4, #5)
+  - [x] 3.1 RED — new `dashboard/page.test.tsx` covering both cases
+  - [x] 3.2 Implement (GREEN)
+- [x] Task 4: Full verification (AC: #6, #7)
+  - [x] 4.1 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean
+  - [x] 4.2 Confirm `HeroSection.tsx`/`ContinueLearningCard.tsx`/`QuickActions.tsx`/`LearningPulse.tsx`/S1-09's own files are untouched (`git diff --stat`)
+- [x] Task 5: Tracker update
+  - [x] 5.1 Mark S1-10 in `docs/dev2-sprint-tracker.md` as done
 
 ## Dev Notes
 
@@ -112,20 +112,36 @@ Purely additive/localized: one service file, one component, one page file, plus 
 
 ### Agent Model Used
 
-_To be filled in during implementation._
+Claude Sonnet 5 (claude-sonnet-5)
 
 ### Debug Log References
 
-_To be filled in during implementation._
+- Task 1 RED confirmed: both new `dashboard.service.test.ts` tests failed against the old mock-only implementation (wrong shape / no `listLessons` call); GREEN after implementing (2/2 passing).
+- Task 2 RED confirmed: 4 of 6 `RecentLessons.test.tsx` tests failed against the old mock-shaped component (`Failed` badge text, inline error text, title-fallback, Ready-click-navigates); the empty-state and "View All" tests happened to still pass trivially against the old component. GREEN after the rewrite (6/6 passing).
+- Task 3 RED confirmed: new `dashboard/page.test.tsx` failed with `DashboardDataFetcher is not a function` before the export existed (`page.tsx` had no named export, only the default). GREEN after extracting `DashboardDataFetcher` + wrapping in `Suspense` (2/2 passing).
 
 ### Completion Notes List
 
-_To be filled in during implementation._
+- All 5 tasks completed; every AC satisfied.
+- `continueLearning`/`learningPulse` remain fully mocked and their computation is byte-for-byte unchanged — confirmed via `git diff --stat` that `HeroSection.tsx`, `ContinueLearningCard.tsx`, `QuickActions.tsx`, `LearningPulse.tsx`, and all of S1-09's own files (`lessons.service.ts`, `api.server.ts`, `upload.service.ts`, `library.service.ts`, `LibraryView.tsx`) show zero diff against this branch's base.
+- `getDashboard()`'s non-blocking design: a `recentLessons` fetch failure is caught, logged, and turned into `recentLessonsError` — but the top-level `ApiResponse` still resolves `success: true`, so the rest of the dashboard (which comes from a separate, already-resolved mock fetch) renders regardless. This was a deliberate response-shape decision, not an accidental catch-and-continue — a top-level `success: false` would have blanked the entire page via `page.tsx`'s existing failure branch, which is the opposite of "non-blocking."
+- Reused `RecentLessons.tsx`'s Ready-card interaction pattern (status badge, title fallback, "Created X ago", keyboard-accessible `role="button"`/`tabIndex`/`onKeyDown` for Ready cards) directly from S1-09's `LibraryCard`, rather than inventing a second pattern for the same underlying data shape.
+- `dashboard/page.tsx`'s `Suspense` + `*DataFetcher` split mirrors `library/page.tsx`'s existing pattern exactly, satisfying the original tracker AC's "loading skeleton" requirement without introducing a new convention.
 
 ### File List
 
-_To be filled in during implementation._
+**Files CREATED:**
+- `apps/web/src/__tests__/services/dashboard.service.test.ts`
+- `apps/web/src/__tests__/app/dashboard/page.test.tsx`
+
+**Files MODIFIED:**
+- `apps/web/src/services/dashboard.service.ts` — real `recentLessons` fetch via `lessonsService.listLessons({limit: 5})`, new `recentLessonsError` field, `continueLearning`/`learningPulse` computation unchanged
+- `apps/web/src/components/dashboard/sections/RecentLessons.tsx` — full rewrite for the real, sparse `LessonStatusResponse` shape; new `error` prop
+- `apps/web/src/app/(dashboard)/dashboard/page.tsx` — extracted `DashboardDataFetcher`, wrapped in `Suspense` (mirrors `library/page.tsx`), passes `recentLessonsError` through
+- `apps/web/src/__tests__/components/dashboard/sections/RecentLessons.test.tsx` — fully rewritten for the new component
+- `docs/dev2-sprint-tracker.md` — S1-10 marked done
 
 ### Change Log
 
 - 2026-07-15: Story created — Sprint 1 remainder task S1-10, branch `sprint1/s1-10-dashboard-real-api` off `feature-real-data-integration` (which has S1-09 merged in).
+- 2026-07-15: All 5 tasks implemented in RED→GREEN order; 10 new/updated tests across 3 files; full `apps/web` suite 356/356 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings); confirmed all "do not touch" files untouched; story marked `review`.
