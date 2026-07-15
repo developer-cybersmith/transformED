@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 8 | 3 | 9 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 9 | 3 | 8 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **31** | **4** | **23** |
+| **Totals** | | **58** | **32** | **4** | **22** |
 
 ---
 
@@ -46,7 +46,7 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7). Still stubs: `slide_generator_node` (S2-8) onward. |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8). Still stubs: `tts_node` (S2-9) onward. |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
 | `apps/api/app/schemas/__init__.py` | **EMPTY — awaiting `lesson.py` (S0-12)** |
 | `apps/api/app/workers/main.py` | ARQ `WorkerSettings` entry point |
@@ -76,7 +76,6 @@
 | `apps/api/app/modules/content/pipeline/nodes/jargon_extractor.py` | Jargon extraction — GPT-4o-mini *(S2-4)* |
 | `apps/api/app/modules/content/pipeline/nodes/intervention_messages.py` | Pre-generate 3×3 interventions — GPT-4o-mini *(S2-5)* |
 | `apps/api/app/modules/content/pipeline/nodes/narration_generator.py` | Narration scripts — GPT-4o-mini *(S2-6)* |
-| `apps/api/app/modules/content/pipeline/nodes/slide_generator.py` | Slide generation — GPT-4o *(S2-8)* |
 | `apps/api/app/modules/content/pipeline/nodes/tts_node.py` | TTS: Sarvam → Azure → Browser *(S2-9)* |
 | `apps/api/app/modules/content/pipeline/nodes/image_generator.py` | Images: GPT Image 1 Mini → Imagen 4 Fast → text-only *(S2-10)* |
 | `apps/api/app/modules/content/pipeline/nodes/package_builder.py` | Assemble + write JSONB LessonPackage *(S2-11)* |
@@ -580,13 +579,15 @@ Every node must:
   - Tier-aware slide-count targets (Epic 1's node-11 spec) are explicitly NOT part of this task — `state` has no `tier` key post-revert (Story 2-2); deferred to S2-LM4 once S2-LM1's 4-dev sign-off unblocks tier plumbing again.
   - **AC:** Input confirmed as summaries ✓ (tested); output passes `LessonMetadata` validation ✗ (deferred to S2-11); Langfuse span records `token_cost_usd` ✗ (pre-existing provider-wide gap) — see `docs/stories/2-6-lesson-planner-node.md` for the full story, including a 3-layer adversarial code review (7 patches applied, 4 pre-existing risks deferred, 297/297 tests passing)
 
-- [ ] **S2-8 `slide_generator` node**
-  - `apps/api/app/modules/content/pipeline/nodes/slide_generator.py`
-  - Model: `settings.llm_slide_generator` (`LLM_SLIDE_GENERATOR`)
-  - Phase 2 — sequential after S2-7
-  - Input: lesson outline from `lesson_planner`; output: list of `Slide` per segment
-  - Each `Slide`: `slide_id`, `title`, `bullets`, `image_url` (nullable), `fallback_image_url` (nullable)
-  - **AC:** Output validates against `app.schemas.Slide`; at least 1 slide per segment; `image_url` nullable (images filled by S2-10)
+- [x] **S2-8 `slide_generator` node** — ✓ 2026-07-15
+  - `apps/api/app/modules/content/pipeline/graph.py::slide_generator_node` (NOT a separate `nodes/slide_generator.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale)
+  - Model: `settings.llm_slide_generator` (`LLM_SLIDE_GENERATOR`) — ONE structured-output call for the whole lesson plan (not one call per segment), same cost-conscious design `lesson_planner_node` (S2-7) uses
+  - Phase 2 — sequential after S2-7, consumes `state["lesson_plan"]["segments"]` only (never raw summaries/sections/chapter text — enforced structurally and by test)
+  - Output: nested `{segment_id, data}` list (mirrors `quiz_generator_node`'s established pattern, Story 2-1) — `data` is `Slide.model_validate()`-checked inside this node itself, not deferred to `package_builder`
+  - Degrade-not-fabricate guards (segment count/ID match, no duplicates, 1-8 slides/segment, non-blank titles, non-blank bullets — including per-bullet blank checks and malformed-entry guards added in the 2026-07-15 code review round) all reviewed via a real 3-layer `/bmad-code-review` (orchestrated via multi-agent Workflow) and patched
+  - Idempotency checkpoint (Phase-A style, same as `lesson_planner_node`)
+  - Tier-aware slide-count targets (Epic 1's node-12 spec) explicitly NOT part of this task — fixed 1-8 slides/segment band, same reasoning as S2-7; deferred to S2-LM4 once S2-LM1's 4-dev sign-off unblocks tier plumbing again
+  - **AC:** Output validates against `app.schemas.Slide` ✓ (tested); at least 1 (and at most 8) slide per segment ✓ (tested); `image_url`/`fallback_image_url` both nullable, always `None` at this node (images filled by S2-10) ✓ — see `docs/stories/2-7-slide-generator-node.md` for the full story, including the 3-layer adversarial code review (5 patches applied, 3 pre-existing risks deferred, 314/314 tests passing) ✅
 
 - [ ] **S2-9 `tts_node` — Sarvam AI Bulbul v2 + Azure TTS + Browser fallback**
   - `apps/api/app/modules/content/pipeline/nodes/tts_node.py`

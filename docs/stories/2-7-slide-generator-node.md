@@ -4,7 +4,7 @@ baseline_commit: 68b23fe0da4fa13fc750284b0c30d841e918d3e9
 
 # Story 2.7: `slide_generator` Node — Real Structured Generation (S2-8)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -14,7 +14,7 @@ so that `tts_node`/`image_generator`/`package_builder` (S2-9/S2-10/S2-11, separa
 
 This story implements the REAL generation logic for `slide_generator_node` — tracker task **S2-8** in `docs/dev1-tracker.md`, Epic 1's Node 12. The node function and its place in the graph already exist as a stub (`graph.add_edge("lesson_planner", "slide_generator")` is already wired) — this story replaces the stub body only.
 
-**Scope boundary — tier-aware slide counts (S2-LM4) are NOT part of this story**, for the identical reason Story 2-6 excluded them: `state` has no `tier` key post-revert (see `docs/stories/2-2-learner-mode-infra.md`'s Change Log). This node targets a single tier-agnostic slide-count heuristic (2–6 slides per segment, LLM's judgment within that band) rather than any tier-conditioned range. S2-LM4 becomes a follow-up story that amends both this node and `lesson_planner` once S2-LM1's sign-off unblocks tier plumbing again.
+**Scope boundary — tier-aware slide counts (S2-LM4) are NOT part of this story**, for the identical reason Story 2-6 excluded them: `state` has no `tier` key post-revert (see `docs/stories/2-2-learner-mode-infra.md`'s Change Log). This node targets a single tier-agnostic slide-count heuristic (1–8 slides per segment, LLM's judgment within that band) rather than any tier-conditioned range. S2-LM4 becomes a follow-up story that amends both this node and `lesson_planner` once S2-LM1's sign-off unblocks tier plumbing again.
 
 **Design decision — ONE structured-output call for the whole plan, not one call per segment.** `lesson_planner_node` (Story 2-6) made exactly this choice for the same reason: `llm_slide_generator` is a premium model (`gpt-4o` by default, same cost tier as `llm_lesson_planner`), and Phase 2 is already sequential (not `Send()`-fanned) — N separate per-segment calls would N-x the cost of this node for no benefit a single call asking for "one slide-set per segment_id" doesn't already achieve. This mirrors `lesson_planner_node`'s exact "1:1, one call" pattern from the same story, just one level deeper (segments → slides instead of sections → segments).
 
@@ -27,47 +27,35 @@ This story implements the REAL generation logic for `slide_generator_node` — t
 5. **Output shape is internal (nested `{segment_id, data}`, not a bare `Slide` list)** — `state["slides"]` becomes `list[{"segment_id": str, "data": {slide_id, title, bullets, image_url: None, fallback_image_url: None}}]`, mirroring `quiz_generator_node`'s/`jargon_extractor_node`'s established nested pattern (Story 2-1) for the identical reason: `Slide` is frozen with `extra="forbid"` and has no `segment_id` field, but `package_builder` (S2-11) needs to know which segment each slide belongs to once results are in a flat list. `slide_id` is generated deterministically as `f"slide_{segment_id}_{index}"` (not LLM-supplied — nothing about slide identity needs LLM judgment, and a deterministic ID removes an entire class of duplicate/malformed-ID guard this node would otherwise need).
 6. **Model call follows the established provider pattern exactly** — `OpenAILLMProvider(lesson_id).complete_structured(messages, settings.llm_slide_generator, _SlideDeckLLM)`. Cost accumulation, cost-ceiling enforcement, circuit-breaker check, Langfuse tracing, and retry are ALL already handled transparently inside `complete_structured()` (Story 2-6 Dev Notes — same provider, same guarantee) — this node must NOT duplicate any of that logic.
 7. **Degrade-not-fabricate guards, matching Story 2-6's established house style**: segment-set mismatch (wrong count, unknown segment_id, duplicate segment_id), any segment with zero or >8 slides, any blank slide title, or any slide with zero bullets → reject the whole response (raise, do not checkpoint, let ARQ retry) — no per-segment redundancy exists here either, same reasoning as Story 2-6 AC-6.
-8. **Idempotency checkpoint, Phase-A style (same as Story 2-6, not Story 2-1b's Phase-1 pattern)** — read `lesson_jobs.node_outputs`; `"slide_generator"` key present → return cached, skip the LLM call. On success, plain client-side read-modify-write (single sequential dispatch, no concurrency to guard against — identical reasoning to Story 2-6 AC-5).
+8. **Idempotency checkpoint, Phase-A style (same as Story 2-6, not Story 2-1b's Phase-1 pattern)** — read `lesson_jobs.node_outputs`; `"slide_generator"` key present → return cached, skip the LLM call. On success, plain client-side read-modify-write (single sequential dispatch, no concurrency to guard against — identical reasoning to Story 2-6 AC-5). **Caveat (added 2026-07-15 review):** this closes re-billing for a retry that starts strictly AFTER a prior attempt's checkpoint write succeeded — a crash/timeout between a successful (billed) LLM call and that checkpoint write still re-bills on the next retry (the exact same accepted tradeoff `lesson_planner_node`/`embed_node` already carry). Not a "no re-billing, full stop" guarantee.
 9. All existing tests continue to pass unmodified.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Internal structured-output models (AC: 3, 5, 6)
-  - [ ] 1.1 In `graph.py`, immediately before `slide_generator_node`, add:
-        ```python
-        class _SlideLLM(BaseModel):
-            title: str
-            bullets: list[str]
+- [x] Task 1: Internal structured-output models (AC: 3, 5, 6)
+  - [x] 1.1 Added `_SlideLLM`, `_SegmentSlidesLLM`, `_SlideDeckLLM` immediately before `slide_generator_node`.
+  - [x] 1.2 All loose (no `extra="forbid"`, no length constraints), as specified.
 
-        class _SegmentSlidesLLM(BaseModel):
-            segment_id: str
-            slides: list[_SlideLLM]
+- [x] Task 2: Replace the `slide_generator_node` stub body (AC: 1, 2, 4, 6, 7, 8)
+  - [x] 2.1 Idempotency checkpoint read added, mirroring `lesson_planner_node` exactly.
+  - [x] 2.2 Reads `state["lesson_plan"]["segments"]` only; never touches `segment_summaries`/`sections`/`chapter_content`.
+  - [x] 2.3 Empty `plan_segments` → `raise RuntimeError` before the LLM call.
+  - [x] 2.4 Prompt built per spec: task + echo-segment_id instruction + `_UNTRUSTED_CONTENT_GUARD`; user message is the plan segments' `segment_id`/`title`/`summary` only.
+  - [x] 2.5 `complete_structured(messages, settings.llm_slide_generator, _SlideDeckLLM)`; `response is None` → raise, no checkpoint.
+  - [x] 2.6 All guards implemented: count mismatch, unknown segment_id, duplicate segment_id, `1 <= len(slides) <= 8` per segment, blank slide title, empty `bullets`.
+  - [x] 2.7 Assembly iterates `plan_segments` (input order); `Slide.model_validate(...)` called on every slide before appending.
+  - [x] 2.8 Checkpoint write added, matching AC-8 exactly.
+  - [x] 2.9 Returns `{**state, "slides": slides_out, "progress_pct": 48.0}`.
+  - [x] 2.10 Stub `TODO` comment removed; `PipelineState.slides` field comment corrected to the nested `{segment_id, data: {...}}` shape.
 
-        class _SlideDeckLLM(BaseModel):
-            segments: list[_SegmentSlidesLLM]
-        ```
-  - [ ] 1.2 Deliberately loose (no `extra="forbid"`, no length constraints on `slides`/`bullets`) — this node's own guards (Task 2) run before any strict validation, same rationale as `_LessonPlanLLM`/`_QuizQuestionLLM`.
-
-- [ ] Task 2: Replace the `slide_generator_node` stub body (AC: 1, 2, 4, 6, 7, 8)
-  - [ ] 2.1 Idempotency checkpoint read at function top (AC-8), identical structure to `lesson_planner_node`'s (`graph.py`, added in Story 2-6) — read `node_outputs`, cache hit → `return {**state, "slides": cached, "progress_pct": 48.0}`.
-  - [ ] 2.2 Read `lesson_plan = state.get("lesson_plan") or {}` and `plan_segments = lesson_plan.get("segments", [])` (AC-1) — do NOT read `state["segment_summaries"]`/`state["sections"]`/`state["chapter_content"]` anywhere in this function.
-  - [ ] 2.3 Guard: if `plan_segments` is empty, raise `RuntimeError` before calling the LLM (mirrors Story 2-6's empty-`segment_summaries` guard, applied one level deeper — a lesson_plan with zero segments is itself a bug from the upstream node, not something to paper over here).
-  - [ ] 2.4 Build the prompt: system message states the task (produce 1-8 slides per lesson-plan segment, each with a title and bullet points), instructs "return exactly one slide-set per segment provided, echoing back each segment's segment_id UNCHANGED", includes `_UNTRUSTED_CONTENT_GUARD` (segment titles/summaries are themselves LLM-derived from untrusted section content, same guard class as every other node's prompt). User message: the plan segments' `segment_id`/`title`/`summary` triples.
-  - [ ] 2.5 Call `OpenAILLMProvider(lesson_id).complete_structured(messages, settings.llm_slide_generator, _SlideDeckLLM)` (AC-6). `response is None` → `raise RuntimeError(...)`, no checkpoint (AC-7).
-  - [ ] 2.6 Validate (AC-2, AC-4, AC-7): segment count/ID match (count mismatch, unknown segment_id, duplicate segment_id — identical guard family to Story 2-6's, applied to `response.segments` against `plan_segments`); each segment has `1 <= len(slides) <= 8`; no blank slide title; no slide with an empty `bullets` list.
-  - [ ] 2.7 Assemble output (AC-3, AC-5): for each plan segment (iterating INPUT order, not LLM response order — same "input order wins" discipline as Story 2-6's own review-round patch), build `slide_id = f"slide_{segment_id}_{index}"`, then `Slide.model_validate({"slide_id": ..., "title": ..., "bullets": ..., "image_url": None, "fallback_image_url": None})` — let a `ValidationError` here propagate as a clear signal this node's own assembly is wrong, don't swallow it.
-  - [ ] 2.8 Write the checkpoint (AC-8): `supabase.table("lesson_jobs").update({"last_node": "slide_generator", "node_outputs": {**node_outputs, "slide_generator": slides_out}}).eq("lesson_id", lesson_id).execute()`.
-  - [ ] 2.9 Return `{**state, "slides": slides_out, "progress_pct": 48.0}` (unchanged progress value from the stub).
-  - [ ] 2.10 Remove the stub's `# TODO: ...` comment. Correct the stale `PipelineState.slides` field comment (`graph.py` — currently `# [{id, title, body, speaker_notes, layout}]`, which matches neither the frozen `Slide` schema nor this story's nested output shape) to `# [{segment_id, data: {slide_id, title, bullets, image_url, fallback_image_url}}]`.
-
-- [ ] Task 3: Tests (AC: all)
-  - [ ] 3.1 Happy path: N plan segments in → N-entry `slides` list out, each entry's `data` validates against `Slide`, `slide_id` deterministic (`slide_{segment_id}_{index}` pattern), `image_url`/`fallback_image_url` both `None`.
-  - [ ] 3.2 AC-1 regression guard: assert the prompt never contains `state["segment_summaries"]`/`state["sections"]`/`state["chapter_content"]` text, even when all three are present in state alongside `lesson_plan`.
-  - [ ] 3.3 AC-2/AC-7 guards: segment-set mismatch (count/unknown-id/duplicate-id) → rejected; a segment with 0 slides → rejected; a segment with >8 slides → rejected; a blank slide title → rejected; a slide with empty `bullets` → rejected. Mirror Story 2-6's test structure (one test per guard).
-  - [ ] 3.4 AC-8 idempotency: pre-existing `node_outputs["slide_generator"]` checkpoint → cache hit, zero calls to `complete_structured`.
-  - [ ] 3.5 AC-6: confirm `settings.llm_slide_generator` (not `llm_lesson_planner`/`llm_mini`) is the model passed to `complete_structured`.
-  - [ ] 3.6 Empty `lesson_plan["segments"]` → rejected before any LLM call (AC per Task 2.3).
-  - [ ] 3.7 Full regression: `pytest tests/unit/` — 297/297 (current baseline) still passes; if any pre-existing test needs updating for the same reason Story 2-6 had to update one (a test calling this node with zero mocking), update it the same documented way — check `test_phase1_economy_nodes.py`'s `TestAC0GraphOrdering` class for a `slide_generator`-adjacent test before assuming none exists.
+- [x] Task 3: Tests (AC: all) — new file `apps/api/tests/unit/test_slide_generator_node.py`, 15 tests
+  - [x] 3.1 `test_happy_path_produces_nested_slide_entries_matching_segments` — note: `slides` is a FLAT per-slide list (not per-segment), so a fixture with one segment carrying 2 slides produces 4 total entries, not 3 — this was a test-authoring bug caught immediately when writing the test (fixed before it ever reached the implementation), not an implementation defect.
+  - [x] 3.2 `test_prompt_never_includes_raw_summaries_or_sections`.
+  - [x] 3.3 One test per guard: `test_mismatched_segment_count_is_rejected_not_checkpointed`, `test_unknown_segment_id_is_rejected`, `test_duplicate_segment_id_is_rejected` (not originally enumerated in 3.3's text but the same guard family, mirrors Story 2-6's own added duplicate-ID guard), `test_zero_slides_for_a_segment_is_rejected`, `test_too_many_slides_for_a_segment_is_rejected`, `test_blank_slide_title_is_rejected`, `test_empty_bullets_is_rejected`, plus `test_refusal_raises_and_does_not_checkpoint` for the `response is None` path.
+  - [x] 3.4 `test_idempotency_cache_hit_skips_llm_call`, `test_successful_run_writes_checkpoint`.
+  - [x] 3.5 `test_model_used_is_settings_llm_slide_generator`.
+  - [x] 3.6 `test_empty_lesson_plan_segments_rejected_before_llm_call`.
+  - [x] 3.7 Full regression: 312/312 passes. **No pre-existing test needed updating this time** — `test_phase1_economy_nodes.py`'s `TestAC0GraphOrdering` class fully mocks `slide_generator_node` via `patch.object` in its barrier-stub list, so it was never at risk (unlike Story 2-6's situation with `lesson_planner_node`). Also added `test_segment_order_follows_input_not_llm_response_order`, not originally enumerated but directly ported from Story 2-6's own review-round patch — proactively applied here rather than caught by a separate review round.
 
 ## Dev Notes
 
@@ -154,6 +142,40 @@ claude-sonnet-5
 
 ### Debug Log References
 
+- Red-green-refactor verified: `test_slide_generator_node.py` written first against the still-stub `slide_generator_node` — confirmed 15/15 failures, then implementation applied — 14/15 green on first pass, 1 failure (`test_happy_path_produces_nested_slide_entries_matching_segments`) traced to a test-authoring bug (asserted `len(slides) == 3` treating the flat per-slide output list as per-segment, when the fixture's `sec_1` carries 2 slides making the real correct total 4) — fixed the test assertion, not the implementation, then 15/15 green.
+- Full-suite run after implementation: 312/312 pass, zero pre-existing tests needed updating (unlike Story 2-6, where `test_phase1_economy_nodes.py`'s AC-0 test called the node with zero mocking — the equivalent check here, `TestAC0GraphOrdering`, already fully mocks `slide_generator_node` via `patch.object` in its barrier-stub list, so it was never exercising the real function body).
+
 ### Completion Notes List
 
+- All 3 tasks / 19 subtasks complete (corrected 2026-07-15 review — Completion Notes originally miscounted this as 13; actual count is 2 in Task 1 + 10 in Task 2 + 7 in Task 3 = 19). 314/314 unit tests pass after the code-review patch round (0 regressions; 17 tests total in `test_slide_generator_node.py`, up from 15 after 2 more were added for the review-round patches).
+- Applied Story 2-6's own review-round lesson proactively rather than waiting for this story's own review to catch it: assembly iterates `plan_segments` (input order), not `response.segments` (LLM order) — `test_segment_order_follows_input_not_llm_response_order` covers this directly, ported near-verbatim from Story 2-6's post-review test of the same name.
+- Design decision confirmed as planned: ONE `complete_structured()` call for the whole plan (not one call per segment) — same cost-conscious pattern `lesson_planner_node` established, for the identical reason (premium model, sequential dispatch).
+- Scope boundary held exactly as planned: no `tier` parameter, no `state.get("tier")` read, fixed 1-8 slides/segment band — no tier-conditioned range. S2-LM4 (blocked on S2-LM1's still-outstanding 4-developer sign-off) will amend both this node and `lesson_planner_node` once tier plumbing is safe to reintroduce.
+- AC-1 enforced both structurally (function never references `state["segment_summaries"]`/`state["sections"]`/`state["chapter_content"]`) and by `test_prompt_never_includes_raw_summaries_or_sections`, which plants all three in state alongside `lesson_plan` and asserts none of their content reaches the prompt.
+- Each assembled slide is validated via `Slide.model_validate(...)` inside this node itself (AC-3), not deferred to `package_builder` — a shape bug in this node's own assembly surfaces immediately as a `ValidationError`, not silently downstream.
+- `tts_node`/`image_generator`/`package_builder_node` (S2-9/S2-10/S2-11, the next nodes in the graph) were NOT touched — all remain today's stubs, correctly out of scope.
+
 ### File List
+
+- `apps/api/app/modules/content/pipeline/graph.py` (modified — `slide_generator_node` real implementation + 3 new internal Pydantic models + `PipelineState.slides` comment fix)
+- `apps/api/tests/unit/test_slide_generator_node.py` (new — 15 tests)
+
+## Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-07-15 | Story implemented (Tasks 1-3) via `bmad-dev-story`. `slide_generator_node` now makes a real `settings.llm_slide_generator` structured-output call (one call for the whole plan) with degrade-not-fabricate guards and a Phase-A-style idempotency checkpoint. 15 new tests, 0 pre-existing tests needed updating. 312/312 total passing. |
+| 2026-07-15 | 3-layer adversarial code review run via multi-agent Workflow orchestration — 0 decision-needed, 5 patch, 3 defer, 0 dismissed. All 5 patches applied same day: per-bullet blank check, malformed-segment guard, AC-8 wording caveat, "2-6"→"1-8" story-text fix, subtask-count correction. 2 new tests added for the code patches. 314/314 total passing. |
+
+### Review Findings (2026-07-15 — 3-layer adversarial review via multi-agent Workflow orchestration: Blind Hunter, Edge Case Hunter, Acceptance Auditor)
+
+- [x] [Review][Patch] **FIXED 2026-07-15 — Individual bullet strings were never checked for blank/whitespace-only content.** Guard now rejects if any bullet is blank/whitespace-only, not just an empty list (`if not slide.bullets or any(not b.strip() for b in slide.bullets):`). [`graph.py::slide_generator_node`] (Blind Hunter + Edge Case Hunter, independently)
+- [x] [Review][Patch] **FIXED 2026-07-15 — A malformed `lesson_plan["segments"]` entry raised a raw `KeyError`.** Added an upfront validation loop raising a contextual `RuntimeError` for any entry missing `segment_id`/`title`/`summary`, mirroring `lesson_planner_node`'s identical fix. [`graph.py::slide_generator_node`] (Blind Hunter + Edge Case Hunter + Acceptance Auditor — all three, independently)
+- [x] [Review][Patch] **FIXED 2026-07-15 — AC-8 didn't disclose the re-billing crash-window caveat.** Reworded AC-8 above with the same caveat Story 2-6 added to its AC-5. Documentation-only fix, no code change. [`docs/stories/2-7-slide-generator-node.md` AC-8] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-15 — Story narrative said "2–6 slides per segment" instead of the correct 1–8 band.** Corrected the Scope Boundary paragraph to match AC-4/the implementation. [`docs/stories/2-7-slide-generator-node.md`, Story section] (Acceptance Auditor)
+- [x] [Review][Patch] **FIXED 2026-07-15 — Dev Agent Record miscounted subtasks as 13 instead of 19.** Corrected in Completion Notes List. [`docs/stories/2-7-slide-generator-node.md`, Completion Notes List] (Acceptance Auditor)
+- [x] [Review][Defer] **No upper bound on bullet count or string length per slide** — a malformed/adversarial LLM response could return one slide with thousands of huge bullet strings, bloating the `lesson_jobs.node_outputs` JSONB column. Theoretical DoS/storage-bloat vector, same risk class as Story 2-6's deferred "no length bound on objectives/title/subject" finding — low severity given this endpoint sits behind the pipeline's own auth/rate-limit/cost-ceiling. [`graph.py::_SlideLLM`] (Blind Hunter) — deferred, same risk class as Story 2-6.
+- [x] [Review][Defer] **TOCTOU race: two concurrent executions of this node for the same `lesson_id` (e.g. an ARQ retry racing a straggler) would both cache-miss, both bill the premium model, and the last checkpoint write wins with no lock/version check.** Identical, already-accepted tradeoff `lesson_planner_node`/`embed_node`/`chunk_node`/`structure_node` all share (Phase A's whole checkpoint style) — closing it properly needs an atomic RPC merge or optimistic-locking check, larger scope than this story. [`graph.py::slide_generator_node`] (Blind Hunter + Edge Case Hunter, independently) — deferred, matches existing accepted Phase A risk (same as Story 2-6's identical deferred finding).
+- [x] [Review][Defer] **`.single().execute()` has no explicit not-found/multiple-rows exception handling.** Identical pattern already used unguarded by every other node in this file (`embed_node`, `chunk_node`, `structure_node`, `lesson_planner_node`) — not a regression specific to this diff. [`graph.py::slide_generator_node`] (Blind Hunter) — deferred, codebase-wide pre-existing pattern (same as Story 2-6's identical deferred finding).
+
+**Dismissed (0):** no findings were classified as noise this round — all three reviewers' findings were substantive (patch or defer).

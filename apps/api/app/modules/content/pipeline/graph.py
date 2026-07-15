@@ -96,7 +96,7 @@ class PipelineState(TypedDict, total=False):
     lesson_plan: dict[str, Any]  # {title, objectives: [], segments: [], total_duration_min}
 
     # Node 6: slide_generator
-    slides: list[dict[str, Any]]  # [{id, title, body, speaker_notes, layout}]
+    slides: list[dict[str, Any]]  # [{segment_id, data: {slide_id, title, bullets, image_url, fallback_image_url}}]
 
     # Node 7: summarise_segment
     # Annotated with operator.add: each Send() dispatch (one per section) returns
@@ -1080,18 +1080,194 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     return {**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}
 
 
+class _SlideLLM(BaseModel):
+    """Internal structured-output shape for one slide within a segment's
+    slide-set — deliberately loose (no extra="forbid", no length constraints)
+    so this node's own guards (AC-4/AC-7) run before any strict validation,
+    same rationale as _LessonPlanLLM/_QuizQuestionLLM."""
+
+    title: str
+    bullets: list[str]
+
+
+class _SegmentSlidesLLM(BaseModel):
+    """One lesson-plan segment's slide-set in the LLM response."""
+
+    segment_id: str
+    slides: list[_SlideLLM]
+
+
+class _SlideDeckLLM(BaseModel):
+    """Internal structured-output shape for slide_generator_node."""
+
+    segments: list[_SegmentSlidesLLM]
+
+
+_MAX_SLIDES_PER_SEGMENT = 8
+
+
 async def slide_generator_node(state: PipelineState) -> PipelineState:
-    """Node 6: Generate slide deck JSON from the lesson plan.
+    """Node 6 (Story 2-7/S2-8): generate a slide deck from Story 2-6's lesson
+    plan.
 
-    Uses llm_slide_generator model (gpt-4o by default).
+    Input is `state["lesson_plan"]["segments"]` ONLY — never
+    segment_summaries/sections/chapter_content (AC-1). One slide-set per
+    lesson-plan segment, 1:1 (AC-2) — no merge/split logic in this story.
+    Tier-agnostic: fixed 1-8 slides/segment band, no `state["tier"]` read
+    (see docs/stories/2-2-learner-mode-infra.md's Change Log) — tier-aware
+    slide counts are S2-LM4, a separate future story.
+
+    ONE structured-output call for the whole plan, not one call per segment —
+    same cost-conscious design lesson_planner_node uses, for the identical
+    reason (premium model, sequential dispatch, no benefit to N separate
+    calls). Idempotent via the same Phase-A checkpoint pattern.
     """
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] slide_generator_node: generating slides", lesson_id)
-    await _update_job_progress(lesson_id, 40.0, "slide_generator")
+    from app.config import get_settings
+    from app.core.db import get_supabase
+    from app.providers.llm.openai import OpenAILLMProvider
+    from app.schemas.lesson import Slide
 
-    # TODO: OpenAILLMProvider(lesson_id).complete_structured(messages, model, SlideDeck)
-    slides: list[dict[str, Any]] = []
-    return {**state, "slides": slides, "progress_pct": 48.0}
+    lesson_id = state["lesson_id"]
+    lesson_plan = state.get("lesson_plan") or {}
+    plan_segments = lesson_plan.get("segments", [])
+    logger.info(
+        "[%s] slide_generator_node: generating slides for %d lesson-plan segments",
+        lesson_id,
+        len(plan_segments),
+    )
+
+    if not plan_segments:
+        raise RuntimeError(f"lesson_id={lesson_id}: slide_generator received zero lesson_plan segments")
+
+    # 2026-07-15 review finding (Blind Hunter + Edge Case Hunter + Acceptance
+    # Auditor, all three independently): a malformed lesson_plan segment
+    # previously raised a raw, context-free KeyError — mirrors the identical
+    # fix already applied to lesson_planner_node's own input validation.
+    for s in plan_segments:
+        if "segment_id" not in s or "title" not in s or "summary" not in s:
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: malformed lesson_plan segment missing "
+                f"segment_id/title/summary: {s!r}"
+            )
+
+    supabase = get_supabase()
+
+    # ── Idempotency: return cached output if this node already completed ──────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+
+    if "slide_generator" in node_outputs:
+        cached = node_outputs["slide_generator"]
+        logger.info("[%s] slide_generator_node: cache hit, skipping LLM call", lesson_id)
+        await _update_job_progress(lesson_id, 48.0, "slide_generator")
+        return {**state, "slides": cached, "progress_pct": 48.0}
+
+    settings = get_settings()
+    provider = OpenAILLMProvider(lesson_id)
+
+    segments_text = "\n".join(
+        f"- segment_id={s['segment_id']}: {s['title']} — {s['summary']}" for s in plan_segments
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Produce a slide deck from the lesson plan segments below. "
+                "For each segment, return 1 to 8 slides, each with a short "
+                "title and a list of bullet points. Return EXACTLY one "
+                "slide-set per segment provided, echoing back each segment's "
+                "segment_id UNCHANGED — do not invent, merge, split, omit, "
+                "or reorder segment_ids."
+                + _UNTRUSTED_CONTENT_GUARD
+            ),
+        },
+        {"role": "user", "content": segments_text},
+    ]
+
+    response = await provider.complete_structured(messages, settings.llm_slide_generator, _SlideDeckLLM)
+    if response is None:
+        logger.warning("[%s] slide_generator_node: LLM returned no parsed response", lesson_id)
+        raise RuntimeError(f"lesson_id={lesson_id}: slide_generator received no parsed LLM response")
+
+    # ── AC-7 degrade-not-fabricate guards — no per-segment redundancy exists
+    # for this premium node, so a wrong response is rejected wholesale. ───────
+    input_ids = [s["segment_id"] for s in plan_segments]
+    input_id_set = set(input_ids)
+    response_ids = [seg.segment_id for seg in response.segments]
+
+    if len(response.segments) != len(plan_segments):
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: slide_generator segment count mismatch — "
+            f"expected {len(plan_segments)}, got {len(response.segments)}"
+        )
+
+    unknown_ids = [sid for sid in response_ids if sid not in input_id_set]
+    if unknown_ids:
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: slide_generator returned unknown segment_id(s): {unknown_ids}"
+        )
+
+    if len(set(response_ids)) != len(response_ids):
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: slide_generator returned duplicate segment_id(s) in {response_ids}"
+        )
+
+    for seg in response.segments:
+        if not (1 <= len(seg.slides) <= _MAX_SLIDES_PER_SEGMENT):
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: slide_generator segment {seg.segment_id!r} has "
+                f"{len(seg.slides)} slides (must be 1-{_MAX_SLIDES_PER_SEGMENT})"
+            )
+        for slide in seg.slides:
+            if not slide.title.strip():
+                raise RuntimeError(
+                    f"lesson_id={lesson_id}: slide_generator returned a blank slide title "
+                    f"in segment {seg.segment_id!r}"
+                )
+            # 2026-07-15 review finding (Blind Hunter + Edge Case Hunter,
+            # independently): the original guard only checked the bullets
+            # LIST was non-empty, not that each bullet STRING was non-blank —
+            # bullets=["   ", "Real point"] passed trivially. Now rejects any
+            # blank/whitespace-only bullet, not just an empty list.
+            if not slide.bullets or any(not b.strip() for b in slide.bullets):
+                raise RuntimeError(
+                    f"lesson_id={lesson_id}: slide_generator returned an empty or blank bullet "
+                    f"in segment {seg.segment_id!r}"
+                )
+
+    # ── Assemble output — iterate INPUT order (not LLM response order), same
+    # discipline as lesson_planner_node's own review-round patch. ────────────
+    llm_segment_by_id = {seg.segment_id: seg for seg in response.segments}
+    slides_out: list[dict[str, Any]] = []
+    for s in plan_segments:
+        segment_id = s["segment_id"]
+        llm_segment = llm_segment_by_id[segment_id]
+        for index, slide in enumerate(llm_segment.slides):
+            slide_data = Slide.model_validate({
+                "slide_id": f"slide_{segment_id}_{index}",
+                "title": slide.title.strip(),
+                "bullets": list(slide.bullets),
+                "image_url": None,
+                "fallback_image_url": None,
+            })
+            slides_out.append({
+                "segment_id": segment_id,
+                "data": slide_data.model_dump(mode="json"),
+            })
+
+    supabase.table("lesson_jobs").update({
+        "last_node": "slide_generator",
+        "node_outputs": {**node_outputs, "slide_generator": slides_out},
+    }).eq("lesson_id", lesson_id).execute()
+
+    await _update_job_progress(lesson_id, 48.0, "slide_generator")
+    return {**state, "slides": slides_out, "progress_pct": 48.0}
 
 
 class _SegmentSummaryLLM(BaseModel):
