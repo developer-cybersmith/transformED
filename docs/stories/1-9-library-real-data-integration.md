@@ -4,7 +4,7 @@ baseline_commit: "3891a0edd75991375301ffc146d138579dda0d5e"
 
 # Story 1-9: Library Real Data Integration
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -58,26 +58,26 @@ This is Sprint 1 task **S1-09** from `docs/dev2-sprint-tracker.md` — previousl
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Server-side authenticated API client (AC: #1)
-  - [ ] 1.1 Write failing test first (RED) for `getServerApi()` — attaches `Authorization` when a session exists, omits it when there's none
-  - [ ] 1.2 Implement `apps/web/src/lib/api.server.ts` (GREEN)
-- [ ] Task 2: `lessons.service.ts` (AC: #2)
-  - [ ] 2.1 RED — `listLessons` calls `content/lessons` with correct params, returns the response array
-  - [ ] 2.2 Implement (GREEN)
-- [ ] Task 3: `library.service.ts` real wiring (AC: #3)
-  - [ ] 3.1 RED — success/failure paths against the new `LibraryData` shape
-  - [ ] 3.2 Implement (GREEN)
-- [ ] Task 4: Rewrite `LibraryView`/`LibraryCard` for real, sparse data (AC: #4, #6)
-  - [ ] 4.1 RED — tabs/counts/click-behavior/empty-states/formatLessonStatusLabel tests
-  - [ ] 4.2 Implement (GREEN)
-- [ ] Task 5: Pagination (AC: #5)
-  - [ ] 5.1 RED — "Load more" appears/fetches-next-page/appends/hides-at-short-page tests
-  - [ ] 5.2 Implement (GREEN)
-- [ ] Task 6: Update existing `library/page.test.tsx` for the new data shape (AC: #7)
-- [ ] Task 7: Full verification (AC: #8)
-  - [ ] 7.1 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean
-- [ ] Task 8: Tracker update
-  - [ ] 8.1 Mark S1-09 in `docs/dev2-sprint-tracker.md` as done
+- [x] Task 1: Server-side authenticated API client (AC: #1)
+  - [x] 1.1 Write failing test first (RED) for `getServerApi()` — attaches `Authorization` when a session exists, omits it when there's none
+  - [x] 1.2 Implement `apps/web/src/lib/api.server.ts` (GREEN)
+- [x] Task 2: `lessons.service.ts` (AC: #2)
+  - [x] 2.1 RED — `listLessons` calls `content/lessons` with correct params, returns the response array
+  - [x] 2.2 Implement (GREEN)
+- [x] Task 3: `library.service.ts` real wiring (AC: #3)
+  - [x] 3.1 RED — success/failure paths against the new `LibraryData` shape
+  - [x] 3.2 Implement (GREEN)
+- [x] Task 4: Rewrite `LibraryView`/`LibraryCard` for real, sparse data (AC: #4, #6)
+  - [x] 4.1 RED — tabs/counts/click-behavior/empty-states/formatLessonStatusLabel tests
+  - [x] 4.2 Implement (GREEN)
+- [x] Task 5: Pagination (AC: #5)
+  - [x] 5.1 RED — "Load more" appears/fetches-next-page/appends/hides-at-short-page tests
+  - [x] 5.2 Implement (GREEN)
+- [x] Task 6: Update existing `library/page.test.tsx` for the new data shape (AC: #7)
+- [x] Task 7: Full verification (AC: #8)
+  - [x] 7.1 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean
+- [x] Task 8: Tracker update
+  - [x] 8.1 Mark S1-09 in `docs/dev2-sprint-tracker.md` as done
 
 ## Dev Notes
 
@@ -125,20 +125,44 @@ No conflicts with `packages/shared` frozen contracts. `library.service.ts`'s pub
 
 ### Agent Model Used
 
-_To be filled in during implementation._
+Claude Sonnet 5 (claude-sonnet-5)
 
 ### Debug Log References
 
-_To be filled in during implementation._
+- Task 1 RED confirmed: `api.server.test.ts` failed on unresolved `@/lib/api.server` import before the file existed; GREEN after implementing (3/3 passing). Used `instance.defaults.headers.common.Authorization` (the documented axios API for default headers applied to every request) rather than asserting on `axios.create({headers})`'s internal merge behavior, which isn't a stable public contract to test against.
+- Task 2/3 RED→GREEN straightforward — both new services with no surprises against the story's own pre-verified backend contract.
+- Task 4/5 RED confirmed: all 10 new `LibraryView.test.tsx` tests failed with `initialData.inProgress is not iterable` (old mock-shape component) before the rewrite; GREEN after (10/10 passing).
+- One test-authoring bug found and fixed during Task 4: `screen.getByText('All Lessons').nextSibling` doesn't return the count `<span>` sibling as assumed — DOM Testing Library's `getByText` matches the `<button>` itself (its default `getNodeText` only concatenates an element's *direct* text-node children, not nested elements, so the button's own text is exactly "All Lessons" even though the count lives in a child `<span>`). `.nextSibling` was therefore the *next tab button* in the DOM, not the count span. Fixed by querying `.querySelector('span')` within the matched button instead. A related ambiguity (`getByText('Generating')` matching both the tab button and a card's status badge, once a card with that status existed) was fixed by scoping to `getByRole('button', { name: /^Generating/ })`.
+- Found via `Glob` (not a stale-cache issue): an existing `LibraryView.test.tsx` and `library/page.test.tsx` already existed against the old mock shape — the former was fully rewritten (Task 4/5), the latter had its two tests' fixture data and one assertion string updated (Task 6) to match the new empty-state copy, with no changes needed to `page.tsx` itself.
 
 ### Completion Notes List
 
-_To be filled in during implementation._
+- All 8 tasks completed; every AC satisfied.
+- Fixed a real, previously-undiscovered gap before this story could work at all: `lib/api.ts`'s auth interceptor only attaches the JWT `if (typeof window !== 'undefined')`, so Server Component calls (like `/library`'s page) would have gone out unauthenticated. `lib/api.server.ts` is the server-only counterpart, used only for the initial server-rendered fetch; client-side "Load more" pagination correctly reuses the existing, already-working client `lib/api.ts` instance instead of inventing a second client-side path.
+- Confirmed the real backend contract by reading `apps/api/app/modules/content/router.py` and the `lessons` table migration directly before writing any code (not assumed from tracker docs, which were stale on this point) — no thumbnail/duration/chapter-title exist anywhere, so `LibraryView`/`LibraryCard` were fully redesigned around the real, sparse `{lesson_id, status, title, error, created_at, completed_at}` shape rather than patched.
+- "Retry" (from the original tracker AC) descoped to "Upload Again" → `/upload`, since no retry-in-place backend endpoint exists and the original file isn't retained client-side after upload. Documented in the story's Context section, not silently substituted.
+- Reused `LessonStatus`/`LessonStatusResponse` types from `upload.service.ts` rather than redefining them — `upload.service.ts` itself was never modified.
+- Pagination uses a length-based `hasMore` heuristic (`returned.length === PAGE_SIZE`) since the real endpoint has no total-count field to check against.
+- Continue-Learning and Learning Pulse were explicitly out of scope per the user's own decision this session — untouched by this story.
 
 ### File List
 
-_To be filled in during implementation._
+**Files CREATED:**
+- `apps/web/src/lib/api.server.ts`
+- `apps/web/src/services/lessons.service.ts`
+- `apps/web/src/__tests__/lib/api.server.test.ts`
+- `apps/web/src/__tests__/services/lessons.service.test.ts`
+- `apps/web/src/__tests__/services/library.service.test.ts`
+
+**Files MODIFIED:**
+- `apps/web/src/services/library.service.ts` — real fetch via `lessonsService`, new `LibraryData` shape (`{ lessons: LessonStatusResponse[] }`)
+- `apps/web/src/components/library/LibraryView.tsx` — full rewrite: real/sparse data, All/Generating/Ready/Failed tabs, "Upload Again" instead of Retry, "Load more" pagination via the client `api` instance
+- `apps/web/src/lib/utils.ts` — added `formatLessonStatusLabel`
+- `apps/web/src/__tests__/components/library/LibraryView.test.tsx` — fully rewritten for the new component
+- `apps/web/src/__tests__/app/library/page.test.tsx` — fixture/assertion updated to the new `LibraryData` shape and empty-state copy
+- `docs/dev2-sprint-tracker.md` — S1-09 marked done
 
 ### Change Log
 
 - 2026-07-14: Story created — Sprint 1 remainder task S1-09, branch `sprint1/s1-9-library-real-api` off `main`, feeding into new feature master `feature-real-data-integration`.
+- 2026-07-14: All 8 tasks implemented in RED→GREEN order; 17 new/updated tests across 5 files; full `apps/web` suite 341/341 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings); story marked `review`.

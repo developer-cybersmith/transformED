@@ -42,3 +42,12 @@ export function formatTeachbackLabel(teachbackScore: number | null): string {
     if (teachbackScore >= 60) return "Solid understanding";
     return "Needs another look";
 }
+
+// Maps the real backend's pipeline-generation status (queued|running|ready|failed)
+// to a student-facing label. queued/running are collapsed into one "Generating"
+// state — there's no percentage/stage data to distinguish them (CLAUDE.md §9).
+export function formatLessonStatusLabel(status: 'queued' | 'running' | 'ready' | 'failed'): string {
+    if (status === 'queued' || status === 'running') return "Generating";
+    if (status === 'ready') return "Ready";
+    return "Failed";
+}

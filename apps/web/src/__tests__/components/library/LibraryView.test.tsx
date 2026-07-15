@@ -1,66 +1,137 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LibraryView } from '@/components/library/LibraryView';
-import type { MockLesson } from '@/mocks/data/lessons';
-import type { LibraryData } from '@/mocks/api/library';
+import type { LibraryData } from '@/services/library.service';
 
-const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
+const { pushMock, apiGetMock } = vi.hoisted(() => ({
+  pushMock: vi.fn(),
+  apiGetMock: vi.fn(),
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-function makeLesson(overrides: Partial<MockLesson>): MockLesson {
+vi.mock('@/lib/api', () => ({
+  api: { get: apiGetMock },
+}));
+
+function lesson(overrides: Partial<LibraryData['lessons'][number]> = {}) {
   return {
-    id: 'les_1',
+    lesson_id: 'lsn_1',
+    status: 'ready' as const,
     title: 'SQL Injection Vectors',
-    chapterTitle: 'Chapter 3',
-    durationSeconds: 1500,
-    status: 'in_progress',
-    progressPercent: 72,
-    lastAccessed: new Date().toISOString(),
-    thumbnailUrl: 'https://images.unsplash.com/photo-real-thumbnail-1',
-    slides: [],
-    timeline: [],
+    error: null,
+    created_at: '2026-07-01T00:00:00Z',
+    completed_at: '2026-07-01T00:05:00Z',
     ...overrides,
   };
 }
 
-const DATA: LibraryData = {
-  inProgress: [makeLesson({ id: 'les_1' })],
-  completed: [],
-  processing: [],
-  failed: [],
-};
-
 beforeEach(() => {
   pushMock.mockReset();
+  apiGetMock.mockReset();
 });
 
 describe('LibraryView', () => {
-  it('renders lesson.thumbnailUrl from the data layer instead of a locally-computed stock image', () => {
-    const { container } = render(<LibraryView initialData={DATA} />);
+  it('shows the empty state with an Upload CTA when there are no lessons at all', async () => {
+    const user = userEvent.setup();
+    render(<LibraryView initialData={{ lessons: [] }} />);
 
-    const img = container.querySelector('img');
-    expect(img?.getAttribute('src')).toBe(DATA.inProgress[0].thumbnailUrl);
+    expect(screen.getByText(/No lessons yet/i)).not.toBeNull();
+    await user.click(screen.getByText('Upload a PDF'));
+    expect(pushMock).toHaveBeenCalledWith('/upload');
   });
 
-  it('navigates to the lesson on card click', async () => {
+  it('renders tabs with correct counts across mixed statuses', () => {
+    const lessons = [
+      lesson({ lesson_id: 'l1', status: 'ready' }),
+      lesson({ lesson_id: 'l2', status: 'running', title: null }),
+      lesson({ lesson_id: 'l3', status: 'queued', title: null }),
+      lesson({ lesson_id: 'l4', status: 'failed', error: 'Cost ceiling exceeded' }),
+    ];
+    render(<LibraryView initialData={{ lessons }} />);
+
+    expect(screen.getByRole('button', { name: /^All Lessons/ }).querySelector('span')?.textContent).toBe('4');
+    expect(screen.getByRole('button', { name: /^Generating/ }).querySelector('span')?.textContent).toBe('2');
+    expect(screen.getByRole('button', { name: /^Ready/ }).querySelector('span')?.textContent).toBe('1');
+    expect(screen.getByRole('button', { name: /^Failed/ }).querySelector('span')?.textContent).toBe('1');
+  });
+
+  it('a Ready card is clickable and navigates to /lesson/{id}', async () => {
     const user = userEvent.setup();
-    render(<LibraryView initialData={DATA} />);
+    render(<LibraryView initialData={{ lessons: [lesson({ lesson_id: 'lsn_42', status: 'ready' })] }} />);
 
     await user.click(screen.getByText('SQL Injection Vectors'));
 
-    expect(pushMock).toHaveBeenCalledWith('/lesson/les_1');
+    expect(pushMock).toHaveBeenCalledWith('/lesson/lsn_42');
   });
 
-  it('hides the thumbnail image instead of showing a broken-image icon when it fails to load', () => {
-    const { container } = render(<LibraryView initialData={DATA} />);
+  it('a Generating card is not clickable and shows a title fallback when title is null', async () => {
+    const user = userEvent.setup();
+    render(<LibraryView initialData={{ lessons: [lesson({ status: 'running', title: null })] }} />);
 
-    const img = container.querySelector('img')!;
-    img.dispatchEvent(new Event('error'));
+    expect(screen.getByText('Untitled Lesson')).not.toBeNull();
+    await user.click(screen.getByText('Untitled Lesson'));
+    expect(pushMock).not.toHaveBeenCalled();
+  });
 
-    expect(img.style.display).toBe('none');
+  it('a Failed card shows its error message and an "Upload Again" button that routes to /upload without navigating to the lesson', async () => {
+    const user = userEvent.setup();
+    render(<LibraryView initialData={{ lessons: [lesson({ status: 'failed', error: 'Cost ceiling exceeded' })] }} />);
+
+    expect(screen.getByText('Cost ceiling exceeded')).not.toBeNull();
+    await user.click(screen.getByText('Upload Again'));
+
+    expect(pushMock).toHaveBeenCalledWith('/upload');
+    expect(pushMock).not.toHaveBeenCalledWith('/lesson/lsn_1');
+  });
+
+  it('a Failed card falls back to a generic message when error is null', () => {
+    render(<LibraryView initialData={{ lessons: [lesson({ status: 'failed', error: null })] }} />);
+
+    expect(screen.getByText('Generation failed — please try again.')).not.toBeNull();
+  });
+
+  it('shows "No lessons found in this category" when a tab has zero matches but the library is not empty', async () => {
+    const user = userEvent.setup();
+    render(<LibraryView initialData={{ lessons: [lesson({ status: 'ready' })] }} />);
+
+    await user.click(screen.getByText('Failed'));
+
+    expect(screen.getByText('No lessons found in this category.')).not.toBeNull();
+  });
+
+  it('shows a "Load more" button when the initial page is full, fetches the next page, and appends results', async () => {
+    const user = userEvent.setup();
+    const fullPage = Array.from({ length: 24 }, (_, i) => lesson({ lesson_id: `l${i}`, title: `Lesson ${i}` }));
+    apiGetMock.mockResolvedValue({ data: [lesson({ lesson_id: 'l24', title: 'Lesson 24' })] });
+
+    render(<LibraryView initialData={{ lessons: fullPage }} />);
+
+    const loadMoreButton = screen.getByText('Load more');
+    await user.click(loadMoreButton);
+
+    expect(apiGetMock).toHaveBeenCalledWith('content/lessons', { params: { limit: 24, offset: 24 } });
+    await waitFor(() => expect(screen.getByText('Lesson 24')).not.toBeNull());
+  });
+
+  it('does not show "Load more" when the initial page is short', () => {
+    const shortPage = [lesson({ lesson_id: 'l1' })];
+    render(<LibraryView initialData={{ lessons: shortPage }} />);
+
+    expect(screen.queryByText('Load more')).toBeNull();
+  });
+
+  it('"Load more" hides itself once the fetched page is short', async () => {
+    const user = userEvent.setup();
+    const fullPage = Array.from({ length: 24 }, (_, i) => lesson({ lesson_id: `l${i}` }));
+    apiGetMock.mockResolvedValue({ data: [lesson({ lesson_id: 'last' })] });
+
+    render(<LibraryView initialData={{ lessons: fullPage }} />);
+    await user.click(screen.getByText('Load more'));
+
+    await waitFor(() => expect(screen.queryByText('Load more')).toBeNull());
   });
 });

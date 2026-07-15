@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-13 (`main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
+| **Last Updated** | 2026-07-14 (S1-09 Library Real Data Integration done — real `GET /api/content/lessons` wired, `LibraryView` rewritten around the real sparse data shape, and a real server-side auth gap in `lib/api.ts` fixed along the way with a new `lib/api.server.ts`. Branch `sprint1/s1-9-library-real-api`, feeding a new feature master `feature-real-data-integration` (S1-10 Dashboard is next, same master). Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/6) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (12/14) · Sprint 2 IN PROGRESS (5/6) |
 
 ---
 
@@ -23,12 +23,12 @@
 | Sprint | Period | Total Tasks | Done | Partial | Not Started |
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
+| Sprint 1 | Weeks 2–3 | 14 | **12** | 0 | **2** |
 | Sprint 2 | Weeks 4–5 | 6 | **5** | 0 | **1** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **51** | **24** | **0** | **27** |
+| **Total** | **10 weeks** | **51** | **25** | **0** | **26** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -885,20 +885,27 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 
 ---
 
-### S1-09 — Library Real Data Integration
+### S1-09 — Library Real Data Integration — ✅ 2026-07-14
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
-**Files to modify:** `src/services/library.service.ts`, `src/components/library/LibraryView.tsx`
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/1-9-library-real-data-integration.md` on branch `sprint1/s1-9-library-real-api` (branched from `main`, which now has `sprint1/s1-8-upload-real-api` merged), feeds into new feature master `feature-real-data-integration`  
+**Files created:** `src/lib/api.server.ts`, `src/services/lessons.service.ts`  
+**Files modified:** `src/services/library.service.ts`, `src/components/library/LibraryView.tsx` (full rewrite), `src/lib/utils.ts` (new `formatLessonStatusLabel`)
 
-Replace mock with real call to `GET /api/lessons` (paginated, user-scoped via JWT). Add status filter tabs: All / Generating / Ready / Failed. Show generation progress for `status: 'generating'` lessons using a polling interval (every 10s) or WebSocket subscription.
+**Original sketch was wrong, same way S1-08's was** — assumed `GET /api/lessons` with rich fields. Verified the real backend directly before writing the story: the only list endpoint is `GET /api/content/lessons?limit=&offset=` (real, working, user-scoped), returning only `{lesson_id, status, title, error, created_at, completed_at}` — no thumbnail, no duration, no chapter title, anywhere (confirmed against the `lessons` table migration too — those columns don't exist). `LibraryView`/`LibraryCard` were fully redesigned around this real, sparse shape rather than patched to fit the old mock's richer one.
+
+**A real, previously-undiscovered gap found and fixed first:** `lib/api.ts`'s auth interceptor only attaches the JWT `if (typeof window !== 'undefined')` — but `/library`'s page is an `async` Server Component calling the service directly server-side, so real calls from it would have gone out unauthenticated. New `lib/api.server.ts` reads the session via the existing cookie-based `lib/supabase/server.ts` client for the initial server-rendered fetch; client-side "Load more" pagination reuses the existing, already-working `lib/api.ts` client instance (no second client-side path invented).
+
+**Descoped from the original ACs (documented, not silent):** "Retry" button → **"Upload Again"** routing to `/upload` — no retry-in-place endpoint exists server-side, and the original file isn't retained client-side after upload completes. "Progress badge/polling for generating lessons" → simple static "Generating" status badge (matches S1-08's own "no percentage/stage — just Processing..." pattern); no WebSocket/polling added to the library grid itself.
 
 **Acceptance criteria:**
-- [ ] Library shows real lessons from authenticated user's account
-- [ ] Status filter tabs functional
-- [ ] Generating lessons show progress badge (not percentage — just "Processing...")
-- [ ] Failed lessons show "Retry" button
-- [ ] Empty state shown when user has no lessons
-- [ ] Pagination works (load more or infinite scroll)
+- [x] Library shows real lessons from authenticated user's account (`GET /api/content/lessons`, JWT-scoped)
+- [x] Status filter tabs functional — All / Generating (queued+running) / Ready / Failed
+- [x] Generating lessons show a status badge (no percentage/stage data exists — matches S1-08's pattern)
+- [x] Failed lessons show an "Upload Again" button (descoped from "Retry" — see above)
+- [x] Empty state shown when user has no lessons, with an Upload CTA
+- [x] Pagination works via a "Load more" button (length-based heuristic — the API has no total count)
+
+17 new/updated tests across 5 files. Full `apps/web` suite: 341/341 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings.
 
 ---
 
