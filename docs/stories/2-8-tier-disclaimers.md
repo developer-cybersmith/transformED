@@ -4,7 +4,7 @@ baseline_commit: "8a99789a5d6ab4bf0d0f5ebcab81fde5f01676a8"
 
 # Story 2-8: Tier Disclaimers
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -54,17 +54,17 @@ This story directly extends **S2-07** (`docs/stories/2-7-mode-selection-screen.m
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Extend the tier type/data (AC: #1, #2)
-  - [ ] 1.1 Add `disclaimer?: string` to `LearnerTierOption` in `apps/web/src/types/learnerMode.ts`
-  - [ ] 1.2 Add the `balanced`/`refresher` disclaimer copy; leave `deep` without the field
-- [ ] Task 2: Render the disclaimer in `ModeSelection.tsx` (AC: #3, #4)
-  - [ ] 2.1 Write failing tests first (RED) — Deep has no disclaimer, Balanced/Refresher each show their own disclaimer text; re-run the 6 existing tests to confirm no regression
-  - [ ] 2.2 Implement the conditional disclaimer block (GREEN)
-- [ ] Task 3: Full verification (AC: #5, #6)
-  - [ ] 3.1 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean (0 new warnings)
-  - [ ] 3.2 Confirm `UploadFlow.tsx`/`UploadFlow.test.tsx` are untouched (git diff shows no changes to either)
-- [ ] Task 4: Tracker update
-  - [ ] 4.1 Mark S2-08 in `docs/dev2-sprint-tracker.md` as done, update the Sprint 2 dashboard row and header
+- [x] Task 1: Extend the tier type/data (AC: #1, #2)
+  - [x] 1.1 Add `disclaimer?: string` to `LearnerTierOption` in `apps/web/src/types/learnerMode.ts`
+  - [x] 1.2 Add the `balanced`/`refresher` disclaimer copy; leave `deep` without the field
+- [x] Task 2: Render the disclaimer in `ModeSelection.tsx` (AC: #3, #4)
+  - [x] 2.1 Write failing tests first (RED) — Deep has no disclaimer, Balanced/Refresher each show their own disclaimer text; re-run the 6 existing tests to confirm no regression
+  - [x] 2.2 Implement the conditional disclaimer block (GREEN)
+- [x] Task 3: Full verification (AC: #5, #6)
+  - [x] 3.1 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean (0 new warnings)
+  - [x] 3.2 Confirm `UploadFlow.tsx`/`UploadFlow.test.tsx` are untouched (git diff shows no changes to either)
+- [x] Task 4: Tracker update
+  - [x] 4.1 Mark S2-08 in `docs/dev2-sprint-tracker.md` as done, update the Sprint 2 dashboard row and header
 
 ## Dev Notes
 
@@ -99,20 +99,30 @@ Purely additive to two already-existing files plus their test file. No conflicts
 
 ### Agent Model Used
 
-_To be filled in during implementation._
+Claude Sonnet 5 (claude-sonnet-5)
 
 ### Debug Log References
 
-_To be filled in during implementation._
+- Task 2 RED confirmed: 3 new tests failed before implementation — `Refresher shows a refresher-only disclaimer` and `renders exactly 2 disclaimer elements total` failed as expected (no disclaimer markup existed yet); `Deep shows no disclaimer` passed trivially even pre-implementation (nothing to fail), which is expected and correct for a negative assertion. All 10 tests (6 existing + 4 new) GREEN after implementing the conditional disclaimer block.
 
 ### Completion Notes List
 
-_To be filled in during implementation._
+- All 4 tasks completed; every AC satisfied.
+- Added `disclaimer?: string` to `LearnerTierOption`; `deep` has no `disclaimer` key at all (not an empty string), `balanced`/`refresher` each have distinct one-sentence copy that doesn't restate their existing `description`.
+- `ModeSelection.tsx` renders the disclaimer via a `data-testid="tier-disclaimer"` block (icon + tinted background) only when `option.disclaimer` is truthy — used a real DOM query (`querySelectorAll`) rather than text-matching alone to assert exactly 2 render (not 3), which is a stronger regression guard than text assertions alone.
+- Did not build a reusable `Alert`/`Warning` component, per the story's explicit instruction — the block is local to `ModeSelection.tsx`.
+- Confirmed via `git diff --stat` that `UploadFlow.tsx` and `UploadFlow.test.tsx` have zero changes — this story never touched them.
+- No regression: all 6 pre-existing `ModeSelection.test.tsx` tests (3-card render, 3 click-to-select tests, focus-visible ring, mount-autofocus) still pass unmodified.
 
 ### File List
 
-_To be filled in during implementation._
+**Files MODIFIED:**
+- `apps/web/src/types/learnerMode.ts` — added `disclaimer?: string` to `LearnerTierOption`; added disclaimer copy for `balanced`/`refresher`
+- `apps/web/src/components/dashboard/upload/ModeSelection.tsx` — added `AlertTriangle` import and a conditional disclaimer block per card
+- `apps/web/src/__tests__/components/dashboard/upload/ModeSelection.test.tsx` — added 4 new tests (Deep has none, Balanced/Refresher each show theirs, exactly 2 disclaimer elements total)
+- `docs/dev2-sprint-tracker.md` — S2-08 marked done, Sprint 2 dashboard row updated
 
 ### Change Log
 
 - 2026-07-14: Story created — Sprint 2 Learner Mode task 2 of 4 (S2-08), branch `sprint2/s2-8-tier-disclaimers` off `feature-learner-mode`.
+- 2026-07-14: All 4 tasks implemented in RED→GREEN order; 4 new tests (10 total in `ModeSelection.test.tsx`); full `apps/web` suite 341/341 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings); confirmed `UploadFlow.tsx`/its tests untouched; story marked `review`.

@@ -9,8 +9,8 @@
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
 | **Last Updated** | 2026-07-14 (added S2-07–S2-10: **Learner Mode** — a new tier-selection feature (T1 Deep / T2 Balanced / T3 Refresher) scoped into Sprint 2 per user instruction; no story/spec exists yet, none of the 4 tasks started. Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (6/10 done — S2-06 partially blocked, escalated to Dev 4; S2-07 (Learner Mode mode-selection screen) done 2026-07-14, 5-agent reviewed + all 3 patches applied; S2-08–S2-10 not started) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (6/10) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (7/10 done — S2-06 partially blocked, escalated to Dev 4; Learner Mode: S2-07/S2-08 done 2026-07-14; S2-09/S2-10 not started) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (7/10) |
 
 ---
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 10 | **6** | 0 | **4** |
+| Sprint 2 | Weeks 4–5 | 10 | **7** | 0 | **3** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **25** | **0** | **30** |
+| **Total** | **10 weeks** | **55** | **26** | **0** | **29** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1046,7 +1046,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 6/10 done — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. Learner Mode: S2-07 (mode-selection screen) done 2026-07-14, 5-agent reviewed and all 3 patches applied; S2-08–S2-10 not started  
+**Period:** Weeks 4–5 | **Status:** 🔵 7/10 done — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. Learner Mode: S2-07 (mode-selection screen) and S2-08 (tier disclaimers) done 2026-07-14; S2-09/S2-10 not started  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1305,21 +1305,24 @@ New feature: **Learner Mode** — student picks a tier before generation begins.
 
 ---
 
-### S2-08 — Tier Disclaimers
+### S2-08 — Tier Disclaimers — ✅ 2026-07-14
 **Priority:** Medium  
-**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
-**Files to create:** inline warning component within `ModeSelection.tsx` (S2-07)
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/2-8-tier-disclaimers.md` on branch `sprint2/s2-8-tier-disclaimers` (branched from `feature-learner-mode`, which already has S2-07 merged in), feeds into feature master `feature-learner-mode`  
+**Files modified:** `src/types/learnerMode.ts` (new `disclaimer?: string` field on `LearnerTierOption` + copy for `balanced`/`refresher`), `src/components/dashboard/upload/ModeSelection.tsx` (conditional inline disclaimer block, `AlertTriangle` icon + amber tint), `src/__tests__/components/dashboard/upload/ModeSelection.test.tsx` (4 new tests)
 
 Per-tier inline warning-style disclaimer shown on the mode selection screen:
-- **T1 (Deep):** no disclaimer
-- **T2 (Balanced):** time-deficit warning (content may be trimmed to fit the time box)
-- **T3 (Refresher):** refresher-only warning (assumes prior mastery, not a full first-pass lesson)
+- **Deep:** no disclaimer
+- **Balanced:** time-deficit warning ("Content may be trimmed or condensed to fit your available time.")
+- **Refresher:** refresher-only warning ("Assumes you already have prior mastery — not a full first-pass lesson.")
 
 **Acceptance criteria:**
-- [ ] T1 card shows no disclaimer
-- [ ] T2 card shows a time-deficit inline warning
-- [ ] T3 card shows a refresher-only inline warning
-- [ ] Disclaimers styled consistently with existing inline warning patterns (not a modal/toast)
+- [x] Deep card shows no disclaimer
+- [x] Balanced card shows a time-deficit inline warning
+- [x] Refresher card shows a refresher-only inline warning
+- [x] Disclaimers styled consistently as an inline warning (icon + tinted background, not a modal/toast) — no reusable `Alert` component existed in the codebase, so this is kept local to `ModeSelection.tsx` per the story's explicit scope
+- [x] No regression to S2-07's card click/focus-visible/mount-autofocus behavior; `UploadFlow.tsx` and its tests untouched (confirmed via `git diff --stat`)
+
+10 tests total in `ModeSelection.test.tsx` (6 unmodified from S2-07 + 4 new). Full `apps/web` suite: 341/341 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings.
 
 ---
 

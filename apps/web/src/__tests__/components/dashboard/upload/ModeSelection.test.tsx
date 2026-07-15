@@ -63,4 +63,32 @@ describe('ModeSelection', () => {
 
     expect(document.activeElement).toBe(screen.getByText('Deep').closest('button'));
   });
+
+  it('Deep shows no disclaimer', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    const deepCard = screen.getByText('Deep').closest('button')!;
+    expect(deepCard.textContent).not.toMatch(/trimmed|condensed|prior mastery|first-pass/i);
+  });
+
+  it('Balanced shows a time-deficit disclaimer', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    const balancedCard = screen.getByText('Balanced').closest('button')!;
+    expect(balancedCard.textContent).toMatch(/trimmed|condensed/i);
+    expect(balancedCard.textContent).toMatch(/time/i);
+  });
+
+  it('Refresher shows a refresher-only disclaimer', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    const refresherCard = screen.getByText('Refresher').closest('button')!;
+    expect(refresherCard.textContent).toMatch(/prior mastery|first-pass/i);
+  });
+
+  it('renders exactly 2 disclaimer elements total (Balanced + Refresher, none for Deep)', () => {
+    const { container } = render(<ModeSelection onSelect={vi.fn()} />);
+
+    expect(container.querySelectorAll('[data-testid="tier-disclaimer"]')).toHaveLength(2);
+  });
 });
