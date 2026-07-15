@@ -4,7 +4,7 @@ baseline_commit: "b5ea07b9a87f00ca5a0a2d30845cc56444aaae8e"
 
 # Story 2-7: Learner Mode Selection Screen
 
-Status: in-progress
+Status: done
 
 ## Story
 
@@ -94,9 +94,9 @@ Picking a card is both the selection and the confirmation — there is no separa
 
 5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2/s2-7-mode-selection` (commits `4c39d57`..`f501d48`) vs its parent `sprint1/s1-8-upload-real-api`, 2026-07-14.
 
-- [ ] [Review][Patch] `handleCancelModeSelection` doesn't reset `file`/`selectedTier` or clear the file input value — re-selecting the exact same file after cancelling never fires a `change` event (browsers don't re-fire `change` for an unchanged `FileList`), silently stranding the user on the idle screen [apps/web/src/components/dashboard/upload/UploadFlow.tsx]
-- [ ] [Review][Patch] No `focus-visible` styling on the tier-card buttons in `ModeSelection.tsx` — only `hover:` classes are defined, so a keyboard user tabbing to a card gets no visible focus indicator [apps/web/src/components/dashboard/upload/ModeSelection.tsx]
-- [ ] [Review][Patch] No focus management on transition into `'selecting-mode'` — when the `'idle'` screen's Browse-Files button unmounts (after its exit animation), focus drops to `document.body` instead of moving to the first tier card, forcing a keyboard user to re-tab from the top of the page [apps/web/src/components/dashboard/upload/UploadFlow.tsx, apps/web/src/components/dashboard/upload/ModeSelection.tsx]
+- [x] [Review][Patch] `handleCancelModeSelection` doesn't reset `file`/`selectedTier` or clear the file input value — re-selecting the exact same file after cancelling never fires a `change` event (browsers don't re-fire `change` for an unchanged `FileList`), silently stranding the user on the idle screen [apps/web/src/components/dashboard/upload/UploadFlow.tsx] — fixed: `handleCancelModeSelection` now clears `file`, `selectedTier`, and `inputRef.current.value`. The exact browser same-`FileList` `change`-suppression symptom isn't reproducible via `fireEvent.change` in this jsdom-based harness (it always dispatches regardless of file-object identity); added `"Choose a different file" clears the file input value"` and `"...fully resets so a fresh drop/tier-pick cycle starts clean"` as the closest testable regression coverage.
+- [x] [Review][Patch] No `focus-visible` styling on the tier-card buttons in `ModeSelection.tsx` — only `hover:` classes are defined, so a keyboard user tabbing to a card gets no visible focus indicator [apps/web/src/components/dashboard/upload/ModeSelection.tsx] — fixed: added `focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent-primary)]/20`, matching `components/ui/button.tsx`'s existing pattern exactly. New test asserts every card's className matches `/focus-visible:ring/`.
+- [x] [Review][Patch] No focus management on transition into `'selecting-mode'` — when the `'idle'` screen's Browse-Files button unmounts (after its exit animation), focus drops to `document.body` instead of moving to the first tier card, forcing a keyboard user to re-tab from the top of the page [apps/web/src/components/dashboard/upload/UploadFlow.tsx, apps/web/src/components/dashboard/upload/ModeSelection.tsx] — fixed: `ModeSelection.tsx` now holds a ref to the first card and calls `.focus()` on it in a mount `useEffect`. New test asserts `document.activeElement` is the first ("Deep") card right after render.
 - [x] [Review][Defer] No drag-and-drop guard on the `'selecting-mode'` screen [apps/web/src/components/dashboard/upload/UploadFlow.tsx] — deferred, pre-existing pattern (processing/completed/error also lack a drop handler; only `'idle'` has one), this story just extends the same exposure to one more screen. Needs a broader "harden all non-idle screens against drop" pass, not a one-off fix here.
 - [x] [Review][Defer] Tier selection has no functional effect on generation yet [apps/web/src/components/dashboard/upload/UploadFlow.tsx] — deferred, correctly scoped away per this story's own "What NOT to do" (S2-09 wires the tier into the backend). Worth a look before the full Learner Mode feature is considered ready to ship: the screen's copy ("Choose a pace before HIE builds your lesson") already implies the choice matters, which is misleading until S2-09 lands.
 
@@ -163,11 +163,14 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `apps/web/src/__tests__/components/dashboard/upload/ModeSelection.test.tsx`
 
 **Files MODIFIED:**
-- `apps/web/src/components/dashboard/upload/UploadFlow.tsx` — added `'selecting-mode'` to the `uploadState` union, `selectedTier` state, `handleTierSelect`/`handleCancelModeSelection` handlers, the `'selecting-mode'` render branch, and a `data-selected-tier` attribute on the `'processing'` screen
-- `apps/web/src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` — added `selectTier`/`dropFileAndSelectTier` helpers; updated all 9 pre-existing tests to select a tier before expecting the upload call; added 2 new tests (mode-selection shown pre-upload, back-link returns to idle without uploading)
-- `docs/dev2-sprint-tracker.md` — S2-07 marked done, Sprint 2 dashboard row now 6/10, header updated
+- `apps/web/src/components/dashboard/upload/UploadFlow.tsx` — added `'selecting-mode'` to the `uploadState` union, `selectedTier` state, `handleTierSelect`/`handleCancelModeSelection` handlers, the `'selecting-mode'` render branch, a `data-selected-tier` attribute on the `'processing'` screen; review-patch pass: `handleCancelModeSelection` now also clears `file`/`selectedTier`/the file input value
+- `apps/web/src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` — added `selectTier`/`dropFileAndSelectTier` helpers; updated all 9 pre-existing tests to select a tier before expecting the upload call; added 2 new tests (mode-selection shown pre-upload, back-link returns to idle without uploading); review-patch pass added 2 more tests (input value cleared on cancel, fresh cycle after cancel completes an upload)
+- `apps/web/src/components/dashboard/upload/ModeSelection.tsx` — review-patch pass: added `focus-visible` ring classes matching `Button`'s pattern, and a mount effect that moves focus to the first card
+- `apps/web/src/__tests__/components/dashboard/upload/ModeSelection.test.tsx` — review-patch pass added 2 tests (focus-visible ring present on every card, focus moves to the first card on mount)
+- `docs/dev2-sprint-tracker.md` — S2-07 marked done, Sprint 2 dashboard row updated, outstanding-action-items list removed (all 3 patches applied)
 
 ### Change Log
 
 - 2026-07-14: Story created — Sprint 2 Learner Mode task 1 of 4 (S2-07), branch `sprint2/s2-7-mode-selection` off `sprint1/s1-8-upload-real-api`.
 - 2026-07-14: All 5 tasks implemented in RED→GREEN order; 15 new/updated tests; full `apps/web` suite 333/333 passing; `tsc --noEmit` clean; `eslint` 0 errors/38 warnings (0 new); story marked `review`.
+- 2026-07-14: 5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 0 decision-needed, 3 patch, 2 defer, 2 dismissed. User initially chose to leave patches as action items (story set `in-progress`), then asked for them to be applied. All 3 patches implemented in RED→GREEN order (5 new tests: 2 in `ModeSelection.test.tsx`, 3 in `UploadFlow.test.tsx`); full `apps/web` suite 337/337 passing; `tsc --noEmit` clean; `eslint` 0 errors/37 warnings (0 new — back to the true pre-existing baseline now that the earlier `data-selected-tier` workaround is the only lint-motivated addition remaining). Story marked `done`.

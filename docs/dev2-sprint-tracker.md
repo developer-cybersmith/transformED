@@ -9,8 +9,8 @@
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
 | **Last Updated** | 2026-07-14 (added S2-07–S2-10: **Learner Mode** — a new tier-selection feature (T1 Deep / T2 Balanced / T3 Refresher) scoped into Sprint 2 per user instruction; no story/spec exists yet, none of the 4 tasks started. Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/10 done, 1 partial — S2-06 partially blocked, escalated to Dev 4; S2-07 (Learner Mode mode-selection screen) implemented + reviewed 2026-07-14, 3 patch findings left as action items; S2-08–S2-10 not started) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/10, 1 partial) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (6/10 done — S2-06 partially blocked, escalated to Dev 4; S2-07 (Learner Mode mode-selection screen) done 2026-07-14, 5-agent reviewed + all 3 patches applied; S2-08–S2-10 not started) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (6/10) |
 
 ---
 
@@ -20,11 +20,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 10 | **5** | **1** | **4** |
+| Sprint 2 | Weeks 4–5 | 10 | **6** | 0 | **4** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **24** | **1** | **30** |
+| **Total** | **10 weeks** | **55** | **25** | **0** | **30** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1046,7 +1046,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 5/10 done, 1 partial — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. Learner Mode: S2-07 (mode-selection screen) implemented + 5-agent reviewed 2026-07-14, 3 patch findings left as action items (not applied yet); S2-08–S2-10 not started  
+**Period:** Weeks 4–5 | **Status:** 🔵 6/10 done — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. Learner Mode: S2-07 (mode-selection screen) done 2026-07-14, 5-agent reviewed and all 3 patches applied; S2-08–S2-10 not started  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1274,9 +1274,9 @@ None of these three ever call `manager.send()`. Confirmed by reading all three f
 
 ---
 
-### S2-07 — Learner Mode Selection Screen — 🟡 in progress (2026-07-14)
+### S2-07 — Learner Mode Selection Screen — ✅ 2026-07-14
 **Priority:** High  
-**Status:** 🟡 IN PROGRESS <!-- implemented + reviewed: 2026-07-14, not yet done --> — implemented via BMAD story `docs/stories/2-7-mode-selection-screen.md` on branch `sprint2/s2-7-mode-selection` (branched from `sprint1/s1-8-upload-real-api`, not main — see branch note below), feeds into feature master `feature-learner-mode`. 5-agent adversarial review complete (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 0 decision-needed, 3 patch, 2 defer, 2 dismissed. **User chose to leave the 3 patches as action items rather than apply now** — see the story's Review Findings section — so this task stays IN PROGRESS, not done, until they're resolved.  
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/2-7-mode-selection-screen.md` on branch `sprint2/s2-7-mode-selection` (branched from `sprint1/s1-8-upload-real-api`, not main — see branch note below), feeds into feature master `feature-learner-mode`. 5-agent adversarial review complete (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 0 decision-needed, 3 patch, 2 defer, 2 dismissed. All 3 patches applied (see below); the 2 deferred items are tracked in `_bmad-output/implementation-artifacts/deferred-work.md`.  
 **Files created:** `src/types/learnerMode.ts`, `src/components/dashboard/upload/ModeSelection.tsx`, `src/__tests__/components/dashboard/upload/ModeSelection.test.tsx`  
 **Files modified:** `src/components/dashboard/upload/UploadFlow.tsx` (new `'selecting-mode'` state, `handleTierSelect`/`handleCancelModeSelection`), `src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` (existing tests updated to select a tier before the upload call fires — an intentional, in-scope behavior change, not a regression)
 
@@ -1297,12 +1297,9 @@ New feature: **Learner Mode** — student picks a tier before generation begins.
 - [x] Oversized-file rejection path unaffected (still short-circuits to the error state before reaching mode-selection)
 - [x] No regression to Story 1-8's upload/polling behavior once a tier is picked — byte-for-byte the same from that point on
 
-15 new/updated tests (4 new in `ModeSelection.test.tsx`, 11 in `UploadFlow.test.tsx` — 2 new, 9 updated to select a tier first). Full `apps/web` suite: 333/333 passing. `tsc --noEmit` clean. `eslint`: 0 errors, 38 warnings (37 pre-existing + 0 new — the one new warning this story would have introduced, an unread `selectedTier` state variable, was resolved by exposing it via a non-visible `data-selected-tier` attribute rather than left or suppressed).
+15 new/updated tests from initial implementation (4 in `ModeSelection.test.tsx`, 11 in `UploadFlow.test.tsx`) + 5 more from the review-patch pass (2 in `ModeSelection.test.tsx`, 3 in `UploadFlow.test.tsx`) = 20 total. Full `apps/web` suite: 337/337 passing. `tsc --noEmit` clean. `eslint`: 0 errors, 37 warnings (all pre-existing, 0 new).
 
-**Outstanding review action items (left unpatched by user choice — see story's Review Findings section for full detail):**
-- [ ] Cancelling mode-selection doesn't reset `file`/`selectedTier`/the file input — re-picking the exact same file after cancel silently does nothing
-- [ ] No `focus-visible` styling on the tier cards — keyboard users can't see which card is focused
-- [ ] No focus management moving into the mode-selection screen — focus drops to `document.body` instead of the first card
+**Review patches applied:** `handleCancelModeSelection` now clears `file`/`selectedTier`/the file input value (so re-picking the same file after cancelling works); tier cards now have `focus-visible` ring styling matching `Button`'s pattern; `ModeSelection` moves focus to the first card on mount so keyboard users land on the screen without re-tabbing.
 
 **Deferred (tracked in `_bmad-output/implementation-artifacts/deferred-work.md`):** no drag-and-drop guard on the new screen (pre-existing gap, needs a broader fix across all non-idle screens); tier choice has no functional effect on generation yet (by design — S2-09's job — but current copy oversells it).
 

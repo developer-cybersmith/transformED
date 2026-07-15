@@ -72,6 +72,12 @@ export function UploadFlow() {
     };
 
     const handleCancelModeSelection = () => {
+        setFile(null);
+        setSelectedTier(null);
+        // Allows re-selecting the exact same file through the native file
+        // dialog afterwards — browsers don't fire a `change` event if the
+        // input's FileList is unchanged from last time.
+        if (inputRef.current) inputRef.current.value = '';
         setUploadState('idle');
     };
 

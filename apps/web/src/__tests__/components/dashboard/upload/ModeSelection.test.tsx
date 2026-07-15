@@ -49,4 +49,18 @@ describe('ModeSelection', () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith('refresher');
   });
+
+  it('every card has a visible focus-visible ring for keyboard users', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    for (const button of screen.getAllByRole('button')) {
+      expect(button.className).toMatch(/focus-visible:ring/);
+    }
+  });
+
+  it('moves focus to the first card on mount, so keyboard users land on the screen without re-tabbing', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    expect(document.activeElement).toBe(screen.getByText('Deep').closest('button'));
+  });
 });

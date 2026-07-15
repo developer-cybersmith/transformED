@@ -97,6 +97,35 @@ describe('UploadFlow', () => {
     expect(uploadLessonMock).not.toHaveBeenCalled();
   });
 
+  it('"Choose a different file" clears the file input value, so re-picking the same file is possible', async () => {
+    const user = userEvent.setup();
+    render(<UploadFlow />);
+
+    dropAFile();
+    await screen.findByText('Deep');
+    await user.click(screen.getByText('Choose a different file'));
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.value).toBe('');
+  });
+
+  it('"Choose a different file" fully resets so a fresh drop/tier-pick cycle starts clean', async () => {
+    const user = userEvent.setup();
+    uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
+    getLessonStatusMock.mockResolvedValue(READY_STATUS);
+
+    render(<UploadFlow />);
+
+    dropAFile();
+    await screen.findByText('Deep');
+    await user.click(screen.getByText('Choose a different file'));
+
+    await dropFileAndSelectTier(user, 'Refresher');
+
+    await waitFor(() => expect(uploadLessonMock).toHaveBeenCalledTimes(1));
+    await screen.findByText('Begin Lesson');
+  });
+
   it('uploads, polls, and on "ready" shows "Begin Lesson" which navigates to the new lesson', async () => {
     const user = userEvent.setup();
     uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
