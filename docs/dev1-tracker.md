@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 7 | 4 | 9 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 8 | 3 | 9 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **30** | **5** | **23** |
+| **Totals** | | **58** | **31** | **4** | **23** |
 
 ---
 
@@ -473,13 +473,13 @@ Every node must:
 **Learner Mode tier logic** (S2-LM4, S2-LM5) — lands together with S2-7/S2-8, not as a later rework pass.
 **Phase 3 Media nodes** (S2-9, S2-10, S2-11) sequential after Phase 2.
 
-- [ ] **S2-1 `summarise_segment` node** ⚠️ PARTIAL — 2026-07-13
+- [x] **S2-1 `summarise_segment` node** — ✓ 2026-07-15 (upgraded from PARTIAL now that S2-7 is real)
   - `apps/api/app/modules/content/pipeline/graph.py::summarise_segment_node` (NOT a separate `nodes/summarise_segment.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale)
   - Model: `settings.llm_mini` (`LLM_MINI`)
   - Phase 1 — dispatched via `Send()`, once per section (graph-level fan-out, see AC-0 below)
   - ✓ Produces a 2–3 sentence, ≤100-word summary per section, calling `OpenAILLMProvider.complete_structured()` — real implementation, tested (`test_phase1_economy_nodes.py`, AC-1)
-  - ✗ `lesson_planner` (S2-7) does not yet actually consume these summaries for real generation — it's still a stub that only reads `len(segment_summaries)` to prove the wiring works. The 5×-token-savings half of this AC is not yet realized (blocked on S2-7, not yet started)
-  - **AC:** Summary ≤100 words ✓; `lesson_planner` (S2-7) consumes summaries not raw text — 5× token savings enforced ✗ (pending S2-7)
+  - ✓ `lesson_planner` (S2-7, Story 2-6, done 2026-07-14/15) now really consumes these summaries — never raw chapter text — enforced structurally and by a dedicated regression test (`test_prompt_never_includes_raw_chapter_text_or_sections`). The 5×-token-savings constraint is now actually realized, not just wired.
+  - **AC:** Summary ≤100 words ✓; `lesson_planner` (S2-7) consumes summaries not raw text — 5× token savings enforced ✓ — tested ✅
   - **Still ⚠️ PARTIAL for the reason above** (blocked on S2-7, unrelated to code quality) — separately, the second-pass `/bmad-code-review` findings against all 6 economy nodes (AC-3..AC-7 combined diff) were fully closed 2026-07-14: 6 patches applied (checkpoint re-validation extended to all 6 nodes, quiz duplicate/blank-option guards on both read and write paths, jargon/intervention checkpoint value-quality re-validation, `narration_style` strip-before-truthiness fix) and 1 decision resolved (`narration_style` moved from the system-role to the user-role prompt — untrusted LLM-derived value, now at the same trust level as the section body). 267/267 unit tests pass. See `docs/stories/2-1-phase1-economy-nodes.md`'s "Review Findings (2026-07-14, second pass...)" section for the full findings.
 
 - [x] **S2-2 `segment_complexity` node** — ✓ 2026-07-13
