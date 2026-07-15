@@ -42,6 +42,7 @@ from __future__ import annotations
 import logging
 import math
 import operator
+import re
 from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -118,7 +119,7 @@ class PipelineState(TypedDict, total=False):
     intervention_prompts: Annotated[list[dict[str, Any]], operator.add]  # [{trigger, message, type}]
 
     # Node 12: narration_generator
-    narration_scripts: Annotated[list[dict[str, Any]], operator.add]  # [{slide_id, script}]
+    narration_scripts: Annotated[list[dict[str, Any]], operator.add]  # [{segment_id, script, narration_style, word_count}]
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
@@ -128,7 +129,7 @@ class PipelineState(TypedDict, total=False):
     _total_sections: int  # len(sections) * len(_ECONOMY_NODES) — Story 2-1b AC-4 progress logging
 
     # Node 13: tts_node
-    audio_assets: list[dict[str, Any]]  # [{slide_id, audio_url, timestamps}]
+    audio_assets: list[dict[str, Any]]  # [{segment_id, data: {script, audio_url, audio_provider, timestamps}}]
 
     # Node 14: image_generator
     slide_images: list[dict[str, Any]]  # [{slide_id, image_url}]
@@ -2342,16 +2343,195 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     return {"narration_scripts": [result]}
 
 
-async def tts_node(state: PipelineState) -> PipelineState:
-    """Node 13: Synthesise narration scripts to audio with word timestamps."""
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] tts_node: synthesising %d narrations", lesson_id, len(state.get("narration_scripts", [])))
-    await _update_job_progress(lesson_id, 80.0, "tts_node")
+# Rough per-character cost estimates — neither vendor's exact billing API is
+# reachable from this environment to verify against; conservative flat
+# per-character rates, documented here so a future story can replace them
+# with real invoiced numbers once available (Story 2-8 Dev Notes).
+_SARVAM_COST_PER_CHAR = 0.00002
+_AZURE_TTS_COST_PER_CHAR = 0.000016
 
-    # TODO: ElevenLabsTTSProvider().synthesize(script, voice_id)
-    # TODO: upload audio to Supabase Storage (lesson-audio bucket)
-    audio_assets: list[dict[str, Any]] = []
-    return {**state, "audio_assets": audio_assets, "progress_pct": 86.0}
+# 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
+# Supabase Storage path (f"{lesson_id}/{segment_id}.mp3") — restrict it to
+# safe path-component characters so a malformed/adversarial segment_id can
+# never traverse outside the intended {lesson_id}/ prefix.
+_SAFE_SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+async def _synthesize_with_fallback(
+    lesson_id: str, segment_id: str, text: str
+) -> tuple[bytes | None, str, float]:
+    """Try Sarvam, then Azure, then Browser — never raises (Story 2-8 AC-2).
+
+    Returns (audio_bytes_or_None, audio_provider, cost_usd). audio_bytes is
+    None for the browser-fallback case (no server-side audio produced).
+    """
+    from app.config import get_settings
+    from app.providers.tts.sarvam import SarvamTTSProvider
+
+    settings = get_settings()
+
+    try:
+        audio_bytes, _ = await SarvamTTSProvider().synthesize(text, settings.sarvam_voice_id)
+        # 2026-07-15 review finding (Edge Case Hunter): `is not None` alone
+        # accepted an empty/falsy-but-present return as a full success —
+        # check truthiness so an empty/malformed body falls through instead.
+        if audio_bytes:
+            return audio_bytes, "sarvam", len(text) * _SARVAM_COST_PER_CHAR
+        logger.warning(
+            "[%s] tts_node: Sarvam returned empty audio for segment %s, falling back to Azure",
+            lesson_id, segment_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] tts_node: Sarvam synthesis failed for segment %s, falling back to Azure",
+            lesson_id, segment_id, exc_info=True,
+        )
+
+    from app.providers.tts.azure import AzureTTSProvider
+
+    try:
+        audio_bytes, _ = await AzureTTSProvider().synthesize(text, settings.azure_tts_voice)
+        if audio_bytes:
+            return audio_bytes, "azure", len(text) * _AZURE_TTS_COST_PER_CHAR
+        logger.warning(
+            "[%s] tts_node: Azure returned empty audio for segment %s, falling back to browser speech",
+            lesson_id, segment_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] tts_node: Azure synthesis failed for segment %s, falling back to browser speech",
+            lesson_id, segment_id, exc_info=True,
+        )
+
+    return None, "browser", 0.0
+
+
+async def tts_node(state: PipelineState) -> PipelineState:
+    """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
+    Sarvam -> Azure -> Browser Speech fallback chain.
+
+    Input is `state["narration_scripts"]` ONLY (AC-1) — never sections/
+    chapter_content/slides (slide-level timestamp mapping is out of scope,
+    see Story 2-8's Dev Notes). This node NEVER hard-fails the pipeline
+    (AC-2/AC-11) — including on an empty `narration_scripts` list, a
+    deliberate divergence from lesson_planner_node/slide_generator_node's
+    stricter empty-input guards (their premium single-shot calls have no
+    fallback; this node's whole design IS the fallback).
+
+    `Narration.timestamps` always ships `[]` — Story 2-8's explicit scope
+    decision (word-to-slide timestamp mapping deferred to a follow-up story).
+    """
+    from app.core.db import get_supabase
+    from app.schemas.lesson import Narration
+
+    lesson_id = state["lesson_id"]
+    narration_scripts = state.get("narration_scripts", [])
+    logger.info("[%s] tts_node: synthesising %d narrations", lesson_id, len(narration_scripts))
+
+    supabase = get_supabase()
+
+    # ── Idempotency: return cached output if this node already completed ──────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+
+    if "tts_node" in node_outputs:
+        cached = node_outputs["tts_node"]
+        logger.info("[%s] tts_node: cache hit, skipping all synthesis", lesson_id)
+        await _update_job_progress(lesson_id, 86.0, "tts_node")
+        return {**state, "audio_assets": cached, "progress_pct": 86.0}
+
+    if not narration_scripts:
+        logger.warning(
+            "[%s] tts_node: zero narration_scripts — producing empty audio_assets "
+            "(AC-11: this node never hard-fails, unlike Phase 2's premium nodes)",
+            lesson_id,
+        )
+        audio_assets_out: list[dict[str, Any]] = []
+        # 2026-07-15 review finding (Blind Hunter): the empty-input branch
+        # never wrote a checkpoint, unlike every other branch of this node —
+        # write one here too so an ARQ retry skips this (free) work as well.
+        supabase.table("lesson_jobs").update({
+            "last_node": "tts_node",
+            "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+        }).eq("lesson_id", lesson_id).execute()
+    else:
+        audio_assets_out = []
+        for entry in narration_scripts:
+            segment_id = entry.get("segment_id", "<unknown>")
+            # 2026-07-15 review finding (Blind Hunter + Edge Case Hunter,
+            # independently): the per-segment loop body previously had NO
+            # exception handling — a malformed entry (KeyError), a Storage
+            # upload error, or a Narration validation failure crashed the
+            # WHOLE node, contradicting the "never hard-fails" guarantee this
+            # node exists to provide. Now any failure anywhere in a single
+            # segment's processing degrades JUST that segment to the browser
+            # fallback, never the whole node.
+            try:
+                script = entry["script"]
+
+                # 2026-07-15 review finding (Blind Hunter): segment_id was
+                # used unvalidated to build a Storage path — reject anything
+                # that isn't a safe path component before it's ever used.
+                if not _SAFE_SEGMENT_ID_RE.match(segment_id):
+                    raise ValueError(f"unsafe segment_id for storage path: {segment_id!r}")
+
+                audio_bytes, audio_provider, cost = await _synthesize_with_fallback(lesson_id, segment_id, script)
+
+                if audio_bytes is not None:
+                    audio_path = f"{lesson_id}/{segment_id}.mp3"
+                    supabase.storage.from_("lesson-audio").upload(
+                        path=audio_path,
+                        file=audio_bytes,
+                        # 2026-07-15 review finding (Edge Case Hunter): no
+                        # upsert flag meant an ARQ retry re-uploading to the
+                        # same deterministic path hit a duplicate-resource
+                        # conflict — mirrors image_generator_node's existing
+                        # upsert="true" pattern for the same private-bucket need.
+                        file_options={"content-type": "audio/mpeg", "upsert": "true"},
+                    )
+                    from app.core.cost_tracker import accumulate_cost
+
+                    await accumulate_cost(lesson_id, cost)
+                else:
+                    audio_path = ""
+
+                narration_data = Narration.model_validate({
+                    "script": script,
+                    "audio_url": audio_path,
+                    "audio_provider": audio_provider,
+                    "timestamps": [],
+                })
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "[%s] tts_node: segment %s failed entirely (malformed entry, upload "
+                    "error, or validation failure) — degrading to browser fallback",
+                    lesson_id, segment_id, exc_info=True,
+                )
+                narration_data = Narration.model_validate({
+                    "script": entry.get("script", ""),
+                    "audio_url": "",
+                    "audio_provider": "browser",
+                    "timestamps": [],
+                })
+
+            audio_assets_out.append({
+                "segment_id": segment_id,
+                "data": narration_data.model_dump(mode="json"),
+            })
+
+        supabase.table("lesson_jobs").update({
+            "last_node": "tts_node",
+            "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+        }).eq("lesson_id", lesson_id).execute()
+
+    await _update_job_progress(lesson_id, 86.0, "tts_node")
+    return {**state, "audio_assets": audio_assets_out, "progress_pct": 86.0}
 
 
 async def image_generator_node(state: PipelineState) -> PipelineState:

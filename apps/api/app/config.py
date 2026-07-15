@@ -49,8 +49,10 @@ class Settings(BaseSettings):
     # ── TTS providers ─────────────────────────────────────────────────────────
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
     sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
+    sarvam_voice_id: str = Field(default="meera", description="Sarvam Bulbul v2 speaker name for narration synthesis")
     azure_tts_key: str | None = Field(default=None, description="Azure Cognitive Services TTS key — fallback")
     azure_tts_region: str = Field(default="centralindia", description="Azure TTS region")
+    azure_tts_voice: str = Field(default="en-IN-NeerjaNeural", description="Azure neural voice for fallback narration synthesis")
     elevenlabs_api_key: str | None = Field(default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam")
 
     # ── HeyGen ────────────────────────────────────────────────────────────────

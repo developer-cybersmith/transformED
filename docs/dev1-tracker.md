@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 9 | 3 | 8 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 10 | 3 | 7 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **32** | **4** | **22** |
+| **Totals** | | **58** | **33** | **4** | **21** |
 
 ---
 
@@ -46,7 +46,9 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8). Still stubs: `tts_node` (S2-9) onward. |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9). Still stubs: `image_generator_node` (S2-10) onward. |
+| `apps/api/app/providers/tts/sarvam.py` | `SarvamTTSProvider` — primary TTS ✅ S2-9 |
+| `apps/api/app/providers/tts/azure.py` | `AzureTTSProvider` — fallback TTS ✅ S2-9 |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
 | `apps/api/app/schemas/__init__.py` | **EMPTY — awaiting `lesson.py` (S0-12)** |
 | `apps/api/app/workers/main.py` | ARQ `WorkerSettings` entry point |
@@ -76,7 +78,6 @@
 | `apps/api/app/modules/content/pipeline/nodes/jargon_extractor.py` | Jargon extraction — GPT-4o-mini *(S2-4)* |
 | `apps/api/app/modules/content/pipeline/nodes/intervention_messages.py` | Pre-generate 3×3 interventions — GPT-4o-mini *(S2-5)* |
 | `apps/api/app/modules/content/pipeline/nodes/narration_generator.py` | Narration scripts — GPT-4o-mini *(S2-6)* |
-| `apps/api/app/modules/content/pipeline/nodes/tts_node.py` | TTS: Sarvam → Azure → Browser *(S2-9)* |
 | `apps/api/app/modules/content/pipeline/nodes/image_generator.py` | Images: GPT Image 1 Mini → Imagen 4 Fast → text-only *(S2-10)* |
 | `apps/api/app/modules/content/pipeline/nodes/package_builder.py` | Assemble + write JSONB LessonPackage *(S2-11)* |
 | `apps/api/app/modules/admin/router.py` | Admin: job status, costs, retry trigger *(S3-4)* |
@@ -589,14 +590,15 @@ Every node must:
   - Tier-aware slide-count targets (Epic 1's node-12 spec) explicitly NOT part of this task — fixed 1-8 slides/segment band, same reasoning as S2-7; deferred to S2-LM4 once S2-LM1's 4-dev sign-off unblocks tier plumbing again
   - **AC:** Output validates against `app.schemas.Slide` ✓ (tested); at least 1 (and at most 8) slide per segment ✓ (tested); `image_url`/`fallback_image_url` both nullable, always `None` at this node (images filled by S2-10) ✓ — see `docs/stories/2-7-slide-generator-node.md` for the full story, including the 3-layer adversarial code review (5 patches applied, 3 pre-existing risks deferred, 314/314 tests passing) ✅
 
-- [ ] **S2-9 `tts_node` — Sarvam AI Bulbul v2 + Azure TTS + Browser fallback**
-  - `apps/api/app/modules/content/pipeline/nodes/tts_node.py`
-  - Phase 3 Media node
-  - **Fallback chain: Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** (ElevenLabs REMOVED 2026-06-25)
-  - Each segment's narration script → `.mp3` stored to Supabase Storage
-  - Wire `is_circuit_open("sarvam")` before each call; fallback never hard-fails — Browser Speech is always available
-  - Include TTS cost in `cost_tracker.accumulate_cost()`
-  - **AC:** Audio file produced per segment; URL in `Narration.audio_url`; `audio_provider` set to `"sarvam"`, `"azure"`, or `"browser"`; pipeline never fails over TTS
+- [x] **S2-9 `tts_node` — Sarvam AI Bulbul v2 + Azure TTS + Browser fallback** — ✓ 2026-07-15
+  - `apps/api/app/modules/content/pipeline/graph.py::tts_node` (NOT a separate `nodes/tts_node.py` file — see Story 2-1's Tracker Cross-Reference Notes) + new `apps/api/app/providers/tts/sarvam.py`/`azure.py`
+  - Phase 3 Media node — **banned `providers/tts/elevenlabs.py` deleted as part of this story** (ElevenLabs REMOVED 2026-06-25; the dead file had lingered in the repo until now)
+  - Fallback chain: Sarvam AI Bulbul v2 → Azure TTS → Browser Speech, real HTTP calls via `httpx.AsyncClient`, each with its own circuit-breaker key (`"sarvam"`/`"azure_tts"`) and `@with_retry(max_attempts=3)`. Sarvam's 429 response body is inspected: `insufficient_quota_error` is non-retryable, anything else (e.g. `rate_limit_exceeded_error`) is retried normally.
+  - Each segment's narration script → `.mp3` uploaded to the private `lesson-audio` Supabase Storage bucket (`upsert: true`, added during code review) at `{lesson_id}/{segment_id}.mp3`; `Narration.audio_url` set to that storage path (never a public URL)
+  - `is_circuit_open()` wired before every provider call; fallback genuinely never hard-fails — a 3-layer adversarial `/bmad-code-review` caught that the ORIGINAL implementation's "never hard-fails" claim only covered the synthesis call itself, not the surrounding per-segment loop (storage upload, malformed-entry indexing) — fixed with a per-segment `try/except` that degrades just that one segment to browser fallback on any failure, never crashing the whole node
+  - TTS cost included in `cost_tracker.accumulate_cost()` via a documented flat per-character estimate (neither vendor's exact billing API is verifiable from this environment — flagged for a future story to replace with real invoiced numbers)
+  - Word-to-slide audio timestamps explicitly NOT implemented — `Narration.timestamps` ships `[]` for every segment; the tracker's own AC below doesn't require them, and no established slide-mapping heuristic exists yet (deferred to a follow-up story)
+  - **AC:** Audio file produced per segment ✓; URL in `Narration.audio_url` ✓; `audio_provider` set to `"sarvam"`/`"azure"`/`"browser"` ✓; pipeline never fails over TTS ✓ (tested, including the code-review round's per-segment degrade fix) — see `docs/stories/2-8-tts-node.md` for the full story, including the adversarial review (7 patches applied, 1 pre-existing risk deferred, 333/333 tests passing) ✅
 
 - [ ] **S2-10 `image_generator` node — GPT Image 1 Mini + Imagen 4 Fast + text-only fallback**
   - `apps/api/app/modules/content/pipeline/nodes/image_generator.py`
