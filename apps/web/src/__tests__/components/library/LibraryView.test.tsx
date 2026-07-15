@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LibraryView } from '@/components/library/LibraryView';
 import type { LibraryData } from '@/services/library.service';
@@ -53,10 +53,10 @@ describe('LibraryView', () => {
     ];
     render(<LibraryView initialData={{ lessons }} />);
 
-    expect(screen.getByRole('button', { name: /^All Lessons/ }).querySelector('span')?.textContent).toBe('4');
-    expect(screen.getByRole('button', { name: /^Generating/ }).querySelector('span')?.textContent).toBe('2');
-    expect(screen.getByRole('button', { name: /^Ready/ }).querySelector('span')?.textContent).toBe('1');
-    expect(screen.getByRole('button', { name: /^Failed/ }).querySelector('span')?.textContent).toBe('1');
+    expect(screen.getByRole('tab', { name: /^All Lessons/ }).querySelector('span')?.textContent).toBe('4');
+    expect(screen.getByRole('tab', { name: /^Generating/ }).querySelector('span')?.textContent).toBe('2');
+    expect(screen.getByRole('tab', { name: /^Ready/ }).querySelector('span')?.textContent).toBe('1');
+    expect(screen.getByRole('tab', { name: /^Failed/ }).querySelector('span')?.textContent).toBe('1');
   });
 
   it('a Ready card is clickable and navigates to /lesson/{id}', async () => {
@@ -133,5 +133,77 @@ describe('LibraryView', () => {
     await user.click(screen.getByText('Load more'));
 
     await waitFor(() => expect(screen.queryByText('Load more')).toBeNull());
+  });
+
+  it('shows an inline error and keeps "Load more" available if the request fails', async () => {
+    const user = userEvent.setup();
+    const fullPage = Array.from({ length: 24 }, (_, i) => lesson({ lesson_id: `l${i}` }));
+    apiGetMock.mockRejectedValue(new Error('network error'));
+
+    render(<LibraryView initialData={{ lessons: fullPage }} />);
+    await user.click(screen.getByText('Load more'));
+
+    await waitFor(() => expect(screen.getByText(/couldn't load more/i)).not.toBeNull());
+    expect(screen.getByText('Load more')).not.toBeNull();
+  });
+
+  it('shows an inline error instead of crashing if the response is not an array', async () => {
+    const user = userEvent.setup();
+    const fullPage = Array.from({ length: 24 }, (_, i) => lesson({ lesson_id: `l${i}` }));
+    apiGetMock.mockResolvedValue({ data: { unexpected: 'shape' } });
+
+    render(<LibraryView initialData={{ lessons: fullPage }} />);
+    await user.click(screen.getByText('Load more'));
+
+    await waitFor(() => expect(screen.getByText(/couldn't load more/i)).not.toBeNull());
+  });
+
+  it('does not send a second "Load more" request while one is already in flight (rapid double-click)', async () => {
+    let resolveFetch: (value: unknown) => void = () => {};
+    apiGetMock.mockImplementation(() => new Promise((resolve) => { resolveFetch = resolve; }));
+    const fullPage = Array.from({ length: 24 }, (_, i) => lesson({ lesson_id: `l${i}` }));
+
+    render(<LibraryView initialData={{ lessons: fullPage }} />);
+    const button = screen.getByText('Load more');
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    expect(apiGetMock).toHaveBeenCalledTimes(1);
+
+    resolveFetch({ data: [] });
+    await waitFor(() => expect(screen.queryByText('Load more')).toBeNull());
+  });
+
+  it('deduplicates by lesson_id if the next page overlaps with already-loaded lessons', async () => {
+    const user = userEvent.setup();
+    const fullPage = Array.from({ length: 24 }, (_, i) => lesson({ lesson_id: `l${i}`, title: `Lesson ${i}` }));
+    apiGetMock.mockResolvedValue({
+      data: [lesson({ lesson_id: 'l0', title: 'Lesson 0' }), lesson({ lesson_id: 'new1', title: 'Lesson New' })],
+    });
+
+    render(<LibraryView initialData={{ lessons: fullPage }} />);
+    await user.click(screen.getByText('Load more'));
+
+    await waitFor(() => expect(screen.getByText('Lesson New')).not.toBeNull());
+    expect(screen.getAllByText('Lesson 0')).toHaveLength(1);
+  });
+
+  it('a Ready card is keyboard-activatable (role="button", Enter key navigates)', () => {
+    render(<LibraryView initialData={{ lessons: [lesson({ lesson_id: 'lsn_9', status: 'ready' })] }} />);
+
+    const card = screen.getByText('SQL Injection Vectors').closest('[role="button"]');
+    expect(card).not.toBeNull();
+    expect(card?.getAttribute('tabindex')).toBe('0');
+
+    fireEvent.keyDown(card!, { key: 'Enter' });
+
+    expect(pushMock).toHaveBeenCalledWith('/lesson/lsn_9');
+  });
+
+  it('a Generating card has no button role/keyboard handling (it is not interactive)', () => {
+    render(<LibraryView initialData={{ lessons: [lesson({ status: 'running', title: null })] }} />);
+
+    const card = screen.getByText('Untitled Lesson').closest('div[class*="rounded-3xl"]');
+    expect(card?.getAttribute('role')).not.toBe('button');
   });
 });

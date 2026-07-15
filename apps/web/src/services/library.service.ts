@@ -13,7 +13,8 @@ export const libraryService = {
         try {
             const lessons = await lessonsService.listLessons({ limit: LIBRARY_PAGE_SIZE, offset: 0 });
             return createSuccessResponse({ lessons }, "Library retrieved successfully");
-        } catch {
+        } catch (err) {
+            console.error("Failed to fetch library data:", err);
             return createErrorResponse<LibraryData>("We couldn't load your library right now.");
         }
     },

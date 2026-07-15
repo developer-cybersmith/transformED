@@ -8,7 +8,7 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-14 (S1-09 Library Real Data Integration done — real `GET /api/content/lessons` wired, `LibraryView` rewritten around the real sparse data shape, and a real server-side auth gap in `lib/api.ts` fixed along the way with a new `lib/api.server.ts`. Branch `sprint1/s1-9-library-real-api`, feeding a new feature master `feature-real-data-integration` (S1-10 Dashboard is next, same master). Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
+| **Last Updated** | 2026-07-15 (S1-09 Library Real Data Integration done, 5-agent reviewed, 8 patches applied — real `GET /api/content/lessons` wired, `LibraryView` rewritten around the real sparse data shape, a real server-side auth gap in `lib/api.ts` fixed with a new `lib/api.server.ts` (hardened to use `getUser()` not just `getSession()`), plus a re-entrancy/dedup fix on "Load more" and keyboard-accessible cards. Branch `sprint1/s1-9-library-real-api`, feeding feature master `feature-real-data-integration` (S1-10 Dashboard is next, same master). Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
 | **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (12/14) · Sprint 2 IN PROGRESS (5/6) |
 
@@ -885,9 +885,9 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 
 ---
 
-### S1-09 — Library Real Data Integration — ✅ 2026-07-14
+### S1-09 — Library Real Data Integration — ✅ 2026-07-15
 **Priority:** P2  
-**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/1-9-library-real-data-integration.md` on branch `sprint1/s1-9-library-real-api` (branched from `main`, which now has `sprint1/s1-8-upload-real-api` merged), feeds into new feature master `feature-real-data-integration`  
+**Status:** ✅ DONE <!-- completed: 2026-07-15 --> — implemented via BMAD story `docs/stories/1-9-library-real-data-integration.md` on branch `sprint1/s1-9-library-real-api` (branched from `main`, which now has `sprint1/s1-8-upload-real-api` merged), feeds into new feature master `feature-real-data-integration`  
 **Files created:** `src/lib/api.server.ts`, `src/services/lessons.service.ts`  
 **Files modified:** `src/services/library.service.ts`, `src/components/library/LibraryView.tsx` (full rewrite), `src/lib/utils.ts` (new `formatLessonStatusLabel`)
 
@@ -906,6 +906,8 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 - [x] Pagination works via a "Load more" button (length-based heuristic — the API has no total count)
 
 17 new/updated tests across 5 files. Full `apps/web` suite: 341/341 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings.
+
+**5-agent adversarial review (2026-07-15) — 8 patches applied, 1 dismissed as noise:** `handleLoadMore` now catches failures and surfaces an inline error instead of an unhandled rejection; a `useRef`-backed re-entrancy guard plus `lesson_id` dedup closes a rapid-double-click race that could append duplicate lessons; `LibraryView.tsx` now imports the single shared `LIBRARY_PAGE_SIZE` constant instead of redeclaring its own; `getServerApi()` now validates via `getUser()` before trusting `getSession()`'s token (closing a known Supabase SSR footgun where a stale/revoked cookie could still mint a Bearer header); added an `Array.isArray` guard on the paginated response; Ready cards are now keyboard-accessible (`role="button"`, `tabIndex`, `onKeyDown`, focus ring) and the tab bar got proper ARIA tablist semantics. 9 new tests. Full suite now 349/349 passing.
 
 ---
 

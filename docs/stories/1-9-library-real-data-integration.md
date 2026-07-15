@@ -4,7 +4,7 @@ baseline_commit: "3891a0edd75991375301ffc146d138579dda0d5e"
 
 # Story 1-9: Library Real Data Integration
 
-Status: review
+Status: done
 
 ## Story
 
@@ -78,6 +78,21 @@ This is Sprint 1 task **S1-09** from `docs/dev2-sprint-tracker.md` — previousl
   - [x] 7.1 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean
 - [x] Task 8: Tracker update
   - [x] 8.1 Mark S1-09 in `docs/dev2-sprint-tracker.md` as done
+
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint1/s1-9-library-real-api` (commits `672daae`..`50cc8ad`) vs its parent `main`, 2026-07-15.
+
+- [x] [Review][Patch] `handleLoadMore` has no `catch` — a rejected fetch (network error, 401, 500) becomes an unhandled promise rejection with zero user feedback; `loadingMore` still resets via `finally`, so the button silently looks normal again [apps/web/src/components/library/LibraryView.tsx] (blind+edge) — fixed: added a `catch` that sets an inline `loadMoreError` message shown above the button; "Load more" stays available for retry.
+- [x] [Review][Patch] No re-entrancy guard in `handleLoadMore` — `disabled={loadingMore}` doesn't take effect until the next React commit, so two rapid clicks (double-click, ghost touch events, held Enter) can both fire before that repaint, sending duplicate requests with the same `offset` and appending duplicate lessons (React key collisions on `lesson_id`) [apps/web/src/components/library/LibraryView.tsx] (blind+edge) — fixed: a `useRef`-backed `loadMoreInFlight` flag guards the top of `handleLoadMore` synchronously (refs mutate immediately, unlike state); also added `lesson_id`-based dedup on append as defense-in-depth against an overlapping page from the backend itself.
+- [x] [Review][Patch] `PAGE_SIZE` (`LibraryView.tsx`) and `LIBRARY_PAGE_SIZE` (`library.service.ts`) are two independent hardcoded literals with no shared source of truth — nothing keeps them in sync if either changes later, silently breaking the `hasMore` heuristic [apps/web/src/components/library/LibraryView.tsx, apps/web/src/services/library.service.ts] (blind+edge) — fixed: `LibraryView.tsx` now imports and uses `LIBRARY_PAGE_SIZE` from `library.service.ts` instead of redeclaring its own constant.
+- [x] [Review][Patch] `getServerApi()` uses `supabase.auth.getSession()` to decide whether to attach a Bearer token — a known Supabase SSR footgun, since `getSession()` reads the cookie payload without revalidating it against the auth server, unlike `getUser()` [apps/web/src/lib/api.server.ts] (blind) — fixed: now calls `getUser()` first to revalidate; only fetches the session token (for the actual header) once a genuinely valid user is confirmed. Skips `getSession()` entirely if `getUser()` fails.
+- [x] [Review][Patch] No runtime check that `GET content/lessons` actually returns an array before spreading it into state — a malformed/error-shaped response would throw a `TypeError` at the append site [apps/web/src/services/lessons.service.ts, apps/web/src/components/library/LibraryView.tsx] (blind) — fixed in `LibraryView.tsx`'s `handleLoadMore` with an `Array.isArray` guard that routes into the same error-handling path as a network failure. (`lessons.service.ts`'s own initial-page fetch already flows through `library.service.ts`'s try/catch, so a malformed response there was already non-crashing — just untyped; the explicit check was added at the point that actually spreads the array.)
+- [x] [Review][Patch] Library cards have no keyboard affordance — `onClick` on a bare `motion.div` with no `role="button"`, `tabIndex`, or `onKeyDown`, so a keyboard/screen-reader user cannot open a ready lesson from the grid [apps/web/src/components/library/LibraryView.tsx] (blind) — fixed: Ready cards get `role="button"`, `tabIndex={0}`, `onKeyDown` (Enter/Space), and a `focus-visible` ring; also gave the tab bar proper ARIA tablist semantics (`role="tablist"`/`role="tab"`/`aria-selected`) since the new card `role="button"` created a real accessible-name ambiguity between "Ready" the tab and "Ready" the status badge, once the tabs were also queried by role.
+- [x] [Review][Patch] `library.service.ts`'s `catch` block discards the actual error (`catch { ... }`, not `catch (err)`) — every failure mode (network, 401, 500) collapses into the same generic message with nothing logged for diagnosis [apps/web/src/services/library.service.ts] (blind) — fixed: `catch (err) { console.error("Failed to fetch library data:", err); ... }`.
+- [x] [Review][Patch] Story Change Log dates say 2026-07-14; actual commit timestamps (and the real current date) are 2026-07-15 [docs/stories/1-9-library-real-data-integration.md] (auditor) — fixed going forward (this story's dates corrected below); S2-07/S2-08's already-pushed 2026-07-14 dates are left as historical artifacts per user decision, not retroactively edited.
+
+**Dismissed as noise/false-positive (1):** the AC's literal tab-label wording ("All") vs. the implemented "All Lessons" — cosmetic wording difference, not a functional deviation; tests were written against the actual implemented label.
 
 ## Dev Notes
 
@@ -155,14 +170,17 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `apps/web/src/__tests__/services/library.service.test.ts`
 
 **Files MODIFIED:**
-- `apps/web/src/services/library.service.ts` — real fetch via `lessonsService`, new `LibraryData` shape (`{ lessons: LessonStatusResponse[] }`)
-- `apps/web/src/components/library/LibraryView.tsx` — full rewrite: real/sparse data, All/Generating/Ready/Failed tabs, "Upload Again" instead of Retry, "Load more" pagination via the client `api` instance
+- `apps/web/src/services/library.service.ts` — real fetch via `lessonsService`, new `LibraryData` shape (`{ lessons: LessonStatusResponse[] }`); review-patch pass: logs the caught error
+- `apps/web/src/components/library/LibraryView.tsx` — full rewrite: real/sparse data, All/Generating/Ready/Failed tabs, "Upload Again" instead of Retry, "Load more" pagination via the client `api` instance; review-patch pass: re-entrancy guard + dedup on `handleLoadMore`, inline error surfacing, array-shape validation, shared `LIBRARY_PAGE_SIZE` constant, keyboard-accessible Ready cards, ARIA tablist semantics on the tab bar
 - `apps/web/src/lib/utils.ts` — added `formatLessonStatusLabel`
-- `apps/web/src/__tests__/components/library/LibraryView.test.tsx` — fully rewritten for the new component
-- `apps/web/src/__tests__/app/library/page.test.tsx` — fixture/assertion updated to the new `LibraryData` shape and empty-state copy
+- `apps/web/src/__tests__/lib/api.server.test.ts` — review-patch pass: added `getUser()`-validation tests
+- `apps/web/src/__tests__/services/library.service.test.ts` — review-patch pass: added error-logging test
+- `apps/web/src/__tests__/components/library/LibraryView.test.tsx` — fully rewritten for the new component; review-patch pass added 7 more tests (Load-more failure, non-array response, double-click re-entrancy, dedup, keyboard activation, tab/card role disambiguation)
+- `apps/web/src/__tests__/app/library/page.test.tsx` — fixture/assertion updated to the new `LibraryData` shape and empty-state copy; review-patch pass: mock now also exports `LIBRARY_PAGE_SIZE`
 - `docs/dev2-sprint-tracker.md` — S1-09 marked done
 
 ### Change Log
 
-- 2026-07-14: Story created — Sprint 1 remainder task S1-09, branch `sprint1/s1-9-library-real-api` off `main`, feeding into new feature master `feature-real-data-integration`.
-- 2026-07-14: All 8 tasks implemented in RED→GREEN order; 17 new/updated tests across 5 files; full `apps/web` suite 341/341 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings); story marked `review`.
+- 2026-07-15: Story created — Sprint 1 remainder task S1-09, branch `sprint1/s1-9-library-real-api` off `main`, feeding into new feature master `feature-real-data-integration`.
+- 2026-07-15: All 8 tasks implemented in RED→GREEN order; 17 new/updated tests across 5 files; full `apps/web` suite 341/341 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings); story marked `review`.
+- 2026-07-15: 5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 0 decision-needed, 8 patch, 0 defer, 1 dismissed (cosmetic tab-label wording). The auditor also independently verified the real backend contract by reading `apps/api/app/modules/content/router.py` directly and caught this story's own Change Log dates being off by a day (fixed in this pass). All 8 patches applied in RED→GREEN order; 9 new tests; full `apps/web` suite 349/349 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings). Story marked `done`.

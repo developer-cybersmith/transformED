@@ -15,9 +15,17 @@ export async function getServerApi() {
     });
 
     const supabase = await createClient();
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.access_token) {
-        instance.defaults.headers.common.Authorization = `Bearer ${data.session.access_token}`;
+
+    // getUser() re-validates the session against the Supabase Auth server —
+    // getSession() alone only reads the cookie payload back, which can still
+    // "succeed" for a stale/revoked session (a known Supabase SSR footgun).
+    // Only fetch the actual token once a genuinely valid user is confirmed.
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (!userError && userData.user) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session?.access_token) {
+            instance.defaults.headers.common.Authorization = `Bearer ${sessionData.session.access_token}`;
+        }
     }
 
     return instance;

@@ -33,4 +33,15 @@ describe('libraryService.getLibrary', () => {
     expect(response.success).toBe(false);
     expect(response.data).toBeNull();
   });
+
+  it('logs the underlying error for diagnosis instead of discarding it', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = new Error('network error');
+    listLessonsMock.mockRejectedValue(err);
+
+    await libraryService.getLibrary();
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('library'), err);
+    consoleSpy.mockRestore();
+  });
 });

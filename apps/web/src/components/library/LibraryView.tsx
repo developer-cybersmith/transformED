@@ -1,16 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, CheckCircle2, AlertCircle, RefreshCw, LayoutGrid } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { formatTimeAgo, formatLessonStatusLabel } from "@/lib/utils";
-import type { LibraryData } from "@/services/library.service";
+import { LIBRARY_PAGE_SIZE, type LibraryData } from "@/services/library.service";
 import type { LessonStatusResponse } from "@/services/upload.service";
-
-const PAGE_SIZE = 24;
 
 interface LibraryViewProps {
     initialData: LibraryData;
@@ -26,8 +24,13 @@ export function LibraryView({ initialData }: LibraryViewProps) {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<TabKey>('all');
     const [lessons, setLessons] = useState<LessonStatusResponse[]>(initialData.lessons);
-    const [hasMore, setHasMore] = useState(initialData.lessons.length === PAGE_SIZE);
+    const [hasMore, setHasMore] = useState(initialData.lessons.length === LIBRARY_PAGE_SIZE);
     const [loadingMore, setLoadingMore] = useState(false);
+    const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+    // A ref (not state) because it must be readable/writable synchronously —
+    // two rapid clicks can both fire before React re-renders `loadingMore`,
+    // so the state flag alone can't prevent a duplicate in-flight request.
+    const loadMoreInFlight = useRef(false);
 
     const getFilteredLessons = (): LessonStatusResponse[] => {
         if (activeTab === 'all') return lessons;
@@ -47,14 +50,27 @@ export function LibraryView({ initialData }: LibraryViewProps) {
     ];
 
     const handleLoadMore = async () => {
+        if (loadMoreInFlight.current) return;
+        loadMoreInFlight.current = true;
         setLoadingMore(true);
+        setLoadMoreError(null);
         try {
             const { data } = await api.get<LessonStatusResponse[]>('content/lessons', {
-                params: { limit: PAGE_SIZE, offset: lessons.length },
+                params: { limit: LIBRARY_PAGE_SIZE, offset: lessons.length },
             });
-            setLessons((prev) => [...prev, ...data]);
-            setHasMore(data.length === PAGE_SIZE);
+            if (!Array.isArray(data)) {
+                throw new Error('Unexpected response shape from content/lessons');
+            }
+            setLessons((prev) => {
+                const existingIds = new Set(prev.map((l) => l.lesson_id));
+                const deduped = data.filter((l) => !existingIds.has(l.lesson_id));
+                return [...prev, ...deduped];
+            });
+            setHasMore(data.length === LIBRARY_PAGE_SIZE);
+        } catch {
+            setLoadMoreError("Couldn't load more lessons — please try again.");
         } finally {
+            loadMoreInFlight.current = false;
             setLoadingMore(false);
         }
     };
@@ -74,10 +90,12 @@ export function LibraryView({ initialData }: LibraryViewProps) {
     return (
         <div className="w-full">
             {/* Header / Tabs */}
-            <div className="flex items-center gap-2 border-b border-neutral-100 pb-px mb-8">
+            <div role="tablist" className="flex items-center gap-2 border-b border-neutral-100 pb-px mb-8">
                 {tabs.map(tab => (
                     <button
                         key={tab.key}
+                        role="tab"
+                        aria-selected={activeTab === tab.key}
                         onClick={() => setActiveTab(tab.key)}
                         className={`relative px-6 py-3 text-sm font-medium transition-colors ${activeTab === tab.key ? 'text-neutral-900' : 'text-neutral-400 hover:text-neutral-600'
                             }`}
@@ -123,7 +141,10 @@ export function LibraryView({ initialData }: LibraryViewProps) {
             </div>
 
             {hasMore && (
-                <div className="flex justify-center pb-24">
+                <div className="flex flex-col items-center gap-3 pb-24">
+                    {loadMoreError && (
+                        <p className="text-sm font-medium text-red-500">{loadMoreError}</p>
+                    )}
                     <Button variant="outline" size="md" onClick={handleLoadMore} disabled={loadingMore}>
                         {loadingMore ? 'Loading...' : 'Load more'}
                     </Button>
@@ -147,7 +168,15 @@ function LibraryCard({ lesson, onNavigateToLesson, index }: { lesson: LessonStat
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.4, ease: "easeOut", delay: index * 0.05 }}
             onClick={isReady ? onNavigateToLesson : undefined}
-            className={`group relative w-full bg-white rounded-3xl border border-neutral-100 shadow-sm transition-all duration-300 flex flex-col overflow-hidden p-6 ${isReady ? 'cursor-pointer hover:shadow-xl hover:-translate-y-1' : 'opacity-90 cursor-default'
+            role={isReady ? "button" : undefined}
+            tabIndex={isReady ? 0 : undefined}
+            onKeyDown={isReady ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onNavigateToLesson();
+                }
+            } : undefined}
+            className={`group relative w-full bg-white rounded-3xl border border-neutral-100 shadow-sm transition-all duration-300 flex flex-col overflow-hidden p-6 ${isReady ? 'cursor-pointer hover:shadow-xl hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent-primary)]/20' : 'opacity-90 cursor-default'
                 }`}
         >
             <div className="flex items-center gap-2 mb-4">

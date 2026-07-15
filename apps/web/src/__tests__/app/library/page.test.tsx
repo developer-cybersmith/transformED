@@ -5,6 +5,7 @@ const { getLibraryMock } = vi.hoisted(() => ({ getLibraryMock: vi.fn() }));
 
 vi.mock('@/services/library.service', () => ({
   libraryService: { getLibrary: getLibraryMock },
+  LIBRARY_PAGE_SIZE: 24,
 }));
 
 vi.mock('next/navigation', () => ({
