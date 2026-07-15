@@ -926,7 +926,9 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 - [x] Loading state shown during fetch — `Suspense` + fallback, reusing `library/page.tsx`'s existing pattern
 - [x] Error state shown on Recent Lessons fetch failure, non-blocking — rest of the dashboard still loads
 
-10 new/updated tests across 3 files. Full `apps/web` suite: 356/356 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings. `HeroSection.tsx`/`ContinueLearningCard.tsx`/`QuickActions.tsx`/`LearningPulse.tsx` and all of S1-09's own files confirmed untouched.
+16 new/updated tests across 3 files. Full `apps/web` suite: 362/362 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings. `HeroSection.tsx`/`ContinueLearningCard.tsx`/`QuickActions.tsx`/`LearningPulse.tsx` and all of S1-09's own files confirmed untouched.
+
+**5-agent adversarial review (2026-07-15) — 6 patches applied, 0 dismissed:** the two data fetches (mocked summary + real recent lessons) now run concurrently via `Promise.allSettled` instead of sequentially — closes a real bug where a mock-fetch failure would have crashed the *entire* dashboard, not just Recent Lessons, undermining this story's own non-blocking design, and also fixes a real latency regression (was stacking both fetches' delays). Added a runtime `Array.isArray` check on the recent-lessons response, dropped an unsafe `as LearningPulse` cast in favor of an honest nullable type, fixed an unrecognized-`status` value rendering a silent unlabeled dead card, fixed an empty-string title not falling back to "Untitled Lesson", and added a defensive fallback in `DashboardDataFetcher` matching `LibraryDataFetcher`'s pattern. `LibraryCard`'s identical title/status gaps were noted but left alone (S1-09 files out of scope) — tracked in `_bmad-output/implementation-artifacts/deferred-work.md` for a quick follow-up.
 
 ---
 

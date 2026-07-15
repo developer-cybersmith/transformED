@@ -4,7 +4,7 @@ baseline_commit: "9d80ba0ac1d88126848062481fdc0cb2a1f521c1"
 
 # Story 1-10: Dashboard Real Data Integration
 
-Status: review
+Status: done
 
 ## Story
 
@@ -74,6 +74,19 @@ This is Sprint 1 task **S1-10** from `docs/dev2-sprint-tracker.md` — the secon
 - [x] Task 5: Tracker update
   - [x] 5.1 Mark S1-10 in `docs/dev2-sprint-tracker.md` as done
 
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint1/s1-10-dashboard-real-api` (commits `5ec027f`..`1804150`) vs its parent `feature-real-data-integration`, 2026-07-15.
+
+- [x] [Review][Patch] The mock-data fetch (`dashboardApi.getDashboardData()`) has no error handling at all — sits outside the `try`/`catch` that only wraps the real `listLessons` call. A rejection (or a `success:false`/`data:null` resolution, a legal `ApiResponse<T>` variant) crashes `getDashboard()` wholesale, taking down the *entire* dashboard — exactly the failure mode this story's non-blocking design was meant to prevent [apps/web/src/services/dashboard.service.ts] (blind+edge) — fixed as part of the `Promise.allSettled` rewrite below.
+- [x] [Review][Patch] The two fetches (mock summary data, real recent lessons) run as sequential `await`s even though neither depends on the other — the page now waits for the *sum* of both latencies instead of the *max*, a real UX regression versus the single combined mock call this replaced [apps/web/src/services/dashboard.service.ts] (edge) — fixed: rewrote `getDashboard()` around `Promise.allSettled([dashboardApi.getDashboardData(), lessonsService.listLessons(...)])`, so both run concurrently and either's rejection is handled independently without affecting the other. New test asserts both fetches' start/end interleave rather than running strictly one-after-the-other.
+- [x] [Review][Patch] `mockResponse.data?.learningPulse as LearningPulse` is an unsafe cast with no runtime guard — if the mock data is ever missing, this silently forces `undefined` into a value typed as a real object, unlike the line above it (`continueLearning`), which is defended with `?? null` [apps/web/src/services/dashboard.service.ts] (blind+edge) — fixed: `DashboardData.learningPulse` is now typed `LearningPulse | null` honestly (no cast), defaulting to `null` via `?? null` just like `continueLearning`. `page.tsx`'s existing `{dashboardData?.learningPulse && (...)}` guard already handles the null case gracefully.
+- [x] [Review][Patch] No runtime check that `lessonsService.listLessons()` actually resolved an array before treating it as success — a malformed 200 (e.g. a paginated wrapper instead of a bare array) is silently accepted, then `lessons.map(...)` in `RecentLessons.tsx` throws on the non-array value, blanking the whole page rather than degrading just the widget [apps/web/src/services/dashboard.service.ts, apps/web/src/components/dashboard/sections/RecentLessons.tsx] (edge) — fixed: `Array.isArray(lessonsResult.value)` check routes a non-array response into the same `recentLessonsError` path as a genuine rejection.
+- [x] [Review][Patch] An unrecognized/unexpected `lesson.status` (typo, new backend value, casing mismatch) makes all three status booleans false — no badge renders and the card is silently non-interactive with zero indication anything's wrong; `formatLessonStatusLabel`'s own defensive "anything else → Failed" default is never reached because the component's own branching never routes an unknown status into the `isFailed` branch [apps/web/src/components/dashboard/sections/RecentLessons.tsx] (blind+edge) — fixed: `isFailed` is now `!generating && !isReady` (anything not generating/ready falls into the Failed bucket), matching `formatLessonStatusLabel`'s own default. New test uses an out-of-union status to confirm the badge still renders and the card stays non-interactive.
+- [x] [Review][Patch] `lesson.title ?? 'Untitled Lesson'` doesn't catch an empty-string title (`??` only substitutes on `null`/`undefined`) — a lesson with `title: ""` (plausible for a still-generating lesson) renders a blank heading instead of the fallback [apps/web/src/components/dashboard/sections/RecentLessons.tsx] (blind) — fixed: switched to `lesson.title || 'Untitled Lesson'`, which also substitutes on empty string.
+
+No dismissed findings this round — all 6 were genuine. One additional defensive fix made alongside these (not a separate finding, but directly related to the "always success" pattern the auditor and edge hunter both discussed): `DashboardDataFetcher` now checks `!response.success || !dashboardData` and shows a fallback message, mirroring `LibraryDataFetcher`'s existing pattern — belt-and-suspenders now that `getDashboard()` is fully hardened to never actually produce that case, but consistent with the sibling page and cheap to add.
+
 ## Dev Notes
 
 ### Files this story touches
@@ -127,6 +140,7 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `getDashboard()`'s non-blocking design: a `recentLessons` fetch failure is caught, logged, and turned into `recentLessonsError` — but the top-level `ApiResponse` still resolves `success: true`, so the rest of the dashboard (which comes from a separate, already-resolved mock fetch) renders regardless. This was a deliberate response-shape decision, not an accidental catch-and-continue — a top-level `success: false` would have blanked the entire page via `page.tsx`'s existing failure branch, which is the opposite of "non-blocking."
 - Reused `RecentLessons.tsx`'s Ready-card interaction pattern (status badge, title fallback, "Created X ago", keyboard-accessible `role="button"`/`tabIndex`/`onKeyDown` for Ready cards) directly from S1-09's `LibraryCard`, rather than inventing a second pattern for the same underlying data shape.
 - `dashboard/page.tsx`'s `Suspense` + `*DataFetcher` split mirrors `library/page.tsx`'s existing pattern exactly, satisfying the original tracker AC's "loading skeleton" requirement without introducing a new convention.
+- Post-review: rewrote `getDashboard()` around `Promise.allSettled` so the mock summary fetch and the real recent-lessons fetch run concurrently and fail independently — the original sequential-await version had a real gap where a mock-fetch failure crashed the whole dashboard, undermining the story's own non-blocking design. `LibraryCard`'s sibling gap (empty-string title, unrecognized-status dead card) was noted but intentionally left alone — S1-09's files are explicitly out of scope for this story.
 
 ### File List
 

@@ -76,4 +76,20 @@ describe('RecentLessons', () => {
     await user.click(screen.getByText('View All'));
     expect(pushMock).toHaveBeenCalledWith('/library');
   });
+
+  it('an unrecognized status still shows a "Failed" badge and is not clickable, instead of a silent dead card', async () => {
+    const user = userEvent.setup();
+    // @ts-expect-error — intentionally out-of-union to simulate an unexpected backend value
+    render(<RecentLessons lessons={[lesson({ status: 'cancelled' })]} error={null} />);
+
+    expect(screen.getByText('Failed')).not.toBeNull();
+    await user.click(screen.getByText('SQL Injection Vectors'));
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to "Untitled Lesson" for an empty-string title, not just null', () => {
+    render(<RecentLessons lessons={[lesson({ title: '' })]} error={null} />);
+
+    expect(screen.getByText('Untitled Lesson')).not.toBeNull();
+  });
 });

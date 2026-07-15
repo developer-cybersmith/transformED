@@ -4,6 +4,10 @@ Items deferred from code review — not urgent for current sprint but should be 
 
 ---
 
+## Deferred from: code review of 1-10-dashboard-real-data-integration (2026-07-15)
+
+- **`LibraryCard` (S1-09) has the same empty-string-title and unrecognized-status gaps `RecentLessons.tsx` had until this story's review** [`apps/web/src/components/library/LibraryView.tsx`] — S1-10's review found `lesson.title ?? 'Untitled Lesson'` doesn't catch `title: ""`, and an unrecognized `lesson.status` renders a silent, badge-less, non-interactive "dead" card. Both were fixed in `RecentLessons.tsx` (the file this story owns), but `LibraryCard` uses the identical pre-existing pattern and was explicitly out of scope for this story (S1-09's files are read-only here). Worth a quick follow-up patch to `LibraryView.tsx` applying the same two fixes (`||` instead of `??` for the title fallback; `isFailed = !generating && !isReady` instead of a strict `=== 'failed'` check).
+
 ## Deferred from: code review of 1-8-upload-real-api (2026-07-13)
 
 - **No `AbortController`-based request cancellation on unmount** [`apps/web/src/services/upload.service.ts`, `apps/web/src/components/dashboard/upload/UploadFlow.tsx`] — no other service in the codebase cancels in-flight requests either; this is the first long-lived polling loop, so an orphaned `getLessonStatus`/`uploadLesson` call keeps running server-side after the user navigates away. Client-side effects are already suppressed via a `cancelled` flag, so the harm is a wasted network call, not a leak or correctness bug. Better addressed as a standalone cross-service story than bolted onto this one.

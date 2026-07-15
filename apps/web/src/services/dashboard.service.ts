@@ -7,7 +7,7 @@ import type { LessonStatusResponse } from './upload.service';
 
 export interface DashboardData {
     continueLearning: MockLesson | null;
-    learningPulse: LearningPulse;
+    learningPulse: LearningPulse | null;
     recentLessons: LessonStatusResponse[];
     recentLessonsError: string | null;
 }
@@ -16,32 +16,48 @@ const RECENT_LESSONS_LIMIT = 5;
 
 export const dashboardService = {
     getDashboard: async (): Promise<ApiResponse<DashboardData>> => {
+        // Both fetches are independent of each other, so they run concurrently
+        // via Promise.allSettled — sequential awaits here would stack their
+        // latencies instead of overlapping them, and (more importantly) a
+        // rejection from either one must not take down the other's data or
+        // the dashboard as a whole.
+        const [mockResult, lessonsResult] = await Promise.allSettled([
+            dashboardApi.getDashboardData(),
+            lessonsService.listLessons({ limit: RECENT_LESSONS_LIMIT }),
+        ]);
+
         // continueLearning / learningPulse: still mocked — no backend endpoint
         // exists for "latest session" or streak/mastery data (see S1-09).
-        const mockResponse = await dashboardApi.getDashboardData();
-        const continueLearning = mockResponse.data?.continueLearning ?? null;
-        const learningPulse = mockResponse.data?.learningPulse as LearningPulse;
-
-        try {
-            const recentLessons = await lessonsService.listLessons({ limit: RECENT_LESSONS_LIMIT });
-            return createSuccessResponse(
-                { continueLearning, learningPulse, recentLessons, recentLessonsError: null },
-                "Dashboard data retrieved successfully"
-            );
-        } catch (err) {
-            console.error("Failed to fetch recent lessons for dashboard:", err);
-            // Non-blocking: the rest of the dashboard (Hero, Continue-Learning,
-            // Quick Actions, Learning Pulse) still renders from the mocked
-            // fetch above — only the Recent Lessons widget degrades.
-            return createSuccessResponse(
-                {
-                    continueLearning,
-                    learningPulse,
-                    recentLessons: [],
-                    recentLessonsError: "We couldn't load your recent lessons right now.",
-                },
-                "Dashboard data retrieved successfully"
-            );
+        let continueLearning: MockLesson | null = null;
+        let learningPulse: LearningPulse | null = null;
+        if (mockResult.status === 'fulfilled' && mockResult.value.success && mockResult.value.data) {
+            continueLearning = mockResult.value.data.continueLearning ?? null;
+            learningPulse = mockResult.value.data.learningPulse ?? null;
+        } else {
+            const reason = mockResult.status === 'rejected' ? mockResult.reason : 'response had success:false or no data';
+            console.error("Failed to fetch dashboard summary data:", reason);
         }
+
+        let recentLessons: LessonStatusResponse[] = [];
+        let recentLessonsError: string | null = null;
+        if (lessonsResult.status === 'fulfilled' && Array.isArray(lessonsResult.value)) {
+            recentLessons = lessonsResult.value;
+        } else {
+            const reason = lessonsResult.status === 'rejected'
+                ? lessonsResult.reason
+                : new Error('Unexpected (non-array) response shape from lessonsService.listLessons');
+            console.error("Failed to fetch recent lessons for dashboard:", reason);
+            recentLessonsError = "We couldn't load your recent lessons right now.";
+        }
+
+        // Non-blocking by design: the top-level response always succeeds.
+        // Hero / Continue-Learning / Quick Actions / Learning Pulse render
+        // from continueLearning/learningPulse above (null-safe fallbacks if
+        // that fetch failed); Recent Lessons renders its own inline error via
+        // recentLessonsError if only that fetch failed.
+        return createSuccessResponse(
+            { continueLearning, learningPulse, recentLessons, recentLessonsError },
+            "Dashboard data retrieved successfully"
+        );
     },
 };

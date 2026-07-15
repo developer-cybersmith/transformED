@@ -41,8 +41,12 @@ export function RecentLessons({ lessons, error }: RecentLessonsProps) {
                 <div className="flex gap-6 overflow-x-auto pb-8 snap-x snap-mandatory scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
                     {lessons.map((lesson, index) => {
                         const generating = isGenerating(lesson);
-                        const isFailed = lesson.status === 'failed';
                         const isReady = lesson.status === 'ready';
+                        // Anything that's neither generating nor ready is treated as the
+                        // "Failed" bucket — matches formatLessonStatusLabel's own defensive
+                        // default, so an unrecognized/unexpected status still shows a visible,
+                        // non-interactive badge instead of a silent, unlabeled dead card.
+                        const isFailed = !generating && !isReady;
 
                         return (
                             <motion.div
@@ -86,7 +90,7 @@ export function RecentLessons({ lessons, error }: RecentLessonsProps) {
                                 </div>
 
                                 <h3 className="text-base font-semibold text-neutral-900 leading-snug line-clamp-2 min-h-[2.75rem] mb-4">
-                                    {lesson.title ?? 'Untitled Lesson'}
+                                    {lesson.title || 'Untitled Lesson'}
                                 </h3>
 
                                 <div className="text-xs font-medium text-neutral-400">

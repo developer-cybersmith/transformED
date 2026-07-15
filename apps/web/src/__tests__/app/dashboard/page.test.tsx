@@ -54,4 +54,12 @@ describe('DashboardDataFetcher (dashboard server component)', () => {
     expect(screen.getByText('Quick Actions')).not.toBeNull();
     expect(screen.getByText("We couldn't load your recent lessons right now.")).not.toBeNull();
   });
+
+  it('shows a fallback message instead of crashing when the response has no data (success: false)', async () => {
+    getDashboardMock.mockResolvedValue({ success: false, data: null, message: 'Dashboard unavailable' });
+
+    render(await DashboardDataFetcher());
+
+    expect(screen.getByText("We couldn't load your dashboard right now.")).not.toBeNull();
+  });
 });

@@ -22,6 +22,14 @@ export async function DashboardDataFetcher() {
     const response = await dashboardService.getDashboard();
     const dashboardData = response.data;
 
+    if (!response.success || !dashboardData) {
+        return (
+            <div className="flex min-h-[40vh] w-full flex-col items-center justify-center gap-2 text-center text-neutral-400">
+                <p>We couldn&apos;t load your dashboard right now.</p>
+            </div>
+        );
+    }
+
     return (
         <div className="w-full max-w-[1400px] mx-auto pt-6 flex flex-col gap-10">
             {/* 1. Compact Hero Section */}

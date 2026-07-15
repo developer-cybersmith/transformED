@@ -57,4 +57,55 @@ describe('dashboardService.getDashboard', () => {
     expect(consoleSpy).toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
+
+  it('stays non-blocking if the mock summary fetch itself fails: still resolves success with recent lessons intact and safe null fallbacks', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    getDashboardDataMock.mockRejectedValue(new Error('mock summary blew up'));
+    listLessonsMock.mockResolvedValue([RECENT_LESSON]);
+
+    const response = await dashboardService.getDashboard();
+
+    expect(response.success).toBe(true);
+    expect(response.data?.continueLearning).toBeNull();
+    expect(response.data?.learningPulse).toBeNull();
+    expect(response.data?.recentLessons).toEqual([RECENT_LESSON]);
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('treats a non-array recentLessons response as a failure, not a crash', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Intentionally malformed (not an array) to simulate a bad backend response.
+    listLessonsMock.mockResolvedValue({ unexpected: 'shape' });
+
+    const response = await dashboardService.getDashboard();
+
+    expect(response.success).toBe(true);
+    expect(response.data?.recentLessons).toEqual([]);
+    expect(response.data?.recentLessonsError).toEqual(expect.any(String));
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('fetches the mock summary and recent lessons concurrently, not sequentially', async () => {
+    const callOrder: string[] = [];
+    getDashboardDataMock.mockImplementation(async () => {
+      callOrder.push('mock-start');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      callOrder.push('mock-end');
+      return { success: true, data: { continueLearning: MOCK_CONTINUE_LEARNING, learningPulse: MOCK_PULSE, recentLessons: [] }, message: 'ok' };
+    });
+    listLessonsMock.mockImplementation(async () => {
+      callOrder.push('lessons-start');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      callOrder.push('lessons-end');
+      return [RECENT_LESSON];
+    });
+
+    await dashboardService.getDashboard();
+
+    // Both must start before either finishes — proves they ran concurrently,
+    // not one strictly after the other.
+    expect(callOrder.indexOf('lessons-start')).toBeLessThan(callOrder.indexOf('mock-end'));
+  });
 });
