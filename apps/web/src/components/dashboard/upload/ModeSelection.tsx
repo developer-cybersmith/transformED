@@ -34,15 +34,18 @@ export function ModeSelection({ onSelect }: ModeSelectionProps) {
                     <p className="text-neutral-500 text-sm leading-relaxed">
                         {option.description}
                     </p>
-                    {option.disclaimer && (
+                    {option.disclaimer && option.disclaimer.trim().length > 0 ? (
                         <div
                             data-testid="tier-disclaimer"
                             className="mt-3 flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-700"
                         >
                             <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                            <span>{option.disclaimer}</span>
+                            <span>
+                                <span className="sr-only">Warning: </span>
+                                {option.disclaimer}
+                            </span>
                         </div>
-                    )}
+                    ) : null}
                 </button>
             ))}
         </div>

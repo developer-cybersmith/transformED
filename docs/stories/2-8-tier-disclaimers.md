@@ -4,7 +4,7 @@ baseline_commit: "8a99789a5d6ab4bf0d0f5ebcab81fde5f01676a8"
 
 # Story 2-8: Tier Disclaimers
 
-Status: review
+Status: done
 
 ## Story
 
@@ -66,6 +66,15 @@ This story directly extends **S2-07** (`docs/stories/2-7-mode-selection-screen.m
 - [x] Task 4: Tracker update
   - [x] 4.1 Mark S2-08 in `docs/dev2-sprint-tracker.md` as done, update the Sprint 2 dashboard row and header
 
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2/s2-8-tier-disclaimers` (commits `2718993`..`6bf44d0`) vs its parent `feature-learner-mode`, 2026-07-14. One factual disagreement between reviewers (whether `lucide-react` sets `aria-hidden` by default) was independently resolved by reading the installed package source directly (`node_modules/.pnpm/lucide-react@1.21.0.../dist/esm/Icon.mjs`) before triage.
+
+- [x] [Review][Patch] No semantic boundary between the tier description and the disclaimer for screen-reader/AT users — both are plain descendant text inside the `<button>` with no separation, so the button's accessible name is a flat concatenation (e.g. "Balanced Time-boxed depth... Content may be trimmed..."), giving no cue that the second part is a caveat rather than a continuation of the description [apps/web/src/components/dashboard/upload/ModeSelection.tsx] (blind+edge) — fixed: added a `<span className="sr-only">Warning: </span>` prefix inside the disclaimer, announced by screen readers but not visible. New test confirms every rendered disclaimer has this prefix.
+- [x] [Review][Patch] `option.disclaimer &&` guard doesn't distinguish `undefined` (intentional, no disclaimer) from a future accidental `disclaimer: ''` — would silently render nothing for the wrong reason, with no type-level or runtime check enforcing the story's own stated invariant ("must be entirely absent, not empty string") [apps/web/src/types/learnerMode.ts, apps/web/src/components/dashboard/upload/ModeSelection.tsx] (blind+edge) — fixed: guard is now `option.disclaimer && option.disclaimer.trim().length > 0 ? (...) : null`, making the "no disclaimer" condition explicit (absent, empty, or whitespace-only all correctly render nothing) rather than relying on incidental JS falsy-string truthiness. Not separately unit-tested with a mocked empty-string tier — `ModeSelection` hard-imports `LEARNER_TIER_OPTIONS` rather than receiving tier data as a prop, so exercising this branch would require module-mocking the shared type file, which isn't worth the complexity for a scenario the current static data never actually produces; documented here instead, consistent with how this codebase handles other environment/architecture-limited untestable guards.
+
+**Dismissed as noise/false-positive (3):** `AlertTriangle` not being `aria-hidden` — verified FALSE by reading `lucide-react`'s actual source: it sets `aria-hidden="true"` automatically whenever no children/a11y prop is passed, which is exactly this usage. A new runtime dependency risk from importing `lucide-react` — false; it's already a project dependency used elsewhere (`UploadCloud`/`CheckCircle`/`AlertCircle`/`Loader2`/`Play` in `UploadFlow.tsx`). The `toHaveLength(2)` exact-count test being "brittle" — this is intentionally behavioral (it should fail loudly if a future story adds/removes a disclaimer from an unexpected tier), not a change-detector to avoid.
+
 ## Dev Notes
 
 ### Files this story touches
@@ -118,11 +127,12 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 **Files MODIFIED:**
 - `apps/web/src/types/learnerMode.ts` — added `disclaimer?: string` to `LearnerTierOption`; added disclaimer copy for `balanced`/`refresher`
-- `apps/web/src/components/dashboard/upload/ModeSelection.tsx` — added `AlertTriangle` import and a conditional disclaimer block per card
-- `apps/web/src/__tests__/components/dashboard/upload/ModeSelection.test.tsx` — added 4 new tests (Deep has none, Balanced/Refresher each show theirs, exactly 2 disclaimer elements total)
+- `apps/web/src/components/dashboard/upload/ModeSelection.tsx` — added `AlertTriangle` import and a conditional disclaimer block per card; review-patch pass: explicit ternary + trim-length guard, `sr-only` "Warning:" prefix
+- `apps/web/src/__tests__/components/dashboard/upload/ModeSelection.test.tsx` — added 4 new tests (Deep has none, Balanced/Refresher each show theirs, exactly 2 disclaimer elements total); review-patch pass added 1 more test (sr-only "Warning:" prefix present on every disclaimer)
 - `docs/dev2-sprint-tracker.md` — S2-08 marked done, Sprint 2 dashboard row updated
 
 ### Change Log
 
 - 2026-07-14: Story created — Sprint 2 Learner Mode task 2 of 4 (S2-08), branch `sprint2/s2-8-tier-disclaimers` off `feature-learner-mode`.
 - 2026-07-14: All 4 tasks implemented in RED→GREEN order; 4 new tests (10 total in `ModeSelection.test.tsx`); full `apps/web` suite 341/341 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings); confirmed `UploadFlow.tsx`/its tests untouched; story marked `review`.
+- 2026-07-14: 5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 0 decision-needed, 2 patch, 0 defer, 3 dismissed (one dismissal — a claim about `lucide-react`'s default `aria-hidden` behavior — required reading the installed package source directly to resolve a factual disagreement between two reviewers). Both patches applied in RED→GREEN order (1 new test); full `apps/web` suite 342/342 passing; `tsc --noEmit` clean; `eslint` clean (0 new warnings). Story marked `done`.

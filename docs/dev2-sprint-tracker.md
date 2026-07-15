@@ -1322,7 +1322,9 @@ Per-tier inline warning-style disclaimer shown on the mode selection screen:
 - [x] Disclaimers styled consistently as an inline warning (icon + tinted background, not a modal/toast) — no reusable `Alert` component existed in the codebase, so this is kept local to `ModeSelection.tsx` per the story's explicit scope
 - [x] No regression to S2-07's card click/focus-visible/mount-autofocus behavior; `UploadFlow.tsx` and its tests untouched (confirmed via `git diff --stat`)
 
-10 tests total in `ModeSelection.test.tsx` (6 unmodified from S2-07 + 4 new). Full `apps/web` suite: 341/341 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings.
+11 tests total in `ModeSelection.test.tsx` (6 unmodified from S2-07 + 5 new). Full `apps/web` suite: 342/342 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings.
+
+**5-agent adversarial review (2026-07-14) — 2 patches applied, 3 dismissed as noise:** disclaimer text now has a screen-reader-only "Warning:" prefix so assistive tech can distinguish it from the description (button accessible names were a flat concatenation before); the `option.disclaimer &&` render guard is now an explicit `option.disclaimer && option.disclaimer.trim().length > 0 ? (...) : null`, codifying the "must be entirely absent, not empty string" invariant in code rather than only in a comment. Dismissed: a claim that `AlertTriangle` needed explicit `aria-hidden` (verified false by reading `lucide-react`'s installed source — it already sets this automatically), a false "new dependency" concern (`lucide-react` is already used elsewhere in this codebase), and a "brittle exact-count test" critique (the `toHaveLength(2)` test is intentionally behavioral).
 
 ---
 

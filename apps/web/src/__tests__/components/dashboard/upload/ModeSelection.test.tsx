@@ -91,4 +91,16 @@ describe('ModeSelection', () => {
 
     expect(container.querySelectorAll('[data-testid="tier-disclaimer"]')).toHaveLength(2);
   });
+
+  it('every disclaimer has a screen-reader-only "Warning:" prefix, so assistive tech can tell it apart from the description', () => {
+    const { container } = render(<ModeSelection onSelect={vi.fn()} />);
+
+    const disclaimers = container.querySelectorAll('[data-testid="tier-disclaimer"]');
+    expect(disclaimers.length).toBeGreaterThan(0);
+    for (const disclaimer of disclaimers) {
+      const srOnlyPrefix = disclaimer.querySelector('.sr-only');
+      expect(srOnlyPrefix).not.toBeNull();
+      expect(srOnlyPrefix!.textContent).toMatch(/warning/i);
+    }
+  });
 });
