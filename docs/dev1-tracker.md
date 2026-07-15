@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 10 | 3 | 7 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 11 | 3 | 6 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **33** | **4** | **21** |
+| **Totals** | | **58** | **34** | **4** | **20** |
 
 ---
 
@@ -46,7 +46,7 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9). Still stubs: `image_generator_node` (S2-10) onward. |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10). Still stubs: `package_builder_node` (S2-11) onward. |
 | `apps/api/app/providers/tts/sarvam.py` | `SarvamTTSProvider` — primary TTS ✅ S2-9 |
 | `apps/api/app/providers/tts/azure.py` | `AzureTTSProvider` — fallback TTS ✅ S2-9 |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
@@ -600,13 +600,13 @@ Every node must:
   - Word-to-slide audio timestamps explicitly NOT implemented — `Narration.timestamps` ships `[]` for every segment; the tracker's own AC below doesn't require them, and no established slide-mapping heuristic exists yet (deferred to a follow-up story)
   - **AC:** Audio file produced per segment ✓; URL in `Narration.audio_url` ✓; `audio_provider` set to `"sarvam"`/`"azure"`/`"browser"` ✓; pipeline never fails over TTS ✓ (tested, including the code-review round's per-segment degrade fix) — see `docs/stories/2-8-tts-node.md` for the full story, including the adversarial review (7 patches applied, 1 pre-existing risk deferred, 333/333 tests passing) ✅
 
-- [ ] **S2-10 `image_generator` node — GPT Image 1 Mini + Imagen 4 Fast + text-only fallback**
-  - `apps/api/app/modules/content/pipeline/nodes/image_generator.py`
+- [x] **S2-10 `image_generator` node — GPT Image 1 Mini + Imagen 4 Fast + text-only fallback** — ✓ 2026-07-15
+  - `apps/api/app/modules/content/pipeline/nodes/image_generator.py` (real implementation inline in `graph.py`, per repo convention)
   - Phase 3 Media node
-  - **DALL-E 3 REMOVED — shut down May 2026. Stack: GPT Image 1 Mini → Imagen 4 Fast → text-only**
-  - Fall back to `image_url = None` (text-only) if cost ceiling is near — never fail the pipeline over images
-  - Include image cost in `cost_tracker.accumulate_cost()`
-  - **AC:** Image URL or `None` set on each slide; pipeline completes if all image providers fail; cost tracked
+  - **DALL-E 3 REMOVED — shut down May 2026. Stack: GPT Image 1 Mini → Imagen 4 Fast → text-only** — `apps/api/app/providers/image/dalle.py` deleted, real `OpenAIImageProvider`/`ImagenProvider` added
+  - Fall back to `image_url = None` (text-only) if cost ceiling is near — never fail the pipeline over images — proactive per-slide `check_ceiling()` pre-check implemented
+  - Image cost included in `cost_tracker.accumulate_cost()` — called from `image_generator_node` itself, only after a successful Storage upload (moved out of the providers during code review — see below)
+  - **AC:** Image URL or `None` set on each slide ✓ (tested); pipeline completes if all image providers fail ✓ (tested, per-slide try/except); cost tracked ✓ (tested, only after successful upload) — see `docs/stories/2-9-image-generator-node.md` for the full story, including the 3-layer adversarial code review (9 patches applied — 1 CRITICAL API-key-leak, 2 HIGH cost-accumulation race, plus a newly-discovered `app/core/retry.py` bug fixed in the same round — 356 tests, 355 passing + 1 pre-existing unrelated skip) ✅
 
 - [ ] **S2-11 `package_builder` node → JSONB write**
   - `apps/api/app/modules/content/pipeline/nodes/package_builder.py`
