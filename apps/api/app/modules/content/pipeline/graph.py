@@ -40,6 +40,7 @@ Architecture constraints
 from __future__ import annotations
 
 import logging
+import base64
 import math
 import operator
 import re
@@ -2534,16 +2535,211 @@ async def tts_node(state: PipelineState) -> PipelineState:
     return {**state, "audio_assets": audio_assets_out, "progress_pct": 86.0}
 
 
-async def image_generator_node(state: PipelineState) -> PipelineState:
-    """Node 14: Generate illustrative images for slides that require visuals."""
-    lesson_id = state["lesson_id"]
-    logger.info("[%s] image_generator_node", lesson_id)
-    await _update_job_progress(lesson_id, 88.0, "image_generator")
+async def _generate_image_with_fallback(lesson_id: str, slide_id: str, prompt: str) -> tuple[str | None, str]:
+    """Try GPT Image 1 Mini, then Imagen 4 Fast, then text-only — never raises
+    (Story 2-9 AC-2). Returns (data_uri_or_None, provider_used_for_logging).
+    """
+    from app.providers.image.openai_image import OpenAIImageProvider
 
-    # TODO: DalleImageProvider(lesson_id).generate(slide_image_prompt)
-    # TODO: download URL and upload to Supabase Storage (lesson-images bucket)
-    slide_images: list[dict[str, Any]] = []
-    return {**state, "slide_images": slide_images, "progress_pct": 93.0}
+    try:
+        data_uri = await OpenAIImageProvider(lesson_id).generate(prompt)
+        if data_uri:
+            return data_uri, "gpt_image"
+        logger.warning(
+            "[%s] image_generator_node: GPT Image returned empty result for slide %s, falling back to Imagen",
+            lesson_id, slide_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] image_generator_node: GPT Image failed for slide %s, falling back to Imagen",
+            lesson_id, slide_id, exc_info=True,
+        )
+
+    from app.providers.image.imagen import ImagenProvider
+
+    try:
+        data_uri = await ImagenProvider(lesson_id).generate(prompt)
+        if data_uri:
+            return data_uri, "imagen"
+        logger.warning(
+            "[%s] image_generator_node: Imagen returned empty result for slide %s, falling back to text-only",
+            lesson_id, slide_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] image_generator_node: Imagen failed for slide %s, falling back to text-only",
+            lesson_id, slide_id, exc_info=True,
+        )
+
+    return None, "text-only"
+
+
+def _decode_data_uri(data_uri: str) -> bytes:
+    """Decode a data:image/...;base64,<...> URI into raw bytes.
+
+    2026-07-15 review finding (Blind Hunter + Edge Case Hunter,
+    independently): the original version used `partition(",")` unconditionally
+    — a comma-less/malformed string silently decoded to `b""` instead of
+    raising, which the node would have then "successfully" uploaded as a
+    0-byte image. Now validates the expected `data:...;base64,` structure
+    and raises ValueError on anything else, so a malformed URI degrades that
+    slide via the existing per-slide try/except instead of silently
+    "succeeding".
+    """
+    if not data_uri.startswith("data:") or ";base64," not in data_uri or "," not in data_uri:
+        raise ValueError(f"malformed data URI (expected data:...;base64,<...>): {data_uri[:40]!r}...")
+    _, _, encoded = data_uri.partition(",")
+    if not encoded:
+        raise ValueError("data URI has no base64 payload after the comma")
+    return base64.b64decode(encoded, validate=True)
+
+
+async def image_generator_node(state: PipelineState) -> PipelineState:
+    """Node 14 (Story 2-9/S2-10): generate an illustrative image per slide via
+    a GPT Image 1 Mini -> Imagen 4 Fast -> text-only fallback chain.
+
+    Input is `state["slides"]` ONLY (AC-1) — never lesson_plan/
+    segment_summaries/narration_scripts. Every slide's entire processing is
+    wrapped in its own try/except from the start (AC-11, baked in from
+    Story 2-8's code-review lessons rather than added after a review round):
+    a malformed slide entry, an unsafe slide_id, or a storage error degrades
+    JUST that slide to image_url=None, never the whole node. The cost
+    ceiling is checked PROACTIVELY per slide (AC-3) before any provider call
+    — CLAUDE.md's documented "never fail the pipeline over images" rule for
+    this node specifically.
+
+    Output is a FLAT `{slide_id, image_url}` list (AC-8) — unlike the nested
+    `{segment_id, data}` shape Stories 2-1/2-7/2-8 use, since slide_id alone
+    is a sufficient correlation key here (matches the pre-existing
+    PipelineState.slide_images field comment).
+    """
+    from app.core.cost_tracker import accumulate_cost, check_ceiling
+    from app.core.db import get_supabase
+    from app.providers.image.imagen import COST_PER_IMAGE as IMAGEN_COST_PER_IMAGE
+    from app.providers.image.openai_image import COST_PER_IMAGE as GPT_IMAGE_COST_PER_IMAGE
+
+    lesson_id = state["lesson_id"]
+    slides = state.get("slides", [])
+    logger.info("[%s] image_generator_node: generating images for %d slides", lesson_id, len(slides))
+
+    # 2026-07-15 review finding (Blind Hunter): lesson_id was used unvalidated
+    # to build a Storage path, unlike slide_id which already had a guard —
+    # defense-in-depth, mirroring the same check.
+    if not _SAFE_SEGMENT_ID_RE.match(lesson_id):
+        raise RuntimeError(f"image_generator_node: unsafe lesson_id for storage path: {lesson_id!r}")
+
+    supabase = get_supabase()
+
+    # ── Idempotency: return cached output if this node already completed ──────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+
+    if "image_generator" in node_outputs:
+        cached = node_outputs["image_generator"]
+        logger.info("[%s] image_generator_node: cache hit, skipping all generation", lesson_id)
+        await _update_job_progress(lesson_id, 93.0, "image_generator")
+        return {**state, "slide_images": cached, "progress_pct": 93.0}
+
+    slide_images_out: list[dict[str, Any]] = []
+    for index, entry in enumerate(slides):
+        # 2026-07-15 review finding (Edge Case Hunter): the original
+        # extraction — `(entry.get("data") or {}).get("slide_id", ...)` —
+        # raised AttributeError (not a graceful default) if entry["data"]
+        # was present but not a dict (e.g. a string), and it ran BEFORE the
+        # try block, so that crashed the whole node — exactly the "one bad
+        # slide degrades only that slide" guarantee AC-11 exists to provide.
+        # Also: a shared "<unknown>" placeholder across multiple malformed
+        # entries risked a downstream key collision — now unique per index.
+        raw_data = entry.get("data") if isinstance(entry, dict) else None
+        slide_id = (
+            raw_data.get("slide_id", f"<unknown-{index}>")
+            if isinstance(raw_data, dict)
+            else f"<unknown-{index}>"
+        )
+        # Story 2-9 AC-11: the ENTIRE per-slide body is wrapped from the
+        # start (Story 2-8's biggest review finding, applied proactively
+        # here rather than patched in after a review round).
+        try:
+            slide_data = entry["data"]
+            title = slide_data["title"]
+            bullets = slide_data["bullets"]
+            if not bullets:
+                # 2026-07-15 review finding (Edge Case Hunter): an empty-but-
+                # present bullets list produced a near-empty prompt and
+                # still paid for a provider call — treat it like a malformed
+                # entry instead.
+                raise ValueError("slide has an empty bullets list")
+
+            # AC-12: validate slide_id before it's ever used in a storage path.
+            if not _SAFE_SEGMENT_ID_RE.match(slide_id):
+                raise ValueError(f"unsafe slide_id for storage path: {slide_id!r}")
+
+            # AC-3: proactive cost-ceiling pre-check, before any provider call.
+            image_url: str | None
+            if await check_ceiling(lesson_id):
+                logger.warning(
+                    "[%s] image_generator_node: cost ceiling reached, skipping image "
+                    "generation for slide %s (text-only)",
+                    lesson_id, slide_id,
+                )
+                image_url = None
+            else:
+                prompt = f"An educational illustration for a slide titled '{title}': {'; '.join(bullets)}"
+                data_uri, provider_used = await _generate_image_with_fallback(lesson_id, slide_id, prompt)
+
+                if data_uri is not None:
+                    # 2026-07-15 review finding (Blind Hunter + Edge Case
+                    # Hunter + Acceptance Auditor, all three independently):
+                    # cost was previously accumulated INSIDE the provider,
+                    # before this upload — a failed upload still "spent" the
+                    # cost for an image never persisted, and a ceiling breach
+                    # discovered mid-provider-call discarded an
+                    # already-successful image and misclassified it as a
+                    # provider failure, cascading to a MORE expensive
+                    # fallback. Cost is now accumulated HERE, only after a
+                    # successful upload — matching tts_node's pattern, where
+                    # the TTS providers don't self-accumulate cost either.
+                    image_bytes = _decode_data_uri(data_uri)
+                    image_path = f"{lesson_id}/{slide_id}.png"
+                    supabase.storage.from_("lesson-images").upload(
+                        path=image_path,
+                        file=image_bytes,
+                        file_options={"content-type": "image/png", "upsert": "true"},
+                    )
+                    image_url = image_path
+
+                    cost = (
+                        GPT_IMAGE_COST_PER_IMAGE.get("1024x1024", 0.02)
+                        if provider_used == "gpt_image"
+                        else IMAGEN_COST_PER_IMAGE
+                    )
+                    await accumulate_cost(lesson_id, cost)
+                else:
+                    image_url = None
+
+            slide_images_out.append({"slide_id": slide_id, "image_url": image_url})
+
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[%s] image_generator_node: slide %s failed entirely (malformed entry, "
+                "unsafe slide_id, empty bullets, or upload error) — degrading to text-only",
+                lesson_id, slide_id, exc_info=True,
+            )
+            slide_images_out.append({"slide_id": slide_id, "image_url": None})
+
+    supabase.table("lesson_jobs").update({
+        "last_node": "image_generator",
+        "node_outputs": {**node_outputs, "image_generator": slide_images_out},
+    }).eq("lesson_id", lesson_id).execute()
+
+    await _update_job_progress(lesson_id, 93.0, "image_generator")
+    return {**state, "slide_images": slide_images_out, "progress_pct": 93.0}
 
 
 # [DEV1-SPRINT2-PENDING] This still builds a flat ad-hoc dict, not the frozen

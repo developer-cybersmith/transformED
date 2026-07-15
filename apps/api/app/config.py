@@ -43,8 +43,15 @@ class Settings(BaseSettings):
     # ── Anthropic (Phase 2, optional) ─────────────────────────────────────────
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key — optional, Phase 2 only")
 
-    # ── Google AI (optional — Gemini evaluation in Sprint 1) ──────────────────
-    google_api_key: str | None = Field(default=None, description="Google AI / Vertex AI key — optional, for Gemini model evaluation")
+    # ── Google AI ──────────────────────────────────────────────────────────────
+    google_api_key: str | None = Field(
+        default=None,
+        description=(
+            "Google AI / Vertex AI key — used for Gemini model evaluation AND "
+            "(as of Story 2-9) as the production auth key for ImagenProvider "
+            "(Imagen 4 Fast, image_generator_node's fallback tier)."
+        ),
+    )
 
     # ── TTS providers ─────────────────────────────────────────────────────────
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
