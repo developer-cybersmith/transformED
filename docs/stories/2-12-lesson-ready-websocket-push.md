@@ -4,7 +4,7 @@ baseline_commit: baf79fa14f1be5bbbc75152a894df7b875aed713
 
 # Story 2.12: `lesson_ready` WebSocket Delivery — Reconcile With Real `LessonPackage` (S2-12)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -34,24 +34,24 @@ so that the moment `package_builder_node` (S2-11) finishes, the notification pip
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Fix `package_summary`'s counts (AC: 1)
-  - [ ] 1.1 Replace `lesson_package.get("slides", [])`/`.get("quiz_questions", [])`/`.get("audio_assets", [])` with the correct nested-segment aggregation in `content_pipeline_job`.
-  - [ ] 1.2 Handle `lesson_package` being an empty dict gracefully (defensive `.get("segments", [])` — matches this codebase's established defensive-degrade style, not a new invented behavior).
+- [x] Task 1: Fix `package_summary`'s counts (AC: 1)
+  - [x] 1.1 Replaced `lesson_package.get("slides", [])`/`.get("quiz_questions", [])`/`.get("audio_assets", [])` with the correct nested-segment aggregation (`sum(len(seg.get("slides", [])) for seg in segments)`, same for `quiz`; `audio_count = len(segments)`).
+  - [x] 1.2 `segments = lesson_package.get("segments", [])` — an empty/missing `lesson_package` degrades to `{"slides_count": 0, "quiz_count": 0, "audio_count": 0}` without raising, verified by a dedicated test.
 
-- [ ] Task 2: Update stale comments (AC: 2)
-  - [ ] 2.1 `content_pipeline.py`'s `[DEV1-SPRINT2-PENDING]` comment above the `run_pipeline()` call updated.
-  - [ ] 2.2 `pubsub.py`'s `[DEV1-SPRINT2-PENDING]` comment above the lesson-package cache-write updated.
+- [x] Task 2: Update stale comments (AC: 2)
+  - [x] 2.1 `content_pipeline.py`'s `[DEV1-SPRINT2-PENDING]` comment above the `run_pipeline()` call updated to reflect Story 2-11 has landed.
+  - [x] 2.2 `pubsub.py`'s `[DEV1-SPRINT2-PENDING]` comment above the lesson-package cache-write updated likewise.
 
-- [ ] Task 3: Align the WS payload with the frozen `ws.ts` contract (AC: 3, 4)
-  - [ ] 3.1 Remove `session_id` from inside the `payload` dict published in `content_pipeline_job` — `payload` becomes exactly `{"lesson_id": ..., "lesson": ...}`.
-  - [ ] 3.2 Confirm `pubsub.py`'s subscriber still correctly extracts `session_id` from the CHANNEL name (`channel.removeprefix("lesson_ready:")`), NOT from the payload — verify this was already the case (it was; the payload's `session_id` was redundant, never actually read back out by the subscriber) before removing it, so nothing silently breaks.
-  - [ ] 3.3 Confirm the `session_id` fallback (`lesson_row.get("session_id") or lesson_id`) is left exactly as-is — no new column, no new endpoint (AC-4).
+- [x] Task 3: Align the WS payload with the frozen `ws.ts` contract (AC: 3, 4)
+  - [x] 3.1 Removed `session_id` from inside the `payload` dict published in `content_pipeline_job` — `payload` is now exactly `{"lesson_id": ..., "lesson": ...}`.
+  - [x] 3.2 Confirmed `pubsub.py`'s subscriber extracts `session_id` from the CHANNEL name (`channel.removeprefix("lesson_ready:")`) only — it never read the payload's `session_id` in the first place (verified by reading the code before removing it); no behavior change to the subscriber, existing subscriber tests untouched and still passing.
+  - [x] 3.3 `session_id` fallback (`lesson_row.get("session_id") or lesson_id`) left exactly as-is — no new column, no new endpoint.
 
-- [ ] Task 4: Tests (AC: 5, 6)
-  - [ ] 4.1 New test(s) for `content_pipeline_job`'s publish step: given a successful `run_pipeline()` returning a realistic multi-segment `LessonPackage` dict, assert the published Redis message matches the frozen payload shape exactly and the channel is `lesson_ready:{lesson_id}`.
-  - [ ] 4.2 New test(s) for `package_summary`'s three counts against that same realistic fixture.
-  - [ ] 4.3 New test for `pubsub.py`'s subscriber: a simulated `pmessage` on `lesson_ready:{some_id}` results in exactly one `manager.send(some_id, message)` call with the decoded message.
-  - [ ] 4.4 Full regression suite passes.
+- [x] Task 4: Tests (AC: 5, 6) — all added to the existing `tests/test_lesson_ready_pubsub.py` (per Dev Notes' guidance to extend rather than fork)
+  - [x] 4.1 Updated `test_publish_message_has_correct_ws_shape` and `test_routing_reaches_correct_client_when_session_id_differs` to assert the payload matches `ws.ts`'s `LessonReadyMessage` exactly (no `session_id` key) against a new realistic multi-segment `REAL_LESSON_PACKAGE` fixture (replacing the old flat-stub-shaped fixtures in both).
+  - [x] 4.2 Two new tests: `test_package_summary_counts_real_nested_lesson_package_shape` (2 segments, 3 slides/1 quiz/2 audio expected) and `test_package_summary_handles_empty_lesson_package_gracefully`.
+  - [x] 4.3 Pre-existing `test_subscriber_forwards_pmessage_to_manager` already covers this exact scenario — confirmed still passing, no change needed.
+  - [x] 4.4 Full regression suite: 942 passed (after patch round; 939 before), 48 pre-existing unrelated failures across 5 files (`test_auth.py`, `test_dna_fusion.py`, `test_dna_growth.py`, `test_onboarding_content.py`, `test_tutor_service.py` — confirmed identical failure set before and after this story's changes), 2 skipped — 0 regressions introduced.
 
 ## Dev Notes
 
@@ -128,22 +128,42 @@ Single shared branch for all of Sprint 2: `sprint2/phase-b-generation-nodes` —
 
 ### Agent Model Used
 
-_To be filled by bmad-dev-story._
+claude-sonnet-5
 
 ### Debug Log References
 
-_To be filled by bmad-dev-story._
+- Discovered `apps/api/tests/test_lesson_ready_pubsub.py` exists OUTSIDE `tests/unit/` (directly under `tests/`), and `pyproject.toml`'s `testpaths = ["tests"]` collects the whole tree — meaning every prior story's "full regression suite" run in this session (`pytest tests/unit -q`) never actually included this file. Re-baselined against `pytest tests -q`: 937 passed, 48 pre-existing failures, 2 skipped — confirmed these 48 predate this story (not introduced by any Sprint 2 pipeline-node work) before making any change. **Correction (2026-07-16 review, Acceptance Auditor):** the initial completion notes under-enumerated the failing files as only `test_dna_growth.py`/`test_onboarding_content.py`/`test_tutor_service.py` — the real set is 5 files: those three plus `test_auth.py` (6 failures) and `test_dna_fusion.py` (1 failure), all unrelated Dev 3/Dev 4 modules with zero overlap with this story's diff.
+- Red-green-refactor: wrote `test_package_summary_counts_real_nested_lesson_package_shape` first against the pre-existing buggy code — confirmed it failed with `assert 0 == 3` (the exact bug: `slides_count` silently reporting 0 against a real nested `LessonPackage`). Implemented the fix; green after.
+- Updated the 2 existing tests whose fixtures/assertions encoded the old flat-stub shape and the old (extra-`session_id`-in-payload) message shape, per Task 4.1 — this is an intentional behavior change (AC-3), not a "0 test changes" refactor like Story 2-15's.
 
 ### Completion Notes List
 
-_To be filled by bmad-dev-story._
+- All 4 tasks / 12 subtasks complete. This was a reconciliation/bug-fix story, not new infrastructure — the `lesson_ready` WebSocket delivery mechanism (Redis pub/sub publish in `content_pipeline_job` → `pubsub.py`'s subscriber → `ConnectionManager.send()`) was already built by Dev 4 (`4534078 fix(arq): lesson_ready via Redis pub/sub`) and already fully wired into `main.py`'s lifespan.
+- **Real bug fixed**: `package_summary`'s `slides_count`/`quiz_count`/`audio_count` had silently reported `0`/`0`/`0` for every successful lesson since Story 2-11 landed — they read top-level `slides`/`quiz_questions`/`audio_assets` keys that only existed on the old flat stub shape. Fixed to aggregate from `LessonPackage.segments[].slides`/`.quiz`, with `audio_count` as the segment count (package_builder_node guarantees exactly one narration per assembled segment).
+- **Frozen-contract deviation fixed**: the published WS payload had an extra `session_id` key not present in `ws.ts`'s `LessonReadyMessage` type. Removed it — confirmed via code reading (not just assumption) that `pubsub.py`'s subscriber only ever extracted `session_id` from the CHANNEL name, never read it back out of the payload, so this was purely redundant, never load-bearing.
+- `session_id` fallback behavior (`lesson_row.get("session_id") or lesson_id`) is explicitly UNCHANGED and confirmed correct — no new column, no new endpoint, matching this story's own scope boundary (AC-4) and the earlier in-session decision that a real `sessions`-table mapping is out of scope pending genuine Dev 4 coordination.
+- Stale `[DEV1-SPRINT2-PENDING]` comments in both `content_pipeline.py` and `pubsub.py` (both said "Story S2-11, not yet built") corrected now that it has landed.
+- **Patch round (2026-07-16):** a 3-layer adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) found 0 issues from Blind Hunter (who additionally proved AC-1's `audio_count = len(segments)` claim correct against `package_builder_node`'s actual invariant, and confirmed via a broad grep of both `apps/api` and `apps/web` that removing `session_id` from the payload has no dangling consumer), 4 MEDIUM findings from Edge Case Hunter (1 downgraded from an initial HIGH after reconciling with Blind Hunter's proof that it's unreachable in production), and 1 MEDIUM + 1 LOW from Acceptance Auditor (a factual inaccuracy in this story's own failure-file enumeration, corrected above). All patchable findings applied: an `isinstance(segments, list)` defensive guard (cheap hardening against an unreachable-today but bad failure mode — crash after the WS publish already succeeded), a malformed-segment test, a test for a non-list `segments` value, and a schema round-trip test (`LessonPackage.model_validate(REAL_LESSON_PACKAGE)`) so the fixture can never silently drift out of sync with the real schema again. AC-5's one LOW note (this story adds zero new `pubsub.py`-specific tests, only reuses a pre-existing one) is accurate, not a dodge — `pubsub.py`'s forwarding behavior itself is unchanged by this story (comment-only edit), so no new behavior needed a new test there.
 
 ### File List
 
-_To be filled by bmad-dev-story._
+- `apps/api/app/workers/jobs/content_pipeline.py` (modified — `package_summary` fix + defensive guard, payload fix, stale comment fix)
+- `apps/api/app/core/pubsub.py` (modified — stale comment fix only)
+- `apps/api/tests/test_lesson_ready_pubsub.py` (modified, then patched — 5 new tests total, 2 existing tests updated for the new payload shape, 1 new realistic `LessonPackage` fixture replacing 3 stale flat-stub fixtures)
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-07-16 | Story created via `bmad-create-story`. |
+| 2026-07-16 | Implemented via `bmad-dev-story`: fixed the `package_summary` bug (silently reporting 0/0/0 since Story 2-11 landed), removed the extra `session_id` key from the WS payload to match `ws.ts`'s frozen `LessonReadyMessage` type exactly, updated stale S2-11-not-yet-built comments, added 2 new tests + updated 2 existing tests. 939 passed / 48 pre-existing unrelated failures (unchanged from baseline) / 2 skipped in the full `tests` suite — 0 regressions. Status → review. |
+| 2026-07-16 | Code review patch round: added a defensive `isinstance(segments, list)` guard (cheap hardening against an unreachable-today but bad crash-after-publish failure mode), 3 new tests (non-list `segments`, segment missing `slides`/`quiz` keys, schema round-trip check on the `REAL_LESSON_PACKAGE` fixture), and corrected this story's own failure-file enumeration (5 files, not 3). 942 passed / same 48 pre-existing unrelated failures / 2 skipped — 0 regressions. Status → done. |
+
+### Review Findings (2026-07-16 — 3-layer adversarial review: Blind Hunter, Edge Case Hunter, Acceptance Auditor)
+
+- [x] [Review][Patch] **FIXED 2026-07-16 — MEDIUM (downgraded from an initial HIGH after reconciling two reviewers) — `lesson_package["segments"]` being an explicit non-list value (not just a missing key) would crash `package_summary` AFTER the WS publish already succeeded**, a real design smell (client already notified, job then raises and may retry/duplicate-publish) even though Blind Hunter proved it's unreachable via a real validated `LessonPackage` (which always produces a well-formed list). Fixed with a cheap `if not isinstance(segments, list): segments = []` guard. Verified by a new test with `{"segments": None}`. [`app/workers/jobs/content_pipeline.py`] (Edge Case Hunter, reconciled against Blind Hunter's invariant proof)
+- [x] [Review][Patch] **FIXED 2026-07-16 — MEDIUM — No test covered a segment dict missing the `slides`/`quiz` keys entirely (only the empty-list-present case was tested).** Added `test_package_summary_handles_segment_missing_slides_and_quiz_keys`. [`tests/test_lesson_ready_pubsub.py`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-16 — MEDIUM — The new `REAL_LESSON_PACKAGE` fixture had no schema round-trip check, so it could silently drift out of sync with the real `LessonPackage`/`Segment` models if either changes shape again — exactly the class of bug this story exists to fix.** Added `test_real_lesson_package_fixture_round_trips_through_schema`, asserting `LessonPackage.model_validate(REAL_LESSON_PACKAGE)` succeeds. [`tests/test_lesson_ready_pubsub.py`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-16 — MEDIUM — This story's own Dev Agent Record under-enumerated the 48 pre-existing test failures as only 3 files, when the real count is 5 files** (`test_auth.py`, `test_dna_fusion.py` were omitted). Didn't change the AC-6 verdict (zero overlap with this diff either way) but was a factual inaccuracy. Corrected in the Debug Log References above. [`docs/stories/2-12-lesson-ready-websocket-push.md`] (Acceptance Auditor)
+- [x] [Review][Dismiss] **LOW — Sharing the realistic `REAL_LESSON_PACKAGE` fixture across the routing/payload-shape tests (which don't test `package_summary`) adds incidental coupling to a future schema change.** Not a defect — sharing one realistic fixture across related tests in the same file is normal practice, and the new schema round-trip test (see above) now protects exactly this coupling from silently breaking. Dismissed. (Edge Case Hunter) — dismissed, not a real defect.
+- [x] [Review][Dismiss] **LOW — AC-5's "subscriber forwarding test already existed, no new test needed" framing could be read as underselling that zero new `pubsub.py`-specific tests were added.** Confirmed accurate, not a dodge: `pubsub.py`'s forwarding behavior itself is unchanged by this story (a comment-only edit), so no new behavior existed that needed a new test — reusing the pre-existing, still-accurate test is the correct call, not a coverage gap. Dismissed. (Acceptance Auditor) — dismissed, story's claim verified honest.

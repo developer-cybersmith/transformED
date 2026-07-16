@@ -5,7 +5,7 @@
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
 **Last updated:** 2026-07-16
 **Sprint 0 status:** 12/12 COMPLETE ✅
-**Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) — see Sprint 2 section below. `package_builder` (S2-11) has now landed (2026-07-16) — the pipeline produces real, schema-validated `LessonPackage` JSONB. Frontend/assessment/tutor teams can start migrating off `apps/web/src/mocks/data/lessonPackage.ts` for integration testing, though the WebSocket `lesson_ready` push (S2-12) is still pending.
+**Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) — see Sprint 2 section below. `package_builder` (S2-11) and the `lesson_ready` WebSocket push (S2-12) have both landed (2026-07-16) — the pipeline produces real, schema-validated `LessonPackage` JSONB and correctly notifies clients over WebSocket. Frontend/assessment/tutor teams can start migrating off `apps/web/src/mocks/data/lessonPackage.ts` for integration testing.
 
 ---
 
@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 13 | 3 | 5 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 14 | 3 | 4 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **59** | **36** | **4** | **19** |
+| **Totals** | | **59** | **37** | **4** | **18** |
 
 ---
 
@@ -46,7 +46,7 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10), `package_builder_node` (S2-11) — this is now the LAST real node; all 15 nodes in the pipeline have a real implementation. Only the WebSocket `lesson_ready` push (S2-12) remains unbuilt. |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10), `package_builder_node` (S2-11) — all 15 nodes in the pipeline have a real implementation. The `lesson_ready` WebSocket push (S2-12) — a separate file, `apps/api/app/workers/jobs/content_pipeline.py` + `apps/api/app/core/pubsub.py`, not this file — has also landed. |
 | `apps/api/app/providers/tts/sarvam.py` | `SarvamTTSProvider` — primary TTS ✅ S2-9 |
 | `apps/api/app/providers/tts/azure.py` | `AzureTTSProvider` — fallback TTS ✅ S2-9 |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
@@ -620,10 +620,14 @@ Every node must:
   - **`teachback_prompt` is a PROVISIONAL placeholder** (deterministic template, no LLM call) — no node in the 15-node pipeline generates a real teach-back prompt; this is pending confirmation from whoever owns the teach-back feature (Dev 3 — Quiz API, teachback scorer, CES formula, Learner DNA per team ownership).
   - **AC:** `lessons.content` valid JSONB ✓ (tested); `LessonPackage.model_validate(row["content"])` round-trip passes ✓ (tested); `lessons.status = 'ready'` ✓ (tested); `lesson_ready` WebSocket push — out of scope for S2-11, see S2-12 below — see `docs/stories/2-11-package-builder-node.md` for the full story, including the 3-layer adversarial code review (5 patches applied — defensive `.get()` lookups replacing crash-prone direct subscripting, duplicate/orphaned-segment_id warning logging, 6 new coverage tests — plus 2 findings correctly deferred with documented rationale, 381/382 tests passing) ✅
 
-- [ ] **S2-12 WebSocket `lesson_ready` push — coordinate with Dev 4**
-  - Shape must match `packages/shared/types/ws.ts` discriminated union exactly
-  - Triggered by `package_builder` (S2-11) on success
-  - **AC:** Frontend receives `lesson_ready`; message passes TS discriminated-union type check; no shape mismatch with Dev 4 handler
+- [x] **S2-12 WebSocket `lesson_ready` push — coordinate with Dev 4** — ✓ 2026-07-16
+  - **Discovery: this infrastructure already existed, built by Dev 4** (`4534078 fix(arq): lesson_ready via Redis pub/sub`) — `apps/api/app/core/pubsub.py` (Redis pub/sub subscriber → `ConnectionManager.send()`) already wired into `app/main.py`'s lifespan, and `apps/api/app/workers/jobs/content_pipeline.py::content_pipeline_job` already published to `lesson_ready:{session_id}`. S2-12 turned out to be a reconciliation/bug-fix story against Story 2-11's landing, not new infrastructure.
+  - ✓ **Real bug fixed:** `package_summary`'s `slides_count`/`quiz_count`/`audio_count` had silently reported `0`/`0`/`0` for every successful lesson since S2-11 landed — the code read top-level `slides`/`quiz_questions`/`audio_assets` keys that only existed on the old flat stub shape (S2-11's real `LessonPackage` nests all three inside each segment). Fixed to aggregate from `segments[].slides`/`.quiz`, with `audio_count = len(segments)`.
+  - ✓ **Frozen-contract deviation fixed:** the published payload had an extra `session_id` key not present in `ws.ts`'s `LessonReadyMessage` type (`{lesson_id, lesson}` only). Removed — confirmed the subscriber only ever extracted `session_id` from the channel name, never the payload, so this was pure redundancy, never load-bearing.
+  - `session_id` fallback (`lesson_row.get("session_id") or lesson_id`) is UNCHANGED and confirmed correct — no `sessions`-table column exists on `lessons` yet, so this remains the only path in practice; building real session-tracking stays out of scope pending genuine Dev 4 coordination.
+  - Shape must match `packages/shared/types/ws.ts` discriminated union exactly — ✓ confirmed (payload is now byte-for-byte `LessonReadyMessage`'s type).
+  - Triggered by `package_builder` (S2-11) on success — ✓ (pre-existing wiring, confirmed still correct).
+  - **AC:** Frontend receives `lesson_ready` ✓ (pre-existing, Dev 4's wiring); message passes TS discriminated-union type check ✓ (payload now matches exactly, extra key removed); no shape mismatch with Dev 4 handler ✓ — see `docs/stories/2-12-lesson-ready-websocket-push.md` for the full story, including the 3-layer adversarial code review (4 patches applied — defensive guard against a crash-after-publish failure mode, 2 new coverage tests, 1 documentation correction — plus 2 findings correctly dismissed as verified-honest/not-a-defect, 942 tests passing) ✅
 
 - [ ] **S2-13 Cost ceiling enforcement wired into all nodes** ⚠️ PARTIAL — 2026-07-14
   - `apps/api/app/core/cost_tracker.py` — wire into every LLM, TTS, image call
