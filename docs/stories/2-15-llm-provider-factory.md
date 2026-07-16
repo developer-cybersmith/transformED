@@ -4,7 +4,7 @@ baseline_commit: 58d7a8c91189a1ac092034c414e58a561fd47aad
 
 # Story 2.15: LLM Provider Factory — Model-Agnostic Dispatch (S2-15)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -28,24 +28,24 @@ This is a **mandatory refactor**, not a new feature — it does not change any n
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Create `apps/api/app/providers/llm/factory.py` (AC: 1, 2, 6)
-  - [ ] 1.1 `get_llm_provider(model: str, lesson_id: str | None = None) -> LLMProvider` — synchronous (no `await` needed; `OpenAILLMProvider.__init__` is itself synchronous), prefix-dispatch (`model.startswith("gpt-")` → lazy `from app.providers.llm.openai import OpenAILLMProvider` → `return OpenAILLMProvider(lesson_id)`).
-  - [ ] 1.2 Unregistered prefix raises `ValueError(f"No LLMProvider registered for model {model!r}")`.
-  - [ ] 1.3 Module docstring documents the registry-extension pattern for a future provider (see Dev Notes' exact template) so this doesn't need re-deriving later.
+- [x] Task 1: Create `apps/api/app/providers/llm/factory.py` (AC: 1, 2, 6)
+  - [x] 1.1 `get_llm_provider(model: str, lesson_id: str | None = None) -> LLMProvider` — synchronous (no `await` needed; `OpenAILLMProvider.__init__` is itself synchronous), prefix-dispatch (`model.startswith("gpt-")` → lazy `from app.providers.llm.openai import OpenAILLMProvider` → `return OpenAILLMProvider(lesson_id)`).
+  - [x] 1.2 Unregistered prefix raises `ValueError(f"No LLMProvider registered for model {model!r}")`.
+  - [x] 1.3 Module docstring documents the registry-extension pattern for a future provider (see Dev Notes' exact template) so this doesn't need re-deriving later.
 
-- [ ] Task 2: Migrate all 9 `graph.py` call sites (AC: 3, 4)
-  - [ ] 2.1 Replace each `from app.providers.llm.openai import OpenAILLMProvider` + `provider = OpenAILLMProvider(lesson_id[, lesson_id=lesson_id])` pair with `from app.providers.llm.factory import get_llm_provider` + `provider = get_llm_provider(model=<the model this node already passes to complete_structured>, lesson_id=lesson_id)`.
-  - [ ] 2.2 Confirm the model string passed to the factory is byte-for-byte the same one already passed to `complete_structured()`/`complete()` in that node (no node currently needs a different model for provider-selection vs. the actual call — verify this holds for `structure_node`, which uses `settings.llm_mini` for both).
-  - [ ] 2.3 `structure_node`'s call site is inside a `try:` block (it's optional/best-effort) — preserve that structure exactly, only swap the provider-acquisition line.
+- [x] Task 2: Migrate all 9 `graph.py` call sites (AC: 3, 4)
+  - [x] 2.1 Replaced each `from app.providers.llm.openai import OpenAILLMProvider` + `provider = OpenAILLMProvider(lesson_id[, lesson_id=lesson_id])` pair with `from app.providers.llm.factory import get_llm_provider` + `provider = get_llm_provider(<model>, lesson_id)` (or `get_llm_provider(settings.llm_mini, lesson_id=lesson_id)` for `structure_node`, matching its existing keyword-arg style). Confirmed via grep: zero `OpenAILLMProvider` references remain in `graph.py`.
+  - [x] 2.2 Confirmed the model string passed to the factory matches exactly what each node already passes to `complete_structured()`: `structure_node`/`summarise_segment_node`/`quiz_generator_node`/`segment_complexity_node`/`jargon_extractor_node`/`intervention_messages_node`/`narration_generator_node` → `settings.llm_mini`; `lesson_planner_node` → `settings.llm_lesson_planner`; `slide_generator_node` → `settings.llm_slide_generator`.
+  - [x] 2.3 `structure_node`'s call site's `try:` block structure preserved exactly — only the provider-acquisition line changed.
 
-- [ ] Task 3: Verify test suite compatibility (AC: 2, 5, 7)
-  - [ ] 3.1 Run the full suite immediately after Task 2's migration, BEFORE touching any test file — per AC-2's lazy-import design, most/all tests patching `"app.providers.llm.openai.OpenAILLMProvider"` should keep passing unmodified, since the factory's lazy import resolves the (patched) attribute at call time exactly like the node's old direct import did.
-  - [ ] 3.2 For any test that fails, diagnose whether it's patching at the wrong layer (e.g. patching `graph.OpenAILLMProvider` — a name that no longer exists in `graph.py`'s namespace once Task 2 lands) and fix only the patch target, not the test's assertions/logic.
-  - [ ] 3.3 Add new unit tests for `factory.py` itself: known-prefix dispatch returns an `OpenAILLMProvider` instance; unknown prefix raises `ValueError` with the model string in the message; `lesson_id=None` is accepted and passed through.
+- [x] Task 3: Verify test suite compatibility (AC: 2, 5, 7)
+  - [x] 3.1 Ran the full suite immediately after Task 2's migration, before touching any test file — **the lazy-import hypothesis held completely: 359/359 tests passed on the first run, 0 failures, 0 test files needed any change.**
+  - [x] 3.2 N/A — no test failed, so no patch-target diagnosis was needed.
+  - [x] 3.3 Added `apps/api/tests/unit/test_llm_provider_factory.py` (4 tests): known-prefix dispatch returns an `OpenAILLMProvider` instance; `lesson_id=None` accepted and stored; unknown prefix raises `ValueError` with the model string in the message; a dedicated regression test confirming the factory's lazy import resolves a `patch("app.providers.llm.openai.OpenAILLMProvider", ...)` correctly (AC-2's core guarantee, explicitly tested rather than just asserted in prose).
 
-- [ ] Task 4: Full regression + documentation (AC: 5, 7)
-  - [ ] 4.1 Full suite green, 0 net new failures.
-  - [ ] 4.2 Update `apps/api/app/providers/llm/factory.py`'s docstring and this story's Dev Agent Record with the actual count of test files that needed a patch-target change (expected: few or zero, per AC-2 — record the real number, don't guess).
+- [x] Task 4: Full regression + documentation (AC: 5, 7)
+  - [x] 4.1 Full suite green: 359/359 passed (358 pre-existing behavior-relevant + 1 pre-existing unrelated skip, minus none lost, plus 4 new factory tests — net 360 collected, 359 passed + 1 skipped).
+  - [x] 4.2 Updated Dev Agent Record below with the actual count: **0 test files required a patch-target change** — the informal ~98-reference estimate from the pre-story conversation was based on an assumption (a naive module-level-dict factory) this story's design explicitly avoided; the real number is zero because the factory preserves the same lazy-import-at-call-time mechanism every node already used.
 
 ## Dev Notes
 
@@ -125,22 +125,42 @@ One new file (`apps/api/app/providers/llm/factory.py`), one new test file (`apps
 
 ### Agent Model Used
 
-_To be filled by bmad-dev-story._
+claude-sonnet-5
 
 ### Debug Log References
 
-_To be filled by bmad-dev-story._
+- Red-green-refactor: `test_llm_provider_factory.py` written first against nonexistent `app.providers.llm.factory` — confirmed 4/4 failures (`ModuleNotFoundError`) — then `factory.py` implemented. First re-run still failed 3/4 with `ModuleNotFoundError: No module named 'openai.types'; 'openai' is not a package` / `AttributeError: module 'app.providers.llm' has no attribute 'openai'` — an existing repo-wide test convention (see `test_lesson_planner_node.py`'s comment) requires an explicit `import app.providers.llm.openai as openai_provider_module` before any test patches `"app.providers.llm.openai.OpenAILLMProvider"`, to guarantee the submodule is in `sys.modules` first. Added that import; 4/4 green after.
+- Migrated all 9 `graph.py` call sites via a mix of `Edit` (for the 3 sites with unique surrounding context: `structure_node`, `lesson_planner_node`, `slide_generator_node`) and a small one-off Python script keyed by exact line number (for the 6 economy-node sites, whose import/instantiation lines are textually identical to each other and needed disambiguation by position rather than content).
+- Full suite run immediately after migration, BEFORE writing/updating any other test file, specifically to test this story's central hypothesis (Dev Notes' claim that the lazy-import design requires zero test changes): **result was 359/359 passing on the first run** — the hypothesis held completely, no test file needed any change.
 
 ### Completion Notes List
 
-_To be filled by bmad-dev-story._
+- All 4 tasks / 12 subtasks complete. `apps/api/app/providers/llm/factory.py` created with `get_llm_provider(model, lesson_id=None) -> LLMProvider`, dispatching by `"gpt-"` prefix to `OpenAILLMProvider` (lazy import, preserving the exact mechanism every node already used), raising `ValueError` on an unregistered prefix.
+- All 9 `graph.py` call sites migrated: `structure_node`, `lesson_planner_node`, `slide_generator_node`, `summarise_segment_node`, `quiz_generator_node`, `segment_complexity_node`, `jargon_extractor_node`, `intervention_messages_node`, `narration_generator_node`. Each now calls `get_llm_provider()` with the exact same model string it already passed to `complete_structured()`. Confirmed via grep: zero remaining `OpenAILLMProvider` references anywhere in `graph.py`.
+- **The story's central bet — that preserving the lazy-import pattern inside the factory would make this a zero-test-file-touched refactor — paid off exactly as predicted.** 359/359 tests passed on the very first full-suite run after the `graph.py` migration, before any test file was opened. This directly supersedes the ~98-test-reference estimate given informally in conversation before this story existed; that number assumed a factory built around a static, import-time-bound registry (which genuinely would have broken every existing patch), not the lazy-per-call-import design this story specifies.
+- No behavior change for any node — confirmed by the unchanged pass/fail set across the full suite (no test needed a new mock, no test's assertions changed, only 4 new tests added for `factory.py` itself).
+- Not built (explicitly out of scope, per the story): any second `LLMProvider` implementation (Gemini/Claude/etc.). The registry has exactly one branch (OpenAI, now covering both `"gpt-"` and `"o1-"` prefixes per the patch round below); adding a real second vendor is future work, documented as a template in `factory.py`'s own docstring and this story's Dev Notes.
+- **Patch round (2026-07-16):** a 3-layer adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) found 0 findings from Blind Hunter, 2 cosmetic LOW findings from Acceptance Auditor (both applied/dismissed below), and 4 real findings from Edge Case Hunter (2 HIGH, 2 MEDIUM). Acceptance Auditor independently re-ran the full suite and confirmed the claimed 359/359 pass count exactly, and verified all 7 ACs against the actual code (not just the story's own claims) — no fabricated completion claims found.
 
 ### File List
 
-_To be filled by bmad-dev-story._
+- `apps/api/app/providers/llm/factory.py` (new, then patched — `get_llm_provider()`)
+- `apps/api/app/modules/content/pipeline/graph.py` (modified — all 9 `OpenAILLMProvider` call sites migrated to `get_llm_provider()`)
+- `apps/api/tests/unit/test_llm_provider_factory.py` (new, then patched — 9 tests after patch round)
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-07-16 | Story created via `bmad-create-story`. |
+| 2026-07-16 | Implemented via `bmad-dev-story`: added `get_llm_provider()` factory, migrated all 9 `graph.py` call sites, added 4 new tests. 0 existing test files required any change — the lazy-import design preserved every existing patch target exactly as the story predicted. 359/359 tests passing (358 pre-existing + 4 new − 1 pre-existing unrelated skip retained, net 360 collected). Status → review. |
+| 2026-07-16 | Code review patch round: fixed 2 HIGH + 2 MEDIUM findings from Edge Case Hunter (o1-mini prefix gap, None/non-string model handling, added 5 new edge-case tests) plus a LOW story-checkbox inconsistency from Acceptance Auditor. Deferred 1 HIGH finding (3 additional hardcoded `OpenAILLMProvider` call sites in the `assessment/` module — out of this story's scope, different dev's owned territory) and dismissed 1 LOW finding (pre-existing untracked `.venv-broken-wsl/` clutter, unrelated to this diff). 364/365 tests passing (9/9 factory tests, 1 pre-existing unrelated skip). Status → done. |
+
+### Review Findings (2026-07-16 — 3-layer adversarial review: Blind Hunter, Edge Case Hunter, Acceptance Auditor)
+
+- [x] [Review][Patch] **FIXED 2026-07-16 — HIGH — Prefix dispatch `model.startswith("gpt-")` doesn't match `"o1-mini"`, a real eval candidate `config.py` itself documents for `LLM_LESSON_PLANNER`/`LLM_SLIDE_GENERATOR`.** Setting either env var to `o1-mini` would raise a confusing `ValueError` even though `OpenAILLMProvider` can actually serve that model. Fix: introduced `_OPENAI_MODEL_PREFIXES = ("gpt-", "o1-")` and dispatch on `model.startswith(_OPENAI_MODEL_PREFIXES)`, scoped strictly to prefixes `config.py` actually documents as valid — not speculative future OpenAI model families. Verified by a new test asserting `"o1-mini"` resolves to `OpenAILLMProvider`. [`app/providers/llm/factory.py`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-16 — MEDIUM — No defensive handling for `None`/non-string/empty `model` — raised an unrelated-looking `AttributeError` from `model.startswith(...)` instead of the documented `ValueError`.** Fix: added an explicit `isinstance(model, str)`/truthiness guard at the top of `get_llm_provider()` that raises `ValueError(f"model must be a non-empty string, got {model!r}")` before any prefix check runs. Verified by a new parametrized test covering `None`, `""`, `42`, and a list. [`app/providers/llm/factory.py`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-16 — MEDIUM — Test coverage gap: no test exercised a non-`"gpt-"` OpenAI model or a `None`/non-string input.** Fixed as part of the two findings above — 5 new tests added (`o1-mini` dispatch, plus 4 parametrized bad-input cases). [`tests/unit/test_llm_provider_factory.py`] (Edge Case Hunter)
+- [x] [Review][Patch] **FIXED 2026-07-16 — LOW — Story file: Task 1's parent checkbox was unchecked despite all its subtasks (1.1–1.3) being `[x]`.** Cosmetic inconsistency; corrected. [`docs/stories/2-15-llm-provider-factory.md`] (Acceptance Auditor)
+- [ ] [Review][Defer] **HIGH — Three more call sites still hardcode `OpenAILLMProvider` directly, bypassing the factory entirely: `apps/api/app/modules/assessment/dna_profile.py:89`, `service.py:430`, `service.py:790`.** Confirmed real via grep. These sit in the `assessment` module — Dev 3's owned territory per CLAUDE.md's team ownership table (Quiz API, teachback scorer, CES formula, Learner DNA), not Dev 1's content pipeline this story's AC-3 was explicitly scoped to (`graph.py`'s 9 call sites only). Deferred as a follow-up story for whoever owns `assessment/` — expanding this diff into another dev's module without coordination would violate the project's "one discipline rule" module-boundary convention. [`apps/api/app/modules/assessment/dna_profile.py`, `service.py`] (Edge Case Hunter) — deferred, cross-module scope, not a defect in this story's own diff.
+- [x] [Review][Dismiss] **LOW — Untracked `apps/api/.venv-broken-wsl/` directory present in the working tree.** Pre-existing clutter unrelated to this diff (a leftover broken virtualenv from an earlier WSL attempt, per repo history) — not introduced by this story, dismissed for this review round. [repo root] (Acceptance Auditor) — dismissed, out of scope for this diff.

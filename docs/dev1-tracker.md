@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-07-15
+**Last updated:** 2026-07-16
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) starts next — see Sprint 2 section below. Frontend/assessment/tutor teams should keep building against `apps/web/src/mocks/data/lessonPackage.ts` and test fixtures until `package_builder` (S2-11) lands; do not build a parallel real-content path.
 
@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 20 | 11 | 3 | 6 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 12 | 3 | 6 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **58** | **34** | **4** | **20** |
+| **Totals** | | **59** | **35** | **4** | **20** |
 
 ---
 
@@ -636,6 +636,14 @@ Every node must:
   - 5 representative PDFs: short (≤10 pages), long (≥100 pages), dense text, table-heavy, image-heavy
   - Automated scoring: slide quality + quiz relevance; output recorded in Langfuse
   - **AC:** All 5 PDFs produce a valid `LessonPackage`; no pipeline crash; per-lesson scores visible in Langfuse
+
+- [x] **S2-15 LLM provider factory — model-agnostic dispatch (MANDATORY refactor)** — ✓ 2026-07-16
+  - `apps/api/app/providers/llm/factory.py` (new) — `get_llm_provider(model, lesson_id=None) -> LLMProvider`
+  - **Why:** all 9 economy/premium node call sites in `graph.py` hardcoded `from app.providers.llm.openai import OpenAILLMProvider` directly — `settings.llm_mini`/`settings.llm_lesson_planner`/etc. were env-var-driven for the MODEL STRING, but the PROVIDER CLASS was not selectable at all. CLAUDE.md's "swapping models is an env var change only" claim was only true within OpenAI's own model lineup — pointing `LLM_MINI` at a non-OpenAI model (Gemini, Claude) would have broken at request time. This refactor makes provider selection itself config-driven, in-process (no new service/deploy) — a future new provider (Gemini, Claude, etc.) now requires writing one file + one registry entry, zero node call-site changes.
+  - ✓ Factory dispatches by model-name prefix (`"gpt-"`/`"o1-"`, both routed to `OpenAILLMProvider`); lazy per-branch import deliberately preserved (mirrors every node's pre-existing pattern) — this is what made the migration a genuinely zero-test-file-touched refactor: **0 of the ~98 informally-estimated test references actually needed a patch-target change**, confirmed by running the full suite immediately after migration, before touching any test file.
+  - ✓ All 9 `graph.py` call sites migrated (`structure_node`, `lesson_planner_node`, `slide_generator_node`, `summarise_segment_node`, `quiz_generator_node`, `segment_complexity_node`, `jargon_extractor_node`, `intervention_messages_node`, `narration_generator_node`) — confirmed via grep, zero `OpenAILLMProvider` references remain in `graph.py`.
+  - Does NOT include writing a second provider (Gemini/Claude) — stays deferred until actually needed for an eval. Also does NOT cover 3 additional hardcoded call sites discovered in the `assessment/` module (`dna_profile.py`, `service.py` — Dev 3's owned territory, out of this story's scope) — flagged as a deferred review finding for whoever owns that module next.
+  - **AC:** `get_llm_provider()` returns a correctly-typed `LLMProvider` for every currently-supported model string ✓ (tested, including the `o1-mini` edge case found in review); all 9 `graph.py` call sites migrated ✓ (verified via grep); unknown/unregistered/non-string model raises a clear `ValueError` ✓ (tested); zero behavior change ✓ (364/365 tests passing, only patch-round additions, no existing test logic changed) — see `docs/stories/2-15-llm-provider-factory.md` for the full story, including the 3-layer adversarial code review (4 patches applied — 2 HIGH, 2 MEDIUM/LOW — 1 HIGH finding deferred as cross-module scope, 1 LOW dismissed as unrelated pre-existing clutter) ✅
 
 ---
 

@@ -438,7 +438,7 @@ async def structure_node(state: PipelineState) -> PipelineState:
         build_section_bodies,
         detect_headings,
     )
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
     from app.schemas import DocumentStructure
 
     lesson_id: str = state["lesson_id"]
@@ -484,7 +484,7 @@ async def structure_node(state: PipelineState) -> PipelineState:
         )
     else:
         try:
-            provider = OpenAILLMProvider(lesson_id=lesson_id)
+            provider = get_llm_provider(settings.llm_mini, lesson_id=lesson_id)
             messages = [
                 {"role": "system", "content": _STRUCTURE_SYSTEM_PROMPT},
                 {"role": "user", "content": _build_structure_prompt(raw_text, candidates)},
@@ -911,7 +911,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     """
     from app.config import get_settings
     from app.core.db import get_supabase
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
     segment_summaries = state.get("segment_summaries", [])
@@ -958,7 +958,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         return {**state, "lesson_plan": cached, "progress_pct": 38.0}
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_lesson_planner, lesson_id)
 
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {s['summary']}" for s in segment_summaries
@@ -1126,7 +1126,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     """
     from app.config import get_settings
     from app.core.db import get_supabase
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
     from app.schemas.lesson import Slide
 
     lesson_id = state["lesson_id"]
@@ -1171,7 +1171,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         return {**state, "slides": cached, "progress_pct": 48.0}
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_slide_generator, lesson_id)
 
     segments_text = "\n".join(
         f"- segment_id={s['segment_id']}: {s['title']} — {s['summary']}" for s in plan_segments
@@ -1493,7 +1493,7 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
     single most cost-critical constraint in the whole pipeline).
     """
     from app.config import get_settings
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
@@ -1515,7 +1515,7 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
         return {"segment_summaries": [cached]}
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_mini, lesson_id)
     body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     messages = [
         {
@@ -1616,7 +1616,7 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     `QuizQuestion.model_validate(entry["data"])` for zero-reshaping validation.
     """
     from app.config import get_settings
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
@@ -1637,7 +1637,7 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         return {"quiz_questions": [cached]}
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_mini, lesson_id)
     body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     messages = [
         {
@@ -1772,7 +1772,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     see quiz_generator_node's docstring for why).
     """
     from app.config import get_settings
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
@@ -1802,7 +1802,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
         return {"complexity_scores": [cached]}
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_mini, lesson_id)
     body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     messages = [
         {
@@ -1888,7 +1888,7 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
     "definition"}}`) — same reasoning as `quiz_generator_node`'s docstring.
     """
     from app.config import get_settings
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
@@ -1906,7 +1906,7 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
         return {"glossary": cached["terms"]}
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_mini, lesson_id)
     body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     messages = [
         {
@@ -2050,7 +2050,7 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
     permanently supplying padded/generic messages for the lesson's lifetime.
     """
     from app.config import get_settings
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
@@ -2071,7 +2071,7 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
         return {"intervention_prompts": [cached]}
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_mini, lesson_id)
     body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     messages = [
         {
@@ -2182,7 +2182,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     narration_style, same as before.
     """
     from app.config import get_settings
-    from app.providers.llm.openai import OpenAILLMProvider
+    from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
     section = state["_section"]
@@ -2217,7 +2217,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     known_narration_style = (known_complexity["narration_style"].strip() if known_complexity else "") or None
 
     settings = get_settings()
-    provider = OpenAILLMProvider(lesson_id)
+    provider = get_llm_provider(settings.llm_mini, lesson_id)
     body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
     if known_narration_style:
         style_instruction = (
