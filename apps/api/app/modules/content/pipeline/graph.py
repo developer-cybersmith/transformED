@@ -44,6 +44,7 @@ import base64
 import math
 import operator
 import re
+from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -2742,32 +2743,247 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     return {**state, "slide_images": slide_images_out, "progress_pct": 93.0}
 
 
-# [DEV1-SPRINT2-PENDING] This still builds a flat ad-hoc dict, not the frozen
-# LessonPackage shape (packages/shared/lesson_package.schema.json /
-# app/schemas/lesson.py). Story S2-11 replaces this with a schema-validated
-# segments[] package. Do not build a parallel real-content path elsewhere
-# against this stub shape -- it will be reconciled when Sprint 2 lands.
-# Ping Dev 1 (developer1-cybersmith) before changing this shape.
 async def package_builder_node(state: PipelineState) -> PipelineState:
-    """Node 15: Assemble all outputs into the final lesson JSON package."""
+    """Node 15 (Story 2-11/S2-11): assemble all prior node outputs into a
+    schema-validated LessonPackage, write it to `lessons`, and mark the
+    `lesson_jobs` row completed.
+
+    Deliberately does NOT: emit any WebSocket push (S2-12, a separate story
+    coordinated with Dev 4), or call any Supabase Storage API (image_url/
+    audio_url are copied through as bare storage paths — a project decision,
+    see Story 2-11's Dev Notes on why baking a signed URL into stored JSONB
+    would silently expire).
+
+    Idempotent via the Phase-A checkpoint pattern — a "package_builder" cache
+    hit returns the cached package directly and skips ALL reassembly and
+    re-writing of both lessons/lesson_jobs (a completed lesson must not be
+    re-validated/re-written on an ARQ retry that reaches this node again).
+    """
+    from app.core.db import get_supabase
+    from app.schemas.lesson import LessonPackage
+
     lesson_id = state["lesson_id"]
     logger.info("[%s] package_builder_node: assembling lesson package", lesson_id)
+
+    supabase = get_supabase()
+
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+
+    if "package_builder" in node_outputs:
+        logger.info("[%s] package_builder_node: cache hit", lesson_id)
+        return {**state, "lesson_package": node_outputs["package_builder"], "progress_pct": 100.0}
+
     await _update_job_progress(lesson_id, 95.0, "package_builder")
 
-    lesson_package: dict[str, Any] = {
+    # chapter_id was never a PipelineState field — chunk_node wrote it into
+    # its OWN checkpoint, and embed_node already reads it back the same way.
+    chapter_id = (node_outputs.get("chunk") or {}).get("chapter_id", "")
+
+    lesson_plan: dict[str, Any] = state.get("lesson_plan", {})
+    plan_segments: list[dict[str, Any]] = lesson_plan.get("segments", [])
+
+    def _index_by_segment_id(
+        items: list[dict[str, Any]], *, label: str, value_key: str | None = None
+    ) -> dict[str, Any]:
+        """Build a {segment_id: value} map defensively — a malformed entry
+        missing its own segment_id is logged and skipped (2026-07-16 review
+        finding, Blind Hunter + Edge Case Hunter, independently) rather than
+        raising a raw KeyError that would crash the whole node, contradicting
+        this node's own "one bad item never crashes the whole node" guarantee
+        (AC-5). A duplicate segment_id is also logged before being
+        overwritten — silently picking "last one wins" on a retried/duplicate
+        dispatch was flagged as a real, unlogged risk."""
+        result: dict[str, Any] = {}
+        for item in items:
+            segment_id = item.get("segment_id")
+            if segment_id is None:
+                logger.warning(
+                    "[%s] package_builder_node: malformed %s entry missing segment_id — skipped: %r",
+                    lesson_id, label, item,
+                )
+                continue
+            if segment_id in result:
+                logger.warning(
+                    "[%s] package_builder_node: duplicate segment_id %r in %s — keeping the last entry",
+                    lesson_id, segment_id, label,
+                )
+            result[segment_id] = item[value_key] if value_key else item
+        return result
+
+    complexity_by_id = _index_by_segment_id(state.get("complexity_scores", []), label="complexity_scores")
+    audio_by_id = _index_by_segment_id(state.get("audio_assets", []), label="audio_assets", value_key="data")
+    interventions_by_id = _index_by_segment_id(
+        state.get("intervention_prompts", []), label="intervention_prompts", value_key="data"
+    )
+
+    def _group_by_segment_id(items: list[dict[str, Any]], *, label: str) -> dict[str, list[dict[str, Any]]]:
+        """Same defensive-skip philosophy as `_index_by_segment_id`, but for
+        the one-to-many groupings (slides/quiz/jargon can have multiple
+        entries per segment_id)."""
+        result: dict[str, list[dict[str, Any]]] = {}
+        for item in items:
+            segment_id = item.get("segment_id")
+            if segment_id is None:
+                logger.warning(
+                    "[%s] package_builder_node: malformed %s entry missing segment_id — skipped: %r",
+                    lesson_id, label, item,
+                )
+                continue
+            result.setdefault(segment_id, []).append(item["data"])
+        return result
+
+    slides_by_segment = _group_by_segment_id(state.get("slides", []), label="slides")
+    quiz_by_segment = _group_by_segment_id(state.get("quiz_questions", []), label="quiz_questions")
+    jargon_by_segment = _group_by_segment_id(state.get("glossary", []), label="glossary")
+
+    # slide_images is a FLAT list with no segment_id at all (Story 2-9's
+    # deliberate design) — correlate purely by slide_id.
+    image_url_by_slide_id: dict[str, Any] = {}
+    for img in state.get("slide_images", []):
+        slide_id = img.get("slide_id")
+        if slide_id is None:
+            logger.warning(
+                "[%s] package_builder_node: malformed slide_images entry missing slide_id — skipped: %r",
+                lesson_id, img,
+            )
+            continue
+        image_url_by_slide_id[slide_id] = img.get("image_url")
+
+    # 2026-07-16 review finding (Edge Case Hunter): segment data present in
+    # an upstream list but absent from lesson_plan["segments"] (upstream
+    # drift — e.g. a segment cut from the plan after Phase 1 nodes already
+    # ran for it) was previously silently discarded with zero diagnostics.
+    # The plan is still authoritative (AC-4) — this only logs, it does not
+    # change what gets assembled.
+    plan_segment_ids = {seg.get("segment_id") for seg in plan_segments}
+    orphaned_ids = (
+        set(complexity_by_id) | set(audio_by_id) | set(interventions_by_id)
+        | set(slides_by_segment) | set(quiz_by_segment) | set(jargon_by_segment)
+    ) - plan_segment_ids
+    if orphaned_ids:
+        logger.warning(
+            "[%s] package_builder_node: found upstream data for segment_id(s) %s not present in "
+            "lesson_plan[\"segments\"] — ignored (plan is authoritative)",
+            lesson_id, sorted(orphaned_ids),
+        )
+
+    segments_out: list[dict[str, Any]] = []
+    seen_terms: set[str] = set()
+    glossary_out: list[dict[str, Any]] = []
+
+    for index, plan_seg in enumerate(plan_segments):
+        segment_id = plan_seg.get("segment_id")
+        if segment_id is None:
+            logger.warning(
+                "[%s] package_builder_node: malformed lesson_plan segment at index %d missing "
+                "segment_id — skipping segment: %r",
+                lesson_id, index, plan_seg,
+            )
+            continue
+
+        complexity = complexity_by_id.get(segment_id)
+        narration = audio_by_id.get(segment_id)
+        interventions = interventions_by_id.get(segment_id)
+        slides_data = slides_by_segment.get(segment_id, [])
+
+        if complexity is None or narration is None or interventions is None or not slides_data:
+            missing = [
+                name
+                for name, present in (
+                    ("complexity", complexity is not None),
+                    ("narration", narration is not None),
+                    ("interventions", interventions is not None),
+                    ("slides", bool(slides_data)),
+                )
+                if not present
+            ]
+            logger.warning(
+                "[%s] package_builder_node: segment %s missing %s — skipping segment",
+                lesson_id, segment_id, missing,
+            )
+            continue
+
+        slides_with_images = [
+            {**slide, "image_url": image_url_by_slide_id.get(slide.get("slide_id"))}
+            for slide in slides_data
+        ]
+
+        jargon_entries = jargon_by_segment.get(segment_id, [])
+        for jargon_entry in jargon_entries:
+            term = jargon_entry.get("term")
+            if not term:
+                logger.warning(
+                    "[%s] package_builder_node: segment %s has a jargon entry with no term — skipped: %r",
+                    lesson_id, segment_id, jargon_entry,
+                )
+                continue
+            key = term.strip().lower()
+            if key not in seen_terms:
+                seen_terms.add(key)
+                glossary_out.append(jargon_entry)
+
+        segments_out.append({
+            "segment_id": segment_id,
+            "segment_index": index,
+            "title": plan_seg.get("title", ""),
+            "summary": plan_seg.get("summary", ""),
+            "complexity": {k: v for k, v in complexity.items() if k != "segment_id"},
+            "slides": slides_with_images,
+            "narration": narration,
+            "quiz": quiz_by_segment.get(segment_id, []),
+            # PROVISIONAL placeholder (Story 2-11 review — no node in the
+            # 15-node pipeline generates a teach-back prompt; this is a
+            # deterministic, zero-cost stand-in pending confirmation from
+            # whoever owns the teach-back feature, not a finalized design).
+            "teachback_prompt": f"In your own words, explain what you learned about {plan_seg.get('title', 'this section')}.",
+            "jargon": jargon_entries,
+            "interventions": interventions,
+        })
+
+    if not segments_out:
+        raise RuntimeError(f"lesson_id={lesson_id}: package_builder produced zero usable segments")
+
+    assembled: dict[str, Any] = {
         "lesson_id": lesson_id,
-        "lesson_plan": state.get("lesson_plan", {}),
-        "slides": state.get("slides", []),
-        "audio_assets": state.get("audio_assets", []),
-        "slide_images": state.get("slide_images", []),
-        "quiz_questions": state.get("quiz_questions", []),
-        "glossary": state.get("glossary", []),
-        "intervention_prompts": state.get("intervention_prompts", []),
-        "segment_summaries": state.get("segment_summaries", []),
+        "book_id": state.get("book_id", ""),
+        "chapter_id": chapter_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {
+            "title": lesson_plan.get("title", ""),
+            "subject": lesson_plan.get("subject", ""),
+            "total_segments": lesson_plan.get("total_segments", len(segments_out)),
+            "estimated_duration_mins": lesson_plan.get("total_duration_min", 0),
+            "complexity_level": lesson_plan.get("complexity_level", "medium"),
+        },
+        "segments": segments_out,
+        "glossary": glossary_out,
     }
 
-    # Final DB update
-    await _update_job_progress(lesson_id, 100.0, "complete")
+    # AC-9: let a schema violation raise immediately — never caught/degraded.
+    package = LessonPackage.model_validate(assembled)
+    lesson_package = package.model_dump(mode="json")
+
+    completed_at = datetime.now(timezone.utc).isoformat()
+
+    supabase.table("lessons").update({
+        "content": lesson_package,
+        "status": "ready",
+        "title": package.metadata.title,
+    }).eq("lesson_id", lesson_id).execute()
+
+    supabase.table("lesson_jobs").update({
+        "status": "completed",
+        "completed_at": completed_at,
+        "last_node": "package_builder",
+        "node_outputs": {**node_outputs, "package_builder": lesson_package},
+    }).eq("lesson_id", lesson_id).execute()
 
     return {**state, "lesson_package": lesson_package, "progress_pct": 100.0}
 

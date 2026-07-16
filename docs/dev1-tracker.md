@@ -5,7 +5,7 @@
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
 **Last updated:** 2026-07-16
 **Sprint 0 status:** 12/12 COMPLETE ✅
-**Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) starts next — see Sprint 2 section below. Frontend/assessment/tutor teams should keep building against `apps/web/src/mocks/data/lessonPackage.ts` and test fixtures until `package_builder` (S2-11) lands; do not build a parallel real-content path.
+**Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) — see Sprint 2 section below. `package_builder` (S2-11) has now landed (2026-07-16) — the pipeline produces real, schema-validated `LessonPackage` JSONB. Frontend/assessment/tutor teams can start migrating off `apps/web/src/mocks/data/lessonPackage.ts` for integration testing, though the WebSocket `lesson_ready` push (S2-12) is still pending.
 
 ---
 
@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 12 | 3 | 6 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 13 | 3 | 5 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **59** | **35** | **4** | **20** |
+| **Totals** | | **59** | **36** | **4** | **19** |
 
 ---
 
@@ -46,7 +46,7 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10). Still stubs: `package_builder_node` (S2-11) onward. |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10), `package_builder_node` (S2-11) — this is now the LAST real node; all 15 nodes in the pipeline have a real implementation. Only the WebSocket `lesson_ready` push (S2-12) remains unbuilt. |
 | `apps/api/app/providers/tts/sarvam.py` | `SarvamTTSProvider` — primary TTS ✅ S2-9 |
 | `apps/api/app/providers/tts/azure.py` | `AzureTTSProvider` — fallback TTS ✅ S2-9 |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
@@ -608,15 +608,17 @@ Every node must:
   - Image cost included in `cost_tracker.accumulate_cost()` — called from `image_generator_node` itself, only after a successful Storage upload (moved out of the providers during code review — see below)
   - **AC:** Image URL or `None` set on each slide ✓ (tested); pipeline completes if all image providers fail ✓ (tested, per-slide try/except); cost tracked ✓ (tested, only after successful upload) — see `docs/stories/2-9-image-generator-node.md` for the full story, including the 3-layer adversarial code review (9 patches applied — 1 CRITICAL API-key-leak, 2 HIGH cost-accumulation race, plus a newly-discovered `app/core/retry.py` bug fixed in the same round — 356 tests, 355 passing + 1 pre-existing unrelated skip) ✅
 
-- [ ] **S2-11 `package_builder` node → JSONB write**
-  - `apps/api/app/modules/content/pipeline/nodes/package_builder.py`
+- [x] **S2-11 `package_builder` node → JSONB write** — ✓ 2026-07-16
+  - `apps/api/app/modules/content/pipeline/graph.py::package_builder_node` (real implementation inline, per repo convention)
   - Phase 3 final node — assembles all prior node outputs
-  - 1. Build `LessonPackage` from accumulated `state` outputs
-  - 2. `LessonPackage.model_validate(assembled)` — raises immediately if schema violated
-  - 3. `lessons.content = package.model_dump(mode="json")`; `lessons.status = 'ready'`
-  - 4. `lesson_jobs.status = 'completed'`; `completed_at = now()`
-  - 5. Emit `lesson_ready` WebSocket push matching `packages/shared/types/ws.ts` (coordinate with Dev 4 before implementing)
-  - **AC:** `lessons.content` valid JSONB; `LessonPackage.model_validate(row["content"])` round-trip passes; `lesson_ready` push delivered; `lessons.status = 'ready'`
+  - ✓ 1. `LessonPackage` built from accumulated `state` outputs — per-segment correlation across all 6 upstream node outputs by `segment_id` (`slide_images` by `slide_id` separately, its own deliberately flat shape); a segment missing required data is skipped with a warning, not a crash; `RuntimeError` if every segment gets skipped.
+  - ✓ 2. `LessonPackage.model_validate(assembled)` called uncaught — raises immediately if schema violated (tested).
+  - ✓ 3. `lessons.content = package.model_dump(mode="json")`; `lessons.status = 'ready'`; `lessons.title` also populated (first node in the pipeline to write to `lessons` at all).
+  - ✓ 4. `lesson_jobs.status = 'completed'`; `completed_at` set (ISO-8601 UTC) — the pre-existing `_update_job_progress()` helper could never do this (only ever sets `status="running"`); the stub's previous final call was a latent bug (would have reset status back to "running") and has been removed.
+  - 5. **WebSocket `lesson_ready` push is S2-12's own scope, not S2-11's** (see S2-12's tracker entry below — "coordinate with Dev 4 before implementing"). This story's scope note treats S2-11 and S2-12 as distinct, not-overlapping work, so S2-11 is complete without it.
+  - **Frozen-contract change, flagged for 4-dev sign-off (PRD §16), mirroring S2-LM1's precedent:** `Slide.image_url`/`fallback_image_url` relaxed from `AnyHttpUrl` to `str` in `app/schemas/lesson.py` + `packages/shared/lesson_package.schema.json` — both fields now store the bare Supabase Storage path, not a signed URL (baking a signed URL into stored JSONB would silently expire before a lesson is necessarily viewed; resolving paths to fresh signed URLs at lesson-view time is a separate, not-yet-built component's job).
+  - **`teachback_prompt` is a PROVISIONAL placeholder** (deterministic template, no LLM call) — no node in the 15-node pipeline generates a real teach-back prompt; this is pending confirmation from whoever owns the teach-back feature (Dev 3 — Quiz API, teachback scorer, CES formula, Learner DNA per team ownership).
+  - **AC:** `lessons.content` valid JSONB ✓ (tested); `LessonPackage.model_validate(row["content"])` round-trip passes ✓ (tested); `lessons.status = 'ready'` ✓ (tested); `lesson_ready` WebSocket push — out of scope for S2-11, see S2-12 below — see `docs/stories/2-11-package-builder-node.md` for the full story, including the 3-layer adversarial code review (5 patches applied — defensive `.get()` lookups replacing crash-prone direct subscripting, duplicate/orphaned-segment_id warning logging, 6 new coverage tests — plus 2 findings correctly deferred with documented rationale, 381/382 tests passing) ✅
 
 - [ ] **S2-12 WebSocket `lesson_ready` push — coordinate with Dev 4**
   - Shape must match `packages/shared/types/ws.ts` discriminated union exactly

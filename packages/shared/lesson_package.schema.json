@@ -113,10 +113,10 @@
           "items": { "type": "string" }
         },
         "image_url": {
-          "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }]
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
         },
         "fallback_image_url": {
-          "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }]
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
         }
       }
     },

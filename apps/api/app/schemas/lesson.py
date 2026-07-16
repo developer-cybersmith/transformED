@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Shared config
@@ -82,8 +82,15 @@ class Slide(BaseModel):
     slide_id: str
     title: str
     bullets: list[str]
-    image_url: AnyHttpUrl | None
-    fallback_image_url: AnyHttpUrl | None
+    # str, not AnyHttpUrl (Story 2-11 review): both are private-bucket storage
+    # paths (e.g. "{lesson_id}/{slide_id}.png"), not URLs — a signed URL baked
+    # into stored lessons.content JSONB would expire (Supabase max ~7 days)
+    # long before a generated lesson is necessarily viewed. Resolving a path
+    # to a fresh signed URL at lesson-view time is a separate, future
+    # component's responsibility, not package_builder's. Matches
+    # Narration.audio_url's existing plain-str type below.
+    image_url: str | None
+    fallback_image_url: str | None
 
 
 # ---------------------------------------------------------------------------
