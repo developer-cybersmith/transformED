@@ -4,7 +4,7 @@ baseline_commit: 358d3c0f3a9986b05f51a2a5c16bb9bc804dfabd
 
 # Story 2.14: Eval Harness — 5 PDFs (S2-14)
 
-Status: review
+Status: done
 
 ## Story
 

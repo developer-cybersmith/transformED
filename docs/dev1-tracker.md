@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 16 | 1 | 4 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 17 | 1 | 3 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **59** | **39** | **2** | **18** |
+| **Totals** | | **59** | **40** | **2** | **17** |
 
 ---
 
@@ -638,11 +638,13 @@ Every node must:
   - No admin panel exists yet (S3-4, Sprint 3, not started) — "flag in admin" is satisfied today via the durable `_cost_downshifts` JSONB trail, not a literal UI.
   - **AC:** A test run over the cost ceiling completes each of the 4 premium/media nodes without crashing ✓ (tested); cost tracked in `lesson_jobs.cost_usd` (unchanged, already done) ✓; downshift recorded for future admin visibility ✓ (tested, survives the node's own final checkpoint write) — see `docs/stories/2-13-cost-ceiling-enforcement.md` for the full story, including the 3-layer adversarial code review (2 HIGH patches applied, 3 LOW patches applied, 5 findings correctly dismissed with rationale). 947/995 tests passing, 48 pre-existing unrelated failures (unchanged baseline), 2 skipped — 0 regressions.
 
-- [ ] **S2-14 Eval harness — 5 PDFs**
-  - `apps/api/tests/evals/`
-  - 5 representative PDFs: short (≤10 pages), long (≥100 pages), dense text, table-heavy, image-heavy
-  - Automated scoring: slide quality + quiz relevance; output recorded in Langfuse
-  - **AC:** All 5 PDFs produce a valid `LessonPackage`; no pipeline crash; per-lesson scores visible in Langfuse
+- [x] **S2-14 Eval harness — 5 PDFs** — ✓ 2026-07-17
+  - `apps/api/tests/evals/scoring.py` (rule-based slide-quality/quiz-relevance heuristics), `apps/api/tests/evals/runner.py` (drives one PDF through the real `run_pipeline()`, validates + scores + records to Langfuse + cleans up), `apps/api/tests/evals/test_live_run.py` (the actual live entry point), `apps/api/tests/fixtures/generate_eval_pdfs.py` (synthetic PDF generator, `fpdf2` new dev-only dependency)
+  - **No real representative textbook PDFs were available in this session** — 5 synthetic PDFs generated deterministically instead (short=3pp, long=120pp, dense_text=15pp, table_heavy=8pp/3 tables-per-page, image_heavy=10pp/4 synthetic images-per-page). PDFs themselves are NOT committed — a pre-existing Sprint 0 `.gitignore` rule (`tests/fixtures/eval_pdfs/*.pdf`) already excluded them, discovered (not created) during this story; only the generator is committed, and it's re-runnable to regenerate them locally.
+  - Scoring is explicitly rule-based/heuristic (documented honestly as such), not LLM/semantic — spends zero additional LLM budget scoring an already-completed lesson, consistent with the project's cost discipline.
+  - **The actual live 5-PDF pipeline run was explicitly NOT executed** — a deliberate scope decision made with the user before implementation (real OpenAI/Sarvam/Azure/Supabase cost + up to ~15 min/lesson × 5). The harness is fully built and unit-tested (16 offline tests, zero live calls); gated behind a new `live_eval` pytest marker + `--run-live-eval` flag (scoped to `tests/evals/conftest.py`, not a global `pyproject.toml` addopts change — a code-review finding caught and reverted an initial version that did touch global config without team sign-off). **Trigger it when ready:** `pytest apps/api/tests/evals/test_live_run.py -v --run-live-eval` (requires live credentials already in `.env`).
+  - Code review (3-layer adversarial) caught and fixed 5 real issues before merge, most notably: a slide-count band violation that was logged but never actually lowered the score; two places where `run_eval()`'s own "never raises" contract was violated by unguarded checks outside its try block; `run_all_evals()` having no per-PDF exception isolation around `run_eval()` itself (would have discarded all results on any future bug); and — most operationally important — no cleanup of the `books`/`lessons`/`lesson_jobs` rows or Storage object each eval run created, meaning every run (pass or fail) would have permanently accumulated orphaned test data in Supabase.
+  - **AC:** All 5 synthetic PDFs produce a valid `LessonPackage` when run live (not yet verified — deferred to the user's live trigger, see above); no pipeline crash — per-PDF failure isolation is unit-tested ✓; per-lesson scores recorded to Langfuse via `start_observation()`/`score_trace()`/`.end()` (verified against the installed v4 SDK, not guessed) ✓ — see `docs/stories/2-14-eval-harness-5-pdfs.md` for the full story, including the 3-layer adversarial code review (8 patches applied — 5 HIGH, 3 LOW — plus 4 findings correctly dismissed with documented rationale). 963/1014 tests passing, 48 pre-existing unrelated failures (unchanged baseline), 3 skipped — 0 regressions.
 
 - [x] **S2-15 LLM provider factory — model-agnostic dispatch (MANDATORY refactor)** — ✓ 2026-07-16
   - `apps/api/app/providers/llm/factory.py` (new) — `get_llm_provider(model, lesson_id=None) -> LLMProvider`
