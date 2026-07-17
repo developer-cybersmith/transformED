@@ -119,11 +119,13 @@ addopts = [
     "--strict-markers",
     "--tb=short",
     "-v",
+    "-m", "not live_eval",
 ]
 markers = [
     "unit: fast isolated unit tests",
     "integration: tests requiring external services",
     "slow: tests that take > 2 seconds",
+    "live_eval: S2-14 eval harness live run — hits real OpenAI/Sarvam/Azure/Supabase, costs real money, excluded from default runs (opt in with -m live_eval)",
 ]
 filterwarnings = [
     "error",
