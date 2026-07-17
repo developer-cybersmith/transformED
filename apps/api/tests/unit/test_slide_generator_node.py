@@ -622,3 +622,108 @@ async def test_malformed_lesson_plan_segment_raises_contextual_error() -> None:
             )
 
     mock_provider.complete_structured.assert_not_called()
+
+
+# ── Story S2-LM4: per-segment slide_budget (from lesson_planner_node) ──────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_segment_without_slide_budget_falls_back_to_global_1_8_band() -> None:
+    """AC-5: a lesson_plan segment lacking slide_budget (a cached plan from
+    before this feature) must fall back to the fixed 1-8 band — proven by
+    every pre-existing test in this file, which never set slide_budget and
+    already passes unmodified. This test asserts the prompt text explicitly
+    contains the fallback band for a budget-less segment."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await slide_generator_node(_base_state())  # PLAN_SEGMENTS has no slide_budget
+
+    sent_prompt = mock_provider.complete_structured.call_args.args[0][1]["content"]
+    assert "produce 1 to 8 slides" in sent_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_segment_specific_slide_budget_used_in_prompt_and_validated() -> None:
+    """AC-5: when lesson_plan segments carry a per-segment slide_budget
+    (from lesson_planner_node, S2-LM4), slide_generator uses THAT budget in
+    the prompt, and a response respecting it (even though outside the
+    fixed global 1-8 band would be nonsensical here since 3-5 is inside
+    1-8) passes validation."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    segments_with_budget = [
+        {**seg, "slide_budget": {"min": 3, "max": 5}} for seg in PLAN_SEGMENTS
+    ]
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response(
+        segments=[
+            {"segment_id": "sec_0", "slides": [{"title": "A", "bullets": ["1"]}] * 3},
+            {"segment_id": "sec_1", "slides": [{"title": "B", "bullets": ["1"]}] * 4},
+            {"segment_id": "sec_2", "slides": [{"title": "C", "bullets": ["1"]}] * 5},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(
+            _base_state(
+                lesson_plan={
+                    "title": "T", "subject": "S", "objectives": ["X"], "complexity_level": "medium",
+                    "total_segments": 3, "total_duration_min": 15.0, "segments": segments_with_budget,
+                }
+            )
+        )
+
+    sent_prompt = mock_provider.complete_structured.call_args.args[0][1]["content"]
+    assert "produce 3 to 5 slides" in sent_prompt
+    assert len(result["slides"]) == 3 + 4 + 5
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_response_violating_segment_specific_budget_is_rejected() -> None:
+    """AC-5: a response with 7 slides for a segment whose slide_budget caps
+    it at 5 must be REJECTED, even though 7 is well within the fixed global
+    1-8 band — proving validation uses the per-segment budget, not the
+    global one."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    segments_with_budget = [
+        {**seg, "slide_budget": {"min": 3, "max": 5}} for seg in PLAN_SEGMENTS
+    ]
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response(
+        segments=[
+            {"segment_id": "sec_0", "slides": [{"title": "A", "bullets": ["1"]}] * 7},  # over budget
+            {"segment_id": "sec_1", "slides": [{"title": "B", "bullets": ["1"]}] * 4},
+            {"segment_id": "sec_2", "slides": [{"title": "C", "bullets": ["1"]}] * 5},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        with pytest.raises(RuntimeError, match="must be 3-5 per its slide_budget"):
+            await slide_generator_node(
+                _base_state(
+                    lesson_plan={
+                        "title": "T", "subject": "S", "objectives": ["X"], "complexity_level": "medium",
+                        "total_segments": 3, "total_duration_min": 15.0, "segments": segments_with_budget,
+                    }
+                )
+            )

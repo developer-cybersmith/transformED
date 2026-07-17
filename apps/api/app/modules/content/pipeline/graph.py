@@ -80,6 +80,7 @@ class PipelineState(TypedDict, total=False):
     book_id: str
     source_pdf_path: str
     chapter_content: str  # Raw text passed directly (for testing without PDF)
+    tier: str  # Learner Mode tier: "T1" | "T2" | "T3" (S2-LM3/LM4/LM5); defaults "T2"
 
     # Node 1: extract
     raw_text: str
@@ -894,6 +895,68 @@ class _LessonPlanLLM(BaseModel):
     segments: list[_LessonPlanSegmentLLM]
 
 
+# Story 2-13.5 (S2-LM4/S2-LM5): Learner Mode tier -> total-lesson slide-count
+# band. T1 = full depth, T2 = standard (default), T3 = critical-topics-only /
+# refresher. lesson_planner_node allocates this total across segments into a
+# per-segment slide_budget that slide_generator_node reads and respects — it
+# does not re-derive tier logic independently (tracker's own S2-LM4 note).
+_TIER_TOTAL_SLIDE_BAND: dict[str, tuple[int, int]] = {
+    "T1": (20, 25),
+    "T2": (12, 15),
+    "T3": (6, 8),
+}
+_DEFAULT_TIER = "T2"
+
+# Per-segment band is clamped to slide_generator's own structural limits
+# (1-8 slides/segment via _MIN_SLIDES_PER_SEGMENT/_MAX_SLIDES_PER_SEGMENT,
+# defined near slide_generator_node below — referenced here by name, safe
+# due to Python's late binding of module globals) regardless of tier math,
+# so a low-segment-count chapter at T1 never asks for a per-segment count
+# slide_generator's own guard would reject.
+_MIN_SLIDES_PER_SEGMENT = 1
+
+
+def _tier_slide_budget_per_segment(tier: str, segment_count: int) -> tuple[int, int]:
+    """Divide *tier*'s total-lesson slide band evenly across *segment_count*
+    segments, clamped to slide_generator's structural 1-8/segment limits.
+    Unknown/missing tier values fall back to T2 (matches LessonMetadata.tier's
+    own Pydantic default) rather than raising — this is a soft budget hint,
+    not a validated contract field.
+    """
+    total_min, total_max = _TIER_TOTAL_SLIDE_BAND.get(tier, _TIER_TOTAL_SLIDE_BAND[_DEFAULT_TIER])
+    if segment_count <= 0:
+        return (_MIN_SLIDES_PER_SEGMENT, _MIN_SLIDES_PER_SEGMENT)
+    # Both bounds are clamped to the structural 1-8/segment ceiling — a
+    # low-segment-count T1 chapter (e.g. 1 segment, total_min=20) would
+    # otherwise produce per_min=20, above the 8-slide structural limit
+    # slide_generator's own schema can represent (caught during this
+    # story's own dev notes before it shipped, not in a later review round).
+    per_min = min(_MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, total_min // segment_count))
+    per_max = max(per_min, min(_MAX_SLIDES_PER_SEGMENT, math.ceil(total_max / segment_count)))
+    return (per_min, per_max)
+
+
+# S2-LM5 (scope confirmed 2026-07-17: outline-only — does NOT extend to
+# Phase 1 economy nodes' quiz/narration depth): tier-conditioned framing
+# appended to lesson_planner's system prompt. T3 asks the LLM to select only
+# critical/foundational sub-topics (a refresher outline); T1 asks for full
+# depth including nuance; T2 (default) gets no extra framing — matches the
+# existing untiered prompt exactly, so T2 behavior is provably unchanged.
+_TIER_PROMPT_FRAMING: dict[str, str] = {
+    "T1": (
+        " This is a FULL-DEPTH lesson (Learner Mode tier T1): cover the "
+        "topic thoroughly, including secondary sub-topics and nuance a "
+        "standard-depth lesson would omit."
+    ),
+    "T3": (
+        " This is a CRITICAL-TOPICS-ONLY REFRESHER lesson (Learner Mode "
+        "tier T3): select only the most essential, foundational sub-topics "
+        "for each segment and omit secondary/supplementary material a "
+        "full-depth lesson would include."
+    ),
+}
+
+
 async def lesson_planner_node(state: PipelineState) -> PipelineState:
     """Node 5 (Phase 2 Premium, Story 2-6/S2-7): generate a structured lesson
     plan from Phase 1's segment summaries.
@@ -902,9 +965,15 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     chapter_content (AC-1, the single most cost-critical constraint in the
     whole pipeline: violating it silently 5xs generation cost). One
     pedagogical segment per input summary, 1:1 (AC-2) — no merge/split logic
-    in this story. Tier-agnostic: `state` has no `tier` key post-revert (see
-    docs/stories/2-2-learner-mode-infra.md's Change Log) — tier-aware slide
-    counts are S2-LM4, a separate future story.
+    in this story.
+
+    Tier-aware (S2-LM4/LM5, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off
+    was recorded): `state.get("tier", "T2")` drives (a) a tier-conditioned
+    prompt framing appended to the system prompt (S2-LM5, outline-scope
+    only — see `_TIER_PROMPT_FRAMING`), and (b) a per-segment `slide_budget`
+    attached to each output segment (S2-LM4, see `_tier_slide_budget_per_segment`)
+    that `slide_generator_node` reads and respects — it does not re-derive
+    tier logic independently.
 
     Idempotent via the Phase-A checkpoint pattern (AC-5) — Phase 2 is a single
     sequential dispatch, not Send()-fanned-out, so Story 2-1b's atomic RPC
@@ -990,6 +1059,11 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         )
     provider = get_llm_provider(model, lesson_id)
 
+    tier = state.get("tier") or _DEFAULT_TIER
+    if tier not in _TIER_TOTAL_SLIDE_BAND:
+        tier = _DEFAULT_TIER
+    tier_framing = _TIER_PROMPT_FRAMING.get(tier, "")
+
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {s['summary']}" for s in segment_summaries
     )
@@ -1005,6 +1079,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 "omit, or reorder segment_ids. For each segment, provide a short "
                 "title and an estimated duration_min (minutes of narration/slide "
                 "time for that segment)."
+                + tier_framing
                 + _UNTRUSTED_CONTENT_GUARD
             ),
         },
@@ -1082,12 +1157,17 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # looking up each LLM segment by segment_id, not the reverse.
     llm_segment_by_id = {seg.segment_id: seg for seg in response.segments}
     summary_by_id = {s["segment_id"]: s["summary"] for s in segment_summaries}
+    # S2-LM4: per-segment slide_budget derived from tier + segment count,
+    # attached here so slide_generator_node reads it rather than re-deriving
+    # tier logic independently (tracker's own S2-LM4 note).
+    slide_budget_min, slide_budget_max = _tier_slide_budget_per_segment(tier, len(segment_summaries))
     segments_out = [
         {
             "segment_id": s["segment_id"],
             "title": llm_segment_by_id[s["segment_id"]].title.strip(),
             "summary": summary_by_id[s["segment_id"]],
             "duration_min": llm_segment_by_id[s["segment_id"]].duration_min,
+            "slide_budget": {"min": slide_budget_min, "max": slide_budget_max},
         }
         for s in segment_summaries
     ]
@@ -1145,9 +1225,14 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     Input is `state["lesson_plan"]["segments"]` ONLY — never
     segment_summaries/sections/chapter_content (AC-1). One slide-set per
     lesson-plan segment, 1:1 (AC-2) — no merge/split logic in this story.
-    Tier-agnostic: fixed 1-8 slides/segment band, no `state["tier"]` read
-    (see docs/stories/2-2-learner-mode-infra.md's Change Log) — tier-aware
-    slide counts are S2-LM4, a separate future story.
+
+    Tier-aware (S2-LM4, unblocked 2026-07-17): each `lesson_plan` segment
+    carries a `slide_budget` (`{"min": ..., "max": ...}`) computed by
+    `lesson_planner_node` from `state["tier"]` — this node reads and
+    respects that budget rather than re-deriving tier logic itself. Falls
+    back to the fixed 1-8 band (`_MIN_SLIDES_PER_SEGMENT`/
+    `_MAX_SLIDES_PER_SEGMENT`) when `slide_budget` is absent, so a cached
+    `lesson_plan` from before this feature landed still validates.
 
     ONE structured-output call for the whole plan, not one call per segment —
     same cost-conscious design lesson_planner_node uses, for the identical
@@ -1227,19 +1312,33 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         )
     provider = get_llm_provider(model, lesson_id)
 
+    # S2-LM4: per-segment slide_budget from lesson_planner_node, keyed by
+    # segment_id. Falls back to the fixed 1-8 band for any segment lacking
+    # it (a cached lesson_plan from before this feature landed).
+    def _segment_budget(seg: dict[str, Any]) -> tuple[int, int]:
+        budget = seg.get("slide_budget")
+        if isinstance(budget, dict) and isinstance(budget.get("min"), int) and isinstance(budget.get("max"), int):
+            return (budget["min"], budget["max"])
+        return (_MIN_SLIDES_PER_SEGMENT, _MAX_SLIDES_PER_SEGMENT)
+
+    budget_by_id: dict[str, tuple[int, int]] = {s["segment_id"]: _segment_budget(s) for s in plan_segments}
+
     segments_text = "\n".join(
-        f"- segment_id={s['segment_id']}: {s['title']} — {s['summary']}" for s in plan_segments
+        f"- segment_id={s['segment_id']}: {s['title']} — {s['summary']} "
+        f"(produce {budget_by_id[s['segment_id']][0]} to {budget_by_id[s['segment_id']][1]} slides for this segment)"
+        for s in plan_segments
     )
     messages = [
         {
             "role": "system",
             "content": (
                 "Produce a slide deck from the lesson plan segments below. "
-                "For each segment, return 1 to 8 slides, each with a short "
-                "title and a list of bullet points. Return EXACTLY one "
-                "slide-set per segment provided, echoing back each segment's "
-                "segment_id UNCHANGED — do not invent, merge, split, omit, "
-                "or reorder segment_ids."
+                "Each segment specifies its own slide-count range — respect "
+                "it exactly. Each slide has a short title and a list of "
+                "bullet points. Return EXACTLY one slide-set per segment "
+                "provided, echoing back each segment's segment_id "
+                "UNCHANGED — do not invent, merge, split, omit, or reorder "
+                "segment_ids."
                 + _UNTRUSTED_CONTENT_GUARD
             ),
         },
@@ -1275,10 +1374,15 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         )
 
     for seg in response.segments:
-        if not (1 <= len(seg.slides) <= _MAX_SLIDES_PER_SEGMENT):
+        # S2-LM4: validate against THIS segment's own slide_budget (falls
+        # back to the fixed 1-8 band when absent), not a single global band
+        # — mirrors lesson_planner_node's own "hand the budget, don't
+        # re-derive it" design.
+        seg_min, seg_max = budget_by_id.get(seg.segment_id, (_MIN_SLIDES_PER_SEGMENT, _MAX_SLIDES_PER_SEGMENT))
+        if not (seg_min <= len(seg.slides) <= seg_max):
             raise RuntimeError(
                 f"lesson_id={lesson_id}: slide_generator segment {seg.segment_id!r} has "
-                f"{len(seg.slides)} slides (must be 1-{_MAX_SLIDES_PER_SEGMENT})"
+                f"{len(seg.slides)} slides (must be {seg_min}-{seg_max} per its slide_budget)"
             )
         for slide in seg.slides:
             if not slide.title.strip():
@@ -3036,6 +3140,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             "total_segments": lesson_plan.get("total_segments", len(segments_out)),
             "estimated_duration_mins": lesson_plan.get("total_duration_min", 0),
             "complexity_level": lesson_plan.get("complexity_level", "medium"),
+            # S2-LM1/S2-LM3: tier flows through PipelineState (set at
+            # run_pipeline() entry from the lessons.tier column), not from
+            # lesson_plan — every node in this pipeline sees the same
+            # state["tier"], so reading it directly here avoids a second,
+            # potentially-drifting copy inside lesson_plan.
+            "tier": state.get("tier") or _DEFAULT_TIER,
         },
         "segments": segments_out,
         "glossary": glossary_out,
@@ -3259,6 +3369,7 @@ async def run_pipeline(
     user_id: str = "",
     source_pdf_path: str = "",
     book_id: str = "",
+    tier: str = "T2",
 ) -> dict[str, Any]:
     """Execute the full content pipeline for a lesson.
 
@@ -3269,6 +3380,10 @@ async def run_pipeline(
         user_id:          UUID of the lesson owner.
         source_pdf_path:  Storage path of the source PDF in Supabase Storage.
         book_id:          UUID of the parent book (for books.page_count write).
+        tier:             Learner Mode tier ("T1"/"T2"/"T3", S2-LM3/LM4/LM5) —
+                          drives lesson_planner's/slide_generator's slide-count
+                          target and lesson_planner's content-depth framing.
+                          Defaults "T2" so pre-tier callers are unaffected.
 
     Returns:
         The final ``lesson_package`` dict from package_builder_node.
@@ -3285,6 +3400,7 @@ async def run_pipeline(
         "book_id": book_id,
         "chapter_content": chapter_content,
         "source_pdf_path": source_pdf_path,
+        "tier": tier if tier in ("T1", "T2", "T3") else "T2",
         "progress_pct": 0.0,
         "error": None,
     }

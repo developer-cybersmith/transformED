@@ -571,3 +571,140 @@ async def test_segment_order_follows_input_not_llm_response_order() -> None:
     assert ordered_ids == ["sec_0", "sec_1", "sec_2"], (
         f"segment order must follow segment_summaries input order, got {ordered_ids}"
     )
+
+
+# ── Story S2-LM3/LM4/LM5: tier-aware slide budget + prompt framing ─────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
+    """AC-6/AC-8: omitting state["tier"] entirely must behave exactly as
+    before this story — T2 slide_budget, no tier framing in the prompt."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state())  # no "tier" key at all
+
+    for seg in result["lesson_plan"]["segments"]:
+        # T2 band (12,15) / 3 segments -> per_min=4, per_max=5.
+        assert seg["slide_budget"] == {"min": 4, "max": 5}
+
+    sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
+    assert "FULL-DEPTH" not in sent_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
+    """AC-4/AC-6: T1 -> full-depth prompt framing + a wider per-segment
+    slide_budget than T2's default."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(tier="T1"))
+
+    for seg in result["lesson_plan"]["segments"]:
+        # T1 band (20,25) / 3 segments -> per_min=6, per_max=8 (clamped).
+        assert seg["slide_budget"] == {"min": 6, "max": 8}
+
+    sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    assert "FULL-DEPTH" in sent_prompt
+    assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
+    """AC-4/AC-6: T3 -> critical-topics-only/refresher framing + a narrower
+    per-segment slide_budget than T2's default."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(tier="T3"))
+
+    for seg in result["lesson_plan"]["segments"]:
+        # T3 band (6,8) / 3 segments -> per_min=2, per_max=3.
+        assert seg["slide_budget"] == {"min": 2, "max": 3}
+
+    sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    assert "CRITICAL-TOPICS-ONLY" in sent_prompt
+    assert "FULL-DEPTH" not in sent_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_single_segment_t1_slide_budget_clamped_to_structural_ceiling() -> None:
+    """Dev Notes edge case: a 1-segment T1 lesson's naive per-segment
+    allocation (total_min // 1 = 20) would exceed slide_generator's 1-8
+    structural ceiling — both bounds must be clamped to 8, not just per_max."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[{"segment_id": "sec_0", "title": "Only Segment", "duration_min": 10.0}]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(
+            _base_state(
+                tier="T1",
+                segment_summaries=[{"segment_id": "sec_0", "summary": "Only segment summary."}],
+            )
+        )
+
+    budget = result["lesson_plan"]["segments"][0]["slide_budget"]
+    assert budget["min"] <= 8
+    assert budget["max"] <= 8
+    assert budget["min"] <= budget["max"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_unknown_tier_value_falls_back_to_t2_budget_and_framing() -> None:
+    """_tier_slide_budget_per_segment/prompt framing must fall back to T2
+    for a garbage tier value, not raise — this is a soft budget hint, not a
+    validated contract field (validation happens at the router, S2-LM3)."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(tier="not-a-real-tier"))
+
+    for seg in result["lesson_plan"]["segments"]:
+        assert seg["slide_budget"] == {"min": 4, "max": 5}  # same as T2 default
+    sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
+    assert "FULL-DEPTH" not in sent_prompt

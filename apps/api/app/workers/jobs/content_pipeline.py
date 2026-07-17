@@ -57,7 +57,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # ── 2. Fetch lesson metadata from lessons table ───────────────────────
         result = (
             supabase.table("lessons")
-            .select("user_id, source_file_path, book_id")
+            .select("user_id, source_file_path, book_id, tier")
             .eq("lesson_id", lesson_id)
             .single()
             .execute()
@@ -67,6 +67,14 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         user_id: str = lesson_row.get("user_id", "")
         source_pdf_path: str = lesson_row.get("source_file_path", "")
         book_id: str = lesson_row.get("book_id", "")
+        # S2-LM3: tier reaches the pipeline via this SAME lessons-table
+        # re-fetch, not a separate ARQ job-payload argument (corrects the
+        # tracker's original "thread into the ARQ job" wording, per Story
+        # 2-2's Dev Notes). lessons.tier defaults 'T2' at the DB level
+        # (migration 20260714020000), so this is never missing in practice —
+        # the "T2" fallback here only matters for a row from before that
+        # migration or a malformed select response.
+        tier: str = lesson_row.get("tier") or "T2"
         # session_id is the WebSocket routing key; falls back to lesson_id until
         # the upload route stores it (Sprint 2 — Dev 4 coordinates)
         session_id: str = lesson_row.get("session_id") or lesson_id
@@ -82,6 +90,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             user_id=user_id,
             source_pdf_path=source_pdf_path,
             book_id=book_id,
+            tier=tier,
         )
 
         # ── 4a. Mark job completed ────────────────────────────────────────────

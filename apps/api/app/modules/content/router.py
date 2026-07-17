@@ -12,7 +12,7 @@ import re
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel
 
 from app.core.rate_limit import _get_user_key, limiter
@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["content"])
 
 MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+# S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
+# recorded): must byte-for-byte match LessonMetadata.tier's Literal values
+# (packages/shared/lesson_package.schema.json / apps/api/app/schemas/lesson.py).
+_VALID_TIERS = {"T1", "T2", "T3"}
+_DEFAULT_TIER = "T2"
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -87,6 +93,10 @@ async def upload_lesson(
     current_user: CurrentUser,
     arq_redis: ArqRedis,
     file: UploadFile = File(..., description="PDF file to process (max 50 MB)"),
+    tier: str = Form(
+        _DEFAULT_TIER,
+        description="Learner Mode tier: T1 (full depth), T2 (standard, default), T3 (critical-topics refresher)",
+    ),
 ) -> LessonUploadResponse:
     """Accept a PDF upload, store it in Supabase Storage, enqueue ARQ job.
 
@@ -98,6 +108,15 @@ async def upload_lesson(
     """
     user_id: str = current_user["sub"]
     supabase = get_supabase()
+
+    # ── S2-LM3: validate tier before any row is created — an invalid value
+    # returns 422, never a silent fallback to the default. Omitting the
+    # field entirely already defaults to T2 via the Form(...) default above.
+    if tier not in _VALID_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid tier {tier!r} — must be one of {sorted(_VALID_TIERS)}",
+        )
 
     # ── Size check (fast path before reading body) ────────────────────────────
     if file.size and file.size > MAX_PDF_SIZE_BYTES:
@@ -147,6 +166,7 @@ async def upload_lesson(
             "user_id": user_id,
             "book_id": book_id,
             "status": "generating",
+            "tier": tier,
         }).execute()
         if not lessons_resp.data:
             raise RuntimeError("lessons insert returned no rows")

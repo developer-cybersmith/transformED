@@ -513,3 +513,40 @@ async def test_orphaned_upstream_data_not_in_plan_is_logged_and_ignored(caplog: 
     package = result["lesson_package"]
     assert {s["segment_id"] for s in package["segments"]} == {"sec_0", "sec_1"}
     assert any("sec_orphan" in r.message for r in caplog.records)
+
+
+# ── Story S2-LM3/LM7: tier written into LessonMetadata ──────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tier_from_state_written_into_metadata() -> None:
+    """AC-7: LessonMetadata.tier reflects state["tier"] (set at run_pipeline
+    entry from the lessons.tier column), not always the Pydantic default."""
+    from app.modules.content.pipeline.graph import package_builder_node
+    from app.schemas.lesson import LessonPackage
+
+    sb, _, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(tier="T3"))
+
+    package = LessonPackage.model_validate(result["lesson_package"])
+    assert package.metadata.tier == "T3"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_tier_in_state_defaults_metadata_tier_to_t2() -> None:
+    """No "tier" key in state at all (pre-S2-LM3 caller, or a test fixture
+    that never set one) must still validate — defaults to T2."""
+    from app.modules.content.pipeline.graph import package_builder_node
+    from app.schemas.lesson import LessonPackage
+
+    sb, _, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state())  # no "tier" key
+
+    package = LessonPackage.model_validate(result["lesson_package"])
+    assert package.metadata.tier == "T2"

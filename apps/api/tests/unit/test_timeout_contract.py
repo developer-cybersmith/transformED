@@ -227,3 +227,53 @@ async def test_failure_paths_write_schema_valid_status(
             assert payload["status"] in _LESSON_JOBS_STATUSES, payload["status"]
     if error_prefix is not None:
         assert failed[0]["error"].startswith(error_prefix), failed[0]["error"]
+
+
+# ── Story S2-LM3: tier fetched from lessons and threaded to run_pipeline ────
+
+
+async def test_content_pipeline_job_threads_tier_from_lessons_row() -> None:
+    """AC-3: tier reaches the pipeline via the SAME lessons-table re-fetch
+    used for user_id/source_file_path/book_id, not a separate ARQ job-payload
+    argument."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase = MagicMock()
+    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={"user_id": "u1", "source_file_path": "p", "book_id": "b1", "tier": "T3"}
+    )
+    mock_run_pipeline = AsyncMock(return_value={})
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch("app.modules.content.pipeline.graph.run_pipeline", new=mock_run_pipeline),
+        patch("app.core.redis.get_redis", return_value=MagicMock(publish=AsyncMock())),
+        patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock()),
+    ):
+        await job_mod.content_pipeline_job({}, "lesson-tiered")
+
+    mock_run_pipeline.assert_awaited_once()
+    assert mock_run_pipeline.await_args.kwargs["tier"] == "T3"
+
+
+async def test_content_pipeline_job_missing_tier_defaults_to_t2() -> None:
+    """A lessons row without a tier value (pre-migration row, or malformed
+    select response) must not crash — defaults to T2."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase = MagicMock()
+    # lessons row has no "tier" key at all.
+    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={"user_id": "u1", "source_file_path": "p", "book_id": "b1"}
+    )
+    mock_run_pipeline = AsyncMock(return_value={})
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch("app.modules.content.pipeline.graph.run_pipeline", new=mock_run_pipeline),
+        patch("app.core.redis.get_redis", return_value=MagicMock(publish=AsyncMock())),
+        patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock()),
+    ):
+        await job_mod.content_pipeline_job({}, "lesson-no-tier")
+
+    assert mock_run_pipeline.await_args.kwargs["tier"] == "T2"
