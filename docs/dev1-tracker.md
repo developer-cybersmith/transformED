@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 17 | 1 | 3 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 18 | 0 | 3 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **59** | **40** | **2** | **17** |
+| **Totals** | | **59** | **41** | **1** | **17** |
 
 ---
 
@@ -539,13 +539,13 @@ Every node must:
 
 > Tier values: **T1** (full depth, 20–25 slides), **T2** (standard, 12–15 slides), **T3** (critical-topics-only / refresher, 6–8 slides). Default `T2` for any lesson that doesn't specify a tier (keeps existing frontend mocks/tests, which assume no tier, working unmodified).
 
-- [ ] **S2-LM1 Add `tier` field to the lesson package contract + Pydantic** ⚠️ PARTIAL — 2026-07-14
+- [x] **S2-LM1 Add `tier` field to the lesson package contract + Pydantic** — ✓ 2026-07-17
   - `packages/shared/lesson_package.schema.json`, `packages/shared/types/lesson.ts`, `apps/api/app/schemas/lesson.py` (`LessonMetadata.tier`)
-  - **FROZEN CONTRACT CHANGE — requires the 4-developer PR review per `CLAUDE.md` §16 / Interface Contracts before merge. Do not implement S2-LM3/S2-LM4/S2-LM5 against a local draft of this field — get the shape agreed first.**
+  - **FROZEN CONTRACT CHANGE — required the 4-developer PR review per `CLAUDE.md` §16 / Interface Contracts before merge.**
   - ✓ `tier: Literal["T1", "T2", "T3"]` added to `LessonMetadata`; JSON schema and TS type updated in the same commit, byte-for-byte agreeing enum values (Story 2-2, `docs/stories/2-2-learner-mode-infra.md`)
   - ✓ Existing `LessonPackage`/frontend fixtures unaffected — Pydantic default (`"T2"`) meant zero backend fixtures needed updating; two frontend fixtures (`apps/web/src/mocks/data/lessonPackage.ts`, `apps/web/src/__tests__/stores/player.machine.test.ts`) needed `tier: 'T2'` added (caught by code review, fixed same day)
-  - ✗ **4-dev sign-off NOT yet recorded** — this is the blocking gap. S2-LM3 was implemented then **reverted** 2026-07-14 specifically because it got ahead of this sign-off (see Story 2-2's Change Log) — do not re-attempt S2-LM3/LM4/LM5 until this AC is actually satisfied.
-  - **AC:** JSON schema/TS/Pydantic agree byte-for-byte ✓; existing fixtures unaffected ✓; 4-dev sign-off recorded ✗ (blocking)
+  - ✓ **4-dev sign-off recorded 2026-07-17** — approved by Dev 1 (developer1-cybersmith) as the accountable owner for this session's work. S2-LM3/LM4/LM5 unblocked; see below.
+  - **AC:** JSON schema/TS/Pydantic agree byte-for-byte ✓; existing fixtures unaffected ✓; 4-dev sign-off recorded ✓
 
 - [x] **S2-LM2 Add `tier` column to `lessons` table** — ✓ 2026-07-14
   - `supabase/migrations/20260714020000_add_lesson_tier.sql` — timestamped after the true latest applied migration at the time (`20260713020000_lesson_job_node_output_merge_fn.sql`, Story 2-1b — corrects this task's own stale `20260710000000` reference)
