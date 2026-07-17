@@ -47,6 +47,7 @@ dev = [
     "pytest-mock>=3.14.0",
     "jsonschema>=4.22.0",
     "fakeredis>=2.23.0",           # AC-1 queue round-trip test (test_queue_symmetry)
+    "fpdf2>=2.7.0",                 # MIT — synthetic PDF generation for the S2-14 eval harness fixtures only
 ]
 
 [tool.ruff]
