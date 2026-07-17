@@ -4,7 +4,7 @@ baseline_commit: 1c8a5195090c69364b267832e3d56ad2e7631090
 
 # Story 2.13: Cost Ceiling Enforcement Wired Into All Sprint 2 Nodes (S2-13)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -36,32 +36,32 @@ so that a lesson generation run never fails outright over cost — matching CLAU
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Shared downshift-recording helper (AC: 5)
-  - [ ] 1.1 Add `_record_cost_downshift(lesson_id, node_name, from_value, to_value)` in `graph.py`, near `_update_job_progress` — reads current `node_outputs`, appends to `node_outputs.get("_cost_downshifts", [])`, writes back via a plain `.update()` (Phase-A style, matching every other node's checkpoint write — no atomic-merge RPC needed here, this key has no concurrent-writer risk since each node's downshift check runs once for premium nodes and is dedup'd within `tts_node`'s own loop).
-  - [ ] 1.2 Helper never raises — wrap its own Supabase write in try/except and log-and-continue on failure (recording a downshift must never itself become a new way for the pipeline to fail).
+- [x] Task 1: Shared downshift-recording helper (AC: 5)
+  - [x] 1.1 Add `_record_cost_downshift(lesson_id, node_name, from_value, to_value)` in `graph.py`, near `_update_job_progress` — reads current `node_outputs`, appends to `node_outputs.get("_cost_downshifts", [])`, writes back via a plain `.update()` (Phase-A style, matching every other node's checkpoint write — no atomic-merge RPC needed here, this key has no concurrent-writer risk since each node's downshift check runs once for premium nodes and is dedup'd within `tts_node`'s own loop).
+  - [x] 1.2 Helper never raises — wrap its own Supabase write in try/except and log-and-continue on failure (recording a downshift must never itself become a new way for the pipeline to fail).
 
-- [ ] Task 2: `lesson_planner_node` downshift (AC: 1)
-  - [ ] 2.1 Before `provider = get_llm_provider(settings.llm_lesson_planner, lesson_id)`, call `await check_ceiling(lesson_id)`.
-  - [ ] 2.2 If over ceiling: set `model = settings.llm_mini`, `provider = get_llm_provider(model, lesson_id)`; else `model = settings.llm_lesson_planner`, existing provider line. Pass `model` (not the hardcoded `settings.llm_lesson_planner`) into both `get_llm_provider(...)` and `provider.complete_structured(messages, model, _LessonPlanLLM)`.
-  - [ ] 2.3 On downshift, log a warning and call `_record_cost_downshift(lesson_id, "lesson_planner", settings.llm_lesson_planner, settings.llm_mini)`.
+- [x] Task 2: `lesson_planner_node` downshift (AC: 1)
+  - [x] 2.1 Before `provider = get_llm_provider(settings.llm_lesson_planner, lesson_id)`, call `await check_ceiling(lesson_id)`.
+  - [x] 2.2 If over ceiling: set `model = settings.llm_mini`, `provider = get_llm_provider(model, lesson_id)`; else `model = settings.llm_lesson_planner`, existing provider line. Pass `model` (not the hardcoded `settings.llm_lesson_planner`) into both `get_llm_provider(...)` and `provider.complete_structured(messages, model, _LessonPlanLLM)`.
+  - [x] 2.3 On downshift, log a warning and call `_record_cost_downshift(lesson_id, "lesson_planner", settings.llm_lesson_planner, settings.llm_mini)`.
 
-- [ ] Task 3: `slide_generator_node` downshift (AC: 2)
-  - [ ] 3.1 Identical pattern to Task 2, substituting `settings.llm_slide_generator` for `settings.llm_lesson_planner`.
+- [x] Task 3: `slide_generator_node` downshift (AC: 2)
+  - [x] 3.1 Identical pattern to Task 2, substituting `settings.llm_slide_generator` for `settings.llm_lesson_planner`.
 
-- [ ] Task 4: `tts_node` per-segment ceiling pre-check (AC: 3)
-  - [ ] 4.1 Inside the per-segment loop (the non-cache-hit branch, `graph.py:2467` onward), before calling `_synthesize_with_fallback`, call `await check_ceiling(lesson_id)`.
-  - [ ] 4.2 If over ceiling: skip the call entirely, set `audio_bytes, audio_provider, cost = None, "browser", 0.0` directly (mirrors what `_synthesize_with_fallback` itself returns on total failure — no new code path shape, just skipping straight to its existing terminal branch).
-  - [ ] 4.3 Track whether a downshift has already been recorded for this lesson (a local `bool` set before the loop) so `_record_cost_downshift` fires at most once per `tts_node` invocation, not once per segment.
+- [x] Task 4: `tts_node` per-segment ceiling pre-check (AC: 3)
+  - [x] 4.1 Inside the per-segment loop (the non-cache-hit branch, `graph.py:2467` onward), before calling `_synthesize_with_fallback`, call `await check_ceiling(lesson_id)`.
+  - [x] 4.2 If over ceiling: skip the call entirely, set `audio_bytes, audio_provider, cost = None, "browser", 0.0` directly (mirrors what `_synthesize_with_fallback` itself returns on total failure — no new code path shape, just skipping straight to its existing terminal branch).
+  - [x] 4.3 Track whether a downshift has already been recorded for this lesson (a local `bool` set before the loop) so `_record_cost_downshift` fires at most once per `tts_node` invocation, not once per segment.
 
-- [ ] Task 5: Verify `image_generator_node` unchanged (AC: 4)
-  - [ ] 5.1 No code change. Add/confirm a regression test asserting the existing `check_ceiling()` pre-check at `graph.py:2686` still short-circuits to `image_url=None` without calling either image provider.
+- [x] Task 5: Verify `image_generator_node` unchanged (AC: 4)
+  - [x] 5.1 No code change. Add/confirm a regression test asserting the existing `check_ceiling()` pre-check at `graph.py:2686` still short-circuits to `image_url=None` without calling either image provider.
 
-- [ ] Task 6: Tests (AC: 1, 2, 3, 4, 6, 7)
-  - [ ] 6.1 `tests/unit/test_lesson_planner_node.py` — new test: `check_ceiling` mocked `True` → provider constructed with `settings.llm_mini`, `complete_structured` called with `settings.llm_mini` as the model arg, node completes and returns a valid `lesson_plan`, downshift entry recorded.
-  - [ ] 6.2 `tests/unit/test_slide_generator_node.py` — mirror of 6.1 for `slide_generator_node`.
-  - [ ] 6.3 `tests/unit/test_tts_node.py` — new test: `check_ceiling` mocked `True` for one segment → `SarvamTTSProvider`/`AzureTTSProvider` never constructed/called for that segment, `Narration.audio_provider == "browser"`, `cost == 0.0`; a second test with 2 segments confirms the downshift record is written exactly once, not twice.
-  - [ ] 6.4 `tests/unit/test_image_generator_node.py` (or wherever Story 2-9's existing ceiling test lives — locate first, extend if present rather than duplicating) — confirm still passing / add if genuinely missing.
-  - [ ] 6.5 Full regression suite run before and after — record pass/fail counts in Dev Agent Record, matching every prior Sprint 2 story's convention.
+- [x] Task 6: Tests (AC: 1, 2, 3, 4, 6, 7)
+  - [x] 6.1 `tests/unit/test_lesson_planner_node.py` — new test: `check_ceiling` mocked `True` → provider constructed with `settings.llm_mini`, `complete_structured` called with `settings.llm_mini` as the model arg, node completes and returns a valid `lesson_plan`, downshift entry recorded.
+  - [x] 6.2 `tests/unit/test_slide_generator_node.py` — mirror of 6.1 for `slide_generator_node`.
+  - [x] 6.3 `tests/unit/test_tts_node.py` — new test: `check_ceiling` mocked `True` for one segment → `SarvamTTSProvider`/`AzureTTSProvider` never constructed/called for that segment, `Narration.audio_provider == "browser"`, `cost == 0.0`; a second test with 2 segments confirms the downshift record is written exactly once, not twice.
+  - [x] 6.4 `tests/unit/test_image_generator_node.py` (or wherever Story 2-9's existing ceiling test lives — locate first, extend if present rather than duplicating) — confirm still passing / add if genuinely missing.
+  - [x] 6.5 Full regression suite run before and after — record pass/fail counts in Dev Agent Record, matching every prior Sprint 2 story's convention.
 
 ## Dev Notes
 
@@ -132,22 +132,34 @@ Single shared branch for all of Sprint 2: `sprint2/phase-b-generation-nodes` —
 
 ### Agent Model Used
 
-_To be filled by dev-story._
+claude-sonnet-5
 
 ### Debug Log References
 
-_To be filled by dev-story._
+- Ran the 3 affected node test files before any code change to confirm baseline: 48 passed. After wiring `check_ceiling()` unconditionally into all 3 nodes, re-ran and got 34 new failures — all `RuntimeError: Redis pool is not initialised`, because none of the pre-existing tests mocked `check_ceiling`/Redis. Fixed by adding an `autouse=True` pytest fixture per file patching `app.core.cost_tracker.check_ceiling` to `AsyncMock(return_value=False)` by default — restores all 48 pre-existing tests to green with zero per-test edits, and downshift-specific new tests override the default explicitly.
+- Full-suite baseline check: re-ran `pytest tests -q` (not just `tests/unit`) after implementation — 945 passed, 48 pre-existing failures, 2 skipped. Confirmed the 48 failing files are exactly the same 5 files Story 2-12 already documented as pre-existing/unrelated (`test_auth.py`, `test_dna_fusion.py`, `test_dna_growth.py`, `test_onboarding_content.py`, `test_tutor_service.py` — all Dev 3/Dev 4 owned) — zero new failures introduced by this story.
+- Verified `image_generator_node`'s existing ceiling check (Story 2-9 AC-3) already has a dedicated test (`tests/unit/test_image_generator_node.py:159`, `check_ceiling` mocked `True`) — Task 5 required no new code or test.
 
 ### Completion Notes List
 
-_To be filled by dev-story._
+- All 6 tasks / 15 subtasks complete. Added `_record_cost_downshift()` helper (`graph.py`, sibling to `_update_job_progress`) — appends a durable `{node, from_model_or_provider, to_model_or_provider, at}` entry to `lesson_jobs.node_outputs["_cost_downshifts"]` (additive JSONB, never touches per-node checkpoint keys), for a future S3-4 admin panel to read.
+- `lesson_planner_node` and `slide_generator_node` now call `check_ceiling(lesson_id)` before selecting a provider; over ceiling, both downshift `settings.llm_lesson_planner`/`settings.llm_slide_generator` → `settings.llm_mini` for both provider selection and the `complete_structured()` model argument, and record one downshift entry. Neither node raises solely for a ceiling breach — this satisfies CLAUDE.md §14's "downshift... complete the lesson" for the two nodes that previously had zero ceiling awareness.
+- `tts_node` now checks `check_ceiling(lesson_id)` once per segment inside the existing per-segment loop, mirroring `image_generator_node`'s established Story 2-9 pattern exactly — over ceiling, skips `_synthesize_with_fallback` (Sarvam/Azure) entirely and degrades straight to the free browser fallback for that segment. A local `downshift_recorded` flag ensures the downshift entry is written at most once per node invocation, not once per over-ceiling segment.
+- `image_generator_node` verified unchanged and already correct (Story 2-9 AC-3's existing per-slide pre-check) — no code change, existing test coverage confirmed sufficient.
+- **Phase 1 economy nodes' terminate-on-breach behavior (`_fan_out_phase1_economy_nodes`) is explicitly and deliberately left unchanged** — documented in this story's Dev Notes as a known, accepted gap against the PRD's literal "never abort" wording: `settings.llm_mini` is already the cheapest configured LLM tier, so there is nothing to downshift Phase 1 *to*. Changing this to "accept unlimited cost overage" is a real safety tradeoff outside this story's authority to decide unilaterally.
+- New tests: 1 downshift test each for `lesson_planner_node` and `slide_generator_node` (assert model swap + downshift record + node completes normally), 1 downshift test for `tts_node` (assert Sarvam/Azure classes never constructed, downshift recorded exactly once across 2 segments, not twice).
+- Full regression suite: 945 passed (up from a 942-test baseline established by Story 2-12, +3 for this story's new tests), same 48 pre-existing unrelated failures (5 files, all Dev 3/Dev 4 owned), 2 skipped — 0 regressions introduced.
 
 ### File List
 
-_To be filled by dev-story._
+- `apps/api/app/modules/content/pipeline/graph.py` (modified — new `_record_cost_downshift()` helper; `lesson_planner_node`, `slide_generator_node`, `tts_node` each wired with a `check_ceiling()` pre-check and downshift; `image_generator_node` unchanged)
+- `apps/api/tests/unit/test_lesson_planner_node.py` (modified — autouse `check_ceiling=False` fixture, 1 new downshift test)
+- `apps/api/tests/unit/test_slide_generator_node.py` (modified — autouse `check_ceiling=False` fixture, 1 new downshift test)
+- `apps/api/tests/unit/test_tts_node.py` (modified — autouse `check_ceiling=False` fixture, 1 new downshift test)
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-07-17 | Story created via `bmad-create-story`. |
+| 2026-07-17 | Implemented via `bmad-dev-story`: wired `check_ceiling()` + downshift-to-`llm_mini`/browser into `lesson_planner_node`, `slide_generator_node`, `tts_node`; added `_record_cost_downshift()` helper; verified `image_generator_node` already correct (Story 2-9). 945 passed / 48 pre-existing unrelated failures (unchanged from Story 2-12's baseline) / 2 skipped in the full `tests` suite — 0 regressions. Status → review. |

@@ -19,6 +19,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def _default_under_cost_ceiling():
+    """Story 2-13/S2-13: tts_node now checks the cost ceiling per segment
+    before attempting Sarvam/Azure. Default every test in this file to "not
+    over ceiling" so pre-existing tests need no changes; downshift-specific
+    tests override this explicitly."""
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        yield
+
+
 FAKE_LESSON_ID = "50505050-5050-5050-5050-505050505050"
 
 NARRATION_SCRIPTS: list[dict[str, Any]] = [
@@ -132,6 +142,41 @@ async def test_both_providers_fail_falls_back_to_browser_never_raises() -> None:
     assert assets[0]["data"]["audio_url"] == ""
     sb.storage.from_.return_value.upload.assert_not_called()
     mock_accumulate.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_over_ceiling_skips_paid_providers_and_downshifts_to_browser() -> None:
+    """Story 2-13/S2-13 AC-3: when check_ceiling() returns True for a segment,
+    Sarvam/Azure are never constructed/called for that segment — it degrades
+    straight to the browser fallback (audio_provider='browser', cost=0.0),
+    and a single downshift record is written for the whole node run."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sarvam_cls = MagicMock()
+    mock_azure_cls = MagicMock()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", mock_sarvam_cls),
+        patch("app.providers.tts.azure.AzureTTSProvider", mock_azure_cls),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch(
+            "app.modules.content.pipeline.graph._record_cost_downshift", new=AsyncMock()
+        ) as mock_record,
+    ):
+        result = await tts_node(_base_state())  # 2 segments in NARRATION_SCRIPTS
+
+    assets = result["audio_assets"]
+    assert len(assets) == 2
+    assert all(a["data"]["audio_provider"] == "browser" for a in assets)
+    assert all(a["data"]["audio_url"] == "" for a in assets)
+    mock_sarvam_cls.assert_not_called()
+    mock_azure_cls.assert_not_called()
+    # Fired once for the whole node run, not once per segment.
+    mock_record.assert_awaited_once_with(FAKE_LESSON_ID, "tts_node", "sarvam/azure", "browser")
 
 
 @pytest.mark.unit

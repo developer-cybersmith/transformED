@@ -28,6 +28,16 @@ import pytest
 # test_phase1_economy_nodes.py).
 import app.providers.llm.openai as openai_provider_module  # noqa: E402,F401
 
+@pytest.fixture(autouse=True)
+def _default_under_cost_ceiling():
+    """Story 2-13/S2-13: every node call now checks the cost ceiling before
+    dispatching an LLM call. Default every test in this file to "not over
+    ceiling" so pre-existing tests need no changes; downshift-specific tests
+    override this explicitly."""
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        yield
+
+
 FAKE_LESSON_ID = "30303030-3030-3030-3030-303030303030"
 
 SUMMARIES: list[dict[str, Any]] = [
@@ -166,6 +176,39 @@ async def test_model_used_is_settings_llm_lesson_planner() -> None:
 
     call_args = mock_provider.complete_structured.call_args
     assert call_args.args[1] == "gpt-4o-custom-eval-candidate"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_over_ceiling_downshifts_to_llm_mini_and_completes() -> None:
+    """Story 2-13/S2-13 AC-1: when check_ceiling() returns True, the node
+    uses settings.llm_mini (not llm_lesson_planner) for both provider
+    selection and the complete_structured model arg, records a downshift,
+    and still completes successfully (never raises solely for a ceiling
+    breach)."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
+        patch(
+            "app.modules.content.pipeline.graph._record_cost_downshift", new=AsyncMock()
+        ) as mock_record,
+    ):
+        mock_settings.return_value.llm_lesson_planner = "gpt-4o"
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        result = await lesson_planner_node(_base_state())
+
+    call_args = mock_provider.complete_structured.call_args
+    assert call_args.args[1] == "gpt-4o-mini"
+    mock_record.assert_awaited_once_with(FAKE_LESSON_ID, "lesson_planner", "gpt-4o", "gpt-4o-mini")
+    assert result["lesson_plan"]["title"]  # completed normally, not raised
 
 
 @pytest.mark.unit

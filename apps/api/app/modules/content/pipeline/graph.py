@@ -958,8 +958,18 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
         return {**state, "lesson_plan": cached, "progress_pct": 38.0}
 
+    from app.core.cost_tracker import check_ceiling
+
     settings = get_settings()
-    provider = get_llm_provider(settings.llm_lesson_planner, lesson_id)
+    model = settings.llm_lesson_planner
+    if await check_ceiling(lesson_id):
+        logger.warning(
+            "[%s] lesson_planner_node: cost ceiling reached, downshifting %s -> %s",
+            lesson_id, settings.llm_lesson_planner, settings.llm_mini,
+        )
+        model = settings.llm_mini
+        await _record_cost_downshift(lesson_id, "lesson_planner", settings.llm_lesson_planner, settings.llm_mini)
+    provider = get_llm_provider(model, lesson_id)
 
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {s['summary']}" for s in segment_summaries
@@ -982,7 +992,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         {"role": "user", "content": summaries_text},
     ]
 
-    response = await provider.complete_structured(messages, settings.llm_lesson_planner, _LessonPlanLLM)
+    response = await provider.complete_structured(messages, model, _LessonPlanLLM)
     if response is None:
         logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
         raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response")
@@ -1171,8 +1181,18 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 48.0, "slide_generator")
         return {**state, "slides": cached, "progress_pct": 48.0}
 
+    from app.core.cost_tracker import check_ceiling
+
     settings = get_settings()
-    provider = get_llm_provider(settings.llm_slide_generator, lesson_id)
+    model = settings.llm_slide_generator
+    if await check_ceiling(lesson_id):
+        logger.warning(
+            "[%s] slide_generator_node: cost ceiling reached, downshifting %s -> %s",
+            lesson_id, settings.llm_slide_generator, settings.llm_mini,
+        )
+        model = settings.llm_mini
+        await _record_cost_downshift(lesson_id, "slide_generator", settings.llm_slide_generator, settings.llm_mini)
+    provider = get_llm_provider(model, lesson_id)
 
     segments_text = "\n".join(
         f"- segment_id={s['segment_id']}: {s['title']} — {s['summary']}" for s in plan_segments
@@ -1193,7 +1213,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         {"role": "user", "content": segments_text},
     ]
 
-    response = await provider.complete_structured(messages, settings.llm_slide_generator, _SlideDeckLLM)
+    response = await provider.complete_structured(messages, model, _SlideDeckLLM)
     if response is None:
         logger.warning("[%s] slide_generator_node: LLM returned no parsed response", lesson_id)
         raise RuntimeError(f"lesson_id={lesson_id}: slide_generator received no parsed LLM response")
@@ -2463,7 +2483,12 @@ async def tts_node(state: PipelineState) -> PipelineState:
             "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
         }).eq("lesson_id", lesson_id).execute()
     else:
+        from app.core.cost_tracker import check_ceiling
+
         audio_assets_out = []
+        # Story 2-13/S2-13: dedup the downshift record across the whole loop
+        # — fires at most once per tts_node invocation, not once per segment.
+        downshift_recorded = False
         for entry in narration_scripts:
             segment_id = entry.get("segment_id", "<unknown>")
             # 2026-07-15 review finding (Blind Hunter + Edge Case Hunter,
@@ -2483,7 +2508,22 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 if not _SAFE_SEGMENT_ID_RE.match(segment_id):
                     raise ValueError(f"unsafe segment_id for storage path: {segment_id!r}")
 
-                audio_bytes, audio_provider, cost = await _synthesize_with_fallback(lesson_id, segment_id, script)
+                # Story 2-13/S2-13 AC-3: proactive per-segment cost-ceiling
+                # pre-check, mirroring image_generator_node's existing
+                # pattern (Story 2-9 AC-3) — skip straight to the free
+                # browser fallback rather than attempting Sarvam/Azure.
+                if await check_ceiling(lesson_id):
+                    logger.warning(
+                        "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
+                        "for segment %s (browser fallback)",
+                        lesson_id, segment_id,
+                    )
+                    audio_bytes, audio_provider, cost = None, "browser", 0.0
+                    if not downshift_recorded:
+                        await _record_cost_downshift(lesson_id, "tts_node", "sarvam/azure", "browser")
+                        downshift_recorded = True
+                else:
+                    audio_bytes, audio_provider, cost = await _synthesize_with_fallback(lesson_id, segment_id, script)
 
                 if audio_bytes is not None:
                     audio_path = f"{lesson_id}/{segment_id}.mp3"
@@ -3245,3 +3285,42 @@ async def _update_job_progress(lesson_id: str, progress_pct: float, node_name: s
         ).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
         logger.warning("Failed to update job progress for lesson %s at node %s", lesson_id, node_name)
+
+
+async def _record_cost_downshift(
+    lesson_id: str, node_name: str, from_value: str, to_value: str
+) -> None:
+    """Append a downshift record to lesson_jobs.node_outputs["_cost_downshifts"]
+    (Story 2-13/S2-13) — a durable, queryable trail for a future admin panel
+    (S3-4, not yet built) to surface "flag in admin" against. Additive JSONB
+    key, never overwrites any node's own checkpoint key. Never raises —
+    recording a downshift must never itself become a new pipeline failure
+    mode.
+    """
+    try:
+        from app.core.db import get_supabase  # lazy import
+
+        supabase = get_supabase()
+        jobs_resp = (
+            supabase.table("lesson_jobs")
+            .select("node_outputs")
+            .eq("lesson_id", lesson_id)
+            .single()
+            .execute()
+        )
+        node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+        downshifts = list(node_outputs.get("_cost_downshifts", []))
+        downshifts.append({
+            "node": node_name,
+            "from_model_or_provider": from_value,
+            "to_model_or_provider": to_value,
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+        supabase.table("lesson_jobs").update(
+            {"node_outputs": {**node_outputs, "_cost_downshifts": downshifts}}
+        ).eq("lesson_id", lesson_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] _record_cost_downshift: failed to record downshift for %s (%s -> %s)",
+            lesson_id, node_name, from_value, to_value, exc_info=True,
+        )
