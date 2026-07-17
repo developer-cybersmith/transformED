@@ -119,7 +119,6 @@ addopts = [
     "--strict-markers",
     "--tb=short",
     "-v",
-    "-m", "not live_eval",
 ]
 markers = [
     "unit: fast isolated unit tests",

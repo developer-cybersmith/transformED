@@ -48,8 +48,15 @@ class EvalScore:
 
 
 def _keyword_set(text: str) -> set[str]:
+    # 2026-07-17 review finding (Blind Hunter): a `len(w) > 2` filter drops
+    # legitimate 2-char science terms this pipeline's textbook content will
+    # routinely contain (e.g. "pH") while keeping equally-short 3-char ones
+    # ("DNA", "RNA") purely by coincidence of length — an unintentional bias
+    # unrelated to the documented "weak keyword-overlap proxy" limitation.
+    # Loosened to >= 2 (case preserved on the original word, not the lookup,
+    # since lower() already applied above).
     words = re.findall(r"[a-zA-Z]+", text.lower())
-    return {w for w in words if w not in _STOPWORDS and len(w) > 2}
+    return {w for w in words if w not in _STOPWORDS and len(w) >= 2}
 
 
 def score_slide_quality(lesson_package: dict[str, Any]) -> EvalScore:
@@ -71,7 +78,17 @@ def score_slide_quality(lesson_package: dict[str, Any]) -> EvalScore:
         if not slides:
             issues.append(f"segment {segment_id}: zero slides")
             continue
-        if not (_MIN_SLIDES_PER_SEGMENT <= len(slides) <= _MAX_SLIDES_PER_SEGMENT):
+        # 2026-07-17 review finding (Blind Hunter + Acceptance Auditor,
+        # independently): this band check originally only appended an issue
+        # string and never affected passing_slides/the score itself — a
+        # segment with 9 otherwise-perfect slides scored a perfect 1.0
+        # despite violating the very band this function's own docstring
+        # says it checks. A band violation is a SEGMENT-level property, so
+        # it now fails every slide in that segment (matches AC-3's intent:
+        # a >8-slide segment "should score lower and report a matching
+        # issue string" — value AND issue, not issue alone).
+        band_violation = not (_MIN_SLIDES_PER_SEGMENT <= len(slides) <= _MAX_SLIDES_PER_SEGMENT)
+        if band_violation:
             issues.append(f"segment {segment_id}: {len(slides)} slides outside the 1-8 band")
 
         for slide in slides:
@@ -80,7 +97,7 @@ def score_slide_quality(lesson_package: dict[str, Any]) -> EvalScore:
             title = (slide.get("title") or "").strip() if isinstance(slide, dict) else ""
             bullets = slide.get("bullets", []) if isinstance(slide, dict) else []
 
-            slide_ok = True
+            slide_ok = not band_violation
             if not title:
                 issues.append(f"slide {slide_id}: blank title")
                 slide_ok = False

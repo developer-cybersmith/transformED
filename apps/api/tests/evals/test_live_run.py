@@ -1,12 +1,14 @@
 """
 Story 2-14 AC-8: the real 5-PDF eval harness run.
 
-EXCLUDED FROM DEFAULT TEST RUNS (marker `live_eval`, registered in
-pyproject.toml with `--strict-markers`). Hits live OpenAI/Sarvam/Azure/
-Supabase, costs real API money, and can take up to ~15 minutes per lesson
-per the PRD SLA — 5 lessons run sequentially. Run explicitly:
+EXCLUDED FROM DEFAULT TEST RUNS via `tests/evals/conftest.py` (marker
+`live_eval`, registered in pyproject.toml with `--strict-markers`; the skip
+itself is scoped to this directory's conftest, not a repo-wide `addopts`
+change — see conftest.py's docstring for why). Hits live OpenAI/Sarvam/
+Azure/Supabase, costs real API money, and can take up to ~15 minutes per
+lesson per the PRD SLA — 5 lessons run sequentially. Run explicitly:
 
-    pytest tests/evals/test_live_run.py -v -m live_eval
+    pytest tests/evals/test_live_run.py -v --run-live-eval
 
 Requires live credentials in .env (OPENAI_API_KEY, SARVAM_API_KEY,
 AZURE_TTS_KEY, SUPABASE_*, REDIS_URL) and the 5 fixture PDFs already

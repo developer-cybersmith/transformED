@@ -67,12 +67,17 @@ def test_slide_quality_empty_bullets_slide_lowers_score_and_reports_issue() -> N
 
 
 @pytest.mark.unit
-def test_slide_quality_over_8_slides_in_a_segment_reports_issue() -> None:
+def test_slide_quality_over_8_slides_in_a_segment_reports_issue_and_lowers_score() -> None:
+    """2026-07-17 review fix (Blind Hunter + Acceptance Auditor): a band
+    violation must actually lower the score, not just log an issue string —
+    otherwise 9 otherwise-perfect slides scored a perfect 1.0 despite
+    violating the very band this function claims to check."""
     segment = _well_formed_segment()
     segment["slides"] = [_well_formed_slide(f"slide_{i}") for i in range(9)]  # over the 1-8 band
     package = _package([segment])
     result = score_slide_quality(package)
     assert any("outside the 1-8 band" in issue for issue in result.issues)
+    assert result.value == 0.0  # every slide in the violating segment fails
 
 
 @pytest.mark.unit

@@ -53,32 +53,84 @@ class EvalResult:
     error: str | None = None
 
 
+def _cleanup_eval_rows(supabase: Any, pdf_key: str, lesson_id: str, book_id: str | None, storage_path: str | None) -> None:
+    """Best-effort teardown of everything run_eval's setup created — mirrors
+    app/modules/content/router.py::upload_lesson's own rollback sequence
+    (2026-07-17 review finding, Blind Hunter + Acceptance Auditor,
+    independently: without this, every eval run — success or failure —
+    permanently accumulated books/lessons/lesson_jobs rows and a Storage
+    object, defeating the harness's own "cheap, frequent" design goal).
+    Each delete is isolated so one failing cleanup step doesn't abandon the
+    rest — same pattern router.py already uses. Never raises.
+
+    Called on EVERY outcome, including success: the eval harness's unit of
+    value is the `EvalResult` (already captured in memory and written to
+    the results JSON by the time this runs), not a lingering `lessons` row
+    under a throwaway/placeholder `user_id` — there is no real product user
+    who needs that row to persist.
+    """
+    try:
+        supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.warning("eval:%s — cleanup: failed to delete lesson_jobs row", pdf_key, exc_info=True)
+    try:
+        supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.warning("eval:%s — cleanup: failed to delete lessons row", pdf_key, exc_info=True)
+    if storage_path:
+        try:
+            supabase.storage.from_("source-pdfs").remove([storage_path])
+        except Exception:  # noqa: BLE001
+            logger.warning("eval:%s — cleanup: failed to remove Storage object", pdf_key, exc_info=True)
+    if book_id:
+        try:
+            supabase.table("books").delete().eq("book_id", book_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.warning("eval:%s — cleanup: failed to delete books row", pdf_key, exc_info=True)
+
+
 async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -> EvalResult:
     """Run one PDF through the real pipeline and score the output.
 
-    Never raises (AC-4) — a pipeline exception is caught and recorded in
-    `EvalResult.error`; the caller (`run_all_evals`) continues to the next
-    PDF regardless.
+    Never raises (AC-4) — every failure mode, including a malformed
+    `pdf_key`/`user_id` or a Langfuse client that can't even be constructed,
+    is caught and recorded in `EvalResult.error`; the caller
+    (`run_all_evals`) continues to the next PDF regardless. (2026-07-17
+    review finding, Edge Case Hunter: the original version had two
+    unguarded failure points — the `_SAFE_PATH_RE` check and
+    `get_langfuse()` — sitting BEFORE any try block, so either one raising
+    contradicted this exact docstring claim. Both are now inside the single
+    outer try/except below.)
+
+    Rows/Storage objects created during setup are cleaned up in `finally`
+    regardless of outcome (see `_cleanup_eval_rows`).
     """
     from app.core.db import get_supabase
     from app.core.langfuse import get_langfuse
     from app.modules.content.pipeline.graph import run_pipeline
     from app.schemas.lesson import LessonPackage
 
-    if not _SAFE_PATH_RE.match(pdf_key):
-        raise ValueError(f"unsafe pdf_key for storage path: {pdf_key!r}")
-
     started = time.monotonic()
-    langfuse = get_langfuse()
     span = None
-    try:
-        span = langfuse.start_observation(
-            name=f"eval:{pdf_key}", as_type="span", input={"pdf_key": pdf_key, "lesson_id": lesson_id}
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning("eval:%s — failed to open Langfuse span, continuing without it", pdf_key, exc_info=True)
+    book_id: str | None = None
+    storage_path: str | None = None
+    supabase = None
 
     try:
+        if not _SAFE_PATH_RE.match(pdf_key):
+            raise ValueError(f"unsafe pdf_key for storage path: {pdf_key!r}")
+        if not _SAFE_PATH_RE.match(user_id):
+            raise ValueError(f"unsafe user_id for storage path: {user_id!r}")
+
+        try:
+            langfuse = get_langfuse()
+            span = langfuse.start_observation(
+                name=f"eval:{pdf_key}", as_type="span", input={"pdf_key": pdf_key, "lesson_id": lesson_id}
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("eval:%s — failed to open Langfuse span, continuing without it", pdf_key, exc_info=True)
+            span = None
+
         supabase = get_supabase()
 
         # ── Setup: books/lessons/lesson_jobs rows + Storage upload ─────────────
@@ -155,6 +207,8 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
                 span.end()
             except Exception:  # noqa: BLE001
                 logger.warning("eval:%s — failed to close Langfuse span", pdf_key, exc_info=True)
+        if supabase is not None:
+            _cleanup_eval_rows(supabase, pdf_key, lesson_id, book_id, storage_path)
 
 
 def _mean(values: list[float]) -> float | None:
@@ -169,7 +223,14 @@ async def run_all_evals(
     """Run all 5 eval PDFs and write a timestamped results JSON.
 
     Each PDF's failure is isolated (AC-4) — one crash never prevents the
-    remaining PDFs from running.
+    remaining PDFs from running. `run_eval()` itself is designed to never
+    raise, but this loop wraps it anyway (2026-07-17 review finding, Edge
+    Case Hunter): relying solely on a callee's "never raises" contract with
+    no caller-side guard means any future bug in `run_eval` (or a bug this
+    review round missed) would abort the ENTIRE run and discard every
+    already-computed result — exactly the failure mode AC-4 exists to
+    prevent, applied one layer up from where the docstring alone can
+    guarantee it.
     """
     import uuid
 
@@ -177,7 +238,14 @@ async def run_all_evals(
     for pdf_key in _EVAL_PDF_KEYS:
         pdf_path = fixtures_dir / f"{pdf_key}.pdf"
         lesson_id = str(uuid.uuid4())
-        result = await run_eval(pdf_path, pdf_key, lesson_id, user_id)
+        try:
+            result = await run_eval(pdf_path, pdf_key, lesson_id, user_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("eval:%s — run_eval raised unexpectedly, isolating as a failure", pdf_key, exc_info=True)
+            result = EvalResult(
+                pdf_key=pdf_key, lesson_id=lesson_id, package_valid=False,
+                slide_quality=None, quiz_relevance=None, error=str(exc),
+            )
         results.append(result)
 
     valid_count = sum(1 for r in results if r.package_valid)
@@ -189,9 +257,15 @@ async def run_all_evals(
         "mean_quiz_relevance": _mean([r.quiz_relevance for r in results if r.quiz_relevance is not None]),
     }
 
+    # 2026-07-17 review finding (Edge Case Hunter): a plain second-resolution
+    # timestamp silently overwrites a same-second prior run's results with
+    # no error. A short random suffix makes a collision astronomically
+    # unlikely without needing a real uniqueness check.
+    import uuid as _uuid
+
     results_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime())
-    output_path = results_dir / f"{timestamp}.json"
+    output_path = results_dir / f"{timestamp}-{_uuid.uuid4().hex[:6]}.json"
     output_path.write_text(
         json.dumps({"summary": summary, "results": [asdict(r) for r in results]}, indent=2)
     )
