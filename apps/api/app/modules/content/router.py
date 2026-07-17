@@ -18,18 +18,18 @@ from pydantic import BaseModel
 from app.core.rate_limit import _get_user_key, limiter
 from app.core.db import get_supabase
 from app.dependencies import ArqRedis, CurrentUser
+# S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
+# recorded): single source of truth for the tier default/valid set, shared
+# with the pipeline graph (2026-07-17 review fix, Blind Hunter — a local copy
+# here previously duplicated graph.py's, a DRY violation inviting drift).
+from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
+from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["content"])
 
 MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
-
-# S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
-# recorded): must byte-for-byte match LessonMetadata.tier's Literal values
-# (packages/shared/lesson_package.schema.json / apps/api/app/schemas/lesson.py).
-_VALID_TIERS = {"T1", "T2", "T3"}
-_DEFAULT_TIER = "T2"
 
 
 # ── Response models ───────────────────────────────────────────────────────────

@@ -52,6 +52,11 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel
 
+# Single source of truth for the Learner Mode tier default (also used by
+# router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
+from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
+from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
+
 logger = logging.getLogger(__name__)
 
 # Story 2-1 AC-0: the six Phase 1 "economy" nodes. Each is fanned out once per
@@ -905,7 +910,10 @@ _TIER_TOTAL_SLIDE_BAND: dict[str, tuple[int, int]] = {
     "T2": (12, 15),
     "T3": (6, 8),
 }
-_DEFAULT_TIER = "T2"
+# _DEFAULT_TIER imported at module top (see imports block) from
+# app.schemas.lesson.DEFAULT_TIER — the single source of truth, replacing a
+# previously-independent local definition here AND in router.py (2026-07-17
+# review finding, Blind Hunter: DRY violation inviting silent drift).
 
 # Per-segment band is clamped to slide_generator's own structural limits
 # (1-8 slides/segment via _MIN_SLIDES_PER_SEGMENT/_MAX_SLIDES_PER_SEGMENT,
@@ -931,7 +939,18 @@ def _tier_slide_budget_per_segment(tier: str, segment_count: int) -> tuple[int, 
     # otherwise produce per_min=20, above the 8-slide structural limit
     # slide_generator's own schema can represent (caught during this
     # story's own dev notes before it shipped, not in a later review round).
-    per_min = min(_MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, total_min // segment_count))
+    #
+    # 2026-07-17 review finding (Blind Hunter): per_min used FLOOR division
+    # (total_min // segment_count) with no round-up — for an unevenly
+    # divisible total (e.g. T3's total_min=6 over 5 segments: 6//5=1), the
+    # worst-case actual total (segment_count * per_min) can fall BELOW the
+    # tier's own advertised floor, silently breaking the "T3 = 6-8 slides"
+    # promise. Switched to ceiling division so per-segment minimums always
+    # sum to at least total_min — the tradeoff (confirmed against every
+    # existing test case, all unaffected) is a per-segment band that can run
+    # slightly narrow-but-safe rather than wide-but-under-promised; this is
+    # still a soft heuristic, not an exact allocator (see docstring).
+    per_min = min(_MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, math.ceil(total_min / segment_count)))
     per_max = max(per_min, min(_MAX_SLIDES_PER_SEGMENT, math.ceil(total_max / segment_count)))
     return (per_min, per_max)
 
@@ -1060,7 +1079,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     provider = get_llm_provider(model, lesson_id)
 
     tier = state.get("tier") or _DEFAULT_TIER
-    if tier not in _TIER_TOTAL_SLIDE_BAND:
+    if tier not in _VALID_TIERS:
         tier = _DEFAULT_TIER
     tier_framing = _TIER_PROMPT_FRAMING.get(tier, "")
 
@@ -1314,11 +1333,22 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
 
     # S2-LM4: per-segment slide_budget from lesson_planner_node, keyed by
     # segment_id. Falls back to the fixed 1-8 band for any segment lacking
-    # it (a cached lesson_plan from before this feature landed).
+    # it (a cached lesson_plan from before this feature landed) OR carrying
+    # a malformed one.
+    #
+    # 2026-07-17 review finding (Blind Hunter + Edge Case Hunter,
+    # independently): the original check only validated min/max were ints —
+    # a cached/corrupted segment with e.g. {"min": 10, "max": 3} or a
+    # negative value passed the isinstance check and was used as-is, then
+    # rejected EVERY LLM response regardless of correctness (misattributing
+    # a data-integrity bug as "the LLM returned the wrong slide count").
+    # Also reject a non-positive min, matching this node's own 1-8 floor.
     def _segment_budget(seg: dict[str, Any]) -> tuple[int, int]:
         budget = seg.get("slide_budget")
-        if isinstance(budget, dict) and isinstance(budget.get("min"), int) and isinstance(budget.get("max"), int):
-            return (budget["min"], budget["max"])
+        if isinstance(budget, dict):
+            mn, mx = budget.get("min"), budget.get("max")
+            if isinstance(mn, int) and isinstance(mx, int) and _MIN_SLIDES_PER_SEGMENT <= mn <= mx:
+                return (mn, mx)
         return (_MIN_SLIDES_PER_SEGMENT, _MAX_SLIDES_PER_SEGMENT)
 
     budget_by_id: dict[str, tuple[int, int]] = {s["segment_id"]: _segment_budget(s) for s in plan_segments}
@@ -3145,7 +3175,19 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             # lesson_plan — every node in this pipeline sees the same
             # state["tier"], so reading it directly here avoids a second,
             # potentially-drifting copy inside lesson_plan.
-            "tier": state.get("tier") or _DEFAULT_TIER,
+            #
+            # 2026-07-17 review finding (Acceptance Auditor + Edge Case
+            # Hunter, independently): this previously used `or _DEFAULT_TIER`
+            # alone — a non-empty but INVALID tier string (any value outside
+            # T1/T2/T3) would pass through unchecked and fail
+            # LessonPackage.model_validate() here, AFTER every upstream
+            # LLM/TTS/image cost has already been spent. run_pipeline()
+            # already validates tier at pipeline entry so this is normally
+            # unreachable, but package_builder_node is the last line of
+            # defense before the schema-validating call two lines below —
+            # matches lesson_planner_node's identical validity check rather
+            # than trusting the entry-point guard alone.
+            "tier": state.get("tier") if state.get("tier") in _VALID_TIERS else _DEFAULT_TIER,
         },
         "segments": segments_out,
         "glossary": glossary_out,
@@ -3400,7 +3442,7 @@ async def run_pipeline(
         "book_id": book_id,
         "chapter_content": chapter_content,
         "source_pdf_path": source_pdf_path,
-        "tier": tier if tier in ("T1", "T2", "T3") else "T2",
+        "tier": tier if tier in _VALID_TIERS else _DEFAULT_TIER,
         "progress_pct": 0.0,
         "error": None,
     }

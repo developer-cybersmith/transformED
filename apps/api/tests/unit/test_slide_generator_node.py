@@ -727,3 +727,42 @@ async def test_response_violating_segment_specific_budget_is_rejected() -> None:
                     }
                 )
             )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_malformed_slide_budget_min_greater_than_max_falls_back_to_global_band() -> None:
+    """Code review fix (Blind Hunter + Edge Case Hunter, independently): a
+    corrupted slide_budget with min > max (or a negative value) must be
+    treated as absent — fall back to the global 1-8 band — rather than used
+    as-is, which would reject every LLM response and misattribute the
+    resulting error to "the LLM returned the wrong count" instead of the
+    real cause (a malformed budget upstream)."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    segments_with_bad_budget = [
+        {**PLAN_SEGMENTS[0], "slide_budget": {"min": 10, "max": 3}},  # min > max
+        {**PLAN_SEGMENTS[1], "slide_budget": {"min": -2, "max": 5}},  # negative min
+        PLAN_SEGMENTS[2],  # no slide_budget at all
+    ]
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response()  # default: 1, 2, 1 slides
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(
+            _base_state(
+                lesson_plan={
+                    "title": "T", "subject": "S", "objectives": ["X"], "complexity_level": "medium",
+                    "total_segments": 3, "total_duration_min": 15.0, "segments": segments_with_bad_budget,
+                }
+            )
+        )
+
+    # All 3 segments' default responses (1, 2, 1 slides) fall inside the
+    # fallback 1-8 band — no RuntimeError, proving the malformed budgets
+    # were discarded rather than enforced.
+    assert len(result["slides"]) == 1 + 2 + 1

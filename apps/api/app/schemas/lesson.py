@@ -36,6 +36,10 @@ AudioProvider = Literal["sarvam", "azure", "browser"]  # frozen — see lesson_p
 QuizType = Literal["mcq", "concept_check"]
 QuizDifficulty = Literal["easy", "medium", "hard"]
 LessonTier = Literal["T1", "T2", "T3"]  # Story 2-2 — Learner Mode content-depth tier
+VALID_TIERS: frozenset[str] = frozenset(("T1", "T2", "T3"))
+DEFAULT_TIER = "T2"  # Story S2-LM3/LM4/LM5 (2026-07-17) — single source of truth for the
+# tier default, previously duplicated independently in graph.py and router.py
+# (code review finding, Blind Hunter) — both now import from here.
 
 
 # ---------------------------------------------------------------------------

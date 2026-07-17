@@ -550,3 +550,23 @@ async def test_missing_tier_in_state_defaults_metadata_tier_to_t2() -> None:
 
     package = LessonPackage.model_validate(result["lesson_package"])
     assert package.metadata.tier == "T2"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_invalid_tier_string_in_state_falls_back_to_t2_not_passed_through() -> None:
+    """Code review fix (Acceptance Auditor + Edge Case Hunter, independently):
+    an invalid (non-empty, non-T1/T2/T3) tier string in state must be
+    normalized to T2 here — the last line of defense before
+    LessonPackage.model_validate() — not passed through unchecked, which
+    would fail validation AFTER every upstream LLM/TTS/image cost is spent."""
+    from app.modules.content.pipeline.graph import package_builder_node
+    from app.schemas.lesson import LessonPackage
+
+    sb, _, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(tier="not-a-real-tier"))
+
+    package = LessonPackage.model_validate(result["lesson_package"])
+    assert package.metadata.tier == "T2"

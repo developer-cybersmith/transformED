@@ -5,7 +5,8 @@
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
 **Last updated:** 2026-07-17
 **Sprint 0 status:** 12/12 COMPLETE ✅
-**Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) — see Sprint 2 section below. `package_builder` (S2-11) and the `lesson_ready` WebSocket push (S2-12) have both landed (2026-07-16) — the pipeline produces real, schema-validated `LessonPackage` JSONB and correctly notifies clients over WebSocket. Frontend/assessment/tutor teams can start migrating off `apps/web/src/mocks/data/lessonPackage.ts` for integration testing.
+**Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance).
+**Sprint 2 status:** 21/21 COMPLETE ✅ (2026-07-17, still on `sprint2/phase-b-generation-nodes` — not yet merged to `main`). All 15 pipeline nodes real; `package_builder` (S2-11) + `lesson_ready` WebSocket push (S2-12) landed 2026-07-16; cost ceiling enforcement (S2-13) and the 5-PDF eval harness (S2-14, live run not yet triggered) landed 2026-07-17; Learner Mode tier-aware generation (S2-LM1–LM5) landed 2026-07-17 — `POST /lessons` accepts a `tier` param that drives per-segment slide budgets and outline content-depth framing. Frontend/assessment/tutor teams can migrate off `apps/web/src/mocks/data/lessonPackage.ts` once this branch merges.
 
 ---
 
@@ -17,11 +18,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 18 | 0 | 3 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **59** | **41** | **1** | **17** |
+| **Totals** | | **59** | **44** | **1** | **14** |
 
 ---
 
@@ -197,7 +198,7 @@ Redis keys Dev 1 WRITES:
 | `status` | `text` | NOT NULL, DEFAULT `'generating'`, CHECK IN (`'generating'`, `'ready'`, `'failed'`) | Pipeline state visible to frontend via polling |
 | `content` | `jsonb` | nullable | Full `LessonPackage` JSONB written by `package_builder`; `NULL` until pipeline completes |
 | `source_file_path` | `text` | nullable | Supabase Storage path to the source PDF |
-| `tier` | `text` | NOT NULL DEFAULT `'T2'`, CHECK IN (`'T1'`,`'T2'`,`'T3'`) ✅ migrated S2-LM2 (2026-07-14) | Learner Mode content-depth tier. Column exists and is writable, but **nothing writes a non-default value yet** — `POST /lessons`'s `tier` param (S2-LM3) was implemented then reverted pending S2-LM1's 4-dev sign-off; drives slide count + content depth in `lesson_planner`/`slide_generator` (S2-LM4/S2-LM5, not started) |
+| `tier` | `text` | NOT NULL DEFAULT `'T2'`, CHECK IN (`'T1'`,`'T2'`,`'T3'`) ✅ migrated S2-LM2 (2026-07-14) | Learner Mode content-depth tier. `POST /lessons`'s `tier` param (S2-LM3) writes non-default values ✅ (2026-07-17); drives per-segment slide count in `lesson_planner`/`slide_generator` (S2-LM4 ✅) and outline content-depth framing in `lesson_planner` (S2-LM5 ✅) |
 | `created_at` | `timestamptz` | NOT NULL DEFAULT now() | Row creation time |
 | `updated_at` | `timestamptz` | NOT NULL DEFAULT now(), auto-trigger | Auto-updated on any write |
 
@@ -553,25 +554,23 @@ Every node must:
   - Independent of S2-LM1 — built in parallel, not reverted alongside S2-LM3/LM4
   - **AC:** Migration applies cleanly (additive, no existing migration touched) ✓; CHECK constraint rejects any value outside `T1/T2/T3` ✓; existing rows backfill to `T2` via `DEFAULT`, no manual step ✓ — tested ✅
 
-- [ ] **S2-LM3 Accept & validate `tier` param in `POST /lessons`; thread into the ARQ job** — implemented 2026-07-14, then **REVERTED same day** pending S2-LM1's 4-dev sign-off
-  - `apps/api/app/modules/content/router.py`, `apps/api/app/workers/jobs/content_pipeline.py`, `PipelineState` in `apps/api/app/modules/content/pipeline/graph.py` (add a `tier: str` field alongside the existing input keys)
-  - **Depends on S2-LM1 (enum values) and S2-LM2 (column to persist to).**
-  - Note (corrected by Story 2-2's Dev Notes): tier reaches the pipeline via the SAME `lessons`-table re-fetch `content_pipeline_job` already uses for `user_id`/`book_id`/`source_pdf_path` — not a new ARQ job-payload argument. This tracker's "thread into the ARQ job" wording is imprecise; update if this task is picked up again.
-  - Optional multipart field `tier`, defaulting to `"T2"` when omitted; invalid value → `422`, not a silent fallback — this behavior was implemented and passed a full 3-layer adversarial code review with no unresolved functional findings, but was reverted anyway per the explicit decision to honor S2-LM1's sign-off gate rather than accept the sequencing violation.
-  - **Re-pickup condition:** do not restart this task until S2-LM1's 4-dev sign-off is recorded.
-  - **AC:** not yet met — reverted, not abandoned.
-  - **AC:** Omitting `tier` behaves exactly as before this story (defaults `T2`); an invalid tier string returns `422`; `PipelineState["tier"]` is populated by the time `lesson_planner` runs.
+- [x] **S2-LM3 Accept & validate `tier` param in `POST /lessons`; thread into the pipeline** — ✓ 2026-07-17
+  - `apps/api/app/modules/content/router.py`, `apps/api/app/workers/jobs/content_pipeline.py`, `PipelineState` in `apps/api/app/modules/content/pipeline/graph.py`
+  - Note (corrected by Story 2-2's Dev Notes, confirmed correct on re-implementation): tier reaches the pipeline via the SAME `lessons`-table re-fetch `content_pipeline_job` already uses for `user_id`/`book_id`/`source_pdf_path` — not a new ARQ job-payload argument. This tracker's original "thread into the ARQ job" wording was imprecise, now corrected in the task title.
+  - Optional multipart field `tier`, defaulting to `"T2"` when omitted; invalid value → `422` before any DB row is created, not a silent fallback.
+  - **AC:** Omitting `tier` behaves exactly as before this story (defaults `T2`) ✓ tested; an invalid tier string returns `422` ✓ tested; `PipelineState["tier"]` is populated by the time `lesson_planner` runs ✓ tested — see `docs/stories/2-lm3-lm4-lm5-tier-aware-generation.md` for the full story, including the 3-layer adversarial code review.
 
-- [ ] **S2-LM4 Tier-aware slide count in `lesson_planner` + `slide_generator`**
-  - Amends **S2-7** and **S2-8** directly — build this together with those two nodes' base implementation, not as a follow-up rework pass.
-  - Slide/segment budget by tier: **T1: 20–25**, **T2: 12–15**, **T3: 6–8**.
-  - `lesson_planner` reads `state["tier"]` and targets the corresponding slide-count range when producing `LessonMetadata`/segment structure; `slide_generator` respects the resulting per-segment slide budget it's handed — it does not re-derive tier logic independently.
-  - **AC:** For a fixed test chapter, three separate pipeline runs (T1/T2/T3) each produce a total slide count inside that tier's range; `slide_generator` never exceeds the budget `lesson_planner` set for a segment.
+- [x] **S2-LM4 Tier-aware slide count in `lesson_planner` + `slide_generator`** — ✓ 2026-07-17
+  - Amends **S2-7** and **S2-8** directly.
+  - Slide/segment budget by tier: **T1: 20–25**, **T2: 12–15**, **T3: 6–8** (total across the lesson, divided evenly across segments — a soft heuristic, not an exact allocator).
+  - `lesson_planner` reads `state["tier"]` and attaches a per-segment `slide_budget` (`{min, max}`) to each output segment; `slide_generator` reads and respects that budget in both its prompt and its degrade-not-fabricate validation — it does not re-derive tier logic independently. Falls back to the fixed 1-8 band for any segment lacking a (valid) budget.
+  - Code review (Blind Hunter) caught a real math bug before merge: floor division for the per-segment minimum could let the worst-case actual total undercut the tier's own advertised floor (e.g. T3's 6-slide minimum over 5 segments could produce as few as 5) — fixed with ceiling division. Also fixed: malformed/corrupted `slide_budget` values (`min > max`, negative) were accepted as-is instead of falling back to the safe default band.
+  - **AC:** For a fixed test chapter, three separate pipeline runs (T1/T2/T3) each produce a per-segment slide-count budget inside that tier's range ✓ tested (unit-level, per-segment budget math — a full live 3-tier pipeline run through real LLM calls is not part of this AC's test coverage); `slide_generator` never exceeds the budget `lesson_planner` set for a segment ✓ tested.
 
-- [ ] **S2-LM5 Tier-aware content-depth prompt variants (T3 = critical topics only / refresher)** ⚠️ scope needs team confirmation
-  - Amends **S2-7** (`lesson_planner`)'s prompt — and *possibly* the Phase 1 economy nodes (`quiz_generator`, `narration_generator`) if "content depth" is meant to vary per-segment rather than only at the outline level. **This ambiguity is not resolved by the source task list — confirm with the team before implementing:** does T3 only change what `lesson_planner` selects as "critical topics," or does it also mean shallower quizzes/narration per segment?
-  - Default interpretation until confirmed: only `lesson_planner`'s outline-generation prompt gets a tier-conditioned variant (T3 prompt explicitly asks for critical-topics-only / refresher framing); Phase 1 economy nodes are unaffected by tier.
-  - **AC (pending confirmation):** T3 lesson plans visibly omit non-critical sub-topics a T1/T2 plan for the same chapter would include; a reviewer can distinguish a T3 outline from a T1 outline for the same source chapter without reading tier metadata.
+- [x] **S2-LM5 Tier-aware content-depth prompt variants (T3 = critical topics only / refresher)** — ✓ 2026-07-17
+  - **Scope confirmed with the accountable owner before implementation** (the ambiguity this task was flagged with): outline-only — T3/T1 framing changes only `lesson_planner`'s outline-generation prompt. Phase 1 economy nodes (`quiz_generator`, `narration_generator`) are explicitly unaffected by tier.
+  - T3 prompt explicitly asks for critical-topics-only/refresher framing; T1 asks for full depth including nuance; T2 (default) gets no additional framing at all — the prompt is byte-identical to the pre-tier version for any T2/untiered lesson, proven by every pre-existing `lesson_planner_node` test passing unmodified.
+  - **AC:** T3 lesson plans get a critical-topics-only/refresher system-prompt instruction distinguishing them from T1/T2 ✓ tested (prompt-content assertion); whether the LLM's actual output visibly omits non-critical sub-topics in practice depends on real LLM behavior, not verified by unit tests — deferred to the eventual live eval run (S2-14).
 
 ---
 

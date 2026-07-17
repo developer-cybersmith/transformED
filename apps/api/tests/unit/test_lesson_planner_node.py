@@ -620,8 +620,10 @@ async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
         result = await lesson_planner_node(_base_state(tier="T1"))
 
     for seg in result["lesson_plan"]["segments"]:
-        # T1 band (20,25) / 3 segments -> per_min=6, per_max=8 (clamped).
-        assert seg["slide_budget"] == {"min": 6, "max": 8}
+        # T1 band (20,25) / 3 segments -> per_min=ceil(20/3)=7, per_max=8 (clamped).
+        # per_min uses ceiling division (2026-07-17 review fix, Blind Hunter)
+        # so 3 segments' worst-case total (21) never falls below total_min=20.
+        assert seg["slide_budget"] == {"min": 7, "max": 8}
 
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "FULL-DEPTH" in sent_prompt
@@ -708,3 +710,30 @@ async def test_unknown_tier_value_falls_back_to_t2_budget_and_framing() -> None:
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tier_t3_five_segments_never_undercuts_total_min() -> None:
+    """Code review fix (Blind Hunter): with floor division, T3's total_min=6
+    over 5 segments gave per_min=1, allowing a worst-case actual total of 5
+    slides — below the tier's own advertised floor. Ceiling division fixes
+    this: 5 segments * per_min must sum to >= 6."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    summaries_5 = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(5)]
+    plan_segments_5 = [
+        {"segment_id": f"sec_{i}", "title": f"Title {i}", "duration_min": 3.0} for i in range(5)
+    ]
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(segments=plan_segments_5)
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(tier="T3", segment_summaries=summaries_5))
+
+    total_min_possible = sum(seg["slide_budget"]["min"] for seg in result["lesson_plan"]["segments"])
+    assert total_min_possible >= 6, f"worst-case total ({total_min_possible}) undercuts T3's advertised min of 6"
