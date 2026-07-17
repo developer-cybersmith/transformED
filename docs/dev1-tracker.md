@@ -155,6 +155,13 @@ Redis keys Dev 1 WRITES:
 | Tutor Q&A (Phase 2) | `LLM_TUTOR` | `gpt-4o` | GPT-4o, claude-3-5-sonnet-20241022 |
 | Embeddings | fixed | `text-embedding-3-small` | Not evaluated — cost/perf optimal |
 
+**Decision (2026-07-17): direct provider SDKs, NOT an LLM router/aggregator (OpenRouter or similar).** Considered and rejected after S2-15's provider factory landed. Rationale:
+- `providers/llm/factory.py` (S2-15) already gives model-agnostic dispatch by model-string prefix — adding Claude (`AnthropicLLMProvider`) or Gemini (`GeminiLLMProvider`) as an eval candidate is one new provider file + one registry entry, zero call-site changes. This was the actual problem an aggregator would have solved, and it's already solved.
+- `core/circuit_breaker.py` and `core/cost_tracker.py` both key/price per literal provider (`"openai"`/`"sarvam"`/`"azure_tts"` breaker keys; fixed per-provider cost tables). Routing multiple model families through one OpenRouter key would blur or require rebuilding both — a real regression, not a simplification.
+- An aggregator adds an unresearched third-party dependency (rate limits, uptime, added latency) into the pipeline's critical path, with no verified reliability data, right as the project approaches Sprint 3's real-student launch.
+- The multi-provider decision (cheap models for economy nodes, premium for planning) was made for cost/quality reasons, not because direct SDK integration was too costly — and S2-15 confirmed direct integration is cheap per new provider.
+- **Action:** when GPT-4o-mini/Claude 3.5 Sonnet/Gemini 2.0 Flash evaluations (Sprint 1 Week 1 eval sprint, still not formally run) pick a non-OpenAI model for any slot in the table above, add that provider directly to `providers/llm/factory.py` — do not introduce an aggregator layer.
+
 ### API Endpoints (Frozen — 4-Dev PR to Change)
 
 | Method | Path | Sprint | DB Write | Notes |
