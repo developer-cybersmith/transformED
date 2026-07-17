@@ -194,6 +194,44 @@ async def test_successful_job_completion_write_is_schema_valid() -> None:
     assert ready_writes, f"lessons.status was never set to 'ready' (payloads: {lessons_payloads})"
 
 
+async def test_lessons_status_ready_write_failure_does_not_regress_completed_job() -> None:
+    """PR #73 review fix regression: the lessons.status='ready' write used to
+    sit unprotected inside the same try block as lesson_jobs' completed
+    write. If it threw, execution fell to `except Exception`, which
+    overwrote lesson_jobs.status back to 'failed' — even though the
+    pipeline had already succeeded — and re-raised, triggering a wasteful/
+    incorrect ARQ retry of an already-finished job.
+
+    This asserts the corrected behavior: a failure in the lessons.status
+    write is isolated — lesson_jobs stays 'completed', the job function
+    returns normally (does not raise), and no ARQ retry is triggered."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase, tables = _make_multi_table_supabase_mock()
+    tables["lessons"].update.side_effect = RuntimeError("simulated RLS/network failure")
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch(
+            "app.modules.content.pipeline.graph.run_pipeline",
+            new=AsyncMock(return_value={}),
+        ),
+        patch("app.core.redis.get_redis", return_value=MagicMock(publish=AsyncMock())),
+        patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock()),
+    ):
+        result = await job_mod.content_pipeline_job({}, "lesson-ok")
+
+    # Job must NOT raise, and must NOT be reported as failed.
+    assert result["status"] == "completed"
+
+    update_payloads = [c.args[0] for c in tables["lesson_jobs"].update.call_args_list]
+    statuses_written = [p.get("status") for p in update_payloads if "status" in p]
+    assert "completed" in statuses_written
+    assert "failed" not in statuses_written, (
+        f"lesson_jobs.status regressed to 'failed' by the lessons-write failure: {update_payloads}"
+    )
+
+
 @pytest.mark.parametrize(
     ("exc", "reraises", "error_prefix"),
     [

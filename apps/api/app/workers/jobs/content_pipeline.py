@@ -108,7 +108,25 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # could never report 'ready' or 'failed' to the client for ANY lesson.
         # No completed_at here — `lessons` (initial_schema.sql, frozen) has no
         # such column, only created_at/updated_at (updated_at is trigger-managed).
-        supabase.table("lessons").update({"status": "ready"}).eq("lesson_id", lesson_id).execute()
+        #
+        # PR #73 review fix: this write was previously unprotected, inside the
+        # same try block as lesson_jobs' completed write above. If it threw
+        # (transient network/RLS error), execution fell to `except Exception`
+        # below, which overwrote lesson_jobs.status back to "failed" — even
+        # though the pipeline had already succeeded and lesson_jobs was
+        # already correctly marked "completed" — and re-raised, triggering a
+        # wasteful/incorrect ARQ retry of an already-finished job. Isolated in
+        # its own try/except so a failure here only logs, never regresses the
+        # job's already-correct completed state.
+        try:
+            supabase.table("lessons").update({"status": "ready"}).eq("lesson_id", lesson_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "content_pipeline_job: lessons.status='ready' write failed for lesson_id=%s "
+                "(lesson_jobs already marked completed; job is NOT being retried)",
+                lesson_id,
+                exc_info=True,
+            )
 
         # ── 4b. Notify client via Redis pub/sub ──────────────────────────────
         import json
