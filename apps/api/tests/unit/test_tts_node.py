@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
 @pytest.fixture(autouse=True)
 def _default_under_cost_ceiling():
     """Story 2-13/S2-13: tts_node now checks the cost ceiling per segment
@@ -161,11 +162,10 @@ async def test_over_ceiling_skips_paid_providers_and_downshifts_to_browser() -> 
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", mock_sarvam_cls),
         patch("app.providers.tts.azure.AzureTTSProvider", mock_azure_cls),
-        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
         patch(
-            "app.modules.content.pipeline.graph._record_cost_downshift", new=AsyncMock()
-        ) as mock_record,
+            "app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)
+        ) as mock_check_ceiling,
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         result = await tts_node(_base_state())  # 2 segments in NARRATION_SCRIPTS
 
@@ -175,8 +175,23 @@ async def test_over_ceiling_skips_paid_providers_and_downshifts_to_browser() -> 
     assert all(a["data"]["audio_url"] == "" for a in assets)
     mock_sarvam_cls.assert_not_called()
     mock_azure_cls.assert_not_called()
-    # Fired once for the whole node run, not once per segment.
-    mock_record.assert_awaited_once_with(FAKE_LESSON_ID, "tts_node", "sarvam/azure", "browser")
+
+    # Story 2-13/S2-13 review fix: the downshift record must survive into the
+    # node's OWN final checkpoint write, and fire once for the whole node
+    # run (2 segments both over ceiling), not once per segment.
+    checkpoint_calls = [
+        c.args[0] for c in sb.table.return_value.update.call_args_list if "node_outputs" in c.args[0]
+    ]
+    assert len(checkpoint_calls) == 1
+    written_node_outputs = checkpoint_calls[0]["node_outputs"]
+    assert "tts_node" in written_node_outputs
+    downshifts = written_node_outputs["_cost_downshifts"]
+    assert len(downshifts) == 1
+    assert downshifts[0]["node"] == "tts_node"
+    assert downshifts[0]["from_model_or_provider"] == "sarvam/azure"
+    assert downshifts[0]["to_model_or_provider"] == "browser"
+    assert mock_check_ceiling.call_count == 2  # once per segment
+    assert all(c.args == (FAKE_LESSON_ID,) for c in mock_check_ceiling.call_args_list)
 
 
 @pytest.mark.unit

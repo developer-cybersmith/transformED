@@ -962,13 +962,32 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     model = settings.llm_lesson_planner
-    if await check_ceiling(lesson_id):
+    # 2026-07-17 review finding (Blind Hunter + Edge Case Hunter,
+    # independently): check_ceiling() can raise (e.g. Redis unavailable) —
+    # every other check_ceiling call site in this file either fails open
+    # explicitly (_fan_out_phase1_economy_nodes) or is inside a per-item
+    # try/except that already degrades gracefully (tts_node/
+    # image_generator_node). This call had neither, so a transient Redis
+    # error would crash the whole node instead of just skipping the
+    # downshift. Fail open, matching _fan_out_phase1_economy_nodes' pattern.
+    try:
+        over_ceiling = await check_ceiling(lesson_id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] lesson_planner_node: check_ceiling() failed — failing open "
+            "(assuming not over ceiling)",
+            lesson_id, exc_info=True,
+        )
+        over_ceiling = False
+    if over_ceiling:
         logger.warning(
             "[%s] lesson_planner_node: cost ceiling reached, downshifting %s -> %s",
             lesson_id, settings.llm_lesson_planner, settings.llm_mini,
         )
         model = settings.llm_mini
-        await _record_cost_downshift(lesson_id, "lesson_planner", settings.llm_lesson_planner, settings.llm_mini)
+        node_outputs = _record_cost_downshift(
+            node_outputs, "lesson_planner", settings.llm_lesson_planner, settings.llm_mini
+        )
     provider = get_llm_provider(model, lesson_id)
 
     summaries_text = "\n".join(
@@ -1185,13 +1204,27 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     model = settings.llm_slide_generator
-    if await check_ceiling(lesson_id):
+    # 2026-07-17 review finding — see lesson_planner_node's identical
+    # comment: check_ceiling() can raise, and this call site had no
+    # fail-open guard, unlike every other check_ceiling call in this file.
+    try:
+        over_ceiling = await check_ceiling(lesson_id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] slide_generator_node: check_ceiling() failed — failing open "
+            "(assuming not over ceiling)",
+            lesson_id, exc_info=True,
+        )
+        over_ceiling = False
+    if over_ceiling:
         logger.warning(
             "[%s] slide_generator_node: cost ceiling reached, downshifting %s -> %s",
             lesson_id, settings.llm_slide_generator, settings.llm_mini,
         )
         model = settings.llm_mini
-        await _record_cost_downshift(lesson_id, "slide_generator", settings.llm_slide_generator, settings.llm_mini)
+        node_outputs = _record_cost_downshift(
+            node_outputs, "slide_generator", settings.llm_slide_generator, settings.llm_mini
+        )
     provider = get_llm_provider(model, lesson_id)
 
     segments_text = "\n".join(
@@ -2520,7 +2553,9 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     )
                     audio_bytes, audio_provider, cost = None, "browser", 0.0
                     if not downshift_recorded:
-                        await _record_cost_downshift(lesson_id, "tts_node", "sarvam/azure", "browser")
+                        node_outputs = _record_cost_downshift(
+                            node_outputs, "tts_node", "sarvam/azure", "browser"
+                        )
                         downshift_recorded = True
                 else:
                     audio_bytes, audio_provider, cost = await _synthesize_with_fallback(lesson_id, segment_id, script)
@@ -3287,40 +3322,32 @@ async def _update_job_progress(lesson_id: str, progress_pct: float, node_name: s
         logger.warning("Failed to update job progress for lesson %s at node %s", lesson_id, node_name)
 
 
-async def _record_cost_downshift(
-    lesson_id: str, node_name: str, from_value: str, to_value: str
-) -> None:
-    """Append a downshift record to lesson_jobs.node_outputs["_cost_downshifts"]
-    (Story 2-13/S2-13) — a durable, queryable trail for a future admin panel
-    (S3-4, not yet built) to surface "flag in admin" against. Additive JSONB
-    key, never overwrites any node's own checkpoint key. Never raises —
-    recording a downshift must never itself become a new pipeline failure
-    mode.
-    """
-    try:
-        from app.core.db import get_supabase  # lazy import
+def _record_cost_downshift(
+    node_outputs: dict[str, Any], node_name: str, from_value: str, to_value: str
+) -> dict[str, Any]:
+    """Fold a downshift record into *node_outputs* (Story 2-13/S2-13) and
+    return the updated dict — a durable, queryable trail for a future admin
+    panel (S3-4, not yet built) to surface "flag in admin" against.
 
-        supabase = get_supabase()
-        jobs_resp = (
-            supabase.table("lesson_jobs")
-            .select("node_outputs")
-            .eq("lesson_id", lesson_id)
-            .single()
-            .execute()
-        )
-        node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
-        downshifts = list(node_outputs.get("_cost_downshifts", []))
-        downshifts.append({
-            "node": node_name,
-            "from_model_or_provider": from_value,
-            "to_model_or_provider": to_value,
-            "at": datetime.now(timezone.utc).isoformat(),
-        })
-        supabase.table("lesson_jobs").update(
-            {"node_outputs": {**node_outputs, "_cost_downshifts": downshifts}}
-        ).eq("lesson_id", lesson_id).execute()
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "[%s] _record_cost_downshift: failed to record downshift for %s (%s -> %s)",
-            lesson_id, node_name, from_value, to_value, exc_info=True,
-        )
+    2026-07-17 review finding (Blind Hunter + Edge Case Hunter, independently):
+    the original version performed its OWN read-modify-write straight to
+    ``lesson_jobs`` mid-function. Every one of the three call sites
+    (lesson_planner_node/slide_generator_node/tts_node) already reads
+    ``node_outputs`` once near the top of the function and later writes ITS
+    OWN final checkpoint using that same (by-then-stale) local variable —
+    so the separate write here was silently clobbered by the node's own
+    subsequent write in the success path, defeating AC-5 on the exact
+    request that was supposed to demonstrate it. Fixed by making this a
+    pure, synchronous, no-I/O function: it merges the downshift entry into
+    the CALLER's local ``node_outputs`` dict and returns it, so the node's
+    own already-planned final write persists it naturally. No separate DB
+    round trip, no race, never raises (pure dict manipulation).
+    """
+    downshifts = list(node_outputs.get("_cost_downshifts", []))
+    downshifts.append({
+        "node": node_name,
+        "from_model_or_provider": from_value,
+        "to_model_or_provider": to_value,
+        "at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {**node_outputs, "_cost_downshifts": downshifts}

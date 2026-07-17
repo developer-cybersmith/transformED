@@ -28,6 +28,7 @@ import pytest
 # test_phase1_economy_nodes.py).
 import app.providers.llm.openai as openai_provider_module  # noqa: E402,F401
 
+
 @pytest.fixture(autouse=True)
 def _default_under_cost_ceiling():
     """Story 2-13/S2-13: every node call now checks the cost ceiling before
@@ -196,10 +197,9 @@ async def test_over_ceiling_downshifts_to_llm_mini_and_completes() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
         patch("app.config.get_settings") as mock_settings,
-        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
         patch(
-            "app.modules.content.pipeline.graph._record_cost_downshift", new=AsyncMock()
-        ) as mock_record,
+            "app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)
+        ) as mock_check_ceiling,
     ):
         mock_settings.return_value.llm_lesson_planner = "gpt-4o"
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
@@ -207,7 +207,57 @@ async def test_over_ceiling_downshifts_to_llm_mini_and_completes() -> None:
 
     call_args = mock_provider.complete_structured.call_args
     assert call_args.args[1] == "gpt-4o-mini"
-    mock_record.assert_awaited_once_with(FAKE_LESSON_ID, "lesson_planner", "gpt-4o", "gpt-4o-mini")
+    assert result["lesson_plan"]["title"]  # completed normally, not raised
+    mock_check_ceiling.assert_awaited_once_with(FAKE_LESSON_ID)
+
+    # Story 2-13/S2-13 review fix: the downshift record must survive into the
+    # node's OWN final checkpoint write, not be clobbered by it (the original
+    # bug this replaces) — _record_cost_downshift is no longer mocked so this
+    # exercises the real merge-then-write path end to end.
+    # _update_job_progress() also calls .update() afterward (a separate,
+    # smaller payload) — find the checkpoint write specifically by its
+    # distinctive "node_outputs" key rather than assuming call order.
+    checkpoint_calls = [
+        c.args[0] for c in sb.table.return_value.update.call_args_list if "node_outputs" in c.args[0]
+    ]
+    assert len(checkpoint_calls) == 1
+    written_node_outputs = checkpoint_calls[0]["node_outputs"]
+    assert "lesson_planner" in written_node_outputs
+    downshifts = written_node_outputs["_cost_downshifts"]
+    assert len(downshifts) == 1
+    assert downshifts[0]["node"] == "lesson_planner"
+    assert downshifts[0]["from_model_or_provider"] == "gpt-4o"
+    assert downshifts[0]["to_model_or_provider"] == "gpt-4o-mini"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_check_ceiling_failure_fails_open_and_uses_premium_model() -> None:
+    """Story 2-13/S2-13 review fix: check_ceiling() raising (e.g. Redis
+    unavailable) must not crash the node — fail open (assume not over
+    ceiling), matching _fan_out_phase1_economy_nodes' established pattern,
+    and keep using the premium model rather than downshifting."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        patch("app.config.get_settings") as mock_settings,
+        patch(
+            "app.core.cost_tracker.check_ceiling",
+            new=AsyncMock(side_effect=RuntimeError("Redis pool is not initialised")),
+        ),
+    ):
+        mock_settings.return_value.llm_lesson_planner = "gpt-4o"
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        result = await lesson_planner_node(_base_state())
+
+    call_args = mock_provider.complete_structured.call_args
+    assert call_args.args[1] == "gpt-4o"  # premium model, not downshifted
     assert result["lesson_plan"]["title"]  # completed normally, not raised
 
 
