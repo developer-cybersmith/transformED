@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-17
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). Sprint 2 (11 lesson-generation nodes) — see Sprint 2 section below. `package_builder` (S2-11) and the `lesson_ready` WebSocket push (S2-12) have both landed (2026-07-16) — the pipeline produces real, schema-validated `LessonPackage` JSONB and correctly notifies clients over WebSocket. Frontend/assessment/tutor teams can start migrating off `apps/web/src/mocks/data/lessonPackage.ts` for integration testing.
 
@@ -17,11 +17,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 14 | 3 | 4 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 16 | 1 | 4 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **59** | **37** | **4** | **18** |
+| **Totals** | | **59** | **39** | **2** | **18** |
 
 ---
 
@@ -568,17 +568,17 @@ Every node must:
 
 ---
 
-- [ ] **S2-7 `lesson_planner` node** ⚠️ PARTIAL — 2026-07-14/15
+- [x] **S2-7 `lesson_planner` node** — ✓ 2026-07-17 (upgraded from PARTIAL now that S2-11 really validates it)
   - `apps/api/app/modules/content/pipeline/graph.py::lesson_planner_node` (NOT a separate `nodes/lesson_planner.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale; the placeholder row above is removed)
   - Model: `settings.llm_lesson_planner` (`LLM_LESSON_PLANNER`) — highest cost node so far
   - **Phase 2 Premium — starts ONLY after ALL Phase 1 nodes complete for ALL segments** — already true via the existing graph wiring (Story 2-1 AC-0), unchanged by this task
   - ✓ Input is `state["segment_summaries"]` ONLY — never raw chapter text/sections; enforced structurally and by a dedicated regression test (`test_prompt_never_includes_raw_chapter_text_or_sections`) that plants raw text in state alongside summaries and asserts it never reaches the prompt
   - ✓ `complete_structured()` used with an internal Pydantic response model (`_LessonPlanLLM`/`_LessonPlanSegmentLLM`); degrade-not-fabricate guards (segment count/ID match, no duplicates, non-blank title/subject/objectives, valid `duration_min`, `complexity_level` clamped to low/medium/high) all reviewed via a real 3-layer `/bmad-code-review` and patched
   - ✓ Idempotency checkpoint added (Phase-A read-then-write style, not Story 2-1b's atomic RPC — correct choice for this single-sequential-dispatch node)
-  - ✗ **Output does NOT yet pass literal `LessonMetadata.model_validate()`** — it's a deliberately richer internal dict (adds `objectives`/`segments` outline, which `LessonMetadata` — `extra="forbid"` — has no room for) that is field-name-compatible with `LessonMetadata` for the fields they share (`title`/`subject`/`total_segments`/`complexity_level`). Projecting into a real `LessonMetadata` instance is `package_builder`'s job (S2-11, not yet built), matching the same "shape now, validate later" pattern `quiz_generator_node`'s output already uses for `QuizQuestion`.
-  - ✗ **Langfuse span does not record an explicit `token_cost_usd` field** — `complete_structured()`'s existing tracing records `usage_details` (input/output token counts) on the generation span, and cost IS accumulated via `cost_tracker.accumulate_cost()`/`check_ceiling()`, but the two aren't joined into one named `token_cost_usd` field on the span itself. This is a pre-existing gap shared by every node using `complete_structured()`, not something specific to `lesson_planner` — flag for whoever next touches the provider's tracing, not a lesson_planner-specific fix.
+  - ✓ **Output now DOES pass `LessonMetadata.model_validate()`** — resolved transitively by S2-11 (`package_builder_node`, done 2026-07-16), which projects `lesson_plan`'s `title`/`subject`/`total_segments`/`total_duration_min`/`complexity_level` into `LessonPackage.metadata` and calls `LessonPackage.model_validate(assembled)` uncaught (AC-9). `LessonMetadata.tier` defaults `"T2"` so the metadata dict — built with no `tier` key, since S2-LM1/LM3 are still reverted — validates cleanly. Confirmed via `test_package_builder_node.py::test_model_validate_failure_propagates_uncaught` and the full round-trip assertion at line 174 (`LessonPackage.model_validate(result["lesson_package"])`); full suite re-run 2026-07-17: 381 passed, 1 skipped.
+  - ✗ **Langfuse span does not record an explicit `token_cost_usd` field** — `complete_structured()`'s existing tracing records `usage_details` (input/output token counts) on the generation span, and cost IS accumulated via `cost_tracker.accumulate_cost()`/`check_ceiling()`, but the two aren't joined into one named `token_cost_usd` field on the span itself. This is a pre-existing gap shared by every node using `complete_structured()`, not something specific to `lesson_planner` — **tracked as Sprint 3's S3-5 (Pipeline cost attribution in Langfuse)**, not reopened here.
   - Tier-aware slide-count targets (Epic 1's node-11 spec) are explicitly NOT part of this task — `state` has no `tier` key post-revert (Story 2-2); deferred to S2-LM4 once S2-LM1's 4-dev sign-off unblocks tier plumbing again.
-  - **AC:** Input confirmed as summaries ✓ (tested); output passes `LessonMetadata` validation ✗ (deferred to S2-11); Langfuse span records `token_cost_usd` ✗ (pre-existing provider-wide gap) — see `docs/stories/2-6-lesson-planner-node.md` for the full story, including a 3-layer adversarial code review (7 patches applied, 4 pre-existing risks deferred, 297/297 tests passing)
+  - **AC:** Input confirmed as summaries ✓ (tested); output passes `LessonMetadata` validation ✓ (resolved by S2-11, tested); Langfuse span records `token_cost_usd` ✗ (pre-existing provider-wide gap, deferred to S3-5) — see `docs/stories/2-6-lesson-planner-node.md` for the full story, including a 3-layer adversarial code review (7 patches applied, 4 pre-existing risks deferred, 297/297 tests passing)
 
 - [x] **S2-8 `slide_generator` node** — ✓ 2026-07-15
   - `apps/api/app/modules/content/pipeline/graph.py::slide_generator_node` (NOT a separate `nodes/slide_generator.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale)
@@ -629,13 +629,14 @@ Every node must:
   - Triggered by `package_builder` (S2-11) on success — ✓ (pre-existing wiring, confirmed still correct).
   - **AC:** Frontend receives `lesson_ready` ✓ (pre-existing, Dev 4's wiring); message passes TS discriminated-union type check ✓ (payload now matches exactly, extra key removed); no shape mismatch with Dev 4 handler ✓ — see `docs/stories/2-12-lesson-ready-websocket-push.md` for the full story, including the 3-layer adversarial code review (4 patches applied — defensive guard against a crash-after-publish failure mode, 2 new coverage tests, 1 documentation correction — plus 2 findings correctly dismissed as verified-honest/not-a-defect, 942 tests passing) ✅
 
-- [ ] **S2-13 Cost ceiling enforcement wired into all nodes** ⚠️ PARTIAL — 2026-07-14
+- [x] **S2-13 Cost ceiling enforcement wired into all nodes** — ✓ 2026-07-17
   - `apps/api/app/core/cost_tracker.py` — wire into every LLM, TTS, image call
   - `MAX_LESSON_COST_USD = settings.max_lesson_cost_usd` (default `$3.00`)
-  - ✓ Story 2-1 AC-7 wired `check_ceiling()` as a single pre-dispatch gate in `_fan_out_phase1_economy_nodes` (graph.py) — a lesson already over budget never starts the Phase 1 fan-out. Per-call circuit-breaker/cost-accumulation already lives inside `OpenAILLMProvider.complete_structured()` (verified, not duplicated in nodes). Fan-out also capped at `_MAX_PHASE1_SECTIONS=60` (5-agent review 2026-07-14 — an unbounded section count made the pre-dispatch check blind to the cost the fan-out itself would incur).
-  - ✗ On breach this terminates the pipeline with `status="failed"` (`cost_ceiling_exceeded:` prefix) rather than the "downshift to cheapest providers, complete lesson, flag in admin, never abort" behavior this AC and CLAUDE.md §14 both describe — `llm_mini` has no cheaper tier to downshift to, so Story 2-1 explicitly chose terminate-and-flag for Phase 1 (see its AC-7 note); a true degraded-completion path is not implemented anywhere yet. Not wired into `lesson_planner`/`slide_generator`/`tts_node`/`image_generator` (S2-7 through S2-10, not yet built) or admin visibility (S3-4, not yet built).
-  - On breach: downshift to cheapest providers; complete lesson; set `lesson_jobs.error = "cost_ceiling_exceeded"`
-  - **AC:** A test run exceeding $3.00 mid-pipeline completes without crashing; admin panel shows the flag; cost tracked in `lesson_jobs.cost_usd`
+  - ✓ `lesson_planner_node`/`slide_generator_node` (S2-7/S2-8) now check `check_ceiling()` before dispatch — on breach, downshift from the premium model (`llm_lesson_planner`/`llm_slide_generator`) to `llm_mini` rather than aborting. `tts_node` (S2-9) checks per segment — on breach, skips Sarvam/Azure entirely and degrades straight to the free browser fallback. `image_generator_node` (S2-10) already had this (Story 2-9 AC-3) — verified unchanged. New `_record_cost_downshift()` helper writes a durable `{node, from, to, at}` trail into `lesson_jobs.node_outputs["_cost_downshifts"]` for the future S3-4 admin panel to read.
+  - ✓ Story 2-1 AC-7's Phase 1 pre-dispatch gate (`_fan_out_phase1_economy_nodes`) is **explicitly and deliberately left unchanged** — `llm_mini` is already the cheapest configured LLM tier, so there is nothing to downshift Phase 1 economy nodes *to*; terminate-and-flag remains the accepted behavior there (documented as a known, accepted gap against CLAUDE.md §14's literal "never abort" wording, not something silently left inconsistent — see Story 2-13's Dev Notes).
+  - Code review (3-layer adversarial, Blind Hunter + Edge Case Hunter + Acceptance Auditor) caught and fixed 2 real HIGH-severity bugs before merge: `_record_cost_downshift`'s own DB write was silently clobbered by each node's own subsequent final checkpoint write (defeating the downshift-recording AC on the very request meant to demonstrate it) — fixed by converting it to a pure in-memory merge; and `check_ceiling()` in the two new LLM-node call sites had no fail-open guard (a transient Redis error would have crashed the node) — fixed to match the existing fail-open pattern used everywhere else in the file.
+  - No admin panel exists yet (S3-4, Sprint 3, not started) — "flag in admin" is satisfied today via the durable `_cost_downshifts` JSONB trail, not a literal UI.
+  - **AC:** A test run over the cost ceiling completes each of the 4 premium/media nodes without crashing ✓ (tested); cost tracked in `lesson_jobs.cost_usd` (unchanged, already done) ✓; downshift recorded for future admin visibility ✓ (tested, survives the node's own final checkpoint write) — see `docs/stories/2-13-cost-ceiling-enforcement.md` for the full story, including the 3-layer adversarial code review (2 HIGH patches applied, 3 LOW patches applied, 5 findings correctly dismissed with rationale). 947/995 tests passing, 48 pre-existing unrelated failures (unchanged baseline), 2 skipped — 0 regressions.
 
 - [ ] **S2-14 Eval harness — 5 PDFs**
   - `apps/api/tests/evals/`
