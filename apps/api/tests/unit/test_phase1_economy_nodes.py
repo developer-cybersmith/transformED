@@ -1083,6 +1083,51 @@ class TestAC6NarrationGenerator:
         assert len(result["narration_scripts"]) == 1
 
     @pytest.mark.asyncio
+    async def test_pacing_guard_rejects_script_too_dense_for_page_count_estimate(self) -> None:
+        """2026-07-17 code-review-audit finding (Sprint 2 full-audit workflow):
+        the pacing guard's ESTIMATED-duration branch (no explicit
+        target_duration_sec, page-count-based fallback) had a sibling test
+        proving it does NOT reject a reasonably-paced script
+        (test_no_explicit_target_duration_falls_back_to_page_count_estimate,
+        above), but nothing proved the guard can actually FIRE in that same
+        branch — only the EXPLICIT-duration branch
+        (test_pacing_guard_rejects_script_too_dense_for_target_duration) had
+        a reject-direction test. Given this guard exists specifically because
+        a past version of the estimated branch was a mathematical no-op
+        (2026-07-14 review finding, see the guard's own comment in graph.py),
+        a reject-direction test for the estimated branch is the exact
+        regression check that would catch that bug recurring — and it was
+        missing until now.
+
+        THREE_SECTIONS[0] spans pages 1-3 (page_count=3), so the page-count
+        estimate is 3 * 90s = 270s. A word count exceeding 15*270 = 4050
+        words implies a rate over the 15 words/sec cap.
+        """
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        over_dense_script = " ".join(["word"] * 4200)  # 4200/270 ≈ 15.6 wps > 15 cap
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "energetic", "script": over_dense_script},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            # THREE_SECTIONS[0] has page_start/page_end and NO target_duration_sec,
+            # so this exercises the estimated (page-count) branch specifically.
+            assert "target_duration_sec" not in THREE_SECTIONS[0]
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"] == [], (
+            "a script implying ~15.6 words/sec against the page-count-estimated "
+            "270s target duration must be rejected (cap 15/sec) — this is the "
+            "estimated-duration branch specifically, not the explicit one"
+        )
+
+    @pytest.mark.asyncio
     async def test_no_target_duration_and_no_page_range_does_not_reject(self) -> None:
         """2026-07-14 review finding (Acceptance Auditor, fixed): the prior
         'no target duration' test used THREE_SECTIONS[0], which HAS

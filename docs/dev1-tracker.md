@@ -47,7 +47,7 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all node functions inline (not one file per node, despite the "Files to Create" rows below — see Story 2-1's Tracker Cross-Reference Notes). Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10), `package_builder_node` (S2-11) — all 15 nodes in the pipeline have a real implementation. The `lesson_ready` WebSocket push (S2-12) — a separate file, `apps/api/app/workers/jobs/content_pipeline.py` + `apps/api/app/core/pubsub.py`, not this file — has also landed. |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all 15 node functions inline (deliberately NOT one file per node — see Story 2-1's Tracker Cross-Reference Notes). **2026-07-17 full-Sprint-2-audit finding:** the "Files to Create" table above previously listed `nodes/summarise_segment.py`, `nodes/quiz_generator.py`, `nodes/package_builder.py`, etc. as separate pending files — none of these ever existed or were meant to; flagged independently by 6 of 21 auditor agents as stale/aspirational documentation. Those rows have been removed; this row is now the single authoritative pointer. Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10), `package_builder_node` (S2-11) — all 15 nodes in the pipeline have a real implementation. The `lesson_ready` WebSocket push (S2-12) — a separate file, `apps/api/app/workers/jobs/content_pipeline.py` + `apps/api/app/core/pubsub.py`, not this file — has also landed. |
 | `apps/api/app/providers/tts/sarvam.py` | `SarvamTTSProvider` — primary TTS ✅ S2-9 |
 | `apps/api/app/providers/tts/azure.py` | `AzureTTSProvider` — fallback TTS ✅ S2-9 |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
@@ -73,14 +73,6 @@
 | `apps/api/app/modules/content/pipeline/nodes/structure_detect.py` | Rule-based + GPT-4o-mini structure detection *(S1-5, S1-6)* |
 | `apps/api/app/modules/content/pipeline/nodes/chunk.py` | Semantic chunking *(S1-7)* |
 | `apps/api/app/modules/content/pipeline/nodes/embed.py` | Embedding generation + pgvector storage *(S1-8)* |
-| `apps/api/app/modules/content/pipeline/nodes/summarise_segment.py` | Segment summaries — GPT-4o-mini *(S2-1)* |
-| `apps/api/app/modules/content/pipeline/nodes/segment_complexity.py` | Complexity scoring — GPT-4o-mini *(S2-2)* |
-| `apps/api/app/modules/content/pipeline/nodes/quiz_generator.py` | Quiz generation — GPT-4o-mini *(S2-3)* |
-| `apps/api/app/modules/content/pipeline/nodes/jargon_extractor.py` | Jargon extraction — GPT-4o-mini *(S2-4)* |
-| `apps/api/app/modules/content/pipeline/nodes/intervention_messages.py` | Pre-generate 3×3 interventions — GPT-4o-mini *(S2-5)* |
-| `apps/api/app/modules/content/pipeline/nodes/narration_generator.py` | Narration scripts — GPT-4o-mini *(S2-6)* |
-| `apps/api/app/modules/content/pipeline/nodes/image_generator.py` | Images: GPT Image 1 Mini → Imagen 4 Fast → text-only *(S2-10)* |
-| `apps/api/app/modules/content/pipeline/nodes/package_builder.py` | Assemble + write JSONB LessonPackage *(S2-11)* |
 | `apps/api/app/modules/admin/router.py` | Admin: job status, costs, retry trigger *(S3-4)* |
 | `apps/api/tests/unit/test_lesson_schema.py` | Pydantic ↔ JSON schema round-trip tests (22 tests) ✅ S0-12 |
 | `apps/api/tests/unit/test_langfuse_core.py` | Singleton + flush contract tests (4 tests) ✅ S0-9 |
@@ -509,7 +501,9 @@ Every node must:
   - Model: `settings.llm_mini` (`LLM_MINI`)
   - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint (Story 2-1b pattern)
   - Output: `QuizQuestion`-shaped dict; exactly-4-options guard (frozen schema only enforces a minimum), out-of-range `correct_index` and blank question/explanation rejected (degrade section, not fabricated)
-  - **AC:** Output validates against `app.schemas.QuizQuestion` (segment_id stripped first) ✓; `min_length=4` enforced by the node itself, not just the schema ✓ — tested (`test_phase1_economy_nodes.py`, AC-3; 5-agent review 2026-07-14 added the missing `QuizQuestion.model_validate` assertion) ✅
+  - **Wording correction (2026-07-17, full Sprint 2 audit workflow):** the AC line below previously said "segment_id stripped first" — this was factually inaccurate against the code, not a bug. The node's real output shape is nested `{segment_id, data: {...}}` (matching every other Phase 1 node's established convention), which never needs a strip step at all — there is no flat dict with `segment_id` mixed into the `QuizQuestion` fields to strip in the first place. Corrected below.
+  - **Documented, not a bug (same audit):** `difficulty` is silently clamped to `"medium"` when the LLM returns a value outside `{easy,medium,hard}`, rather than rejecting that question — this mirrors the same clamp-not-reject pattern already used for `complexity_level` in `lesson_planner_node` and `narration_style` in `narration_generator_node` elsewhere in this same file, applied consistently across the codebase's "LLM enum drift" handling, not an isolated inconsistency within this one node.
+  - **AC:** Output validates against `app.schemas.QuizQuestion` (nested `{segment_id, data}` shape, no strip step needed) ✓; `min_length=4` enforced by the node itself, not just the schema ✓ — tested (`test_phase1_economy_nodes.py`, AC-3; 5-agent review 2026-07-14 added the missing `QuizQuestion.model_validate` assertion) ✅
 
 - [x] **S2-4 `jargon_extractor` node** — ✓ 2026-07-14
   - `apps/api/app/modules/content/pipeline/graph.py::jargon_extractor_node`
