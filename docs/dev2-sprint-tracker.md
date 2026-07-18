@@ -1344,12 +1344,14 @@ Pass the tier chosen in S2-07 through to lesson creation, and surface it back to
 
 ### S2-10 — Tier Badge on Player + Session Report
 **Priority:** Low  
-**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
+**Status:** 🔲 NOT STARTED — investigated 2026-07-18, deferred pending S2-09 <!-- added 2026-07-14 -->  
 **Files to modify:** `src/components/player/Player.tsx`, `src/components/reports/SessionReport.tsx`
 
 Small badge showing the lesson's tier and duration, e.g. `Deep · 45 min`.
 
-**Acceptance criteria:**
+**Investigated 2026-07-18** (branch `sprint2/s2-10-tier-badge` created off `feature-learner-mode`, no commits, story creation halted at this finding): confirmed by reading the actual files that there is currently no data path for a tier value to reach either target component. `selectedTier` lives only as `UploadFlow.tsx` component state (surfaced via the `data-selected-tier` attribute S2-07 added as a hook) and is discarded once `UploadFlow` unmounts. `Player.tsx` only receives a `LessonPackage` prop (no tier field); `SessionReport.tsx` only receives data from `useSessionReport(sessionId)` (no tier field). S2-09 (send tier to backend) is not started and is blocked on Dev 1 sign-off for a new field on `POST /api/content/lessons` — until that lands (and is confirmed to also reach whatever `SessionReport` reads from), there is nothing real for this badge to display. **Decision (user, 2026-07-18): defer S2-10 until S2-09 lands** rather than build an interim client-side bridge or an unverifiable UI shell.
+
+**Acceptance criteria (unchanged, pending re-scoping once S2-09 lands):**
 - [ ] Badge visible in the lesson player (header/chrome area)
 - [ ] Same badge shown on the session report (S2-04)
 - [ ] Badge format: `{Tier label} · {duration} min`
