@@ -22,11 +22,11 @@ _STATE_TTL = 86_400  # mirrors graph._STATE_TTL
 
 @pytest.fixture(autouse=True)
 def _stub_langfuse(mocker):
-    """dispatch_event traces every call via get_langfuse(); stub it so no real Langfuse client is
-    built in any graph test. Returns the stub client for trace-assertion tests."""
-    client = MagicMock()
-    mocker.patch("app.core.langfuse.get_langfuse", return_value=client)
-    return client
+    """Stub _trace_dispatch so tests don't require app.core.langfuse to exist."""
+    mocker.patch(
+        "app.modules.tutor.state_machine.graph._trace_dispatch",
+        return_value=None,
+    )
 
 
 def _redis(current_state: str | None) -> AsyncMock:
@@ -612,22 +612,29 @@ async def test_intervention_message_none_when_absent(mocker) -> None:
 
 
 @pytest.mark.unit
-async def test_langfuse_trace_called_on_dispatch(mocker, _stub_langfuse) -> None:
-    """AC5: dispatch_event emits a Langfuse trace."""
+async def test_langfuse_trace_called_on_dispatch(mocker) -> None:
+    """_trace_dispatch is called once per dispatch."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+    trace_spy = mocker.patch(
+        "app.modules.tutor.state_machine.graph._trace_dispatch",
+        return_value=None,
+    )
 
     from app.modules.tutor.state_machine.graph import dispatch_event
 
     await dispatch_event("s-lf", "session_start")
 
-    _stub_langfuse.trace.assert_called_once()
+    trace_spy.assert_called_once()
 
 
 @pytest.mark.unit
 async def test_langfuse_failure_does_not_break_dispatch(mocker) -> None:
-    """AC5: a Langfuse failure must never break a dispatch (best-effort tracing)."""
-    mocker.patch("app.core.langfuse.get_langfuse", side_effect=RuntimeError("no langfuse"))
+    """A tracing failure must never break a dispatch (best-effort, try/except in dispatch_event)."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+    mocker.patch(
+        "app.modules.tutor.state_machine.graph._trace_dispatch",
+        side_effect=RuntimeError("simulated trace failure"),
+    )
 
     from app.modules.tutor.state_machine.graph import dispatch_event
 
@@ -788,3 +795,62 @@ async def test_fatigue_fires_once_then_blocked(mocker) -> None:
 
     r2 = await dispatch_event(sid, "fatigue_detected")
     assert r2["current_state"] == TutorState.TEACHING  # blocked — fatigue already fired
+
+
+# ── state_change WebSocket broadcast ─────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_state_change_broadcast_fires_on_real_transition(mocker) -> None:
+    """dispatch_event broadcasts state_change when from_state != to_state."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+    mock_send = AsyncMock()
+    mocker.patch("app.core.websocket.manager.send", mock_send)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event("s-sc1", "session_start")
+
+    mock_send.assert_awaited_once()
+    call_args = mock_send.call_args
+    assert call_args[0][0] == "s-sc1"
+    msg = call_args[0][1]
+    assert msg["type"] == "state_change"
+    assert msg["payload"]["from_state"] == "IDLE"
+    assert msg["payload"]["to_state"] == "TEACHING"
+    assert msg["payload"]["session_id"] == "s-sc1"
+
+
+@pytest.mark.unit
+async def test_state_change_broadcast_silent_on_no_transition(mocker) -> None:
+    """dispatch_event does NOT broadcast when state does not change (e.g. noop from TEACHING)."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+    mock_send = AsyncMock()
+    mocker.patch("app.core.websocket.manager.send", mock_send)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event("s-sc2", "noop")
+
+    mock_send.assert_not_awaited()
+
+
+@pytest.mark.unit
+async def test_state_change_broadcast_payload_matches_ws_ts_contract(mocker) -> None:
+    """Payload shape must match the frozen StateChangeMessage in ws.ts exactly."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+    _patch_settings(mocker)
+    mock_send = AsyncMock()
+    mocker.patch("app.core.websocket.manager.send", mock_send)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event("s-sc3", "segment_complete")
+
+    mock_send.assert_awaited_once()
+    msg = mock_send.call_args[0][1]
+    payload = msg["payload"]
+    assert set(payload.keys()) == {"session_id", "from_state", "to_state"}
+    assert isinstance(payload["session_id"], str)
+    assert isinstance(payload["from_state"], str)
+    assert isinstance(payload["to_state"], str)
