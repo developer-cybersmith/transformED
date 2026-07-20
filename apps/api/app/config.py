@@ -43,14 +43,23 @@ class Settings(BaseSettings):
     # ── Anthropic (Phase 2, optional) ─────────────────────────────────────────
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key — optional, Phase 2 only")
 
-    # ── Google AI (optional — Gemini evaluation in Sprint 1) ──────────────────
-    google_api_key: str | None = Field(default=None, description="Google AI / Vertex AI key — optional, for Gemini model evaluation")
+    # ── Google AI ──────────────────────────────────────────────────────────────
+    google_api_key: str | None = Field(
+        default=None,
+        description=(
+            "Google AI / Vertex AI key — used for Gemini model evaluation AND "
+            "(as of Story 2-9) as the production auth key for ImagenProvider "
+            "(Imagen 4 Fast, image_generator_node's fallback tier)."
+        ),
+    )
 
     # ── TTS providers ─────────────────────────────────────────────────────────
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
     sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
+    sarvam_voice_id: str = Field(default="meera", description="Sarvam Bulbul v2 speaker name for narration synthesis")
     azure_tts_key: str | None = Field(default=None, description="Azure Cognitive Services TTS key — fallback")
     azure_tts_region: str = Field(default="centralindia", description="Azure TTS region")
+    azure_tts_voice: str = Field(default="en-IN-NeerjaNeural", description="Azure neural voice for fallback narration synthesis")
     elevenlabs_api_key: str | None = Field(default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam")
 
     # ── HeyGen ────────────────────────────────────────────────────────────────

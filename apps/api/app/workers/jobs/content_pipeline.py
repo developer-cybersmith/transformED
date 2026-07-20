@@ -57,7 +57,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # ── 2. Fetch lesson metadata from lessons table ───────────────────────
         result = (
             supabase.table("lessons")
-            .select("user_id, source_file_path, book_id")
+            .select("user_id, source_file_path, book_id, tier")
             .eq("lesson_id", lesson_id)
             .single()
             .execute()
@@ -67,22 +67,30 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         user_id: str = lesson_row.get("user_id", "")
         source_pdf_path: str = lesson_row.get("source_file_path", "")
         book_id: str = lesson_row.get("book_id", "")
+        # S2-LM3: tier reaches the pipeline via this SAME lessons-table
+        # re-fetch, not a separate ARQ job-payload argument (corrects the
+        # tracker's original "thread into the ARQ job" wording, per Story
+        # 2-2's Dev Notes). lessons.tier defaults 'T2' at the DB level
+        # (migration 20260714020000), so this is never missing in practice —
+        # the "T2" fallback here only matters for a row from before that
+        # migration or a malformed select response.
+        tier: str = lesson_row.get("tier") or "T2"
         # session_id is the WebSocket routing key; falls back to lesson_id until
         # the upload route stores it (Sprint 2 — Dev 4 coordinates)
         session_id: str = lesson_row.get("session_id") or lesson_id
 
-        # [DEV1-SPRINT2-PENDING] lesson_package here is today's flat stub shape
-        # from package_builder_node, not the frozen LessonPackage from Dev 1's
-        # real package_builder (Story S2-11, not yet built). It is republished
-        # verbatim below with no schema validation. Do not build a parallel
-        # real-content path here -- this will be reconciled when Sprint 2 lands.
-        # Ping Dev 1 (developer1-cybersmith) before changing this shape.
+        # lesson_package is the REAL, schema-validated LessonPackage produced by
+        # package_builder_node (Story 2-11, landed 2026-07-16) —
+        # package.model_dump(mode="json"). Top-level keys: lesson_id/book_id/
+        # chapter_id/created_at/metadata/segments/glossary. It is republished
+        # verbatim below (already validated by package_builder_node itself).
         # ── 3. Run LangGraph pipeline ─────────────────────────────────────────
         lesson_package = await run_pipeline(
             lesson_id=lesson_id,
             user_id=user_id,
             source_pdf_path=source_pdf_path,
             book_id=book_id,
+            tier=tier,
         )
 
         # ── 4a. Mark job completed ────────────────────────────────────────────
@@ -116,10 +124,15 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
 
         redis = get_redis()
         channel = f"lesson_ready:{session_id}"
+        # payload matches packages/shared/types/ws.ts's LessonReadyMessage
+        # exactly ({lesson_id, lesson}) — session_id is already the pub/sub
+        # channel suffix / WebSocket routing key, it does not need to be
+        # duplicated inside the payload too (2026-07-16 review finding,
+        # Story 2-12 — the subscriber in app/core/pubsub.py already extracts
+        # session_id from the CHANNEL name, never read it from the payload).
         message = {
             "type": "lesson_ready",
             "payload": {
-                "session_id": session_id,
                 "lesson_id": lesson_id,
                 "lesson": lesson_package,
             },
@@ -131,13 +144,31 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         await clear_lesson_cost(lesson_id)
 
         logger.info("content_pipeline_job COMPLETE lesson_id=%s", lesson_id)
+        # lesson_package is the REAL nested LessonPackage (Story 2-11) —
+        # slides_count/quiz_count are aggregated per-segment (Segment.slides,
+        # Segment.quiz); audio_count is the segment count itself, since
+        # package_builder_node guarantees exactly one narration per assembled
+        # segment (2026-07-16 fix, Story 2-12 — the previous
+        # .get("slides"/"quiz_questions"/"audio_assets", []) calls read
+        # top-level keys that only existed on the old flat stub shape and
+        # have silently returned 0/0/0 since Story 2-11 landed).
+        # 2026-07-16 review finding (Edge Case Hunter): .get("segments", [])
+        # only degrades when the key is MISSING — an explicit non-list value
+        # (e.g. None) would still crash here, AFTER the WS publish above has
+        # already succeeded. Unreachable today (lesson_package is always a
+        # validated LessonPackage.model_dump()), but the failure mode is bad
+        # enough (client already notified, job then raises and may retry) to
+        # guard cheaply against regardless.
+        segments = lesson_package.get("segments", [])
+        if not isinstance(segments, list):
+            segments = []
         return {
             "lesson_id": lesson_id,
             "status": "completed",
             "package_summary": {
-                "slides_count": len(lesson_package.get("slides", [])),
-                "quiz_count": len(lesson_package.get("quiz_questions", [])),
-                "audio_count": len(lesson_package.get("audio_assets", [])),
+                "slides_count": sum(len(seg.get("slides", [])) for seg in segments),
+                "quiz_count": sum(len(seg.get("quiz", [])) for seg in segments),
+                "audio_count": len(segments),
             },
         }
 

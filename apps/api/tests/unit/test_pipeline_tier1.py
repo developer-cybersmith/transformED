@@ -241,6 +241,47 @@ async def test_structure_guard_adopts_faithful_llm_output() -> None:
 
 
 @pytest.mark.unit
+async def test_structure_guard_llm_raises_keeps_rule_based_sections() -> None:
+    """2026-07-20 review finding (Test Coverage layer): the branch where the
+    LLM provider RAISES mid-call (e.g. complete_structured throws) was
+    untested — only the <90% reject / ≥90% adopt / empty-skip paths were. A
+    provider exception with non-empty raw_text must be caught and the
+    rule-based sections kept, never crash the node."""
+    from app.modules.content.pipeline.graph import structure_node
+
+    state = {
+        "lesson_id": FAKE_LESSON_ID,
+        "book_id": FAKE_BOOK_ID,
+        "raw_text": LARGE_RAW_TEXT,
+        "font_blocks": [],
+        "progress_pct": 7.0,
+        "error": None,
+    }
+    sb = MagicMock()
+    sb.table.return_value = _make_jobs_table({})
+
+    # Provider whose complete_structured RAISES rather than returns.
+    instance = MagicMock()
+    instance.complete_structured = AsyncMock(side_effect=RuntimeError("provider exploded"))
+    fake_module = MagicMock()
+    fake_module.OpenAILLMProvider = MagicMock(return_value=instance)
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch.dict("sys.modules", {"app.providers.llm.openai": fake_module}),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        result = await structure_node(state)  # must NOT raise
+
+    sections = result["sections"]
+    # Rule-based fallback for headingless prose = 1 section with the FULL text.
+    assert len(sections) == 1
+    assert sections[0]["body"] == LARGE_RAW_TEXT
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("raw_text", ["", "   \n\t  "])
 async def test_structure_guard_empty_raw_text_skips_llm_keeps_rule_based(
     raw_text: str,
