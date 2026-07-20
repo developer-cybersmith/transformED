@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 
 from redis.asyncio import ConnectionPool, Redis
-from redis.asyncio.connection import SSLConnection
 
 logger = logging.getLogger(__name__)
 

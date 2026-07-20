@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 # Client-drivable tutor lifecycle events accepted as inbound WS control messages (same category as
 # "ping" / "session_start" — flat control messages, not the ws.ts payload union). Server/engine-only
-# events (distraction_detected, fatigue_detected) and admin events (session_reset) are NOT here, so a
-# client cannot drive them. Mirrors service._CLIENT_DRIVABLE_EVENTS.
+# events (distraction_detected, fatigue_detected) and admin events (session_reset) are NOT
+# here, so a client cannot drive them. Mirrors service._CLIENT_DRIVABLE_EVENTS.
 _TUTOR_CLIENT_EVENTS = frozenset(
     {
         "segment_complete",
@@ -83,9 +83,13 @@ class ConnectionManager:
                     }
                 )
             except Exception:
-                logger.warning("reconnect state sync send failed for %s — dropping socket", session_id)
+                logger.warning(
+                    "reconnect state sync send failed for %s — dropping socket", session_id
+                )
                 self.disconnect(websocket, session_id)
-        logger.info("WS connected: session=%s  total_sessions=%d", session_id, len(self._connections))
+        logger.info(
+            "WS connected: session=%s  total_sessions=%d", session_id, len(self._connections)
+        )
 
     def disconnect(self, websocket: WebSocket, session_id: str) -> None:
         """Remove *websocket* from the session registry."""
@@ -176,9 +180,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 async def _restore_or_init_session(session_id: str) -> str | None:
     """Reconnect-aware session bootstrap.
 
-    If a ``tutor_state:{session_id}`` already exists, this is a reconnect — return the stored state so
-    the caller can push ``state_sync`` to the client; the session is NOT reset. Otherwise initialise a
-    fresh session and return ``None``.
+    If a ``tutor_state:{session_id}`` already exists, this is a reconnect — return the stored
+    state so the caller can push ``state_sync`` to the client; the session is NOT reset.
+    Otherwise initialise a fresh session and return ``None``.
 
     Never raises — the WebSocket handshake must not fail on a Redis blip (degrade to fresh init).
     """
@@ -219,7 +223,9 @@ async def _init_session_state(session_id: str) -> None:
         await redis.set(f"tutor_distraction_count:{session_id}", "0", ex=86400)
         await redis.delete(f"tutor_cooldown:{session_id}")
         await redis.delete(f"tutor_fatigue_fired:{session_id}")
-        await redis.delete(f"session:{session_id}:segment_index")  # reset segment pointer for a reused id
+        await redis.delete(
+            f"session:{session_id}:segment_index"
+        )  # reset segment pointer for a reused id
         logger.info("WS session initialised: session=%s", session_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to init session state for %s: %s", session_id, e)
@@ -277,6 +283,8 @@ async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> 
         )
     except ImportError:
         # Tutor service not yet implemented — log and skip gracefully
-        logger.debug("Tutor service not available yet — attention signal dropped for session %s", session_id)
+        logger.debug(
+            "Tutor service not available yet — attention signal dropped for session %s", session_id
+        )
     except Exception:
         logger.exception("Error processing attention signal for session %s", session_id)

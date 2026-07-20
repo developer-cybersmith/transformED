@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 
-from app.config import get_settings
 from app.core.db import get_supabase
 from app.providers.base import AvatarProvider
 
@@ -63,8 +62,7 @@ class HeyGenAvatarProvider(AvatarProvider):
         """
         if clip_type not in _CLIP_PATHS:
             raise ValueError(
-                f"Unknown clip_type '{clip_type}'. "
-                f"Valid values: {sorted(_CLIP_PATHS.keys())}"
+                f"Unknown clip_type '{clip_type}'. Valid values: {sorted(_CLIP_PATHS.keys())}"
             )
 
         object_path = _CLIP_PATHS[clip_type]
@@ -76,7 +74,9 @@ class HeyGenAvatarProvider(AvatarProvider):
                 expires_in=_SIGNED_URL_EXPIRY,
             )
             signed_url: str = result["signedURL"]
-            logger.debug("Signed URL generated for clip_type='%s' path='%s'", clip_type, object_path)
+            logger.debug(
+                "Signed URL generated for clip_type='%s' path='%s'", clip_type, object_path
+            )
             return signed_url
 
         except Exception as exc:

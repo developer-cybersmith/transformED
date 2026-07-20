@@ -12,10 +12,9 @@ deterministic and easy-to-reason-about token counts in tests.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -69,17 +68,11 @@ def _make_supabase_mock(
 
     jobs_table = MagicMock()
     (
-        jobs_table.select.return_value
-        .eq.return_value
-        .single.return_value
-        .execute.return_value
-        .data
+        jobs_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data
     ) = jobs_data
 
     chapter_table = MagicMock()
-    chapter_table.insert.return_value.execute.return_value.data = [
-        {"chapter_id": chapter_id}
-    ]
+    chapter_table.insert.return_value.execute.return_value.data = [{"chapter_id": chapter_id}]
 
     chunks_table = MagicMock()
 
@@ -289,7 +282,7 @@ async def test_chunk_node_writes_chunk_rows() -> None:
 
 @pytest.mark.unit
 async def test_chunk_node_empty_sections() -> None:
-    """Empty sections list → empty chunks; chapters.insert still called; chunks.upsert NOT called."""
+    """Empty sections → empty chunks; chapters.insert still called; chunks.upsert NOT called."""
     from app.modules.content.pipeline.graph import chunk_node
 
     state = _base_state(sections=[])
@@ -338,6 +331,7 @@ def test_chunk_sections_splits_long_section() -> None:
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunks = chunk_sections([section], target=200, overlap=10, tokenizer_name="cl100k_base")
 
     assert len(chunks) >= 2, f"Expected >= 2 chunks for multi-paragraph section, got {len(chunks)}"
@@ -353,6 +347,7 @@ def test_chunk_sections_short_section() -> None:
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunks = chunk_sections([section], target=512, overlap=64, tokenizer_name="cl100k_base")
 
     assert len(chunks) == 1
@@ -376,6 +371,7 @@ def test_chunk_sections_overlap_appears_in_next_chunk() -> None:
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunks = chunk_sections([section], target=100, overlap=10, tokenizer_name="cl100k_base")
 
     assert len(chunks) >= 2
@@ -398,8 +394,15 @@ def test_chunk_section_ids_are_deterministic() -> None:
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
-        first = [c["id"] for c in chunk_sections(sections, target=512, overlap=64, tokenizer_name="cl100k_base")]
-        second = [c["id"] for c in chunk_sections(sections, target=512, overlap=64, tokenizer_name="cl100k_base")]
+
+        first = [
+            c["id"]
+            for c in chunk_sections(sections, target=512, overlap=64, tokenizer_name="cl100k_base")
+        ]
+        second = [
+            c["id"]
+            for c in chunk_sections(sections, target=512, overlap=64, tokenizer_name="cl100k_base")
+        ]
 
     assert first == second
 
@@ -413,6 +416,7 @@ def test_chunk_sections_chunk_id_format() -> None:
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunks = chunk_sections([section], target=512, overlap=64, tokenizer_name="cl100k_base")
 
     for i, chunk in enumerate(chunks):
@@ -424,7 +428,13 @@ def test_chunk_sections_is_pure() -> None:
     """chunk_sections contains no Supabase calls — it is a pure function."""
     _, _, tiktoken_patch = _make_tiktoken_mock()
 
-    section = {"id": "s0", "title": "Pure", "body": "pure function test", "page_start": 1, "page_end": 1}
+    section = {
+        "id": "s0",
+        "title": "Pure",
+        "body": "pure function test",
+        "page_start": 1,
+        "page_end": 1,
+    }
     mock_supabase = MagicMock()
 
     with (
@@ -432,6 +442,7 @@ def test_chunk_sections_is_pure() -> None:
         patch.dict("sys.modules", tiktoken_patch),
     ):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunk_sections([section], target=512, overlap=64, tokenizer_name="cl100k_base")
 
     mock_supabase.table.assert_not_called()
@@ -446,6 +457,7 @@ def test_chunk_sections_empty_body_returns_single_empty_chunk() -> None:
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunks = chunk_sections([section], target=512, overlap=64, tokenizer_name="cl100k_base")
 
     assert len(chunks) == 1
@@ -472,6 +484,7 @@ def test_ac7_large_section_produces_at_least_eight_chunks() -> None:
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunks = chunk_sections([section], target=512, overlap=64, tokenizer_name="cl100k_base")
 
     assert len(chunks) >= 8, (
@@ -486,12 +499,19 @@ def test_chunk_sections_multiple_sections_produce_chunks_for_each() -> None:
     _, _, tiktoken_patch = _make_tiktoken_mock()
 
     sections = [
-        {"id": f"s{i}", "title": f"Section {i}", "body": f"body text for section {i}", "page_start": i + 1, "page_end": i + 1}
+        {
+            "id": f"s{i}",
+            "title": f"Section {i}",
+            "body": f"body text for section {i}",
+            "page_start": i + 1,
+            "page_end": i + 1,
+        }
         for i in range(10)
     ]
 
     with patch.dict("sys.modules", tiktoken_patch):
         from app.modules.content.pipeline.nodes.chunking import chunk_sections
+
         chunks = chunk_sections(sections, target=512, overlap=64, tokenizer_name="cl100k_base")
 
     assert len(chunks) >= 10

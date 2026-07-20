@@ -27,7 +27,7 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
         model: str,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401
     ) -> str:
         """Return a plain-text completion.
 
@@ -48,8 +48,8 @@ class LLMProvider(ABC):
         messages: list[dict[str, str]],
         model: str,
         response_format: type,
-        **kwargs: Any,
-    ) -> Any:
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
         """Return a completion parsed into a Pydantic model.
 
         Args:

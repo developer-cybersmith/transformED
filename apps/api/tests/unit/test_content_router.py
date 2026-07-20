@@ -75,7 +75,10 @@ def _make_supabase_mock(
     jobs_mock.update.return_value.eq.return_value.execute.return_value = MagicMock()
     jobs_select_resp = MagicMock()
     jobs_select_resp.data = [{"error": lesson_error}] if lesson_error else []
-    jobs_mock.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = jobs_select_resp
+    jobs_select = jobs_mock.select.return_value
+    jobs_select.eq.return_value.order.return_value.limit.return_value.execute.return_value = (
+        jobs_select_resp
+    )
 
     # ── Dispatch by table name ────────────────────────────────────────────────
     _table_map = {
@@ -143,21 +146,29 @@ def test_upload_lesson_db_insert_order(client: TestClient) -> None:
     call_order: list[str] = []
 
     sb = MagicMock()
-    # Track insert calls by table name
-    original_table = sb.table.side_effect
 
+    # Track insert calls by table name
     def track_table(name: str) -> MagicMock:
         t = MagicMock()
         insert_exec = MagicMock()
         if name == "books":
             insert_exec.data = [{"book_id": FAKE_BOOK_ID}]
-            t.insert.return_value.execute.side_effect = lambda: (call_order.append("books"), insert_exec)[1]
+            t.insert.return_value.execute.side_effect = lambda: (
+                call_order.append("books"),
+                insert_exec,
+            )[1]
         elif name == "lessons":
             insert_exec.data = [{"lesson_id": FAKE_LESSON_ID}]
-            t.insert.return_value.execute.side_effect = lambda: (call_order.append("lessons"), insert_exec)[1]
+            t.insert.return_value.execute.side_effect = lambda: (
+                call_order.append("lessons"),
+                insert_exec,
+            )[1]
             t.update.return_value.eq.return_value.execute.return_value = MagicMock()
         elif name == "lesson_jobs":
-            t.insert.return_value.execute.side_effect = lambda: (call_order.append("lesson_jobs"), MagicMock())[1]
+            t.insert.return_value.execute.side_effect = lambda: (
+                call_order.append("lesson_jobs"),
+                MagicMock(),
+            )[1]
         return t
 
     sb.table.side_effect = track_table
@@ -245,7 +256,11 @@ def test_get_lesson_404_wrong_user() -> None:
         "title": None,
         "created_at": "2026-06-28T00:00:00Z",
     }
-    sb.table("lessons").select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = lesson_row
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
 
     app.dependency_overrides[get_current_user] = lambda: other_user
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
@@ -265,7 +280,9 @@ def test_get_lesson_404_not_found() -> None:
     from app.main import app
 
     sb = MagicMock()
-    sb.table("lessons").select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
 
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
@@ -419,11 +436,13 @@ def test_upload_lesson_accepts_valid_tier_and_persists_it(client: TestClient) ->
         if name == "books":
             t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
         elif name == "lessons":
+
             def _insert(payload: dict) -> MagicMock:
                 lessons_insert_calls.append(payload)
                 m = MagicMock()
                 m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
                 return m
+
             t.insert.side_effect = _insert
             t.update.return_value.eq.return_value.execute.return_value = MagicMock()
         elif name == "lesson_jobs":
@@ -468,11 +487,13 @@ def test_upload_lesson_omitted_tier_defaults_to_t2(client: TestClient) -> None:
         if name == "books":
             t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
         elif name == "lessons":
+
             def _insert(payload: dict) -> MagicMock:
                 lessons_insert_calls.append(payload)
                 m = MagicMock()
                 m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
                 return m
+
             t.insert.side_effect = _insert
             t.update.return_value.eq.return_value.execute.return_value = MagicMock()
         elif name == "lesson_jobs":
@@ -482,7 +503,10 @@ def test_upload_lesson_omitted_tier_defaults_to_t2(client: TestClient) -> None:
     sb.table.side_effect = track_table
     sb.storage.from_.return_value.upload.return_value = MagicMock()
 
-    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-default-test-sub"}
+    app.dependency_overrides[get_current_user] = lambda: {
+        **FAKE_USER,
+        "sub": "tier-default-test-sub",
+    }
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
 
     with patch("app.modules.content.router.get_supabase", return_value=sb):
@@ -510,7 +534,10 @@ def test_upload_lesson_invalid_tier_returns_422_before_any_row_created(client: T
     sb = MagicMock()
     sb.table.side_effect = lambda name: MagicMock()  # any call here is a bug
 
-    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-invalid-test-sub"}
+    app.dependency_overrides[get_current_user] = lambda: {
+        **FAKE_USER,
+        "sub": "tier-invalid-test-sub",
+    }
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
 
     with patch("app.modules.content.router.get_supabase", return_value=sb):

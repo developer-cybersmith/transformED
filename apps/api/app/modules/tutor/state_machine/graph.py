@@ -288,8 +288,9 @@ async def route_from_teach_back(state: TutorMachineState) -> str:
     """Route out of TEACH_BACK.
 
     CLAUDE.md §10 — NEVER interrupt mid-TEACH_BACK: only an explicit teach-back outcome leaves this
-    state. Any other event (including ``distraction_detected`` / ``fatigue_detected``) is suppressed —
-    the FSM stays in TEACH_BACK. This is the authoritative routing-level enforcement of the guard.
+    state. Any other event (including ``distraction_detected`` / ``fatigue_detected``) is
+    suppressed — the FSM stays in TEACH_BACK. This is the authoritative routing-level enforcement
+    of the guard.
     """
     event = state.get("event", "")
     if event == "teachback_complete":
@@ -356,7 +357,7 @@ async def route_entry(state: TutorMachineState) -> str:
 # ── Graph construction ────────────────────────────────────────────────────────
 
 
-def _build_tutor_graph() -> Any:
+def _build_tutor_graph() -> Any:  # noqa: ANN401
     """Build and compile the tutor state machine graph.
 
     Uses MemorySaver — PostgresSaver is BANNED per PRD §24.
@@ -408,7 +409,7 @@ def _build_tutor_graph() -> Any:
 _compiled_tutor_graph: Any | None = None
 
 
-def get_tutor_graph() -> Any:
+def get_tutor_graph() -> Any:  # noqa: ANN401
     """Return the cached compiled tutor state machine graph."""
     global _compiled_tutor_graph  # noqa: PLW0603
     if _compiled_tutor_graph is None:
@@ -455,8 +456,8 @@ async def dispatch_event(
         "event": event,
         "event_payload": payload or {},
         # Derive intervention_type from the event when the caller didn't set it explicitly. Without
-        # this, fatigue_detected/distraction_detected (dispatched without a payload) left it None and
-        # intervening_node recorded neither branch (the fatigue-once flag never got set).
+        # this, fatigue_detected/distraction_detected (dispatched without a payload) left it None
+        # and intervening_node recorded neither branch (the fatigue-once flag never got set).
         "intervention_type": (payload.get("intervention_type") if payload else None)
         or _EVENT_INTERVENTION_TYPE.get(event),
         "error": None,

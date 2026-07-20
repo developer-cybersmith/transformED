@@ -28,16 +28,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from app.dependencies import get_current_user
-from app.modules.analytics.router import BatchEventsRequest, router
+from app.modules.analytics.router import router
 
 # ── Test client ───────────────────────────────────────────────────────────────
+
 
 async def _fake_user() -> dict:  # type: ignore[type-arg]
     return {"sub": "user-aaa-111", "email": "student@example.com"}
@@ -132,9 +133,11 @@ def _build_events_supabase(
 
 # ── asyncio.to_thread shim ────────────────────────────────────────────────────
 
+
 @pytest.fixture(autouse=True)
 def _mock_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make asyncio.to_thread call the lambda synchronously in tests."""
+
     def _sync_to_thread(fn, *args, **kwargs):
         result = fn(*args, **kwargs)
         future: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -373,17 +376,20 @@ def test_unknown_event_type_logs_warning(caplog: pytest.LogCaptureFixture) -> No
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("event_type", [
-    "tab_switch",
-    "retry_after_fail",
-    "jargon_hover",
-    "quiz_skip",
-    "teachback_skip",
-    "intervention_acknowledged",
-    "segment_complete",
-    "session_start",
-    "session_end",
-])
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "tab_switch",
+        "retry_after_fail",
+        "jargon_hover",
+        "quiz_skip",
+        "teachback_skip",
+        "intervention_acknowledged",
+        "segment_complete",
+        "session_start",
+        "session_end",
+    ],
+)
 def test_all_9_known_event_types_accepted(event_type: str) -> None:
     """AC 11: each of the 9 known event types returns HTTP 202."""
     supabase_mock = _build_events_supabase()
@@ -499,7 +505,7 @@ def test_mixed_valid_invalid_session_batch_fully_rejected() -> None:
 
 @pytest.mark.unit
 def test_reserved_client_ts_ms_key_in_payload_is_overwritten_by_server_value() -> None:
-    """AC 3a: if payload already contains '_client_ts_ms', server value (client_timestamp_ms) wins."""
+    """AC 3a: payload '_client_ts_ms' is overwritten by server value (client_timestamp_ms)."""
     supabase_mock = _build_events_supabase()
     ev = _event(
         payload={"_client_ts_ms": 99999, "term": "entropy"},
@@ -512,7 +518,8 @@ def test_reserved_client_ts_ms_key_in_payload_is_overwritten_by_server_value() -
     rows_passed = insert_call.insert.call_args[0][0]
     payload = rows_passed[0]["payload"]
     assert payload["_client_ts_ms"] == 1_700_000_000_000, (
-        f"Server value must overwrite client-supplied _client_ts_ms. Got: {payload['_client_ts_ms']}"
+        "Server value must overwrite client-supplied _client_ts_ms. "
+        f"Got: {payload['_client_ts_ms']}"
     )
     assert payload["term"] == "entropy", "Other payload keys must survive"
 
@@ -568,7 +575,9 @@ def test_ownership_query_passes_correct_user_id_to_eq() -> None:
     eq_call_args = in_mock.eq.call_args
     assert eq_call_args is not None, ".eq() was never called on sessions chain"
     called_field, called_value = eq_call_args[0]
-    assert called_field == "user_id", f"Expected .eq('user_id', ...), got .eq({called_field!r}, ...)"
+    assert called_field == "user_id", (
+        f"Expected .eq('user_id', ...), got .eq({called_field!r}, ...)"
+    )
     assert called_value == _USER_ID, f"Expected user_id={_USER_ID!r}, got {called_value!r}"
 
 
@@ -576,7 +585,9 @@ def test_ownership_query_passes_correct_user_id_to_eq() -> None:
 
 
 @pytest.mark.unit
-def test_500_on_insert_error_logs_error_with_sanitized_message(caplog: pytest.LogCaptureFixture) -> None:
+def test_500_on_insert_error_logs_error_with_sanitized_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """AC 12: insert failure logs at ERROR level; embedded newlines stripped from log message."""
     insert_error = MagicMock()
     insert_error.__str__ = lambda self: "line1\nline2\r\nline3"  # embedded newlines
@@ -591,8 +602,12 @@ def test_500_on_insert_error_logs_error_with_sanitized_message(caplog: pytest.Lo
     assert error_records, "Expected at least one ERROR log record for insert failure"
     # Sanitization: no raw newlines or carriage returns in the logged error
     logged_messages = " ".join(r.getMessage() for r in error_records)
-    assert "\n" not in logged_messages, f"Newline in error log — sanitization failed: {logged_messages!r}"
-    assert "\r" not in logged_messages, f"CR in error log — sanitization failed: {logged_messages!r}"
+    assert "\n" not in logged_messages, (
+        f"Newline in error log — sanitization failed: {logged_messages!r}"
+    )
+    assert "\r" not in logged_messages, (
+        f"CR in error log — sanitization failed: {logged_messages!r}"
+    )
 
 
 # ── AC 11 — Field description content ────────────────────────────────────────
@@ -607,9 +622,15 @@ def test_event_type_field_description_lists_all_9_known_types() -> None:
     assert description is not None, "event_type Field must have a description"
 
     expected_types = [
-        "tab_switch", "retry_after_fail", "jargon_hover", "quiz_skip",
-        "teachback_skip", "intervention_acknowledged", "segment_complete",
-        "session_start", "session_end",
+        "tab_switch",
+        "retry_after_fail",
+        "jargon_hover",
+        "quiz_skip",
+        "teachback_skip",
+        "intervention_acknowledged",
+        "segment_complete",
+        "session_start",
+        "session_end",
     ]
     for expected in expected_types:
         assert expected in description, (
@@ -652,12 +673,14 @@ def test_unauthenticated_request_is_rejected() -> None:
     resp = unauthed_client.post(
         "/api/analytics/events",
         json={
-            "events": [{
-                "session_id": _VALID_SESSION_ID,
-                "event_type": "segment_complete",
-                "payload": {},
-                "client_timestamp_ms": 1_700_000_000_000,
-            }]
+            "events": [
+                {
+                    "session_id": _VALID_SESSION_ID,
+                    "event_type": "segment_complete",
+                    "payload": {},
+                    "client_timestamp_ms": 1_700_000_000_000,
+                }
+            ]
         },
         # No Authorization header
     )
@@ -680,11 +703,15 @@ def test_no_llm_calls_in_analytics_ingest_flow() -> None:
     supabase_mock = _build_events_supabase()
     with patch(
         "app.providers.llm.openai.OpenAILLMProvider.complete",
-        side_effect=AssertionError("LLM.complete() was called in analytics service — this is forbidden"),
+        side_effect=AssertionError(
+            "LLM.complete() was called in analytics service — this is forbidden"
+        ),
     ) as mock_complete:
         with patch(
             "app.providers.llm.openai.OpenAILLMProvider.complete_structured",
-            side_effect=AssertionError("LLM.complete_structured() was called in analytics service — forbidden"),
+            side_effect=AssertionError(
+                "LLM.complete_structured() was called in analytics service — forbidden"
+            ),
         ) as mock_structured:
             with patch("app.core.db.get_supabase", return_value=supabase_mock):
                 resp = client.post("/api/analytics/events", json=_body([_event()]))
@@ -717,8 +744,7 @@ def test_50_events_same_session_id_single_ownership_query() -> None:
 
 @pytest.mark.unit
 def test_403_when_ownership_resp_data_is_none() -> None:
-    """AC 7/8: if ownership query returns data=None (unusual DB state), treated as unauthorized → 403."""
-    supabase_mock = _build_events_supabase(authorized_session_ids=None)
+    """AC 7/8: ownership query data=None (unusual DB state) is treated as unauthorized → 403."""
     # Override to return data=None specifically
     sessions_mock = MagicMock()
     select_m = MagicMock()
@@ -733,8 +759,8 @@ def test_403_when_ownership_resp_data_is_none() -> None:
     sessions_mock.select.return_value = select_m
 
     call_count_box = [0]
+
     def _table(name: str) -> MagicMock:
-        idx = call_count_box[0]
         call_count_box[0] += 1
         if name == "sessions":
             return sessions_mock

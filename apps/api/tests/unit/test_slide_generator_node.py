@@ -41,9 +41,24 @@ def _default_under_cost_ceiling():
 FAKE_LESSON_ID = "40404040-4040-4040-4040-404040404040"
 
 PLAN_SEGMENTS: list[dict[str, Any]] = [
-    {"segment_id": "sec_0", "title": "Getting Started", "summary": "Intro summary.", "duration_min": 4.0},
-    {"segment_id": "sec_1", "title": "How It Works", "summary": "Mechanics summary.", "duration_min": 6.0},
-    {"segment_id": "sec_2", "title": "Examples", "summary": "Examples summary.", "duration_min": 5.0},
+    {
+        "segment_id": "sec_0",
+        "title": "Getting Started",
+        "summary": "Intro summary.",
+        "duration_min": 4.0,
+    },
+    {
+        "segment_id": "sec_1",
+        "title": "How It Works",
+        "summary": "Mechanics summary.",
+        "duration_min": 6.0,
+    },
+    {
+        "segment_id": "sec_2",
+        "title": "Examples",
+        "summary": "Examples summary.",
+        "duration_min": 5.0,
+    },
 ]
 
 
@@ -154,7 +169,9 @@ async def test_prompt_never_includes_raw_summaries_or_sections() -> None:
     sb = _mock_supabase()
 
     state = _base_state(
-        segment_summaries=[{"segment_id": "sec_0", "summary": "RAW SEGMENT SUMMARY MUST NEVER APPEAR"}],
+        segment_summaries=[
+            {"segment_id": "sec_0", "summary": "RAW SEGMENT SUMMARY MUST NEVER APPEAR"}
+        ],
         chapter_content="RAW CHAPTER TEXT MUST NEVER APPEAR" * 50,
         sections=[{"title": "sec_0", "body": "RAW SECTION BODY MUST NEVER APPEAR"}],
     )
@@ -230,7 +247,9 @@ async def test_over_ceiling_downshifts_to_llm_mini_and_completes() -> None:
     # Story 2-13/S2-13 review fix: the downshift record must survive into the
     # node's OWN final checkpoint write, not be clobbered by it.
     checkpoint_calls = [
-        c.args[0] for c in sb.table.return_value.update.call_args_list if "node_outputs" in c.args[0]
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
     ]
     assert len(checkpoint_calls) == 1
     written_node_outputs = checkpoint_calls[0]["node_outputs"]
@@ -507,8 +526,11 @@ async def test_idempotency_cache_hit_skips_llm_call() -> None:
         {
             "segment_id": "sec_0",
             "data": {
-                "slide_id": "slide_sec_0_0", "title": "Cached", "bullets": ["x"],
-                "image_url": None, "fallback_image_url": None,
+                "slide_id": "slide_sec_0_0",
+                "title": "Cached",
+                "bullets": ["x"],
+                "image_url": None,
+                "fallback_image_url": None,
             },
         }
     ]
@@ -546,7 +568,9 @@ async def test_successful_run_writes_checkpoint() -> None:
         for call in sb.table.return_value.update.call_args_list
         if "node_outputs" in call.args[0]
     ]
-    assert len(checkpoint_calls) == 1, f"expected exactly one checkpoint write, got {checkpoint_calls}"
+    assert len(checkpoint_calls) == 1, (
+        f"expected exactly one checkpoint write, got {checkpoint_calls}"
+    )
     update_call = checkpoint_calls[0]
     assert update_call["last_node"] == "slide_generator"
     assert "slide_generator" in update_call["node_outputs"]
@@ -597,7 +621,10 @@ async def test_blank_whitespace_only_bullet_is_rejected() -> None:
     mock_provider = AsyncMock()
     mock_provider.complete_structured.return_value = _deck_response(
         segments=[
-            {"segment_id": "sec_0", "slides": [{"title": "Welcome", "bullets": ["   ", "Real point"]}]},
+            {
+                "segment_id": "sec_0",
+                "slides": [{"title": "Welcome", "bullets": ["   ", "Real point"]}],
+            },
             {"segment_id": "sec_1", "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}]},
             {"segment_id": "sec_2", "slides": [{"title": "Example", "bullets": ["Case A"]}]},
         ]
@@ -674,9 +701,7 @@ async def test_segment_specific_slide_budget_used_in_prompt_and_validated() -> N
     1-8) passes validation."""
     from app.modules.content.pipeline.graph import slide_generator_node
 
-    segments_with_budget = [
-        {**seg, "slide_budget": {"min": 3, "max": 5}} for seg in PLAN_SEGMENTS
-    ]
+    segments_with_budget = [{**seg, "slide_budget": {"min": 3, "max": 5}} for seg in PLAN_SEGMENTS]
     mock_provider = AsyncMock()
     mock_provider.complete_structured.return_value = _deck_response(
         segments=[
@@ -694,8 +719,13 @@ async def test_segment_specific_slide_budget_used_in_prompt_and_validated() -> N
         result = await slide_generator_node(
             _base_state(
                 lesson_plan={
-                    "title": "T", "subject": "S", "objectives": ["X"], "complexity_level": "medium",
-                    "total_segments": 3, "total_duration_min": 15.0, "segments": segments_with_budget,
+                    "title": "T",
+                    "subject": "S",
+                    "objectives": ["X"],
+                    "complexity_level": "medium",
+                    "total_segments": 3,
+                    "total_duration_min": 15.0,
+                    "segments": segments_with_budget,
                 }
             )
         )
@@ -714,13 +744,14 @@ async def test_response_violating_segment_specific_budget_is_rejected() -> None:
     global one."""
     from app.modules.content.pipeline.graph import slide_generator_node
 
-    segments_with_budget = [
-        {**seg, "slide_budget": {"min": 3, "max": 5}} for seg in PLAN_SEGMENTS
-    ]
+    segments_with_budget = [{**seg, "slide_budget": {"min": 3, "max": 5}} for seg in PLAN_SEGMENTS]
     mock_provider = AsyncMock()
     mock_provider.complete_structured.return_value = _deck_response(
         segments=[
-            {"segment_id": "sec_0", "slides": [{"title": "A", "bullets": ["1"]}] * 7},  # over budget
+            {
+                "segment_id": "sec_0",
+                "slides": [{"title": "A", "bullets": ["1"]}] * 7,
+            },  # over budget
             {"segment_id": "sec_1", "slides": [{"title": "B", "bullets": ["1"]}] * 4},
             {"segment_id": "sec_2", "slides": [{"title": "C", "bullets": ["1"]}] * 5},
         ]
@@ -735,8 +766,13 @@ async def test_response_violating_segment_specific_budget_is_rejected() -> None:
             await slide_generator_node(
                 _base_state(
                     lesson_plan={
-                        "title": "T", "subject": "S", "objectives": ["X"], "complexity_level": "medium",
-                        "total_segments": 3, "total_duration_min": 15.0, "segments": segments_with_budget,
+                        "title": "T",
+                        "subject": "S",
+                        "objectives": ["X"],
+                        "complexity_level": "medium",
+                        "total_segments": 3,
+                        "total_duration_min": 15.0,
+                        "segments": segments_with_budget,
                     }
                 )
             )
@@ -769,8 +805,13 @@ async def test_malformed_slide_budget_min_greater_than_max_falls_back_to_global_
         result = await slide_generator_node(
             _base_state(
                 lesson_plan={
-                    "title": "T", "subject": "S", "objectives": ["X"], "complexity_level": "medium",
-                    "total_segments": 3, "total_duration_min": 15.0, "segments": segments_with_bad_budget,
+                    "title": "T",
+                    "subject": "S",
+                    "objectives": ["X"],
+                    "complexity_level": "medium",
+                    "total_segments": 3,
+                    "total_duration_min": 15.0,
+                    "segments": segments_with_bad_budget,
                 }
             )
         )

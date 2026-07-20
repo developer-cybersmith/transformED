@@ -1,4 +1,4 @@
-﻿"""
+"""
 ARQ worker entry point.
 
 Run with:
@@ -96,7 +96,7 @@ class WorkerSettings:
     All class attributes are ARQ worker settings.
     """
 
-    # â”€â”€ Job registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Job registry ──
     functions = [
         content_pipeline_job,
         # Add future jobs here:
@@ -104,10 +104,10 @@ class WorkerSettings:
         # teachback_evaluation_job,
     ]
 
-    # â”€â”€ Redis connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Redis connection ──
     redis_settings = _build_redis_settings()
 
-    # â”€â”€ Worker tuning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Worker tuning ──
     max_jobs: int = 5
     """Maximum number of concurrent jobs per worker process.
     Content pipeline is CPU/IO intensive â€” keep low to avoid OOM."""
@@ -128,10 +128,9 @@ class WorkerSettings:
     max_tries: int = 3
     """Maximum retry attempts per job (matches PRD Â§14 critical node rule)."""
 
-    # â”€â”€ Lifecycle hooks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Lifecycle hooks ──
     on_startup = startup
     on_shutdown = shutdown
 
-    # â”€â”€ Queue names â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Queue names ──
     queue_name: str = PIPELINE_QUEUE
-

@@ -7,9 +7,9 @@ without a real .env file or deployed secrets. These are test stubs only.
 
 from __future__ import annotations
 
+import os
 import sys
 from unittest.mock import MagicMock
-import os
 
 import pytest
 

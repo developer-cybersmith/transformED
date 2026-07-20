@@ -67,7 +67,9 @@ def test_get_llm_provider_resolves_patched_openai_provider_lazily() -> None:
     from app.providers.llm.factory import get_llm_provider
 
     mock_provider = MagicMock()
-    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider) as mock_cls:
+    with patch(
+        "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
+    ) as mock_cls:
         result = get_llm_provider("gpt-4o-mini", lesson_id="lesson-1")
 
     mock_cls.assert_called_once_with("lesson-1")
@@ -90,7 +92,9 @@ def test_get_llm_provider_dispatches_o1_mini_to_openai_provider() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("bad_model", [None, "", 42, ["gpt-4o"]])
-def test_get_llm_provider_rejects_non_string_or_empty_model_with_value_error(bad_model: object) -> None:
+def test_get_llm_provider_rejects_non_string_or_empty_model_with_value_error(
+    bad_model: object,
+) -> None:
     """A None/empty/non-string model must raise the documented ValueError,
     never an unrelated AttributeError from model.startswith(...)."""
     from app.providers.llm.factory import get_llm_provider

@@ -39,13 +39,14 @@ Architecture constraints
 
 from __future__ import annotations
 
-import logging
 import base64
+import logging
 import math
 import operator
 import re
-from datetime import datetime, timezone
-from typing import Annotated, Any, Callable, TypedDict
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Annotated, Any, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -90,7 +91,7 @@ class PipelineState(TypedDict, total=False):
     # Node 1: extract
     raw_text: str
     extracted_images: list[dict[str, Any]]  # [{page: int, path: str, caption: str}]
-    font_blocks: list[dict[str, Any]]       # pdftext span-level blocks; consumed by Node 2
+    font_blocks: list[dict[str, Any]]  # pdftext span-level blocks; consumed by Node 2
 
     # Node 2: structure
     sections: list[dict[str, Any]]  # [{title, body, page_start, page_end}]
@@ -105,7 +106,9 @@ class PipelineState(TypedDict, total=False):
     lesson_plan: dict[str, Any]  # {title, objectives: [], segments: [], total_duration_min}
 
     # Node 6: slide_generator
-    slides: list[dict[str, Any]]  # [{segment_id, data: {slide_id, title, bullets, image_url, fallback_image_url}}]
+    slides: list[
+        dict[str, Any]
+    ]  # [{segment_id, data: {slide_id, title, bullets, image_url, fallback_image_url}}]
 
     # Node 7: summarise_segment
     # Annotated with operator.add: each Send() dispatch (one per section) returns
@@ -115,19 +118,27 @@ class PipelineState(TypedDict, total=False):
     segment_summaries: Annotated[list[dict[str, Any]], operator.add]  # [{segment_id, summary}]
 
     # Node 8: quiz_generator
-    quiz_questions: Annotated[list[dict[str, Any]], operator.add]  # [{id, question, options, correct, explanation}]
+    quiz_questions: Annotated[
+        list[dict[str, Any]], operator.add
+    ]  # [{id, question, options, correct, explanation}]
 
     # Node 9: segment_complexity
-    complexity_scores: Annotated[list[dict[str, Any]], operator.add]  # [{segment_id, flesch_kincaid, grade_level}]
+    complexity_scores: Annotated[
+        list[dict[str, Any]], operator.add
+    ]  # [{segment_id, flesch_kincaid, grade_level}]
 
     # Node 10: jargon_extractor
     glossary: Annotated[list[dict[str, Any]], operator.add]  # [{term, definition, segment_id}]
 
     # Node 11: intervention_messages
-    intervention_prompts: Annotated[list[dict[str, Any]], operator.add]  # [{trigger, message, type}]
+    intervention_prompts: Annotated[
+        list[dict[str, Any]], operator.add
+    ]  # [{trigger, message, type}]
 
     # Node 12: narration_generator
-    narration_scripts: Annotated[list[dict[str, Any]], operator.add]  # [{segment_id, script, narration_style, word_count}]
+    narration_scripts: Annotated[
+        list[dict[str, Any]], operator.add
+    ]  # [{segment_id, script, narration_style, word_count}]
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
@@ -137,7 +148,9 @@ class PipelineState(TypedDict, total=False):
     _total_sections: int  # len(sections) * len(_ECONOMY_NODES) — Story 2-1b AC-4 progress logging
 
     # Node 13: tts_node
-    audio_assets: list[dict[str, Any]]  # [{segment_id, data: {script, audio_url, audio_provider, timestamps}}]
+    audio_assets: list[
+        dict[str, Any]
+    ]  # [{segment_id, data: {script, audio_url, audio_provider, timestamps}}]
 
     # Node 14: image_generator
     slide_images: list[dict[str, Any]]  # [{slide_id, image_url}]
@@ -164,7 +177,7 @@ _IMAGE_UPLOAD_ATTEMPTS = 5
 _IMAGE_UPLOAD_BACKOFF_BASE_S = 1.0
 
 
-def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:
+def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:  # noqa: ANN401
     """AC-5: page-aware timeout for the PDF-extraction subprocess.
 
     ``page_estimate`` is a byte heuristic (~30 kB/page) that overestimates the
@@ -237,9 +250,7 @@ async def extract_node(state: PipelineState) -> PipelineState:
 
     # ── Download PDF from Supabase Storage ────────────────────────────────────
     if not source_pdf_path:
-        raise RuntimeError(
-            f"extract_node: source_pdf_path missing for lesson_id={lesson_id}"
-        )
+        raise RuntimeError(f"extract_node: source_pdf_path missing for lesson_id={lesson_id}")
 
     pdf_bytes: bytes = supabase.storage.from_("source-pdfs").download(source_pdf_path)
 
@@ -262,7 +273,8 @@ async def extract_node(state: PipelineState) -> PipelineState:
         )
         proc = await asyncio.create_subprocess_exec(  # noqa: S603
             sys.executable,
-            "-m", "app.modules.content.pipeline.nodes.extract_subprocess",
+            "-m",
+            "app.modules.content.pipeline.nodes.extract_subprocess",
             local_pdf,
             img_dir,
             str(settings.ocr_text_yield_threshold),
@@ -276,10 +288,8 @@ async def extract_node(state: PipelineState) -> PipelineState:
         # exit path: success, timeout, and cancellation.
         try:
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=extract_timeout
-                )
-            except asyncio.TimeoutError:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=extract_timeout)
+            except TimeoutError:
                 raise RuntimeError(
                     f"PDF extraction timed out after {extract_timeout:.0f}s "
                     f"for lesson_id={lesson_id}"
@@ -339,13 +349,16 @@ async def extract_node(state: PipelineState) -> PipelineState:
                     last_exc = exc
                     logger.warning(
                         "[%s] extract_node: image upload attempt %d/%d failed for %s: %s",
-                        lesson_id, attempt + 1, _IMAGE_UPLOAD_ATTEMPTS, storage_path, exc,
+                        lesson_id,
+                        attempt + 1,
+                        _IMAGE_UPLOAD_ATTEMPTS,
+                        storage_path,
+                        exc,
                     )
                     if attempt < _IMAGE_UPLOAD_ATTEMPTS - 1:
                         # 1s, 2s, 4s, 8s + jitter — inside the thread
                         time.sleep(
-                            _IMAGE_UPLOAD_BACKOFF_BASE_S * (2 ** attempt)
-                            + random.random()
+                            _IMAGE_UPLOAD_BACKOFF_BASE_S * (2**attempt) + random.random()  # noqa: S311
                         )
             raise RuntimeError(
                 f"extract_node: image upload failed after "
@@ -393,10 +406,12 @@ async def extract_node(state: PipelineState) -> PipelineState:
         if _extra_key in result:
             extract_cache[_extra_key] = result[_extra_key]
     try:
-        supabase.table("lesson_jobs").update({
-            "last_node": "extract",
-            "node_outputs": {**node_outputs, "extract": extract_cache},
-        }).eq("lesson_id", lesson_id).execute()
+        supabase.table("lesson_jobs").update(
+            {
+                "last_node": "extract",
+                "node_outputs": {**node_outputs, "extract": extract_cache},
+            }
+        ).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
         logger.warning("[%s] extract_node: failed to write checkpoint", lesson_id)
 
@@ -427,8 +442,7 @@ Rules:
 def _build_structure_prompt(raw_text: str, candidates: list[dict[str, Any]]) -> str:
     text_preview = raw_text[:6000] + ("..." if len(raw_text) > 6000 else "")
     candidates_str = "\n".join(
-        f"- [{c['level']}] {c['text']!r} (char_offset={c['char_offset']})"
-        for c in candidates[:30]
+        f"- [{c['level']}] {c['text']!r} (char_offset={c['char_offset']})" for c in candidates[:30]
     )
     return (
         f"Raw text (first 6000 chars of {len(raw_text)}):\n{text_preview}\n\n"
@@ -512,11 +526,15 @@ async def structure_node(state: PipelineState) -> PipelineState:
                 logger.warning(
                     "[%s] structure_node: LLM sections cover %d/%d chars (< 90%%) — "
                     "rejecting LLM output, keeping rule-based sections",
-                    lesson_id, llm_total, len(raw_text),
+                    lesson_id,
+                    llm_total,
+                    len(raw_text),
                 )
             else:
                 sections_list = [s.model_dump() for s in result.sections]
-                logger.info("[%s] structure_node: LLM produced %d sections", lesson_id, len(sections_list))
+                logger.info(
+                    "[%s] structure_node: LLM produced %d sections", lesson_id, len(sections_list)
+                )
         except Exception:  # noqa: BLE001
             logger.warning(
                 "[%s] structure_node: LLM validation failed — using rule-based fallback",
@@ -526,10 +544,12 @@ async def structure_node(state: PipelineState) -> PipelineState:
     # ── Write checkpoint to lesson_jobs ───────────────────────────────────────
     structure_cache: dict[str, Any] = {"sections": sections_list}
     try:
-        supabase.table("lesson_jobs").update({
-            "last_node": "structure",
-            "node_outputs": {**node_outputs, "structure": structure_cache},
-        }).eq("lesson_id", lesson_id).execute()
+        supabase.table("lesson_jobs").update(
+            {
+                "last_node": "structure",
+                "node_outputs": {**node_outputs, "structure": structure_cache},
+            }
+        ).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
         logger.warning("[%s] structure_node: failed to write checkpoint", lesson_id)
 
@@ -552,7 +572,9 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     from app.modules.content.pipeline.nodes.chunking import chunk_sections
 
     lesson_id: str = state["lesson_id"]
-    book_id: str = state.get("book_id") or ""  # coerce None → "" so NOT NULL constraint gives clear error
+    book_id: str = (
+        state.get("book_id") or ""
+    )  # coerce None → "" so NOT NULL constraint gives clear error
     sections: list[dict[str, Any]] = state.get("sections", [])
 
     logger.info("[%s] chunk_node: chunking %d sections", lesson_id, len(sections))
@@ -582,7 +604,12 @@ async def chunk_node(state: PipelineState) -> PipelineState:
         overlap=settings.chunk_overlap_tokens,
         tokenizer_name=settings.embedding_tokenizer,
     )
-    logger.info("[%s] chunk_node: produced %d chunks from %d sections", lesson_id, len(chunks), len(sections))
+    logger.info(
+        "[%s] chunk_node: produced %d chunks from %d sections",
+        lesson_id,
+        len(chunks),
+        len(sections),
+    )
 
     # ── Create one chapter row (one chapter per lesson ingestion in MVP) ──────
     chapter_title = sections[0].get("title", "Chapter") if sections else "Chapter"
@@ -590,14 +617,20 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     chapter_page_end = sections[-1].get("page_end", 1) if sections else 1
 
     try:
-        chapter_resp = supabase.table("chapters").insert({
-            "lesson_id": lesson_id,
-            "book_id": book_id,
-            "title": chapter_title,
-            "page_start": chapter_page_start,
-            "page_end": chapter_page_end,
-            "chapter_index": 1,
-        }).execute()
+        chapter_resp = (
+            supabase.table("chapters")
+            .insert(
+                {
+                    "lesson_id": lesson_id,
+                    "book_id": book_id,
+                    "title": chapter_title,
+                    "page_start": chapter_page_start,
+                    "page_end": chapter_page_end,
+                    "chapter_index": 1,
+                }
+            )
+            .execute()
+        )
     except Exception as exc:
         raise RuntimeError(
             f"chunk_node: failed to create chapter row for lesson_id={lesson_id}"
@@ -638,10 +671,12 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     # ── Write checkpoint to lesson_jobs ───────────────────────────────────────
     chunk_cache: dict[str, Any] = {"chunks": chunks, "chapter_id": chapter_id}
     try:
-        supabase.table("lesson_jobs").update({
-            "last_node": "chunk",
-            "node_outputs": {**node_outputs, "chunk": chunk_cache},
-        }).eq("lesson_id", lesson_id).execute()
+        supabase.table("lesson_jobs").update(
+            {
+                "last_node": "chunk",
+                "node_outputs": {**node_outputs, "chunk": chunk_cache},
+            }
+        ).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
         logger.warning("[%s] chunk_node: failed to write checkpoint", lesson_id)
 
@@ -671,7 +706,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
     content (CLAUDE.md rule). The `embedding IS NULL` filter makes retries safe.
     """
     import asyncio
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.config import get_settings
     from app.core.db import get_supabase
@@ -698,7 +733,8 @@ async def embed_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["embed"]
         logger.info(
             "[%s] embed_node: cache hit — %d chunks already embedded",
-            lesson_id, cached.get("chunk_count", 0),
+            lesson_id,
+            cached.get("chunk_count", 0),
         )
         return {**state, "embeddings_stored": True}
 
@@ -714,7 +750,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
     # AC-6(b): paginate with .range() — PostgREST silently caps a select at
     # 1000 rows, so books > 1000 chunks would otherwise be half-embedded then
     # checkpointed as complete.
-    _PAGE_SIZE = 1000
+    page_size = 1000
 
     def _fetch_unembedded_chunks() -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -726,14 +762,14 @@ async def embed_node(state: PipelineState) -> PipelineState:
                 .eq("chapter_id", chapter_id)
                 .is_("embedding", "null")
                 .order("chunk_index")
-                .range(offset, offset + _PAGE_SIZE - 1)
+                .range(offset, offset + page_size - 1)
                 .execute()
             )
             page: list[dict[str, Any]] = page_resp.data or []
             rows.extend(page)
-            if len(page) < _PAGE_SIZE:
+            if len(page) < page_size:
                 return rows
-            offset += _PAGE_SIZE
+            offset += page_size
 
     # Sync PostgREST round-trips must not block the ARQ event loop.
     chunks: list[dict[str, Any]] = await asyncio.to_thread(_fetch_unembedded_chunks)
@@ -744,14 +780,15 @@ async def embed_node(state: PipelineState) -> PipelineState:
     if len(embeddable) < len(chunks):
         logger.info(
             "[%s] embed_node: skipping %d empty-content chunks (embedding stays NULL)",
-            lesson_id, len(chunks) - len(embeddable),
+            lesson_id,
+            len(chunks) - len(embeddable),
         )
 
     if embeddable:
         provider = OpenAIEmbeddingsProvider(lesson_id=lesson_id)
         total_tokens = 0
         batch_count = 0
-        ingested_at = datetime.now(tz=timezone.utc).isoformat()
+        ingested_at = datetime.now(tz=UTC).isoformat()
         metadata: dict[str, Any] = {
             "model": settings.embedding_model,
             "dimensions": settings.embedding_dimensions,
@@ -776,13 +813,15 @@ async def embed_node(state: PipelineState) -> PipelineState:
                     "[%s] embed_node: chunk %s est %d tokens exceeds the "
                     "%d-token per-input cap — truncating the API input "
                     "(DB content unchanged)",
-                    lesson_id, c.get("chunk_id"), est, _MAX_EMBED_INPUT_TOKENS,
+                    lesson_id,
+                    c.get("chunk_id"),
+                    est,
+                    _MAX_EMBED_INPUT_TOKENS,
                 )
                 text = text[: _MAX_EMBED_INPUT_TOKENS * 4]  # ~4 chars/token
                 est = _MAX_EMBED_INPUT_TOKENS
             if current and (
-                current_tokens + est > budget
-                or len(current) >= _MAX_EMBED_BATCH_ITEMS
+                current_tokens + est > budget or len(current) >= _MAX_EMBED_BATCH_ITEMS
             ):
                 batches.append(current)
                 current = []
@@ -817,13 +856,13 @@ async def embed_node(state: PipelineState) -> PipelineState:
                     "embedding": embedding,
                     "embedding_metadata": metadata,
                 }
-                for (c, _), embedding in zip(batch, embeddings)
+                for (c, _), embedding in zip(batch, embeddings, strict=False)
             ]
             try:
                 await asyncio.to_thread(
-                    lambda rows=rows: supabase.table("chunks")
-                    .upsert(rows, on_conflict="chunk_id")
-                    .execute()
+                    lambda rows=rows: (
+                        supabase.table("chunks").upsert(rows, on_conflict="chunk_id").execute()
+                    )
                 )
             except Exception as exc:
                 raise RuntimeError(
@@ -833,12 +872,16 @@ async def embed_node(state: PipelineState) -> PipelineState:
 
         logger.info(
             "[%s] embed_node: embedded %d chunks in %d batches (%d tokens total)",
-            lesson_id, len(embeddable), batch_count, total_tokens,
+            lesson_id,
+            len(embeddable),
+            batch_count,
+            total_tokens,
         )
     else:
         logger.info(
             "[%s] embed_node: no unembedded chunks found for chapter_id=%s (all already done)",
-            lesson_id, chapter_id,
+            lesson_id,
+            chapter_id,
         )
 
     # ── Completion check (AC-6b): never checkpoint a half-embedded book ───────
@@ -861,15 +904,19 @@ async def embed_node(state: PipelineState) -> PipelineState:
         except Exception as exc:
             logger.warning(
                 "[%s] embed_node: failed to mark book_id=%s ready: %s",
-                lesson_id, book_id, exc,
+                lesson_id,
+                book_id,
+                exc,
             )
 
     # ── Checkpoint ────────────────────────────────────────────────────────────
     embed_cache: dict[str, Any] = {"chunk_count": len(embeddable), "chapter_id": chapter_id}
-    supabase.table("lesson_jobs").update({
-        "last_node": "embed",
-        "node_outputs": {**node_outputs, "embed": embed_cache},
-    }).eq("lesson_id", lesson_id).execute()
+    supabase.table("lesson_jobs").update(
+        {
+            "last_node": "embed",
+            "node_outputs": {**node_outputs, "embed": embed_cache},
+        }
+    ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 28.0, "embed")
     return {**state, "embeddings_stored": True}
@@ -950,7 +997,9 @@ def _tier_slide_budget_per_segment(tier: str, segment_count: int) -> tuple[int, 
     # existing test case, all unaffected) is a per-segment band that can run
     # slightly narrow-but-safe rather than wide-but-under-promised; this is
     # still a soft heuristic, not an exact allocator (see docstring).
-    per_min = min(_MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, math.ceil(total_min / segment_count)))
+    per_min = min(
+        _MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, math.ceil(total_min / segment_count))
+    )
     per_max = max(per_min, min(_MAX_SLIDES_PER_SEGMENT, math.ceil(total_max / segment_count)))
     return (per_min, per_max)
 
@@ -1066,13 +1115,16 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         logger.warning(
             "[%s] lesson_planner_node: check_ceiling() failed — downshifting by "
             "default (assuming over ceiling) to protect the cost budget",
-            lesson_id, exc_info=True,
+            lesson_id,
+            exc_info=True,
         )
         over_ceiling = True
     if over_ceiling:
         logger.warning(
             "[%s] lesson_planner_node: cost ceiling reached, downshifting %s -> %s",
-            lesson_id, settings.llm_lesson_planner, settings.llm_mini,
+            lesson_id,
+            settings.llm_lesson_planner,
+            settings.llm_mini,
         )
         model = settings.llm_mini
         node_outputs = _record_cost_downshift(
@@ -1099,9 +1151,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 "summary's segment_id UNCHANGED — do not invent, merge, split, "
                 "omit, or reorder segment_ids. For each segment, provide a short "
                 "title and an estimated duration_min (minutes of narration/slide "
-                "time for that segment)."
-                + tier_framing
-                + _UNTRUSTED_CONTENT_GUARD
+                "time for that segment)." + tier_framing + _UNTRUSTED_CONTENT_GUARD
             ),
         },
         {"role": "user", "content": summaries_text},
@@ -1133,7 +1183,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
 
     if len(set(response_ids)) != len(response_ids):
         raise RuntimeError(
-            f"lesson_id={lesson_id}: lesson_planner returned duplicate segment_id(s) in {response_ids}"
+            f"lesson_id={lesson_id}: lesson_planner returned duplicate "
+            f"segment_id(s) in {response_ids}"
         )
 
     if not response.title.strip() or not response.subject.strip():
@@ -1164,7 +1215,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     complexity_level = response.complexity_level.strip().lower()
     if complexity_level not in ("low", "medium", "high"):
         logger.warning(
-            "[%s] lesson_planner_node: complexity_level=%r not in low/medium/high — clamping to 'medium'",
+            "[%s] lesson_planner_node: complexity_level=%r not in low/medium/high"
+            " — clamping to 'medium'",
             lesson_id,
             response.complexity_level,
         )
@@ -1181,7 +1233,9 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # S2-LM4: per-segment slide_budget derived from tier + segment count,
     # attached here so slide_generator_node reads it rather than re-deriving
     # tier logic independently (tracker's own S2-LM4 note).
-    slide_budget_min, slide_budget_max = _tier_slide_budget_per_segment(tier, len(segment_summaries))
+    slide_budget_min, slide_budget_max = _tier_slide_budget_per_segment(
+        tier, len(segment_summaries)
+    )
     segments_out = [
         {
             "segment_id": s["segment_id"],
@@ -1204,10 +1258,12 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         "segments": segments_out,
     }
 
-    supabase.table("lesson_jobs").update({
-        "last_node": "lesson_planner",
-        "node_outputs": {**node_outputs, "lesson_planner": lesson_plan},
-    }).eq("lesson_id", lesson_id).execute()
+    supabase.table("lesson_jobs").update(
+        {
+            "last_node": "lesson_planner",
+            "node_outputs": {**node_outputs, "lesson_planner": lesson_plan},
+        }
+    ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
     return {**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}
@@ -1275,7 +1331,9 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     )
 
     if not plan_segments:
-        raise RuntimeError(f"lesson_id={lesson_id}: slide_generator received zero lesson_plan segments")
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: slide_generator received zero lesson_plan segments"
+        )
 
     # 2026-07-15 review finding (Blind Hunter + Edge Case Hunter + Acceptance
     # Auditor, all three independently): a malformed lesson_plan segment
@@ -1320,13 +1378,16 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         logger.warning(
             "[%s] slide_generator_node: check_ceiling() failed — downshifting by "
             "default (assuming over ceiling) to protect the cost budget",
-            lesson_id, exc_info=True,
+            lesson_id,
+            exc_info=True,
         )
         over_ceiling = True
     if over_ceiling:
         logger.warning(
             "[%s] slide_generator_node: cost ceiling reached, downshifting %s -> %s",
-            lesson_id, settings.llm_slide_generator, settings.llm_mini,
+            lesson_id,
+            settings.llm_slide_generator,
+            settings.llm_mini,
         )
         model = settings.llm_mini
         node_outputs = _record_cost_downshift(
@@ -1354,11 +1415,14 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
                 return (mn, mx)
         return (_MIN_SLIDES_PER_SEGMENT, _MAX_SLIDES_PER_SEGMENT)
 
-    budget_by_id: dict[str, tuple[int, int]] = {s["segment_id"]: _segment_budget(s) for s in plan_segments}
+    budget_by_id: dict[str, tuple[int, int]] = {
+        s["segment_id"]: _segment_budget(s) for s in plan_segments
+    }
 
     segments_text = "\n".join(
         f"- segment_id={s['segment_id']}: {s['title']} — {s['summary']} "
-        f"(produce {budget_by_id[s['segment_id']][0]} to {budget_by_id[s['segment_id']][1]} slides for this segment)"
+        f"(produce {budget_by_id[s['segment_id']][0]} to "
+        f"{budget_by_id[s['segment_id']][1]} slides for this segment)"
         for s in plan_segments
     )
     messages = [
@@ -1371,8 +1435,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
                 "bullet points. Return EXACTLY one slide-set per segment "
                 "provided, echoing back each segment's segment_id "
                 "UNCHANGED — do not invent, merge, split, omit, or reorder "
-                "segment_ids."
-                + _UNTRUSTED_CONTENT_GUARD
+                "segment_ids." + _UNTRUSTED_CONTENT_GUARD
             ),
         },
         {"role": "user", "content": segments_text},
@@ -1381,7 +1444,9 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     response = await provider.complete_structured(messages, model, _SlideDeckLLM)
     if response is None:
         logger.warning("[%s] slide_generator_node: LLM returned no parsed response", lesson_id)
-        raise RuntimeError(f"lesson_id={lesson_id}: slide_generator received no parsed LLM response")
+        raise RuntimeError(
+            f"lesson_id={lesson_id}: slide_generator received no parsed LLM response"
+        )
 
     # ── AC-7 degrade-not-fabricate guards — no per-segment redundancy exists
     # for this premium node, so a wrong response is rejected wholesale. ───────
@@ -1403,7 +1468,8 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
 
     if len(set(response_ids)) != len(response_ids):
         raise RuntimeError(
-            f"lesson_id={lesson_id}: slide_generator returned duplicate segment_id(s) in {response_ids}"
+            f"lesson_id={lesson_id}: slide_generator returned duplicate "
+            f"segment_id(s) in {response_ids}"
         )
 
     for seg in response.segments:
@@ -1411,7 +1477,9 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         # back to the fixed 1-8 band when absent), not a single global band
         # — mirrors lesson_planner_node's own "hand the budget, don't
         # re-derive it" design.
-        seg_min, seg_max = budget_by_id.get(seg.segment_id, (_MIN_SLIDES_PER_SEGMENT, _MAX_SLIDES_PER_SEGMENT))
+        seg_min, seg_max = budget_by_id.get(
+            seg.segment_id, (_MIN_SLIDES_PER_SEGMENT, _MAX_SLIDES_PER_SEGMENT)
+        )
         if not (seg_min <= len(seg.slides) <= seg_max):
             raise RuntimeError(
                 f"lesson_id={lesson_id}: slide_generator segment {seg.segment_id!r} has "
@@ -1442,22 +1510,28 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         segment_id = s["segment_id"]
         llm_segment = llm_segment_by_id[segment_id]
         for index, slide in enumerate(llm_segment.slides):
-            slide_data = Slide.model_validate({
-                "slide_id": f"slide_{segment_id}_{index}",
-                "title": slide.title.strip(),
-                "bullets": list(slide.bullets),
-                "image_url": None,
-                "fallback_image_url": None,
-            })
-            slides_out.append({
-                "segment_id": segment_id,
-                "data": slide_data.model_dump(mode="json"),
-            })
+            slide_data = Slide.model_validate(
+                {
+                    "slide_id": f"slide_{segment_id}_{index}",
+                    "title": slide.title.strip(),
+                    "bullets": list(slide.bullets),
+                    "image_url": None,
+                    "fallback_image_url": None,
+                }
+            )
+            slides_out.append(
+                {
+                    "segment_id": segment_id,
+                    "data": slide_data.model_dump(mode="json"),
+                }
+            )
 
-    supabase.table("lesson_jobs").update({
-        "last_node": "slide_generator",
-        "node_outputs": {**node_outputs, "slide_generator": slides_out},
-    }).eq("lesson_id", lesson_id).execute()
+    supabase.table("lesson_jobs").update(
+        {
+            "last_node": "slide_generator",
+            "node_outputs": {**node_outputs, "slide_generator": slides_out},
+        }
+    ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
     return {**state, "slides": slides_out, "progress_pct": 48.0}
@@ -1511,7 +1585,9 @@ _UNTRUSTED_CONTENT_GUARD = (
 )
 
 
-def _get_section_body(section: dict[str, Any], *, lesson_id: str, section_id: str, max_chars: int = 6000) -> str:
+def _get_section_body(
+    section: dict[str, Any], *, lesson_id: str, section_id: str, max_chars: int = 6000
+) -> str:
     """Return the section body, capped to *max_chars* for the LLM prompt.
 
     Logs when truncation happens — previously silent, unlike `_cap_words`'s
@@ -1589,7 +1665,8 @@ async def _read_phase1_checkpoint(
         return None
     if not isinstance(cached, dict) or any(k not in cached for k in required_keys):
         logger.warning(
-            "[%s] checkpoint %s failed shape validation (expected keys %s) — treating as cache-miss",
+            "[%s] checkpoint %s failed shape validation (expected keys %s)"
+            " — treating as cache-miss",
             lesson_id,
             key,
             required_keys,
@@ -1629,7 +1706,9 @@ async def _write_phase1_checkpoint(lesson_id: str, key: str, value: dict[str, An
     ).execute()
 
 
-async def _increment_phase1_progress(lesson_id: str, checkpoint_key: str, total_expected: int | None) -> None:
+async def _increment_phase1_progress(
+    lesson_id: str, checkpoint_key: str, total_expected: int | None
+) -> None:
     """Story 2-1b AC-4: Phase 1 progress visibility via a Redis set.
 
     `progress_pct` cannot be written by economy nodes directly — concurrent
@@ -1664,7 +1743,9 @@ async def _increment_phase1_progress(lesson_id: str, checkpoint_key: str, total_
             total_expected if total_expected is not None else "?",
         )
     except Exception:  # noqa: BLE001
-        logger.warning("[%s] Failed to update Phase 1 progress counter for %s", lesson_id, checkpoint_key)
+        logger.warning(
+            "[%s] Failed to update Phase 1 progress counter for %s", lesson_id, checkpoint_key
+        )
 
 
 def _summary_is_valid_shape(cached: dict[str, Any]) -> bool:
@@ -1701,7 +1782,9 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
         extra_validate=_summary_is_valid_shape,
     )
     if cached is not None:
-        logger.info("[%s] summarise_segment_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
+        logger.info(
+            "[%s] summarise_segment_node: %s — cache hit, skipping LLM call", lesson_id, section_id
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"segment_summaries": [cached]}
 
@@ -1721,7 +1804,11 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
         # A content-policy refusal (or a failed function-call parse) leaves
         # message.parsed = None — degrade this one section rather than crash
         # the whole fan-out (Story 2-1 review finding).
-        logger.warning("[%s] summarise_segment_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
+        logger.warning(
+            "[%s] summarise_segment_node: %s — LLM returned no parsed response, skipping",
+            lesson_id,
+            section_id,
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"segment_summaries": []}
     summary_text = _cap_words(response.summary, 100)
@@ -1823,7 +1910,9 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         extra_validate=_quiz_data_is_valid_shape,
     )
     if cached is not None:
-        logger.info("[%s] quiz_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
+        logger.info(
+            "[%s] quiz_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"quiz_questions": [cached]}
 
@@ -1837,20 +1926,25 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
                 "Write one multiple-choice question testing understanding of "
                 "this section. Provide exactly 4 distinct answer options, the "
                 "0-based index of the correct option, a brief explanation, and "
-                "a difficulty (easy/medium/hard)."
-                + _UNTRUSTED_CONTENT_GUARD
+                "a difficulty (easy/medium/hard)." + _UNTRUSTED_CONTENT_GUARD
             ),
         },
         {"role": "user", "content": body},
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _QuizQuestionLLM)
     if response is None:
-        logger.warning("[%s] quiz_generator_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
+        logger.warning(
+            "[%s] quiz_generator_node: %s — LLM returned no parsed response, skipping",
+            lesson_id,
+            section_id,
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"quiz_questions": []}
 
     async def _reject(reason: str) -> PipelineState:
-        logger.warning("[%s] quiz_generator_node: %s — %s, rejecting", lesson_id, section_id, reason)
+        logger.warning(
+            "[%s] quiz_generator_node: %s — %s, rejecting", lesson_id, section_id, reason
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"quiz_questions": []}
 
@@ -1868,7 +1962,9 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
 
     correct_index = response.correct_index
     if not (0 <= correct_index < len(options)):
-        return await _reject(f"correct_index {correct_index} out of range for {len(options)} options")
+        return await _reject(
+            f"correct_index {correct_index} out of range for {len(options)} options"
+        )
 
     question_text = response.question.strip()
     explanation_text = response.explanation.strip()
@@ -1893,7 +1989,9 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     if len({_normalize_option(o) for o in options}) < len(options):
         return await _reject("duplicate option text")
 
-    difficulty = response.difficulty if response.difficulty in ("easy", "medium", "hard") else "medium"
+    difficulty = (
+        response.difficulty if response.difficulty in ("easy", "medium", "hard") else "medium"
+    )
 
     result: dict[str, Any] = {
         "segment_id": section_id,
@@ -1988,7 +2086,9 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
         extra_validate=_complexity_is_valid_shape,
     )
     if cached is not None:
-        logger.info("[%s] segment_complexity_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
+        logger.info(
+            "[%s] segment_complexity_node: %s — cache hit, skipping LLM call", lesson_id, section_id
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"complexity_scores": [cached]}
 
@@ -2008,9 +2108,15 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
         },
         {"role": "user", "content": body},
     ]
-    response = await provider.complete_structured(messages, settings.llm_mini, _SegmentComplexityLLM)
+    response = await provider.complete_structured(
+        messages, settings.llm_mini, _SegmentComplexityLLM
+    )
     if response is None:
-        logger.warning("[%s] segment_complexity_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
+        logger.warning(
+            "[%s] segment_complexity_node: %s — LLM returned no parsed response, skipping",
+            lesson_id,
+            section_id,
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"complexity_scores": []}
 
@@ -2092,7 +2198,9 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
         lesson_id, checkpoint_key, required_keys=("terms",), extra_validate=_valid_jargon_checkpoint
     )
     if cached is not None:
-        logger.info("[%s] jargon_extractor_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
+        logger.info(
+            "[%s] jargon_extractor_node: %s — cache hit, skipping LLM call", lesson_id, section_id
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"glossary": cached["terms"]}
 
@@ -2113,7 +2221,11 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _JargonListLLM)
     if response is None:
-        logger.warning("[%s] jargon_extractor_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
+        logger.warning(
+            "[%s] jargon_extractor_node: %s — LLM returned no parsed response, skipping",
+            lesson_id,
+            section_id,
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"glossary": []}
 
@@ -2257,7 +2369,11 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
         extra_validate=_valid_interventions_checkpoint,
     )
     if cached is not None:
-        logger.info("[%s] intervention_messages_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
+        logger.info(
+            "[%s] intervention_messages_node: %s — cache hit, skipping LLM call",
+            lesson_id,
+            section_id,
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"intervention_prompts": [cached]}
 
@@ -2281,7 +2397,9 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
         },
         {"role": "user", "content": body},
     ]
-    response = await provider.complete_structured(messages, settings.llm_mini, _SegmentInterventionsLLM)
+    response = await provider.complete_structured(
+        messages, settings.llm_mini, _SegmentInterventionsLLM
+    )
     # 2026-07-14 review finding (Blind Hunter, CRITICAL): a total refusal
     # (response is None) must still go through the same guaranteed-3x3 pad
     # logic as a partial response — this is the CRITICAL entire runtime
@@ -2338,7 +2456,9 @@ class _NarrationScriptLLM(BaseModel):
     script: str
 
 
-_DEFAULT_SECONDS_PER_PAGE: float = 90.0  # ~90s of narration per page — AC-6 fallback duration estimate
+_DEFAULT_SECONDS_PER_PAGE: float = (
+    90.0  # ~90s of narration per page — AC-6 fallback duration estimate
+)
 
 
 def _narration_is_valid_shape(cached: dict[str, Any]) -> bool:
@@ -2389,7 +2509,11 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         extra_validate=_narration_is_valid_shape,
     )
     if cached is not None:
-        logger.info("[%s] narration_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id)
+        logger.info(
+            "[%s] narration_generator_node: %s — cache hit, skipping LLM call",
+            lesson_id,
+            section_id,
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"narration_scripts": [cached]}
 
@@ -2405,7 +2529,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # below falls back to "conversational" (that computation does `.strip()`)
     # — a prompt/persisted-field divergence. Stripping here keeps "known" and
     # "not known" consistent between the prompt and the persisted value.
-    known_narration_style = (known_complexity["narration_style"].strip() if known_complexity else "") or None
+    known_narration_style = (
+        known_complexity["narration_style"].strip() if known_complexity else ""
+    ) or None
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
@@ -2449,7 +2575,11 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _NarrationScriptLLM)
     if response is None:
-        logger.warning("[%s] narration_generator_node: %s — LLM returned no parsed response, skipping", lesson_id, section_id)
+        logger.warning(
+            "[%s] narration_generator_node: %s — LLM returned no parsed response, skipping",
+            lesson_id,
+            section_id,
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"narration_scripts": []}
 
@@ -2459,7 +2589,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # nothing previously rejected a blank script — it would pass the pacing
     # guard trivially (word_count=0) and be checkpointed/shipped as-is.
     if not script:
-        logger.warning("[%s] narration_generator_node: %s — blank script, rejecting", lesson_id, section_id)
+        logger.warning(
+            "[%s] narration_generator_node: %s — blank script, rejecting", lesson_id, section_id
+        )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"narration_scripts": []}
     word_count = len(script.split())
@@ -2470,7 +2602,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # guaranteed non-empty (a blank string is falsy, same as None) — fall
     # back to a sane default rather than checkpoint an empty narration_style,
     # mirroring quiz_generator_node's difficulty enum-clamp pattern.
-    narration_style = (known_narration_style or response.narration_style or "").strip() or "conversational"
+    narration_style = (
+        known_narration_style or response.narration_style or ""
+    ).strip() or "conversational"
 
     # AC-6 pacing guard: average spoken rate ~2.5 words/sec; the AC's hard
     # cap is 15 words/sec. A section with an explicit target speaking
@@ -2510,7 +2644,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
                 "explicit" if explicit_target is not None else "estimated (page-count-based)",
                 target_duration_sec,
             )
-            await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
+            await _increment_phase1_progress(
+                lesson_id, checkpoint_key, state.get("_total_sections")
+            )
             return {"narration_scripts": []}
     else:
         logger.info(
@@ -2575,12 +2711,15 @@ async def _synthesize_with_fallback(
             return audio_bytes, "sarvam", len(text) * _SARVAM_COST_PER_CHAR
         logger.warning(
             "[%s] tts_node: Sarvam returned empty audio for segment %s, falling back to Azure",
-            lesson_id, segment_id,
+            lesson_id,
+            segment_id,
         )
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] tts_node: Sarvam synthesis failed for segment %s, falling back to Azure",
-            lesson_id, segment_id, exc_info=True,
+            lesson_id,
+            segment_id,
+            exc_info=True,
         )
 
     from app.providers.tts.azure import AzureTTSProvider
@@ -2590,13 +2729,17 @@ async def _synthesize_with_fallback(
         if audio_bytes:
             return audio_bytes, "azure", len(text) * _AZURE_TTS_COST_PER_CHAR
         logger.warning(
-            "[%s] tts_node: Azure returned empty audio for segment %s, falling back to browser speech",
-            lesson_id, segment_id,
+            "[%s] tts_node: Azure returned empty audio for segment %s, "
+            "falling back to browser speech",
+            lesson_id,
+            segment_id,
         )
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] tts_node: Azure synthesis failed for segment %s, falling back to browser speech",
-            lesson_id, segment_id, exc_info=True,
+            lesson_id,
+            segment_id,
+            exc_info=True,
         )
 
     return None, "browser", 0.0
@@ -2660,10 +2803,12 @@ async def tts_node(state: PipelineState) -> PipelineState:
         # 2026-07-15 review finding (Blind Hunter): the empty-input branch
         # never wrote a checkpoint, unlike every other branch of this node —
         # write one here too so an ARQ retry skips this (free) work as well.
-        supabase.table("lesson_jobs").update({
-            "last_node": "tts_node",
-            "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
-        }).eq("lesson_id", lesson_id).execute()
+        supabase.table("lesson_jobs").update(
+            {
+                "last_node": "tts_node",
+                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+            }
+        ).eq("lesson_id", lesson_id).execute()
     else:
         from app.core.cost_tracker import check_ceiling
 
@@ -2698,7 +2843,8 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     logger.warning(
                         "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
                         "for segment %s (browser fallback)",
-                        lesson_id, segment_id,
+                        lesson_id,
+                        segment_id,
                     )
                     audio_bytes, audio_provider, cost = None, "browser", 0.0
                     if not downshift_recorded:
@@ -2707,7 +2853,9 @@ async def tts_node(state: PipelineState) -> PipelineState:
                         )
                         downshift_recorded = True
                 else:
-                    audio_bytes, audio_provider, cost = await _synthesize_with_fallback(lesson_id, segment_id, script)
+                    audio_bytes, audio_provider, cost = await _synthesize_with_fallback(
+                        lesson_id, segment_id, script
+                    )
 
                 if audio_bytes is not None:
                     audio_path = f"{lesson_id}/{segment_id}.mp3"
@@ -2727,40 +2875,52 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 else:
                     audio_path = ""
 
-                narration_data = Narration.model_validate({
-                    "script": script,
-                    "audio_url": audio_path,
-                    "audio_provider": audio_provider,
-                    "timestamps": [],
-                })
+                narration_data = Narration.model_validate(
+                    {
+                        "script": script,
+                        "audio_url": audio_path,
+                        "audio_provider": audio_provider,
+                        "timestamps": [],
+                    }
+                )
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "[%s] tts_node: segment %s failed entirely (malformed entry, upload "
                     "error, or validation failure) — degrading to browser fallback",
-                    lesson_id, segment_id, exc_info=True,
+                    lesson_id,
+                    segment_id,
+                    exc_info=True,
                 )
-                narration_data = Narration.model_validate({
-                    "script": entry.get("script", ""),
-                    "audio_url": "",
-                    "audio_provider": "browser",
-                    "timestamps": [],
-                })
+                narration_data = Narration.model_validate(
+                    {
+                        "script": entry.get("script", ""),
+                        "audio_url": "",
+                        "audio_provider": "browser",
+                        "timestamps": [],
+                    }
+                )
 
-            audio_assets_out.append({
-                "segment_id": segment_id,
-                "data": narration_data.model_dump(mode="json"),
-            })
+            audio_assets_out.append(
+                {
+                    "segment_id": segment_id,
+                    "data": narration_data.model_dump(mode="json"),
+                }
+            )
 
-        supabase.table("lesson_jobs").update({
-            "last_node": "tts_node",
-            "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
-        }).eq("lesson_id", lesson_id).execute()
+        supabase.table("lesson_jobs").update(
+            {
+                "last_node": "tts_node",
+                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+            }
+        ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 86.0, "tts_node")
     return {**state, "audio_assets": audio_assets_out, "progress_pct": 86.0}
 
 
-async def _generate_image_with_fallback(lesson_id: str, slide_id: str, prompt: str) -> tuple[str | None, str]:
+async def _generate_image_with_fallback(
+    lesson_id: str, slide_id: str, prompt: str
+) -> tuple[str | None, str]:
     """Try GPT Image 1 Mini, then Imagen 4 Fast, then text-only — never raises
     (Story 2-9 AC-2). Returns (data_uri_or_None, provider_used_for_logging).
     """
@@ -2771,13 +2931,17 @@ async def _generate_image_with_fallback(lesson_id: str, slide_id: str, prompt: s
         if data_uri:
             return data_uri, "gpt_image"
         logger.warning(
-            "[%s] image_generator_node: GPT Image returned empty result for slide %s, falling back to Imagen",
-            lesson_id, slide_id,
+            "[%s] image_generator_node: GPT Image returned empty result for slide %s, "
+            "falling back to Imagen",
+            lesson_id,
+            slide_id,
         )
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] image_generator_node: GPT Image failed for slide %s, falling back to Imagen",
-            lesson_id, slide_id, exc_info=True,
+            lesson_id,
+            slide_id,
+            exc_info=True,
         )
 
     from app.providers.image.imagen import ImagenProvider
@@ -2787,13 +2951,17 @@ async def _generate_image_with_fallback(lesson_id: str, slide_id: str, prompt: s
         if data_uri:
             return data_uri, "imagen"
         logger.warning(
-            "[%s] image_generator_node: Imagen returned empty result for slide %s, falling back to text-only",
-            lesson_id, slide_id,
+            "[%s] image_generator_node: Imagen returned empty result for slide %s, "
+            "falling back to text-only",
+            lesson_id,
+            slide_id,
         )
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] image_generator_node: Imagen failed for slide %s, falling back to text-only",
-            lesson_id, slide_id, exc_info=True,
+            lesson_id,
+            slide_id,
+            exc_info=True,
         )
 
     return None, "text-only"
@@ -2812,7 +2980,9 @@ def _decode_data_uri(data_uri: str) -> bytes:
     "succeeding".
     """
     if not data_uri.startswith("data:") or ";base64," not in data_uri or "," not in data_uri:
-        raise ValueError(f"malformed data URI (expected data:...;base64,<...>): {data_uri[:40]!r}...")
+        raise ValueError(
+            f"malformed data URI (expected data:...;base64,<...>): {data_uri[:40]!r}..."
+        )
     _, _, encoded = data_uri.partition(",")
     if not encoded:
         raise ValueError("data URI has no base64 payload after the comma")
@@ -2845,13 +3015,17 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
 
     lesson_id = state["lesson_id"]
     slides = state.get("slides", [])
-    logger.info("[%s] image_generator_node: generating images for %d slides", lesson_id, len(slides))
+    logger.info(
+        "[%s] image_generator_node: generating images for %d slides", lesson_id, len(slides)
+    )
 
     # 2026-07-15 review finding (Blind Hunter): lesson_id was used unvalidated
     # to build a Storage path, unlike slide_id which already had a guard —
     # defense-in-depth, mirroring the same check.
     if not _SAFE_SEGMENT_ID_RE.match(lesson_id):
-        raise RuntimeError(f"image_generator_node: unsafe lesson_id for storage path: {lesson_id!r}")
+        raise RuntimeError(
+            f"image_generator_node: unsafe lesson_id for storage path: {lesson_id!r}"
+        )
 
     supabase = get_supabase()
 
@@ -2911,12 +3085,18 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                 logger.warning(
                     "[%s] image_generator_node: cost ceiling reached, skipping image "
                     "generation for slide %s (text-only)",
-                    lesson_id, slide_id,
+                    lesson_id,
+                    slide_id,
                 )
                 image_url = None
             else:
-                prompt = f"An educational illustration for a slide titled '{title}': {'; '.join(bullets)}"
-                data_uri, provider_used = await _generate_image_with_fallback(lesson_id, slide_id, prompt)
+                prompt = (
+                    f"An educational illustration for a slide titled '{title}': "
+                    f"{'; '.join(bullets)}"
+                )
+                data_uri, provider_used = await _generate_image_with_fallback(
+                    lesson_id, slide_id, prompt
+                )
 
                 if data_uri is not None:
                     # 2026-07-15 review finding (Blind Hunter + Edge Case
@@ -2954,14 +3134,18 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
             logger.warning(
                 "[%s] image_generator_node: slide %s failed entirely (malformed entry, "
                 "unsafe slide_id, empty bullets, or upload error) — degrading to text-only",
-                lesson_id, slide_id, exc_info=True,
+                lesson_id,
+                slide_id,
+                exc_info=True,
             )
             slide_images_out.append({"slide_id": slide_id, "image_url": None})
 
-    supabase.table("lesson_jobs").update({
-        "last_node": "image_generator",
-        "node_outputs": {**node_outputs, "image_generator": slide_images_out},
-    }).eq("lesson_id", lesson_id).execute()
+    supabase.table("lesson_jobs").update(
+        {
+            "last_node": "image_generator",
+            "node_outputs": {**node_outputs, "image_generator": slide_images_out},
+        }
+    ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 93.0, "image_generator")
     return {**state, "slide_images": slide_images_out, "progress_pct": 93.0}
@@ -3029,25 +3213,37 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             segment_id = item.get("segment_id")
             if segment_id is None:
                 logger.warning(
-                    "[%s] package_builder_node: malformed %s entry missing segment_id — skipped: %r",
-                    lesson_id, label, item,
+                    "[%s] package_builder_node: malformed %s entry missing "
+                    "segment_id — skipped: %r",
+                    lesson_id,
+                    label,
+                    item,
                 )
                 continue
             if segment_id in result:
                 logger.warning(
-                    "[%s] package_builder_node: duplicate segment_id %r in %s — keeping the last entry",
-                    lesson_id, segment_id, label,
+                    "[%s] package_builder_node: duplicate segment_id %r in %s "
+                    "— keeping the last entry",
+                    lesson_id,
+                    segment_id,
+                    label,
                 )
             result[segment_id] = item[value_key] if value_key else item
         return result
 
-    complexity_by_id = _index_by_segment_id(state.get("complexity_scores", []), label="complexity_scores")
-    audio_by_id = _index_by_segment_id(state.get("audio_assets", []), label="audio_assets", value_key="data")
+    complexity_by_id = _index_by_segment_id(
+        state.get("complexity_scores", []), label="complexity_scores"
+    )
+    audio_by_id = _index_by_segment_id(
+        state.get("audio_assets", []), label="audio_assets", value_key="data"
+    )
     interventions_by_id = _index_by_segment_id(
         state.get("intervention_prompts", []), label="intervention_prompts", value_key="data"
     )
 
-    def _group_by_segment_id(items: list[dict[str, Any]], *, label: str) -> dict[str, list[dict[str, Any]]]:
+    def _group_by_segment_id(
+        items: list[dict[str, Any]], *, label: str
+    ) -> dict[str, list[dict[str, Any]]]:
         """Same defensive-skip philosophy as `_index_by_segment_id`, but for
         the one-to-many groupings (slides/quiz/jargon can have multiple
         entries per segment_id)."""
@@ -3056,8 +3252,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             segment_id = item.get("segment_id")
             if segment_id is None:
                 logger.warning(
-                    "[%s] package_builder_node: malformed %s entry missing segment_id — skipped: %r",
-                    lesson_id, label, item,
+                    "[%s] package_builder_node: malformed %s entry missing "
+                    "segment_id — skipped: %r",
+                    lesson_id,
+                    label,
+                    item,
                 )
                 continue
             result.setdefault(segment_id, []).append(item["data"])
@@ -3074,8 +3273,10 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         slide_id = img.get("slide_id")
         if slide_id is None:
             logger.warning(
-                "[%s] package_builder_node: malformed slide_images entry missing slide_id — skipped: %r",
-                lesson_id, img,
+                "[%s] package_builder_node: malformed slide_images entry missing "
+                "slide_id — skipped: %r",
+                lesson_id,
+                img,
             )
             continue
         image_url_by_slide_id[slide_id] = img.get("image_url")
@@ -3088,14 +3289,19 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     # change what gets assembled.
     plan_segment_ids = {seg.get("segment_id") for seg in plan_segments}
     orphaned_ids = (
-        set(complexity_by_id) | set(audio_by_id) | set(interventions_by_id)
-        | set(slides_by_segment) | set(quiz_by_segment) | set(jargon_by_segment)
+        set(complexity_by_id)
+        | set(audio_by_id)
+        | set(interventions_by_id)
+        | set(slides_by_segment)
+        | set(quiz_by_segment)
+        | set(jargon_by_segment)
     ) - plan_segment_ids
     if orphaned_ids:
         logger.warning(
             "[%s] package_builder_node: found upstream data for segment_id(s) %s not present in "
-            "lesson_plan[\"segments\"] — ignored (plan is authoritative)",
-            lesson_id, sorted(orphaned_ids),
+            'lesson_plan["segments"] — ignored (plan is authoritative)',
+            lesson_id,
+            sorted(orphaned_ids),
         )
 
     segments_out: list[dict[str, Any]] = []
@@ -3108,7 +3314,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             logger.warning(
                 "[%s] package_builder_node: malformed lesson_plan segment at index %d missing "
                 "segment_id — skipping segment: %r",
-                lesson_id, index, plan_seg,
+                lesson_id,
+                index,
+                plan_seg,
             )
             continue
 
@@ -3130,7 +3338,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             ]
             logger.warning(
                 "[%s] package_builder_node: segment %s missing %s — skipping segment",
-                lesson_id, segment_id, missing,
+                lesson_id,
+                segment_id,
+                missing,
             )
             continue
 
@@ -3144,8 +3354,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             term = jargon_entry.get("term")
             if not term:
                 logger.warning(
-                    "[%s] package_builder_node: segment %s has a jargon entry with no term — skipped: %r",
-                    lesson_id, segment_id, jargon_entry,
+                    "[%s] package_builder_node: segment %s has a jargon entry "
+                    "with no term — skipped: %r",
+                    lesson_id,
+                    segment_id,
+                    jargon_entry,
                 )
                 continue
             key = term.strip().lower()
@@ -3153,23 +3366,26 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 seen_terms.add(key)
                 glossary_out.append(jargon_entry)
 
-        segments_out.append({
-            "segment_id": segment_id,
-            "segment_index": index,
-            "title": plan_seg.get("title", ""),
-            "summary": plan_seg.get("summary", ""),
-            "complexity": {k: v for k, v in complexity.items() if k != "segment_id"},
-            "slides": slides_with_images,
-            "narration": narration,
-            "quiz": quiz_by_segment.get(segment_id, []),
-            # PROVISIONAL placeholder (Story 2-11 review — no node in the
-            # 15-node pipeline generates a teach-back prompt; this is a
-            # deterministic, zero-cost stand-in pending confirmation from
-            # whoever owns the teach-back feature, not a finalized design).
-            "teachback_prompt": f"In your own words, explain what you learned about {plan_seg.get('title', 'this section')}.",
-            "jargon": jargon_entries,
-            "interventions": interventions,
-        })
+        segments_out.append(
+            {
+                "segment_id": segment_id,
+                "segment_index": index,
+                "title": plan_seg.get("title", ""),
+                "summary": plan_seg.get("summary", ""),
+                "complexity": {k: v for k, v in complexity.items() if k != "segment_id"},
+                "slides": slides_with_images,
+                "narration": narration,
+                "quiz": quiz_by_segment.get(segment_id, []),
+                # PROVISIONAL placeholder (Story 2-11 review — no node in the
+                # 15-node pipeline generates a teach-back prompt; this is a
+                # deterministic, zero-cost stand-in pending confirmation from
+                # whoever owns the teach-back feature, not a finalized design).
+                "teachback_prompt": f"In your own words, explain what you learned "
+                f"about {plan_seg.get('title', 'this section')}.",
+                "jargon": jargon_entries,
+                "interventions": interventions,
+            }
+        )
 
     if not segments_out:
         raise RuntimeError(f"lesson_id={lesson_id}: package_builder produced zero usable segments")
@@ -3178,7 +3394,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         "lesson_id": lesson_id,
         "book_id": state.get("book_id", ""),
         "chapter_id": chapter_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "metadata": {
             "title": lesson_plan.get("title", ""),
             "subject": lesson_plan.get("subject", ""),
@@ -3212,20 +3428,24 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     package = LessonPackage.model_validate(assembled)
     lesson_package = package.model_dump(mode="json")
 
-    completed_at = datetime.now(timezone.utc).isoformat()
+    completed_at = datetime.now(UTC).isoformat()
 
-    supabase.table("lessons").update({
-        "content": lesson_package,
-        "status": "ready",
-        "title": package.metadata.title,
-    }).eq("lesson_id", lesson_id).execute()
+    supabase.table("lessons").update(
+        {
+            "content": lesson_package,
+            "status": "ready",
+            "title": package.metadata.title,
+        }
+    ).eq("lesson_id", lesson_id).execute()
 
-    supabase.table("lesson_jobs").update({
-        "status": "completed",
-        "completed_at": completed_at,
-        "last_node": "package_builder",
-        "node_outputs": {**node_outputs, "package_builder": lesson_package},
-    }).eq("lesson_id", lesson_id).execute()
+    supabase.table("lesson_jobs").update(
+        {
+            "status": "completed",
+            "completed_at": completed_at,
+            "last_node": "package_builder",
+            "node_outputs": {**node_outputs, "package_builder": lesson_package},
+        }
+    ).eq("lesson_id", lesson_id).execute()
 
     return {**state, "lesson_package": lesson_package, "progress_pct": 100.0}
 
@@ -3323,7 +3543,8 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     if len(sections) > _MAX_PHASE1_SECTIONS:
         logger.warning(
             "[%s] structure_node produced %d sections, exceeding _MAX_PHASE1_SECTIONS=%d "
-            "— dispatching only the first %d (dropped %d) to bound Phase 1 fan-out cost/DoS exposure",
+            "— dispatching only the first %d (dropped %d) to bound "
+            "Phase 1 fan-out cost/DoS exposure",
             lesson_id,
             len(sections),
             _MAX_PHASE1_SECTIONS,
@@ -3346,7 +3567,7 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     ]
 
 
-def _build_pipeline_graph() -> Any:
+def _build_pipeline_graph() -> Any:  # noqa: ANN401
     """Build and compile the content pipeline StateGraph.
 
     Returns the compiled graph with MemorySaver checkpointing.
@@ -3409,7 +3630,7 @@ def _build_pipeline_graph() -> Any:
 _compiled_graph: Any | None = None
 
 
-def get_pipeline_graph() -> Any:
+def get_pipeline_graph() -> Any:  # noqa: ANN401
     """Return the cached compiled pipeline graph."""
     global _compiled_graph  # noqa: PLW0603
     if _compiled_graph is None:
@@ -3492,7 +3713,9 @@ async def _update_job_progress(lesson_id: str, progress_pct: float, node_name: s
             }
         ).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
-        logger.warning("Failed to update job progress for lesson %s at node %s", lesson_id, node_name)
+        logger.warning(
+            "Failed to update job progress for lesson %s at node %s", lesson_id, node_name
+        )
 
 
 def _record_cost_downshift(
@@ -3517,10 +3740,12 @@ def _record_cost_downshift(
     round trip, no race, never raises (pure dict manipulation).
     """
     downshifts = list(node_outputs.get("_cost_downshifts", []))
-    downshifts.append({
-        "node": node_name,
-        "from_model_or_provider": from_value,
-        "to_model_or_provider": to_value,
-        "at": datetime.now(timezone.utc).isoformat(),
-    })
+    downshifts.append(
+        {
+            "node": node_name,
+            "from_model_or_provider": from_value,
+            "to_model_or_provider": to_value,
+            "at": datetime.now(UTC).isoformat(),
+        }
+    )
     return {**node_outputs, "_cost_downshifts": downshifts}

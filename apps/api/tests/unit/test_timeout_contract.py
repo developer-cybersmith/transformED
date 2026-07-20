@@ -82,9 +82,7 @@ async def test_cancelled_job_marks_lesson_failed_and_reraises() -> None:
         with pytest.raises(asyncio.CancelledError):
             await job_mod.content_pipeline_job({}, "lesson-cancelled")
 
-    failed_calls = [
-        c for c in status_mock.await_args_list if c.args[2:3] == ("failed",)
-    ]
+    failed_calls = [c for c in status_mock.await_args_list if c.args[2:3] == ("failed",)]
     assert failed_calls, (
         "cancelled job must record lesson_jobs.status='failed' "
         f"(calls seen: {status_mock.await_args_list})"
@@ -121,16 +119,25 @@ async def test_second_cancellation_inside_shield_still_reraises_original() -> No
             await job_mod.content_pipeline_job({}, "lesson-double-cancel")
 
     # The shielded 'failed' write was attempted before the re-raise.
-    assert any(
-        c.args[2:3] == ("failed",) for c in status_mock.await_args_list
-    ), f"shielded status write never attempted (calls: {status_mock.await_args_list})"
+    assert any(c.args[2:3] == ("failed",) for c in status_mock.await_args_list), (
+        f"shielded status write never attempted (calls: {status_mock.await_args_list})"
+    )
 
 
 # Columns that exist on lesson_jobs in the frozen initial schema; its status
 # CHECK allows only pending/running/completed/failed.
 _LESSON_JOBS_COLUMNS = {
-    "job_id", "lesson_id", "status", "last_node", "node_outputs",
-    "error", "attempt", "cost_usd", "started_at", "completed_at", "created_at",
+    "job_id",
+    "lesson_id",
+    "status",
+    "last_node",
+    "node_outputs",
+    "error",
+    "attempt",
+    "cost_usd",
+    "started_at",
+    "completed_at",
+    "created_at",
 }
 _LESSON_JOBS_STATUSES = {"pending", "running", "completed", "failed"}
 
@@ -148,7 +155,9 @@ def _make_multi_table_supabase_mock() -> tuple[MagicMock, dict[str, MagicMock]]:
 
     supabase = MagicMock()
     supabase.table.side_effect = _table
-    _table("lessons").select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+    _table(
+        "lessons"
+    ).select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data={"user_id": "u1", "source_file_path": "p", "book_id": "b1"}
     )
     return supabase, tables
@@ -253,7 +262,9 @@ async def test_failure_paths_write_schema_valid_status(
 
     lessons_payloads = [c.args[0] for c in tables["lessons"].update.call_args_list]
     lessons_failed = [p for p in lessons_payloads if p.get("status") == "failed"]
-    assert lessons_failed, f"lessons.status was never set to 'failed' (payloads: {lessons_payloads})"
+    assert lessons_failed, (
+        f"lessons.status was never set to 'failed' (payloads: {lessons_payloads})"
+    )
 
 
 # ── Story S2-LM3: tier fetched from lessons and threaded to run_pipeline ────
@@ -266,7 +277,8 @@ async def test_content_pipeline_job_threads_tier_from_lessons_row() -> None:
     from app.workers.jobs import content_pipeline as job_mod
 
     supabase = MagicMock()
-    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+    single_rv = supabase.table.return_value.select.return_value.eq.return_value.single.return_value
+    single_rv.execute.return_value = MagicMock(
         data={"user_id": "u1", "source_file_path": "p", "book_id": "b1", "tier": "T3"}
     )
     mock_run_pipeline = AsyncMock(return_value={})
@@ -290,7 +302,8 @@ async def test_content_pipeline_job_missing_tier_defaults_to_t2() -> None:
 
     supabase = MagicMock()
     # lessons row has no "tier" key at all.
-    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+    single_rv = supabase.table.return_value.select.return_value.eq.return_value.single.return_value
+    single_rv.execute.return_value = MagicMock(
         data={"user_id": "u1", "source_file_path": "p", "book_id": "b1"}
     )
     mock_run_pipeline = AsyncMock(return_value={})
@@ -315,8 +328,14 @@ async def test_content_pipeline_job_malformed_tier_string_falls_back_to_t2() -> 
     from app.workers.jobs import content_pipeline as job_mod
 
     supabase = MagicMock()
-    supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"user_id": "u1", "source_file_path": "p", "book_id": "b1", "tier": "bogus-legacy-value"}
+    single_rv = supabase.table.return_value.select.return_value.eq.return_value.single.return_value
+    single_rv.execute.return_value = MagicMock(
+        data={
+            "user_id": "u1",
+            "source_file_path": "p",
+            "book_id": "b1",
+            "tier": "bogus-legacy-value",
+        }
     )
     mock_run_pipeline = AsyncMock(return_value={})
 

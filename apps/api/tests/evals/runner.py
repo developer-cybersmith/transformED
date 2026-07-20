@@ -53,7 +53,9 @@ class EvalResult:
     error: str | None = None
 
 
-def _cleanup_eval_rows(supabase: Any, pdf_key: str, lesson_id: str, book_id: str | None, storage_path: str | None) -> None:
+def _cleanup_eval_rows(
+    supabase: Any, pdf_key: str, lesson_id: str, book_id: str | None, storage_path: str | None
+) -> None:
     """Best-effort teardown of everything run_eval's setup created — mirrors
     app/modules/content/router.py::upload_lesson's own rollback sequence
     (2026-07-17 review finding, Blind Hunter + Acceptance Auditor,
@@ -72,7 +74,9 @@ def _cleanup_eval_rows(supabase: Any, pdf_key: str, lesson_id: str, book_id: str
     try:
         supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
-        logger.warning("eval:%s — cleanup: failed to delete lesson_jobs row", pdf_key, exc_info=True)
+        logger.warning(
+            "eval:%s — cleanup: failed to delete lesson_jobs row", pdf_key, exc_info=True
+        )
     try:
         supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
@@ -81,7 +85,9 @@ def _cleanup_eval_rows(supabase: Any, pdf_key: str, lesson_id: str, book_id: str
         try:
             supabase.storage.from_("source-pdfs").remove([storage_path])
         except Exception:  # noqa: BLE001
-            logger.warning("eval:%s — cleanup: failed to remove Storage object", pdf_key, exc_info=True)
+            logger.warning(
+                "eval:%s — cleanup: failed to remove Storage object", pdf_key, exc_info=True
+            )
     if book_id:
         try:
             supabase.table("books").delete().eq("book_id", book_id).execute()
@@ -125,10 +131,16 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
         try:
             langfuse = get_langfuse()
             span = langfuse.start_observation(
-                name=f"eval:{pdf_key}", as_type="span", input={"pdf_key": pdf_key, "lesson_id": lesson_id}
+                name=f"eval:{pdf_key}",
+                as_type="span",
+                input={"pdf_key": pdf_key, "lesson_id": lesson_id},
             )
         except Exception:  # noqa: BLE001
-            logger.warning("eval:%s — failed to open Langfuse span, continuing without it", pdf_key, exc_info=True)
+            logger.warning(
+                "eval:%s — failed to open Langfuse span, continuing without it",
+                pdf_key,
+                exc_info=True,
+            )
             span = None
 
         supabase = get_supabase()
@@ -137,9 +149,11 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
         # Mirrors app/modules/content/router.py::upload_lesson's setup sequence
         # (S1-10) minus the ARQ enqueue — this harness calls run_pipeline()
         # directly instead of going through the worker.
-        books_resp = supabase.table("books").insert(
-            {"user_id": user_id, "filename": f"{pdf_key}.pdf"}
-        ).execute()
+        books_resp = (
+            supabase.table("books")
+            .insert({"user_id": user_id, "filename": f"{pdf_key}.pdf"})
+            .execute()
+        )
         book_id = books_resp.data[0]["book_id"]
 
         storage_path = f"{user_id}/{book_id}/{pdf_key}.pdf"
@@ -158,7 +172,9 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
                 "source_file_path": storage_path,
             }
         ).execute()
-        supabase.table("lesson_jobs").insert({"lesson_id": lesson_id, "status": "pending"}).execute()
+        supabase.table("lesson_jobs").insert(
+            {"lesson_id": lesson_id, "status": "pending"}
+        ).execute()
 
         # ── Run ──────────────────────────────────────────────────────────────
         lesson_package = await run_pipeline(
@@ -241,10 +257,18 @@ async def run_all_evals(
         try:
             result = await run_eval(pdf_path, pdf_key, lesson_id, user_id)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("eval:%s — run_eval raised unexpectedly, isolating as a failure", pdf_key, exc_info=True)
+            logger.warning(
+                "eval:%s — run_eval raised unexpectedly, isolating as a failure",
+                pdf_key,
+                exc_info=True,
+            )
             result = EvalResult(
-                pdf_key=pdf_key, lesson_id=lesson_id, package_valid=False,
-                slide_quality=None, quiz_relevance=None, error=str(exc),
+                pdf_key=pdf_key,
+                lesson_id=lesson_id,
+                package_valid=False,
+                slide_quality=None,
+                quiz_relevance=None,
+                error=str(exc),
             )
         results.append(result)
 
@@ -253,8 +277,12 @@ async def run_all_evals(
         "pdfs_run": len(results),
         "pdfs_valid": valid_count,
         "pdfs_crashed": len(results) - valid_count,
-        "mean_slide_quality": _mean([r.slide_quality for r in results if r.slide_quality is not None]),
-        "mean_quiz_relevance": _mean([r.quiz_relevance for r in results if r.quiz_relevance is not None]),
+        "mean_slide_quality": _mean(
+            [r.slide_quality for r in results if r.slide_quality is not None]
+        ),
+        "mean_quiz_relevance": _mean(
+            [r.quiz_relevance for r in results if r.quiz_relevance is not None]
+        ),
     }
 
     # 2026-07-17 review finding (Edge Case Hunter): a plain second-resolution

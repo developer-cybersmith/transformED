@@ -11,11 +11,14 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from arq.connections import RedisSettings
 
 import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -35,7 +38,7 @@ from app.modules.tutor.router import router as tutor_router
 logger = logging.getLogger(__name__)
 
 
-def _build_arq_redis_settings() -> "RedisSettings":
+def _build_arq_redis_settings() -> RedisSettings:
     from urllib.parse import urlparse
 
     from arq.connections import RedisSettings
@@ -160,13 +163,13 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
     # ── Module routers ────────────────────────────────────────────────────────
-    app.include_router(auth_router,       prefix="/api/auth")
-    app.include_router(content_router,    prefix="/api/content")
-    app.include_router(media_router,      prefix="/api/media")
+    app.include_router(auth_router, prefix="/api/auth")
+    app.include_router(content_router, prefix="/api/content")
+    app.include_router(media_router, prefix="/api/media")
     app.include_router(assessment_router, prefix="/api/assessment")
-    app.include_router(analytics_router,  prefix="/api/analytics")
-    app.include_router(tutor_router,      prefix="/api/tutor")
-    app.include_router(admin_router,      prefix="/api/admin")
+    app.include_router(analytics_router, prefix="/api/analytics")
+    app.include_router(tutor_router, prefix="/api/tutor")
+    app.include_router(admin_router, prefix="/api/admin")
 
     # ── WebSocket router ──────────────────────────────────────────────────────
     app.include_router(ws_router)

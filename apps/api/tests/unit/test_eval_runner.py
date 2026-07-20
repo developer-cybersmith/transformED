@@ -63,8 +63,12 @@ async def test_run_eval_valid_package_scores_and_records_langfuse(tmp_path: Path
     assert result.slide_quality is not None
     assert result.quiz_relevance is not None
     mock_run_pipeline.assert_awaited_once()
-    span.score_trace.assert_any_call(name="slide_quality", value=result.slide_quality, data_type="NUMERIC")
-    span.score_trace.assert_any_call(name="quiz_relevance", value=result.quiz_relevance, data_type="NUMERIC")
+    span.score_trace.assert_any_call(
+        name="slide_quality", value=result.slide_quality, data_type="NUMERIC"
+    )
+    span.score_trace.assert_any_call(
+        name="quiz_relevance", value=result.quiz_relevance, data_type="NUMERIC"
+    )
     span.end.assert_called_once()
     # Storage upload happened before the pipeline ran.
     sb.storage.from_.assert_any_call("source-pdfs")
