@@ -579,7 +579,7 @@ No test for `started_at = None` path (code: `if ended_at is not None and started
 - BMAD process: CLEAN — story commit `7ef18f3` is chronologically first; implementation commit `e931860` follows.
 - 30/30 tests pass after all 4 BLOCKERs resolved; 0 regressions in assessment suite (111 total passing).
 - Architectural debt noted and documented: `SessionReport` defined in `router.py` — lazy import workaround in place; future refactor story to move to `schemas.py` deferred.
-- `event_type = "intervention_triggered"` filter string: previously unverified in tests; now explicitly asserted via mock capture pattern.
+- `event_type = "intervention_triggered"` filter string: previously unverified in tests (BLOCKER B during review); now explicitly asserted via mock capture pattern.
 
 ### Action Items
 
