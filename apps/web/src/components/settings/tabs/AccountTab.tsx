@@ -1,9 +1,12 @@
+import { useState } from "react";
 import { KeyRound, LogOut, Trash2, Wallet } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
+import { ChangePasswordModal } from "@/components/settings/ChangePasswordModal";
 
 export function AccountTab() {
     const { logout } = useAuth();
+    const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
 
     return (
         <div className="flex flex-col gap-10 w-full max-w-3xl pt-8 pb-12">
@@ -40,6 +43,7 @@ export function AccountTab() {
 
                     <Button
                         variant="outline"
+                        onClick={() => setIsChangePasswordOpen(true)}
                         className="h-auto w-full justify-start gap-3 rounded-xl border-neutral-100 bg-white p-4 text-left font-medium text-neutral-800 hover:bg-neutral-50 hover:border-neutral-200 group"
                     >
                         <KeyRound className="w-5 h-5 text-neutral-500 group-hover:text-neutral-700 transition-colors" />
@@ -70,6 +74,8 @@ export function AccountTab() {
                 </div>
 
             </div>
+
+            <ChangePasswordModal isOpen={isChangePasswordOpen} onClose={() => setIsChangePasswordOpen(false)} />
         </div>
     );
 }
