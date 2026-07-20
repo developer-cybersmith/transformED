@@ -232,11 +232,13 @@ async def test_over_ceiling_downshifts_to_llm_mini_and_completes() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_check_ceiling_failure_fails_open_and_uses_premium_model() -> None:
-    """Story 2-13/S2-13 review fix: check_ceiling() raising (e.g. Redis
-    unavailable) must not crash the node — fail open (assume not over
-    ceiling), matching _fan_out_phase1_economy_nodes' established pattern,
-    and keep using the premium model rather than downshifting."""
+async def test_check_ceiling_failure_downshifts_by_default() -> None:
+    """2026-07-20 review fix: check_ceiling() raising (e.g. Redis unavailable)
+    must not crash the node AND must not fail open. For this PREMIUM node,
+    failing open would run the expensive model uncapped during a Redis
+    outage — a fleet-wide cost-exhaustion vector. Instead it DOWNSHIFTS BY
+    DEFAULT: assume over-ceiling, use llm_mini, record the downshift, and
+    still complete."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -257,8 +259,20 @@ async def test_check_ceiling_failure_fails_open_and_uses_premium_model() -> None
         result = await lesson_planner_node(_base_state())
 
     call_args = mock_provider.complete_structured.call_args
-    assert call_args.args[1] == "gpt-4o"  # premium model, not downshifted
+    assert call_args.args[1] == "gpt-4o-mini"  # downshifted, NOT the premium model
     assert result["lesson_plan"]["title"]  # completed normally, not raised
+
+    # The downshift must be recorded just as it is on a real ceiling breach.
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    assert len(checkpoint_calls) == 1
+    downshifts = checkpoint_calls[0]["node_outputs"]["_cost_downshifts"]
+    assert len(downshifts) == 1
+    assert downshifts[0]["node"] == "lesson_planner"
+    assert downshifts[0]["to_model_or_provider"] == "gpt-4o-mini"
 
 
 @pytest.mark.unit

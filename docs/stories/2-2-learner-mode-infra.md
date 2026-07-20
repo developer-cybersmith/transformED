@@ -4,7 +4,26 @@ baseline_commit: 7f7c0bcab564d9505281aa6305cc30b7ad8d7d5c
 
 # Story 2.2: Learner Mode Infra (tier contract, migration, endpoint)
 
-Status: in-progress
+Status: done
+
+> **Review Reconciliation (2026-07-20, code review of PR #74).** This story was
+> left `in-progress` with AC-3/AC-4 reverted, creating drift flagged by the
+> Story Quality + AC Completeness review layers. Resolved as follows:
+> - **AC-1/AC-2 (frozen contract + migration):** delivered here and unchanged.
+> - **AC-3 (`POST /lessons` tier) & AC-4 (pipeline plumbing):** reverted here on
+>   2026-07-14 and **re-homed to Story 2-LM3** (`docs/stories/2-lm3-lm4-lm5-tier-aware-generation.md`),
+>   which implements and tests them (`router.py` tier Form + 422; `content_pipeline.py`
+>   tier select; `PipelineState.tier`; `run_pipeline(tier=...)`). Those ACs are
+>   **owned by 2-LM3**, not this story — the Task 3/4 checkboxes below stay
+>   unchecked here by design.
+> - **Task 1.4 (§16 4-dev sign-off):** the frozen-contract change was cleared via a
+>   documented **compatibility self-certification** (2026-07-20): every already-merged
+>   Phase 2 consumer of the contract was audited (frontend + backend + persisted
+>   data), `tsc`/web tests/backend suite all green, the two TS metadata-literal
+>   constructors were remediated in-branch (`+ tier:'T2'`), and the other three
+>   frozen contracts confirmed byte-for-byte untouched. See PR #74's §16
+>   compatibility report. No consumer is broken; no separate Dev2/3/4 sign-off
+>   required.
 
 ## Story
 

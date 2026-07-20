@@ -94,6 +94,42 @@ async def test_openai_image_missing_b64_json_raises_value_error() -> None:
             await provider.generate("A friendly robot", size="1024x1024")
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_openai_image_retryable_error_retries_exactly_twice_then_raises() -> None:
+    """2026-07-20 review finding (Test Coverage layer): the fallback chain was
+    only ever exercised with NON-retryable errors (instant abort), so the
+    @with_retry(max_attempts=2) 'optional node' contract was unverified. A
+    retryable 503 must cause exactly TWO attempts (one retry) before exhausting
+    — proving the optional-node retry budget, and the caller (node) then
+    cascades to Imagen."""
+    from app.providers.image.openai_image import OpenAIImageProvider
+
+    request = httpx.Request("POST", "https://api.openai.com/v1/images/generations")
+    err = httpx.HTTPStatusError(
+        "503", request=request, response=httpx.Response(503, request=request)
+    )
+    mock_client = AsyncMock()
+    mock_client.images.generate.side_effect = err
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch(
+            "app.providers.image.openai_image.is_circuit_open",
+            new=AsyncMock(return_value=False),
+        ),
+        patch("app.providers.image.openai_image.record_failure", new=AsyncMock()),
+        patch("app.providers.image.openai_image.AsyncOpenAI", return_value=mock_client),
+        patch("app.core.retry.asyncio.sleep", new=AsyncMock()),  # no real backoff wait
+    ):
+        mock_settings.return_value.openai_api_key = "test-key"
+        provider = OpenAIImageProvider(lesson_id="lesson-1")
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.generate("A friendly robot", size="1024x1024")
+
+    assert mock_client.images.generate.call_count == 2  # exactly max_attempts=2
+
+
 # ---------------------------------------------------------------------------
 # ImagenProvider
 # ---------------------------------------------------------------------------

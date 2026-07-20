@@ -417,3 +417,34 @@ async def test_sarvam_empty_audio_bytes_falls_back_to_azure() -> None:
         result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
 
     assert result["audio_assets"][0]["data"]["audio_provider"] == "azure"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_azure_empty_audio_bytes_falls_back_to_browser() -> None:
+    """2026-07-20 review finding (Test Coverage layer): the symmetric hop to
+    the Sarvam-empty case was untested — Azure returning empty (falsy) audio
+    bytes without raising must fall through to the browser fallback, not be
+    accepted as a 0-byte 'success' uploaded to Storage."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.side_effect = RuntimeError("Sarvam down")
+    mock_azure = AsyncMock()
+    mock_azure.synthesize.return_value = (b"", [])  # falsy but not None
+    sb = _mock_supabase()
+    mock_accumulate = AsyncMock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.providers.tts.azure.AzureTTSProvider", return_value=mock_azure),
+        patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
+    ):
+        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+
+    asset = result["audio_assets"][0]["data"]
+    assert asset["audio_provider"] == "browser"
+    assert asset["audio_url"] == ""  # no 0-byte upload
+    sb.storage.from_.return_value.upload.assert_not_called()
+    mock_accumulate.assert_not_called()

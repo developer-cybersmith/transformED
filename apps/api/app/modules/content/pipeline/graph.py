@@ -1050,23 +1050,25 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     model = settings.llm_lesson_planner
-    # 2026-07-17 review finding (Blind Hunter + Edge Case Hunter,
-    # independently): check_ceiling() can raise (e.g. Redis unavailable) —
-    # every other check_ceiling call site in this file either fails open
-    # explicitly (_fan_out_phase1_economy_nodes) or is inside a per-item
-    # try/except that already degrades gracefully (tts_node/
-    # image_generator_node). This call had neither, so a transient Redis
-    # error would crash the whole node instead of just skipping the
-    # downshift. Fail open, matching _fan_out_phase1_economy_nodes' pattern.
+    # 2026-07-20 review finding (Blind Hunter): check_ceiling() can raise
+    # (e.g. Redis unavailable). This is a PREMIUM node — failing open here
+    # would run the expensive planner model with no budget cap during a Redis
+    # outage, a fleet-wide cost-exhaustion vector. Instead DOWNSHIFT BY
+    # DEFAULT: when the ceiling cannot be evaluated, assume over-ceiling and
+    # use the cheap model. This protects the $3/lesson budget without hard-
+    # failing — the lesson still completes, just at economy quality for this
+    # one node. (The Phase 1 fan-out gate stays fail-open on purpose: those
+    # nodes already run at llm_mini, the cheapest tier, so there is nothing
+    # to downshift to and aborting on a transient blip is the worse outcome.)
     try:
         over_ceiling = await check_ceiling(lesson_id)
     except Exception:  # noqa: BLE001
         logger.warning(
-            "[%s] lesson_planner_node: check_ceiling() failed — failing open "
-            "(assuming not over ceiling)",
+            "[%s] lesson_planner_node: check_ceiling() failed — downshifting by "
+            "default (assuming over ceiling) to protect the cost budget",
             lesson_id, exc_info=True,
         )
-        over_ceiling = False
+        over_ceiling = True
     if over_ceiling:
         logger.warning(
             "[%s] lesson_planner_node: cost ceiling reached, downshifting %s -> %s",
@@ -1308,18 +1310,19 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     model = settings.llm_slide_generator
-    # 2026-07-17 review finding — see lesson_planner_node's identical
-    # comment: check_ceiling() can raise, and this call site had no
-    # fail-open guard, unlike every other check_ceiling call in this file.
+    # 2026-07-20 review finding — see lesson_planner_node's identical comment:
+    # a PREMIUM node must DOWNSHIFT BY DEFAULT (not fail open) when
+    # check_ceiling() can't be evaluated, so a Redis outage cannot uncap the
+    # expensive model fleet-wide. Downshift to llm_mini and complete.
     try:
         over_ceiling = await check_ceiling(lesson_id)
     except Exception:  # noqa: BLE001
         logger.warning(
-            "[%s] slide_generator_node: check_ceiling() failed — failing open "
-            "(assuming not over ceiling)",
+            "[%s] slide_generator_node: check_ceiling() failed — downshifting by "
+            "default (assuming over ceiling) to protect the cost budget",
             lesson_id, exc_info=True,
         )
-        over_ceiling = False
+        over_ceiling = True
     if over_ceiling:
         logger.warning(
             "[%s] slide_generator_node: cost ceiling reached, downshifting %s -> %s",
@@ -2543,7 +2546,11 @@ _AZURE_TTS_COST_PER_CHAR = 0.000016
 # Supabase Storage path (f"{lesson_id}/{segment_id}.mp3") — restrict it to
 # safe path-component characters so a malformed/adversarial segment_id can
 # never traverse outside the intended {lesson_id}/ prefix.
-_SAFE_SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# 2026-07-20 review finding (Blind Hunter): `$` matches just before a trailing
+# newline, so `.match()` on e.g. "section_0_Intro\n" (a title-derived id) would
+# accept an id with an embedded newline and build a malformed Storage key. `\Z`
+# anchors the true end of string, rejecting any trailing newline.
+_SAFE_SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 
 
 async def _synthesize_with_fallback(
@@ -2616,6 +2623,14 @@ async def tts_node(state: PipelineState) -> PipelineState:
     lesson_id = state["lesson_id"]
     narration_scripts = state.get("narration_scripts", [])
     logger.info("[%s] tts_node: synthesising %d narrations", lesson_id, len(narration_scripts))
+
+    # 2026-07-20 review finding (Blind Hunter): lesson_id is used to build a
+    # Storage path (f"{lesson_id}/{segment_id}.mp3") but was unguarded here,
+    # unlike image_generator_node which already validates it. Add the same
+    # defense-in-depth guard for parity — an unsafe lesson_id must never reach
+    # a Storage key.
+    if not _SAFE_SEGMENT_ID_RE.match(lesson_id):
+        raise RuntimeError(f"tts_node: unsafe lesson_id for storage path: {lesson_id!r}")
 
     supabase = get_supabase()
 
