@@ -266,10 +266,9 @@ async def test_posthog_quiz_event_fired():
             supabase=supabase,
         )
     mock_capture.assert_called_once()
-    pos_args = mock_capture.call_args[0]
-    assert pos_args[0] == USER_ID, "distinct_id must be user_id"
-    assert pos_args[1] == "assessment_quiz_submitted"
-    props = pos_args[2]
+    assert mock_capture.call_args.args[0] == "assessment_quiz_submitted"
+    assert mock_capture.call_args.kwargs["distinct_id"] == USER_ID, "distinct_id must be user_id"
+    props = mock_capture.call_args.kwargs["properties"]
     assert props["session_id"] == SESSION_ID
     assert props["segment_id"] == SEGMENT_ID  # AC 13
     assert "ces_contribution" in props
@@ -310,10 +309,9 @@ async def test_posthog_teachback_event_fired():
                     supabase=supabase,
                 )
     mock_capture.assert_called_once()
-    pos_args = mock_capture.call_args[0]
-    assert pos_args[0] == USER_ID
-    assert pos_args[1] == "assessment_teachback_submitted"
-    props = pos_args[2]
+    assert mock_capture.call_args.args[0] == "assessment_teachback_submitted"
+    assert mock_capture.call_args.kwargs["distinct_id"] == USER_ID
+    props = mock_capture.call_args.kwargs["properties"]
     assert props["session_id"] == SESSION_ID
     assert props["segment_id"] == SEGMENT_ID  # AC 14
     assert props["score"] == 80
@@ -337,10 +335,11 @@ async def test_posthog_onboarding_event_fired():
                     supabase=supabase,
                 )
     mock_capture.assert_called_once()
-    pos_args = mock_capture.call_args[0]
-    assert pos_args[0] == USER_ID
-    assert pos_args[1] == "assessment_onboarding_completed"
-    assert pos_args[2]["session_count"] == 0  # BLOCKER-002 fix: verify the value, not just key
+    assert mock_capture.call_args.args[0] == "assessment_onboarding_completed"
+    assert mock_capture.call_args.kwargs["distinct_id"] == USER_ID
+    assert (
+        mock_capture.call_args.kwargs["properties"]["session_count"] == 0
+    )  # BLOCKER-002 fix: verify the value, not just key
 
 
 @pytest.mark.unit
@@ -376,10 +375,9 @@ def test_posthog_session_report_event_fired():
 
     assert response.status_code == 200
     mock_capture.assert_called_once()
-    pos_args = mock_capture.call_args[0]
-    assert pos_args[0] == USER_ID
-    assert pos_args[1] == "assessment_session_report_viewed"
-    assert pos_args[2] == {"session_id": SESSION_ID}
+    assert mock_capture.call_args.args[0] == "assessment_session_report_viewed"
+    assert mock_capture.call_args.kwargs["distinct_id"] == USER_ID
+    assert mock_capture.call_args.kwargs["properties"] == {"session_id": SESSION_ID}
 
 
 @pytest.mark.unit
@@ -404,10 +402,9 @@ def test_posthog_dna_viewed_event_fired():
 
     assert response.status_code == 200
     mock_capture.assert_called_once()
-    pos_args = mock_capture.call_args[0]
-    assert pos_args[0] == USER_ID
-    assert pos_args[1] == "assessment_dna_viewed"
-    assert pos_args[2]["session_count"] == 3
+    assert mock_capture.call_args.args[0] == "assessment_dna_viewed"
+    assert mock_capture.call_args.kwargs["distinct_id"] == USER_ID
+    assert mock_capture.call_args.kwargs["properties"]["session_count"] == 3
 
 
 @pytest.mark.unit

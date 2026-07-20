@@ -116,7 +116,7 @@ async def record_failure(provider: str) -> None:
             sentry_sdk.capture_message(
                 f"Circuit breaker OPENED for AI provider '{provider}'",
                 level="error",
-                extras={  # type: ignore[call-arg]
+                extras={
                     "provider": provider,
                     "failures": failures,
                     "threshold": FAILURE_THRESHOLD,

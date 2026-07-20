@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from langfuse import Langfuse
 from openai import AsyncOpenAI
 
 from app.config import get_settings
@@ -48,6 +49,7 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         self._model = settings.embedding_model
         # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to
         # no-tracing, never crash the provider mid-job.
+        self._langfuse: Langfuse | None
         try:
             self._langfuse = get_langfuse()
         except Exception:
@@ -83,9 +85,10 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         # Tracing is best-effort — the OpenAI call must never fail because of it.
         # self._langfuse is None when init failed (AC-3) — skip tracing entirely.
         generation = None
-        if self._langfuse is not None:
+        langfuse = self._langfuse
+        if langfuse is not None:
             generation = _safe_trace(
-                lambda: self._langfuse.start_observation(
+                lambda: langfuse.start_observation(
                     name="openai.embeddings",
                     as_type="generation",
                     model=self._model,

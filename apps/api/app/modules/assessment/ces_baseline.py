@@ -103,7 +103,7 @@ async def compute_and_store_ces_baseline(
             detail="Could not read session history.",
         ) from exc
 
-    rows: list[dict] = resp.data or []
+    rows: list[dict[str, Any]] = resp.data or []
 
     # Keep only rows where both fields are non-NULL and ces_final is finite.
     # PostgreSQL NUMERIC(5,2) cannot store NaN/Inf, but guard anyway for robustness.

@@ -123,13 +123,13 @@ def _get_docling_converter() -> Any:  # noqa: ANN401
     """
     global _docling_converter  # noqa: PLW0603
     if _docling_converter is None:
-        from docling.datamodel.base_models import (  # type: ignore[import-not-found]
+        from docling.datamodel.base_models import (
             InputFormat,
         )
-        from docling.datamodel.pipeline_options import (  # type: ignore[import-not-found]
+        from docling.datamodel.pipeline_options import (
             PdfPipelineOptions,
         )
-        from docling.document_converter import (  # type: ignore[import-not-found]
+        from docling.document_converter import (
             DocumentConverter,
             PdfFormatOption,
         )
@@ -143,7 +143,7 @@ def _get_docling_converter() -> Any:  # noqa: ANN401
 
 def _build_sub_pdf(pdf_doc: Any, start: int, end: int, sub_path: str) -> None:  # noqa: ANN401
     """Write pages ``start..end`` (inclusive) of *pdf_doc* to *sub_path*."""
-    import pypdfium2 as pdfium  # type: ignore[import-not-found]
+    import pypdfium2 as pdfium
 
     sub = pdfium.PdfDocument.new()
     try:
@@ -212,7 +212,7 @@ def _append_fallback_tables(pdf_path: str, table_idxs: list[int], page_texts: li
     if not table_idxs:
         return
     try:
-        import pdfplumber  # type: ignore[import-not-found]
+        import pdfplumber
 
         with pdfplumber.open(pdf_path) as plumb_pdf:
             for idx in table_idxs:
@@ -294,7 +294,7 @@ def _convert_table_runs(
 def _ocr_page_text(pdfium_page: Any, img_dir: str, page_num: int) -> str:  # noqa: ANN401
     """Render a pypdfium2 page at 300 DPI and run Tesseract OCR on it."""
     try:
-        import pytesseract  # type: ignore[import-not-found]
+        import pytesseract
 
         bitmap = pdfium_page.render(scale=300 / 72)
         pil_img = bitmap.to_pil()
@@ -386,7 +386,7 @@ def _extract_font_blocks(pdf_path: str) -> list[dict[str, Any]]:
     detection to infer heading hierarchy from font name, size, and bold flag.
     """
     try:
-        from pdftext.extraction import dictionary_output  # type: ignore[import-not-found]
+        from pdftext.extraction import dictionary_output
 
         pages_data: list[dict[str, Any]] = dictionary_output(pdf_path)
         font_blocks: list[dict[str, Any]] = []
@@ -443,8 +443,8 @@ def extract_pdf(pdf_path: str, img_dir: str, ocr_threshold: int) -> dict[str, An
         ``{"raw_text": str, "page_count": int, "image_files": list,
         "font_blocks": list, "tables_detected": int, "docling_pages": list}``
     """
-    import pdfplumber  # type: ignore[import-not-found]
-    import pypdfium2 as pdfium  # type: ignore[import-not-found]
+    import pdfplumber
+    import pypdfium2 as pdfium
 
     page_texts: list[str] = []
     image_files: list[dict[str, Any]] = []

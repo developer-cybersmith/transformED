@@ -26,7 +26,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
-from app.core.db import get_supabase
+from app.core.db import get_supabase, rows, single_row
 from app.core.rate_limit import _get_user_key, limiter
 from app.dependencies import ArqRedis, CurrentUser
 
@@ -182,9 +182,10 @@ async def upload_lesson(
             )
             .execute()
         )
-        if not books_resp.data:
+        books_rows = rows(books_resp)
+        if not books_rows:
             raise RuntimeError("books insert returned no rows")
-        book_id = books_resp.data[0]["book_id"]
+        book_id = books_rows[0]["book_id"]
 
         # ── 2. lessons row ────────────────────────────────────────────────────
         lessons_resp = (
@@ -199,9 +200,10 @@ async def upload_lesson(
             )
             .execute()
         )
-        if not lessons_resp.data:
+        lessons_rows = rows(lessons_resp)
+        if not lessons_rows:
             raise RuntimeError("lessons insert returned no rows")
-        lesson_id = lessons_resp.data[0]["lesson_id"]
+        lesson_id = lessons_rows[0]["lesson_id"]
 
         # ── 3. Storage upload ─────────────────────────────────────────────────
         storage_path = f"{user_id}/{book_id}/{safe_filename}"
@@ -299,7 +301,7 @@ async def get_lesson(
     lesson_resp = (
         supabase.table("lessons").select("*").eq("lesson_id", lesson_id).maybe_single().execute()
     )
-    lesson: dict[str, Any] | None = lesson_resp.data
+    lesson: dict[str, Any] | None = single_row(lesson_resp)
 
     if not lesson or lesson.get("user_id") != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
@@ -315,8 +317,9 @@ async def get_lesson(
             .limit(1)
             .execute()
         )
-        if jobs_resp.data:
-            error = jobs_resp.data[0].get("error")
+        jobs_rows = rows(jobs_resp)
+        if jobs_rows:
+            error = jobs_rows[0].get("error")
 
     return _row_to_status_response(lesson, error=error)
 
@@ -343,5 +346,5 @@ async def list_lessons(
         .range(offset, offset + limit - 1)
         .execute()
     )
-    rows: list[dict[str, Any]] = resp.data or []
-    return [_row_to_status_response(row) for row in rows]
+    lesson_rows = rows(resp)
+    return [_row_to_status_response(row) for row in lesson_rows]
