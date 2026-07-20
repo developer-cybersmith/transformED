@@ -82,6 +82,30 @@ def _score_to_label(score: float) -> str:
     return "Beginning"
 
 
+# Story 3-29 — tier-context constants and helpers
+
+_TIER_LABELS: dict[str, str] = {
+    "T1": "Full-Depth",
+    "T2": "Standard",
+    "T3": "Refresher",
+}
+
+
+def _quiz_accuracy_label(accuracy: float, total: int) -> str | None:
+    """Map quiz accuracy to a descriptive label (no raw floats to students).
+
+    Returns None when total == 0 — cannot evaluate accuracy with zero questions.
+    Thresholds: Strong ≥80%, Developing ≥60%, Needs Review <60%.
+    """
+    if total == 0:
+        return None
+    if accuracy >= 0.8:
+        return "Strong"
+    if accuracy >= 0.6:
+        return "Developing"
+    return "Needs Review"
+
+
 async def grade_quiz(
     *,
     session_id: str,
@@ -558,8 +582,8 @@ async def get_session_report(
 ) -> SessionReport:
     """Aggregate a completed session's assessment data into a SessionReport.
 
-    Reads from sessions, quiz_attempts, teachback_attempts, and session_events.
-    No LLM calls — pure DB aggregation and arithmetic.
+    Reads from sessions, lessons (tier), quiz_attempts, teachback_attempts,
+    and session_events. No LLM calls — pure DB aggregation and arithmetic.
 
     Args:
         session_id: UUID of the session to report on.
@@ -568,7 +592,7 @@ async def get_session_report(
 
     Returns:
         SessionReport with ces_score, ces_breakdown, quiz_score, teachback_score,
-        interventions_count, duration_minutes, completed_at.
+        interventions_count, duration_minutes, completed_at, tier context fields.
 
     Raises:
         HTTPException 404: Session not found.
@@ -601,6 +625,23 @@ async def get_session_report(
         )
 
     row = session_resp.data
+
+    # Step 1b — Fetch lesson tier for contextualised report (Story 3-29)
+    _lesson_id = str(row.get("lesson_id") or "")
+    tier = "T2"  # safe default — matches lessons.tier DEFAULT 'T2'
+    if _lesson_id:
+        _tier_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("lessons")
+                .select("tier")
+                .eq("lesson_id", _lesson_id)
+                .maybe_single()
+                .execute()
+            )
+        )
+        if _tier_resp.data and _tier_resp.data.get("tier") in _TIER_LABELS:
+            tier = _tier_resp.data["tier"]
+    tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
     quiz_resp = await asyncio.to_thread(
@@ -710,6 +751,12 @@ async def get_session_report(
         teachback_score=teachback_score,
         duration_minutes=duration_minutes,
         completed_at=completed_at,
+        # Story 3-29 tier-context fields
+        tier=tier,
+        tier_label=tier_label,
+        quiz_total_questions=total_quiz,
+        quiz_correct_count=correct_count,
+        quiz_accuracy_label=_quiz_accuracy_label(quiz_accuracy, total_quiz),
     )
 
 

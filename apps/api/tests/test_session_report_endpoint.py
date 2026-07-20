@@ -4,7 +4,7 @@ All tests are @pytest.mark.unit — no real Supabase connection required.
 asyncio.to_thread is shimmed to run synchronously so MagicMock chain works correctly.
 
 Covers:
-  - AC 1: HTTP 200 + all 9 fields present
+  - AC 1: HTTP 200 + all fields present (Story 3-24 + Story 3-29 new fields)
   - AC 2: SEC-006 (wrong-user → 404, not 403)
   - AC 3: Non-existent session → 404
   - AC 4: ces_score from sessions.ces_final (including NULL → 0.0)
@@ -18,9 +18,14 @@ Covers:
   - AC 12: duration_minutes from timestamps
   - AC 13: completed_at as ISO string or None
   - AC 14: No LLM calls
-  - AC 15: asyncio.to_thread used (mock_to_thread fixture required)
+  - AC 15: asyncio.to_thread used (5 calls — mock_to_thread fixture required)
   - AC 16: Unauthenticated → HTTP 401
   - AC 17: user_id and lesson_id come from DB row, not JWT
+  Story 3-29 tier-context tests (ACs 1-5, 8):
+  - tier/tier_label from lessons.tier (T1/T2/T3)
+  - quiz_total_questions, quiz_correct_count from existing quiz_attempts data
+  - quiz_accuracy_label: Strong/Developing/Needs Review/None
+  - Unknown tier or missing lesson row → graceful T2 default
 """
 
 from __future__ import annotations
@@ -83,12 +88,16 @@ _TEACHBACK_ROWS = [
 
 _INTERVENTION_COUNT = 2
 
+# Sentinel — distinct from None so callers can pass tier_data=None to mean "no lesson row found"
+_NO_TIER_ROW = object()
+
 
 # ── Mock builder ──────────────────────────────────────────────────────────────
 
 
 def _build_report_supabase(
     session_data=_SESSION_ROW,
+    tier_data=_NO_TIER_ROW,
     quiz_rows=None,
     tb_rows=None,
     intervention_count=0,
@@ -96,11 +105,17 @@ def _build_report_supabase(
     """Build a mock Supabase client for get_session_report.
 
     Table call order (must match service implementation exactly):
-      1. sessions   — .maybe_single() → session_data
-      2. quiz_attempts   — .execute() → data list
-      3. teachback_attempts — .execute() → data list
-      4. session_events — count query → .count
+      1. sessions        — .maybe_single() → session_data
+      2. lessons         — .maybe_single() → tier_data   (Story 3-29)
+      3. quiz_attempts   — .execute()      → data list
+      4. teachback_attempts — .execute()   → data list
+      5. session_events  — count query     → .count
+
+    tier_data default (_NO_TIER_ROW sentinel) → {"tier": "T2"}.
+    Pass tier_data=None explicitly to simulate a missing lessons row.
     """
+    if tier_data is _NO_TIER_ROW:
+        tier_data = {"tier": "T2"}  # matches lessons.tier DEFAULT 'T2'
     if quiz_rows is None:
         quiz_rows = []
     if tb_rows is None:
@@ -120,13 +135,16 @@ def _build_report_supabase(
             m_exec = m.select.return_value.eq.return_value.maybe_single.return_value.execute
             m_exec.return_value.data = session_data
         elif n == 2:
-            # quiz_attempts — list
-            m.select.return_value.eq.return_value.execute.return_value.data = quiz_rows
+            # lessons — maybe_single (Story 3-29 — tier fetch)
+            m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = tier_data
         elif n == 3:
-            # teachback_attempts — list
-            m.select.return_value.eq.return_value.execute.return_value.data = tb_rows
+            # quiz_attempts — list (was n==2)
+            m.select.return_value.eq.return_value.execute.return_value.data = quiz_rows
         elif n == 4:
-            # session_events — count (two .eq() filters: session_id, event_type)
+            # teachback_attempts — list (was n==3)
+            m.select.return_value.eq.return_value.execute.return_value.data = tb_rows
+        elif n == 5:
+            # session_events — count (two .eq() filters: session_id, event_type) (was n==4)
             m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = (
                 intervention_count
             )
@@ -211,6 +229,10 @@ async def test_get_report_wrong_user_returns_404(mock_to_thread):
     assert exc_info.value.status_code == 404
     # SEC-006: detail must be identical to the nonexistent-session path (no ownership leak)
     assert exc_info.value.detail == "Session not found."
+    # AC 9 (SEC-006): lessons table must NOT be queried — ownership check fires before Step 1b
+    assert len(supabase._captured_mocks) == 1, (
+        "lessons table must not be queried when ownership check fails (only sessions was called)"
+    )
 
 
 @pytest.mark.unit
@@ -410,7 +432,7 @@ async def test_get_report_interventions_count_from_session_events(mock_to_thread
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.interventions_count == 3
     # Verify the event_type='intervention_triggered' filter was actually passed to the query
-    events_mock = supabase._captured_mocks[4]
+    events_mock = supabase._captured_mocks[5]
     second_eq = events_mock.select.return_value.eq.return_value.eq
     second_eq.assert_called_once_with("event_type", "intervention_triggered")
 
@@ -573,8 +595,8 @@ async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_asyncio_to_thread_called_4_times():
-    """AC 15: get_session_report wraps all 4 DB calls in asyncio.to_thread."""
+async def test_get_report_asyncio_to_thread_called_5_times():
+    """AC 15: get_session_report wraps all 5 DB calls in asyncio.to_thread (Story 3-29 adds lessons tier fetch)."""
     from unittest.mock import patch
 
     from app.modules.assessment.service import get_session_report
@@ -597,7 +619,7 @@ async def test_get_report_asyncio_to_thread_called_4_times():
             supabase=supabase,
         )
 
-    assert len(call_log) == 4, f"Expected 4 asyncio.to_thread calls, got {len(call_log)}"
+    assert len(call_log) == 5, f"Expected 5 asyncio.to_thread calls, got {len(call_log)}"
 
 
 # ── HTTP-layer tests ──────────────────────────────────────────────────────────
@@ -643,6 +665,12 @@ def test_http_get_report_returns_200():
         "teachback_score",
         "duration_minutes",
         "completed_at",
+        # Story 3-29 tier-context fields
+        "tier",
+        "tier_label",
+        "quiz_total_questions",
+        "quiz_correct_count",
+        "quiz_accuracy_label",
     }
     assert required_keys.issubset(body.keys())
 
@@ -657,3 +685,150 @@ def test_http_get_report_unauthenticated_returns_401():
     """
     resp = _unauth_client.get(f"/api/assessment/session/{_SESSION_ID}/report")
     assert resp.status_code in (401, 403)
+
+
+# ── Story 3-29: Session Report Tier Context ───────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_tier_t1_returns_full_depth_label(mock_to_thread):
+    """AC 1+2: lessons.tier='T1' → tier='T1', tier_label='Full-Depth' in report."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "T1"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T1"
+    assert result.tier_label == "Full-Depth"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_tier_t2_returns_standard_label(mock_to_thread):
+    """AC 1+2: lessons.tier='T2' → tier='T2', tier_label='Standard' in report."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "T2"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T2"
+    assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_tier_t3_returns_refresher_label(mock_to_thread):
+    """AC 1+2: lessons.tier='T3' → tier='T3', tier_label='Refresher' in report."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "T3"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T3"
+    assert result.tier_label == "Refresher"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_total_questions_and_correct_count(mock_to_thread):
+    """AC 3+4: quiz_total_questions = len(attempts), quiz_correct_count = sum(is_correct)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_total_questions == 3
+    assert result.quiz_correct_count == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_strong(mock_to_thread):
+    """AC 5: 4/4 correct (100%) → quiz_accuracy_label='Strong' (≥80% threshold)."""
+    from app.modules.assessment.service import get_session_report
+
+    all_correct = [{"is_correct": True}] * 4
+    supabase = _build_report_supabase(quiz_rows=all_correct)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Strong"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_developing(mock_to_thread):
+    """AC 5: 2/3 correct (66.67%) → quiz_accuracy_label='Developing' (60-79% range)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Developing"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_needs_review(mock_to_thread):
+    """AC 5: 1/3 correct (33.33%) → quiz_accuracy_label='Needs Review' (<60% threshold)."""
+    from app.modules.assessment.service import get_session_report
+
+    rows = [{"is_correct": True}, {"is_correct": False}, {"is_correct": False}]
+    supabase = _build_report_supabase(quiz_rows=rows)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Needs Review"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_none_when_no_questions(mock_to_thread):
+    """AC 5: 0 quiz attempts → quiz_accuracy_label=None (cannot evaluate accuracy)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(quiz_rows=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label is None
+    assert result.quiz_total_questions == 0
+    assert result.quiz_correct_count == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_unknown_tier_defaults_to_t2(mock_to_thread):
+    """AC 8: lessons.tier='TX' (not in T1/T2/T3) → tier='T2', tier_label='Standard'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "TX"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T2"
+    assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_missing_lesson_row_defaults_to_t2(mock_to_thread):
+    """AC 8: lessons row absent (data=None) → tier='T2', tier_label='Standard' (safe default)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data=None)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T2"
+    assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_strong_at_exact_80_percent(mock_to_thread):
+    """AC 5: exactly 80% (4/5) → 'Strong' — verifies the ≥0.8 boundary is inclusive."""
+    from app.modules.assessment.service import get_session_report
+
+    rows = [{"is_correct": True}] * 4 + [{"is_correct": False}]  # 4/5 = 0.80 exactly
+    supabase = _build_report_supabase(quiz_rows=rows)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Strong"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_developing_at_exact_60_percent(mock_to_thread):
+    """AC 5: exactly 60% (3/5) → 'Developing' — verifies the ≥0.6 boundary is inclusive."""
+    from app.modules.assessment.service import get_session_report
+
+    rows = [{"is_correct": True}] * 3 + [{"is_correct": False}] * 2  # 3/5 = 0.60 exactly
+    supabase = _build_report_supabase(quiz_rows=rows)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Developing"

@@ -42,6 +42,12 @@ class SessionReport(BaseModel):
     teachback_score: float | None
     duration_minutes: float
     completed_at: str | None
+    # Story 3-29 — tier context fields (additive; existing fields unchanged)
+    tier: str
+    tier_label: str
+    quiz_total_questions: int
+    quiz_correct_count: int
+    quiz_accuracy_label: str | None
 
 
 class LearnerDNA(BaseModel):
