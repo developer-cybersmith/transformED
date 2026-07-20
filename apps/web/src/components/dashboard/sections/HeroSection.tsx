@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ArrowRight, UploadCloud, BookOpen } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
 
 export interface HeroSectionProps {
     continueLessonId?: string;
@@ -11,6 +12,11 @@ export interface HeroSectionProps {
 
 export function HeroSection({ continueLessonId }: HeroSectionProps) {
     const router = useRouter();
+    const { user } = useAuth();
+
+    // Extract first name (or part of email before @) to be friendly
+    const rawName = user?.full_name || user?.email?.split('@')[0] || "Guest";
+    const firstName = rawName.split(" ")[0];
 
     return (
         <motion.section
@@ -35,8 +41,8 @@ export function HeroSection({ continueLessonId }: HeroSectionProps) {
                         Optimal Learning State
                     </div>
 
-                    <h1 className="font-serif text-3xl lg:text-4xl font-semibold tracking-tight text-neutral-900 mb-3">
-                        Good evening, Robert 👋
+                    <h1 className="font-serif text-3xl lg:text-4xl font-semibold tracking-tight text-neutral-900 mb-3 capitalize">
+                        Good evening, {firstName} 👋
                     </h1>
 
                     <p className="text-neutral-500 max-w-md leading-relaxed mb-8">

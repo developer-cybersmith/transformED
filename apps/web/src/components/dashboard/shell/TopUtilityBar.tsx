@@ -31,17 +31,28 @@ export function TopUtilityBar() {
         <header className="flex-shrink-0 h-24 px-8 lg:px-12 flex items-center justify-between relative z-40">
 
             {/* Search Widget */}
-            <div className="flex-1 max-w-sm hidden md:flex">
+            <div className="flex-1 max-w-md hidden md:flex">
                 <div className="relative w-full group">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <Search className="h-4 w-4 text-neutral-400 group-focus-within:text-[var(--accent-primary)] transition-colors" />
+                    <div className="absolute -inset-0.5 bg-gradient-to-r from-[var(--accent-primary)]/20 to-[var(--accent-secondary)]/20 rounded-[1.15rem] blur opacity-0 group-focus-within:opacity-100 transition duration-500" />
+                    <div className="relative flex items-center w-full bg-white/70 backdrop-blur-xl border border-white rounded-[1.15rem] shadow-[0_4px_15px_-4px_rgba(0,0,0,0.05),0_0_0_1px_rgba(200,205,210,0.3)] group-focus-within:bg-white group-focus-within:shadow-[0_8px_30px_rgba(7,23,44,0.06),0_0_0_1px_rgba(7,23,44,0.1)] transition-all duration-300">
+                        <div className="pl-4 pr-3 flex items-center pointer-events-none">
+                            <Search className="h-4 w-4 text-neutral-400 group-focus-within:text-[var(--accent-primary)] transition-colors duration-300" />
+                        </div>
+                        <input
+                            suppressHydrationWarning
+                            type="text"
+                            className="block w-full py-2.5 px-0 bg-transparent border-0 text-[14px] placeholder:text-neutral-400/80 focus:ring-0 outline-none text-neutral-800 placeholder:font-light"
+                            placeholder="Find lessons, concepts, insights..."
+                        />
+                        <div className="pr-3 flex items-center gap-1 opacity-70 group-focus-within:opacity-100 transition-opacity">
+                            <kbd className="hidden sm:inline-flex items-center justify-center min-w-[24px] h-6 px-1.5 bg-neutral-100/80 border border-neutral-200/60 rounded text-[11px] font-sans font-medium text-neutral-500 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
+                                ⌘
+                            </kbd>
+                            <kbd className="hidden sm:inline-flex items-center justify-center min-w-[24px] h-6 px-1.5 bg-neutral-100/80 border border-neutral-200/60 rounded text-[11px] font-sans font-medium text-neutral-500 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
+                                K
+                            </kbd>
+                        </div>
                     </div>
-                    <input
-                        suppressHydrationWarning
-                        type="text"
-                        className="block w-full pl-11 pr-4 py-2.5 rounded-2xl border-0 bg-white/60 backdrop-blur-md shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] text-sm placeholder:text-neutral-400 focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:bg-white transition-all duration-300 placeholder:font-light text-neutral-800"
-                        placeholder="Search lessons, concepts..."
-                    />
                 </div>
             </div>
 
