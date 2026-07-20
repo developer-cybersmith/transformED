@@ -643,3 +643,213 @@ async def test_all_questions_carry_correct_segment_id() -> None:
 
     for entry in result["quiz_questions"]:
         assert entry["segment_id"] == section_id
+
+
+# ---------------------------------------------------------------------------
+# P1 patch: prompt system message contains tier-specific n_min/n_max values
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_t1_prompt_contains_tier_specific_n_min_n_max() -> None:
+    """P1 patch: system message must contain 'Write 3 to 5' for T1 tier."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    batch = _make_batch(_make_q(), _make_q(question="Q2?"), _make_q(question="Q3?"))
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        await quiz_generator_node(_state(tier="T1"))
+
+    call_args = mock_provider.complete_structured.call_args
+    messages, *_ = call_args.args
+    system_content = messages[0]["content"]
+    assert "Write 3 to 5" in system_content, (
+        f"T1 system prompt must contain 'Write 3 to 5', got: {system_content!r}"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_t2_prompt_contains_tier_specific_n_min_n_max() -> None:
+    """P1 patch: system message must contain 'Write 2 to 3' for T2 tier."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    batch = _make_batch(_make_q(), _make_q(question="Q2?"))
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        await quiz_generator_node(_state(tier="T2"))
+
+    call_args = mock_provider.complete_structured.call_args
+    messages, *_ = call_args.args
+    system_content = messages[0]["content"]
+    assert "Write 2 to 3" in system_content, (
+        f"T2 system prompt must contain 'Write 2 to 3', got: {system_content!r}"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_t3_prompt_contains_tier_specific_n_min_n_max() -> None:
+    """P1 patch: system message must contain 'Write 1 to 2' for T3 tier."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    batch = _make_batch(_make_q(question="Q1?"))
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        await quiz_generator_node(_state(tier="T3"))
+
+    call_args = mock_provider.complete_structured.call_args
+    messages, *_ = call_args.args
+    system_content = messages[0]["content"]
+    assert "Write 1 to 2" in system_content, (
+        f"T3 system prompt must contain 'Write 1 to 2', got: {system_content!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P2 patch: n_max truncation — LLM over-supplying questions is capped at n_max
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_t1_nmax_truncation_discards_extra_questions() -> None:
+    """P2 patch: T1 n_max=5; LLM returning 6 valid questions → only 5 kept."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    batch = _make_batch(*[_make_q(question=f"Q{i}?") for i in range(6)])
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        result = await quiz_generator_node(_state(tier="T1"))
+
+    assert len(result["quiz_questions"]) == 5, (
+        f"T1 n_max=5; 6 input questions should be truncated to 5, got {len(result['quiz_questions'])}"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_t2_nmax_truncation_discards_extra_questions() -> None:
+    """P2 patch: T2 n_max=3; LLM returning 4 valid questions → only 3 kept."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    batch = _make_batch(*[_make_q(question=f"Q{i}?") for i in range(4)])
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        result = await quiz_generator_node(_state(tier="T2"))
+
+    assert len(result["quiz_questions"]) == 3, (
+        f"T2 n_max=3; 4 input questions should be truncated to 3, got {len(result['quiz_questions'])}"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_t3_nmax_truncation_discards_extra_questions() -> None:
+    """P2 patch: T3 n_max=2; LLM returning 3 valid questions → only 2 kept."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    batch = _make_batch(_make_q(), _make_q(question="Q2?"), _make_q(question="Q3?"))
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        result = await quiz_generator_node(_state(tier="T3"))
+
+    assert len(result["quiz_questions"]) == 2, (
+        f"T3 n_max=2; 3 input questions should be truncated to 2, got {len(result['quiz_questions'])}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P3 patch: AC-6 blank explanation guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_question_with_blank_explanation_is_rejected_from_batch() -> None:
+    """P3 patch (AC 6): blank explanation text rejects that question; others kept."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    good = _make_q(question="Good?")
+    bad = _make_q(question="Blank explanation?", explanation="   ")
+    batch = _make_batch(good, bad)
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        result = await quiz_generator_node(_state(tier="T2"))
+
+    assert len(result["quiz_questions"]) == 1
+    assert result["quiz_questions"][0]["data"]["question"] == "Good?"
+
+
+# ---------------------------------------------------------------------------
+# P4 patch: AC-6 correct_index=4 after 5→4 option truncation is rejected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_correct_index_invalidated_by_option_truncation_is_rejected() -> None:
+    """P4 patch (AC 6): 5 options + correct_index=4 → truncate to 4 → index out of range → rejected.
+
+    This tests the guard ordering: truncation (line 1929) before range check (line 1939).
+    If order were swapped, correct_index=4 would pass the pre-truncation check and a
+    dangling index would be written to the output.
+    """
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    q = _make_q(
+        question="5opt correct at last?",
+        options=["A", "B", "C", "D", "E"],
+        correct_index=4,
+    )
+    batch = _make_batch(q)
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        result = await quiz_generator_node(_state(tier="T3"))
+
+    assert result["quiz_questions"] == [], (
+        "A question with 5 options and correct_index=4 must be rejected after "
+        "truncation to 4 options makes the index out of range."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P5 patch: AC-6 difficulty clamping to "medium"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_invalid_difficulty_is_clamped_to_medium() -> None:
+    """P5 patch (AC 6): difficulty not in ('easy','medium','hard') is clamped to 'medium'."""
+    from app.modules.content.pipeline.graph import quiz_generator_node
+
+    q = _make_q(question="What is the capital?", difficulty="genius")
+    batch = _make_batch(q)
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = batch
+
+    with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+        result = await quiz_generator_node(_state(tier="T3"))
+
+    assert len(result["quiz_questions"]) == 1
+    assert result["quiz_questions"][0]["data"]["difficulty"] == "medium", (
+        "An invalid difficulty value must be clamped to 'medium', not passed through."
+    )

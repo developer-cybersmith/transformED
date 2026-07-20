@@ -2,7 +2,7 @@
 story_id: "3-28"
 epic: "3"
 title: "Tier-Aware Quiz Question Count in quiz_generator_node"
-status: "review"
+status: "done"
 branch: "learner-mode-sprint-dev3-task1"
 baseline_commit: "efc5a4a96607b288d0d607172a5e1b04d0502fe5"
 ---
@@ -240,8 +240,27 @@ All 15 ACs satisfied. 25 new tests in `test_quiz_generator_tier.py` all pass. 8 
 ### Change Log
 - 2026-07-20: Story 3-28 created — Learner Mode Sprint Task 1, tier-aware quiz question count
 - 2026-07-20: Implementation complete — all tasks done, all tests green, status → review
+- 2026-07-20: 5-agent code review complete — 5 patch findings resolved, 7 deferred, 4 dismissed; 9 new tests added (34 total); status → done
 
 ---
 
 ## Senior Developer Review (AI)
-(to be filled after `/bmad-code-review` — 5 required agent layers)
+
+**Review date:** 2026-07-20
+**Layers run:** Story Quality · Blind Hunter · Edge Case Hunter · Acceptance Auditor · Process Integrity
+**Outcome:** Changes Requested — 5 patch findings
+
+### Review Findings
+
+- [x] [Review][Patch] P1 — Prompt n_min/n_max values never asserted in system message [graph.py:1895] — fixed 2026-07-20: 3 tests added asserting system message contains "Write N to M" per tier
+- [x] [Review][Patch] P2 — n_max truncation upper-bound never exercised [graph.py:1919] — fixed 2026-07-20: 3 tests added (T1: 6→5, T2: 4→3, T3: 3→2)
+- [x] [Review][Patch] P3 — AC-6: blank explanation guard untested [graph.py:1948] — fixed 2026-07-20: test_question_with_blank_explanation_is_rejected_from_batch added
+- [x] [Review][Patch] P4 — AC-6: correct_index=4 after 5→4 truncation interaction untested [graph.py:1929,1939] — fixed 2026-07-20: test_correct_index_invalidated_by_option_truncation_is_rejected added
+- [x] [Review][Patch] P5 — AC-6: difficulty clamping to "medium" never tested [graph.py:1969] — fixed 2026-07-20: test_invalid_difficulty_is_clamped_to_medium added
+- [x] [Review][Defer] D1 — Prompt injection via untrusted body in user role [graph.py:1895] — deferred, pre-existing (all 6 economy nodes share this pattern; _UNTRUSTED_CONTENT_GUARD is documented mitigation)
+- [x] [Review][Defer] D2 — Cached checkpoint bypasses Pydantic re-validation [graph.py:1881] — deferred, pre-existing pattern for all economy node checkpoint reads
+- [x] [Review][Defer] D3 — section_id special chars in question_id [graph.py:1504] — deferred, pre-existing from Story 2-1 _derive_section_id
+- [x] [Review][Defer] D4 — No body size cap before LLM call [graph.py:1895] — deferred, pre-existing across all 6 economy nodes
+- [x] [Review][Defer] D5 — AC-9 old-shape cache-miss integration path not end-to-end tested — deferred, story explicitly documents unit-test approach; sufficient coverage
+- [x] [Review][Defer] D6 — AC-11 _group_by_segment_id multi-accumulation waived — deferred, explicit story waiver; implementation trivially correct
+- [x] [Review][Defer] D7 — _TIER_QUIZ_COUNT_BAND not typed Final — deferred, matches _TIER_TOTAL_SLIDE_BAND pattern; coordinated fix needed for both constants
