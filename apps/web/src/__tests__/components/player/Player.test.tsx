@@ -4,6 +4,14 @@ import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
+const { useLessonSocketMock } = vi.hoisted(() => ({
+  useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
+}));
+
+vi.mock('@/hooks/useLessonSocket', () => ({
+  useLessonSocket: useLessonSocketMock,
+}));
+
 const originalPlay = window.HTMLMediaElement.prototype.play;
 const originalPause = window.HTMLMediaElement.prototype.pause;
 
@@ -11,6 +19,7 @@ beforeEach(() => {
   window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
   window.HTMLMediaElement.prototype.pause = vi.fn();
   localStorage.clear();
+  useLessonSocketMock.mockClear();
 });
 
 afterEach(() => {
@@ -77,5 +86,23 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
     render(<Player lesson={mockLessonPackage} />);
 
     expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+  });
+});
+
+describe('Player — lesson WebSocket (S2-06)', () => {
+  it('mounts useLessonSocket with the store sessionId, so the socket actually connects during a real session', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    expect(useLessonSocketMock).toHaveBeenCalledWith(usePlayerStore.getState().sessionId);
+  });
+
+  it('mounts CheckingInTransition — it becomes visible when tutorState is CHECKING_IN', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ tutorState: 'CHECKING_IN' });
+    });
+
+    expect(screen.queryByText(/checking in/i)).not.toBeNull();
   });
 });

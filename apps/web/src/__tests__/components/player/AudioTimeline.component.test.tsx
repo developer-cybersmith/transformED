@@ -16,6 +16,7 @@ beforeEach(() => {
   window.HTMLMediaElement.prototype.pause = pauseMock;
 
   usePlayerStore.getState().loadLesson(mockLessonPackage);
+  usePlayerStore.setState({ wsSendControl: null });
 });
 
 afterEach(() => {
@@ -96,5 +97,57 @@ describe('AudioTimeline — segment replay does not freeze playback', () => {
 
     expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
     expect(usePlayerStore.getState().status).toBe('QUIZ');
+  });
+});
+
+describe('AudioTimeline — handleEnded sends segment_complete (S2-06 AC2/AC6)', () => {
+  it('non-last segment, quiz not yet fired: sends segment_complete and sets tutorState CHECKING_IN', () => {
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(sendControl).toHaveBeenCalledTimes(1);
+    expect(sendControl).toHaveBeenCalledWith({ type: 'segment_complete' });
+    expect(usePlayerStore.getState().tutorState).toBe('CHECKING_IN');
+  });
+
+  it('last segment, quiz not yet fired: sends segment_complete and sets tutorState CHECKING_IN', () => {
+    const sendControl = vi.fn();
+    const lastIndex = mockLessonPackage.segments.length - 1;
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: lastIndex,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(sendControl).toHaveBeenCalledTimes(1);
+    expect(sendControl).toHaveBeenCalledWith({ type: 'segment_complete' });
+    expect(usePlayerStore.getState().tutorState).toBe('CHECKING_IN');
+  });
+
+  it('does NOT send segment_complete again when replaying an already-quizzed segment (advanceSegment branch)', () => {
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(['seg_0']),
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(sendControl).not.toHaveBeenCalled();
   });
 });

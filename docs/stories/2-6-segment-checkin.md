@@ -4,7 +4,7 @@ baseline_commit: "131ff6a153ebe1284ceeda4f4900711c63219da2"
 
 # Story 2-6: Segment-End Detection → CHECKING_IN State
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -29,33 +29,33 @@ so that my progress is tracked server-side for the tutor state machine (CLAUDE.m
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Extend `player.machine.ts` — expose a WS-send hook, keep `tutorState` accurate across segments (AC: 6, 7, 10)
-  - [ ] 1.1 Add `wsSendControl: ((msg: LocalControlOut) => void) | null` field (default `null`) and a `setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void` action to `PlayerStore`. Import `LocalControlOut` from `@/lib/ws/wireTypes` (type-only import — no runtime coupling issue, `wireTypes.ts` only imports from `@hie/shared/types/ws`)
-  - [ ] 1.2 In `exitTeachBack()`, in **both** branches (the `advanceSegment()` branch and the last-segment "resume playback" branch), also set `tutorState: 'TEACHING'` alongside the existing `status: 'PLAYING'` — do this in the single `set({...})` call already there, not a second `set()`
-  - [ ] 1.3 Do NOT touch `loadLesson()`'s existing `tutorState: 'IDLE'` reset — correct as-is (a fresh session hasn't reached TEACHING yet; that transition arrives via the real `state_change` echo after `session_start`, already handled by `useLessonSocket`)
+- [x] Task 1: Extend `player.machine.ts` — expose a WS-send hook, keep `tutorState` accurate across segments (AC: 6, 7, 10)
+  - [x] 1.1 Add `wsSendControl: ((msg: LocalControlOut) => void) | null` field (default `null`) and a `setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void` action to `PlayerStore`. Import `LocalControlOut` from `@/lib/ws/wireTypes` (type-only import — no runtime coupling issue, `wireTypes.ts` only imports from `@hie/shared/types/ws`)
+  - [x] 1.2 In `exitTeachBack()`, in **both** branches (the `advanceSegment()` branch and the last-segment "resume playback" branch), also set `tutorState: 'TEACHING'` alongside the existing `status: 'PLAYING'` — do this in the single `set({...})` call already there, not a second `set()`
+  - [x] 1.3 Do NOT touch `loadLesson()`'s existing `tutorState: 'IDLE'` reset — correct as-is (a fresh session hasn't reached TEACHING yet; that transition arrives via the real `state_change` echo after `session_start`, already handled by `useLessonSocket`)
 
-- [ ] Task 2: Wire `useLessonSocket` to register `wsSendControl` into the store (AC: 1, 3, 12)
-  - [ ] 2.1 In `useLessonSocket.ts`, add `const sendControl = useCallback((msg: LocalControlOut) => { socketRef.current?.sendControl(msg); }, [])` — same pattern as the existing `sendAttentionSignal`
-  - [ ] 2.2 In the connect `useEffect`'s `init()`, immediately after `socketRef.current = socket; socket.connect(sid, token)`, call `usePlayerStore.getState().setWsSendControl((msg) => socketRef.current?.sendControl(msg))`. In the effect's cleanup function, alongside the existing `socketRef.current?.disconnect()`, call `usePlayerStore.getState().setWsSendControl(null)`
-  - [ ] 2.3 In `Player.tsx`, add `const sessionId = usePlayerStore((s) => s.sessionId);` (may already be selected — check) and call `useLessonSocket(sessionId || null);` near the top of the component body. Its returned `{status, sendAttentionSignal}` isn't needed by this story — call it for the side effect only (the mount + guarded-`!sessionId` behavior already exists in the hook)
+- [x] Task 2: Wire `useLessonSocket` to register `wsSendControl` into the store (AC: 1, 3, 12)
+  - [x] 2.1 In `useLessonSocket.ts`, add `const sendControl = useCallback((msg: LocalControlOut) => { socketRef.current?.sendControl(msg); }, [])` — same pattern as the existing `sendAttentionSignal` — **deviation:** implemented as an inline closure passed directly to `setWsSendControl` instead of a separately-named `useCallback` returned from the hook, since nothing consumes a hook-returned `sendControl` in this story (AudioTimeline reads `wsSendControl` off the store) — avoids adding an unused export
+  - [x] 2.2 In the connect `useEffect`'s `init()`, immediately after `socketRef.current = socket; socket.connect(sid, token)`, call `usePlayerStore.getState().setWsSendControl((msg) => socketRef.current?.sendControl(msg))`. In the effect's cleanup function, alongside the existing `socketRef.current?.disconnect()`, call `usePlayerStore.getState().setWsSendControl(null)`
+  - [x] 2.3 In `Player.tsx`, add `const sessionId = usePlayerStore((s) => s.sessionId);` (may already be selected — check) and call `useLessonSocket(sessionId || null);` near the top of the component body. Its returned `{status, sendAttentionSignal}` isn't needed by this story — call it for the side effect only (the mount + guarded-`!sessionId` behavior already exists in the hook)
 
-- [ ] Task 3: `AudioTimeline.tsx` — send `segment_complete` + optimistic `CHECKING_IN` at all 3 boundary call sites (AC: 2, 3, 4, 6)
-  - [ ] 3.1 In `processTimeUpdate`, in the existing `if (ms >= segmentEnd && !quizFiredForSegment.has(segment.segment_id))` branch, before calling `enterQuiz()`: call `usePlayerStore.getState().setTutorState('CHECKING_IN')`, then `usePlayerStore.getState().wsSendControl?.({ type: 'segment_complete' })`, then `enterQuiz()` last (so `enterQuiz()`'s own synchronous timing/behavior is provably unchanged — it's still the final statement in the branch)
-  - [ ] 3.2 Do the identical 3-line sequence in `handleEnded()`'s two `enterQuiz()` call sites (the last-segment "audio ended before boundary" branch, and the non-last-segment "boundary check should have caught it, fire now" branch). Do **not** add it to the third branch (`segment && quizFiredForSegment.has(segment.segment_id)` → `advanceSegment()`) — that segment already sent its `segment_complete` on first traversal
-  - [ ] 3.3 No try/catch needed — `wsSendControl` is nullable and called with `?.`; `LessonSocket.sendControl` itself already no-ops safely when the socket isn't open (existing behavior, see `lessonSocket.ts:143-147`)
+- [x] Task 3: `AudioTimeline.tsx` — send `segment_complete` + optimistic `CHECKING_IN` at all 3 boundary call sites (AC: 2, 3, 4, 6)
+  - [x] 3.1 In `processTimeUpdate`, in the existing `if (ms >= segmentEnd && !quizFiredForSegment.has(segment.segment_id))` branch, before calling `enterQuiz()`: call `usePlayerStore.getState().setTutorState('CHECKING_IN')`, then `usePlayerStore.getState().wsSendControl?.({ type: 'segment_complete' })`, then `enterQuiz()` last (so `enterQuiz()`'s own synchronous timing/behavior is provably unchanged — it's still the final statement in the branch)
+  - [x] 3.2 Do the identical 3-line sequence in `handleEnded()`'s two `enterQuiz()` call sites (the last-segment "audio ended before boundary" branch, and the non-last-segment "boundary check should have caught it, fire now" branch). Do **not** add it to the third branch (`segment && quizFiredForSegment.has(segment.segment_id)` → `advanceSegment()`) — that segment already sent its `segment_complete` on first traversal
+  - [x] 3.3 No try/catch needed — `wsSendControl` is nullable and called with `?.`; `LessonSocket.sendControl` itself already no-ops safely when the socket isn't open (existing behavior, see `lessonSocket.ts:143-147`)
 
-- [ ] Task 4: Build `CheckingInTransition.tsx` (AC: 5, 8, 9)
-  - [ ] 4.1 New file `apps/web/src/components/player/CheckingInTransition.tsx`. Read `tutorState` via `usePlayerStore((s) => s.tutorState)`
-  - [ ] 4.2 Local `const [visible, setVisible] = useState(false)`. `useEffect` keyed on `[tutorState]`: `if (tutorState !== 'CHECKING_IN') return;` then `setVisible(true)`, `const timer = setTimeout(() => setVisible(false), TRANSITION_VISIBLE_MS)` (module constant, `500`), return `() => clearTimeout(timer)`. This is edge-triggered by design (AC8) — it only fires when the *value actually changes* to `'CHECKING_IN'`, which is why Task 1.2's reset to `'TEACHING'` is load-bearing, not cosmetic
-  - [ ] 4.3 Render with `framer-motion`'s `AnimatePresence`/`motion.div`, `className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none bg-primary-dark/90 backdrop-blur-sm"` (z-30, above `QuizOverlay`/`TeachBackModal`'s z-20; same dark/blur visual language as `TeachBackModal.tsx`), brief `font-serif text-white` "Checking in…" copy, no buttons/inputs
-  - [ ] 4.4 Mount unconditionally in `Player.tsx` (not gated on `status`) — place it after the slide/quiz/teach-back conditional block so it visually layers on top when it shows
+- [x] Task 4: Build `CheckingInTransition.tsx` (AC: 5, 8, 9)
+  - [x] 4.1 New file `apps/web/src/components/player/CheckingInTransition.tsx`. Read `tutorState` via `usePlayerStore((s) => s.tutorState)`
+  - [x] 4.2 Local `const [visible, setVisible] = useState(false)`. `useEffect` keyed on `[tutorState]`: `if (tutorState !== 'CHECKING_IN') return;` then `setVisible(true)`, `const timer = setTimeout(() => setVisible(false), TRANSITION_VISIBLE_MS)` (module constant, `500`), return `() => clearTimeout(timer)`. This is edge-triggered by design (AC8) — it only fires when the *value actually changes* to `'CHECKING_IN'`, which is why Task 1.2's reset to `'TEACHING'` is load-bearing, not cosmetic
+  - [x] 4.3 Render `className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none bg-primary-dark/90 backdrop-blur-sm"` (z-30, above `QuizOverlay`/`TeachBackModal`'s z-20; same dark/blur visual language as `TeachBackModal.tsx`), brief `font-serif text-white` "Checking in…" copy, no buttons/inputs — **deviation:** used a plain `motion.div` fade-in (no `AnimatePresence`/`exit`) instead of `AnimatePresence`, so removal on timeout is an immediate, deterministic unmount rather than delayed by an exit animation — keeps the edge-triggered/auto-hide behavior (AC8) testable without flakiness
+  - [x] 4.4 Mount unconditionally in `Player.tsx` (not gated on `status`) — place it after the slide/quiz/teach-back conditional block so it visually layers on top when it shows
 
-- [ ] Task 5: Tests (AC: all)
-  - [ ] 5.1 `apps/web/src/__tests__/stores/player.machine.test.ts`: `setWsSendControl` sets and clears the field; `exitTeachBack()` sets `tutorState: 'TEACHING'` in both the advance-segment and last-segment branches (extend the existing `describe('enterQuiz / exitQuiz / enterTeachBack / exitTeachBack', ...)` block)
-  - [ ] 5.2 `apps/web/src/__tests__/components/player/AudioTimeline.test.ts`: inject a `vi.fn()` via `usePlayerStore.setState({ wsSendControl: fn })` before each relevant case; assert it's called once with `{type:'segment_complete'}` per forward traversal at all 3 call sites, not called again on seek-back/replay of an already-quizzed segment, and that `tutorState` becomes `'CHECKING_IN'` synchronously in the same test
-  - [ ] 5.3 New `apps/web/src/__tests__/components/player/CheckingInTransition.test.tsx`: renders nothing while `tutorState !== 'CHECKING_IN'`; shows on a genuine edge into `'CHECKING_IN'`; auto-hides after the timer (use `vi.useFakeTimers()` — already the project convention per `player.machine.test.ts`/`lessonSocket.test.ts`); re-triggers on a second edge after `tutorState` is reset to `'TEACHING'` in between
-  - [ ] 5.4 `apps/web/src/__tests__/hooks/useLessonSocket.test.ts`: add a case asserting `usePlayerStore.getState().wsSendControl` becomes a function once the socket connects, and becomes `null` again after unmount — use the existing `FakeWebSocket` test util, same pattern as the current `tutorState`-after-`state_change` test
-  - [ ] 5.5 `apps/web/src/__tests__/components/player/Player.test.tsx`: mock `useLessonSocket` and assert it's called with the store's `sessionId`; assert `CheckingInTransition` is present in the rendered tree
+- [x] Task 5: Tests (AC: all)
+  - [x] 5.1 `apps/web/src/__tests__/stores/player.machine.test.ts`: `setWsSendControl` sets and clears the field; `exitTeachBack()` sets `tutorState: 'TEACHING'` in both the advance-segment and last-segment branches (extend the existing `describe('enterQuiz / exitQuiz / enterTeachBack / exitTeachBack', ...)` block)
+  - [x] 5.2 `apps/web/src/__tests__/components/player/AudioTimeline.test.ts` + `AudioTimeline.component.test.tsx`: inject a `vi.fn()` via `usePlayerStore.setState({ wsSendControl: fn })` before each relevant case; assert it's called once with `{type:'segment_complete'}` per forward traversal at all 3 call sites (processTimeUpdate boundary + both handleEnded branches), not called again on seek-back/replay of an already-quizzed segment, and that `tutorState` becomes `'CHECKING_IN'` synchronously in the same test
+  - [x] 5.3 New `apps/web/src/__tests__/components/player/CheckingInTransition.test.tsx`: renders nothing while `tutorState !== 'CHECKING_IN'`; shows on a genuine edge into `'CHECKING_IN'`; auto-hides after the timer (`vi.useFakeTimers()`); re-triggers on a second edge after `tutorState` is reset to `'TEACHING'` in between; does not re-trigger on a same-value no-op set; not gated on `status`
+  - [x] 5.4 `apps/web/src/__tests__/hooks/useLessonSocket.test.ts`: added cases asserting `usePlayerStore.getState().wsSendControl` becomes a function once the socket connects (and forwards to the real `FakeWebSocket`), and becomes `null` again after unmount
+  - [x] 5.5 `apps/web/src/__tests__/components/player/Player.test.tsx`: mocked `useLessonSocket` and asserted it's called with the store's `sessionId`; asserted `CheckingInTransition` becomes visible when `tutorState` is `CHECKING_IN`
 
 ## Dev Notes
 
@@ -111,8 +111,46 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`, `jsdom` envir
 
 ### Agent Model Used
 
+Claude Sonnet 5 (claude-sonnet-5)
+
 ### Debug Log References
+
+- RED confirmed for every task before implementation: Task 1's 4 new `player.machine.test.ts` tests (`setWsSendControl is not a function` ×2, `tutorState` wrong-value ×2) all failed as expected pre-implementation, 48 pre-existing tests unaffected. Task 2's 3 new tests (2 in `useLessonSocket.test.ts`, 1 in `Player.test.tsx`) failed with `expected null not to be null` / `expected "spy" to be called with arguments` before the store-registration wiring existed. Task 3's 3 new tests (1 in `AudioTimeline.test.ts`, 2 in `AudioTimeline.component.test.tsx`) failed with `expected "spy" to be called 1 times, but got 0 times` before the 3 call sites were touched. Task 4's 6 new `CheckingInTransition.test.tsx` tests passed on the first implementation attempt (new file, no separate RED run needed beyond confirming the component didn't exist). Task 4's `Player.test.tsx` mount assertion failed (`expected null not to be null`) before `CheckingInTransition` was mounted.
+- A real timing tension was worked through before writing any code (documented in Dev Notes "Timing constraint"): the backend's real `state_change` echo necessarily arrives after `status` has already flipped to `'QUIZ'`, given the locked client-authoritative/zero-latency quiz decision — so `CheckingInTransition`'s visibility can't depend on that echo at all. Resolved by setting `tutorState` optimistically and locally at the same boundary-check call sites that fire `enterQuiz()`/`segment_complete`, resetting it back to `'TEACHING'` in `exitTeachBack()` so each subsequent segment produces a genuine edge-transition, and making the transition component edge-triggered with a fixed auto-hide timer rather than a persistent `tutorState === 'CHECKING_IN'` gate.
+- `react-hooks/set-state-in-effect` ESLint error surfaced on `CheckingInTransition`'s `setVisible(true)` call inside its `useEffect` — resolved with a targeted `eslint-disable-next-line` + justification comment, matching the exact existing pattern already used in `useLessonSocket.ts` for its own "must be synchronous, no one-tick flash" `setStatus('connecting')` call.
+- Implemented `CheckingInTransition` with a plain conditional `motion.div` fade-in (no `AnimatePresence`/`exit`) rather than the story's originally-sketched `AnimatePresence` approach, so hiding on timeout is an immediate, deterministic unmount instead of being delayed by an exit animation — kept the auto-hide test assertions (`vi.advanceTimersByTime` → immediately `null`) deterministic.
+- Deviated from Task 2.1's literal wording (a separately-named `useCallback` `sendControl` returned from `useLessonSocket`): implemented as an inline closure passed directly to `setWsSendControl` instead, since nothing in this story consumes a hook-returned `sendControl` (`AudioTimeline` reads `wsSendControl` off the store via `getState()`) — avoids adding an unused export.
+- Full regression suite run after all 5 tasks: 336/336 tests passing across 41 files, no regressions. `tsc --noEmit` clean. `eslint` clean on every touched file (3 pre-existing "unused eslint-disable directive" warnings remain in `useLessonSocket.ts`, confirmed via `git show HEAD:...` to predate this story — not introduced or touched here).
 
 ### Completion Notes List
 
+- All 5 tasks (12 subtasks) implemented in strict RED → GREEN order; no task marked complete without its tests passing first.
+- `player.machine.ts`: added `wsSendControl` field + `setWsSendControl` action; `exitTeachBack()` now resets `tutorState` to `'TEACHING'` in both branches (advance-segment and last-segment-resume), which is load-bearing for `CheckingInTransition`'s edge-trigger to fire again on subsequent segments, not merely cosmetic.
+- `useLessonSocket.ts`: registers `wsSendControl` into the store once the socket connects (inline closure over `socketRef`), clears it to `null` in the effect's cleanup alongside the existing `disconnect()` call. The existing `state_change` handling (`setTutorState(msg.payload.to_state)`) was not touched.
+- `Player.tsx`: now calls `useLessonSocket(sessionId || null)` — the lesson WebSocket actually connects during a real session for the first time. Also mounts `CheckingInTransition` unconditionally (not gated on `status`).
+- `AudioTimeline.tsx`: all 3 `enterQuiz()` call sites (the `processTimeUpdate` boundary check, and both `handleEnded()` branches) now also call `setTutorState('CHECKING_IN')` and `wsSendControl?.({type:'segment_complete'})` immediately before `enterQuiz()` — `enterQuiz()` remains the final statement in each branch, so its own synchronous, zero-latency behavior is unchanged (verified by tests asserting `status` becomes `'QUIZ'` in the same test as the `wsSendControl` assertion).
+- New `CheckingInTransition.tsx`: edge-triggered on `tutorState` transitioning into `'CHECKING_IN'`, auto-hides after a fixed 500ms timer, renders independent of `status` (verified by a dedicated test setting `status: 'QUIZ'` and confirming it still shows), `pointer-events-none` and `z-30` (above `QuizOverlay`/`TeachBackModal`'s `z-20`).
+- No changes to the frozen `packages/shared/types/ws.ts` contract, `apps/web/src/lib/ws/wireTypes.ts`, or `apps/web/src/lib/ws/lessonSocket.ts` — all three already had everything this story needed.
+- Backend dependency (Dev 4's `state_change`-on-every-transition fix) remains unverified end-to-end — his branch (`sprint2/s2-1-state-change-broadcast`) isn't pushed yet. All new tests run against `FakeWebSocket`/direct store manipulation, consistent with the story's documented "not a blocker" posture. A real integration check is still a follow-up once his branch/PR lands.
+
 ### File List
+
+**Files CREATED:**
+- `apps/web/src/components/player/CheckingInTransition.tsx`
+- `apps/web/src/__tests__/components/player/CheckingInTransition.test.tsx`
+
+**Files MODIFIED:**
+- `apps/web/src/stores/player.machine.ts` — added `wsSendControl` field + `setWsSendControl` action, `LocalControlOut` type import; `exitTeachBack()` resets `tutorState` to `'TEACHING'`
+- `apps/web/src/__tests__/stores/player.machine.test.ts` — new `wsSendControl` describe block (3 tests), 2 new `exitTeachBack` tutorState-reset tests, `wsSendControl: null` added to the shared `beforeEach` reset
+- `apps/web/src/hooks/useLessonSocket.ts` — registers/clears `wsSendControl` in the player store on connect/cleanup
+- `apps/web/src/__tests__/hooks/useLessonSocket.test.ts` — 2 new tests (register-on-connect + forwards to socket, clear-on-unmount), `wsSendControl: null` added to the existing `beforeEach` reset
+- `apps/web/src/components/player/AudioTimeline.tsx` — sends `segment_complete` + optimistic `setTutorState('CHECKING_IN')` at all 3 `enterQuiz()` call sites
+- `apps/web/src/__tests__/components/player/AudioTimeline.test.ts` — 3 new tests, `wsSendControl: null` added to `beforeEach`, `vi` import added
+- `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` — 3 new tests (`handleEnded`'s two call sites + the already-quizzed no-send case), `wsSendControl: null` added to `beforeEach`
+- `apps/web/src/components/player/Player.tsx` — mounts `useLessonSocket(sessionId || null)` and `CheckingInTransition`
+- `apps/web/src/__tests__/components/player/Player.test.tsx` — mocked `useLessonSocket` via `vi.mock`, 2 new tests (hook called with `sessionId`, `CheckingInTransition` becomes visible)
+
+### Change Log
+
+- 2026-07-20: Story created via `bmad-create-story` — Sprint 2 extra task (S2-06 in `docs/dev2-sprint-tracker.md`), branch `sprint2/s2-6-segment-checkin`, committed story-only per the story-first gate.
+- 2026-07-20: All 5 tasks implemented in RED→GREEN order; 15 new tests across 6 files (`player.machine.test.ts` +5, `useLessonSocket.test.ts` +2, `AudioTimeline.test.ts` +3, `AudioTimeline.component.test.tsx` +3, `CheckingInTransition.test.tsx` +6 new file, `Player.test.tsx` +2); full `apps/web` suite 336/336 passing; `tsc --noEmit` and `eslint` clean; story marked `review`.

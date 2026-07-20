@@ -21,7 +21,7 @@ function latestFake(): FakeWebSocket {
 beforeEach(() => {
   FakeWebSocket.instances = [];
   global.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
-  usePlayerStore.setState({ tutorState: 'IDLE' });
+  usePlayerStore.setState({ tutorState: 'IDLE', wsSendControl: null });
   getSessionMock.mockReset();
   getSessionMock.mockResolvedValue({ data: { session: { access_token: 'fake-token' } } });
 });
@@ -127,5 +127,30 @@ describe('useLessonSocket', () => {
 
     await waitFor(() => expect(result.current.status).toBe('closed'));
     expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it('registers wsSendControl into the player store once the socket connects, and it forwards to the real socket (S2-06)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    await waitFor(() => expect(usePlayerStore.getState().wsSendControl).not.toBeNull());
+
+    act(() => usePlayerStore.getState().wsSendControl!({ type: 'segment_complete' }));
+
+    expect(latestFake().sentMessages).toContain(JSON.stringify({ type: 'segment_complete' }));
+  });
+
+  it('clears wsSendControl in the player store on unmount (S2-06)', async () => {
+    const { unmount } = renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendControl).not.toBeNull());
+
+    unmount();
+
+    expect(usePlayerStore.getState().wsSendControl).toBeNull();
   });
 });

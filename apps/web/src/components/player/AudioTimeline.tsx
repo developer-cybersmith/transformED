@@ -22,6 +22,8 @@ export function processTimeUpdate(ms: number): void {
     quizFiredForSegment,
     updateAudioPosition,
     setCurrentSlide,
+    setTutorState,
+    wsSendControl,
     enterQuiz,
   } = usePlayerStore.getState();
 
@@ -45,9 +47,14 @@ export function processTimeUpdate(ms: number): void {
     setCurrentSlide(targetSlideId);
   }
 
-  // Segment boundary: fire quiz exactly once per forward traversal
+  // Segment boundary: fire quiz exactly once per forward traversal. Notify the
+  // backend tutor FSM (segment_complete) and optimistically mirror CHECKING_IN
+  // locally in the same tick — see CheckingInTransition / Dev Notes "Timing
+  // constraint" for why this can't wait for the backend's state_change echo.
   const segmentEnd = timestamps.at(-1)!.end_ms;
   if (ms >= segmentEnd && !quizFiredForSegment.has(segment.segment_id)) {
+    setTutorState('CHECKING_IN');
+    wsSendControl?.({ type: 'segment_complete' });
     enterQuiz();
   }
 }
@@ -114,6 +121,8 @@ export function AudioTimeline() {
       quizFiredForSegment,
       endLesson,
       advanceSegment,
+      setTutorState,
+      wsSendControl,
       enterQuiz,
     } = usePlayerStore.getState();
     if (!l) return;
@@ -123,6 +132,8 @@ export function AudioTimeline() {
     if (isLast) {
       // Last segment: end the lesson (quiz boundary detection handles quiz first if not yet fired)
       if (segment && !quizFiredForSegment.has(segment.segment_id)) {
+        setTutorState('CHECKING_IN');
+        wsSendControl?.({ type: 'segment_complete' });
         enterQuiz(); // audio ended before quiz fired (very short audio or tight timing)
       } else {
         endLesson();
@@ -135,6 +146,8 @@ export function AudioTimeline() {
       // If quiz hasn't fired yet, processTimeUpdate's boundary check should have caught it.
       // If the audio ended before hitting the boundary, fire the quiz now.
       else if (segment) {
+        setTutorState('CHECKING_IN');
+        wsSendControl?.({ type: 'segment_complete' });
         enterQuiz();
       }
     }

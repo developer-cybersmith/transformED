@@ -75,6 +75,7 @@ beforeEach(() => {
     audioPositionMs: 0,
     tutorState: 'IDLE',
     quizFiredForSegment: new Set(),
+    wsSendControl: null,
   });
   localStorage.clear();
 });
@@ -197,6 +198,28 @@ describe('enterQuiz / exitQuiz / enterTeachBack / exitTeachBack', () => {
     expect(usePlayerStore.getState().status).toBe('PLAYING');
   });
 
+  it('exitTeachBack() resets tutorState to TEACHING when advancing to the next segment (S2-06 AC7)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson(5));
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().enterQuiz();
+    usePlayerStore.setState({ tutorState: 'CHECKING_IN' });
+    usePlayerStore.getState().exitQuiz();
+    usePlayerStore.getState().exitTeachBack(); // not the last segment — advances
+    expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+  });
+
+  it('exitTeachBack() resets tutorState to TEACHING when resuming playback on the last segment (S2-06 AC7)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson(1)); // single-segment lesson — this is the last segment
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().enterQuiz();
+    usePlayerStore.setState({ tutorState: 'CHECKING_IN' });
+    usePlayerStore.getState().exitQuiz();
+    usePlayerStore.getState().exitTeachBack();
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+
   it('enterQuiz() is no-op when not PLAYING', () => {
     usePlayerStore.getState().loadLesson(makeLesson());
     // status is IDLE — enterQuiz should not fire
@@ -307,6 +330,25 @@ describe('setTutorState', () => {
   it('mirrors tutor FSM state from WebSocket', () => {
     usePlayerStore.getState().setTutorState('TEACHING');
     expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+});
+
+describe('wsSendControl (S2-06)', () => {
+  it('defaults to null', () => {
+    expect(usePlayerStore.getState().wsSendControl).toBeNull();
+  });
+
+  it('setWsSendControl registers a callable function', () => {
+    const fn = vi.fn();
+    usePlayerStore.getState().setWsSendControl(fn);
+    usePlayerStore.getState().wsSendControl?.({ type: 'segment_complete' });
+    expect(fn).toHaveBeenCalledWith({ type: 'segment_complete' });
+  });
+
+  it('setWsSendControl(null) clears a previously registered function', () => {
+    usePlayerStore.getState().setWsSendControl(vi.fn());
+    usePlayerStore.getState().setWsSendControl(null);
+    expect(usePlayerStore.getState().wsSendControl).toBeNull();
   });
 });
 
