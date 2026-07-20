@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = Field(..., description="Langfuse secret key")
     langfuse_host: str = Field(default="https://cloud.langfuse.com", description="Langfuse host URL")
 
+    # ── PostHog ───────────────────────────────────────────────────────────────
+    posthog_api_key: str = Field(
+        default="",
+        description="PostHog API key — leave empty to disable event capture",
+    )
+    posthog_host: str = Field(
+        default="https://us.i.posthog.com",
+        description="PostHog ingest endpoint (change to https://eu.i.posthog.com for EU data residency)",
+    )
+
     # ── Sentry ────────────────────────────────────────────────────────────────
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN — leave empty to disable")
 
@@ -121,6 +131,31 @@ class Settings(BaseSettings):
                 "Check CES_WEIGHT_* env vars."
             )
         return self
+
+    # ── CES Baseline (Sprint 3 Task 2) ───────────────────────────────────────
+    ces_baseline_window: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Number of most-recent completed sessions to average for the per-learner CES baseline",
+    )
+    ces_baseline_ttl_seconds: int = Field(
+        default=86400,
+        ge=60,
+        description="TTL for the Redis user:{user_id}:ces_baseline key, in seconds (default 24 h)",
+    )
+
+    # ── Learner DNA Fusion (Sprint 3 Task 3) ──────────────────────────────────
+    dna_ema_retain: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "EMA retention weight for Learner DNA dimension updates. "
+            "new = retain * old + (1 - retain) * session_signal. "
+            "Default 0.7 means each session contributes 30% of the new value."
+        ),
+    )
 
     # ── Intervention tuning ───────────────────────────────────────────────────
     intervention_cooldown_seconds: int = Field(

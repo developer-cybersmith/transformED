@@ -9,6 +9,7 @@ import type {
   SessionReport,
   LearnerDNA,
   OnboardingDiagnosticSubmission,
+  OnboardingResult,
 } from '@/types/assessment';
 
 // ── Type-shape tests via runtime value construction ───────────────────────
@@ -92,13 +93,32 @@ describe('assessment types', () => {
     expect(Object.keys(sub)).not.toContain('grade_level');
   });
 
+  it('OnboardingResult uses badge_labels/profile_text (not dna_label/profile_narrative)', () => {
+    const result: OnboardingResult = {
+      badge_labels: ['Pattern Thinker'],
+      profile_text: 'You learn visually. — Pursuant to DPDP Act 2023.',
+      session_count: 0,
+    };
+    expect(result.badge_labels).toContain('Pattern Thinker');
+    expect(Object.keys(result)).not.toContain('dna_label');
+    expect(Object.keys(result)).not.toContain('profile_narrative');
+    const forbidden = [
+      'pattern_recognition', 'logical_deduction', 'processing_speed',
+      'frustration_tolerance', 'persistence', 'help_seeking',
+      'goal_orientation', 'curiosity_index', 'study_independence',
+    ];
+    for (const field of forbidden) {
+      expect(Object.keys(result)).not.toContain(field);
+    }
+  });
+
   it('SessionReport has duration_minutes (not duration_seconds)', () => {
     const report: SessionReport = {
       session_id: 'sess_001',
       user_id: 'user_001',
       lesson_id: 'lesson_001',
       ces_score: 72,
-      ces_breakdown: { quiz_accuracy: 0.8 },
+      ces_breakdown: { quiz: 28.0, teachback: 20.0, behavioral: 0.0, head_pose: 0.0, blink: 0.0 },
       interventions_count: 2,
       quiz_score: 0.75,
       teachback_score: null,
@@ -107,6 +127,24 @@ describe('assessment types', () => {
     };
     expect(report.duration_minutes).toBe(18);
     expect(Object.keys(report)).not.toContain('duration_seconds');
+  });
+
+  it('SessionReport.ces_breakdown has exactly the 5 real backend keys (quiz/teachback/behavioral/head_pose/blink) — not quiz_accuracy', () => {
+    const report: SessionReport = {
+      session_id: 'sess_001',
+      user_id: 'user_001',
+      lesson_id: 'lesson_001',
+      ces_score: 48.0,
+      ces_breakdown: { quiz: 28.0, teachback: 20.0, behavioral: 0.0, head_pose: 0.0, blink: 0.0 },
+      interventions_count: 0,
+      quiz_score: null,
+      teachback_score: null,
+      duration_minutes: 5,
+      completed_at: null,
+    };
+    expect(Object.keys(report.ces_breakdown).sort()).toEqual(
+      ['behavioral', 'blink', 'head_pose', 'quiz', 'teachback']
+    );
   });
 
   it('TeachbackResult has overall_score and rubric_scores', () => {

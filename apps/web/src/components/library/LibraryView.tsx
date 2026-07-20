@@ -98,15 +98,6 @@ export function LibraryView({ initialData }: LibraryViewProps) {
 }
 
 function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: () => void, index: number }) {
-    // Generate deterministic placeholder
-    const thumbnails = [
-        "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&q=80&w=600&h=400",
-        "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=600&h=400",
-        "https://images.unsplash.com/photo-1605745341112-85968b19335b?auto=format&fit=crop&q=80&w=600&h=400",
-        "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600&h=400"
-    ];
-    const image = thumbnails[parseInt(lesson.id.replace(/\D/g, '') || '0') % thumbnails.length];
-
     const isProcessing = lesson.status === 'processing';
     const isFailed = lesson.status === 'failed';
     const isCompleted = lesson.status === 'completed';
@@ -126,8 +117,9 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
             <div className="relative w-full h-44 overflow-hidden bg-neutral-100 shrink-0">
                 {!isProcessing && !isFailed && (
                     <img
-                        src={image}
+                        src={lesson.thumbnailUrl}
                         alt={lesson.title}
+                        onError={(e) => { e.currentTarget.style.display = "none"; }}
                         className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-out"
                     />
                 )}
@@ -137,7 +129,7 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
 
                 <div className="absolute top-4 right-4 flex items-center gap-2">
                     {isProcessing && (
-                        <div className="px-3 py-1.5 rounded-full bg-blue-500/90 text-white backdrop-blur flex items-center gap-1.5 text-xs font-medium shadow-sm">
+                        <div className="px-3 py-1.5 rounded-full bg-[var(--accent-primary)]/90 text-white backdrop-blur flex items-center gap-1.5 text-xs font-medium shadow-sm">
                             <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Processing
                         </div>
                     )}
@@ -167,7 +159,7 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
                 <div className="text-xs font-bold text-[var(--accent-primary)] mb-2 uppercase tracking-wide">
                     {lesson.chapterTitle}
                 </div>
-                <h3 className="text-lg font-semibold text-neutral-900 leading-snug mb-4 line-clamp-2">
+                <h3 className="font-serif text-lg font-semibold text-neutral-900 leading-snug mb-4 line-clamp-2">
                     {lesson.title}
                 </h3>
 
@@ -194,8 +186,8 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
                     )}
 
                     {isProcessing && (
-                        <div className="flex items-center gap-2 text-sm font-medium text-blue-500">
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                        <div className="flex items-center gap-2 text-sm font-medium text-[var(--accent-primary)]">
+                            <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] animate-pulse" />
                             Synthesizing content...
                         </div>
                     )}

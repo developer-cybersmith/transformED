@@ -6,22 +6,39 @@
 
 import { MockLesson, Slide, TimelineEvent, SlideChangeEvent, QuizEvent, TeachbackEvent, InterventionEvent } from "@/mocks/data/lessons";
 import { JargonHover } from "@/components/player/JargonHover";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Pause, ArrowLeft, Volume2, SkipBack, SkipForward, CheckCircle, ChevronRight, Zap, PenLine } from "lucide-react";
+import { Play, Pause, ArrowLeft, Volume2, SkipBack, SkipForward, CheckCircle, Zap, PenLine } from "lucide-react";
 import Link from "next/link";
 
 interface InteractivePlayerProps {
     initialLesson: MockLesson;
 }
 
+// Pure derivation from currentTime/timeline/slides — no reason for this to be
+// its own state; computing it during render avoids a setState-in-effect call
+// that would otherwise just be mirroring a value already derivable from props.
+function resolveActiveSlide(
+    currentTime: number,
+    timeline: TimelineEvent[],
+    slides: Slide[],
+    fallback: Slide | null
+): Slide | null {
+    const pastSlideEvents = [...timeline]
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .filter((e): e is SlideChangeEvent => e.type === 'slide_change' && e.timestamp <= currentTime);
+    if (pastSlideEvents.length === 0) return fallback;
+    const latest = pastSlideEvents[pastSlideEvents.length - 1];
+    return slides.find(s => s.id === latest.slideId) ?? fallback;
+}
+
 export function InteractivePlayer({ initialLesson }: InteractivePlayerProps) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
-    const [activeSlide, setActiveSlide] = useState<Slide | null>(
-        initialLesson.slides.length > 0 ? initialLesson.slides[0] : null
-    );
     const [activeIntervention, setActiveIntervention] = useState<TimelineEvent | null>(null);
+
+    const firstSlide = initialLesson.slides.length > 0 ? initialLesson.slides[0] : null;
+    const activeSlide = resolveActiveSlide(currentTime, initialLesson.timeline, initialLesson.slides, firstSlide);
 
     // Audio Timeline Loop (1 tick = 1 virtual second)
     // We speed it up slightly (e.g. 500ms real time = 1s virtual) to make demos brisker, 
@@ -43,30 +60,25 @@ export function InteractivePlayer({ initialLesson }: InteractivePlayerProps) {
         return () => clearInterval(interval);
     }, [isPlaying, activeIntervention, initialLesson.durationSeconds]);
 
-    // Timeline Engine: resolve active slide and popup interventions
+    // Timeline Engine: pop an intervention when the timeline crosses one.
+    // (Active slide resolution moved to render-time — see resolveActiveSlide above.)
     useEffect(() => {
-        const sortedEvents = [...initialLesson.timeline].sort((a, b) => a.timestamp - b.timestamp);
-
-        // 1. Resolve active slide
-        const pastSlideEvents = sortedEvents.filter(e => e.type === 'slide_change' && e.timestamp <= currentTime) as SlideChangeEvent[];
-        if (pastSlideEvents.length > 0) {
-            const latest = pastSlideEvents[pastSlideEvents.length - 1];
-            const slide = initialLesson.slides.find(s => s.id === latest.slideId);
-            if (slide && slide.id !== activeSlide?.id) {
-                setActiveSlide(slide);
-            }
-        }
-
-        // 2. Resolve Active Interventions (Quiz/Teachback/Pause)
         // If an intervention exactly matches the current timestamp, and we haven't popped it yet
-        const immediateIntervention = sortedEvents.find(e => e.type !== 'slide_change' && e.timestamp === currentTime);
+        const immediateIntervention = initialLesson.timeline.find(
+            e => e.type !== 'slide_change' && e.timestamp === currentTime
+        );
 
         if (immediateIntervention && !activeIntervention) {
-            // Auto-pause and pop intervention
+            // Fire-once trigger, not a pure derivation: `activeIntervention` is
+            // only cleared by handleDismissIntervention (which also nudges
+            // currentTime forward specifically to avoid an immediate re-match),
+            // so this genuinely needs to run as a timer-driven effect.
+            /* eslint-disable react-hooks/set-state-in-effect */
             setIsPlaying(false);
             setActiveIntervention(immediateIntervention);
+            /* eslint-enable react-hooks/set-state-in-effect */
         }
-    }, [currentTime, initialLesson.timeline, initialLesson.slides, activeSlide?.id, activeIntervention]);
+    }, [currentTime, initialLesson.timeline, activeIntervention]);
 
     const formatTime = (seconds: number) => {
         const m = Math.floor(seconds / 60);
@@ -218,124 +230,128 @@ function SlideLayer({ slide }: { slide: Slide | null }) {
     );
 }
 
+// Dispatches by event.type into a dedicated component per branch — each with
+// its own unconditional hook calls. The previous version called useState
+// inside `if (event.type === ...)` blocks directly in this function, which
+// violates the Rules of Hooks (masked only because the parent always remounts
+// this component via a key tied to the event id — fragile, not a real fix).
 function InterventionLayer({ event, onComplete }: { event: TimelineEvent, onComplete: () => void }) {
-
-    if (event.type === 'quiz') {
-        const quiz = event as QuizEvent;
-        const [selected, setSelected] = useState<number | null>(null);
-
-        const handleSelect = (idx: number) => {
-            setSelected(idx);
-            // Simulate answer validation delay
-            setTimeout(() => {
-                onComplete();
-            }, 1000);
-        };
-
-        return (
-            <motion.div
-                initial={{ opacity: 0, y: 40 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -40 }}
-                className="w-full max-w-2xl bg-neutral-900 border border-[var(--accent-primary)]/50 shadow-[0_0_50px_rgba(var(--accent-primary-rgb),0.1)] rounded-[2.5rem] p-12 text-center relative overflow-hidden"
-            >
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[var(--accent-primary)] to-transparent" />
-
-                <div className="w-16 h-16 bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] rounded-full flex items-center justify-center mx-auto mb-6">
-                    <Zap className="w-8 h-8" />
-                </div>
-
-                <h3 className="text-sm font-bold uppercase tracking-widest text-[var(--accent-primary)] mb-4">Knowledge Check</h3>
-                <h2 className="text-2xl font-semibold text-white mb-8">{quiz.question}</h2>
-
-                <div className="flex flex-col gap-3">
-                    {quiz.options.map((opt, idx) => {
-                        const isCorrect = idx === quiz.correctOptionIndex;
-                        const isSelected = selected === idx;
-
-                        let optStyle = "bg-neutral-800 border-neutral-700 hover:bg-neutral-700 text-neutral-300";
-                        if (selected !== null) {
-                            if (isSelected && isCorrect) optStyle = "bg-emerald-500/20 border-emerald-500 text-emerald-400";
-                            if (isSelected && !isCorrect) optStyle = "bg-red-500/20 border-red-500 text-red-500";
-                            if (!isSelected && isCorrect) optStyle = "bg-emerald-500/10 border-emerald-500 text-emerald-500 opactity-50";
-                        }
-
-                        return (
-                            <button
-                                key={idx}
-                                disabled={selected !== null}
-                                onClick={() => handleSelect(idx)}
-                                className={`w-full p-4 rounded-2xl border transition-all duration-300 font-medium ${optStyle}`}
-                            >
-                                {opt}
-                            </button>
-                        );
-                    })}
-                </div>
-            </motion.div>
-        );
-    }
-
-    if (event.type === 'teachback') {
-        const tb = event as TeachbackEvent;
-        const [teachbackText, setTeachbackText] = useState('');
-        return (
-            <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, y: 20 }}
-                className="w-full max-w-2xl bg-neutral-900 border border-purple-500/50 shadow-[0_0_50px_rgba(168,85,247,0.1)] rounded-[2.5rem] p-12 text-center"
-            >
-                <div className="w-16 h-16 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <PenLine className="w-8 h-8" />
-                </div>
-                <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400 mb-4">Teach-Back</h3>
-                <h2 className="text-2xl font-semibold text-white mb-8 leading-snug">"{tb.prompt}"</h2>
-
-                <textarea
-                    value={teachbackText}
-                    onChange={(e) => setTeachbackText(e.target.value)}
-                    placeholder="Type your explanation here…"
-                    rows={4}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-2xl px-4 py-3 text-white placeholder-neutral-500 resize-none focus:outline-none focus:border-purple-500/60 mb-6 text-left"
-                />
-
-                <div className="flex gap-3">
-                    <button
-                        onClick={onComplete}
-                        className="flex-1 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-medium rounded-2xl transition-colors"
-                    >
-                        Skip
-                    </button>
-                    <button
-                        onClick={onComplete}
-                        disabled={teachbackText.trim() === ''}
-                        className="flex-1 py-3 bg-purple-500 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-colors shadow-[0_4px_20px_-4px_rgba(168,85,247,0.5)] flex items-center justify-center gap-2"
-                    >
-                        <CheckCircle className="w-5 h-5" /> Submit &amp; Continue
-                    </button>
-                </div>
-            </motion.div>
-        );
-    }
-
-    if (event.type === 'intervention') {
-        const int = event as InterventionEvent;
-        return (
-            <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="w-full max-w-xl bg-neutral-800 rounded-3xl p-8 text-center border border-neutral-700"
-            >
-                <h3 className="text-lg font-semibold text-white mb-2">Attention</h3>
-                <p className="text-neutral-400 mb-6">{int.message}</p>
-                <button onClick={onComplete} className="px-6 py-2 bg-white text-black font-semibold rounded-full hover:bg-neutral-200">
-                    Continue Learning
-                </button>
-            </motion.div>
-        );
-    }
-
+    if (event.type === 'quiz') return <QuizIntervention quiz={event} onComplete={onComplete} />;
+    if (event.type === 'teachback') return <TeachbackIntervention tb={event} onComplete={onComplete} />;
+    if (event.type === 'intervention') return <GenericIntervention int={event} onComplete={onComplete} />;
     return null;
+}
+
+function QuizIntervention({ quiz, onComplete }: { quiz: QuizEvent, onComplete: () => void }) {
+    const [selected, setSelected] = useState<number | null>(null);
+
+    const handleSelect = (idx: number) => {
+        setSelected(idx);
+        // Simulate answer validation delay
+        setTimeout(() => {
+            onComplete();
+        }, 1000);
+    };
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -40 }}
+            className="w-full max-w-2xl bg-neutral-900 border border-[var(--accent-primary)]/50 shadow-[0_0_50px_rgba(var(--accent-primary-rgb),0.1)] rounded-[2.5rem] p-12 text-center relative overflow-hidden"
+        >
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[var(--accent-primary)] to-transparent" />
+
+            <div className="w-16 h-16 bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] rounded-full flex items-center justify-center mx-auto mb-6">
+                <Zap className="w-8 h-8" />
+            </div>
+
+            <h3 className="text-sm font-bold uppercase tracking-widest text-[var(--accent-primary)] mb-4">Knowledge Check</h3>
+            <h2 className="text-2xl font-semibold text-white mb-8">{quiz.question}</h2>
+
+            <div className="flex flex-col gap-3">
+                {quiz.options.map((opt, idx) => {
+                    const isCorrect = idx === quiz.correctOptionIndex;
+                    const isSelected = selected === idx;
+
+                    let optStyle = "bg-neutral-800 border-neutral-700 hover:bg-neutral-700 text-neutral-300";
+                    if (selected !== null) {
+                        if (isSelected && isCorrect) optStyle = "bg-emerald-500/20 border-emerald-500 text-emerald-400";
+                        if (isSelected && !isCorrect) optStyle = "bg-red-500/20 border-red-500 text-red-500";
+                        if (!isSelected && isCorrect) optStyle = "bg-emerald-500/10 border-emerald-500 text-emerald-500 opactity-50";
+                    }
+
+                    return (
+                        <button
+                            key={idx}
+                            disabled={selected !== null}
+                            onClick={() => handleSelect(idx)}
+                            className={`w-full p-4 rounded-2xl border transition-all duration-300 font-medium ${optStyle}`}
+                        >
+                            {opt}
+                        </button>
+                    );
+                })}
+            </div>
+        </motion.div>
+    );
+}
+
+function TeachbackIntervention({ tb, onComplete }: { tb: TeachbackEvent, onComplete: () => void }) {
+    const [teachbackText, setTeachbackText] = useState('');
+    return (
+        <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="w-full max-w-2xl bg-neutral-900 border border-purple-500/50 shadow-[0_0_50px_rgba(168,85,247,0.1)] rounded-[2.5rem] p-12 text-center"
+        >
+            <div className="w-16 h-16 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                <PenLine className="w-8 h-8" />
+            </div>
+            <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400 mb-4">Teach-Back</h3>
+            <h2 className="text-2xl font-semibold text-white mb-8 leading-snug">&ldquo;{tb.prompt}&rdquo;</h2>
+
+            <textarea
+                value={teachbackText}
+                onChange={(e) => setTeachbackText(e.target.value)}
+                placeholder="Type your explanation here…"
+                rows={4}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-2xl px-4 py-3 text-white placeholder-neutral-500 resize-none focus:outline-none focus:border-purple-500/60 mb-6 text-left"
+            />
+
+            <div className="flex gap-3">
+                <button
+                    onClick={onComplete}
+                    className="flex-1 py-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-medium rounded-2xl transition-colors"
+                >
+                    Skip
+                </button>
+                <button
+                    onClick={onComplete}
+                    disabled={teachbackText.trim() === ''}
+                    className="flex-1 py-3 bg-purple-500 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-colors shadow-[0_4px_20px_-4px_rgba(168,85,247,0.5)] flex items-center justify-center gap-2"
+                >
+                    <CheckCircle className="w-5 h-5" /> Submit &amp; Continue
+                </button>
+            </div>
+        </motion.div>
+    );
+}
+
+function GenericIntervention({ int, onComplete }: { int: InterventionEvent, onComplete: () => void }) {
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="w-full max-w-xl bg-neutral-800 rounded-3xl p-8 text-center border border-neutral-700"
+        >
+            <h3 className="text-lg font-semibold text-white mb-2">Attention</h3>
+            <p className="text-neutral-400 mb-6">{int.message}</p>
+            <button onClick={onComplete} className="px-6 py-2 bg-white text-black font-semibold rounded-full hover:bg-neutral-200">
+                Continue Learning
+            </button>
+        </motion.div>
+    );
 }

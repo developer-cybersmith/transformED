@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (ws_message_types_final — docs/ws-message-contract.md published → Completed; Sprint 2 done 6/6)
-**Overall status:** 24/36 Completed · 2 Partial · 10 Not Started
+**Last updated:** 2026-06-30 (Sprint 4 analysis tasks — methodology/skeleton docs authored → Partial; findings pending real data)
+**Overall status:** 28/36 Completed · 6 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -17,10 +17,10 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 8 | 4 | 2 | 2 |
-| Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
+| Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
+| Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **24** | **2** | **10** |
+| **Total** | | **36** | **28** | **6** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -456,11 +456,20 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Load test: 50 concurrent sessions each sending 1 signal/second → CES computed every 5s with < 10ms latency
 
 <!-- CHECK:ces_computation -->
-- [Not Started] **CES computation in-process (~3–5ms total)**
-  - Call `compute_ces()` from Dev 3's `apps/api/app/modules/assessment/ces.py`
-  - Pass: `quiz_accuracy`, `teachback_score`, `behavioral`, `head_pose`, `blink` from the attention signal
-  - Store result in `tutor_ces:{session_id}` Redis key
-  - **AC:** `compute_ces()` roundtrip including Redis write completes in < 5ms (benchmark test)
+- [Completed] **CES computation in-process (~3–5ms total)** — ✓ 2026-06-30
+  - Real §11 weighted formula now in `tutor/service.py:compute_ces` (replaces the `0.5` stub): reads
+    `settings.ces_weight_*`, **0–100 scale** (matches Dev 3's `ces_contribution` contract → `ces_threshold=50`
+    works; fixes the latent always-fire bug where `0.5 < 50`). Story: `docs/stories/4-11-ces-computation.md`.
+  - **`None`-signal handling:** weight of any `None` signal (quiz/teachback) redistributed proportionally
+    across present signals — reduces exactly to §11's ÷0.75 when only teachback is `None`. Clamped `[0,100]`.
+  - **Persistence:** `process_attention_signal` writes `tutor_ces:{session_id}` (24 h TTL) alongside `ces_window`.
+  - **🔎 Review-caught (Edge Case Hunter, HIGH):** `float("nan")`/`inf` passed the parser and NaN clamped to
+    100 (maximally-engaged) → suppressed interventions. **Fixed:** `_parse_signal` rejects non-finite values.
+  - **Tests:** Group G (formula 71.8, teachback-`None` 75.733, quiz+teachback-`None`, clamp hi/lo,
+    all-`None` guard, `tutor_ces` write, benchmark) + non-finite parse tests. **298 passed** (full suite).
+  - **AC MET:** benchmark ~7 µs/call (≈690× under the 5 ms budget; in-process — Redis I/O excluded).
+  - **⚠️ Flagged:** input `[0,1]` range-reject belongs to `attention_ingestion`; quiz-`None` extension +
+    eventual move to Dev 3's `assessment/ces.py` need Dev 3 (CES owner) sign-off.
 
 <!-- CHECK:intervention_trigger -->
 - [Completed] **Intervention trigger: 2 consecutive windows below threshold**
@@ -476,25 +485,48 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** After an intervention fires, attempting to trigger another within 2 minutes → guard blocks; after 2 minutes → guard allows
 
 <!-- CHECK:max_distraction_cap -->
-- [Partial] **Max 3 distraction interventions per session cap** ⚠️ PARTIAL — implementation done, tests missing
+- [Completed] **Max 3 distraction interventions per session cap** — ✓ 2026-06-30
   - `tutor_distraction_count:{session_id}` incremented in `intervening_node()` for `type == "distraction"` ✅ (graph.py)
   - Guard `_can_intervene_distraction()` checks `count < settings.max_distraction_per_session` ✅ (graph.py)
-  - **MISSING:** No integration test firing 3 interventions → 4th blocked
-  - **AC NOT MET:** Tests required to verify guard correctness end-to-end
+  - **Integration test added:** `test_max_distraction_cap_blocks_fourth` (`test_tutor_graph.py`) drives the
+    real compiled FSM via `dispatch_event` — interventions #1–#3 reach INTERVENING + incr the counter to
+    1/2/3; #4 (count == max 3) is blocked → stays TEACHING, counter NOT incremented. Cooldown held at 0 so
+    the cap is provably the sole gate. Story: `docs/stories/4-12-max-distraction-cap.md`.
+  - **🔎 Review:** false-green review (SHIP) hand-traced all 4 dispatches; confirmed the state-reset is
+    load-bearing (forces each firing through the guard, not the INTERVENING bypass) and the dual
+    `TEACHING`+`count==3` assertion can't hold if the 4th fired. Full suite **299 passed**.
+  - **AC MET:** guard correctness verified end-to-end (exactly 3 fire, 4th blocked).
 
 <!-- CHECK:fatigue_once -->
-- [Partial] **Fatigue intervention: once per session flag** ⚠️ PARTIAL — implementation done, tests missing
+- [Completed] **Fatigue intervention: once per session flag** — ✓ 2026-06-30
   - `tutor_fatigue_fired:{session_id}` = "1" set in `intervening_node()` for `type == "fatigue"` ✅ (graph.py)
   - Guard `_can_intervene_fatigue()` checks `redis.exists(fatigue_key)` ✅ (graph.py)
-  - **MISSING:** No test triggering fatigue twice → second trigger blocked
-  - **AC NOT MET:** Tests required to verify guard correctness end-to-end
+  - **Test (already present — task was mis-tracked):** `test_tutor_graph.py::test_fatigue_fires_once_then_blocked`
+    drives the real FSM — fatigue fires once (→ INTERVENING, sets the flag), `intervention_complete` → TEACHING,
+    then a 2nd `fatigue_detected` → TEACHING (**blocked**, flag present). Flag write asserted by
+    `test_fatigue_detected_sets_fatigue_fired_flag`. Story: `docs/stories/4-13-fatigue-once.md`.
+  - **🔎 Finding:** the integration test the tracker listed as "missing" already existed on `main` (landed
+    with the s2-1 full_state_machine fatigue tests but never reconciled). Verified sound (hand-traced — `r2 ==
+    TEACHING` proves the guard blocked it, not a false-green); a redundant duplicate was discarded. No code change.
+  - **AC MET:** once-per-session guard verified end-to-end.
 
 <!-- CHECK:intervention_routing -->
-- [Not Started] **Type A/B/C intervention routing to correct message**
-  - Intervention types: `distraction` | `fatigue` | `encouragement`
-  - Each maps to a different pre-generated message from `LessonPackage.segments[].intervention_messages`
-  - Route based on `intervention_type` in the state bag
-  - **AC:** All 3 intervention types deliver distinct, correct messages from the lesson package
+- [Completed] **Type A/B/C intervention routing to correct message** — ✓ 2026-06-30
+  - Intervention types (frozen contract): `distraction` | `confusion` | `fatigue`
+    (`ws.ts InterventionType` + `SegmentInterventions`). **NOT `encouragement`** — that type was stale tracker
+    wording; reconciled out of the Dev-4 surfaces (`tutor/router.py` comment, `check_dev4_progress.py` heuristic).
+  - Routing already implemented: `_EVENT_INTERVENTION_TYPE` maps `distraction_detected→distraction`,
+    `fatigue_detected→fatigue`, `teachback_failed→confusion`; `intervening_node` selects
+    `segments[].interventions[type][0]` (frozen field). **No routing-logic change** this task.
+  - **Test added:** `test_intervention_routes_each_type_to_its_own_message` (parametrized ×3) drives the real
+    FSM and proves each event routes to its OWN type and selects that type's **distinct** message (D0/F0/C0) —
+    covers the previously-untested distraction selection. Story: `docs/stories/4-14-intervention-routing.md`.
+  - **🔎 Review (SHIP):** hand-traced all 3 — distinct messages mean a cross-wire fails; the type + message
+    assertions are complementary (derive stage vs select stage). Reconciliation verified complete across
+    ws.ts/schema/router/heuristic. **⚠️ Flagged (pre-existing):** admin `InterventionRequest.intervention_type`
+    is an unvalidated `str` → follow-up to constrain with `Literal`. Dev 1's pipeline TODO still says
+    "encouragement" — flagged for Dev 1.
+  - **AC MET:** all 3 frozen types deliver distinct, correct messages from the lesson package.
 
 ---
 
@@ -503,46 +535,68 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Stability, tuning, load testing. No new features.
 
 <!-- CHECK:threshold_tuning -->
-- [Not Started] **Intervention threshold tuning (is CES < 50 right?)**
-  - Analyse 20+ real sessions: plot CES value distribution vs post-session quiz scores
-  - Objective: find CES threshold where sensitivity (true interventions) > 70% and false positive rate < 20%
-  - Propose updated `CES_THRESHOLD` value with data backing
-  - **AC:** Analysis written in `docs/sprint4-ces-threshold-analysis.md`; new threshold proposed
+- [Partial] **Intervention threshold tuning (is CES < 50 right?)** ⚠️ PARTIAL — methodology written; findings pending ≥20 real sessions
+  - **Methodology doc:** `docs/sprint4-ces-threshold-analysis.md` — objective, data sources, threshold-sweep
+    method, SQL query templates, decision rule (env-var-only `CES_THRESHOLD` change).
+  - **🔎 Surfaced prerequisite:** per-window CES is **not persisted** (Redis 24 h TTL) — recompute from
+    `attention_events` (raw components persisted) or add a `ces_window` event log before the analysis runs.
+  - **⏳ Pending:** ≥20 real sessions (production deploy) → threshold sweep + proposed value. No data invented.
 
 <!-- CHECK:intervention_response_review -->
-- [Not Started] **Review which interventions students responded to vs ignored**
-  - Query `session_events` for `intervention_acknowledged` events
-  - Compute acknowledgement rate per intervention type (distraction / fatigue / encouragement)
-  - Flag types with < 50% acknowledgement rate for message copy revision
-  - **AC:** Review doc written; at least 1 intervention type flagged with proposed copy change
+- [Partial] **Review which interventions students responded to vs ignored** ⚠️ PARTIAL — methodology written; blocked on instrumentation + data
+  - **Methodology doc:** `docs/sprint4-intervention-review.md` — ack-rate-per-type method + SQL templates.
+  - **🔎 Surfaced blocking gap:** **interventions + acknowledgements are NOT logged** — firing only updates
+    Redis counters, and there is **no `intervention_acknowledged` message/handler** (analytics event_type enum
+    lacks it). Needs an instrumentation story (Dev 4 fire→`session_events`; Dev 2 client ack tap) first.
+  - **⏳ Pending:** instrumentation + real sessions → per-type ack rates + flagged type. No rates invented.
 
 <!-- CHECK:cooldown_tuning -->
-- [Not Started] **Cooldown period tuning from real session data**
-  - Analyse time between consecutive interventions in real sessions
-  - If avg inter-intervention time < 4 minutes, increase `INTERVENTION_COOLDOWN_SECONDS`
-  - Update Railway env var; document change
-  - **AC:** Cooldown value updated in Railway; documented with data rationale
+- [Partial] **Cooldown period tuning from real session data** ⚠️ PARTIAL — methodology written; pending intervention-timestamp logging + data
+  - **Methodology doc:** `docs/sprint4-cooldown-tuning.md` — inter-intervention-gap analysis (LAG window),
+    decision rule (raise `INTERVENTION_COOLDOWN_SECONDS` if mean gap < 4 min), env-var-only rollout.
+  - **🔎 Surfaced prerequisite:** needs per-intervention timestamps in `session_events` (same instrumentation
+    gap as `intervention_response_review`).
+  - **⏳ Pending:** instrumentation + real sessions → gap distribution + cooldown decision. No timings invented.
 
 <!-- CHECK:ws_load_test -->
-- [Not Started] **WebSocket stability testing under 50 concurrent users**
-  - Use `locust` or `websockets` Python lib to simulate 50 concurrent WS sessions
-  - Each session: connect → send 60 attention_signals over 5 minutes → disconnect
-  - Target: 0 dropped connections, memory stable, Redis connection count < pool max (20)
-  - **AC:** Load test report in `docs/sprint4-ws-load-test.md`; 0 connection drops at 50 concurrent users
+- [Partial] **WebSocket stability testing under 50 concurrent users** ⚠️ PARTIAL — harness built + locally validated; production run pending staging
+  - **Harness:** `scripts/ws_load_test.py` (`websockets`) — N concurrent sessions, each connect →
+    `session_start` → M `attention_signal`s over a duration (awaiting each `attention_ack`) → disconnect.
+    Aggregates drops/errors/acks/latency p50-p95-max; **exit 0 iff 0 drops + 0 errors + 0 missed acks**.
+    Report: `docs/sprint4-ws-load-test.md`. Story: `docs/stories/4-15-ws-load-test.md`.
+  - **Validated locally (`--self-test`, in-process reference server):** **50/50 connected, 0 dropped, 150/150
+    acks, p50≈3.4ms** — confirms the harness + 50-way concurrency model + ack contract. `summarize()` unit-tested
+    (7 cases, socket-free) in `apps/api/tests/test_ws_load_test.py`.
+  - **🔎 Review-caught (HIGH, fixed):** mid-run drops were undercounted (`connected` stayed True) → would
+    false-green. Now a drop = "didn't cleanly complete"; `passed` gates drops+errors+missed-acks.
+  - **⚠️ NOT DONE (why Partial):** the real **50-user × 60-signal × 5-min** run vs the live API+Redis is
+    pending a running server — ideally the **India-region deploy** (Sprint-3 prerequisite per CLAUDE.md;
+    Railway has no India region). Harness is ready to point at staging unchanged.
+  - **AC PARTIALLY MET:** report exists + harness proves 0 drops at 50 concurrent locally; production-server
+    run + memory/Redis-pool observation remain.
 
 <!-- CHECK:reconnect_test -->
-- [Not Started] **Session reconnect testing under poor network conditions**
-  - Use `toxiproxy` or manual network interrupt to simulate dropped connection mid-session
-  - Client reconnects → receives `state_sync` → session continues without data loss
-  - Test all 7 states: reconnect should work from any state
-  - **AC:** Reconnect from each of the 7 states tested; state is always correctly restored from Redis
+- [Partial] **Session reconnect testing under poor network conditions** ⚠️ PARTIAL — all-7-states restore proven; live network-fault sim pending
+  - **DONE — all 7 states restore from Redis:** `test_f7_reconnect_restores_each_of_7_states`
+    (`test_websocket_session.py`, parametrized ×7: IDLE/TEACHING/INTERVENING/CHECKING_IN/QUIZZING/TEACH_BACK/
+    SESSION_END) drives the real `connect()`/`_restore_or_init_session` — each reads `tutor_state:{sid}` from
+    Redis and pushes the frozen **`state_change`** sync (`from==to`), no reset. Mutation-verified non-vacuous.
+    Story: `docs/stories/4-16-reconnect-test.md`. **AC sentence ("restored from Redis, each of 7 states") MET.**
+  - **Contract note:** reconnect sync uses the frozen `state_change` (from==to), NOT `state_sync` (not in ws.ts).
+  - **⚠️ NOT DONE (why Partial):** live **network-fault simulation** (`toxiproxy` / manual interrupt — drop a
+    real socket mid-session, reconnect against the running API) needs a live server (India-region deploy,
+    Sprint-3 prerequisite); and **"without data loss"** beyond the FSM state name (`segment_index`/player
+    position) is a known s2-4 follow-up (the sync carries the state name only).
+  - **🔎 Flagged:** SESSION_END (terminal) restore locked in without a guard against re-driving a dead session.
 
 <!-- CHECK:intervention_copy_review -->
-- [Not Started] **Intervention message copy review (tone + warmth)**
-  - Extract all pre-generated intervention messages from 5 real lesson packages
-  - Review checklist: warm tone, not condescending, < 15 words, action-oriented
-  - Flag any failing messages and coordinate with Dev 1 (pipeline owner) to regenerate
-  - **AC:** All reviewed messages pass checklist; failing ones have documented fix requests to Dev 1
+- [Partial] **Intervention message copy review (tone + warmth)** ⚠️ PARTIAL — checklist ready; pending 5 real lesson packages
+  - **Checklist doc:** `docs/sprint4-intervention-copy-review.md` — 5-point checklist (warm/not-condescending,
+    < 15 words, action-oriented, type-appropriate, no clinical/DNA language), message-extraction method, and
+    a verdict table to fill. Messages live in `LessonPackage.segments[].interventions` (frozen schema).
+  - **🔎 Surfaced prerequisite:** needs 5 generated lesson packages (Dev 1's pipeline); also flagged Dev 1's
+    `content/pipeline/graph.py:249` stale `encouragement` TODO to reconcile to `distraction|confusion|fatigue`.
+  - **⏳ Pending:** 5 real packages → verdict table + fix requests to Dev 1. No messages reviewed/invented yet.
 
 ---
 

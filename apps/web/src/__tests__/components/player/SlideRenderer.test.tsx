@@ -106,9 +106,11 @@ describe('SlideRenderer — image handling', () => {
     expect(screen.queryByTestId('slide-image-placeholder')).toBeNull();
   });
 
-  it('shows placeholder when both image_url and fallback_image_url are null', () => {
+  it('renders no image element (not even a placeholder) when both image_url and fallback_image_url are null', () => {
+    // Intentional design: skip the placeholder entirely rather than a blank
+    // space-eating box — see SlideImage's early `return null` in SlideRenderer.tsx.
     render(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
-    expect(screen.getByTestId('slide-image-placeholder')).toBeDefined();
+    expect(screen.queryByTestId('slide-image-placeholder')).toBeNull();
     expect(screen.queryByTestId('slide-image')).toBeNull();
   });
 

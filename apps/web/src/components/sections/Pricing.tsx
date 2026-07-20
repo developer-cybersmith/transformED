@@ -86,10 +86,10 @@ export default function Pricing() {
                     y: y / window.innerHeight,
                 },
                 colors: [
-                    "#2F80ED", // primary
-                    "#3FA9F5", // accent
-                    "#1a6dd4", // dark
-                    "#EAF5FF", // soft wrapper
+                    "#07172C", // primary (navy)
+                    "#C6A45C", // accent (gold)
+                    "#040D19", // dark (navy-dark)
+                    "#EDEFF3", // soft wrapper (light navy-tint)
                 ],
                 ticks: 200,
                 gravity: 1.2,
@@ -111,8 +111,8 @@ export default function Pricing() {
                     transition={{ duration: 0.4 }}
                     className="text-center max-w-xl mx-auto mb-10"
                 >
-                    <h2 className="text-3xl sm:text-[2.25rem] font-bold text-foreground font-display tracking-tight leading-tight mb-3">
-                        Simple pricing
+                    <h2 className="text-3xl sm:text-[2.25rem] font-serif text-foreground tracking-tight leading-tight mb-3">
+                        <span className="font-semibold">Simple</span> <span className="italic font-normal text-text-secondary">pricing</span>
                     </h2>
                     <p className="text-text-secondary text-[1.05rem]">
                         Start free. Upgrade when you need more.
@@ -174,7 +174,7 @@ export default function Pricing() {
 
                             <div className="flex items-baseline gap-1 mb-1 relative min-h-[50px]">
                                 {plan.price === 0 ? (
-                                    <span className={cn("text-4xl font-bold font-display tracking-tight", plan.highlighted ? "text-white" : "text-foreground")}>
+                                    <span className={cn("text-4xl font-serif font-semibold tracking-tight", plan.highlighted ? "text-white" : "text-foreground")}>
                                         Free
                                     </span>
                                 ) : (
@@ -191,7 +191,7 @@ export default function Pricing() {
                                             easing: "ease-out",
                                         }}
                                         willChange
-                                        className={cn("text-4xl font-bold font-display font-variant-numeric: tabular-nums tracking-tight", plan.highlighted ? "text-white" : "text-foreground")}
+                                        className={cn("text-4xl font-serif font-semibold tabular-nums tracking-tight", plan.highlighted ? "text-white" : "text-foreground")}
                                     />
                                 )}
                                 {plan.period && plan.price !== 0 && (

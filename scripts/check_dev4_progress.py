@@ -279,7 +279,7 @@ def _build_checks() -> dict[str, object]:
             "apps/api/app/**/*.py",
             '"distraction"',
             '"fatigue"',
-            '"encouragement"',
+            '"confusion"',
         ),
         # ── Sprint 4 ──────────────────────────────────────────────────────────
         "threshold_tuning": lambda: file_exists("docs", "sprint4-ces-threshold-analysis.md"),

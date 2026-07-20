@@ -281,7 +281,7 @@ def test_narration_audio_provider_enum() -> None:
     with pytest.raises(ValidationError):
         Narration(
             script="x", audio_url="https://x.com/a.mp3",
-            audio_provider="sarvam",  # not in frozen schema enum yet
+            audio_provider="elevenlabs",  # removed — replaced by sarvam (CLAUDE.md 2026-06-25)
             timestamps=[],
         )
 

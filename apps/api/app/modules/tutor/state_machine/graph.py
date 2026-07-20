@@ -467,7 +467,23 @@ async def dispatch_event(
     # with GraphRecursionError instead of hanging.
     config = {"configurable": {"thread_id": session_id}, "recursion_limit": 5}
     result: TutorMachineState = await graph.ainvoke(input_state, config=config)
-    _trace_dispatch(session_id, event, result)
+    try:
+        _trace_dispatch(session_id, event, result)
+    except Exception:  # noqa: BLE001 — tracing is best-effort; never break the FSM
+        logger.debug("_trace_dispatch raised for %s/%s", session_id, event, exc_info=True)
+
+    to_state = result["current_state"]
+    if current_state_val != to_state:
+        from app.core.websocket import manager  # lazy — avoids circular import
+        await manager.send(session_id, {
+            "type": "state_change",
+            "payload": {
+                "session_id": session_id,
+                "from_state": str(current_state_val),
+                "to_state": str(to_state),
+            },
+        })
+
     return result
 
 

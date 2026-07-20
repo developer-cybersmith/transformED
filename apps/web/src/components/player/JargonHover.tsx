@@ -53,7 +53,7 @@ export function JargonHover({ text, jargon }: JargonHoverProps) {
                                   * inline text by 1px. All other classes are constant so line height
                                   * stays stable across all bullet renders.
                                   */}
-                                <span className="cursor-help inline-block font-semibold text-[var(--accent-primary)] bg-[var(--accent-primary)]/5 border-b-[2px] border-dotted border-[var(--accent-primary)]/60 hover:bg-[var(--accent-primary)]/15 hover:border-solid hover:shadow-sm transition-all rounded-md px-1.5 py-0.5 mx-0.5 relative z-10">
+                                <span className="cursor-help inline-block font-semibold text-[var(--accent-secondary)] bg-[var(--accent-secondary)]/8 border-b-[2px] border-dotted border-[var(--accent-secondary)]/60 hover:bg-[var(--accent-secondary)]/18 hover:border-solid hover:shadow-sm transition-all rounded-md px-1.5 py-0.5 mx-0.5 relative z-10">
                                     {matchedText}
                                 </span>
                             </TooltipTrigger>
@@ -61,10 +61,10 @@ export function JargonHover({ text, jargon }: JargonHoverProps) {
                               * TooltipContent portals to document.body via Radix's default Portal
                               * behaviour — never clipped by overflow-y-auto on SlideRenderer.
                               */}
-                            <TooltipContent side="top" align="center" sideOffset={10} className="w-[300px] border border-[var(--accent-primary)]/20 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)]">
+                            <TooltipContent side="top" align="center" sideOffset={10} className="w-[300px] border border-[var(--accent-secondary)]/25 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)]">
                                 <div className="p-2">
-                                    <p className="font-semibold text-white mb-2 inline-flex items-center gap-2.5">
-                                        <span className="w-2 h-2 rounded-full bg-[var(--accent-primary)] shrink-0 shadow-[0_0_10px_var(--accent-primary)]" />
+                                    <p className="font-serif font-semibold text-white mb-2 inline-flex items-center gap-2.5">
+                                        <span className="w-2 h-2 rounded-full bg-[var(--accent-secondary)] shrink-0 shadow-[0_0_10px_var(--accent-secondary)]" />
                                         {dictKey}
                                     </p>
                                     <p className="text-neutral-300 text-[13px] leading-relaxed font-normal">{dictionary[dictKey]}</p>

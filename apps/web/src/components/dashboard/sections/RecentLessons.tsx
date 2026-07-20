@@ -13,22 +13,20 @@ export function RecentLessons({ lessons }: { lessons: MockLesson[] }) {
     return (
         <div className="w-full">
             <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-semibold tracking-tight text-neutral-900">
+                <h2 className="font-serif text-xl font-semibold tracking-tight text-neutral-900">
                     Recently Added Lessons
                 </h2>
-                <span className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors">
+                <button
+                    type="button"
+                    onClick={() => router.push("/library")}
+                    className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors"
+                >
                     View All
-                </span>
+                </button>
             </div>
 
             <div className="flex gap-6 overflow-x-auto pb-8 snap-x snap-mandatory scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
                 {lessons.map((lesson, index) => {
-                    // Assign deterministic fake thumbnails
-                    const thumbnails = [
-                        "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&q=80&w=600&h=400",
-                        "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=600&h=400",
-                        "https://images.unsplash.com/photo-1605745341112-85968b19335b?auto=format&fit=crop&q=80&w=600&h=400"
-                    ];
                     return (
                         <motion.div
                             key={lesson.id}
@@ -39,11 +37,12 @@ export function RecentLessons({ lessons }: { lessons: MockLesson[] }) {
                             className="group relative flex-shrink-0 w-[280px] sm:w-[320px] rounded-3xl overflow-hidden bg-white border border-neutral-100 shadow-sm hover:shadow-xl transition-all duration-500 cursor-pointer snap-start h-full"
                         >
                             {/* Thumbnail */}
-                            <div className="relative w-full h-40 sm:h-44 overflow-hidden">
+                            <div className="relative w-full h-40 sm:h-44 overflow-hidden bg-neutral-100">
                                 <div className="absolute inset-0 bg-neutral-900/10 group-hover:bg-neutral-900/0 transition-colors z-10 duration-500" />
                                 <img
-                                    src={thumbnails[index % thumbnails.length]}
+                                    src={lesson.thumbnailUrl}
                                     alt={lesson.title}
+                                    onError={(e) => { e.currentTarget.style.display = "none"; }}
                                     className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-out"
                                 />
 

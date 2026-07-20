@@ -64,13 +64,15 @@ export interface SessionReport {
   user_id: string;
   lesson_id: string;
   ces_score: number;
+  // Exactly 5 keys, matching the frozen backend contract verbatim
+  // (apps/api/app/modules/assessment/router.py SessionReport, story 3-19 AC 7).
+  // behavioral/head_pose/blink are always 0.0 in Sprint 2 (Phase 3 concern).
   ces_breakdown: {
-    quiz_accuracy?: number;
-    teachback_score?: number;
-    behavioral?: number;
-    head_pose?: number;
-    blink?: number;
-    [key: string]: number | undefined;
+    quiz: number;
+    teachback: number;
+    behavioral: number;
+    head_pose: number;
+    blink: number;
   };
   interventions_count: number;
   quiz_score: number | null;
@@ -94,4 +96,10 @@ export interface LearnerDNA {
 
 export interface OnboardingDiagnosticSubmission {
   responses: OnboardingAnswer[];
+}
+
+export interface OnboardingResult {
+  badge_labels: string[];
+  profile_text: string; // always ends with the DPDP Act 2023 disclaimer sentence — never truncate
+  session_count: number;
 }

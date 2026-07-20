@@ -38,12 +38,12 @@ export default function Footer() {
                     <div className="col-span-2">
                         <Link href="/" className="flex items-center gap-2 mb-3">
                             <Image src="/logo.jpeg" alt="HIE Logo" width={24} height={24} className="rounded-md object-contain" />
-                            <span className="text-sm font-bold text-foreground font-display">
+                            <span className="text-sm font-serif font-semibold text-foreground">
                                 HIEIQ<span className="text-primary">.AI</span>
                             </span>
                         </Link>
                         <p className="text-xs text-text-muted leading-relaxed max-w-[240px]">
-                            Human Intelligence Engine. Monitor cognitive decline and train your structural critical thinking, IQ, EQ, and SQ.
+                            Human Intelligence Engine. An AI tutor that builds your private Learner DNA profile — a descriptive picture of how you learn best.
                         </p>
                     </div>
 

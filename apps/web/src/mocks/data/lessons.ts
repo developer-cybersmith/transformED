@@ -49,6 +49,7 @@ export interface MockLesson {
     status: LessonStatus;
     progressPercent: number;
     lastAccessed: string;
+    thumbnailUrl: string;
     slides: Slide[];
     timeline: TimelineEvent[];
 }
@@ -62,6 +63,7 @@ export const mockLessons: MockLesson[] = [
         status: "in_progress",
         progressPercent: 72,
         lastAccessed: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+        thumbnailUrl: "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&q=80&w=600&h=400",
         slides: [
             {
                 id: "slide_1",
@@ -106,6 +108,7 @@ export const mockLessons: MockLesson[] = [
         status: "completed",
         progressPercent: 100,
         lastAccessed: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+        thumbnailUrl: "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=600&h=400",
         slides: [
             {
                 id: "slide_1",
@@ -141,6 +144,7 @@ export const mockLessons: MockLesson[] = [
         status: "processing",
         progressPercent: 0,
         lastAccessed: new Date().toISOString(),
+        thumbnailUrl: "https://images.unsplash.com/photo-1605745341112-85968b19335b?auto=format&fit=crop&q=80&w=600&h=400",
         slides: [],
         timeline: []
     },
@@ -152,6 +156,7 @@ export const mockLessons: MockLesson[] = [
         status: "failed",
         progressPercent: 0,
         lastAccessed: new Date().toISOString(),
+        thumbnailUrl: "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=600&h=400",
         slides: [],
         timeline: []
     },
@@ -163,6 +168,7 @@ export const mockLessons: MockLesson[] = [
         status: "in_progress",
         progressPercent: 15,
         lastAccessed: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
+        thumbnailUrl: "https://images.unsplash.com/photo-1555949963-aa79dcee981c?auto=format&fit=crop&q=80&w=600&h=400",
         slides: [],
         timeline: []
     }
