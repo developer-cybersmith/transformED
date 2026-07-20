@@ -47,6 +47,7 @@ dev = [
     "pytest-mock>=3.14.0",
     "jsonschema>=4.22.0",
     "fakeredis>=2.23.0",           # AC-1 queue round-trip test (test_queue_symmetry)
+    "fpdf2>=2.7.0",                 # MIT — synthetic PDF generation for the S2-14 eval harness fixtures only
 ]
 
 [tool.ruff]
@@ -123,6 +124,7 @@ markers = [
     "unit: fast isolated unit tests",
     "integration: tests requiring external services",
     "slow: tests that take > 2 seconds",
+    "live_eval: S2-14 eval harness live run — hits real OpenAI/Sarvam/Azure/Supabase, costs real money, excluded from default runs (opt in with -m live_eval)",
 ]
 filterwarnings = [
     "error",

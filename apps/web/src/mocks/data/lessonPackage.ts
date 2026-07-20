@@ -11,6 +11,7 @@ export const mockLessonPackage: LessonPackage = {
     total_segments: 2,
     estimated_duration_mins: 5,
     complexity_level: 'medium',
+    tier: 'T2',
   },
   segments: [
     {

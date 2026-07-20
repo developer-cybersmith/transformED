@@ -148,6 +148,53 @@ def test_lesson_metadata_extra_fields_forbidden() -> None:
         )
 
 
+@pytest.mark.unit
+def test_lesson_metadata_tier_defaults_to_t2() -> None:
+    """Story 2-2 AC-1: tier defaults to T2 so existing callers/fixtures are unaffected."""
+    metadata = LessonMetadata(
+        title="T", subject="S", total_segments=1,
+        estimated_duration_mins=1.0, complexity_level="low",
+    )
+    assert metadata.tier == "T2"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+def test_lesson_metadata_tier_accepts_valid_values(tier: str) -> None:
+    metadata = LessonMetadata(
+        title="T", subject="S", total_segments=1,
+        estimated_duration_mins=1.0, complexity_level="low",
+        tier=tier,
+    )
+    assert metadata.tier == tier
+
+
+@pytest.mark.unit
+def test_lesson_metadata_tier_rejects_invalid_value() -> None:
+    with pytest.raises(ValidationError):
+        LessonMetadata(
+            title="T", subject="S", total_segments=1,
+            estimated_duration_mins=1.0, complexity_level="low",
+            tier="T4",
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+def test_lesson_package_tier_round_trips_through_json_schema(tier: str) -> None:
+    """Story 2-2 AC-1/AC-5: every tier value round-trips through Pydantic + the
+    frozen JSON schema (which now requires `tier` — see Dev Notes on
+    additionalProperties: false)."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    package_dict = {
+        **MINIMAL_PACKAGE_DICT,
+        "metadata": {**MINIMAL_PACKAGE_DICT["metadata"], "tier": tier},
+    }
+    package = LessonPackage.model_validate(package_dict)
+    assert package.metadata.tier == tier
+    jsonschema.validate(instance=json.loads(package.model_dump_json()), schema=schema)
+
+
 # ---------------------------------------------------------------------------
 # SegmentComplexity
 # ---------------------------------------------------------------------------

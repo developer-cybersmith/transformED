@@ -14,6 +14,8 @@
 
 TransformED's core value proposition is fully automated lesson generation from a PDF upload. Without a reliable, cost-bounded, crash-recoverable pipeline that produces a complete lesson package, nothing else in the product can be built or tested. This epic delivers that pipeline.
 
+**Added 2026-07-13 (Learner Mode):** the pipeline must also support a content-depth **tier** (T1 full / T2 standard / T3 critical-topics-only) selected per lesson, since students vary in how much time they have per session. This amends nodes 11 (`lesson_planner`) and 12 (`slide_generator`) below rather than introducing new nodes — see the tier column added to the Phase B.2 table and the new Learner Mode rows in Definition of Done. Full task breakdown lives in `docs/dev1-tracker.md`'s Sprint 2 section (S2-LM1 through S2-LM5).
+
 ---
 
 ## Goal / Success Metric
@@ -34,6 +36,7 @@ Secondary metrics:
 - As a **developer**, I can inspect the status of any in-flight or failed job from the admin panel.
 - As a **platform operator**, I am confident total LLM spend per lesson will not exceed $3.00 under any normal input.
 - As a **developer**, if a pipeline worker crashes mid-run, the job resumes from the last completed node — not from scratch.
+- As a **student**, I can choose a lesson depth tier (T1 full-depth / T2 standard / T3 critical-topics-only refresher) matching how much time I have for this session.
 
 ---
 
@@ -45,7 +48,7 @@ Nodes execute in two physically separate phases. Each node checkpoints to `lesso
 
 | # | Node | Input | Output | Key Constraint |
 |---|---|---|---|---|
-| 1 | `extract` | PDF bytes | raw text + page map | PyMuPDF; never pass full book to LLM |
+| 1 | `extract` | PDF bytes | raw text + page map | pypdfium2 + pdftext (PyMuPDF/`fitz` is BANNED — AGPL-3.0); never pass full book to LLM |
 | 2 | `structure` | raw text | chapter/section outline | hierarchical chunking |
 | 3 | `chunk` | outline | semantic chunks (≤800 tokens) | overlap 10% |
 | 4 | `embed` | chunks | vector(1536) stored inline in `chunks.embedding` | Embed at ingestion only — NEVER regenerate stored embeddings |
@@ -67,8 +70,8 @@ Nodes execute in two physically separate phases. Each node checkpoints to `lesso
 
 | # | Node | Input | Output | Key Constraint |
 |---|---|---|---|---|
-| 11 | `lesson_planner` | segment summaries from Phase B.1 | lesson plan JSON | GPT-4o; input is summaries NOT raw chapter text (5× token savings) |
-| 12 | `slide_generator` | lesson plan | slide JSON array | max 20 slides/lesson |
+| 11 | `lesson_planner` | segment summaries from Phase B.1 + `tier` | lesson plan JSON | GPT-4o; input is summaries NOT raw chapter text (5× token savings); **tier-aware (Learner Mode):** targets T1 20–25 / T2 12–15 / T3 6–8 slides, T3 outline limited to critical topics only |
+| 12 | `slide_generator` | lesson plan (tier-scoped) | slide JSON array | respects the per-segment slide budget `lesson_planner` set for the request's tier — does not re-derive tier logic independently |
 
 **Phase B.3 — Media nodes:**
 
@@ -86,16 +89,14 @@ Nodes execute in two physically separate phases. Each node checkpoints to `lesso
 
 | Layer | Files / Modules |
 |---|---|
-| Pipeline graph | `backend/pipeline/graph.py` |
-| Node implementations | `backend/pipeline/nodes/*.py` (one file per node) |
-| Checkpointing | `backend/pipeline/checkpoint.py` — writes `lesson_jobs.last_node` |
-| ARQ worker | `backend/workers/pipeline_worker.py` |
-| Provider abstraction | `backend/llm/providers.py` (OpenAI / Anthropic adapters) |
-| Retry + circuit breaker | `backend/llm/resilience.py` — `with_retry()`, `CircuitBreaker` |
-| Storage | `backend/storage/lesson_store.py` — Supabase bucket + DB writes |
-| Cost tracking | `backend/pipeline/cost_tracker.py` — tracks token spend per job |
-| DB migrations | `supabase/migrations/` — `lesson_jobs`, `lesson_packages`, `chunks` (inline `embedding vector(1536)`) tables. Note: `embeddings` table was dropped in migration `20260625000000` — embeddings are now inline in `chunks.embedding`. |
-| ARQ job definition | `backend/workers/jobs.py` — `generate_lesson_job` |
+| Pipeline graph + all node implementations | `apps/api/app/modules/content/pipeline/graph.py` (all 15 node functions defined here, not one file per node — `nodes/` holds only extracted helper modules too large to inline: `chunking.py`, `extract_subprocess.py`, `structure_detection.py`) |
+| Checkpointing | Inline in each node function in `graph.py` — writes `lesson_jobs.last_node` + `node_outputs` (no separate `checkpoint.py` module) |
+| ARQ worker | `apps/api/app/workers/main.py` (`WorkerSettings`) + `apps/api/app/workers/jobs/content_pipeline.py` (job entry point) |
+| Provider abstraction | `apps/api/app/providers/base.py` (ABCs) + `apps/api/app/providers/llm/openai.py`, `providers/tts/`, `providers/image/`, `providers/avatar/` |
+| Retry + circuit breaker | `apps/api/app/core/retry.py` — `with_retry()`; `apps/api/app/core/circuit_breaker.py` — `is_circuit_open()` |
+| Storage | `apps/api/app/core/storage.py` (bucket assertion) + `apps/api/app/core/db.py` (Supabase client) |
+| Cost tracking | `apps/api/app/core/cost_tracker.py` — `accumulate_cost()` / `check_ceiling()` |
+| DB migrations | `supabase/migrations/` — `lessons`, `lesson_jobs`, `books`, `chapters`, `chunks` (inline `embedding vector(1536)`). `embeddings` table was dropped in `20260625000000` — embeddings are now inline in `chunks.embedding`. `lessons.tier` pending via S2-LM2 (Learner Mode). |
 
 **State management:** LangGraph `MemorySaver` (in-memory per invocation). `PostgresSaver` is **BANNED** — conflicts with Supabase PgBouncer + asyncpg. Custom `lesson_jobs` checkpointing only.
 
@@ -140,6 +141,9 @@ Nodes execute in two physically separate phases. Each node checkpoints to `lesso
 - [ ] All node outputs conform to `lesson_package.json` schema (Pydantic validation passing)
 - [ ] ARQ worker visible in admin job monitor
 - [ ] No hardcoded API keys; all secrets via Railway env vars
+- [ ] **(Learner Mode)** `tier` field present on the frozen lesson contract (JSON schema + TS + Pydantic), reviewed and signed off by all 4 devs
+- [ ] **(Learner Mode)** `lessons.tier` column migrated, enum-constrained (`T1`/`T2`/`T3`), default `T2`
+- [ ] **(Learner Mode)** Three pipeline runs (T1/T2/T3) against the same test chapter each produce a slide count inside that tier's range (T1 20–25, T2 12–15, T3 6–8)
 
 ---
 
