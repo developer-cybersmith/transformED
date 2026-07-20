@@ -31,7 +31,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # -- Helpers -------------------------------------------------------------------
 
 
@@ -51,19 +50,9 @@ def _make_mock_supabase(session_id: str | None = None) -> MagicMock:
     if session_id is not None:
         row["session_id"] = session_id
     (
-        mock.table.return_value
-        .select.return_value
-        .eq.return_value
-        .single.return_value
-        .execute.return_value
-        .data
+        mock.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data
     ) = row
-    (
-        mock.table.return_value
-        .update.return_value
-        .eq.return_value
-        .execute.return_value
-    ) = MagicMock()
+    (mock.table.return_value.update.return_value.eq.return_value.execute.return_value) = MagicMock()
     return mock
 
 
@@ -89,54 +78,105 @@ REAL_LESSON_PACKAGE: dict = {
     "chapter_id": "90909090-9090-9090-9090-909090909090",
     "created_at": "2026-07-16T00:00:00+00:00",
     "metadata": {
-        "title": "Intro to Thermodynamics", "subject": "Physics", "total_segments": 2,
-        "estimated_duration_mins": 12.5, "complexity_level": "medium", "tier": "T2",
+        "title": "Intro to Thermodynamics",
+        "subject": "Physics",
+        "total_segments": 2,
+        "estimated_duration_mins": 12.5,
+        "complexity_level": "medium",
+        "tier": "T2",
     },
     "segments": [
         {
-            "segment_id": "sec_0", "segment_index": 0, "title": "Entropy Basics",
+            "segment_id": "sec_0",
+            "segment_index": 0,
+            "title": "Entropy Basics",
             "summary": "Intro to entropy.",
             "complexity": {
-                "level": "medium", "cognitive_load": "moderate", "abstraction_level": "concrete",
-                "prerequisite_concepts": ["energy"], "narration_style": "conversational",
-                "quiz_difficulty": "medium", "intervention_sensitivity": 0.4,
+                "level": "medium",
+                "cognitive_load": "moderate",
+                "abstraction_level": "concrete",
+                "prerequisite_concepts": ["energy"],
+                "narration_style": "conversational",
+                "quiz_difficulty": "medium",
+                "intervention_sensitivity": 0.4,
             },
             "slides": [
-                {"slide_id": "slide_sec_0_0", "title": "What is Entropy?", "bullets": ["Point A"],
-                 "image_url": None, "fallback_image_url": None},
-                {"slide_id": "slide_sec_0_1", "title": "Why it matters", "bullets": ["Point B"],
-                 "image_url": None, "fallback_image_url": None},
+                {
+                    "slide_id": "slide_sec_0_0",
+                    "title": "What is Entropy?",
+                    "bullets": ["Point A"],
+                    "image_url": None,
+                    "fallback_image_url": None,
+                },
+                {
+                    "slide_id": "slide_sec_0_1",
+                    "title": "Why it matters",
+                    "bullets": ["Point B"],
+                    "image_url": None,
+                    "fallback_image_url": None,
+                },
             ],
-            "narration": {"script": "Entropy measures disorder.", "audio_url": "lesson/sec_0.mp3",
-                          "audio_provider": "sarvam", "timestamps": []},
-            "quiz": [{"question_id": "quiz_sec_0", "type": "mcq", "question": "What is entropy?",
-                      "options": ["Disorder", "Order", "Mass", "Energy"], "correct_index": 0,
-                      "explanation": "Entropy measures disorder.", "difficulty": "medium"}],
+            "narration": {
+                "script": "Entropy measures disorder.",
+                "audio_url": "lesson/sec_0.mp3",
+                "audio_provider": "sarvam",
+                "timestamps": [],
+            },
+            "quiz": [
+                {
+                    "question_id": "quiz_sec_0",
+                    "type": "mcq",
+                    "question": "What is entropy?",
+                    "options": ["Disorder", "Order", "Mass", "Energy"],
+                    "correct_index": 0,
+                    "explanation": "Entropy measures disorder.",
+                    "difficulty": "medium",
+                }
+            ],
             "teachback_prompt": "In your own words, explain what you learned about Entropy Basics.",
             "jargon": [{"term": "Entropy", "definition": "A measure of disorder."}],
             "interventions": {
-                "distraction": ["a", "b", "c"], "confusion": ["a", "b", "c"], "fatigue": ["a", "b", "c"],
+                "distraction": ["a", "b", "c"],
+                "confusion": ["a", "b", "c"],
+                "fatigue": ["a", "b", "c"],
             },
         },
         {
-            "segment_id": "sec_1", "segment_index": 1, "title": "Heat Transfer",
+            "segment_id": "sec_1",
+            "segment_index": 1,
+            "title": "Heat Transfer",
             "summary": "Intro to heat transfer.",
             "complexity": {
-                "level": "medium", "cognitive_load": "moderate", "abstraction_level": "concrete",
-                "prerequisite_concepts": ["temperature"], "narration_style": "conversational",
-                "quiz_difficulty": "medium", "intervention_sensitivity": 0.5,
+                "level": "medium",
+                "cognitive_load": "moderate",
+                "abstraction_level": "concrete",
+                "prerequisite_concepts": ["temperature"],
+                "narration_style": "conversational",
+                "quiz_difficulty": "medium",
+                "intervention_sensitivity": 0.5,
             },
             "slides": [
-                {"slide_id": "slide_sec_1_0", "title": "Conduction", "bullets": ["Point C"],
-                 "image_url": None, "fallback_image_url": None},
+                {
+                    "slide_id": "slide_sec_1_0",
+                    "title": "Conduction",
+                    "bullets": ["Point C"],
+                    "image_url": None,
+                    "fallback_image_url": None,
+                },
             ],
-            "narration": {"script": "Heat flows from hot to cold.", "audio_url": "lesson/sec_1.mp3",
-                          "audio_provider": "azure", "timestamps": []},
+            "narration": {
+                "script": "Heat flows from hot to cold.",
+                "audio_url": "lesson/sec_1.mp3",
+                "audio_provider": "azure",
+                "timestamps": [],
+            },
             "quiz": [],
             "teachback_prompt": "In your own words, explain what you learned about Heat Transfer.",
             "jargon": [],
             "interventions": {
-                "distraction": ["a", "b", "c"], "confusion": ["a", "b", "c"], "fatigue": ["a", "b", "c"],
+                "distraction": ["a", "b", "c"],
+                "confusion": ["a", "b", "c"],
+                "fatigue": ["a", "b", "c"],
             },
         },
     ],
@@ -290,7 +330,9 @@ async def test_publish_message_has_correct_ws_shape(mocker) -> None:
 
     assert msg["type"] == "lesson_ready"
     assert msg["payload"] == {"lesson_id": lesson_id, "lesson": lesson_package}
-    assert "session_id" not in msg["payload"], "payload must match ws.ts's LessonReadyMessage exactly"
+    assert "session_id" not in msg["payload"], (
+        "payload must match ws.ts's LessonReadyMessage exactly"
+    )
     assert "title" not in msg, "flat 'title' key must not appear at top level"
 
 
@@ -528,9 +570,9 @@ async def test_start_lesson_ready_listener_returns_cancellable_task(mocker) -> N
 
     Verifies the listener-factory contract that the lifespan relies on: the returned object is the
     named background asyncio.Task, the scheduled coroutine actually runs (it reaches psubscribe — so
-    a broken factory that scheduled the wrong coroutine would be caught), and cancellation propagates
-    CancelledError cleanly with no restart. (main.py's lifespan start/cancel is exercised end-to-end
-    by the integration suite's ``running_listener``.)
+    a broken factory that scheduled the wrong coroutine would be caught), and cancellation
+    propagates CancelledError cleanly with no restart. (main.py's lifespan start/cancel is
+    exercised end-to-end by the integration suite's ``running_listener``.)
     """
     mock_settings = MagicMock()
     mock_settings.redis_url = "redis://localhost:6379/0"

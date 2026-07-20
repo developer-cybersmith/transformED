@@ -54,7 +54,9 @@ def test_tier_migration_adds_check_constrained_column_with_t2_default() -> None:
     assert re.search(r"ADD\s+COLUMN\s+tier\s+text", sql, re.IGNORECASE)
     assert re.search(r"NOT\s+NULL", sql, re.IGNORECASE)
     assert re.search(r"DEFAULT\s+'T2'", sql, re.IGNORECASE)
-    assert re.search(r"CHECK\s*\(\s*tier\s+IN\s*\(\s*'T1'\s*,\s*'T2'\s*,\s*'T3'\s*\)\s*\)", sql, re.IGNORECASE)
+    assert re.search(
+        r"CHECK\s*\(\s*tier\s+IN\s*\(\s*'T1'\s*,\s*'T2'\s*,\s*'T3'\s*\)\s*\)", sql, re.IGNORECASE
+    )
 
 
 @pytest.mark.unit
@@ -71,5 +73,6 @@ def test_no_existing_applied_migration_was_modified() -> None:
         "20260713020000_lesson_job_node_output_merge_fn.sql",
     }
     existing_names = {p.name for p in _MIGRATIONS_DIR.glob("*.sql")}
-    assert previously_applied.issubset(existing_names), "an already-applied migration is missing/renamed"
-
+    assert previously_applied.issubset(existing_names), (
+        "an already-applied migration is missing/renamed"
+    )

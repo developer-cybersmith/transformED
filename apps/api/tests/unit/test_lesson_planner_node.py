@@ -116,7 +116,9 @@ async def test_happy_path_produces_lesson_plan_matching_input_count() -> None:
     assert plan["subject"] == "General Studies"
     assert plan["complexity_level"] == "medium"
     assert plan["total_segments"] == 3
-    assert plan["total_duration_min"] == pytest.approx(15.0), "must be summed, not LLM-supplied directly"
+    assert plan["total_duration_min"] == pytest.approx(15.0), (
+        "must be summed, not LLM-supplied directly"
+    )
     assert len(plan["segments"]) == 3
     assert plan["segments"][0]["segment_id"] == "sec_0"
     assert plan["segments"][0]["title"] == "Getting Started"
@@ -218,7 +220,9 @@ async def test_over_ceiling_downshifts_to_llm_mini_and_completes() -> None:
     # smaller payload) — find the checkpoint write specifically by its
     # distinctive "node_outputs" key rather than assuming call order.
     checkpoint_calls = [
-        c.args[0] for c in sb.table.return_value.update.call_args_list if "node_outputs" in c.args[0]
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
     ]
     assert len(checkpoint_calls) == 1
     written_node_outputs = checkpoint_calls[0]["node_outputs"]
@@ -396,9 +400,15 @@ async def test_idempotency_cache_hit_skips_llm_call() -> None:
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     cached_plan = {
-        "title": "Cached Plan", "subject": "Cached Subject", "objectives": [],
-        "complexity_level": "medium", "total_segments": 3, "total_duration_min": 12.0,
-        "segments": [{"segment_id": "sec_0", "title": "Cached", "summary": "x", "duration_min": 4.0}],
+        "title": "Cached Plan",
+        "subject": "Cached Subject",
+        "objectives": [],
+        "complexity_level": "medium",
+        "total_segments": 3,
+        "total_duration_min": 12.0,
+        "segments": [
+            {"segment_id": "sec_0", "title": "Cached", "summary": "x", "duration_min": 4.0}
+        ],
     }
     mock_provider = AsyncMock()
     sb = _mock_supabase(node_outputs={"lesson_planner": cached_plan})
@@ -437,7 +447,9 @@ async def test_successful_run_writes_checkpoint() -> None:
         for call in sb.table.return_value.update.call_args_list
         if "node_outputs" in call.args[0]
     ]
-    assert len(checkpoint_calls) == 1, f"expected exactly one checkpoint write, got {checkpoint_calls}"
+    assert len(checkpoint_calls) == 1, (
+        f"expected exactly one checkpoint write, got {checkpoint_calls}"
+    )
     update_call = checkpoint_calls[0]
     assert update_call["last_node"] == "lesson_planner"
     assert "lesson_planner" in update_call["node_outputs"]
@@ -544,7 +556,9 @@ async def test_complexity_level_clamped_to_medium_when_invalid() -> None:
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
-    mock_provider.complete_structured.return_value = _plan_llm_response(complexity_level="extremely-hard")
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        complexity_level="extremely-hard"
+    )
     sb = _mock_supabase()
 
     with (
@@ -749,5 +763,9 @@ async def test_tier_t3_five_segments_never_undercuts_total_min() -> None:
     ):
         result = await lesson_planner_node(_base_state(tier="T3", segment_summaries=summaries_5))
 
-    total_min_possible = sum(seg["slide_budget"]["min"] for seg in result["lesson_plan"]["segments"])
-    assert total_min_possible >= 6, f"worst-case total ({total_min_possible}) undercuts T3's advertised min of 6"
+    total_min_possible = sum(
+        seg["slide_budget"]["min"] for seg in result["lesson_plan"]["segments"]
+    )
+    assert total_min_possible >= 6, (
+        f"worst-case total ({total_min_possible}) undercuts T3's advertised min of 6"
+    )

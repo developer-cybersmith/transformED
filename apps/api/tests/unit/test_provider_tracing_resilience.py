@@ -229,7 +229,11 @@ async def test_embed_cost_accumulation_runs_when_tracing_fully_broken() -> None:
         openai_response=_make_embeddings_response(n=1, total_tokens=1000),
     )
     with (
-        p1, p2, p3, p4, p5,
+        p1,
+        p2,
+        p3,
+        p4,
+        p5,
         patch("app.core.cost_tracker.accumulate_cost", accumulate),
         patch("app.core.cost_tracker.check_ceiling", ceiling),
     ):
@@ -257,9 +261,7 @@ async def test_llm_complete_succeeds_when_tracer_raises_everywhere() -> None:
     p1, p2, p3, p4, p5 = _llm_patches(langfuse)
     with p1, p2, p3, p4 as record_success, p5:
         provider = OpenAILLMProvider()
-        content = await provider.complete(
-            [{"role": "user", "content": "hi"}], model="gpt-4o-mini"
-        )
+        content = await provider.complete([{"role": "user", "content": "hi"}], model="gpt-4o-mini")
 
     assert content == "hello"
     record_success.assert_awaited_once()
@@ -277,15 +279,17 @@ async def test_llm_provider_constructs_when_get_langfuse_raises() -> None:
 
     p1, p2, p3, p4, p5 = _llm_patches(RuntimeError("bad LANGFUSE_* env"))
     with (
-        p1, p2, p3, p4, p5,
+        p1,
+        p2,
+        p3,
+        p4,
+        p5,
         patch("app.core.cost_tracker.accumulate_cost", accumulate),
         patch("app.core.cost_tracker.check_ceiling", ceiling),
     ):
         provider = OpenAILLMProvider(lesson_id=FAKE_LESSON_ID)
         assert provider._langfuse is None
-        content = await provider.complete(
-            [{"role": "user", "content": "hi"}], model="gpt-4o-mini"
-        )
+        content = await provider.complete([{"role": "user", "content": "hi"}], model="gpt-4o-mini")
 
     assert content == "hello"
     accumulate.assert_awaited_once()
@@ -306,8 +310,6 @@ async def test_llm_openai_error_propagates_unmasked_with_broken_tracer() -> None
     with p1, p2, p3, p4, p5 as record_failure:
         provider = OpenAILLMProvider()
         with pytest.raises(ValueError, match="openai exploded"):
-            await provider.complete(
-                [{"role": "user", "content": "hi"}], model="gpt-4o-mini"
-            )
+            await provider.complete([{"role": "user", "content": "hi"}], model="gpt-4o-mini")
 
     record_failure.assert_awaited()

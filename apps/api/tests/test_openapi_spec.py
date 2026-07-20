@@ -17,6 +17,7 @@ AC coverage:
   AC7 — LearnerDNA has badge_labels and profile_text (no raw numeric scores exposed)
   AC8 — spec is valid JSON (structural sanity)
 """
+
 from __future__ import annotations
 
 import json
@@ -78,6 +79,7 @@ def _props(schemas: dict, schema_name: str) -> dict:
 
 # ── AC1: All 5 paths present ──────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_all_five_assessment_paths_exist(spec: dict) -> None:
     actual = set(spec.get("paths", {}).keys())
@@ -86,6 +88,7 @@ def test_all_five_assessment_paths_exist(spec: dict) -> None:
 
 
 # ── AC2: Correct HTTP methods ─────────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_quiz_endpoint_is_post(spec: dict) -> None:
@@ -114,6 +117,7 @@ def test_onboarding_submit_endpoint_is_post(spec: dict) -> None:
 
 # ── AC3: No banned field — transcript ────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_spec_contains_no_transcript_field(spec_str: str) -> None:
     # Check for the JSON property key "transcript" — catches any field so named.
@@ -126,17 +130,19 @@ def test_spec_contains_no_transcript_field(spec_str: str) -> None:
 
 # ── AC4: No banned field — duration_seconds ───────────────────────────────────
 
+
 @pytest.mark.unit
 def test_spec_contains_no_duration_seconds_field(spec_str: str) -> None:
     # Uses quoted form (same as transcript check) so only a JSON property named
     # "duration_seconds" triggers this — not description text or value strings.
     assert '"duration_seconds"' not in spec_str, (
         '"duration_seconds" found as a field name in spec — implies a teach-back timer '
-        'which is banned (CLAUDE.md §dev-rules). Use duration_minutes in SessionReport instead.'
+        "which is banned (CLAUDE.md §dev-rules). Use duration_minutes in SessionReport instead."
     )
 
 
 # ── AC5: OnboardingDiagnosticSubmission shape ─────────────────────────────────
+
 
 @pytest.mark.unit
 def test_onboarding_submission_has_responses_field(schemas: dict) -> None:
@@ -150,11 +156,16 @@ def test_onboarding_submission_has_responses_field(schemas: dict) -> None:
 @pytest.mark.unit
 def test_onboarding_submission_has_no_subject_or_grade_level(schemas: dict) -> None:
     props = _props(schemas, "OnboardingDiagnosticSubmission")
-    assert "subject" not in props, "'subject' found in OnboardingDiagnosticSubmission — old shape, must be removed"
-    assert "grade_level" not in props, "'grade_level' found in OnboardingDiagnosticSubmission — old shape, must be removed"
+    assert "subject" not in props, (
+        "'subject' found in OnboardingDiagnosticSubmission — old shape, must be removed"
+    )
+    assert "grade_level" not in props, (
+        "'grade_level' found in OnboardingDiagnosticSubmission — old shape, must be removed"
+    )
 
 
 # ── AC6: TeachbackSubmission shape ────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_teachback_submission_has_response_text(schemas: dict) -> None:
@@ -174,6 +185,7 @@ def test_teachback_submission_has_no_transcript_field(schemas: dict) -> None:
 
 # ── AC7: LearnerDNA shape ─────────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_learner_dna_has_badge_labels_and_profile_text(schemas: dict) -> None:
     props = _props(schemas, "LearnerDNA")
@@ -182,6 +194,7 @@ def test_learner_dna_has_badge_labels_and_profile_text(schemas: dict) -> None:
 
 
 # ── AC8: Structural sanity ────────────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_spec_is_valid_json_roundtrip(spec: dict) -> None:

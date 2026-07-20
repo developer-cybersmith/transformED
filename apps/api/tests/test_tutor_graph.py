@@ -249,7 +249,8 @@ async def test_session_reset_returns_to_idle(mocker) -> None:
 
 @pytest.mark.unit
 async def test_session_end_noop_terminates_without_running_a_node(mocker) -> None:
-    """SESSION_END + unrecognised event → entry routes straight to END; no crash, stays SESSION_END."""
+    """SESSION_END + unrecognised event → entry routes straight to END; no crash, stays
+    SESSION_END."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis("SESSION_END"))
 
     from app.modules.tutor.state_machine.graph import dispatch_event
@@ -379,7 +380,8 @@ def _assert_intervention_suppressed(redis: AsyncMock, sid: str) -> None:
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_cooldown_stays_teaching(mocker) -> None:
-    """distraction_detected during an active cooldown → guard blocks → stays TEACHING (suppressed)."""
+    """distraction_detected during an active cooldown → guard blocks → stays TEACHING
+    (suppressed)."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-cool", state="TEACHING", exists=1)  # cooldown active
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -394,7 +396,8 @@ async def test_distraction_blocked_by_cooldown_stays_teaching(mocker) -> None:
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_max_count_stays_teaching(mocker) -> None:
-    """distraction_detected at the per-session cap (count == max) → guard blocks → stays TEACHING."""
+    """distraction_detected at the per-session cap (count == max) → guard blocks → stays
+    TEACHING."""
     _patch_settings(mocker, max_distraction=3)
     redis = _keyed_redis("s-cap", state="TEACHING", count="3", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -427,7 +430,9 @@ async def test_distraction_allowed_just_below_max(mocker) -> None:
 @pytest.mark.unit
 async def test_fatigue_blocked_when_already_fired_stays_teaching(mocker) -> None:
     """fatigue_detected after fatigue already fired this session → guard blocks → stays TEACHING."""
-    _patch_settings(mocker)  # consistency: future fatigue-guard changes won't crash on MagicMock attrs
+    _patch_settings(
+        mocker
+    )  # consistency: future fatigue-guard changes won't crash on MagicMock attrs
     redis = _keyed_redis("s-fat2", state="TEACHING", exists=1)  # fatigue_fired present
     mocker.patch("app.core.redis.get_redis", return_value=redis)
 
@@ -468,7 +473,8 @@ async def test_fatigue_blocked_during_teach_back(mocker) -> None:
 
 @pytest.mark.unit
 async def test_teach_back_stays_on_unrelated_event(mocker) -> None:
-    """Any non teach-back-outcome event keeps the FSM in TEACH_BACK (not the old default→TEACHING)."""
+    """Any non teach-back-outcome event keeps the FSM in TEACH_BACK (not the old
+    default→TEACHING)."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACH_BACK"))
 
     from app.modules.tutor.state_machine.graph import dispatch_event
@@ -546,7 +552,8 @@ async def test_start_session_dispatches_session_start(mocker) -> None:
 
 @pytest.mark.unit
 async def test_fatigue_detected_sets_fatigue_fired_flag(mocker) -> None:
-    """AC1/AC2: fatigue_detected now records the fatigue flag (intervention_type derived = fatigue)."""
+    """AC1/AC2: fatigue_detected now records the fatigue flag (intervention_type derived =
+    fatigue)."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-ff", state="TEACHING", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -561,7 +568,8 @@ async def test_fatigue_detected_sets_fatigue_fired_flag(mocker) -> None:
 
 @pytest.mark.unit
 async def test_distraction_detected_increments_count(mocker) -> None:
-    """AC2: distraction_detected increments the distraction counter (intervention_type = distraction)."""
+    """AC2: distraction_detected increments the distraction counter (intervention_type =
+    distraction)."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-dc", state="TEACHING", count="0", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -576,7 +584,8 @@ async def test_distraction_detected_increments_count(mocker) -> None:
 
 @pytest.mark.unit
 async def test_intervention_message_selected_from_payload(mocker) -> None:
-    """AC3: intervening_node selects the pre-generated message for the active type from the payload."""
+    """AC3: intervening_node selects the pre-generated message for the active type from the
+    payload."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-msg", state="TEACHING", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -598,7 +607,8 @@ async def test_intervention_message_selected_from_payload(mocker) -> None:
 
 @pytest.mark.unit
 async def test_intervention_message_none_when_absent(mocker) -> None:
-    """AC4: no package supplied → intervention_message is None, recording/transition still happen."""
+    """AC4: no package supplied → intervention_message is None, recording/transition still
+    happen."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-nomsg", state="TEACHING", count="0", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -661,7 +671,8 @@ async def test_teach_back_sets_in_teachback(mocker) -> None:
 
 
 def _stateful_full_redis(initial: str) -> AsyncMock:
-    """Stateful Redis for the full intervention cycle: live tutor_state + count='0' + no cooldown."""
+    """Stateful Redis for the full intervention cycle: live tutor_state + count='0' + no
+    cooldown."""
     store = {"tutor_state": initial}
     redis = AsyncMock()
 

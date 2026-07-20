@@ -6,9 +6,9 @@ are used so the contract is both isolated and demonstrated end-to-end:
 1. A synthetic ``GET /protected`` route — isolates the verification logic itself.
 2. The real ``app.modules.tutor.router`` mounted under ``/api/tutor`` — proves at least one real
    module router actually enforces ``CurrentUser`` (no-token requests are rejected before the
-   handler runs). The verification logic is shared verbatim across all eight ``CurrentUser``-protected
-   HTTP routers (analytics, tutor, admin, content, auth, media, assessment), so this proves the
-   contract for every such route.
+   handler runs). The verification logic is shared verbatim across all eight
+   ``CurrentUser``-protected HTTP routers (analytics, tutor, admin, content, auth, media,
+   assessment), so this proves the contract for every such route.
 
 Scope note: the WebSocket endpoint (``core/websocket.py`` ``/ws/{session_id}``) is intentionally
 NOT covered here — it does not use ``CurrentUser`` and its auth is a separate, not-yet-implemented
@@ -25,11 +25,12 @@ correct regardless of the day the suite runs.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import jwt
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from unittest.mock import MagicMock
 
 from app.config import get_settings
 from app.dependencies import CurrentUser
@@ -37,9 +38,9 @@ from app.dependencies import CurrentUser
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 _SECRET = "test-jwt-secret"
-_PAST_EPOCH = 1_700_000_000        # 2023-11-14 — provably in the past
-_FUTURE_EPOCH = 4_102_444_800      # 2100-01-01 — provably in the future
-_DROP = object()                   # sentinel: omit a claim from the minted token
+_PAST_EPOCH = 1_700_000_000  # 2023-11-14 — provably in the past
+_FUTURE_EPOCH = 4_102_444_800  # 2100-01-01 — provably in the future
+_DROP = object()  # sentinel: omit a claim from the minted token
 
 
 # ── App under test ───────────────────────────────────────────────────────────

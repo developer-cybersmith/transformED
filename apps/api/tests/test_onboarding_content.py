@@ -25,9 +25,9 @@ import pytest
 
 # Path is relative to apps/api/ (where pytest is run from).
 # When running from the repo root: adjust accordingly.
-ONBOARDING_FILE = pathlib.Path(
-    __file__
-).parent.parent.parent / "web" / "src" / "app" / "onboarding" / "page.tsx"
+ONBOARDING_FILE = (
+    pathlib.Path(__file__).parent.parent.parent / "web" / "src" / "app" / "onboarding" / "page.tsx"
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -137,9 +137,7 @@ def test_cognitive_question_count_is_8() -> None:
     content = _content()
     # Match dimension field set to 'cognitive' or "cognitive"
     matches = re.findall(r"dimension:\s*['\"]cognitive['\"]", content)
-    assert len(matches) == 8, (
-        f"Expected 8 cognitive questions, found {len(matches)}"
-    )
+    assert len(matches) == 8, f"Expected 8 cognitive questions, found {len(matches)}"
 
 
 @pytest.mark.unit
@@ -147,9 +145,7 @@ def test_emotional_question_count_is_5() -> None:
     """Exactly 5 questions must have dimension: 'emotional'."""
     content = _content()
     matches = re.findall(r"dimension:\s*['\"]emotional['\"]", content)
-    assert len(matches) == 5, (
-        f"Expected 5 emotional questions, found {len(matches)}"
-    )
+    assert len(matches) == 5, f"Expected 5 emotional questions, found {len(matches)}"
 
 
 @pytest.mark.unit
@@ -157,9 +153,7 @@ def test_self_direction_question_count_is_7() -> None:
     """Exactly 7 questions must have dimension: 'self_direction'."""
     content = _content()
     matches = re.findall(r"dimension:\s*['\"]self_direction['\"]", content)
-    assert len(matches) == 7, (
-        f"Expected 7 self-direction questions, found {len(matches)}"
-    )
+    assert len(matches) == 7, f"Expected 7 self-direction questions, found {len(matches)}"
 
 
 # ---------------------------------------------------------------------------

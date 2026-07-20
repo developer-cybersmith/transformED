@@ -18,7 +18,10 @@ def _well_formed_slide(slide_id: str = "slide_0") -> dict[str, Any]:
     return {
         "slide_id": slide_id,
         "title": "Cellular Respiration Overview",
-        "bullets": ["The mitochondrion produces ATP", "Electron transport chain converts nutrients"],
+        "bullets": [
+            "The mitochondrion produces ATP",
+            "Electron transport chain converts nutrients",
+        ],
     }
 
 
@@ -83,9 +86,7 @@ def test_slide_quality_over_8_slides_in_a_segment_reports_issue_and_lowers_score
 @pytest.mark.unit
 def test_slide_quality_wall_of_text_bullet_flagged() -> None:
     segment = _well_formed_segment()
-    segment["slides"] = [
-        {"slide_id": "slide_wall", "title": "Dense", "bullets": ["x" * 250]}
-    ]
+    segment["slides"] = [{"slide_id": "slide_wall", "title": "Dense", "bullets": ["x" * 250]}]
     package = _package([segment])
     result = score_slide_quality(package)
     assert result.value == 0.0

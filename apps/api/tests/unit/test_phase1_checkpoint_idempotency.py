@@ -19,8 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import app.providers.llm.openai as openai_provider_module  # noqa: E402  (force submodule import, see test_phase1_economy_nodes.py)
-
 FAKE_LESSON_ID = "20202020-2020-2020-2020-202020202020"
 
 SECTION_0 = {"title": "Spaced Repetition", "body": "prose about spaced repetition. " * 20}
@@ -65,9 +63,11 @@ class TestCheckpointCacheHit:
         mock_supabase.table.return_value = mock_jobs_table
         mock_provider = AsyncMock()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             result = await summarise_segment_node(state)
 
@@ -95,9 +95,11 @@ class TestCheckpointCacheHit:
         mock_supabase.table.return_value = mock_jobs_table
         mock_provider = AsyncMock()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             result = await segment_complexity_node(state)
 
@@ -130,9 +132,11 @@ class TestCheckpointCacheHit:
         mock_supabase.table.return_value = mock_jobs_table
         mock_provider = AsyncMock()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             result = await quiz_generator_node(state)
 
@@ -145,17 +149,24 @@ class TestCheckpointCacheHit:
 
         section_id = _derive_section_id(SECTION_0, 0)
         cached_terms = [
-            {"segment_id": section_id, "data": {"term": "Encoding", "definition": "Already-computed definition."}}
+            {
+                "segment_id": section_id,
+                "data": {"term": "Encoding", "definition": "Already-computed definition."},
+            }
         ]
-        mock_jobs_table = _make_jobs_table({f"jargon_extractor:{section_id}": {"terms": cached_terms}})
+        mock_jobs_table = _make_jobs_table(
+            {f"jargon_extractor:{section_id}": {"terms": cached_terms}}
+        )
 
         mock_supabase = MagicMock()
         mock_supabase.table.return_value = mock_jobs_table
         mock_provider = AsyncMock()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             result = await jargon_extractor_node(state)
 
@@ -164,7 +175,10 @@ class TestCheckpointCacheHit:
 
     @pytest.mark.asyncio
     async def test_intervention_messages_skips_llm_call_on_cache_hit(self) -> None:
-        from app.modules.content.pipeline.graph import _derive_section_id, intervention_messages_node
+        from app.modules.content.pipeline.graph import (
+            _derive_section_id,
+            intervention_messages_node,
+        )
 
         section_id = _derive_section_id(SECTION_0, 0)
         cached_interventions = {
@@ -175,15 +189,19 @@ class TestCheckpointCacheHit:
                 "fatigue": ["f1", "f2", "f3"],
             },
         }
-        mock_jobs_table = _make_jobs_table({f"intervention_messages:{section_id}": cached_interventions})
+        mock_jobs_table = _make_jobs_table(
+            {f"intervention_messages:{section_id}": cached_interventions}
+        )
 
         mock_supabase = MagicMock()
         mock_supabase.table.return_value = mock_jobs_table
         mock_provider = AsyncMock()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             result = await intervention_messages_node(state)
 
@@ -207,9 +225,11 @@ class TestCheckpointCacheHit:
         mock_supabase.table.return_value = mock_jobs_table
         mock_provider = AsyncMock()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             result = await narration_generator_node(state)
 
@@ -240,9 +260,11 @@ class TestCheckpointWriteOnSuccess:
             "Summary", (), {"summary": "A fresh summary."}
         )()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             await summarise_segment_node(state)
 
@@ -262,7 +284,9 @@ class TestCheckpointWriteOnSuccess:
         mock_jobs_table.update.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_concurrent_dispatches_for_different_sections_write_independent_rpc_calls(self) -> None:
+    async def test_concurrent_dispatches_for_different_sections_write_independent_rpc_calls(
+        self,
+    ) -> None:
         """Review finding: the original test suite never exercised real
         concurrency despite that being the stated justification for the RPC.
         A mock can't prove server-side atomicity, but it CAN prove there is
@@ -294,9 +318,11 @@ class TestCheckpointWriteOnSuccess:
 
         mock_provider.complete_structured.side_effect = _fake_complete_structured
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             await asyncio.gather(
                 *[
                     summarise_segment_node(_base_state(_section=s, _section_index=i))
@@ -306,8 +332,12 @@ class TestCheckpointWriteOnSuccess:
 
         assert mock_supabase.rpc.call_count == 3
         written_keys = {call.args[1]["p_key"] for call in mock_supabase.rpc.call_args_list}
-        expected_keys = {f"summarise_segment:{_derive_section_id(s, i)}" for i, s in enumerate(sections)}
-        assert written_keys == expected_keys, "concurrent dispatches must each write their own distinct key"
+        expected_keys = {
+            f"summarise_segment:{_derive_section_id(s, i)}" for i, s in enumerate(sections)
+        }
+        assert written_keys == expected_keys, (
+            "concurrent dispatches must each write their own distinct key"
+        )
 
 
 class TestSimulatedRetry:
@@ -338,12 +368,20 @@ class TestSimulatedRetry:
             "Summary", (), {"summary": "Freshly computed summary for section 2."}
         )()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
-            result_0 = await summarise_segment_node(_base_state(_section=SECTION_0, _section_index=0))
-            result_1 = await summarise_segment_node(_base_state(_section=SECTION_1, _section_index=1))
-            result_2 = await summarise_segment_node(_base_state(_section=SECTION_2, _section_index=2))
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
+            result_0 = await summarise_segment_node(
+                _base_state(_section=SECTION_0, _section_index=0)
+            )
+            result_1 = await summarise_segment_node(
+                _base_state(_section=SECTION_1, _section_index=1)
+            )
+            result_2 = await summarise_segment_node(
+                _base_state(_section=SECTION_2, _section_index=2)
+            )
 
         assert mock_provider.complete_structured.call_count == 1, (
             f"expected exactly 1 LLM call for the 1 uncached section, "
@@ -352,7 +390,9 @@ class TestSimulatedRetry:
         )
         assert result_0["segment_summaries"] == [cached_0]
         assert result_1["segment_summaries"] == [cached_1]
-        assert result_2["segment_summaries"][0]["summary"] == "Freshly computed summary for section 2."
+        assert (
+            result_2["segment_summaries"][0]["summary"] == "Freshly computed summary for section 2."
+        )
 
 
 class TestPhase1ProgressVisibility:
@@ -375,13 +415,17 @@ class TestPhase1ProgressVisibility:
         mock_supabase.rpc.return_value.execute.return_value = MagicMock()
 
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = type("Summary", (), {"summary": "Summary."})()
+        mock_provider.complete_structured.return_value = type(
+            "Summary", (), {"summary": "Summary."}
+        )()
 
         mock_redis = AsyncMock()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=mock_redis):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=mock_redis),
+        ):
             state = _base_state(_total_sections=3)
             await summarise_segment_node(state)
 
@@ -415,8 +459,9 @@ class TestPhase1ProgressVisibility:
         mock_redis.sadd.return_value = 0
         mock_redis.scard.return_value = 1
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.core.redis.get_redis", return_value=mock_redis
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.core.redis.get_redis", return_value=mock_redis),
         ):
             state = _base_state(_total_sections=3)
             result = await summarise_segment_node(state)
@@ -447,9 +492,11 @@ class TestExistingStory21TestsUnaffected:
             "Summary", (), {"summary": "A short summary under the word cap."}
         )()
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state()
             result = await summarise_segment_node(state)
 

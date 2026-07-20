@@ -84,7 +84,9 @@ class OpenAIImageProvider(ImageProvider):
                 a latent bug for a hypothetical case.
         """
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+            raise RuntimeError(
+                f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
+            )
 
         try:
             response = await self._client.images.generate(

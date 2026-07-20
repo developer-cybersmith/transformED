@@ -55,7 +55,9 @@ class AzureTTSProvider(TTSProvider):
             are always empty.
         """
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+            raise RuntimeError(
+                f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
+            )
 
         # 2026-07-15 review finding (Blind Hunter): voice_id was interpolated
         # unescaped into an XML attribute — every current call site passes a

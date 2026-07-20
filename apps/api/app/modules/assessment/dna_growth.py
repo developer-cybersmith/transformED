@@ -11,6 +11,7 @@ Separation of concerns:
 
 No LLM calls. No model strings. Pure analytics write.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,7 +27,7 @@ async def record_dna_growth(
     session_id: str,
     old_dims: dict[str, float | None],
     new_dims: dict[str, float],
-    supabase: Any,
+    supabase: Any,  # noqa: ANN401
 ) -> int:
     """Insert dna_update session_events rows for each dimension in new_dims.
 
@@ -53,18 +54,21 @@ async def record_dna_growth(
     for dim, new_val in new_dims.items():
         old_val = old_dims.get(dim)
         delta = round(new_val - old_val, 4) if old_val is not None else None
-        rows.append({
-            "session_id": session_id,
-            "event_type": "dna_update",
-            "payload": {
-                "dimension": dim,
-                "old_value": old_val,
-                "new_value": new_val,
-                "delta": delta,
-            },
-        })
+        rows.append(
+            {
+                "session_id": session_id,
+                "event_type": "dna_update",
+                "payload": {
+                    "dimension": dim,
+                    "old_value": old_val,
+                    "new_value": new_val,
+                    "delta": delta,
+                },
+            }
+        )
 
     from app.modules.analytics.service import write_system_events  # local import (avoids circular)
+
     count = await write_system_events(rows=rows, supabase=supabase)
     if count > 0:
         logger.info("DNA growth: inserted %d rows session=%s", count, _safe_sid)

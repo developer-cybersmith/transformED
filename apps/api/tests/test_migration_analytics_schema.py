@@ -55,9 +55,7 @@ def test_onboarding_responses_table_exists():
 def test_onboarding_responses_has_dimension_tag():
     """dimension_tag column is present in onboarding_responses."""
     block = _extract_table_block("CREATE TABLE public.onboarding_responses")
-    assert "dimension_tag" in block, (
-        "Expected dimension_tag column in onboarding_responses table"
-    )
+    assert "dimension_tag" in block, "Expected dimension_tag column in onboarding_responses table"
 
 
 @pytest.mark.unit
@@ -83,9 +81,7 @@ def test_onboarding_dimension_tag_has_check_constraint():
 def test_onboarding_responses_has_response_value():
     """response_value column exists to store the selected_index from the quiz."""
     block = _extract_table_block("CREATE TABLE public.onboarding_responses")
-    assert "response_value" in block, (
-        "Expected response_value column in onboarding_responses"
-    )
+    assert "response_value" in block, "Expected response_value column in onboarding_responses"
 
 
 @pytest.mark.unit
@@ -124,18 +120,14 @@ def test_session_events_table_exists():
 def test_session_events_has_jsonb_payload():
     """payload column is JSONB type within session_events — not another table."""
     block = _extract_table_block("CREATE TABLE public.session_events")
-    assert "jsonb" in block.lower(), (
-        "Expected JSONB type for payload column in session_events"
-    )
+    assert "jsonb" in block.lower(), "Expected JSONB type for payload column in session_events"
 
 
 @pytest.mark.unit
 def test_session_events_has_event_type():
     """event_type column exists for filtering and routing session events."""
     block = _extract_table_block("CREATE TABLE public.session_events")
-    assert "event_type" in block, (
-        "Expected event_type column in session_events"
-    )
+    assert "event_type" in block, "Expected event_type column in session_events"
 
 
 @pytest.mark.unit

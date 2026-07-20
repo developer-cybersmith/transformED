@@ -87,12 +87,7 @@ def _make_chunks_table(pages: list[list[dict[str, Any]]]) -> MagicMock:
         return resp
 
     (
-        t.select.return_value
-        .eq.return_value
-        .is_.return_value
-        .order.return_value
-        .range.return_value
-        .execute.side_effect
+        t.select.return_value.eq.return_value.is_.return_value.order.return_value.range.return_value.execute.side_effect
     ) = _execute
     t.upsert.return_value.execute.return_value = MagicMock()
     return t
@@ -437,7 +432,9 @@ def test_extract_timeout_never_below_one_second() -> None:
 
     for arq_timeout in (300, 200, 100, 1):
         for size in (0, 1, 30_000, 10**9):
-            timeout = _compute_extract_timeout(size, _timeout_settings(arq_job_timeout_s=arq_timeout))
+            timeout = _compute_extract_timeout(
+                size, _timeout_settings(arq_job_timeout_s=arq_timeout)
+            )
             assert timeout >= 1.0
     # And the clamp floors exactly at 1.0 when arq − 300 goes non-positive
     assert _compute_extract_timeout(10**9, _timeout_settings(arq_job_timeout_s=300)) == 1.0
@@ -559,11 +556,18 @@ async def test_embed_node_empty_chunk_does_not_misalign_vectors() -> None:
 
     e_first = [0.11] * 4
     e_third = [0.33] * 4
-    pages = [[
-        {"chunk_id": "chunk-a", "content": "first text", "chunk_index": 0, "token_count": 10},
-        {"chunk_id": "chunk-b", "content": "   ", "chunk_index": 0, "token_count": 0},  # empty → skipped
-        {"chunk_id": "chunk-c", "content": "third text", "chunk_index": 0, "token_count": 10},
-    ]]
+    pages = [
+        [
+            {"chunk_id": "chunk-a", "content": "first text", "chunk_index": 0, "token_count": 10},
+            {
+                "chunk_id": "chunk-b",
+                "content": "   ",
+                "chunk_index": 0,
+                "token_count": 0,
+            },  # empty → skipped
+            {"chunk_id": "chunk-c", "content": "third text", "chunk_index": 0, "token_count": 10},
+        ]
+    ]
     sb, jobs, chk = _make_embed_supabase(pages)
 
     provider = AsyncMock()
@@ -625,10 +629,7 @@ async def test_embed_node_paginates_past_1000_row_cap() -> None:
     assert sum(embedded_counts) == 1001, "all 1001 chunks must be embedded"
 
     # The select walked consecutive .range() windows
-    range_mock = (
-        chk.select.return_value.eq.return_value.is_.return_value
-        .order.return_value.range
-    )
+    range_mock = chk.select.return_value.eq.return_value.is_.return_value.order.return_value.range
     range_windows = [c.args for c in range_mock.call_args_list]
     assert range_windows[0] == (0, 999)
     assert range_windows[1] == (1000, 1999)
@@ -648,7 +649,12 @@ async def test_embed_node_completion_check_blocks_checkpoint() -> None:
     embed_node must raise and must NOT write its checkpoint."""
     from app.modules.content.pipeline.graph import embed_node
 
-    stubborn = {"chunk_id": "stuck", "content": "never got embedded", "chunk_index": 0, "token_count": 10}
+    stubborn = {
+        "chunk_id": "stuck",
+        "content": "never got embedded",
+        "chunk_index": 0,
+        "token_count": 10,
+    }
     # Page sequence: initial fetch finds it; completion re-query finds it AGAIN
     # (simulating a silently failed writeback).
     sb, jobs, chk = _make_embed_supabase([[stubborn], [stubborn]])

@@ -27,7 +27,6 @@ import pytest
 # patch("app.providers.llm.openai.OpenAILLMProvider", ...) can resolve it —
 # graph.py's lazy in-function imports mean nothing else guarantees this import
 # has already happened by the time these tests run.
-import app.providers.llm.openai as openai_provider_module  # noqa: E402
 
 FAKE_LESSON_ID = "20202020-2020-2020-2020-202020202020"
 FAKE_USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -47,9 +46,8 @@ def _no_checkpoint_infra():
     calls didn't exist when they were first written).
     """
     mock_jobs_table = MagicMock()
-    mock_jobs_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
-        "node_outputs": {}
-    }
+    jobs_single = mock_jobs_table.select.return_value.eq.return_value.single
+    jobs_single.return_value.execute.return_value.data = {"node_outputs": {}}
     mock_supabase = MagicMock()
     mock_supabase.table.return_value = mock_jobs_table
     mock_supabase.rpc.return_value.execute.return_value = MagicMock()
@@ -66,15 +64,32 @@ def _no_checkpoint_infra():
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
 
-    with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-        "app.core.redis.get_redis", return_value=mock_redis
+    with (
+        patch("app.core.db.get_supabase", return_value=mock_supabase),
+        patch("app.core.redis.get_redis", return_value=mock_redis),
     ):
         yield
 
+
 THREE_SECTIONS: list[dict[str, Any]] = [
-    {"title": "Spaced Repetition", "body": "prose about spaced repetition. " * 20, "page_start": 1, "page_end": 3},
-    {"title": "Active Recall", "body": "prose about active recall. " * 20, "page_start": 4, "page_end": 6},
-    {"title": "Interleaving", "body": "prose about interleaving practice. " * 20, "page_start": 7, "page_end": 9},
+    {
+        "title": "Spaced Repetition",
+        "body": "prose about spaced repetition. " * 20,
+        "page_start": 1,
+        "page_end": 3,
+    },
+    {
+        "title": "Active Recall",
+        "body": "prose about active recall. " * 20,
+        "page_start": 4,
+        "page_end": 6,
+    },
+    {
+        "title": "Interleaving",
+        "body": "prose about interleaving practice. " * 20,
+        "page_start": 7,
+        "page_end": 9,
+    },
 ]
 
 ECONOMY_NODE_NAMES = [
@@ -166,7 +181,8 @@ class TestAC0GraphOrdering:
             return _stub
 
         patches = [
-            patch.object(graph_module, f"{name}_node", _make_economy_stub(name)) for name in ECONOMY_NODE_NAMES
+            patch.object(graph_module, f"{name}_node", _make_economy_stub(name))
+            for name in ECONOMY_NODE_NAMES
         ] + [
             patch.object(graph_module, name, _make_barrier_stub(name))
             for name in [
@@ -254,7 +270,8 @@ class TestAC0GraphOrdering:
         from app.modules.content.pipeline.graph import lesson_planner_node
 
         summaries = [
-            {"segment_id": s["title"], "summary": f"Summary of {s['title']}."} for s in THREE_SECTIONS
+            {"segment_id": s["title"], "summary": f"Summary of {s['title']}."}
+            for s in THREE_SECTIONS
         ]
         state = _base_state(segment_summaries=summaries)
         assert "raw_text" not in state
@@ -266,7 +283,9 @@ class TestAC0GraphOrdering:
         mock_response.complexity_level = "medium"
         mock_response.objectives = ["Objective 1"]
         mock_response.segments = [
-            MagicMock(segment_id=s["segment_id"], title=f"Outline: {s['segment_id']}", duration_min=5.0)
+            MagicMock(
+                segment_id=s["segment_id"], title=f"Outline: {s['segment_id']}", duration_min=5.0
+            )
             for s in summaries
         ]
         mock_provider = AsyncMock()
@@ -311,7 +330,9 @@ class TestAC1SummariseSegment:
             f"complete_structured call, got {mock_provider.complete_structured.call_count}"
         )
         assert len(result["segment_summaries"]) == 1
-        assert result["segment_summaries"][0]["segment_id"] == _derive_section_id(THREE_SECTIONS[0], 0)
+        assert result["segment_summaries"][0]["segment_id"] == _derive_section_id(
+            THREE_SECTIONS[0], 0
+        )
 
     @pytest.mark.asyncio
     async def test_llm_refusal_degrades_section_instead_of_crashing(self) -> None:
@@ -336,7 +357,9 @@ class TestAC1SummariseSegment:
 
         too_long = " ".join(["word"] * 150)
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = type("Summary", (), {"summary": too_long})()
+        mock_provider.complete_structured.return_value = type(
+            "Summary", (), {"summary": too_long}
+        )()
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
@@ -387,7 +410,9 @@ class TestAC2SegmentComplexity:
         SegmentComplexity.model_validate({k: v for k, v in score.items() if k != "segment_id"})
 
     @pytest.mark.asyncio
-    async def test_out_of_range_intervention_sensitivity_is_rejected_not_silently_clamped(self, caplog) -> None:
+    async def test_out_of_range_intervention_sensitivity_is_rejected_not_silently_clamped(
+        self, caplog
+    ) -> None:
         """An LLM response with intervention_sensitivity=1.4 must not silently
         pass through — the node must reject/clamp-with-logging, never trust
         the raw value into state unchanged. Also verifies the clamp is not
@@ -487,8 +512,8 @@ class TestAC2SegmentComplexity:
 class TestAC3QuizGenerator:
     @pytest.mark.asyncio
     async def test_single_invocation_makes_exactly_one_provider_call(self) -> None:
-        from app.schemas.lesson import QuizQuestion
         from app.modules.content.pipeline.graph import _derive_section_id, quiz_generator_node
+        from app.schemas.lesson import QuizQuestion
 
         mock_output = type(
             "Quiz",
@@ -559,7 +584,12 @@ class TestAC3QuizGenerator:
             (),
             {
                 "question": "Which is a memory technique?",
-                "options": ["Spaced repetition", "Spaced repetition", "Spaced repetition", "Spaced repetition"],
+                "options": [
+                    "Spaced repetition",
+                    "Spaced repetition",
+                    "Spaced repetition",
+                    "Spaced repetition",
+                ],
                 "correct_index": 0,
                 "explanation": "A is correct.",
                 "difficulty": "easy",
@@ -693,15 +723,19 @@ class TestAC3QuizGenerator:
 class TestAC4JargonExtractor:
     @pytest.mark.asyncio
     async def test_output_validates_against_jargon_entry_schema(self) -> None:
-        from app.schemas.lesson import JargonEntry
         from app.modules.content.pipeline.graph import jargon_extractor_node
+        from app.schemas.lesson import JargonEntry
 
         mock_output = type(
             "Jargon",
             (),
             {
                 "terms": [
-                    type("Entry", (), {"term": "Encoding", "definition": "Converting info into memory."})(),
+                    type(
+                        "Entry",
+                        (),
+                        {"term": "Encoding", "definition": "Converting info into memory."},
+                    )(),
                 ]
             },
         )()
@@ -728,7 +762,11 @@ class TestAC4JargonExtractor:
             (),
             {
                 "terms": [
-                    type("Entry", (), {"term": "Encoding", "definition": "Converting info into memory."})(),
+                    type(
+                        "Entry",
+                        (),
+                        {"term": "Encoding", "definition": "Converting info into memory."},
+                    )(),
                     type("Entry", (), {"term": "  ", "definition": "Has a blank term."})(),
                     type("Entry", (), {"term": "Chunking", "definition": "   "})(),
                 ]
@@ -766,8 +804,8 @@ class TestAC4JargonExtractor:
 class TestAC5InterventionMessages:
     @pytest.mark.asyncio
     async def test_output_validates_with_exactly_3x3_messages(self) -> None:
-        from app.schemas.lesson import SegmentInterventions
         from app.modules.content.pipeline.graph import intervention_messages_node
+        from app.schemas.lesson import SegmentInterventions
 
         mock_output = type(
             "Interventions",
@@ -807,7 +845,11 @@ class TestAC5InterventionMessages:
         mock_output = type(
             "Interventions",
             (),
-            {"distraction": ["d1", "d2", "d3"], "confusion": ["c1", "c2", "c3"], "fatigue": ["f1", "f2", "f3"]},
+            {
+                "distraction": ["d1", "d2", "d3"],
+                "confusion": ["c1", "c2", "c3"],
+                "fatigue": ["f1", "f2", "f3"],
+            },
         )()
         mock_provider = AsyncMock()
         mock_provider.complete_structured.return_value = mock_output
@@ -910,8 +952,9 @@ class TestAC5InterventionMessages:
         mock_supabase = MagicMock()
         mock_supabase.rpc.return_value.execute.return_value = MagicMock()
 
-        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider), patch(
-            "app.core.db.get_supabase", return_value=mock_supabase
+        with (
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
         ):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
             await intervention_messages_node(state)
@@ -927,15 +970,20 @@ class TestAC5InterventionMessages:
         mock_output = type(
             "Interventions",
             (),
-            {"distraction": ["d1", "d2", "d3"], "confusion": ["c1", "c2", "c3"], "fatigue": ["f1", "f2", "f3"]},
+            {
+                "distraction": ["d1", "d2", "d3"],
+                "confusion": ["c1", "c2", "c3"],
+                "fatigue": ["f1", "f2", "f3"],
+            },
         )()
         mock_provider = AsyncMock()
         mock_provider.complete_structured.return_value = mock_output
         mock_supabase = MagicMock()
         mock_supabase.rpc.return_value.execute.return_value = MagicMock()
 
-        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider), patch(
-            "app.core.db.get_supabase", return_value=mock_supabase
+        with (
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
         ):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
             await intervention_messages_node(state)
@@ -948,7 +996,9 @@ class TestAC5InterventionMessages:
 
 class TestAC6NarrationGenerator:
     @pytest.mark.asyncio
-    async def test_narration_style_sourced_from_matching_section_complexity_when_available(self) -> None:
+    async def test_narration_style_sourced_from_matching_section_complexity_when_available(
+        self,
+    ) -> None:
         """AC-6: 'the prompt must include the corresponding complexity's
         narration_style field, not generate narration blind to complexity.'
         Review finding (2026-07-14): the original implementation never read
@@ -987,9 +1037,11 @@ class TestAC6NarrationGenerator:
         mock_provider = AsyncMock()
         mock_provider.complete_structured.return_value = mock_output
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider
-        ), patch("app.core.redis.get_redis", return_value=AsyncMock()):
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
             result = await narration_generator_node(state)
 
@@ -1050,13 +1102,17 @@ class TestAC6NarrationGenerator:
         mock_provider = AsyncMock()
         mock_provider.complete_structured.return_value = mock_output
 
-        section_with_target = {**THREE_SECTIONS[0], "target_duration_sec": 10}  # 200/10 = 20 words/sec > 15
+        section_with_target = {
+            **THREE_SECTIONS[0],
+            "target_duration_sec": 10,
+        }  # 200/10 = 20 words/sec > 15
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=section_with_target, _section_index=0)
             result = await narration_generator_node(state)
 
         assert result["narration_scripts"] == [], (
-            "a script implying 20 words/sec against a 10s target duration must be rejected (cap 15/sec)"
+            "a script implying 20 words/sec against a 10s target duration must be "
+            "rejected (cap 15/sec)"
         )
 
     @pytest.mark.asyncio
@@ -1139,7 +1195,10 @@ class TestAC6NarrationGenerator:
         """
         from app.modules.content.pipeline.graph import narration_generator_node
 
-        section_no_metadata = {"title": "No Metadata Section", "body": "prose with no page metadata. " * 20}
+        section_no_metadata = {
+            "title": "No Metadata Section",
+            "body": "prose with no page metadata. " * 20,
+        }
         mock_output = type(
             "Narration",
             (),
@@ -1209,7 +1268,9 @@ class TestAC6NarrationGenerator:
         """
         from app.modules.content.pipeline.graph import narration_generator_node
 
-        mock_output = type("Narration", (), {"narration_style": "   ", "script": "A valid script."})()
+        mock_output = type(
+            "Narration", (), {"narration_style": "   ", "script": "A valid script."}
+        )()
         mock_provider = AsyncMock()
         mock_provider.complete_structured.return_value = mock_output
 
@@ -1271,7 +1332,9 @@ class TestAC7CostCeiling:
 
         with patch(
             "app.core.cost_tracker.check_ceiling",
-            new=AsyncMock(side_effect=AssertionError("check_ceiling must not be called for empty sections")),
+            new=AsyncMock(
+                side_effect=AssertionError("check_ceiling must not be called for empty sections")
+            ),
         ):
             with pytest.raises(RuntimeError, match="zero sections"):
                 await _fan_out_phase1_economy_nodes(_base_state(sections=[]))
@@ -1287,7 +1350,9 @@ class TestAC7CostCeiling:
 
         with patch(
             "app.core.cost_tracker.check_ceiling",
-            new=AsyncMock(side_effect=AssertionError("check_ceiling must not be called with no lesson_id")),
+            new=AsyncMock(
+                side_effect=AssertionError("check_ceiling must not be called with no lesson_id")
+            ),
         ):
             with pytest.raises(RuntimeError, match="lesson_id"):
                 await _fan_out_phase1_economy_nodes(_base_state(lesson_id=None))
@@ -1318,13 +1383,18 @@ class TestAC7CostCeiling:
         upload could dispatch an unbounded number of concurrent LLM calls
         approved by one near-$0 check. This asserts the cap actually applies.
         """
-        from app.modules.content.pipeline.graph import _MAX_PHASE1_SECTIONS, _fan_out_phase1_economy_nodes
+        from app.modules.content.pipeline.graph import (
+            _MAX_PHASE1_SECTIONS,
+            _fan_out_phase1_economy_nodes,
+        )
 
         too_many_sections = [
             {"title": f"Section {i}", "body": f"body {i}"} for i in range(_MAX_PHASE1_SECTIONS + 10)
         ]
         with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
-            dispatches = await _fan_out_phase1_economy_nodes(_base_state(sections=too_many_sections))
+            dispatches = await _fan_out_phase1_economy_nodes(
+                _base_state(sections=too_many_sections)
+            )
 
         assert len(dispatches) == _MAX_PHASE1_SECTIONS * len(ECONOMY_NODE_NAMES), (
             f"expected fan-out capped at {_MAX_PHASE1_SECTIONS} sections x "
@@ -1333,7 +1403,9 @@ class TestAC7CostCeiling:
         )
 
     @pytest.mark.asyncio
-    async def test_economy_node_functions_never_call_circuit_breaker_or_cost_accumulation_directly(self) -> None:
+    async def test_economy_node_functions_never_call_circuit_breaker_or_cost_accumulation_directly(
+        self,
+    ) -> None:
         """AC-7 Test line: 'a node never calls is_circuit_open/accumulate_cost
         itself (regression guard against re-duplicating provider-layer logic)'
         — that's already handled inside OpenAILLMProvider.complete_structured().
@@ -1350,14 +1422,20 @@ class TestAC7CostCeiling:
         )
 
         def _forbidden(*args: Any, **kwargs: Any) -> None:
-            raise AssertionError("economy node called circuit-breaker/cost-accumulation logic directly")
+            raise AssertionError(
+                "economy node called circuit-breaker/cost-accumulation logic directly"
+            )
 
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = None  # degrade-and-return path, cheapest to drive
+        mock_provider.complete_structured.return_value = (
+            None  # degrade-and-return path, cheapest to drive
+        )
 
-        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider), patch(
-            "app.core.circuit_breaker.is_circuit_open", side_effect=_forbidden
-        ), patch("app.core.cost_tracker.accumulate_cost", side_effect=_forbidden):
+        with (
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.circuit_breaker.is_circuit_open", side_effect=_forbidden),
+            patch("app.core.cost_tracker.accumulate_cost", side_effect=_forbidden),
+        ):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
             for node in (
                 summarise_segment_node,
@@ -1372,7 +1450,9 @@ class TestAC7CostCeiling:
 
 class TestAC7CostCeilingEndToEnd:
     @pytest.mark.asyncio
-    async def test_ceiling_breach_produces_failed_status_with_cost_ceiling_exceeded_prefix(self) -> None:
+    async def test_ceiling_breach_produces_failed_status_with_cost_ceiling_exceeded_prefix(
+        self,
+    ) -> None:
         """AC-7 Test line: 'simulated ceiling breach mid-fan-out results in a
         failed status with the correct error prefix, not a stranded running
         row.' Drives content_pipeline_job's actual except-RuntimeError handler
@@ -1396,7 +1476,8 @@ class TestAC7CostCeilingEndToEnd:
 
         mock_jobs_table.update.side_effect = _capture_update
         mock_lessons_table = MagicMock()
-        mock_lessons_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+        lessons_single = mock_lessons_table.select.return_value.eq.return_value.single
+        lessons_single.return_value.execute.return_value.data = {
             "user_id": FAKE_USER_ID,
             "source_file_path": "fake/path.pdf",
             "book_id": FAKE_BOOK_ID,
@@ -1408,14 +1489,19 @@ class TestAC7CostCeilingEndToEnd:
         mock_supabase = MagicMock()
         mock_supabase.table.side_effect = _table
 
-        with patch("app.core.db.get_supabase", return_value=mock_supabase), patch(
-            "app.modules.content.pipeline.graph.run_pipeline",
-            new=AsyncMock(
-                side_effect=RuntimeError(
-                    f"cost ceiling exceeded before Phase 1 economy-node dispatch for lesson_id={FAKE_LESSON_ID}"
-                )
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch(
+                "app.modules.content.pipeline.graph.run_pipeline",
+                new=AsyncMock(
+                    side_effect=RuntimeError(
+                        "cost ceiling exceeded before Phase 1 economy-node dispatch "
+                        f"for lesson_id={FAKE_LESSON_ID}"
+                    )
+                ),
             ),
-        ), patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock()):
+            patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock()),
+        ):
             # content_pipeline_job's cost-ceiling branch returns a dict rather
             # than re-raising (unlike other RuntimeErrors, which propagate for
             # ARQ retry) — see content_pipeline.py's except RuntimeError block.
@@ -1426,5 +1512,7 @@ class TestAC7CostCeilingEndToEnd:
             f"expected error prefixed 'cost_ceiling_exceeded:', got {result['error']!r}"
         )
         failed_updates = [c for c in update_calls if c.get("status") == "failed"]
-        assert failed_updates, "lesson_jobs.status was never updated to 'failed' — row would be stranded at 'running'"
+        assert failed_updates, (
+            "lesson_jobs.status was never updated to 'failed' — row would be stranded at 'running'"
+        )
         assert failed_updates[-1]["error"].startswith("cost_ceiling_exceeded:")

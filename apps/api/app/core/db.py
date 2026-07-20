@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import httpx
 from supabase import Client, create_client
 
 if TYPE_CHECKING:

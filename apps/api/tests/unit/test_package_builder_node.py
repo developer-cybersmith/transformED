@@ -20,6 +20,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 FAKE_LESSON_ID = "70707070-7070-7070-7070-707070707070"
 FAKE_BOOK_ID = "80808080-8080-8080-8080-808080808080"
@@ -33,35 +34,65 @@ LESSON_PLAN: dict[str, Any] = {
     "total_segments": 2,
     "total_duration_min": 12.5,
     "segments": [
-        {"segment_id": "sec_0", "title": "Entropy Basics", "summary": "Intro to entropy.", "duration_min": 6.0},
-        {"segment_id": "sec_1", "title": "Heat Transfer", "summary": "Intro to heat transfer.", "duration_min": 6.5},
+        {
+            "segment_id": "sec_0",
+            "title": "Entropy Basics",
+            "summary": "Intro to entropy.",
+            "duration_min": 6.0,
+        },
+        {
+            "segment_id": "sec_1",
+            "title": "Heat Transfer",
+            "summary": "Intro to heat transfer.",
+            "duration_min": 6.5,
+        },
     ],
 }
 
 COMPLEXITY_SCORES: list[dict[str, Any]] = [
     {
-        "segment_id": "sec_0", "level": "medium", "cognitive_load": "moderate",
-        "abstraction_level": "concrete", "prerequisite_concepts": ["energy"],
-        "narration_style": "conversational", "quiz_difficulty": "medium",
+        "segment_id": "sec_0",
+        "level": "medium",
+        "cognitive_load": "moderate",
+        "abstraction_level": "concrete",
+        "prerequisite_concepts": ["energy"],
+        "narration_style": "conversational",
+        "quiz_difficulty": "medium",
         "intervention_sensitivity": 0.4,
     },
     {
-        "segment_id": "sec_1", "level": "medium", "cognitive_load": "moderate",
-        "abstraction_level": "concrete", "prerequisite_concepts": ["temperature"],
-        "narration_style": "conversational", "quiz_difficulty": "medium",
+        "segment_id": "sec_1",
+        "level": "medium",
+        "cognitive_load": "moderate",
+        "abstraction_level": "concrete",
+        "prerequisite_concepts": ["temperature"],
+        "narration_style": "conversational",
+        "quiz_difficulty": "medium",
         "intervention_sensitivity": 0.5,
     },
 ]
 
 SLIDES: list[dict[str, Any]] = [
-    {"segment_id": "sec_0", "data": {
-        "slide_id": "slide_sec_0_0", "title": "What is Entropy?", "bullets": ["Point A"],
-        "image_url": None, "fallback_image_url": None,
-    }},
-    {"segment_id": "sec_1", "data": {
-        "slide_id": "slide_sec_1_0", "title": "Conduction", "bullets": ["Point B"],
-        "image_url": None, "fallback_image_url": None,
-    }},
+    {
+        "segment_id": "sec_0",
+        "data": {
+            "slide_id": "slide_sec_0_0",
+            "title": "What is Entropy?",
+            "bullets": ["Point A"],
+            "image_url": None,
+            "fallback_image_url": None,
+        },
+    },
+    {
+        "segment_id": "sec_1",
+        "data": {
+            "slide_id": "slide_sec_1_0",
+            "title": "Conduction",
+            "bullets": ["Point B"],
+            "image_url": None,
+            "fallback_image_url": None,
+        },
+    },
 ]
 
 SLIDE_IMAGES: list[dict[str, Any]] = [
@@ -70,46 +101,82 @@ SLIDE_IMAGES: list[dict[str, Any]] = [
 ]
 
 AUDIO_ASSETS: list[dict[str, Any]] = [
-    {"segment_id": "sec_0", "data": {
-        "script": "Entropy measures disorder.", "audio_url": f"{FAKE_LESSON_ID}/sec_0.mp3",
-        "audio_provider": "sarvam", "timestamps": [],
-    }},
-    {"segment_id": "sec_1", "data": {
-        "script": "Heat flows from hot to cold.", "audio_url": f"{FAKE_LESSON_ID}/sec_1.mp3",
-        "audio_provider": "azure", "timestamps": [],
-    }},
+    {
+        "segment_id": "sec_0",
+        "data": {
+            "script": "Entropy measures disorder.",
+            "audio_url": f"{FAKE_LESSON_ID}/sec_0.mp3",
+            "audio_provider": "sarvam",
+            "timestamps": [],
+        },
+    },
+    {
+        "segment_id": "sec_1",
+        "data": {
+            "script": "Heat flows from hot to cold.",
+            "audio_url": f"{FAKE_LESSON_ID}/sec_1.mp3",
+            "audio_provider": "azure",
+            "timestamps": [],
+        },
+    },
 ]
 
 QUIZ_QUESTIONS: list[dict[str, Any]] = [
-    {"segment_id": "sec_0", "data": {
-        "question_id": "quiz_sec_0", "type": "mcq", "question": "What is entropy?",
-        "options": ["Disorder", "Order", "Mass", "Energy"], "correct_index": 0,
-        "explanation": "Entropy measures disorder.", "difficulty": "medium",
-    }},
-    {"segment_id": "sec_1", "data": {
-        "question_id": "quiz_sec_1", "type": "mcq", "question": "Heat flows from?",
-        "options": ["Hot to cold", "Cold to hot", "Nowhere", "Everywhere"], "correct_index": 0,
-        "explanation": "Second law of thermodynamics.", "difficulty": "medium",
-    }},
+    {
+        "segment_id": "sec_0",
+        "data": {
+            "question_id": "quiz_sec_0",
+            "type": "mcq",
+            "question": "What is entropy?",
+            "options": ["Disorder", "Order", "Mass", "Energy"],
+            "correct_index": 0,
+            "explanation": "Entropy measures disorder.",
+            "difficulty": "medium",
+        },
+    },
+    {
+        "segment_id": "sec_1",
+        "data": {
+            "question_id": "quiz_sec_1",
+            "type": "mcq",
+            "question": "Heat flows from?",
+            "options": ["Hot to cold", "Cold to hot", "Nowhere", "Everywhere"],
+            "correct_index": 0,
+            "explanation": "Second law of thermodynamics.",
+            "difficulty": "medium",
+        },
+    },
 ]
 
 GLOSSARY: list[dict[str, Any]] = [
     {"segment_id": "sec_0", "data": {"term": "Entropy", "definition": "A measure of disorder."}},
-    {"segment_id": "sec_1", "data": {"term": "entropy ", "definition": "A duplicate, different casing."}},
-    {"segment_id": "sec_1", "data": {"term": "Conduction", "definition": "Heat transfer through contact."}},
+    {
+        "segment_id": "sec_1",
+        "data": {"term": "entropy ", "definition": "A duplicate, different casing."},
+    },
+    {
+        "segment_id": "sec_1",
+        "data": {"term": "Conduction", "definition": "Heat transfer through contact."},
+    },
 ]
 
 INTERVENTION_PROMPTS: list[dict[str, Any]] = [
-    {"segment_id": "sec_0", "data": {
-        "distraction": ["Stay focused!", "You've got this.", "Keep going."],
-        "confusion": ["Let's slow down.", "Try re-reading.", "It's okay to pause."],
-        "fatigue": ["Take a breath.", "Almost there.", "Stretch a bit."],
-    }},
-    {"segment_id": "sec_1", "data": {
-        "distraction": ["Stay focused!", "You've got this.", "Keep going."],
-        "confusion": ["Let's slow down.", "Try re-reading.", "It's okay to pause."],
-        "fatigue": ["Take a breath.", "Almost there.", "Stretch a bit."],
-    }},
+    {
+        "segment_id": "sec_0",
+        "data": {
+            "distraction": ["Stay focused!", "You've got this.", "Keep going."],
+            "confusion": ["Let's slow down.", "Try re-reading.", "It's okay to pause."],
+            "fatigue": ["Take a breath.", "Almost there.", "Stretch a bit."],
+        },
+    },
+    {
+        "segment_id": "sec_1",
+        "data": {
+            "distraction": ["Stay focused!", "You've got this.", "Keep going."],
+            "confusion": ["Let's slow down.", "Try re-reading.", "It's okay to pause."],
+            "fatigue": ["Take a breath.", "Almost there.", "Stretch a bit."],
+        },
+    },
 ]
 
 
@@ -136,12 +203,16 @@ def _mock_supabase(
     node_outputs: dict[str, Any] | None = None,
     chapter_id: str = FAKE_CHAPTER_ID,
 ) -> MagicMock:
-    jobs_data = {"node_outputs": {**(node_outputs or {}), "chunk": {"chapter_id": chapter_id, "chunks": []}}}
+    jobs_data = {
+        "node_outputs": {**(node_outputs or {}), "chunk": {"chapter_id": chapter_id, "chunks": []}}
+    }
     if node_outputs and "chunk" in node_outputs:
         jobs_data = {"node_outputs": node_outputs}
 
     jobs_table = MagicMock()
-    jobs_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = jobs_data
+    jobs_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = (
+        jobs_data
+    )
     jobs_table.update.return_value.eq.return_value.execute.return_value = MagicMock()
 
     lessons_table = MagicMock()
@@ -268,7 +339,9 @@ async def test_segment_missing_interventions_is_skipped() -> None:
     sb, _, _ = _mock_supabase()
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        result = await package_builder_node(_base_state(intervention_prompts=incomplete_interventions))
+        result = await package_builder_node(
+            _base_state(intervention_prompts=incomplete_interventions)
+        )
 
     package = result["lesson_package"]
     assert len(package["segments"]) == 1
@@ -337,7 +410,7 @@ async def test_model_validate_failure_propagates_uncaught() -> None:
     sb.table.side_effect = _table_router
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        with pytest.raises(Exception):  # pydantic ValidationError, not RuntimeError
+        with pytest.raises(ValidationError):  # not RuntimeError
             await package_builder_node(_base_state())
 
     lessons_table.update.assert_not_called()
@@ -433,7 +506,7 @@ async def test_chunk_present_but_missing_chapter_id_key_behaves_like_chunk_absen
     sb.table.side_effect = _table_router
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             await package_builder_node(_base_state())
 
     lessons_table.update.assert_not_called()
@@ -450,7 +523,7 @@ async def test_missing_book_id_fails_model_validate() -> None:
     sb, _, lessons_table = _mock_supabase()
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             await package_builder_node(_base_state(book_id=""))
 
     lessons_table.update.assert_not_called()
@@ -470,13 +543,17 @@ async def test_slide_entirely_absent_from_slide_images_degrades_same_as_explicit
     with patch("app.core.db.get_supabase", return_value=sb):
         result = await package_builder_node(_base_state(slide_images=slide_images_missing_one))
 
-    seg1_slide = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_1")["slides"][0]
+    seg1_slide = next(
+        s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_1"
+    )["slides"][0]
     assert seg1_slide["image_url"] is None
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_duplicate_segment_id_in_complexity_scores_keeps_last_and_logs_warning(caplog: Any) -> None:
+async def test_duplicate_segment_id_in_complexity_scores_keeps_last_and_logs_warning(
+    caplog: Any,
+) -> None:
     """A retried/duplicate Send() dispatch could produce two complexity_scores
     entries for the same segment_id — must not crash, and must log a warning
     rather than silently picking one with no trace."""

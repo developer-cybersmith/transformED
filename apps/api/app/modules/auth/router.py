@@ -7,12 +7,12 @@ JWT verification is always done locally via PyJWT — no remote auth calls.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
-from app.dependencies import CurrentUser, get_settings
+from app.dependencies import CurrentUser
 
 router = APIRouter(tags=["auth"])
 
@@ -33,7 +33,7 @@ class SignInRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105
     user: dict[str, Any]
 
 

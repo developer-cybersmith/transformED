@@ -17,6 +17,7 @@ Responsibilities
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -58,7 +59,9 @@ class SarvamTTSProvider(TTSProvider):
             word timestamps in this story (see module docstring).
         """
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+            raise RuntimeError(
+                f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
+            )
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -69,10 +72,8 @@ class SarvamTTSProvider(TTSProvider):
                 )
                 if response.status_code == 429:
                     body: dict[str, Any] = {}
-                    try:
+                    with contextlib.suppress(Exception):
                         body = response.json()
-                    except Exception:  # noqa: BLE001
-                        pass
                     error_code = (body.get("error") or {}).get("code", "")
                     if error_code == "insufficient_quota_error":
                         await record_failure(_PROVIDER_KEY)

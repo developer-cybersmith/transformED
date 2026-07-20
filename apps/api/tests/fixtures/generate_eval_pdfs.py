@@ -46,7 +46,13 @@ def _build_short() -> bytes:
     for page in range(3):
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 16)
-        pdf.cell(0, 10, text=f"Chapter 1: Introduction to Cell Biology (Page {page + 1})", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(
+            0,
+            10,
+            text=f"Chapter 1: Introduction to Cell Biology (Page {page + 1})",
+            new_x="LMARGIN",
+            new_y="NEXT",
+        )
         pdf.set_font("Helvetica", size=12)
         pdf.multi_cell(0, 8, text=_LOREM * 10, new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
@@ -58,7 +64,9 @@ def _build_long() -> bytes:
     for page in range(120):
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 14)
-        pdf.cell(0, 10, text=f"Section {page // 10 + 1}.{page % 10 + 1}", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(
+            0, 10, text=f"Section {page // 10 + 1}.{page % 10 + 1}", new_x="LMARGIN", new_y="NEXT"
+        )
         pdf.set_font("Helvetica", size=11)
         pdf.multi_cell(0, 7, text=_LOREM * 6, new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
@@ -89,7 +97,14 @@ def _build_table_heavy() -> bytes:
         for table_index in range(3):
             data = [["Enzyme", "Substrate", "Product", "Rate (µmol/min)"]]
             for row in range(5):
-                data.append([f"E{table_index}{row}", f"S{table_index}{row}", f"P{table_index}{row}", str(10 + row)])
+                data.append(
+                    [
+                        f"E{table_index}{row}",
+                        f"S{table_index}{row}",
+                        f"P{table_index}{row}",
+                        str(10 + row),
+                    ]
+                )
             with pdf.table() as table:
                 for data_row in data:
                     row_obj = table.row()
@@ -122,7 +137,13 @@ def _build_image_heavy() -> bytes:
             x = 10 + (slot % 2) * 95
             y = 25 + (slot // 2) * 60
             pdf.image(img, x=x, y=y, w=85, h=50)
-        pdf.multi_cell(0, 6, text="Figure captions describe the illustrations above.", new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(
+            0,
+            6,
+            text="Figure captions describe the illustrations above.",
+            new_x="LMARGIN",
+            new_y="NEXT",
+        )
     return bytes(pdf.output())
 
 

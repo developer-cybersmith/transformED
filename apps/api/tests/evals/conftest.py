@@ -23,14 +23,19 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--run-live-eval",
         action="store_true",
         default=False,
-        help="Run the S2-14 eval harness live test (hits real OpenAI/Sarvam/Azure/Supabase, costs real money).",
+        help=(
+            "Run the S2-14 eval harness live test "
+            "(hits real OpenAI/Sarvam/Azure/Supabase, costs real money)."
+        ),
     )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if config.getoption("--run-live-eval"):
         return
-    skip_live = pytest.mark.skip(reason="live_eval test skipped by default — pass --run-live-eval to run it")
+    skip_live = pytest.mark.skip(
+        reason="live_eval test skipped by default — pass --run-live-eval to run it"
+    )
     for item in items:
         if "live_eval" in item.keywords:
             item.add_marker(skip_live)
