@@ -2,9 +2,9 @@
 story_id: "3-28"
 epic: "3"
 title: "Tier-Aware Quiz Question Count in quiz_generator_node"
-status: "ready-for-dev"
+status: "review"
 branch: "learner-mode-sprint-dev3-task1"
-baseline_commit: ""
+baseline_commit: "efc5a4a96607b288d0d607172a5e1b04d0502fe5"
 ---
 
 # Story 3-28 — Tier-Aware Quiz Question Count in quiz_generator_node
@@ -100,58 +100,31 @@ The node makes exactly ONE `provider.complete_structured` call per segment regar
 
 ## Tasks and Subtasks
 
-- [ ] **Task 1: Add `_TIER_QUIZ_COUNT_BAND` constant in `graph.py`**
-  - [ ] 1.1 Add `_TIER_QUIZ_COUNT_BAND: dict[str, tuple[int, int]] = {"T1": (3, 5), "T2": (2, 3), "T3": (1, 2)}` near `_TIER_TOTAL_SLIDE_BAND` (around line 903)
+- [x] **Task 1: Add `_TIER_QUIZ_COUNT_BAND` constant in `graph.py`** — ✓ 2026-07-20
+  - [x] 1.1 Added after `_TIER_TOTAL_SLIDE_BAND` (line ~913)
 
-- [ ] **Task 2: Add `_QuizBatchLLM` Pydantic model in `graph.py`**
-  - [ ] 2.1 Add `class _QuizBatchLLM(BaseModel): questions: list[_QuizQuestionLLM]` below the existing `_QuizQuestionLLM` class (around line 1751)
-  - [ ] 2.2 Keep `_QuizQuestionLLM` unchanged — it is still used as the element type within the batch
+- [x] **Task 2: Add `_QuizBatchLLM` Pydantic model in `graph.py`** — ✓ 2026-07-20
+  - [x] 2.1 Added after `_QuizQuestionLLM`; uses `questions: list[_QuizQuestionLLM]`
+  - [x] 2.2 `_QuizQuestionLLM` unchanged — still used as element type
 
-- [ ] **Task 3: Add `_quiz_batch_is_valid_shape()` validator in `graph.py`**
-  - [ ] 3.1 Add `_quiz_batch_is_valid_shape(cached: dict[str, Any]) -> bool` immediately after `_quiz_data_is_valid_shape`
-  - [ ] 3.2 Checks: `cached.get("questions")` is a non-empty list; each element passes `_quiz_data_is_valid_shape`
-  - [ ] 3.3 Keep `_quiz_data_is_valid_shape` unchanged — it is reused by `_quiz_batch_is_valid_shape` to validate each question in the batch
+- [x] **Task 3: Add `_quiz_batch_is_valid_shape()` validator in `graph.py`** — ✓ 2026-07-20
+  - [x] 3.1 Added immediately after `_quiz_data_is_valid_shape`
+  - [x] 3.2 Validates non-empty `questions` list; each element passes `_quiz_data_is_valid_shape`
+  - [x] 3.3 `_quiz_data_is_valid_shape` unchanged — reused inside the batch validator
 
-- [ ] **Task 4: Modify `quiz_generator_node` to generate N questions**
-  - [ ] 4.1 Read `tier = state.get("tier", DEFAULT_TIER)` at the top of the node
-  - [ ] 4.2 Look up `n_min, n_max = _TIER_QUIZ_COUNT_BAND.get(tier, _TIER_QUIZ_COUNT_BAND["T2"])` — log warning if `tier` not in band
-  - [ ] 4.3 Update `_read_phase1_checkpoint` call: `required_keys=("segment_id", "questions")`, `extra_validate=_quiz_batch_is_valid_shape`
-  - [ ] 4.4 On cache hit, return `{"quiz_questions": cached["questions"]}` (list of per-question dicts)
-  - [ ] 4.5 Update system prompt: `"Write {n_min} to {n_max} multiple-choice questions testing understanding of this section. For each question, provide exactly 4 distinct answer options, the 0-based index of the correct option, a brief explanation, and a difficulty (easy/medium/hard)."`
-  - [ ] 4.6 Call `provider.complete_structured(messages, settings.llm_mini, _QuizBatchLLM)` (note: `_QuizBatchLLM` not `_QuizQuestionLLM`)
-  - [ ] 4.7 If `response is None` or `response.questions` is empty, return `{"quiz_questions": []}` (degrade, don't crash)
-  - [ ] 4.8 Loop over `response.questions`, apply all existing guards per question, assign `question_id = f"quiz_{section_id}_{i}"` (0-based), collect valid results
-  - [ ] 4.9 Truncate valid results to `n_max` if somehow > n_max (defensive guard)
-  - [ ] 4.10 If count < n_min (but > 0), log a warning — do NOT discard valid questions
-  - [ ] 4.11 If count == 0, log warning and return `{"quiz_questions": []}`
-  - [ ] 4.12 Write batch checkpoint: `{"segment_id": section_id, "questions": results}` where `results` is the list of `{"segment_id": ..., "data": {...}}`
-  - [ ] 4.13 Return `{"quiz_questions": results}`
+- [x] **Task 4: Modify `quiz_generator_node` to generate N questions** — ✓ 2026-07-20
+  - [x] 4.1–4.13 All subtasks complete; full rewrite of node body
 
-- [ ] **Task 5: Update existing `TestAC3QuizGenerator` tests in `test_phase1_economy_nodes.py`**
-  - [ ] 5.1 Update every mock in `TestAC3QuizGenerator` from single-question shape to batch shape: mock object must have `.questions` attribute containing a list of individual question objects
-  - [ ] 5.2 Update count assertions that currently check `len(result["quiz_questions"]) == 1` — T2 default now returns up to 3, but each test can use a T2 state with a mock that returns exactly 1 question in the batch to preserve 1-question assertions
-  - [ ] 5.3 Verify all 7 existing `TestAC3QuizGenerator` tests pass with the updated mocks
+- [x] **Task 5: Update existing `TestAC3QuizGenerator` tests in `test_phase1_economy_nodes.py`** — ✓ 2026-07-20
+  - [x] 5.1–5.3 All 7 existing tests updated to batch mock shape; all pass
 
-- [ ] **Task 6: Write new tests in `apps/api/tests/unit/test_quiz_generator_tier.py`**
-  - [ ] 6.1 `test_t1_tier_produces_3_to_5_questions` — mock returns 4 valid questions, assert `len(result["quiz_questions"]) == 4`
-  - [ ] 6.2 `test_t2_tier_produces_2_to_3_questions` — mock returns 2 valid questions, assert count == 2
-  - [ ] 6.3 `test_t3_tier_produces_1_to_2_questions` — mock returns 1 valid question, assert count == 1
-  - [ ] 6.4 `test_question_ids_are_0_indexed_suffixed` — mock returns 3 questions (T1 state), assert `question_id` values are `quiz_{section_id}_0`, `quiz_{section_id}_1`, `quiz_{section_id}_2`
-  - [ ] 6.5 `test_batch_checkpoint_cache_hit_returns_all_questions` — patch `_read_phase1_checkpoint` to return a batch-shaped checkpoint, assert LLM NOT called and all questions returned
-  - [ ] 6.6 `test_old_single_question_checkpoint_is_treated_as_cache_miss` — confirm that `required_keys=("segment_id", "questions")` causes old `{"segment_id": ..., "data": {...}}` checkpoint to miss (validate via `_read_phase1_checkpoint` logic — see `_quiz_batch_is_valid_shape` validator)
-  - [ ] 6.7 `test_mixed_valid_invalid_batch_keeps_only_valid` — batch has 3 questions; question[1] has duplicate options; assert only 2 questions returned (question[0] and question[2])
-  - [ ] 6.8 `test_all_invalid_batch_returns_empty_list` — batch has 2 questions, both with blank explanation; assert returns `{"quiz_questions": []}`
-  - [ ] 6.9 `test_unknown_tier_falls_back_to_t2_band` — state with `tier="T99"`, mock returns 2 questions, assert 2 returned (T2 band accepts 2-3)
-  - [ ] 6.10 `test_single_llm_call_per_segment_regardless_of_tier` — T1 state, assert `mock_provider.complete_structured.call_count == 1`
-  - [ ] 6.11 `test_tier_band_constant_has_correct_values` — import `_TIER_QUIZ_COUNT_BAND` and assert all 3 tier values
-  - [ ] 6.12 `test_quiz_batch_is_valid_shape_rejects_missing_questions_key` — unit-test the validator directly
-  - [ ] 6.13 `test_quiz_batch_is_valid_shape_rejects_empty_questions_list` — validator rejects `{"segment_id": ..., "questions": []}`
-  - [ ] 6.14 `test_quiz_batch_is_valid_shape_rejects_old_single_question_shape` — validator rejects `{"segment_id": ..., "data": {...}}` (old format)
+- [x] **Task 6: Write new tests in `apps/api/tests/unit/test_quiz_generator_tier.py`** — ✓ 2026-07-20
+  - [x] 6.1–6.14 All 25 tests written and passing (AC 1–3, 4, 5, 6, 7, 8, 9, 13, 14, 15)
 
-- [ ] **Task 7: Run full test suite to verify no regressions**
-  - [ ] 7.1 `pytest apps/api/tests/unit/test_quiz_generator_tier.py -v` — all 14 new tests green
-  - [ ] 7.2 `pytest apps/api/tests/unit/test_phase1_economy_nodes.py -v` — all existing tests green (including updated `TestAC3QuizGenerator`)
-  - [ ] 7.3 `pytest apps/api/tests/unit/ -v` — full unit suite green (0 regressions)
+- [x] **Task 7: Run full test suite to verify no regressions** — ✓ 2026-07-20
+  - [x] 7.1 `test_quiz_generator_tier.py` — 25/25 green
+  - [x] 7.2 `test_phase1_economy_nodes.py::TestAC3QuizGenerator` — 8/8 green
+  - [x] 7.3 Full unit suite — 455 pass, 7 pre-existing failures (Windows encoding + missing fpdf; unrelated)
 
 ---
 
@@ -247,19 +220,26 @@ This proves the validator correctly rejects the old format, meaning `_read_phase
 ## Dev Agent Record
 
 ### Implementation Plan
-(to be filled by dev agent during implementation)
+Single-file implementation in `graph.py`: (1) add `_TIER_QUIZ_COUNT_BAND` constant, (2) add `_QuizBatchLLM` model wrapping list of `_QuizQuestionLLM`, (3) add `_quiz_batch_is_valid_shape` validator reusing existing `_quiz_data_is_valid_shape` per-element, (4) rewrite `quiz_generator_node` body to read tier, look up band, make one batch LLM call, validate each question individually, write batch checkpoint. No changes to `package_builder_node` or shared schemas needed.
 
 ### Debug Log
-(to be filled by dev agent during implementation)
+- Existing tests in `TestAC3QuizGenerator` failed because mocks returned single-question shaped objects; fixed by wrapping in batch mock (`.questions = [...]`).
+- `test_quiz_generator_skips_llm_call_on_cache_hit` in `test_phase1_checkpoint_idempotency.py` used old single-question checkpoint shape; updated to batch shape.
+- `langgraph` not installed globally on Windows — installed via pip to enable test run.
 
 ### Completion Notes
-(to be filled by dev agent on completion)
+All 15 ACs satisfied. 25 new tests in `test_quiz_generator_tier.py` all pass. 8 updated tests in `TestAC3QuizGenerator` all pass. 1 fixed test in `test_phase1_checkpoint_idempotency.py`. No regressions beyond 7 pre-existing failures (Windows codec + missing fpdf, both unrelated to this story). `package_builder_node` unchanged — `_group_by_segment_id` already handles multiple entries per segment_id naturally.
 
 ### File List
-(to be filled by dev agent on completion)
+- `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED (constant, model, validator, node rewrite)
+- `apps/api/tests/unit/test_quiz_generator_tier.py` — NEW (25 tests, all ACs covered)
+- `apps/api/tests/unit/test_phase1_economy_nodes.py` — MODIFIED (TestAC3QuizGenerator batch mock update)
+- `apps/api/tests/unit/test_phase1_checkpoint_idempotency.py` — MODIFIED (batch checkpoint shape for quiz cache-hit test)
+- `docs/stories/3-28-tier-aware-quiz-count.md` — MODIFIED (tasks completed, status → review)
 
 ### Change Log
 - 2026-07-20: Story 3-28 created — Learner Mode Sprint Task 1, tier-aware quiz question count
+- 2026-07-20: Implementation complete — all tasks done, all tests green, status → review
 
 ---
 
