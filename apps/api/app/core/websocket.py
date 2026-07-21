@@ -204,12 +204,15 @@ async def _init_session_state(session_id: str) -> None:
     and clears any stale cooldown / fatigue flags left over from a previous
     session that reused this ``session_id``.  State/counter carry a 24 h TTL.
 
+    Also seeds the learner tier and Q&A phase duration from the cached lesson
+    package (``lesson_package:{session_id}``).  If the cache is absent the tier
+    keys are simply not written — a subsequent reconnect will retry.
+
     ``get_redis`` is imported lazily inside the function — no module-level
     imports in this file (avoids the core ↔ tutor circular import).
 
     Error contract: a Redis failure must never crash the WebSocket
-    ``accept()`` handshake, so the whole body is best-effort and never
-    re-raises.
+    ``accept()`` handshake, so every block is best-effort and never re-raises.
     """
     try:
         from app.core.redis import get_redis  # type: ignore[import]
@@ -223,6 +226,35 @@ async def _init_session_state(session_id: str) -> None:
         logger.info("WS session initialised: session=%s", session_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to init session state for %s: %s", session_id, e)
+
+    # Learner Mode — seed tier and Q&A phase length from the cached lesson package.
+    # Runs in its own try/except: a tier-seeding failure must never affect the core
+    # session init above.  If the cache is absent, no tier keys are written; a
+    # reconnect after lesson generation completes will populate them.
+    try:
+        import json as _json  # noqa: PLC0415
+
+        from app.core.redis import get_redis  # type: ignore[import]
+        from app.modules.tutor.service import qa_phase_seconds as _qa  # type: ignore[import]
+
+        _redis = get_redis()
+        raw_pkg = await _redis.get(f"lesson_package:{session_id}")
+        if raw_pkg:
+            pkg = _json.loads(raw_pkg)
+            tier = (pkg.get("metadata") or {}).get("learner_tier")
+            if tier:
+                await _redis.set(f"session:{session_id}:learner_tier", tier, ex=86400)
+                await _redis.set(
+                    f"session:{session_id}:qa_phase_seconds", str(_qa(tier)), ex=86400
+                )
+                logger.info(
+                    "WS session learner tier=%s qa_phase=%ss for %s",
+                    tier,
+                    _qa(tier),
+                    session_id,
+                )
+    except Exception:  # noqa: BLE001
+        logger.warning("learner tier seeding failed for %s — continuing without tier", session_id)
 
 
 # ── Dispatch helpers ───────────────────────────────────────────────────────────

@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-20 (Learner module added to Dev 4 domain per HIE_AI_Weekly_Tracker)
-**Overall status:** 28/39 Completed · 6 Partial · 5 Not Started
+**Last updated:** 2026-07-21 (Story 4-19 learner-tier-runtime — AC2–AC6 implemented, AC1 blocked on contract PR)
+**Overall status:** 28/39 Completed · 7 Partial · 4 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
 
@@ -19,7 +19,7 @@
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
-| Learner Mode | Feature Sprint | 3 | 0 | 0 | 3 |
+| Learner Mode | Feature Sprint | 3 | 0 | 1 | 2 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
 | **Total** | | **39** | **28** | **6** | **5** |
 
@@ -606,7 +606,7 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Session runtime adapts Q&A phase duration and pacing based on the learner tier embedded in the lesson package.
 
 <!-- CHECK:learner_tier_runtime -->
-- [Not Started] **Session runtime reads tier from lesson package; sets duration + Q&A phase length** `[High]`
+- [Partial] **Session runtime reads tier from lesson package; sets duration + Q&A phase length** `[High]` ⚠️ PARTIAL — AC2–AC6 implemented + tested; AC1 blocked on 4-dev contract PR (lesson_package.schema.json + lesson.ts)
   - Story: `docs/stories/4-19-learner-tier-runtime.md`
   - On session start, read `learner_tier` from `LessonPackage` (field TBD — requires shared contract addition; 4-dev PR flagged in story)
   - Store tier in Redis: `session:{session_id}:learner_tier` (24h TTL)

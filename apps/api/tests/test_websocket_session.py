@@ -19,6 +19,7 @@ on the websocket module).
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -361,3 +362,185 @@ async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
         {"type": "state_change", "payload": {"session_id": sid, "from_state": state, "to_state": state}}
     )
     mock_redis.set.assert_not_called()
+
+
+# ── Group G — Story 4-19: Learner tier seeding in _init_session_state ─────────
+#
+# _init_session_state reads lesson_package:{session_id} from Redis.
+# If metadata.learner_tier is T1/T2/T3, it writes:
+#   session:{sid}:learner_tier  → tier string (24 h TTL)
+#   session:{sid}:qa_phase_seconds → seconds per tier (24 h TTL)
+# If the cache is absent or the tier field is missing, no tier keys are written.
+# Redis failure in the tier block must never crash the handshake.
+
+
+def _make_pkg(tier: str | None) -> str:
+    """Return a minimal lesson_package JSON with the given learner_tier."""
+    pkg: dict = {"metadata": {"title": "Test"}, "segments": []}
+    if tier is not None:
+        pkg["metadata"]["learner_tier"] = tier
+    return json.dumps(pkg)
+
+
+def _mock_settings(mocker, t1=600, t2=300, t3=150, default=300):
+    s = MagicMock()
+    s.learner_tier_t1_qa_seconds = t1
+    s.learner_tier_t2_qa_seconds = t2
+    s.learner_tier_t3_qa_seconds = t3
+    s.learner_tier_default_qa_seconds = default
+    mocker.patch("app.config.get_settings", return_value=s)
+    return s
+
+
+@pytest.mark.unit
+async def test_g1_tier_t1_writes_600s(mocker):
+    """AC2+AC3: T1 tier → learner_tier='T1' and qa_phase_seconds='600' written."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=_make_pkg("T1"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _init_session_state
+
+    await _init_session_state("sess-g1")
+
+    mock_redis.set.assert_any_call("session:sess-g1:learner_tier", "T1", ex=86400)
+    mock_redis.set.assert_any_call("session:sess-g1:qa_phase_seconds", "600", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g2_tier_t2_writes_300s(mocker):
+    """AC3: T2 tier → qa_phase_seconds='300'."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=_make_pkg("T2"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _init_session_state
+
+    await _init_session_state("sess-g2")
+
+    mock_redis.set.assert_any_call("session:sess-g2:learner_tier", "T2", ex=86400)
+    mock_redis.set.assert_any_call("session:sess-g2:qa_phase_seconds", "300", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g3_tier_t3_writes_150s(mocker):
+    """AC3: T3 tier → qa_phase_seconds='150'."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=_make_pkg("T3"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _init_session_state
+
+    await _init_session_state("sess-g3")
+
+    mock_redis.set.assert_any_call("session:sess-g3:learner_tier", "T3", ex=86400)
+    mock_redis.set.assert_any_call("session:sess-g3:qa_phase_seconds", "150", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g4_unknown_tier_writes_default_qa_seconds(mocker):
+    """AC3: Unrecognised tier string uses default qa_phase_seconds."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=_make_pkg("TX"))  # not T1/T2/T3
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker, default=300)
+
+    from app.core.websocket import _init_session_state
+
+    await _init_session_state("sess-g4")
+
+    mock_redis.set.assert_any_call("session:sess-g4:qa_phase_seconds", "300", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g5_missing_cache_writes_no_tier_keys(mocker):
+    """AC4: lesson_package cache absent → no learner_tier / qa_phase_seconds keys written."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)  # cache miss
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _init_session_state
+
+    await _init_session_state("sess-g5")
+
+    set_keys = [call.args[0] for call in mock_redis.set.call_args_list]
+    assert "session:sess-g5:learner_tier" not in set_keys
+    assert "session:sess-g5:qa_phase_seconds" not in set_keys
+
+
+@pytest.mark.unit
+async def test_g6_missing_tier_field_writes_no_tier_keys(mocker):
+    """AC4: lesson_package present but metadata has no learner_tier → no tier keys written."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=_make_pkg(None))  # no learner_tier field
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _init_session_state
+
+    await _init_session_state("sess-g6")
+
+    set_keys = [call.args[0] for call in mock_redis.set.call_args_list]
+    assert "session:sess-g6:learner_tier" not in set_keys
+    assert "session:sess-g6:qa_phase_seconds" not in set_keys
+
+
+@pytest.mark.unit
+async def test_g7_redis_failure_in_tier_block_does_not_raise(mocker):
+    """AC6: Redis failure during tier seeding must never crash the WS handshake."""
+    call_count = 0
+
+    async def get_side_effect(key):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None  # tutor_state lookup (in _restore_or_init_session)
+        raise ConnectionError("Redis down")
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(side_effect=get_side_effect)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _init_session_state
+
+    await _init_session_state("sess-g7")  # must not raise
+
+
+@pytest.mark.unit
+def test_g8_qa_phase_seconds_helper_maps_all_tiers(mocker):
+    """AC5+AC3: qa_phase_seconds() pure helper returns correct seconds for each tier."""
+    _mock_settings(mocker)
+
+    from app.modules.tutor.service import qa_phase_seconds
+
+    assert qa_phase_seconds("T1") == 600
+    assert qa_phase_seconds("T2") == 300
+    assert qa_phase_seconds("T3") == 150
+    assert qa_phase_seconds("TX") == 300   # unknown → default
+    assert qa_phase_seconds(None) == 300   # None → default
+
+
+@pytest.mark.unit
+def test_g9_settings_have_learner_tier_fields():
+    """AC5: all four learner_tier_* fields exist on Settings with correct defaults.
+
+    Uses model_fields introspection — no instantiation needed, so no required
+    env vars must be provided.
+    """
+    from app.config import Settings
+
+    fields = Settings.model_fields
+    assert "learner_tier_t1_qa_seconds" in fields
+    assert "learner_tier_t2_qa_seconds" in fields
+    assert "learner_tier_t3_qa_seconds" in fields
+    assert "learner_tier_default_qa_seconds" in fields
+
+    assert fields["learner_tier_t1_qa_seconds"].default == 600
+    assert fields["learner_tier_t2_qa_seconds"].default == 300
+    assert fields["learner_tier_t3_qa_seconds"].default == 150
+    assert fields["learner_tier_default_qa_seconds"].default == 300

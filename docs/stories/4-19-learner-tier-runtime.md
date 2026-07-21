@@ -1,5 +1,6 @@
 ---
-baseline_commit: "a35ede1"
+baseline_commit: "b390788"
+status: review
 ---
 
 # Story 4-19: Learner Mode — Session Runtime Reads Tier from Lesson Package
@@ -31,11 +32,11 @@ so that downstream components (FSM, intervention engine) can adapt Q&A phase len
 ## Acceptance Criteria
 
 - [ ] **AC1:** `lesson_package.schema.json` and `lesson.ts` both have `learner_tier: "T1" | "T2" | "T3"` as an **optional** field on `LessonMetadata`. *(Blocked on 4-dev contract PR — open the PR as part of this story's first commit.)*
-- [ ] **AC2:** On new WebSocket connect, `_init_session_state` reads `lesson_package:{session_id}` from Redis; if present and `metadata.learner_tier` is set, writes `session:{session_id}:learner_tier` (string, 24 h TTL).
-- [ ] **AC3:** `session:{session_id}:qa_phase_seconds` is written (integer, 24 h TTL) using the mapping: T1 → `settings.learner_tier_t1_qa_seconds` (default 600), T2 → `settings.learner_tier_t2_qa_seconds` (default 300), T3 → `settings.learner_tier_t3_qa_seconds` (default 150); unknown/missing tier → `settings.learner_tier_default_qa_seconds` (default 300).
-- [ ] **AC4:** If the lesson package cache is absent (lesson not yet generated), `_init_session_state` completes without error and writes neither key; a subsequent reconnect will retry the lookup and write the keys when the cache is populated.
-- [ ] **AC5:** All new settings (`learner_tier_t1_qa_seconds`, `learner_tier_t2_qa_seconds`, `learner_tier_t3_qa_seconds`, `learner_tier_default_qa_seconds`) are added to `config.py:Settings` as env-var-backed fields with the defaults above.
-- [ ] **AC6:** Unit tests cover: T1/T2/T3 mapping writes the correct `qa_phase_seconds`; unknown tier writes default; missing cache → no Redis write; Redis failure → no crash.
+- [x] **AC2:** On new WebSocket connect, `_init_session_state` reads `lesson_package:{session_id}` from Redis; if present and `metadata.learner_tier` is set, writes `session:{session_id}:learner_tier` (string, 24 h TTL).
+- [x] **AC3:** `session:{session_id}:qa_phase_seconds` is written (integer, 24 h TTL) using the mapping: T1 → `settings.learner_tier_t1_qa_seconds` (default 600), T2 → `settings.learner_tier_t2_qa_seconds` (default 300), T3 → `settings.learner_tier_t3_qa_seconds` (default 150); unknown/missing tier → `settings.learner_tier_default_qa_seconds` (default 300).
+- [x] **AC4:** If the lesson package cache is absent (lesson not yet generated), `_init_session_state` completes without error and writes neither key; a subsequent reconnect will retry the lookup and write the keys when the cache is populated.
+- [x] **AC5:** All new settings (`learner_tier_t1_qa_seconds`, `learner_tier_t2_qa_seconds`, `learner_tier_t3_qa_seconds`, `learner_tier_default_qa_seconds`) are added to `config.py:Settings` as env-var-backed fields with the defaults above.
+- [x] **AC6:** Unit tests cover: T1/T2/T3 mapping writes the correct `qa_phase_seconds`; unknown tier writes default; missing cache → no Redis write; Redis failure → no crash.
 
 ---
 
@@ -135,6 +136,37 @@ except Exception:
 | `apps/api/tests/test_websocket_session.py` | New AC2–AC6 tests |
 | `packages/shared/lesson_package.schema.json` | **4-dev PR only** — add optional `learner_tier` |
 | `packages/shared/types/lesson.ts` | **4-dev PR only** — add optional `learner_tier` |
+
+---
+
+## Dev Agent Record
+
+### Implementation Notes
+
+- `qa_phase_seconds()` added to `service.py` as a pure function (no I/O) — fully testable without Redis.
+- Tier seeding in `_init_session_state` uses a **separate** `try/except` block from the core session init, so a tier lookup failure never rolls back the IDLE state, distraction counter, or cooldown deletes.
+- `get_redis()` is called twice (once in each block) — same singleton in production; both calls are mocked to the same mock in tests.
+- `test_g9` uses `Settings.model_fields` introspection to verify defaults without requiring env vars.
+- Pre-existing `test_auth.py` failures (PyJWT InsecureKeyLengthWarning, 6 tests) are unrelated to this story — confirmed pre-existing.
+
+### Completion Notes
+
+- AC1 deferred to 4-dev contract PR (lesson_package.schema.json + lesson.ts) — flagged as blocker, PR must be opened.
+- AC2–AC6 fully implemented and tested: 9 new tests (G1–G9), 38/38 passing in `test_websocket_session.py`.
+- Full suite of collectible tests: **105 passed, 0 regressions** from this story.
+
+### File List
+
+| File | Change |
+|------|--------|
+| `apps/api/app/config.py` | Added 4 `learner_tier_*_qa_seconds` settings fields |
+| `apps/api/app/modules/tutor/service.py` | Added `qa_phase_seconds(tier)` pure helper |
+| `apps/api/app/core/websocket.py` | `_init_session_state` — learner tier seeding block |
+| `apps/api/tests/test_websocket_session.py` | 9 new Group G tests (AC2–AC6); added `import json` |
+
+### Change Log
+
+- 2026-07-21: Story 4-19 implemented — learner tier runtime seeding (AC2–AC6). AC1 blocked on 4-dev contract PR.
 
 ---
 
