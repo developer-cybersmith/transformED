@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { uploadService, extractErrorMessage, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
 import { Button } from "@/components/ui/button";
 import { ModeSelection } from "@/components/dashboard/upload/ModeSelection";
-import type { LearnerTier } from "@/types/learnerMode";
+import { LEARNER_TIER_OPTIONS, LEARNER_TIER_TO_BACKEND, type LearnerTier } from "@/types/learnerMode";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
@@ -146,7 +146,7 @@ export function UploadFlow() {
         };
 
         uploadService
-            .uploadLesson(file)
+            .uploadLesson(file, selectedTier ? LEARNER_TIER_TO_BACKEND[selectedTier] : undefined)
             .then((res) => {
                 if (cancelled) return;
                 setStatusMessage('Processing...');
@@ -162,7 +162,7 @@ export function UploadFlow() {
             cancelled = true;
             if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         };
-    }, [uploadState, file]);
+    }, [uploadState, file, selectedTier]);
 
     return (
         <AnimatePresence mode="wait">
@@ -258,6 +258,14 @@ export function UploadFlow() {
                     <p className="text-neutral-500 max-w-sm leading-relaxed">
                         Establishing intelligence matrix, compiling timeline sequences, and synthesizing audio overlays.
                     </p>
+                    {selectedTier && (
+                        <span
+                            data-testid="selected-tier-label"
+                            className="mt-5 inline-flex items-center px-3 py-1 rounded-full bg-[var(--accent-secondary)] text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wide"
+                        >
+                            {LEARNER_TIER_OPTIONS.find((option) => option.id === selectedTier)?.label}
+                        </span>
+                    )}
                 </motion.div>
             )}
 

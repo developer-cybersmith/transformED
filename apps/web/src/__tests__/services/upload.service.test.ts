@@ -42,6 +42,26 @@ describe('uploadService.uploadLesson', () => {
     const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' });
     await expect(uploadService.uploadLesson(file)).rejects.toBe(error);
   });
+
+  it('appends tier to FormData when provided (S2-09)', async () => {
+    const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' });
+    postMock.mockResolvedValue({ data: { lesson_id: 'lsn_1', job_id: 'job_1', status: 'queued' } });
+
+    await uploadService.uploadLesson(file, 'T3');
+
+    const [, body] = postMock.mock.calls[0];
+    expect(body.get('tier')).toBe('T3');
+  });
+
+  it('omits the tier field entirely when not provided, relying on the backend default (S2-09)', async () => {
+    const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' });
+    postMock.mockResolvedValue({ data: { lesson_id: 'lsn_1', job_id: 'job_1', status: 'queued' } });
+
+    await uploadService.uploadLesson(file);
+
+    const [, body] = postMock.mock.calls[0];
+    expect(body.has('tier')).toBe(false);
+  });
 });
 
 describe('uploadService.getLessonStatus', () => {

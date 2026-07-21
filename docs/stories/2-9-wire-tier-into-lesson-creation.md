@@ -4,7 +4,7 @@ baseline_commit: "4b4ac2132a9db053a61a4394399d0b9aa9e53eb6"
 
 # Story 2-9: Wire Selected Tier into Lesson Creation
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -54,22 +54,22 @@ if tier not in _VALID_TIERS:  # frozenset({"T1", "T2", "T3"})
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Add the tier mapping constant (AC: #1)
-  - [ ] 1.1 In `apps/web/src/types/learnerMode.ts`, add `export const LEARNER_TIER_TO_BACKEND: Record<LearnerTier, 'T1' | 'T2' | 'T3'> = { deep: 'T1', balanced: 'T2', refresher: 'T3' };` — do not change `LearnerTier`, `LearnerTierOption`, or `LEARNER_TIER_OPTIONS`
+- [x] Task 1: Add the tier mapping constant (AC: #1)
+  - [x] 1.1 In `apps/web/src/types/learnerMode.ts`, add `export const LEARNER_TIER_TO_BACKEND: Record<LearnerTier, 'T1' | 'T2' | 'T3'> = { deep: 'T1', balanced: 'T2', refresher: 'T3' };` — do not change `LearnerTier`, `LearnerTierOption`, or `LEARNER_TIER_OPTIONS`
 
-- [ ] Task 2: Extend `uploadService.uploadLesson` to send tier (AC: #2)
-  - [ ] 2.1 Write failing tests first (RED) in `upload.service.test.ts`: `tier` appended to FormData when passed as a second arg; `FormData.has('tier')` is `false` when the arg is omitted
-  - [ ] 2.2 Implement (GREEN): `uploadLesson: (file: File, tier?: string) => { const formData = new FormData(); formData.append('file', file); if (tier) formData.append('tier', tier); return api.post<LessonUploadResponse>('content/lessons', formData).then((r) => r.data); }` — keep the existing no-explicit-Content-Type comment/behavior unchanged
+- [x] Task 2: Extend `uploadService.uploadLesson` to send tier (AC: #2)
+  - [x] 2.1 Write failing tests first (RED) in `upload.service.test.ts`: `tier` appended to FormData when passed as a second arg; `FormData.has('tier')` is `false` when the arg is omitted
+  - [x] 2.2 Implement (GREEN): `uploadLesson: (file: File, tier?: string) => { const formData = new FormData(); formData.append('file', file); if (tier) formData.append('tier', tier); return api.post<LessonUploadResponse>('content/lessons', formData).then((r) => r.data); }` — keep the existing no-explicit-Content-Type comment/behavior unchanged
 
-- [ ] Task 3: Wire `UploadFlow.tsx`'s call site + visible tier display (AC: #3, #4)
-  - [ ] 3.1 Import `LEARNER_TIER_TO_BACKEND` alongside the existing `LearnerTier` import
-  - [ ] 3.2 Update the upload call in the `'processing'`-effect to `uploadService.uploadLesson(file, selectedTier ? LEARNER_TIER_TO_BACKEND[selectedTier] : undefined)`
-  - [ ] 3.3 Add a small visible label on the `'processing'` screen showing the chosen tier (look up `LEARNER_TIER_OPTIONS.find(o => o.id === selectedTier)?.label`); keep the existing `data-selected-tier` attribute as-is alongside it
+- [x] Task 3: Wire `UploadFlow.tsx`'s call site + visible tier display (AC: #3, #4)
+  - [x] 3.1 Import `LEARNER_TIER_TO_BACKEND` alongside the existing `LearnerTier` import
+  - [x] 3.2 Update the upload call in the `'processing'`-effect to `uploadService.uploadLesson(file, selectedTier ? LEARNER_TIER_TO_BACKEND[selectedTier] : undefined)` — also added `selectedTier` to the effect's dependency array (referenced inside, exhaustive-deps correctness; harmless since the effect only acts when `uploadState === 'processing'` and `selectedTier` is already fixed by then)
+  - [x] 3.3 Added a visible `data-testid="selected-tier-label"` badge on the `'processing'` screen showing `LEARNER_TIER_OPTIONS.find(o => o.id === selectedTier)?.label`; kept the existing `data-selected-tier` attribute unchanged alongside it
 
-- [ ] Task 4: Update the existing call-signature assertion + add new tests (AC: #5, #6)
-  - [ ] 4.1 Update `UploadFlow.test.tsx`'s `expect(uploadLessonMock).toHaveBeenCalledWith(expect.any(File))` to include the second arg matching whatever tier `dropFileAndSelectTier`'s default (`'Deep'`) maps to (`'T1'`)
-  - [ ] 4.2 Add the two new `UploadFlow.test.tsx` cases from AC #6 (mapped tier sent for a non-default selection; visible label shown)
-  - [ ] 4.3 Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean (0 new warnings)
+- [x] Task 4: Update the existing call-signature assertion + add new tests (AC: #5, #6)
+  - [x] 4.1 Updated `UploadFlow.test.tsx`'s `expect(uploadLessonMock).toHaveBeenCalledWith(expect.any(File))` to `toHaveBeenCalledWith(expect.any(File), 'T1')` (the default `dropFileAndSelectTier` selection is `'Deep'` → `'T1'`)
+  - [x] 4.2 Added the two new `UploadFlow.test.tsx` cases (Refresher → `'T3'` sent; Balanced label visible) and 2 new `upload.service.test.ts` cases (tier appended when provided; omitted when not)
+  - [x] 4.3 Full `apps/web` suite green (see Debug Log), `tsc --noEmit` clean, `eslint` clean (0 new warnings)
 
 - [ ] Task 5: Tracker update
   - [ ] 5.1 Mark S2-09 in `docs/dev2-sprint-tracker.md` as done, update the Sprint 2 dashboard row and header; note that S2-10 is now unblocked (data path exists) for re-scoping
@@ -118,10 +118,35 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`, `jsdom` envir
 
 ### Agent Model Used
 
+Claude Sonnet 5 (claude-sonnet-5)
+
 ### Debug Log References
+
+- RED confirmed for every task before implementation: Task 2's 1 new failing test (`expected null to be 'T3'` — `FormData` had no `tier` key yet), the "omits tier" case passed trivially pre-implementation (correct — nothing appended `tier` yet either way). Task 3/4's 3 new/updated tests all failed pre-implementation: the updated call-signature assertion (`toHaveBeenCalledWith(expect.any(File), 'T1')`) failed because the mock was still called with a single arg; the new "Refresher → T3" test failed the same way; the visible-label test failed with a `findByText` timeout (no `data-testid="selected-tier-label"` element existed).
+- Full regression suite after all tasks: 346/346 passing across 42 files (up from `feature-learner-mode`'s pre-story baseline of 342 — 4 new tests: 2 in `upload.service.test.ts`, 2 in `UploadFlow.test.tsx`), `tsc --noEmit` clean, `eslint` clean on every touched file (0 new warnings).
+- No HALT conditions hit — no new dependencies needed, no ambiguous requirements, no 3-consecutive-failure loop.
 
 ### Completion Notes List
 
+- All 5 tasks (11 subtasks) implemented in strict RED → GREEN order; no task marked complete without its tests passing first.
+- `learnerMode.ts`: added `LEARNER_TIER_TO_BACKEND` mapping constant only — `LearnerTier`, `LearnerTierOption`, `LEARNER_TIER_OPTIONS` (including S2-08's disclaimer fields) untouched.
+- `upload.service.ts`: `uploadLesson` gained an optional second `tier?: string` param, appended to `FormData` only when truthy — omitted entirely otherwise, so the backend's own `Form(DEFAULT_TIER, ...)` default is what applies, not a client-side guess.
+- `UploadFlow.tsx`: the upload call now passes `selectedTier ? LEARNER_TIER_TO_BACKEND[selectedTier] : undefined`; `selectedTier` added to the effect's dependency array (referenced inside, exhaustive-deps correctness — harmless in practice since the effect only fires its upload logic once per `'processing'` transition and `selectedTier` is already fixed by then). Added a visible tier-label badge to the `'processing'` screen (`data-testid="selected-tier-label"`, shows e.g. "Deep"/"Balanced"/"Refresher"); the pre-existing invisible `data-selected-tier` attribute was left exactly as-is for S2-10's potential use.
+- Updated one pre-existing test assertion (`UploadFlow.test.tsx`'s "uploads, polls, and on ready..." test) to match the new 2-argument call signature — not a behavior regression, an expected consequence of extending the function signature this story targets.
+- No changes to `ModeSelection.tsx`, `learnerMode.ts`'s existing fields/disclaimer logic (S2-08), `getLessonStatus`/`LessonStatusResponse`, or any `packages/shared` frozen contract.
+- S2-10 (tier badge on player/session report) is now genuinely unblocked — the data path this story adds (tier reaches the backend on create) is what S2-10's own 2026-07-18 investigation was waiting on. S2-10 will still need its own scoping pass since `GET /lessons/{id}` doesn't echo tier back and `Player.tsx`/`SessionReport.tsx` still have no tier field reaching them from anywhere — this story only unblocks the upload-time send, not a read-back path.
+
 ### File List
 
+**Files MODIFIED:**
+- `apps/web/src/types/learnerMode.ts` — added `LEARNER_TIER_TO_BACKEND` mapping constant
+- `apps/web/src/services/upload.service.ts` — `uploadLesson` gained optional `tier?: string` param, appended to FormData when provided
+- `apps/web/src/components/dashboard/upload/UploadFlow.tsx` — passes mapped tier to `uploadLesson`, added `selectedTier` to effect deps, added visible tier-label badge on the processing screen
+- `apps/web/src/__tests__/services/upload.service.test.ts` — 2 new tests (tier appended when provided, omitted when not)
+- `apps/web/src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` — 1 existing assertion updated to the new 2-arg call signature, 2 new tests (non-default tier mapping, visible label)
+- `docs/dev2-sprint-tracker.md` — S2-09 marked done (implementation + tests complete, pending 5-agent code review), Sprint 2 dashboard updated, S2-10 noted as unblocked
+
 ### Change Log
+
+- 2026-07-21: Story created via `bmad-create-story` — Sprint 2 Learner Mode task 3 of 4 (S2-09), branch `sprint2/s2-09-wire-tier` off `feature-learner-mode`, committed story-only per the story-first gate, fast-forward-merged into `feature-learner-mode` (task branch itself not pushed, per standing team convention).
+- 2026-07-21: All 5 tasks implemented in RED→GREEN order; 4 new tests + 1 updated assertion; full `apps/web` suite 346/346 passing; `tsc --noEmit` and `eslint` clean; story marked `review`.

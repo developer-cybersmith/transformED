@@ -134,11 +134,33 @@ describe('UploadFlow', () => {
     render(<UploadFlow />);
     await dropFileAndSelectTier(user);
 
-    await waitFor(() => expect(uploadLessonMock).toHaveBeenCalledWith(expect.any(File)));
+    await waitFor(() => expect(uploadLessonMock).toHaveBeenCalledWith(expect.any(File), 'T1'));
     await screen.findByText('Begin Lesson');
     await user.click(screen.getByText('Begin Lesson'));
 
     expect(pushMock).toHaveBeenCalledWith('/lesson/lsn_42');
+  });
+
+  it('sends the mapped backend tier for a non-default selection (S2-09)', async () => {
+    const user = userEvent.setup();
+    uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
+    getLessonStatusMock.mockResolvedValue(READY_STATUS);
+
+    render(<UploadFlow />);
+    await dropFileAndSelectTier(user, 'Refresher');
+
+    await waitFor(() => expect(uploadLessonMock).toHaveBeenCalledWith(expect.any(File), 'T3'));
+  });
+
+  it('shows the selected tier\'s visible label on the processing screen (S2-09)', async () => {
+    const user = userEvent.setup();
+    uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
+    getLessonStatusMock.mockResolvedValue({ lesson_id: 'lsn_42', status: 'running', title: null, error: null, created_at: null, completed_at: null });
+
+    render(<UploadFlow />);
+    await dropFileAndSelectTier(user, 'Balanced');
+
+    await screen.findByText('Balanced', { selector: '[data-testid="selected-tier-label"]' });
   });
 
   it('completed state: "Generate Another" resets back to the idle drop zone', async () => {

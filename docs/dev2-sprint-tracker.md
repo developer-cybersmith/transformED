@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-14 (added S2-07–S2-10: **Learner Mode** — a new tier-selection feature (T1 Deep / T2 Balanced / T3 Refresher) scoped into Sprint 2 per user instruction; no story/spec exists yet, none of the 4 tasks started. Previous update 2026-07-13: `main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (7/10 done — S2-06 partially blocked, escalated to Dev 4; Learner Mode: S2-07/S2-08 done 2026-07-14; S2-09/S2-10 not started) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (7/10) |
+| **Last Updated** | 2026-07-21 (`main` fast-forwarded — Dev 1's Sprint 2 Phase B backend (PR #74) landed: all 11 lesson-generation nodes real, tier-aware generation, cost ceiling enforcement. This unblocked two items: **S2-06** — Dev 4 fixed the escalated `state_change` broadcast gap; both open architecture decisions resolved with the user; implemented and merged into `sprint2-master` (pending code review). **S2-09** — Dev 1's backend added real `tier` support to `POST /lessons`; implemented and merged into `feature-learner-mode` (pending code review). **S2-10** re-investigated: splits into an unblocked player-side half (`LessonMetadata.tier` now flows end-to-end) and a still-blocked session-report half (Dev 3's `SessionReport` contract has no `tier` field) — decision on how to proceed pending. Previous update 2026-07-14: added S2-07–S2-10 Learner Mode tasks.) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (9/10 done — S2-06 implemented 2026-07-21 (pending code review); Learner Mode: S2-07/S2-08 done 2026-07-14, S2-09 done 2026-07-21 (pending code review), S2-10 splits into an unblocked player half + a Dev-3-blocked session-report half, decision pending — last remaining Sprint 2 item) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (9/10) |
 
 ---
 
@@ -24,11 +24,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 10 | **7** | 0 | **3** |
+| Sprint 2 | Weeks 4–5 | 10 | **9** | 0 | **1** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **26** | **0** | **29** |
+| **Total** | **10 weeks** | **55** | **28** | **0** | **27** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1050,7 +1050,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 7/10 done — S2-06 (segment-end → CHECKING_IN) partially blocked, escalated to Dev 4. Learner Mode: S2-07 (mode-selection screen) and S2-08 (tier disclaimers) done 2026-07-14; S2-09/S2-10 not started  
+**Period:** Weeks 4–5 | **Status:** 🔵 9/10 done — S2-06 (segment-end → CHECKING_IN) implemented 2026-07-21, pending code review. Learner Mode: S2-07/S2-08 done 2026-07-14; S2-09 (wire tier into lesson creation) implemented 2026-07-21, pending code review; S2-10 (tier badge) re-scoped — player half unblocked, session-report half blocked on Dev 3, decision pending  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1221,9 +1221,15 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 
 ---
 
-### S2-06 — Segment-End Detection → CHECKING_IN State
+### S2-06 — Segment-End Detection → CHECKING_IN State — ✓ 2026-07-21 (implemented, pending 5-agent code review)
 **Priority:** P2  
-**Status:** 🔴 PARTIALLY BLOCKED — escalated to Dev 4 2026-07-06, holding on the receive-side half. Added 2026-07-06 (tracked in `docs/master-tracker.md`'s Dev 2 Sprint 2 checklist since 2026-07-02 but never had its own entry in this file's S2-xx numbering; brought in here after the user flagged it was missing from a Sprint 2 status review). Branch `sprint2/s2-6-segment-checkin` created; BMAD story creation paused at the escalation, not yet resumed.  
+**Status:** ✅ DONE — implementation + tests complete; code review not yet run (user deferred: "will review it later")  
+**Resolution (2026-07-21):** Dev 4 replied and fixed the escalated gap — `dispatch_event()` in `graph.py` now broadcasts `state_change` on every real FSM transition (previously only on reconnect-sync), confirmed via his 44/44 passing tests including payload-shape verification against the frozen `ws.ts` contract. His branch (`sprint2/s2-1-state-change-broadcast`) wasn't pushed at the time, so he pasted the diff description directly rather than the frontend pulling his branch. Two architecture decisions (open since the original investigation below) were resolved with the user: (1) CHECKING_IN shows a brief visible transition to the student, not silent bookkeeping; (2) quiz-triggering stays client-authoritative/zero-latency — the WS round-trip is a parallel sync signal only, never a gate. Full story with the resulting timing-constraint design: `docs/stories/2-6-segment-checkin.md`. Implemented: `useLessonSocket(sessionId)` now mounted live in `Player.tsx`; `AudioTimeline.tsx` sends `segment_complete` + optimistically sets `tutorState` at all 3 `enterQuiz()` call sites; new `CheckingInTransition.tsx` gives `tutorState` its first real UI reader (edge-triggered, auto-hiding, independent of `status`). Branch `sprint2/s2-6-segment-checkin`, merged into `sprint2-master`. 21 new tests, full suite green, `tsc`/`eslint` clean.  
+**Files modified:** `src/components/player/Player.tsx`, `src/components/player/AudioTimeline.tsx`, `src/stores/player.machine.ts`, new `src/components/player/CheckingInTransition.tsx`, `src/hooks/useLessonSocket.ts`, plus all their tests
+
+<details>
+<summary>Original investigation + escalation (2026-07-06) — kept for the record</summary>
+
 **Files likely touched:** `src/components/player/Player.tsx` or `PlayerLoader.tsx` (mount the socket), `src/components/player/AudioTimeline.tsx` (send on segment boundary), `src/stores/player.machine.ts` (`tutorState` already exists), a new CHECKING_IN UI component (none exists, blocked)
 
 **Investigated 2026-07-06 — found the actual gap is larger than the master tracker's 2026-07-02 note suggested.** That note read as "just wire the send side," implying the receive side was already live. Verified against the actual code:
@@ -1275,6 +1281,8 @@ None of these three ever call `manager.send()`. Confirmed by reading all three f
 </details>
 
 **Recommendation:** given the real architectural decision buried in this "line item" and the fact that nothing here has ever been scoped into acceptance criteria, run this as a full BMAD story (`bmad-create-story` → `bmad-dev-story` → 5-agent review) rather than a quick patch — same rigor as S2-01 through S2-05, once Dev 4 unblocks the receive side (or a decision is made to ship the send-side half alone in the meantime).
+
+</details>
 
 ---
 
@@ -1332,30 +1340,38 @@ Per-tier inline warning-style disclaimer shown on the mode selection screen:
 
 ---
 
-### S2-09 — Wire Selected Tier into Lesson Creation
+### S2-09 — Wire Selected Tier into Lesson Creation — ✓ 2026-07-21 (implemented, pending 5-agent code review)
 **Priority:** Medium  
-**Status:** 🔲 NOT STARTED <!-- added 2026-07-14 -->  
-**Files to modify:** upload/pipeline submit call site (currently `POST /api/content/lessons` per S1-08 — confirm exact field name with Dev 1, since the tier concept doesn't exist yet in the frozen request body), generation/progress screen
+**Status:** ✅ DONE — implementation + tests complete; code review not yet run  
+**Files modified:** `apps/web/src/types/learnerMode.ts` (new `LEARNER_TIER_TO_BACKEND` mapping), `apps/web/src/services/upload.service.ts` (`uploadLesson` gains `tier?` param), `apps/web/src/components/dashboard/upload/UploadFlow.tsx` (call site + visible tier label), plus both files' tests
 
-Pass the tier chosen in S2-07 through to lesson creation, and surface it back to the student during generation.
+Unblocked 2026-07-21 once Dev 1's Sprint 2 Phase B backend merge (PR #74) landed `tier: Form(...)` on `POST /lessons` (multipart, default `T2`, 422 on invalid — confirmed by reading `apps/api/app/modules/content/router.py`/`apps/api/app/schemas/lesson.py` directly, not assumed). Mapping confirmed by matching backend semantics (`docs/stories/2-lm3-lm4-lm5-tier-aware-generation.md`) to the existing frontend tier descriptions: `deep→T1`, `balanced→T2`, `refresher→T3`. Full story: `docs/stories/2-9-wire-tier-into-lesson-creation.md`. Branch `sprint2/s2-09-wire-tier` off `feature-learner-mode` (task branch kept local, merged into the feature master per standing convention).
 
 **Acceptance criteria:**
-- [ ] Selected tier included in the lesson-creation request body (field name/contract confirmed with Dev 1 first — not yet part of any frozen contract)
-- [ ] Chosen tier displayed on the generating/progress screen
-- [ ] No regression to S1-08's existing upload flow when Learner Mode is skipped/defaulted (if backend doesn't yet support tier, confirm fallback behavior)
+- [x] Selected tier included in the lesson-creation request body (`FormData.append('tier', ...)`, mapped T1/T2/T3)
+- [x] Chosen tier displayed on the generating/progress screen (`data-testid="selected-tier-label"`)
+- [x] No regression to the existing upload flow — tier omitted entirely (not defaulted client-side) when unset, relying on the backend's own `T2` default
+
+**Note:** `GET /lessons/{id}` still doesn't echo `tier` back — this story only wires the send side (upload-time). S2-10 (below) is now unblocked to re-scope, but will still need its own decision on how the player/session report actually gets a tier value (no read-back path exists yet).
 
 ---
 
 ### S2-10 — Tier Badge on Player + Session Report
 **Priority:** Low  
-**Status:** 🔲 NOT STARTED — investigated 2026-07-18, deferred pending S2-09 <!-- added 2026-07-14 -->  
-**Files to modify:** `src/components/player/Player.tsx`, `src/components/reports/SessionReport.tsx`
+**Status:** 🔲 NOT STARTED — re-investigated 2026-07-21 now that S2-09 has landed. **Splits into two genuinely different states — see below.** <!-- added 2026-07-14 -->  
+**Files to modify:** `src/components/player/Player.tsx` (unblocked), `src/components/reports/SessionReport.tsx` (still blocked — cross-team)
 
 Small badge showing the lesson's tier and duration, e.g. `Deep · 45 min`.
 
-**Investigated 2026-07-18** (branch `sprint2/s2-10-tier-badge` created off `feature-learner-mode`, no commits, story creation halted at this finding): confirmed by reading the actual files that there is currently no data path for a tier value to reach either target component. `selectedTier` lives only as `UploadFlow.tsx` component state (surfaced via the `data-selected-tier` attribute S2-07 added as a hook) and is discarded once `UploadFlow` unmounts. `Player.tsx` only receives a `LessonPackage` prop (no tier field); `SessionReport.tsx` only receives data from `useSessionReport(sessionId)` (no tier field). S2-09 (send tier to backend) is not started and is blocked on Dev 1 sign-off for a new field on `POST /api/content/lessons` — until that lands (and is confirmed to also reach whatever `SessionReport` reads from), there is nothing real for this badge to display. **Decision (user, 2026-07-18): defer S2-10 until S2-09 lands** rather than build an interim client-side bridge or an unverifiable UI shell.
+**Originally investigated 2026-07-18** (branch `sprint2/s2-10-tier-badge`, no commits, story creation halted): confirmed neither target component had any data path for a tier value. **Decision (user, 2026-07-18): defer S2-10 until S2-09 lands.**
 
-**Acceptance criteria (unchanged, pending re-scoping once S2-09 lands):**
+**Re-investigated 2026-07-21, after S2-09:**
+- **Player side — genuinely unblocked, no cross-team dependency.** `packages/shared/types/lesson.ts`'s `LessonMetadata` now has a required `tier: LessonTier` field (Dev1's PR #74, self-certified §16-compatible — see `docs/reports/s16-lessonpackage-compat.md`), and `package_builder_node` explicitly bakes the `lessons.tier` column value into it. `Player.tsx` already receives the full `LessonPackage` as a prop — `lesson.metadata.tier` is real, present data today. This half needs no backend work at all.
+- **Session report side — still blocked, and it's a different blocker than before.** `apps/web/src/types/assessment.ts`'s `SessionReport` interface (the frozen-ish contract from story 3-19, owned by **Dev 3**'s assessment module) has no `tier` field — confirmed by reading `apps/api/app/modules/assessment/router.py`'s response model directly (also no `tier`). S2-09 never touched this; it only wired the upload-time send (`lessons.tier` column), not anything Dev 3's assessment/session-report endpoint reads. Adding `tier` to `SessionReport` is a small, additive, non-breaking change in spirit — but it's Dev 3's contract to change, per team-ownership rules (CLAUDE.md §"modules communicate only through service layer" / per-dev file ownership) — not something to add unilaterally from the frontend side.
+
+**Decision needed:** ship the player badge now (fully unblocked) and split the session-report badge into its own follow-up pending a small ask to Dev 3, or hold both halves together as one task until Dev 3's field lands. Not yet decided — ask before implementing either half.
+
+**Acceptance criteria (unchanged, split per the above once a path is chosen):**
 - [ ] Badge visible in the lesson player (header/chrome area)
 - [ ] Same badge shown on the session report (S2-04)
 - [ ] Badge format: `{Tier label} · {duration} min`
