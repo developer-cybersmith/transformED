@@ -91,6 +91,32 @@ _INTERVENTION_COUNT = 2
 # Sentinel — distinct from None so callers can pass tier_data=None to mean "no lesson row found"
 _NO_TIER_ROW = object()
 
+# ── DNA snapshot test fixtures (Story 3-30) ───────────────────────────────────
+
+_ALL_DIMS = (
+    "pattern_recognition",
+    "logical_deduction",
+    "processing_speed",
+    "frustration_tolerance",
+    "persistence",
+    "help_seeking",
+    "goal_orientation",
+    "curiosity_index",
+    "study_independence",
+)
+
+_DNA_ROW = {dim: 85.0 for dim in _ALL_DIMS}  # score 85 → "Proficient"
+
+_GROWTH_EVENTS = [
+    {"payload": {"dimension": dim, "old_value": 82.0, "new_value": 85.0, "delta": 3.0}}
+    for dim in _ALL_DIMS
+]  # delta 3.0 > 2.0 → "Improving"
+
+
+def _growth_event_for(dim: str, delta: float) -> list[dict]:
+    """Build a single-dim growth events list for threshold boundary tests."""
+    return [{"payload": {"dimension": dim, "old_value": 0.0, "new_value": delta, "delta": delta}}]
+
 
 # ── Mock builder ──────────────────────────────────────────────────────────────
 
@@ -101,15 +127,19 @@ def _build_report_supabase(
     quiz_rows=None,
     tb_rows=None,
     intervention_count=0,
+    dna_data=None,
+    growth_events=None,
 ) -> MagicMock:
     """Build a mock Supabase client for get_session_report.
 
     Table call order (must match service implementation exactly):
-      1. sessions        — .maybe_single() → session_data
-      2. lessons         — .maybe_single() → tier_data   (Story 3-29)
-      3. quiz_attempts   — .execute()      → data list
-      4. teachback_attempts — .execute()   → data list
-      5. session_events  — count query     → .count
+      1. sessions           — .maybe_single() → session_data
+      2. lessons            — .maybe_single() → tier_data  (Story 3-29)
+      3. quiz_attempts      — .execute()      → data list
+      4. teachback_attempts — .execute()      → data list
+      5. session_events     — count query     → .count (intervention_triggered)
+      6. learner_dna        — .maybe_single() → dna_data   (Story 3-30)
+      7. session_events     — .execute()      → growth_events (dna_update; only when dna_data is not None)
 
     tier_data default (_NO_TIER_ROW sentinel) → {"tier": "T2"}.
     Pass tier_data=None explicitly to simulate a missing lessons row.
@@ -120,6 +150,8 @@ def _build_report_supabase(
         quiz_rows = []
     if tb_rows is None:
         tb_rows = []
+    if growth_events is None:
+        growth_events = []
 
     mock = MagicMock()
     call_count = [0]
@@ -144,9 +176,18 @@ def _build_report_supabase(
             # teachback_attempts — list (was n==3)
             m.select.return_value.eq.return_value.execute.return_value.data = tb_rows
         elif n == 5:
-            # session_events — count (two .eq() filters: session_id, event_type) (was n==4)
+            # session_events — count (two .eq() filters: session_id, event_type)
             m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = (
                 intervention_count
+            )
+        elif n == 6:
+            # learner_dna — maybe_single (Story 3-30)
+            m_exec = m.select.return_value.eq.return_value.maybe_single.return_value.execute
+            m_exec.return_value.data = dna_data
+        elif n == 7:
+            # session_events dna_update — two .eq() filters → data list of payloads
+            m.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = (
+                growth_events
             )
         return m
 
@@ -595,8 +636,8 @@ async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_asyncio_to_thread_called_5_times():
-    """AC 15: get_session_report wraps all 5 DB calls in asyncio.to_thread (Story 3-29 adds lessons tier fetch)."""
+async def test_get_report_asyncio_to_thread_called_6_times_when_no_dna():
+    """AC 9 (Story 3-30): 6 asyncio.to_thread calls when learner_dna row is absent (sessions+lessons+quiz+teachback+events_count+learner_dna)."""
     from unittest.mock import patch
 
     from app.modules.assessment.service import get_session_report
@@ -611,6 +652,7 @@ async def test_get_report_asyncio_to_thread_called_5_times():
         quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG,
         tb_rows=_TEACHBACK_ROWS,
         intervention_count=1,
+        dna_data=None,
     )
     with patch("app.modules.assessment.service.asyncio.to_thread", side_effect=_counting_shim):
         await get_session_report(
@@ -619,7 +661,7 @@ async def test_get_report_asyncio_to_thread_called_5_times():
             supabase=supabase,
         )
 
-    assert len(call_log) == 5, f"Expected 5 asyncio.to_thread calls, got {len(call_log)}"
+    assert len(call_log) == 6, f"Expected 6 asyncio.to_thread calls (no DNA), got {len(call_log)}"
 
 
 # ── HTTP-layer tests ──────────────────────────────────────────────────────────
@@ -671,6 +713,8 @@ def test_http_get_report_returns_200():
         "quiz_total_questions",
         "quiz_correct_count",
         "quiz_accuracy_label",
+        # Story 3-30 DNA snapshot
+        "learner_dna_snapshot",
     }
     assert required_keys.issubset(body.keys())
 
@@ -704,6 +748,25 @@ async def test_report_tier_t1_returns_full_depth_label(mock_to_thread):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_report_dna_snapshot_present_when_dna_exists(mock_to_thread):
+    """AC 2, AC 4: learner_dna_snapshot is a dict with exactly 2 keys when DNA row exists."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=_DNA_ROW, growth_events=_GROWTH_EVENTS)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot is not None
+    assert set(result.learner_dna_snapshot.keys()) == {"dimension_labels", "growth_labels"}
+    assert len(result.learner_dna_snapshot["dimension_labels"]) == 9
+    assert len(result.learner_dna_snapshot["growth_labels"]) == 9
+    # All 9 canonical dimensions present
+    for dim in _ALL_DIMS:
+        assert dim in result.learner_dna_snapshot["dimension_labels"]
+        assert dim in result.learner_dna_snapshot["growth_labels"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_report_tier_t2_returns_standard_label(mock_to_thread):
     """AC 1+2: lessons.tier='T2' → tier='T2', tier_label='Standard' in report."""
     from app.modules.assessment.service import get_session_report
@@ -712,6 +775,18 @@ async def test_report_tier_t2_returns_standard_label(mock_to_thread):
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.tier == "T2"
     assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_dna_snapshot_none_when_no_dna(mock_to_thread):
+    """AC 3: learner_dna_snapshot is None when the user has no learner_dna row."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=None)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot is None
 
 
 @pytest.mark.unit
@@ -728,6 +803,26 @@ async def test_report_tier_t3_returns_refresher_label(mock_to_thread):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_report_dimension_labels_map_scores_to_labels(mock_to_thread):
+    """AC 5: dimension_labels values are descriptive strings — no raw floats returned.
+
+    score=85.0 → "Proficient" per _score_to_label thresholds.
+    """
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=_DNA_ROW, growth_events=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    labels = result.learner_dna_snapshot["dimension_labels"]
+    for dim in _ALL_DIMS:
+        assert labels[dim] == "Proficient", f"{dim}: expected 'Proficient', got {labels[dim]!r}"
+    # Verify no raw numbers leak through
+    for val in labels.values():
+        assert isinstance(val, str), f"dimension_labels must contain strings only, got {type(val)}"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_report_quiz_total_questions_and_correct_count(mock_to_thread):
     """AC 3+4: quiz_total_questions = len(attempts), quiz_correct_count = sum(is_correct)."""
     from app.modules.assessment.service import get_session_report
@@ -736,6 +831,21 @@ async def test_report_quiz_total_questions_and_correct_count(mock_to_thread):
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.quiz_total_questions == 3
     assert result.quiz_correct_count == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_none_dimension_value_maps_to_beginning(mock_to_thread):
+    """AC 6: None dimension column → treated as 0.0 → 'Beginning'."""
+    from app.modules.assessment.service import get_session_report
+
+    dna_none = {dim: None for dim in _ALL_DIMS}
+    supabase = _build_report_supabase(dna_data=dna_none, growth_events=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    labels = result.learner_dna_snapshot["dimension_labels"]
+    for dim in _ALL_DIMS:
+        assert labels[dim] == "Beginning", f"{dim}: expected 'Beginning' for None, got {labels[dim]!r}"
 
 
 @pytest.mark.unit
@@ -752,6 +862,21 @@ async def test_report_quiz_accuracy_label_strong(mock_to_thread):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_report_growth_label_improving_when_delta_above_threshold(mock_to_thread):
+    """AC 7: delta > 2.0 → 'Improving'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("pattern_recognition", 2.1),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["pattern_recognition"] == "Improving"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_report_quiz_accuracy_label_developing(mock_to_thread):
     """AC 5: 2/3 correct (66.67%) → quiz_accuracy_label='Developing' (60-79% range)."""
     from app.modules.assessment.service import get_session_report
@@ -759,6 +884,21 @@ async def test_report_quiz_accuracy_label_developing(mock_to_thread):
     supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.quiz_accuracy_label == "Developing"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_needs_attention_when_delta_below_threshold(mock_to_thread):
+    """AC 7: delta < -2.0 → 'Needs Attention'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("persistence", -2.1),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["persistence"] == "Needs Attention"
 
 
 @pytest.mark.unit
@@ -771,6 +911,21 @@ async def test_report_quiz_accuracy_label_needs_review(mock_to_thread):
     supabase = _build_report_supabase(quiz_rows=rows)
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.quiz_accuracy_label == "Needs Review"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_stable_within_range(mock_to_thread):
+    """AC 7: -2.0 <= delta <= 2.0 (exclusive boundaries) → 'Stable'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("curiosity_index", 1.9),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["curiosity_index"] == "Stable"
 
 
 @pytest.mark.unit
@@ -788,6 +943,20 @@ async def test_report_quiz_accuracy_label_none_when_no_questions(mock_to_thread)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_report_growth_label_none_when_no_events(mock_to_thread):
+    """AC 8: all growth_labels are None when no dna_update events exist for the session."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=_DNA_ROW, growth_events=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    growth = result.learner_dna_snapshot["growth_labels"]
+    for dim in _ALL_DIMS:
+        assert growth[dim] is None, f"{dim}: expected None when no events, got {growth[dim]!r}"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_report_unknown_tier_defaults_to_t2(mock_to_thread):
     """AC 8: lessons.tier='TX' (not in T1/T2/T3) → tier='T2', tier_label='Standard'."""
     from app.modules.assessment.service import get_session_report
@@ -796,6 +965,21 @@ async def test_report_unknown_tier_defaults_to_t2(mock_to_thread):
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.tier == "T2"
     assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_stable_at_exact_positive_threshold(mock_to_thread):
+    """AC 7 boundary: delta == 2.0 → 'Stable', NOT 'Improving' (strict > required)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("logical_deduction", 2.0),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["logical_deduction"] == "Stable"
 
 
 @pytest.mark.unit
@@ -812,6 +996,21 @@ async def test_report_missing_lesson_row_defaults_to_t2(mock_to_thread):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_report_growth_label_stable_at_exact_negative_threshold(mock_to_thread):
+    """AC 7 boundary: delta == -2.0 → 'Stable', NOT 'Needs Attention' (strict < required)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("goal_orientation", -2.0),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["goal_orientation"] == "Stable"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_report_quiz_accuracy_label_strong_at_exact_80_percent(mock_to_thread):
     """AC 5: exactly 80% (4/5) → 'Strong' — verifies the ≥0.8 boundary is inclusive."""
     from app.modules.assessment.service import get_session_report
@@ -824,6 +1023,30 @@ async def test_report_quiz_accuracy_label_strong_at_exact_80_percent(mock_to_thr
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_report_sec006_learner_dna_not_queried_for_wrong_user(mock_to_thread):
+    """AC 10 (SEC-006): learner_dna table is NEVER queried when ownership check fails.
+
+    Only supabase.table("sessions") should be called (n=1). The function must raise 404
+    before reaching call 6 (learner_dna).
+    """
+    from fastapi import HTTPException
+
+    from app.modules.assessment.service import get_session_report
+
+    session_other = {**_SESSION_ROW, "user_id": "other-user-999"}
+    supabase = _build_report_supabase(session_data=session_other)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert exc_info.value.status_code == 404
+    assert len(supabase._captured_mocks) == 1, (
+        f"Only sessions table should be queried; got {len(supabase._captured_mocks)} table calls"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_report_quiz_accuracy_label_developing_at_exact_60_percent(mock_to_thread):
     """AC 5: exactly 60% (3/5) → 'Developing' — verifies the ≥0.6 boundary is inclusive."""
     from app.modules.assessment.service import get_session_report
@@ -832,3 +1055,37 @@ async def test_report_quiz_accuracy_label_developing_at_exact_60_percent(mock_to
     supabase = _build_report_supabase(quiz_rows=rows)
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.quiz_accuracy_label == "Developing"
+
+
+# ── Story 3-30: Learner DNA snapshot tests ────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_asyncio_to_thread_called_7_times_on_happy_path():
+    """AC 9: exactly 7 asyncio.to_thread calls on happy path (sessions+lessons+quiz+teachback+events_count+learner_dna+events_dna_update)."""
+    from unittest.mock import patch
+
+    from app.modules.assessment.service import get_session_report
+
+    call_log: list[bool] = []
+
+    async def _counting_shim(func, *args, **kwargs):
+        call_log.append(True)
+        return func(*args, **kwargs)
+
+    supabase = _build_report_supabase(
+        quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG,
+        tb_rows=_TEACHBACK_ROWS,
+        intervention_count=1,
+        dna_data=_DNA_ROW,
+        growth_events=_GROWTH_EVENTS,
+    )
+    with patch("app.modules.assessment.service.asyncio.to_thread", side_effect=_counting_shim):
+        await get_session_report(
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            supabase=supabase,
+        )
+
+    assert len(call_log) == 7, f"Expected 7 asyncio.to_thread calls (happy path), got {len(call_log)}"

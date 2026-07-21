@@ -371,6 +371,7 @@ def test_posthog_session_report_event_fired():
         quiz_total_questions=5,
         quiz_correct_count=4,
         quiz_accuracy_label="Strong",
+        learner_dna_snapshot=None,  # Story 3-30 added
     )
 
     with patch(
