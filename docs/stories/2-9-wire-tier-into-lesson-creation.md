@@ -4,7 +4,7 @@ baseline_commit: "4b4ac2132a9db053a61a4394399d0b9aa9e53eb6"
 
 # Story 2-9: Wire Selected Tier into Lesson Creation
 
-Status: review
+Status: done
 
 ## Story
 
@@ -71,8 +71,23 @@ if tier not in _VALID_TIERS:  # frozenset({"T1", "T2", "T3"})
   - [x] 4.2 Added the two new `UploadFlow.test.tsx` cases (Refresher → `'T3'` sent; Balanced label visible) and 2 new `upload.service.test.ts` cases (tier appended when provided; omitted when not)
   - [x] 4.3 Full `apps/web` suite green (see Debug Log), `tsc --noEmit` clean, `eslint` clean (0 new warnings)
 
-- [ ] Task 5: Tracker update
-  - [ ] 5.1 Mark S2-09 in `docs/dev2-sprint-tracker.md` as done, update the Sprint 2 dashboard row and header; note that S2-10 is now unblocked (data path exists) for re-scoping
+- [x] Task 5: Tracker update
+  - [x] 5.1 Mark S2-09 in `docs/dev2-sprint-tracker.md` as done, update the Sprint 2 dashboard row and header; note that S2-10 is now unblocked (data path exists) for re-scoping
+
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `feature-learner-mode` vs `main`, 2026-07-21 — covers all 3 Learner Mode stories (2-7, 2-8, 2-9) in one pass since they share the branch. Acceptance Auditor: 0 code-level AC violations for any of the 3 stories.
+
+- [x] [Review][Patch] No guard against rapid double-selection of a tier card — two click/keypress events landing before React commits the `'selecting-mode'`→`'processing'` transition both invoke `handleTierSelect`, each driving its own `uploadService.uploadLesson()` call. The backend creates a brand-new `lessons`/`lesson_jobs` row and a distinct ARQ job per call (no shared `lesson_id` for the dedup key to catch), so this is two full, separately-billed pipeline runs from one user action. [apps/web/src/components/dashboard/upload/UploadFlow.tsx, apps/web/src/components/dashboard/upload/ModeSelection.tsx] (blind+edge)
+- [x] [Review][Patch] `uploadService.uploadLesson`'s `tier` param is typed as a bare `string`, not the backend's actual closed `'T1'|'T2'|'T3'` union — a typo'd or unmapped value would compile fine and only fail at runtime as a 422 from the server, with no compile-time guarantee the `LEARNER_TIER_TO_BACKEND` mapping was used. [apps/web/src/services/upload.service.ts] (blind)
+- [x] [Review][Patch] `if (tier) formData.append('tier', tier)` uses a truthy check instead of a definedness check — works today only because all 3 valid tier codes are non-empty strings; conflates "not provided" with "falsy value." [apps/web/src/services/upload.service.ts] (blind)
+- [x] [Review][Patch] The visible tier-label badge renders an empty pill (no text, but still a visible rounded box) if `LEARNER_TIER_OPTIONS.find(...)` ever fails to match `selectedTier` — not reachable via the current single call site (`ModeSelection` only ever passes an `option.id` from that same array), but cheap to guard defensively. [apps/web/src/components/dashboard/upload/UploadFlow.tsx] (blind+edge)
+- [x] [Review][Patch] `docs/master-tracker.md`'s 4 Learner Mode checklist bullets (added alongside S2-07) were still unchecked despite S2-07/S2-08/S2-09 all being done in `docs/dev2-sprint-tracker.md` — staleness gap, not a code issue. [docs/master-tracker.md] (auditor)
+- [x] [Review][Defer] Autofocus on the first tier card fires before `UploadFlow.tsx`'s wrapping fade-in animation (600ms) completes — a keyboard/AT user gets focus and an announcement on a still-animating element. Pre-existing from S2-07 (autofocus behavior untouched by S2-09's diff), minor a11y timing nit, out of this story's scope. [apps/web/src/components/dashboard/upload/ModeSelection.tsx] (blind)
+
+**Dismissed as noise/false-positive (4):** displayed tier never reconciled against a backend read-back — explicitly by-design, this story's own Dev Notes say not to build that read-back path (`GET /lessons/{id}` has no `tier` field). Drag-and-drop falling through to native browser handling on the `'selecting-mode'` screen — already deferred/documented pre-existing gap (`deferred-work.md`), not introduced by this story. Disclaimer trim-check vs. render mismatch in `ModeSelection.tsx` — pre-existing from S2-08, purely theoretical (the only 2 disclaimer strings are static hardcoded copy with no whitespace issue today). Non-null assertions (`.closest('button')!`) in tests — matches this codebase's established test convention used everywhere else, not a new deviation introduced here.
+
+**Process note (not a code finding, flagged for the record rather than quietly self-excused):** the Acceptance Auditor also caught that the `docs/dev2-sprint-tracker.md` diff on this branch (a) writes a full re-scoping analysis for S2-10, when this story's own Dev Notes said "do NOT re-scope S2-10... just note it's unblocked," and (b) had briefly marked S2-09 "DONE" while this story file's own Status still said `review` and this Task 5.1 was unchecked. (a) is defensible because the user explicitly requested that deeper S2-10 investigation in live conversation after this story was written — real-time instruction superseding a pre-written scope note — but it's noted here rather than silently waved off. (b) is a real sequencing inconsistency that resolves itself by this review round completing; Task 5.1 above is now genuinely checked off after, not before, review.
 
 ## Dev Notes
 
@@ -126,6 +141,8 @@ Claude Sonnet 5 (claude-sonnet-5)
 - Full regression suite after all tasks: 346/346 passing across 42 files (up from `feature-learner-mode`'s pre-story baseline of 342 — 4 new tests: 2 in `upload.service.test.ts`, 2 in `UploadFlow.test.tsx`), `tsc --noEmit` clean, `eslint` clean on every touched file (0 new warnings).
 - No HALT conditions hit — no new dependencies needed, no ambiguous requirements, no 3-consecutive-failure loop.
 
+**Review Round (2026-07-21):** 5 patches applied (2 blind, 2 blind+edge, 1 auditor), 1 deferred (a11y timing, `deferred-work.md`), 4 dismissed as noise. Patch 1 (duplicate-submission guard): reproduction attempted via a same-tick different-card click after the first upload fired — did not reproduce red in this jsdom/RTL setup (React's `act()` flush + the mocked upload promise resolve before a second synthetic event lands), stated honestly rather than claiming a false RED; fix applied on correctness grounds regardless (ref-captured tier at upload entry, `selectedTier` removed from the effect's dependency array). Patches 2–3 (`BackendTier` union type, definedness-not-truthiness check) verified via revert-and-confirm against the existing `upload.service.test.ts` cases plus 1 new type-level test (`expectTypeOf`) and 1 new runtime test (`'' as unknown as 'T1'` cast). Patch 4 (badge fallback guard) is defensive/unreachable through any current type-safe call site — no dedicated regression test added; verified via the full existing suite (`UploadFlow.test.tsx`'s "shows the selected tier's visible label" case still passes). Patch 5 was a doc-only staleness fix (`docs/master-tracker.md`). Full `apps/web` suite: 349/349 passing across 42 files after all 5 patches (up from this story's pre-review 346); `tsc --noEmit` clean; `eslint` clean (0 new warnings) on every file touched this round.
+
 ### Completion Notes List
 
 - All 5 tasks (11 subtasks) implemented in strict RED → GREEN order; no task marked complete without its tests passing first.
@@ -135,6 +152,13 @@ Claude Sonnet 5 (claude-sonnet-5)
 - Updated one pre-existing test assertion (`UploadFlow.test.tsx`'s "uploads, polls, and on ready..." test) to match the new 2-argument call signature — not a behavior regression, an expected consequence of extending the function signature this story targets.
 - No changes to `ModeSelection.tsx`, `learnerMode.ts`'s existing fields/disclaimer logic (S2-08), `getLessonStatus`/`LessonStatusResponse`, or any `packages/shared` frozen contract.
 - S2-10 (tier badge on player/session report) is now genuinely unblocked — the data path this story adds (tier reaches the backend on create) is what S2-10's own 2026-07-18 investigation was waiting on. S2-10 will still need its own scoping pass since `GET /lessons/{id}` doesn't echo tier back and `Player.tsx`/`SessionReport.tsx` still have no tier field reaching them from anywhere — this story only unblocks the upload-time send, not a read-back path.
+
+**Review Round completion notes:**
+- `upload.service.ts`: `tier` param re-typed from bare `string` to the closed `BackendTier = 'T1' | 'T2' | 'T3'` union; `if (tier)` changed to `if (tier !== undefined)` (definedness, not truthiness).
+- `UploadFlow.tsx`: `selectedTierAtUploadRef` (a `useRef<LearnerTier | null>`) now captures the tier at the moment `handleTierSelect` fires; the upload effect reads from the ref instead of the reactive `selectedTier` state and `selectedTier` was removed from its dependency array, closing the reachable re-fire path where selecting a different tier while already `'processing'` could trigger a second, separately-billed upload. The visible badge is now gated on a derived `selectedTierOption` (`LEARNER_TIER_OPTIONS.find(...)` result) rather than on `selectedTier` truthiness alone, so a lookup miss can never render an empty pill.
+- `upload.service.test.ts`: added a compile-time `expectTypeOf` assertion on the union type, and a runtime test proving an empty-string tier (cast past the type system) is still appended rather than treated as unset.
+- `UploadFlow.test.tsx`: added a duplicate-submission regression test (different tier clicked after upload already fired — asserts still only 1 call, with `'T1'`).
+- `docs/master-tracker.md`: checked off the S2-07/S2-08/S2-09 Learner Mode bullets (were stale — done in `docs/dev2-sprint-tracker.md` but still shown unchecked here); S2-10's bullet left unchecked with an added note on its player-half/session-report-half split, matching the Dev 2 tracker's own re-scoping language.
 
 ### File List
 
@@ -146,7 +170,15 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `apps/web/src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` — 1 existing assertion updated to the new 2-arg call signature, 2 new tests (non-default tier mapping, visible label)
 - `docs/dev2-sprint-tracker.md` — S2-09 marked done (implementation + tests complete, pending 5-agent code review), Sprint 2 dashboard updated, S2-10 noted as unblocked
 
+**Files MODIFIED (Review Round):**
+- `apps/web/src/services/upload.service.ts` — `tier` param re-typed to closed `BackendTier` union, truthy check changed to definedness check
+- `apps/web/src/components/dashboard/upload/UploadFlow.tsx` — ref-captured tier at upload entry, `selectedTier` removed from effect deps, badge gated on derived `selectedTierOption`
+- `apps/web/src/__tests__/services/upload.service.test.ts` — 1 new type-level test, 1 new runtime definedness test
+- `apps/web/src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` — 1 new duplicate-submission regression test
+- `docs/master-tracker.md` — 3 Learner Mode checklist bullets (S2-07/S2-08/S2-09) checked off, S2-10 bullet annotated with its split status
+
 ### Change Log
 
 - 2026-07-21: Story created via `bmad-create-story` — Sprint 2 Learner Mode task 3 of 4 (S2-09), branch `sprint2/s2-09-wire-tier` off `feature-learner-mode`, committed story-only per the story-first gate, fast-forward-merged into `feature-learner-mode` (task branch itself not pushed, per standing team convention).
 - 2026-07-21: All 5 tasks implemented in RED→GREEN order; 4 new tests + 1 updated assertion; full `apps/web` suite 346/346 passing; `tsc --noEmit` and `eslint` clean; story marked `review`.
+- 2026-07-21: 5-agent adversarial review run against `feature-learner-mode` (covering S2-07/S2-08/S2-09 together); 5 patches applied, 1 deferred, 4 dismissed. Full suite 349/349 passing, `tsc --noEmit` and `eslint` clean; story marked `done`.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { UploadFlow } from '@/components/dashboard/upload/UploadFlow';
 
@@ -161,6 +161,28 @@ describe('UploadFlow', () => {
     await dropFileAndSelectTier(user, 'Balanced');
 
     await screen.findByText('Balanced', { selector: '[data-testid="selected-tier-label"]' });
+  });
+
+  it('does not fire a second upload if selectedTier changes again after processing has already started (review fix — unnecessary effect dependency)', async () => {
+    uploadLessonMock.mockResolvedValue({ lesson_id: 'lsn_42', job_id: 'job_1', status: 'queued' });
+    getLessonStatusMock.mockResolvedValue(READY_STATUS);
+
+    render(<UploadFlow />);
+    dropAFile();
+    const deepButton = (await screen.findByText('Deep')).closest('button')!;
+    const balancedButton = screen.getByText('Balanced').closest('button')!;
+
+    // First click commits uploadState -> 'processing', firing the upload effect once.
+    act(() => { fireEvent.click(deepButton); });
+    await waitFor(() => expect(uploadLessonMock).toHaveBeenCalledTimes(1));
+
+    // A second, different tier card firing afterward (e.g. a mis-click followed by a
+    // correct one, landing during the exit-animation window) must not re-trigger the
+    // upload effect just because selectedTier changed — only uploadState/file should.
+    act(() => { fireEvent.click(balancedButton); });
+
+    expect(uploadLessonMock).toHaveBeenCalledTimes(1);
+    expect(uploadLessonMock).toHaveBeenCalledWith(expect.any(File), 'T1');
   });
 
   it('completed state: "Generate Another" resets back to the idle drop zone', async () => {

@@ -27,6 +27,12 @@ export function UploadFlow() {
 
     const router = useRouter();
     const inputRef = useRef<HTMLInputElement>(null);
+    // Captures the tier at the moment processing starts, without making it a
+    // reactive dependency of the upload effect below — a later selectedTier
+    // change (e.g. a mis-click followed by a different card, landing during
+    // the exit-animation window) must not re-trigger a second, separately
+    // billed upload call (review fix).
+    const selectedTierAtUploadRef = useRef<LearnerTier | null>(null);
 
     const handleDrag = (e: React.DragEvent) => {
         e.preventDefault();
@@ -66,6 +72,7 @@ export function UploadFlow() {
     };
 
     const handleTierSelect = (tier: LearnerTier) => {
+        selectedTierAtUploadRef.current = tier;
         setSelectedTier(tier);
         setUploadState('processing');
         setStatusMessage('Uploading...');
@@ -145,8 +152,9 @@ export function UploadFlow() {
             }
         };
 
+        const tierAtEntry = selectedTierAtUploadRef.current;
         uploadService
-            .uploadLesson(file, selectedTier ? LEARNER_TIER_TO_BACKEND[selectedTier] : undefined)
+            .uploadLesson(file, tierAtEntry ? LEARNER_TIER_TO_BACKEND[tierAtEntry] : undefined)
             .then((res) => {
                 if (cancelled) return;
                 setStatusMessage('Processing...');
@@ -162,7 +170,14 @@ export function UploadFlow() {
             cancelled = true;
             if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         };
-    }, [uploadState, file, selectedTier]);
+        // selectedTier is deliberately NOT a dependency — see selectedTierAtUploadRef above.
+    }, [uploadState, file]);
+
+    // Gated on a successful lookup, not just selectedTier being truthy — avoids
+    // ever rendering an empty visible pill if the two ever desync (review fix).
+    const selectedTierOption = selectedTier
+        ? LEARNER_TIER_OPTIONS.find((option) => option.id === selectedTier)
+        : undefined;
 
     return (
         <AnimatePresence mode="wait">
@@ -258,12 +273,12 @@ export function UploadFlow() {
                     <p className="text-neutral-500 max-w-sm leading-relaxed">
                         Establishing intelligence matrix, compiling timeline sequences, and synthesizing audio overlays.
                     </p>
-                    {selectedTier && (
+                    {selectedTierOption && (
                         <span
                             data-testid="selected-tier-label"
                             className="mt-5 inline-flex items-center px-3 py-1 rounded-full bg-[var(--accent-secondary)] text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wide"
                         >
-                            {LEARNER_TIER_OPTIONS.find((option) => option.id === selectedTier)?.label}
+                            {selectedTierOption.label}
                         </span>
                     )}
                 </motion.div>
