@@ -25,6 +25,8 @@ def _stub_openai_package() -> None:
     stub = MagicMock()
     sys.modules.setdefault("openai", stub)
     sys.modules.setdefault("openai.AsyncOpenAI", stub.AsyncOpenAI)
+    sys.modules.setdefault("openai.types", stub.types)
+    sys.modules.setdefault("openai.types.chat", stub.types.chat)
 
 
 @pytest.fixture(autouse=True, scope="session")
