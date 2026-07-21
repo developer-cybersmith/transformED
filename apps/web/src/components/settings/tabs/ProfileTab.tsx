@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { Target, Sparkles, BookOpen } from "lucide-react";
 import { settingsService } from "@/services/settings.service";
 import type { UserProfile } from "@/mocks/data/users";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function ProfileTab() {
+    const { user } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
 
     useEffect(() => {
@@ -26,6 +28,9 @@ export function ProfileTab() {
         );
     }
 
+    const displayName = user?.full_name || profile.name;
+    const displayEmail = user?.email || profile.email;
+
     return (
         <div className="flex flex-col gap-8 w-full max-w-3xl pt-8">
             <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight">Profile & Identity</h2>
@@ -36,7 +41,7 @@ export function ProfileTab() {
                     <div className="w-32 h-32 rounded-2xl bg-gradient-to-tr from-[var(--color-light-bg)] to-[var(--color-soft-panel)] p-1 flex items-center justify-center shadow-sm">
                         <div className="w-full h-full rounded-xl bg-white flex items-center justify-center overflow-hidden relative">
                             <img
-                                src={`https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(profile.name)}&backgroundColor=f8fafc`}
+                                src={`https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(displayName)}&backgroundColor=f8fafc`}
                                 alt="Profile Avatar"
                                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                             />
@@ -47,8 +52,8 @@ export function ProfileTab() {
                 {/* Profile Details */}
                 <div className="flex flex-col gap-6 flex-1">
                     <div>
-                        <h3 className="font-serif text-xl font-medium text-neutral-900">{profile.name}</h3>
-                        <p className="text-neutral-500 mt-1">{profile.email}</p>
+                        <h3 className="font-serif text-xl font-medium text-neutral-900">{displayName}</h3>
+                        <p className="text-neutral-500 mt-1">{displayEmail}</p>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

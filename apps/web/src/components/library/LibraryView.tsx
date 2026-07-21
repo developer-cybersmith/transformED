@@ -74,12 +74,29 @@ export function LibraryView({ initialData }: LibraryViewProps) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-24">
                 <AnimatePresence mode="popLayout">
                     {lessons.map((lesson, idx) => (
-                        <LibraryCard
+                        <motion.div
                             key={lesson.id}
-                            lesson={lesson}
-                            onClick={() => router.push(`/lesson/${lesson.id}`)}
-                            index={idx}
-                        />
+                            layout
+                            layoutId={lesson.id}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{
+                                opacity: 1,
+                                y: 0,
+                                transition: { duration: 0.4, ease: "easeOut", delay: idx * 0.05 }
+                            }}
+                            exit={{
+                                opacity: 0,
+                                scale: 0.95,
+                                transition: { duration: 0.2, ease: "easeIn" }
+                            }}
+                            transition={{ layout: { type: "spring", stiffness: 350, damping: 30 } }}
+                            className="w-full flex"
+                        >
+                            <LibraryCard
+                                lesson={lesson}
+                                onClick={() => router.push(`/lesson/${lesson.id}`)}
+                            />
+                        </motion.div>
                     ))}
                     {lessons.length === 0 && (
                         <motion.div
@@ -97,20 +114,15 @@ export function LibraryView({ initialData }: LibraryViewProps) {
     );
 }
 
-function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: () => void, index: number }) {
+function LibraryCard({ lesson, onClick }: { lesson: MockLesson, onClick: () => void }) {
     const isProcessing = lesson.status === 'processing';
     const isFailed = lesson.status === 'failed';
     const isCompleted = lesson.status === 'completed';
 
     return (
-        <motion.div
-            layout
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.4, ease: "easeOut", delay: index * 0.05 }}
+        <div
             onClick={!isProcessing && !isFailed ? onClick : undefined}
-            className={`group relative w-full bg-white rounded-3xl border border-neutral-100 shadow-sm transition-all duration-300 flex flex-col overflow-hidden ${isProcessing || isFailed ? 'opacity-80 cursor-default' : 'cursor-pointer hover:shadow-xl hover:-translate-y-1'
+            className={`group relative w-full bg-white rounded-3xl border border-neutral-100 shadow-sm transition-[box-shadow,transform] duration-300 flex flex-col overflow-hidden ${isProcessing || isFailed ? 'opacity-80 cursor-default' : 'cursor-pointer hover:shadow-xl hover:-translate-y-1'
                 }`}
         >
             {/* Thumbnail Header */}
@@ -199,6 +211,6 @@ function LibraryCard({ lesson, onClick, index }: { lesson: MockLesson, onClick: 
                     )}
                 </div>
             </div>
-        </motion.div>
+        </div>
     );
 }
