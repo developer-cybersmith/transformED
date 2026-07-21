@@ -18,6 +18,7 @@ Nine dimensions (exact learner_dna column names):
 
 No LLM calls in this module. Profile text generation is a separate story (Task 4).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +27,8 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from supabase import Client
+
     from app.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -34,14 +37,14 @@ __all__ = ["fuse_learner_dna"]
 
 # ── Signal computation constants (Sprint 4 can move these to Settings) ────────
 
-_JARGON_CAP = 5          # jargon_hover events → curiosity_index signal 100
-_HELP_CAP = 4            # help_seeking events → max help_seeking/study_independence signal
-_SKIP_CAP = 4            # skip_segment events → goal_orientation signal 0
-_INTERVENTION_CAP = 3    # intervention_triggered events → frustration_tolerance signal 0
-_FAST_RESPONSE_MS = 15_000   # avg response_time_ms ≤ this → processing_speed = 100
-_SLOW_RESPONSE_MS = 60_000   # avg response_time_ms ≥ this → processing_speed = 0
-_TEACHBACK_LOW_SCORE = 60    # teachback score below this triggers persistence retry check
-_NEUTRAL = 50.0              # default signal / old value when no data
+_JARGON_CAP = 5  # jargon_hover events → curiosity_index signal 100
+_HELP_CAP = 4  # help_seeking events → max help_seeking/study_independence signal
+_SKIP_CAP = 4  # skip_segment events → goal_orientation signal 0
+_INTERVENTION_CAP = 3  # intervention_triggered events → frustration_tolerance signal 0
+_FAST_RESPONSE_MS = 15_000  # avg response_time_ms ≤ this → processing_speed = 100
+_SLOW_RESPONSE_MS = 60_000  # avg response_time_ms ≥ this → processing_speed = 0
+_TEACHBACK_LOW_SCORE = 60  # teachback score below this triggers persistence retry check
+_NEUTRAL = 50.0  # default signal / old value when no data
 
 _NINE_DIMENSIONS = (
     "pattern_recognition",
@@ -100,11 +103,7 @@ def _compute_signals(
         sigs["logical_deduction"] = sigs["pattern_recognition"]
 
     # ── Cognitive: processing_speed (inverse avg response time) ───────────────
-    times = [
-        r["response_time_ms"]
-        for r in quiz_rows
-        if r.get("response_time_ms") is not None
-    ]
+    times = [r["response_time_ms"] for r in quiz_rows if r.get("response_time_ms") is not None]
     if not times:
         sigs["processing_speed"] = _NEUTRAL
     else:
@@ -144,9 +143,9 @@ def _compute_signals(
         if had_retry_after_low:
             sigs["persistence"] = 100.0
         elif had_low_score:
-            sigs["persistence"] = 25.0     # gave up after low score
+            sigs["persistence"] = 25.0  # gave up after low score
         else:
-            sigs["persistence"] = 75.0     # completed with no low-score issue
+            sigs["persistence"] = 75.0  # completed with no low-score issue
 
     # ── Self-direction: help_seeking + study_independence (inverse pair) ───────
     help_events = event_counts.get("help_seeking", 0)
@@ -156,15 +155,11 @@ def _compute_signals(
 
     # ── Self-direction: goal_orientation (inverse of skip events) ─────────────
     skip_events = event_counts.get("skip_segment", 0)
-    sigs["goal_orientation"] = min(
-        100.0, max(0.0, 100.0 - (skip_events / _SKIP_CAP) * 100.0)
-    )
+    sigs["goal_orientation"] = min(100.0, max(0.0, 100.0 - (skip_events / _SKIP_CAP) * 100.0))
 
     # ── Self-direction: curiosity_index (jargon hover events) ─────────────────
     jargon_events = event_counts.get("jargon_hover", 0)
-    sigs["curiosity_index"] = min(
-        100.0, max(0.0, (jargon_events / _JARGON_CAP) * 100.0)
-    )
+    sigs["curiosity_index"] = min(100.0, max(0.0, (jargon_events / _JARGON_CAP) * 100.0))
 
     return sigs
 
@@ -173,8 +168,8 @@ async def fuse_learner_dna(
     *,
     user_id: str,
     session_id: str,
-    supabase: Any,
-    settings: "Settings",
+    supabase: Client,
+    settings: Settings,
 ) -> dict[str, float] | None:
     """Blend this session's behavioural signals into the user's Learner DNA profile.
 
@@ -207,18 +202,22 @@ async def fuse_learner_dna(
     # ── Step 1: Read session row ───────────────────────────────────────────────
     try:
         session_resp = await asyncio.to_thread(
-            lambda: supabase.table("sessions")
-            .select("session_id, user_id, ended_at")
-            .eq("session_id", session_id)
-            .maybe_single()
-            .execute()
+            lambda: (
+                supabase.table("sessions")
+                .select("session_id, user_id, ended_at")
+                .eq("session_id", session_id)
+                .maybe_single()
+                .execute()
+            )
         )
     except Exception as exc:
-        logger.error("DNA fusion: session read failed session=%s: %s", session_id, exc, exc_info=True)
+        logger.error(
+            "DNA fusion: session read failed session=%s: %s", session_id, exc, exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not read session data.",
-        )
+        ) from exc
 
     if session_resp.data is None:
         raise HTTPException(
@@ -250,10 +249,12 @@ async def fuse_learner_dna(
 
     try:
         quiz_resp = await asyncio.to_thread(
-            lambda: supabase.table("quiz_attempts")
-            .select("is_correct, response_time_ms, segment_id")
-            .eq("session_id", session_id)
-            .execute()
+            lambda: (
+                supabase.table("quiz_attempts")
+                .select("is_correct, response_time_ms, segment_id")
+                .eq("session_id", session_id)
+                .execute()
+            )
         )
         quiz_rows = quiz_resp.data or []
     except Exception as exc:
@@ -261,10 +262,12 @@ async def fuse_learner_dna(
 
     try:
         tb_resp = await asyncio.to_thread(
-            lambda: supabase.table("teachback_attempts")
-            .select("score, attempt_number, segment_id")
-            .eq("session_id", session_id)
-            .execute()
+            lambda: (
+                supabase.table("teachback_attempts")
+                .select("score, attempt_number, segment_id")
+                .eq("session_id", session_id)
+                .execute()
+            )
         )
         tb_rows = tb_resp.data or []
     except Exception as exc:
@@ -272,10 +275,12 @@ async def fuse_learner_dna(
 
     try:
         events_resp = await asyncio.to_thread(
-            lambda: supabase.table("session_events")
-            .select("event_type")
-            .eq("session_id", session_id)
-            .execute()
+            lambda: (
+                supabase.table("session_events")
+                .select("event_type")
+                .eq("session_id", session_id)
+                .execute()
+            )
         )
         event_rows = events_resp.data or []
     except Exception as exc:
@@ -293,11 +298,13 @@ async def fuse_learner_dna(
     old_session_count = 0
     try:
         dna_resp = await asyncio.to_thread(
-            lambda: supabase.table("learner_dna")
-            .select(", ".join(_NINE_DIMENSIONS) + ", session_count")
-            .eq("user_id", user_id)
-            .maybe_single()
-            .execute()
+            lambda: (
+                supabase.table("learner_dna")
+                .select(", ".join(_NINE_DIMENSIONS) + ", session_count")
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
         )
         if dna_resp.data is not None:
             old_row = dna_resp.data
@@ -327,9 +334,11 @@ async def fuse_learner_dna(
     }
     try:
         upsert_resp = await asyncio.to_thread(
-            lambda: supabase.table("learner_dna")
-            .upsert(upsert_payload, on_conflict="user_id")
-            .execute()
+            lambda: (
+                supabase.table("learner_dna")
+                .upsert(upsert_payload, on_conflict="user_id")
+                .execute()
+            )
         )
         upsert_error = getattr(upsert_resp, "error", None)
         if upsert_error:
@@ -350,10 +359,11 @@ async def fuse_learner_dna(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not update learner profile.",
-        )
+        ) from exc
 
     # ── Step 6: Write growth tracking events (non-fatal) ──────────────────────
     from app.modules.assessment.dna_growth import record_dna_growth  # local import
+
     old_dims_for_growth: dict[str, float | None] = {
         dim: (float(old_row[dim]) if old_row.get(dim) is not None else None)
         for dim in _NINE_DIMENSIONS

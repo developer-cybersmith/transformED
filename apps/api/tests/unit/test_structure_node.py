@@ -16,12 +16,10 @@ Patching strategy:
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -41,11 +39,9 @@ RAW_TEXT_WITH_HEADINGS = (
 def _make_supabase_mock(node_outputs: dict | None = None) -> MagicMock:
     jobs_mock = MagicMock()
     jobs_data = {"node_outputs": node_outputs or {}}
-    (jobs_mock.select.return_value
-               .eq.return_value
-               .single.return_value
-               .execute.return_value
-               .data) = jobs_data
+    (
+        jobs_mock.select.return_value.eq.return_value.single.return_value.execute.return_value.data
+    ) = jobs_data
 
     sb = MagicMock()
     sb.table.return_value = jobs_mock
@@ -166,9 +162,7 @@ async def test_structure_node_idempotent() -> None:
             "page_end": 5,
         }
     ]
-    sb = _make_supabase_mock(
-        node_outputs={"structure": {"sections": cached_sections}}
-    )
+    sb = _make_supabase_mock(node_outputs={"structure": {"sections": cached_sections}})
     state = _base_state()
     mock_class, mock_instance, modules_patch = _make_provider_mock()
 

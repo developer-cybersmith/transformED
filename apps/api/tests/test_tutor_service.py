@@ -2,11 +2,12 @@
 
 Covers ``apps/api/app/modules/tutor/service.py``:
 - ``_parse_signal``           — boundary mapping (envelope/flat, required vs optional fields)
-- ``process_attention_signal`` — Redis ``ces_window`` write + ``ces_history`` LPUSH/LTRIM/EXPIRE/LRANGE
-  and the ``distraction_detected`` trigger guards (2-below-threshold + cooldown).
+- ``process_attention_signal`` — Redis ``ces_window`` write + ``ces_history``
+  LPUSH/LTRIM/EXPIRE/LRANGE and the ``distraction_detected`` trigger guards
+  (2-below-threshold + cooldown).
 
-``process_attention_signal`` lazy-imports ``get_redis``, ``get_settings`` and ``dispatch_event`` inside
-the function body, so the effective patch targets are the SOURCE modules
+``process_attention_signal`` lazy-imports ``get_redis``, ``get_settings`` and
+``dispatch_event`` inside the function body, so the effective patch targets are the SOURCE modules
 (``app.core.redis.get_redis`` etc.) — the namespaces the lazy ``from ... import`` resolve against.
 
 All tests are ``@pytest.mark.unit`` — no real Redis / state machine. ``asyncio_mode = "auto"``
@@ -321,7 +322,8 @@ def _intervention_redis(package_json: str | None) -> AsyncMock:
 
 
 def _patch_dispatch(mocker, intervention_message):
-    """Mock dispatch_event to return an INTERVENING result (real selection covered in test_tutor_graph)."""
+    """Mock dispatch_event to return an INTERVENING result
+    (real selection covered in test_tutor_graph)."""
     mock_dispatch = AsyncMock(
         return_value={
             "current_state": "INTERVENING",
@@ -335,11 +337,18 @@ def _patch_dispatch(mocker, intervention_message):
 
 @pytest.mark.unit
 async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
-    """Triggered intervention passes the segment's messages to the FSM and delivers tutor_intervene."""
+    """Triggered intervention passes the segment's messages to the FSM
+    and delivers tutor_intervene."""
     # Segment field is `interventions` per the frozen LessonPackage schema (SegmentInterventions).
     pkg = {
         "segments": [
-            {"interventions": {"distraction": ["focus up", "x", "y"], "confusion": ["c"], "fatigue": ["f"]}}
+            {
+                "interventions": {
+                    "distraction": ["focus up", "x", "y"],
+                    "confusion": ["c"],
+                    "fatigue": ["f"],
+                }
+            }
         ]
     }
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
@@ -374,7 +383,9 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
 @pytest.mark.unit
 async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
     """Cache miss → no message → tutor_intervene skipped; no crash; CesResult still returned."""
-    mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(None))  # no cached package
+    mocker.patch(
+        "app.core.redis.get_redis", return_value=_intervention_redis(None)
+    )  # no cached package
     mock_settings = MagicMock()
     mock_settings.ces_threshold = 0.5
     mocker.patch("app.config.get_settings", return_value=mock_settings)
@@ -427,10 +438,12 @@ async def test_segment_messages_returns_interventions_for_segment(mocker) -> Non
     """Reads the frozen `interventions` field for the current segment."""
     from app.modules.tutor.service import _segment_intervention_messages
 
-    pkg = {"segments": [
-        {"interventions": {"distraction": ["d0"], "confusion": ["c0"], "fatigue": ["f0"]}},
-        {"interventions": {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}},
-    ]}
+    pkg = {
+        "segments": [
+            {"interventions": {"distraction": ["d0"], "confusion": ["c0"], "fatigue": ["f0"]}},
+            {"interventions": {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}},
+        ]
+    }
     redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "1"})
 
     out = await _segment_intervention_messages("s", redis)
@@ -467,7 +480,11 @@ async def test_segment_messages_index_clamped_to_range(mocker) -> None:
     """An out-of-range segment_index (e.g. stale) clamps to the last segment instead of raising."""
     from app.modules.tutor.service import _segment_intervention_messages
 
-    pkg = {"segments": [{"interventions": {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}}]}
+    pkg = {
+        "segments": [
+            {"interventions": {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}}
+        ]
+    }
     redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "9"})
 
     out = await _segment_intervention_messages("s", redis)

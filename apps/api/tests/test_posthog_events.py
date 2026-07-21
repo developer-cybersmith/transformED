@@ -17,12 +17,14 @@ Coverage:
 All tests are @pytest.mark.unit — no real Supabase, Redis, LLM, or PostHog connections.
 asyncio.to_thread is shimmed synchronously via the _mock_to_thread autouse fixture.
 """
+
 from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.dependencies import get_current_user
 from app.modules.assessment.router import router
@@ -64,39 +66,45 @@ _SESSION_ROW: dict = {
     "lesson_id": LESSON_ID,
 }
 
-_VALID_ONBOARDING_RESPONSES: list[OnboardingAnswer] = [
-    OnboardingAnswer(
-        question_id=f"c{i}",
-        dimension="cognitive",
-        selected_index=2,
-        selected_text="Sometimes",
-        response_time_ms=1500,
-    )
-    for i in range(1, 9)
-] + [
-    OnboardingAnswer(
-        question_id=f"e{i}",
-        dimension="emotional",
-        selected_index=3,
-        selected_text="Often",
-        response_time_ms=1200,
-    )
-    for i in range(1, 6)
-] + [
-    OnboardingAnswer(
-        question_id=f"s{i}",
-        dimension="self_direction",
-        selected_index=1,
-        selected_text="Rarely",
-        response_time_ms=2000,
-    )
-    for i in range(1, 8)
-]
+_VALID_ONBOARDING_RESPONSES: list[OnboardingAnswer] = (
+    [
+        OnboardingAnswer(
+            question_id=f"c{i}",
+            dimension="cognitive",
+            selected_index=2,
+            selected_text="Sometimes",
+            response_time_ms=1500,
+        )
+        for i in range(1, 9)
+    ]
+    + [
+        OnboardingAnswer(
+            question_id=f"e{i}",
+            dimension="emotional",
+            selected_index=3,
+            selected_text="Often",
+            response_time_ms=1200,
+        )
+        for i in range(1, 6)
+    ]
+    + [
+        OnboardingAnswer(
+            question_id=f"s{i}",
+            dimension="self_direction",
+            selected_index=1,
+            selected_text="Rarely",
+            response_time_ms=2000,
+        )
+        for i in range(1, 8)
+    ]
+)
 
 # ── Router TestClient (for route-level PostHog assertions) ────────────────────
 
+
 async def _fake_user() -> dict:
     return {"sub": USER_ID, "email": "test@example.com"}
+
 
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
@@ -109,8 +117,10 @@ _client = TestClient(_app, raise_server_exceptions=False)
 @pytest.fixture(autouse=True)
 def _mock_to_thread(monkeypatch):
     """Shim asyncio.to_thread to run synchronously so MagicMock chains resolve."""
+
     async def _sync_shim(fn, *args, **kwargs):
         return fn(*args, **kwargs)
+
     monkeypatch.setattr("app.modules.assessment.service.asyncio.to_thread", _sync_shim)
 
 
@@ -159,12 +169,12 @@ def _build_quiz_supabase() -> MagicMock:
     supabase = MagicMock()
 
     session_m = MagicMock()
-    session_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    sess_exec = session_m.select.return_value.eq.return_value.maybe_single.return_value.execute
+    sess_exec.return_value.data = _SESSION_ROW
 
     lesson_m = MagicMock()
-    lesson_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
-        "content": _LESSON_CONTENT
-    }
+    lesson_execute = lesson_m.select.return_value.eq.return_value.maybe_single.return_value.execute
+    lesson_execute.return_value.data = {"content": _LESSON_CONTENT}
 
     count_m = MagicMock()
     count_m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
@@ -182,12 +192,12 @@ def _build_quiz_supabase_insert_error() -> MagicMock:
     supabase = MagicMock()
 
     session_m = MagicMock()
-    session_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    sess_exec = session_m.select.return_value.eq.return_value.maybe_single.return_value.execute
+    sess_exec.return_value.data = _SESSION_ROW
 
     lesson_m = MagicMock()
-    lesson_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
-        "content": _LESSON_CONTENT
-    }
+    lesson_execute = lesson_m.select.return_value.eq.return_value.maybe_single.return_value.execute
+    lesson_execute.return_value.data = {"content": _LESSON_CONTENT}
 
     count_m = MagicMock()
     count_m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
@@ -205,12 +215,12 @@ def _build_teachback_supabase() -> MagicMock:
     supabase = MagicMock()
 
     session_m = MagicMock()
-    session_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    sess_exec = session_m.select.return_value.eq.return_value.maybe_single.return_value.execute
+    sess_exec.return_value.data = _SESSION_ROW
 
     lesson_m = MagicMock()
-    lesson_m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
-        "content": _LESSON_CONTENT
-    }
+    lesson_execute = lesson_m.select.return_value.eq.return_value.maybe_single.return_value.execute
+    lesson_execute.return_value.data = {"content": _LESSON_CONTENT}
 
     count_m = MagicMock()
     count_m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
@@ -265,7 +275,7 @@ async def test_posthog_quiz_event_fired():
     assert "ces_contribution" in props
     assert "quiz_accuracy" in props
     assert "total_questions" in props  # IMP-005
-    assert "correct_count" in props    # IMP-005
+    assert "correct_count" in props  # IMP-005
 
 
 @pytest.mark.unit
@@ -343,15 +353,29 @@ def test_posthog_session_report_event_fired():
         user_id=USER_ID,
         lesson_id=LESSON_ID,
         ces_score=72.0,
-        ces_breakdown={"quiz": 25.0, "teachback": 15.0, "behavioral": 0.0, "head_pose": 0.0, "blink": 0.0},
+        ces_breakdown={
+            "quiz": 25.0,
+            "teachback": 15.0,
+            "behavioral": 0.0,
+            "head_pose": 0.0,
+            "blink": 0.0,
+        },
         interventions_count=1,
         quiz_score=80.0,
         teachback_score=75.0,
         duration_minutes=12.5,
         completed_at="2026-07-03T10:00:00+00:00",
+        # Story 3-29 required tier-context fields
+        tier="T2",
+        tier_label="Standard",
+        quiz_total_questions=5,
+        quiz_correct_count=4,
+        quiz_accuracy_label="Strong",
     )
 
-    with patch("app.modules.assessment.service.get_session_report", new=AsyncMock(return_value=mock_report)):
+    with patch(
+        "app.modules.assessment.service.get_session_report", new=AsyncMock(return_value=mock_report)
+    ):
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
             with patch("app.core.posthog_client.posthog.capture") as mock_capture:
                 response = _client.get(f"/api/assessment/session/{SESSION_ID}/report")
@@ -376,7 +400,10 @@ def test_posthog_dna_viewed_event_fired():
         "last_updated": "2026-07-03T09:00:00+00:00",
     }
 
-    with patch("app.modules.assessment.service.get_learner_dna_data", new=AsyncMock(return_value=mock_dna_row)):
+    with patch(
+        "app.modules.assessment.service.get_learner_dna_data",
+        new=AsyncMock(return_value=mock_dna_row),
+    ):
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
             with patch("app.core.posthog_client.posthog.capture") as mock_capture:
                 response = _client.get("/api/assessment/user/dna")
@@ -398,7 +425,9 @@ async def test_posthog_no_call_when_api_key_empty(monkeypatch):
     """
     monkeypatch.setattr("posthog.api_key", "")
     supabase = _build_quiz_supabase()
-    with patch("app.core.posthog_client.posthog.capture") as mock_capture:  # IMP-007: consistent path
+    with patch(
+        "app.core.posthog_client.posthog.capture"
+    ) as mock_capture:  # IMP-007: consistent path
         await grade_quiz(
             session_id=SESSION_ID,
             lesson_id=LESSON_ID,
@@ -437,10 +466,12 @@ def test_capture_event_exception_swallowed():
 async def test_get_learner_dna_data_returns_404_when_no_row():
     """IMP-002a: get_learner_dna_data raises HTTP 404 when resp.data is None."""
     from fastapi import HTTPException
+
     from app.modules.assessment.service import get_learner_dna_data
 
     supabase = MagicMock()
-    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
+    dna_q = supabase.table.return_value.select.return_value.eq.return_value.maybe_single
+    dna_q.return_value.execute.return_value.data = None
 
     with pytest.raises(HTTPException) as exc_info:
         await get_learner_dna_data(user_id=USER_ID, supabase=supabase)
@@ -455,7 +486,8 @@ async def test_get_learner_dna_data_null_safe_defaults():
     from app.modules.assessment.service import get_learner_dna_data
 
     supabase = MagicMock()
-    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+    dna_q = supabase.table.return_value.select.return_value.eq.return_value.maybe_single
+    dna_q.return_value.execute.return_value.data = {
         "user_id": USER_ID,
         "badge_labels": None,
         "profile_text": "Test profile with DPDP disclaimer.",

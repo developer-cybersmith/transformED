@@ -28,7 +28,7 @@ _PROVIDER_KEY = "openai"
 _EMBED_COST_PER_1K_USD = 0.00002
 
 
-def _safe_trace(call: Callable[[], Any]) -> Any | None:
+def _safe_trace(call: Callable[[], Any]) -> Any | None:  # noqa: ANN401
     """Run a Langfuse tracing call; observability failures must NEVER fail the pipeline."""
     try:
         return call()
@@ -125,9 +125,7 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
-                _safe_trace(
-                    lambda: generation.update(level="ERROR", status_message=error_message)
-                )
+                _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
             await record_failure(_PROVIDER_KEY)
             raise
 

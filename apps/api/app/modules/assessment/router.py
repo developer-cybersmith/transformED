@@ -42,6 +42,12 @@ class SessionReport(BaseModel):
     teachback_score: float | None
     duration_minutes: float
     completed_at: str | None
+    # Story 3-29 — tier context fields (additive; existing fields unchanged)
+    tier: str
+    tier_label: str
+    quiz_total_questions: int
+    quiz_correct_count: int
+    quiz_accuracy_label: str | None
 
 
 class LearnerDNA(BaseModel):
@@ -71,6 +77,7 @@ async def submit_quiz(
     """Grade a quiz submission and update the session's CES score."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
     from app.modules.assessment.service import grade_quiz
+
     return await grade_quiz(
         session_id=body.session_id,
         lesson_id=body.lesson_id,
@@ -93,6 +100,7 @@ async def submit_teachback(
     """Evaluate a student's typed teach-back response using the GPT-4o-mini rubric."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
     from app.modules.assessment.service import grade_teachback
+
     return await grade_teachback(
         session_id=body.session_id,
         lesson_id=body.lesson_id,

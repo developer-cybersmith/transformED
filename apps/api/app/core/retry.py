@@ -50,7 +50,7 @@ def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             last_exc: BaseException | None = None
 
             for attempt in range(max_attempts):
@@ -94,7 +94,7 @@ def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
 
                 # Compute backoff and log before sleeping
                 if attempt < max_attempts - 1:
-                    wait = (2**attempt) + random.random()
+                    wait = (2**attempt) + random.random()  # noqa: S311
                     logger.warning(
                         "Retry %d/%d for %s after %.2fs (error: %s)",
                         attempt + 1,

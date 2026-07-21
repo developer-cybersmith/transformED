@@ -20,12 +20,11 @@ import pytest
 # Resolve migration path relative to this file's location:
 # tests/ -> apps/api/ -> repo root -> supabase/migrations/
 _REPO_ROOT = pathlib.Path(__file__).parent.parent.parent.parent
-MIGRATION_PATH = (
-    _REPO_ROOT / "supabase" / "migrations" / "20260611000000_initial_schema.sql"
-)
+MIGRATION_PATH = _REPO_ROOT / "supabase" / "migrations" / "20260611000000_initial_schema.sql"
 MIGRATION = MIGRATION_PATH.read_text(encoding="utf-8")
 
 # ── Utility helpers ──────────────────────────────────────────────────────────
+
 
 def _extract_table_block(table_name: str, migration: str, window: int = 3000) -> str:
     """Return up to `window` characters of the migration starting at the first
@@ -193,9 +192,7 @@ def test_teachback_attempts_response_text_is_not_null() -> None:
     lines = block.splitlines()
     for line in lines:
         if "response_text" in line:
-            assert "NOT NULL" in line, (
-                f"response_text should be NOT NULL, got: {line.strip()}"
-            )
+            assert "NOT NULL" in line, f"response_text should be NOT NULL, got: {line.strip()}"
             break
 
 

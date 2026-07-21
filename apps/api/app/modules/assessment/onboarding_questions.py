@@ -4,33 +4,34 @@ Onboarding question → sub-dimension mapping.
 20 questions map to 9 learner_dna sub-dimensions (column names in the DB).
 Source: Story 3-18, Story 3-4 AC #10, CLAUDE.md Learner DNA rules.
 """
+
 from __future__ import annotations
 
 # Maps each question_id to its learner_dna sub-dimension column name.
 QUESTION_SUBDIMENSION_MAP: dict[str, str] = {
     # Cognitive — 8 questions
-    "c1": "pattern_recognition",   # learning style
-    "c2": "logical_deduction",     # concept abstraction
-    "c3": "logical_deduction",     # problem-solving
-    "c4": "processing_speed",      # attention span
-    "c5": "pattern_recognition",   # retention method
-    "c6": "processing_speed",      # reading preference
-    "c7": "logical_deduction",     # ambiguity tolerance
-    "c8": "pattern_recognition",   # quiz format preference
+    "c1": "pattern_recognition",  # learning style
+    "c2": "logical_deduction",  # concept abstraction
+    "c3": "logical_deduction",  # problem-solving
+    "c4": "processing_speed",  # attention span
+    "c5": "pattern_recognition",  # retention method
+    "c6": "processing_speed",  # reading preference
+    "c7": "logical_deduction",  # ambiguity tolerance
+    "c8": "pattern_recognition",  # quiz format preference
     # Emotional — 5 questions
-    "e1": "frustration_tolerance", # reaction to wrong answers
-    "e2": "persistence",           # encouragement response
-    "e3": "frustration_tolerance", # time pressure effect
-    "e4": "help_seeking",          # confusion reaction
-    "e5": "help_seeking",          # AI tracking comfort
+    "e1": "frustration_tolerance",  # reaction to wrong answers
+    "e2": "persistence",  # encouragement response
+    "e3": "frustration_tolerance",  # time pressure effect
+    "e4": "help_seeking",  # confusion reaction
+    "e5": "help_seeking",  # AI tracking comfort
     # Self-direction — 7 questions
-    "s1": "goal_orientation",      # goal-setting frequency
-    "s2": "curiosity_index",       # free-choice behaviour
-    "s3": "study_independence",    # pacing preference
-    "s4": "study_independence",    # setback response
-    "s5": "goal_orientation",      # self-review habit
-    "s6": "curiosity_index",       # study consistency
-    "s7": "study_independence",    # post-lesson behaviour
+    "s1": "goal_orientation",  # goal-setting frequency
+    "s2": "curiosity_index",  # free-choice behaviour
+    "s3": "study_independence",  # pacing preference
+    "s4": "study_independence",  # setback response
+    "s5": "goal_orientation",  # self-review habit
+    "s6": "curiosity_index",  # study consistency
+    "s7": "study_independence",  # post-lesson behaviour
 }
 
 # All 9 sub-dimension names — must match learner_dna column names in DB exactly.

@@ -6,12 +6,14 @@ asyncio.to_thread is shimmed to run synchronously so MagicMock chain works corre
 Includes both direct service-layer tests (grade_quiz called directly) and an
 HTTP-layer test via TestClient to verify the router wires to the service correctly.
 """
+
 from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from app.dependencies import get_current_user
 from app.modules.assessment.router import QuizAnswer, router
@@ -19,8 +21,10 @@ from app.modules.assessment.service import grade_quiz
 
 # ── HTTP-layer client (router integration) ────────────────────────────────────
 
+
 async def _fake_user() -> dict:
     return {"sub": "user-001", "email": "test@example.com"}
+
 
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
@@ -101,6 +105,7 @@ def mock_to_thread(monkeypatch):
     pool, so MagicMock return values resolve correctly without a real event loop
     or thread pool overhead.
     """
+
     async def _sync_shim(func, *args, **kwargs):
         return func(*args, **kwargs)
 
@@ -131,16 +136,20 @@ def _build_supabase(
     mock = MagicMock()
 
     session_mock = MagicMock()
-    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
+    sess_exec = session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    sess_exec.return_value.data = session_data
 
     lesson_mock = MagicMock()
-    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = lesson_data
+    les_exec = lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    les_exec.return_value.data = lesson_data
 
     count_resp_obj = MagicMock()
     count_resp_obj.count = count
 
     count_table_mock = MagicMock()
-    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = (
+        count_resp_obj
+    )
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = insert_data or []
@@ -169,8 +178,12 @@ async def test_correct_answer_is_marked_correct(mock_to_thread) -> None:
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1500)]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.feedback[0]["is_correct"] is True
     assert result.correct_count == 1
@@ -182,8 +195,12 @@ async def test_wrong_answer_is_marked_incorrect(mock_to_thread) -> None:
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=0, response_time_ms=1000)]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.feedback[0]["is_correct"] is False
     assert result.correct_count == 0
@@ -198,8 +215,12 @@ async def test_all_correct_gives_score_100(mock_to_thread) -> None:
         QuizAnswer(question_id="q2", response_index=2, response_time_ms=2000),
     ]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.correct_count == 2
     assert result.total_count == 2
@@ -217,8 +238,12 @@ async def test_all_wrong_gives_score_0(mock_to_thread) -> None:
         QuizAnswer(question_id="q2", response_index=0, response_time_ms=1000),
     ]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.correct_count == 0
     assert result.score == pytest.approx(0.0)
@@ -234,8 +259,12 @@ async def test_mixed_answers_give_50_percent(mock_to_thread) -> None:
         QuizAnswer(question_id="q2", response_index=0, response_time_ms=1500),  # wrong
     ]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.score == pytest.approx(50.0)
 
@@ -250,8 +279,12 @@ async def test_ces_contribution_uses_quiz_weight(mock_to_thread, monkeypatch) ->
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.ces_contribution == pytest.approx(1.0 * 0.35 * 100)
 
@@ -262,15 +295,19 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
     captured_rows: list = []
 
     session_mock = MagicMock()
-    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    sess_exec = session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    sess_exec.return_value.data = _SESSION_ROW
     lesson_mock = MagicMock()
-    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+    les_exec = lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    les_exec.return_value.data = {"content": _LESSON_CONTENT}
 
     # count query: count=0 → attempt_number=1 (first attempt)
     count_resp_obj = MagicMock()
     count_resp_obj.count = 0
     count_table_mock = MagicMock()
-    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = (
+        count_resp_obj
+    )
 
     def _capture(rows):
         captured_rows.extend(rows)
@@ -287,8 +324,12 @@ async def test_response_time_ms_written_to_db(mock_to_thread) -> None:
 
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=3750)]
     await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert len(captured_rows) == 1
     assert captured_rows[0]["response_time_ms"] == 3750
@@ -303,15 +344,19 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
     captured_rows: list = []
 
     session_mock = MagicMock()
-    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    sess_exec = session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    sess_exec.return_value.data = _SESSION_ROW
     lesson_mock = MagicMock()
-    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+    les_exec = lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    les_exec.return_value.data = {"content": _LESSON_CONTENT}
 
     # count=1 → service computes attempt_number = 1 + 1 = 2
     count_resp_obj = MagicMock()
     count_resp_obj.count = 1
     count_table_mock = MagicMock()
-    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = (
+        count_resp_obj
+    )
 
     def _capture(rows):
         captured_rows.extend(rows)
@@ -328,8 +373,12 @@ async def test_attempt_number_written_to_db(mock_to_thread) -> None:
 
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert captured_rows[0]["attempt_number"] == 2
 
@@ -340,8 +389,12 @@ async def test_feedback_contains_explanation(mock_to_thread) -> None:
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=0, response_time_ms=1000)]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.feedback[0]["explanation"] == _QUESTION_1["explanation"]
     assert result.feedback[0]["question"] == _QUESTION_1["question"]
@@ -353,8 +406,12 @@ async def test_feedback_contains_correct_option_text(mock_to_thread) -> None:
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=0, response_time_ms=1000)]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.feedback[0]["correct_option"] == "Mitochondria"
 
@@ -366,12 +423,17 @@ async def test_feedback_contains_correct_option_text(mock_to_thread) -> None:
 async def test_raises_404_when_session_not_found(mock_to_thread) -> None:
     """DB returns None for session → HTTP 404."""
     from fastapi import HTTPException
+
     supabase = _build_supabase(session_data=None, lesson_data={"content": _LESSON_CONTENT})
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="missing", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="missing",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 404
 
@@ -385,13 +447,18 @@ async def test_session_wrong_user_returns_404(mock_to_thread) -> None:
     Detail must contain 'not found or access denied'.
     """
     from fastapi import HTTPException
+
     other_session = {"session_id": "sess-001", "user_id": "other-user", "lesson_id": "lesson-001"}
     supabase = _build_supabase(session_data=other_session, lesson_data={"content": _LESSON_CONTENT})
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 404
     assert "not found or access denied" in exc_info.value.detail
@@ -401,12 +468,17 @@ async def test_session_wrong_user_returns_404(mock_to_thread) -> None:
 async def test_raises_404_when_lesson_content_is_none(mock_to_thread) -> None:
     """lesson.content == None → HTTP 404."""
     from fastapi import HTTPException
+
     supabase = _build_supabase(session_data=_SESSION_ROW, lesson_data={"content": None})
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 404
 
@@ -415,12 +487,17 @@ async def test_raises_404_when_lesson_content_is_none(mock_to_thread) -> None:
 async def test_raises_404_when_segment_not_in_lesson(mock_to_thread) -> None:
     """segment_id not in lesson.segments → HTTP 404."""
     from fastapi import HTTPException
+
     supabase = _build_supabase(session_data=_SESSION_ROW, lesson_data={"content": _LESSON_CONTENT})
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="DOES-NOT-EXIST",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="DOES-NOT-EXIST",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 404
 
@@ -429,12 +506,17 @@ async def test_raises_404_when_segment_not_in_lesson(mock_to_thread) -> None:
 async def test_raises_422_when_question_id_not_in_segment(mock_to_thread) -> None:
     """question_id from answer not in segment quiz → HTTP 422."""
     from fastapi import HTTPException
+
     supabase = _build_supabase(session_data=_SESSION_ROW, lesson_data={"content": _LESSON_CONTENT})
     answers = [QuizAnswer(question_id="BOGUS-Q", response_index=0, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 422
 
@@ -446,11 +528,16 @@ async def test_raises_422_when_question_id_not_in_segment(mock_to_thread) -> Non
 async def test_raises_422_when_answers_list_is_empty(mock_to_thread) -> None:
     """Empty answers list must be rejected with 422 before any DB write."""
     from fastapi import HTTPException
+
     supabase = _build_supabase(session_data=_SESSION_ROW, lesson_data={"content": _LESSON_CONTENT})
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=[], user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=[],
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 422
     # Confirm no insert was attempted for empty submission
@@ -471,8 +558,12 @@ async def test_table_routing_is_verified(mock_to_thread) -> None:
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     calls = [c.args[0] for c in supabase.table.call_args_list]
     assert calls == ["sessions", "lessons", "quiz_attempts", "quiz_attempts"], (
@@ -505,8 +596,12 @@ async def test_correct_index_zero_marks_correct_answer(mock_to_thread) -> None:
     )
     answers = [QuizAnswer(question_id="q_zero", response_index=0, response_time_ms=500)]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.feedback[0]["is_correct"] is True
 
@@ -571,15 +666,19 @@ def _build_supabase_with_insert_error(error_message: str) -> MagicMock:
     4-call side_effect required after S3-12 added the SELECT COUNT query.
     """
     session_mock = MagicMock()
-    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = _SESSION_ROW
+    sess_exec = session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    sess_exec.return_value.data = _SESSION_ROW
 
     lesson_mock = MagicMock()
-    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"content": _LESSON_CONTENT}
+    les_exec = lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    les_exec.return_value.data = {"content": _LESSON_CONTENT}
 
     count_resp_obj = MagicMock()
     count_resp_obj.count = 0
     count_table_mock = MagicMock()
-    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = count_resp_obj
+    count_table_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = (
+        count_resp_obj
+    )
 
     error_obj = MagicMock()
     error_obj.__str__ = MagicMock(return_value=error_message)
@@ -602,14 +701,19 @@ async def test_quiz_duplicate_attempt_returns_409(mock_to_thread) -> None:
     HTTPException(409) instead of the generic 500.
     """
     from fastapi import HTTPException
+
     supabase = _build_supabase_with_insert_error(
-        "duplicate key value violates unique constraint \"uq_quiz_attempt\""
+        'duplicate key value violates unique constraint "uq_quiz_attempt"'
     )
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 409
     assert "duplicate" in exc_info.value.detail.lower()
@@ -622,12 +726,17 @@ async def test_quiz_generic_insert_error_still_returns_500(mock_to_thread) -> No
     Non-constraint errors (e.g. connection timeout) must still produce a 500.
     """
     from fastapi import HTTPException
+
     supabase = _build_supabase_with_insert_error("connection timeout")
     answers = [QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 500
 
@@ -646,7 +755,9 @@ def test_too_many_answers_rejected() -> None:
         "session_id": "sess-001",
         "lesson_id": "lesson-001",
         "segment_id": "seg-001",
-        "answers": [{"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0} for i in range(51)],
+        "answers": [
+            {"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0} for i in range(51)
+        ],
     }
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/quiz", json=payload)
@@ -656,10 +767,10 @@ def test_too_many_answers_rejected() -> None:
 @pytest.mark.unit
 def test_answers_at_max_length_accepted(monkeypatch) -> None:
     """AC 9.2: Exactly 50 answers → HTTP 200 (upper boundary is accepted)."""
-    from app.modules.assessment.schemas import QuizResult as _QR
+    from app.modules.assessment.schemas import QuizResult as _QuizResult
 
     async def _fake_grade_quiz(**kwargs):
-        return _QR(
+        return _QuizResult(
             session_id=kwargs["session_id"],
             score=0.0,
             correct_count=0,
@@ -673,7 +784,9 @@ def test_answers_at_max_length_accepted(monkeypatch) -> None:
         "session_id": "sess-001",
         "lesson_id": "lesson-001",
         "segment_id": "seg-001",
-        "answers": [{"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0} for i in range(50)],
+        "answers": [
+            {"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0} for i in range(50)
+        ],
     }
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/quiz", json=payload)
@@ -687,12 +800,17 @@ async def test_response_index_upper_bound_rejected(mock_to_thread) -> None:
     _QUESTION_1 has 4 options (indices 0–3). response_index=99 is out of range.
     """
     from fastapi import HTTPException
+
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=99, response_time_ms=1000)]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 422
     assert "out of range" in exc_info.value.detail.lower()
@@ -708,8 +826,12 @@ async def test_response_index_at_max_valid(mock_to_thread) -> None:
     supabase = _default_supabase()
     answers = [QuizAnswer(question_id="q1", response_index=3, response_time_ms=500)]
     result = await grade_quiz(
-        session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-        answers=answers, user_id="user-001", supabase=supabase,
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        answers=answers,
+        user_id="user-001",
+        supabase=supabase,
     )
     assert result.feedback[0]["is_correct"] is False
     assert result.feedback[0]["selected_option"] == "Golgi apparatus"
@@ -723,6 +845,7 @@ async def test_duplicate_question_id_rejected(mock_to_thread) -> None:
     incorrectly inflate or deflate the score.
     """
     from fastapi import HTTPException
+
     supabase = _default_supabase()
     answers = [
         QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000),
@@ -730,8 +853,12 @@ async def test_duplicate_question_id_rejected(mock_to_thread) -> None:
     ]
     with pytest.raises(HTTPException) as exc_info:
         await grade_quiz(
-            session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
-            answers=answers, user_id="user-001", supabase=supabase,
+            session_id="sess-001",
+            lesson_id="lesson-001",
+            segment_id="seg-001",
+            answers=answers,
+            user_id="user-001",
+            supabase=supabase,
         )
     assert exc_info.value.status_code == 422
     assert "duplicate" in exc_info.value.detail.lower()
@@ -744,8 +871,9 @@ async def test_insert_error_log_sanitized(mock_to_thread) -> None:
     SEC-009: Log injection prevention. The raw error object may contain newlines from
     stack traces or injected SQL. safe_err must strip them before logging.
     """
-    from fastapi import HTTPException
     from unittest.mock import patch as _patch
+
+    from fastapi import HTTPException
 
     malicious_error = "connection failed\nSELECT * FROM secrets\rANOTHER LINE"
     supabase = _build_supabase_with_insert_error(malicious_error)
@@ -753,9 +881,12 @@ async def test_insert_error_log_sanitized(mock_to_thread) -> None:
     with _patch("app.modules.assessment.service.logger") as mock_log:
         with pytest.raises(HTTPException) as exc_info:
             await grade_quiz(
-                session_id="sess-001", lesson_id="lesson-001", segment_id="seg-001",
+                session_id="sess-001",
+                lesson_id="lesson-001",
+                segment_id="seg-001",
                 answers=[QuizAnswer(question_id="q1", response_index=1, response_time_ms=1000)],
-                user_id="user-001", supabase=supabase,
+                user_id="user-001",
+                supabase=supabase,
             )
 
     assert exc_info.value.status_code == 500
@@ -766,4 +897,6 @@ async def test_insert_error_log_sanitized(mock_to_thread) -> None:
     # The safe_err is the last positional argument (session_id then safe_err)
     logged_str = " ".join(str(a) for a in logged_args)
     assert "\n" not in logged_str, f"logger.error must not contain newlines; got: {logged_str!r}"
-    assert "\r" not in logged_str, f"logger.error must not contain carriage returns; got: {logged_str!r}"
+    assert "\r" not in logged_str, (
+        f"logger.error must not contain carriage returns; got: {logged_str!r}"
+    )

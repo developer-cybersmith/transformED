@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # OpenAIImageProvider
 # ---------------------------------------------------------------------------
@@ -37,7 +36,9 @@ async def test_openai_image_success_returns_data_uri() -> None:
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.openai_image.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch(
+            "app.providers.image.openai_image.is_circuit_open", new=AsyncMock(return_value=False)
+        ),
         patch("app.providers.image.openai_image.record_success", new=AsyncMock()),
         patch("app.providers.image.openai_image.AsyncOpenAI", return_value=mock_client),
     ):
@@ -84,7 +85,9 @@ async def test_openai_image_missing_b64_json_raises_value_error() -> None:
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.openai_image.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch(
+            "app.providers.image.openai_image.is_circuit_open", new=AsyncMock(return_value=False)
+        ),
         patch("app.providers.image.openai_image.record_failure", new=AsyncMock()),
         patch("app.providers.image.openai_image.AsyncOpenAI", return_value=mock_client),
     ):
@@ -142,9 +145,7 @@ async def test_imagen_success_returns_data_uri() -> None:
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "predictions": [{"bytesBase64Encoded": "ZmFrZWltYWdlbg=="}]
-    }
+    mock_response.json.return_value = {"predictions": [{"bytesBase64Encoded": "ZmFrZWltYWdlbg=="}]}
     mock_response.raise_for_status.return_value = None
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response

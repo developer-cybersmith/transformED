@@ -23,12 +23,10 @@ Coverage:
 
 All tests are @pytest.mark.unit — no DB, no LLM, no network.
 """
+
 from __future__ import annotations
 
 import ast
-import importlib
-import inspect
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -36,6 +34,7 @@ import pytest
 from app.config import Settings
 
 # ── Settings factory ─────────────────────────────────────────────────────────
+
 
 def _settings(
     quiz: float = 0.35,
@@ -66,15 +65,18 @@ def _settings(
 # Lazy import so tests fail clearly if ces.py doesn't exist yet
 def _import_compute_ces():
     from app.modules.assessment.ces import compute_ces  # noqa: PLC0415
+
     return compute_ces
 
 
 # ── AC 2: __all__ contains only "compute_ces" ─────────────────────────────
 
+
 @pytest.mark.unit
 def test_dunder_all_contains_only_compute_ces():
     """AC 2: ces.py defines __all__ = ['compute_ces'] and nothing else."""
     import app.modules.assessment.ces as ces_module
+
     assert hasattr(ces_module, "__all__"), "__all__ must be defined in ces.py"
     assert list(ces_module.__all__) == ["compute_ces"], (
         f"__all__ must contain only 'compute_ces', got {ces_module.__all__!r}"
@@ -82,6 +84,7 @@ def test_dunder_all_contains_only_compute_ces():
 
 
 # ── AC 3: keyword-only signature ─────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_positional_args_raise_type_error():
@@ -93,6 +96,7 @@ def test_positional_args_raise_type_error():
 
 
 # ── AC 4: no hardcoded weight literals ───────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_no_hardcoded_weight_literals_in_ces_py():
@@ -116,6 +120,7 @@ def test_no_hardcoded_weight_literals_in_ces_py():
 
 # ── AC 10: all-zeros → 0.0 ───────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_all_zeros_returns_zero():
     """AC 10: All signals = 0 → CES = 0.0."""
@@ -132,6 +137,7 @@ def test_all_zeros_returns_zero():
 
 
 # ── AC 11: all-ones → 100.0 (full formula) ───────────────────────────────────
+
 
 @pytest.mark.unit
 def test_all_ones_full_formula_returns_100():
@@ -150,6 +156,7 @@ def test_all_ones_full_formula_returns_100():
 
 # ── AC 12: all-ones → 100.0 (teachback None) ─────────────────────────────────
 
+
 @pytest.mark.unit
 def test_all_ones_teachback_none_returns_100():
     """AC 12: Redistributed weights still sum to 1.0 → all-ones → 100.0."""
@@ -167,6 +174,7 @@ def test_all_ones_teachback_none_returns_100():
 
 # ── AC 13: mid-values 0.5 → 50.0 ─────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_mid_values_all_half_returns_50():
     """AC 13: All signals = 0.5 → CES = 0.5 × sum(weights) × 100 = 50.0."""
@@ -183,6 +191,7 @@ def test_mid_values_all_half_returns_50():
 
 
 # ── AC 14: partial values with teachback None → ≈73.33 ───────────────────────
+
 
 @pytest.mark.unit
 def test_partial_values_teachback_none_correct_weighted_sum():
@@ -203,6 +212,7 @@ def test_partial_values_teachback_none_correct_weighted_sum():
 
 
 # ── AC 7: redistribution weights are proportional (per-weight) ───────────────
+
 
 @pytest.mark.unit
 def test_redistribution_weights_are_proportional():
@@ -230,6 +240,7 @@ def test_redistribution_weights_are_proportional():
 
 # ── AC 8: quiz_accuracy=None treated as 0.0, weight retained ─────────────────
 
+
 @pytest.mark.unit
 def test_quiz_accuracy_none_treated_as_zero():
     """AC 8: quiz_accuracy=None → contribution is 0 but weight is NOT redistributed."""
@@ -252,6 +263,7 @@ def test_quiz_accuracy_none_treated_as_zero():
 
 # ── AC 8b: quiz_accuracy=None AND teachback_score=None ───────────────────────
 
+
 @pytest.mark.unit
 def test_both_none_quiz_accuracy_treated_as_zero_in_redistribution():
     """AC 8+7: quiz_accuracy=None + teachback=None → qa=0.0 in redistribution."""
@@ -269,11 +281,17 @@ def test_both_none_quiz_accuracy_treated_as_zero_in_redistribution():
         settings=s,
     )
     remaining = 1.0 - 0.25
-    expected = (0.0 * (0.35 / remaining) + 1.0 * (0.20 / remaining) + 1.0 * (0.12 / remaining) + 1.0 * (0.08 / remaining)) * 100
+    expected = (
+        0.0 * (0.35 / remaining)
+        + 1.0 * (0.20 / remaining)
+        + 1.0 * (0.12 / remaining)
+        + 1.0 * (0.08 / remaining)
+    ) * 100
     assert result == pytest.approx(expected, abs=0.1)
 
 
 # ── AC 9: division-by-zero guard ─────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_division_by_zero_guard_returns_zero():
@@ -283,7 +301,7 @@ def test_division_by_zero_guard_returns_zero():
     s = _settings(quiz=0.0, tb=1.0, beh=0.0, hp=0.0, blink=0.0)
     result = compute_ces(
         quiz_accuracy=1.0,
-        teachback_score=None,   # triggers redistribution path → remaining = 0.0
+        teachback_score=None,  # triggers redistribution path → remaining = 0.0
         behavioral=1.0,
         head_pose=1.0,
         blink=1.0,
@@ -293,6 +311,7 @@ def test_division_by_zero_guard_returns_zero():
 
 
 # ── AC 15: out-of-range inputs clamped ───────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_out_of_range_inputs_are_clamped_not_rejected():
@@ -314,6 +333,7 @@ def test_out_of_range_inputs_are_clamped_not_rejected():
 
 
 # ── AC 16: custom non-default weights ────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_custom_weights_produce_correct_result():
@@ -352,6 +372,7 @@ def test_custom_weights_partial_values():
 
 # ── AC 6: specific non-trivial weighted sum ───────────────────────────────────
 
+
 @pytest.mark.unit
 def test_full_formula_specific_non_trivial_values():
     """AC 6: Non-trivial partial values produce exactly the correct weighted sum."""
@@ -373,6 +394,7 @@ def test_full_formula_specific_non_trivial_values():
 
 
 # ── AC 17: no forbidden imports ──────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_ces_py_has_no_forbidden_imports():
@@ -397,6 +419,7 @@ def test_ces_py_has_no_forbidden_imports():
 
 # ── AC 5 (extended): head_pose and blink clamped ─────────────────────────────
 
+
 @pytest.mark.unit
 def test_head_pose_and_blink_clamped_when_out_of_range():
     """AC 5: head_pose > 1 and blink < 0 are clamped silently — no exception raised."""
@@ -406,8 +429,8 @@ def test_head_pose_and_blink_clamped_when_out_of_range():
         quiz_accuracy=0.5,
         teachback_score=0.5,
         behavioral=0.5,
-        head_pose=2.0,   # > 1.0 — clamped to 1.0
-        blink=-1.0,      # < 0.0 — clamped to 0.0
+        head_pose=2.0,  # > 1.0 — clamped to 1.0
+        blink=-1.0,  # < 0.0 — clamped to 0.0
         settings=s,
     )
     # Equivalent: quiz=0.5, tb=0.5, beh=0.5, hp=1.0, blink=0.0
@@ -416,6 +439,7 @@ def test_head_pose_and_blink_clamped_when_out_of_range():
 
 
 # ── AC 8 (extended): teachback=0.0 uses full formula, not redistribution ─────
+
 
 @pytest.mark.unit
 def test_teachback_zero_uses_full_formula_not_redistribution():
@@ -459,6 +483,7 @@ def test_teachback_zero_uses_full_formula_not_redistribution():
 
 
 # ── Output clamp: CES never exceeds 100.0 ────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_output_clamped_to_100_when_weights_sum_exceeds_one():

@@ -8,6 +8,7 @@ Scale contract: returns a float on the 0-100 POINT scale.
 Dev 4 compares the result against settings.ces_threshold (default 50.0)
 to decide whether to trigger an intervention.
 """
+
 from __future__ import annotations
 
 from app.config import Settings
@@ -51,10 +52,10 @@ def compute_ces(
         CES as a float in [0.0, 100.0] on the POINT scale, rounded to 4 d.p.
     """
     # Clamp all signals to [0, 1]
-    qa  = min(1.0, max(0.0, quiz_accuracy if quiz_accuracy is not None else 0.0))
+    qa = min(1.0, max(0.0, quiz_accuracy if quiz_accuracy is not None else 0.0))
     beh = min(1.0, max(0.0, behavioral))
-    hp  = min(1.0, max(0.0, head_pose))
-    bl  = min(1.0, max(0.0, blink))
+    hp = min(1.0, max(0.0, head_pose))
+    bl = min(1.0, max(0.0, blink))
 
     if teachback_score is None:
         # Redistribute teachback weight proportionally across the 4 remaining signals.
@@ -66,19 +67,19 @@ def compute_ces(
             # weights are 0 — division is undefined, safe return is 0.0.
             return 0.0
         raw = (
-            qa  * (settings.ces_weight_quiz       / remaining)
+            qa * (settings.ces_weight_quiz / remaining)
             + beh * (settings.ces_weight_behavioral / remaining)
-            + hp  * (settings.ces_weight_head_pose  / remaining)
-            + bl  * (settings.ces_weight_blink      / remaining)
+            + hp * (settings.ces_weight_head_pose / remaining)
+            + bl * (settings.ces_weight_blink / remaining)
         )
     else:
         tb = min(1.0, max(0.0, teachback_score))
         raw = (
-            qa  * settings.ces_weight_quiz
-            + tb  * settings.ces_weight_teachback
+            qa * settings.ces_weight_quiz
+            + tb * settings.ces_weight_teachback
             + beh * settings.ces_weight_behavioral
-            + hp  * settings.ces_weight_head_pose
-            + bl  * settings.ces_weight_blink
+            + hp * settings.ces_weight_head_pose
+            + bl * settings.ces_weight_blink
         )
 
     # Guard: weights may sum to up to 1.001 (within ±0.001 model_validator tolerance),

@@ -27,15 +27,21 @@ SLIDES: list[dict[str, Any]] = [
     {
         "segment_id": "sec_0",
         "data": {
-            "slide_id": "slide_sec_0_0", "title": "Welcome", "bullets": ["Point A"],
-            "image_url": None, "fallback_image_url": None,
+            "slide_id": "slide_sec_0_0",
+            "title": "Welcome",
+            "bullets": ["Point A"],
+            "image_url": None,
+            "fallback_image_url": None,
         },
     },
     {
         "segment_id": "sec_1",
         "data": {
-            "slide_id": "slide_sec_1_0", "title": "Mechanics", "bullets": ["Step 1"],
-            "image_url": None, "fallback_image_url": None,
+            "slide_id": "slide_sec_1_0",
+            "title": "Mechanics",
+            "bullets": ["Step 1"],
+            "image_url": None,
+            "fallback_image_url": None,
         },
     },
 ]
@@ -80,14 +86,20 @@ async def test_happy_path_openai_success_produces_flat_slide_images() -> None:
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         result = await image_generator_node(_base_state())
 
     images = result["slide_images"]
     assert len(images) == 2
-    assert images[0] == {"slide_id": "slide_sec_0_0", "image_url": f"{FAKE_LESSON_ID}/slide_sec_0_0.png"}
+    assert images[0] == {
+        "slide_id": "slide_sec_0_0",
+        "image_url": f"{FAKE_LESSON_ID}/slide_sec_0_0.png",
+    }
     upload_call = sb.storage.from_.return_value.upload.call_args_list[0]
     assert upload_call.kwargs["file_options"]["upsert"] == "true"
     assert upload_call.kwargs["file_options"]["content-type"] == "image/png"
@@ -108,7 +120,10 @@ async def test_openai_failure_falls_back_to_imagen() -> None:
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.providers.image.imagen.ImagenProvider", return_value=mock_imagen_provider),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -134,7 +149,10 @@ async def test_both_providers_fail_falls_back_to_text_only_never_raises() -> Non
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.providers.image.imagen.ImagenProvider", return_value=mock_imagen_provider),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
@@ -157,7 +175,10 @@ async def test_cost_ceiling_over_skips_providers_entirely() -> None:
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
     ):
         result = await image_generator_node(_base_state(slides=[SLIDES[0]]))
 
@@ -176,13 +197,19 @@ async def test_malformed_slide_entry_degrades_that_slide_only() -> None:
     mock_openai_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
-    malformed = {"segment_id": "sec_bad", "data": {"slide_id": "slide_bad"}}  # missing title/bullets
+    malformed = {
+        "segment_id": "sec_bad",
+        "data": {"slide_id": "slide_bad"},
+    }  # missing title/bullets
     slides_in = [malformed, SLIDES[0]]
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         result = await image_generator_node(_base_state(slides=slides_in))
@@ -206,13 +233,22 @@ async def test_unsafe_slide_id_degrades_to_text_only() -> None:
 
     unsafe_slide = {
         "segment_id": "sec_0",
-        "data": {"slide_id": "../../etc/passwd", "title": "x", "bullets": ["y"], "image_url": None, "fallback_image_url": None},
+        "data": {
+            "slide_id": "../../etc/passwd",
+            "title": "x",
+            "bullets": ["y"],
+            "image_url": None,
+            "fallback_image_url": None,
+        },
     }
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         result = await image_generator_node(_base_state(slides=[unsafe_slide]))
@@ -256,7 +292,10 @@ async def test_idempotency_cache_hit_skips_all_generation() -> None:
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
     ):
         result = await image_generator_node(_base_state())
 
@@ -277,7 +316,10 @@ async def test_successful_run_writes_checkpoint() -> None:
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         await image_generator_node(_base_state(slides=[SLIDES[0]]))
@@ -313,7 +355,10 @@ async def test_prompt_never_includes_raw_lesson_plan_or_narration() -> None:
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         await image_generator_node(state)
@@ -348,7 +393,10 @@ async def test_cost_is_accumulated_only_after_successful_upload_not_by_provider(
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
         result = await image_generator_node(_base_state(slides=[SLIDES[0]]))
@@ -374,7 +422,10 @@ async def test_malformed_data_uri_from_provider_degrades_slide_not_uploaded_as_s
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         result = await image_generator_node(_base_state(slides=[SLIDES[0]]))
@@ -401,7 +452,10 @@ async def test_non_dict_data_field_degrades_that_slide_only() -> None:
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         result = await image_generator_node(_base_state(slides=slides_in))
@@ -440,7 +494,9 @@ async def test_unsafe_lesson_id_raises() -> None:
 
     with patch("app.core.db.get_supabase", return_value=sb):
         with pytest.raises(RuntimeError, match="unsafe lesson_id"):
-            await image_generator_node(_base_state(lesson_id="../../etc/passwd", slides=[SLIDES[0]]))
+            await image_generator_node(
+                _base_state(lesson_id="../../etc/passwd", slides=[SLIDES[0]])
+            )
 
 
 @pytest.mark.unit
@@ -455,13 +511,22 @@ async def test_empty_bullets_list_degrades_slide_without_calling_provider() -> N
 
     empty_bullets_slide = {
         "segment_id": "sec_0",
-        "data": {"slide_id": "slide_sec_0_0", "title": "Welcome", "bullets": [], "image_url": None, "fallback_image_url": None},
+        "data": {
+            "slide_id": "slide_sec_0_0",
+            "title": "Welcome",
+            "bullets": [],
+            "image_url": None,
+            "fallback_image_url": None,
+        },
     }
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_openai_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
     ):
         result = await image_generator_node(_base_state(slides=[empty_bullets_slide]))
 

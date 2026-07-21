@@ -24,7 +24,9 @@ import httpx
 import pytest
 
 
-def _make_httpx_response(status_code: int, json_body: dict[str, Any] | None = None, content: bytes = b"") -> MagicMock:
+def _make_httpx_response(
+    status_code: int, json_body: dict[str, Any] | None = None, content: bytes = b""
+) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
     resp.content = content
@@ -48,7 +50,9 @@ def _make_httpx_response(status_code: int, json_body: dict[str, Any] | None = No
 async def test_sarvam_synthesize_success_returns_audio_and_empty_timestamps() -> None:
     from app.providers.tts.sarvam import SarvamTTSProvider
 
-    mock_response = _make_httpx_response(200, json_body={"audios": ["base64ignored"]}, content=b"FAKEAUDIO")
+    mock_response = _make_httpx_response(
+        200, json_body={"audios": ["base64ignored"]}, content=b"FAKEAUDIO"
+    )
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
@@ -121,7 +125,9 @@ async def test_sarvam_429_rate_limit_exceeded_is_retried() -> None:
     default 429 handling applies, verify it's exercised (3 attempts total)."""
     from app.providers.tts.sarvam import SarvamTTSProvider
 
-    mock_response = _make_httpx_response(429, json_body={"error": {"code": "rate_limit_exceeded_error"}})
+    mock_response = _make_httpx_response(
+        429, json_body={"error": {"code": "rate_limit_exceeded_error"}}
+    )
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
@@ -138,7 +144,9 @@ async def test_sarvam_429_rate_limit_exceeded_is_retried() -> None:
         with pytest.raises(httpx.HTTPStatusError):
             await provider.synthesize("Hello world", "meera")
 
-    assert mock_client.post.call_count == 3, "rate_limit_exceeded_error must be retried up to max_attempts"
+    assert mock_client.post.call_count == 3, (
+        "rate_limit_exceeded_error must be retried up to max_attempts"
+    )
 
 
 @pytest.mark.unit
@@ -148,7 +156,9 @@ async def test_sarvam_429_insufficient_quota_is_not_retried() -> None:
     the body-inspection split this AC requires."""
     from app.providers.tts.sarvam import SarvamTTSProvider
 
-    mock_response = _make_httpx_response(429, json_body={"error": {"code": "insufficient_quota_error"}})
+    mock_response = _make_httpx_response(
+        429, json_body={"error": {"code": "insufficient_quota_error"}}
+    )
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 

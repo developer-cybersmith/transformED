@@ -131,18 +131,12 @@ def build_section_bodies(
     sections: list[dict[str, Any]] = []
     for i, cand in enumerate(candidates):
         start_offset = cand["char_offset"] + len(cand["text"])
-        end_offset = (
-            candidates[i + 1]["char_offset"]
-            if i + 1 < len(candidates)
-            else total_chars
-        )
+        end_offset = candidates[i + 1]["char_offset"] if i + 1 < len(candidates) else total_chars
 
         body = raw_text[start_offset:end_offset].strip()
         page_start = estimate_page(cand["char_offset"], total_chars, total_pages)
         if i + 1 < len(candidates):
-            next_page = estimate_page(
-                candidates[i + 1]["char_offset"], total_chars, total_pages
-            )
+            next_page = estimate_page(candidates[i + 1]["char_offset"], total_chars, total_pages)
             page_end = max(page_start, next_page - 1)
         else:
             page_end = max(total_pages, page_start)

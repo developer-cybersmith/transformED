@@ -6,18 +6,30 @@ Handles PDF upload → lesson pipeline dispatch and lesson status/retrieval.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 
-from app.core.rate_limit import _get_user_key, limiter
 from app.core.db import get_supabase
+from app.core.rate_limit import _get_user_key, limiter
 from app.dependencies import ArqRedis, CurrentUser
+
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
 # recorded): single source of truth for the tier default/valid set, shared
 # with the pipeline graph (2026-07-17 review fix, Blind Hunter — a local copy
@@ -92,10 +104,13 @@ async def upload_lesson(
     response: Response,
     current_user: CurrentUser,
     arq_redis: ArqRedis,
-    file: UploadFile = File(..., description="PDF file to process (max 50 MB)"),
-    tier: str = Form(
+    file: UploadFile = File(..., description="PDF file to process (max 50 MB)"),  # noqa: B008
+    tier: str = Form(  # noqa: B008
         _DEFAULT_TIER,
-        description="Learner Mode tier: T1 (full depth), T2 (standard, default), T3 (critical-topics refresher)",
+        description=(
+            "Learner Mode tier: T1 (full depth), T2 (standard, default), "
+            "T3 (critical-topics refresher)"
+        ),
     ),
 ) -> LessonUploadResponse:
     """Accept a PDF upload, store it in Supabase Storage, enqueue ARQ job.
@@ -130,7 +145,9 @@ async def upload_lesson(
 
     # ── MIME type check ───────────────────────────────────────────────────────
     if file.content_type not in ("application/pdf", "application/octet-stream"):
-        raise HTTPException(status_code=422, detail="Invalid content type — expected application/pdf")
+        raise HTTPException(
+            status_code=422, detail="Invalid content type — expected application/pdf"
+        )
 
     # ── Read full body with streaming size guard (enforces limit even without Content-Length) ──
     chunks: list[bytes] = []
@@ -145,7 +162,9 @@ async def upload_lesson(
         chunks.append(chunk)
     pdf_bytes = b"".join(chunks)
 
-    safe_filename = re.sub(r"[^a-zA-Z0-9._\-]", "_", os.path.basename(file.filename or "upload.pdf"))
+    safe_filename = re.sub(
+        r"[^a-zA-Z0-9._\-]", "_", os.path.basename(file.filename or "upload.pdf")
+    )
 
     book_id: str | None = None
     lesson_id: str | None = None
@@ -153,21 +172,33 @@ async def upload_lesson(
 
     try:
         # ── 1. books row ──────────────────────────────────────────────────────
-        books_resp = supabase.table("books").insert({
-            "user_id": user_id,
-            "filename": safe_filename,
-        }).execute()
+        books_resp = (
+            supabase.table("books")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "filename": safe_filename,
+                }
+            )
+            .execute()
+        )
         if not books_resp.data:
             raise RuntimeError("books insert returned no rows")
         book_id = books_resp.data[0]["book_id"]
 
         # ── 2. lessons row ────────────────────────────────────────────────────
-        lessons_resp = supabase.table("lessons").insert({
-            "user_id": user_id,
-            "book_id": book_id,
-            "status": "generating",
-            "tier": tier,
-        }).execute()
+        lessons_resp = (
+            supabase.table("lessons")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "book_id": book_id,
+                    "status": "generating",
+                    "tier": tier,
+                }
+            )
+            .execute()
+        )
         if not lessons_resp.data:
             raise RuntimeError("lessons insert returned no rows")
         lesson_id = lessons_resp.data[0]["lesson_id"]
@@ -181,15 +212,17 @@ async def upload_lesson(
         )
 
         # ── 4. Write storage path back to lessons ─────────────────────────────
-        supabase.table("lessons").update(
-            {"source_file_path": storage_path}
-        ).eq("lesson_id", lesson_id).execute()
+        supabase.table("lessons").update({"source_file_path": storage_path}).eq(
+            "lesson_id", lesson_id
+        ).execute()
 
         # ── 5. lesson_jobs row ────────────────────────────────────────────────
-        supabase.table("lesson_jobs").insert({
-            "lesson_id": lesson_id,
-            "status": "pending",
-        }).execute()
+        supabase.table("lesson_jobs").insert(
+            {
+                "lesson_id": lesson_id,
+                "status": "pending",
+            }
+        ).execute()
 
         # ── 6. Enqueue ARQ job ────────────────────────────────────────────────
         # P5: pass _job_id so ARQ deduplicates by lesson — one pipeline job per lesson
@@ -201,23 +234,15 @@ async def upload_lesson(
             # Clean up all created rows before returning 409. Each delete is isolated
             # so a transient failure on one doesn't abandon the remaining cleanup.
             logger.warning("ARQ deduped job for lesson_id=%s", lesson_id)
-            try:
+            with contextlib.suppress(Exception):
                 supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
-            except Exception:  # noqa: BLE001
-                pass
             if storage_path:
-                try:
+                with contextlib.suppress(Exception):
                     supabase.storage.from_("source-pdfs").remove([storage_path])
-                except Exception:  # noqa: BLE001
-                    pass
-            try:
+            with contextlib.suppress(Exception):
                 supabase.table("books").delete().eq("book_id", book_id).execute()
-            except Exception:  # noqa: BLE001
-                pass
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A lesson pipeline job is already queued for this ID",
@@ -231,24 +256,16 @@ async def upload_lesson(
         # P4: hard-delete all created rows in FK order so the user gets a clean slate on retry.
         # (marking as "failed" leaves orphaned books rows on subsequent retry attempts)
         if lesson_id:
-            try:
+            with contextlib.suppress(Exception):
                 supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
-            except Exception:  # noqa: BLE001
-                pass
         if storage_path:
-            try:
+            with contextlib.suppress(Exception):
                 supabase.storage.from_("source-pdfs").remove([storage_path])
-            except Exception:  # noqa: BLE001
-                pass
         if book_id:
-            try:
+            with contextlib.suppress(Exception):
                 supabase.table("books").delete().eq("book_id", book_id).execute()
-            except Exception:  # noqa: BLE001
-                pass
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create lesson — please retry",
@@ -273,11 +290,15 @@ async def get_lesson(
     try:
         uuid.UUID(lesson_id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found"
+        ) from None
     user_id: str = current_user["sub"]
     supabase = get_supabase()
 
-    lesson_resp = supabase.table("lessons").select("*").eq("lesson_id", lesson_id).maybe_single().execute()
+    lesson_resp = (
+        supabase.table("lessons").select("*").eq("lesson_id", lesson_id).maybe_single().execute()
+    )
     lesson: dict[str, Any] | None = lesson_resp.data
 
     if not lesson or lesson.get("user_id") != user_id:
@@ -286,7 +307,14 @@ async def get_lesson(
     # Fetch error from lesson_jobs if present
     error: str | None = None
     if lesson.get("status") == "failed":
-        jobs_resp = supabase.table("lesson_jobs").select("error").eq("lesson_id", lesson_id).order("created_at", desc=True).limit(1).execute()
+        jobs_resp = (
+            supabase.table("lesson_jobs")
+            .select("error")
+            .eq("lesson_id", lesson_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
         if jobs_resp.data:
             error = jobs_resp.data[0].get("error")
 

@@ -36,7 +36,7 @@ _COST_PER_1K: dict[str, dict[str, float]] = {
 }
 
 
-def _safe_trace(call: Callable[[], Any]) -> Any | None:
+def _safe_trace(call: Callable[[], Any]) -> Any | None:  # noqa: ANN401
     """Run a Langfuse tracing call; observability failures must NEVER fail the pipeline."""
     try:
         return call()
@@ -70,11 +70,13 @@ class OpenAILLMProvider(LLMProvider):
         self,
         messages: list[dict[str, str]],
         model: str,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401
     ) -> str:
         """Return a plain-text chat completion from OpenAI."""
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+            raise RuntimeError(
+                f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
+            )
 
         # Langfuse 4.x (OTel-based): one generation-type observation per call.
         # Tracing is best-effort — the OpenAI call must never fail because of it.
@@ -111,7 +113,9 @@ class OpenAILLMProvider(LLMProvider):
                             },
                         )
                     )
-                await self._maybe_accumulate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                await self._maybe_accumulate_cost(
+                    model, response.usage.prompt_tokens, response.usage.completion_tokens
+                )
 
             await record_success(_PROVIDER_KEY)
             return content
@@ -119,9 +123,7 @@ class OpenAILLMProvider(LLMProvider):
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
-                _safe_trace(
-                    lambda: generation.update(level="ERROR", status_message=error_message)
-                )
+                _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
             await record_failure(_PROVIDER_KEY)
             raise
 
@@ -135,11 +137,13 @@ class OpenAILLMProvider(LLMProvider):
         messages: list[dict[str, str]],
         model: str,
         response_format: type,
-        **kwargs: Any,
-    ) -> Any:
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
         """Return a structured completion parsed into *response_format* (a Pydantic model)."""
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+            raise RuntimeError(
+                f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
+            )
 
         # self._langfuse is None when init failed (AC-3) — skip tracing entirely.
         generation = None
@@ -180,7 +184,9 @@ class OpenAILLMProvider(LLMProvider):
                             },
                         )
                     )
-                await self._maybe_accumulate_cost(model, response.usage.prompt_tokens, response.usage.completion_tokens)
+                await self._maybe_accumulate_cost(
+                    model, response.usage.prompt_tokens, response.usage.completion_tokens
+                )
 
             await record_success(_PROVIDER_KEY)
             return parsed
@@ -188,9 +194,7 @@ class OpenAILLMProvider(LLMProvider):
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
-                _safe_trace(
-                    lambda: generation.update(level="ERROR", status_message=error_message)
-                )
+                _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
             await record_failure(_PROVIDER_KEY)
             raise
 
@@ -198,7 +202,9 @@ class OpenAILLMProvider(LLMProvider):
             if generation is not None:
                 _safe_trace(generation.end)
 
-    async def _maybe_accumulate_cost(self, model: str, input_tokens: int, output_tokens: int) -> None:
+    async def _maybe_accumulate_cost(
+        self, model: str, input_tokens: int, output_tokens: int
+    ) -> None:
         """Accumulate cost for the current lesson if a lesson_id is set."""
         if self._lesson_id is None:
             return

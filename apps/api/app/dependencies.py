@@ -112,7 +112,7 @@ async def get_current_user(
     return payload
 
 
-async def get_arq_redis(request: Request) -> "ArqRedisType":
+async def get_arq_redis(request: Request) -> ArqRedisType:
     """Inject the ARQ Redis pool from app state (for job enqueue only).
 
     Distinct from get_redis() which returns redis.asyncio.Redis.

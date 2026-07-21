@@ -27,7 +27,7 @@ tests/unit/test_bucket_manifest.py)."""
 _MISSING = object()
 
 
-def _bucket_field(bucket: Any, field: str) -> Any:
+def _bucket_field(bucket: Any, field: str) -> Any:  # noqa: ANN401
     """Read `field` from a bucket entry that may be an object or a dict."""
     value = getattr(bucket, field, _MISSING)
     if value is _MISSING and isinstance(bucket, dict):
@@ -35,7 +35,7 @@ def _bucket_field(bucket: Any, field: str) -> Any:
     return value
 
 
-def assert_required_buckets(client: Any) -> None:
+def assert_required_buckets(client: Any) -> None:  # noqa: ANN401
     """Fail fast unless every required bucket exists AND is private.
 
     Raises RuntimeError (never KeyError/AttributeError) with an actionable
@@ -62,9 +62,7 @@ def assert_required_buckets(client: Any) -> None:
 
     missing = REQUIRED_BUCKETS - visibility.keys()
     if missing:
-        raise RuntimeError(
-            f"Missing storage buckets: {sorted(missing)} — apply migrations"
-        )
+        raise RuntimeError(f"Missing storage buckets: {sorted(missing)} — apply migrations")
 
     public = sorted(
         name
@@ -79,6 +77,4 @@ def assert_required_buckets(client: Any) -> None:
             "in the dashboard"
         )
 
-    logger.info(
-        "Storage buckets verified (all private): %s", sorted(REQUIRED_BUCKETS)
-    )
+    logger.info("Storage buckets verified (all private): %s", sorted(REQUIRED_BUCKETS))

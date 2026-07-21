@@ -15,13 +15,15 @@ from app.dependencies import CurrentUser
 router = APIRouter(tags=["media"])
 
 # Allowed buckets (allowlist — never let callers specify arbitrary bucket names)
-_ALLOWED_BUCKETS: frozenset[str] = frozenset({
-    "source-pdfs",
-    "lesson-slides",
-    "lesson-audio",
-    "lesson-images",
-    "avatar-clips",
-})
+_ALLOWED_BUCKETS: frozenset[str] = frozenset(
+    {
+        "source-pdfs",
+        "lesson-slides",
+        "lesson-audio",
+        "lesson-images",
+        "avatar-clips",
+    }
+)
 
 
 class SignedUrlResponse(BaseModel):
