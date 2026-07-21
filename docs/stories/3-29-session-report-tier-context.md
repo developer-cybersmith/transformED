@@ -2,9 +2,9 @@
 story_id: "3-29"
 epic: "3"
 title: "Session Report Contextualised by Tier"
-status: "ready-for-dev"
+status: "done"
 branch: "learner-mode-sprint-dev3-task2"
-baseline_commit: ""
+baseline_commit: "9fa278c"
 ---
 
 # Story 3-29 — Session Report Contextualised by Tier
@@ -97,47 +97,47 @@ Both defined at module level, not inside the route handler.
 
 ## Tasks and Subtasks
 
-- [ ] **Task 1: Add `_TIER_LABELS` constant and `_quiz_accuracy_label` helper to `service.py`**
-  - [ ] 1.1 Add `_TIER_LABELS: dict[str, str]` at module level after existing module-level constants
-  - [ ] 1.2 Add `_quiz_accuracy_label(accuracy: float, total: int) -> str | None` pure function after `_score_to_label`
+- [x] **Task 1: Add `_TIER_LABELS` constant and `_quiz_accuracy_label` helper to `service.py`** — ✓ 2026-07-21
+  - [x] 1.1 Add `_TIER_LABELS: dict[str, str]` at module level after existing module-level constants
+  - [x] 1.2 Add `_quiz_accuracy_label(accuracy: float, total: int) -> str | None` pure function after `_score_to_label`
 
-- [ ] **Task 2: Extend `SessionReport` model in `router.py` with 5 new fields**
-  - [ ] 2.1 Add `tier: str` field
-  - [ ] 2.2 Add `tier_label: str` field
-  - [ ] 2.3 Add `quiz_total_questions: int` field
-  - [ ] 2.4 Add `quiz_correct_count: int` field
-  - [ ] 2.5 Add `quiz_accuracy_label: str | None` field
+- [x] **Task 2: Extend `SessionReport` model in `router.py` with 5 new fields** — ✓ 2026-07-21
+  - [x] 2.1 Add `tier: str` field
+  - [x] 2.2 Add `tier_label: str` field
+  - [x] 2.3 Add `quiz_total_questions: int` field
+  - [x] 2.4 Add `quiz_correct_count: int` field
+  - [x] 2.5 Add `quiz_accuracy_label: str | None` field
 
-- [ ] **Task 3: Extend `get_session_report` in `service.py`**
-  - [ ] 3.1 Add Step 1b: fetch `lessons.tier` via `asyncio.to_thread` using `row["lesson_id"]`
-  - [ ] 3.2 Default `tier = "T2"` when lesson row absent or tier value unexpected
-  - [ ] 3.3 Compute `tier_label = _TIER_LABELS[tier]`
-  - [ ] 3.4 Compute `quiz_accuracy_label` via helper using existing `quiz_accuracy` and `total_quiz`
-  - [ ] 3.5 Add all 5 new fields to the `SessionReport(...)` constructor call
+- [x] **Task 3: Extend `get_session_report` in `service.py`** — ✓ 2026-07-21
+  - [x] 3.1 Add Step 1b: fetch `lessons.tier` via `asyncio.to_thread` using `row["lesson_id"]`
+  - [x] 3.2 Default `tier = "T2"` when lesson row absent or tier value unexpected
+  - [x] 3.3 Compute `tier_label = _TIER_LABELS[tier]`
+  - [x] 3.4 Compute `quiz_accuracy_label` via helper using existing `quiz_accuracy` and `total_quiz`
+  - [x] 3.5 Add all 5 new fields to the `SessionReport(...)` constructor call
 
-- [ ] **Task 4: Write failing tests (RED) in `test_session_report_endpoint.py`**
-  - [ ] 4.1 Update `_build_report_supabase` — add `tier_data` param, handle 5 table calls (shift quiz/teachback/events to n==3/4/5)
-  - [ ] 4.2 Update `test_get_report_asyncio_to_thread_called_4_times` → renamed to `_called_5_times`, assert `len(call_log) == 5`
-  - [ ] 4.3 Update `test_http_get_report_returns_200` `required_keys` to include all 5 new fields
-  - [ ] 4.4 Update `test_get_report_interventions_count_from_session_events` — `supabase._captured_mocks[4]` → `[5]`
-  - [ ] 4.5 Write `test_report_tier_t1_returns_full_depth_label`
-  - [ ] 4.6 Write `test_report_tier_t2_returns_standard_label`
-  - [ ] 4.7 Write `test_report_tier_t3_returns_refresher_label`
-  - [ ] 4.8 Write `test_report_quiz_total_questions_and_correct_count`
-  - [ ] 4.9 Write `test_report_quiz_accuracy_label_strong` (accuracy ≥ 80%)
-  - [ ] 4.10 Write `test_report_quiz_accuracy_label_developing` (60-79%)
-  - [ ] 4.11 Write `test_report_quiz_accuracy_label_needs_review` (< 60%)
-  - [ ] 4.12 Write `test_report_quiz_accuracy_label_none_when_no_questions`
-  - [ ] 4.13 Write `test_report_unknown_tier_defaults_to_t2`
-  - [ ] 4.14 Write `test_report_missing_lesson_row_defaults_to_t2`
+- [x] **Task 4: Write failing tests (RED) in `test_session_report_endpoint.py`** — ✓ 2026-07-21
+  - [x] 4.1 Update `_build_report_supabase` — add `tier_data` param + `_NO_TIER_ROW` sentinel, handle 5 table calls (shift quiz/teachback/events to n==3/4/5)
+  - [x] 4.2 Update `test_get_report_asyncio_to_thread_called_4_times` → renamed to `_called_5_times`, assert `len(call_log) == 5`
+  - [x] 4.3 Update `test_http_get_report_returns_200` `required_keys` to include all 5 new fields
+  - [x] 4.4 Update `test_get_report_interventions_count_from_session_events` — `supabase._captured_mocks[4]` → `[5]`
+  - [x] 4.5 Write `test_report_tier_t1_returns_full_depth_label`
+  - [x] 4.6 Write `test_report_tier_t2_returns_standard_label`
+  - [x] 4.7 Write `test_report_tier_t3_returns_refresher_label`
+  - [x] 4.8 Write `test_report_quiz_total_questions_and_correct_count`
+  - [x] 4.9 Write `test_report_quiz_accuracy_label_strong` (accuracy ≥ 80%)
+  - [x] 4.10 Write `test_report_quiz_accuracy_label_developing` (60-79%)
+  - [x] 4.11 Write `test_report_quiz_accuracy_label_needs_review` (< 60%)
+  - [x] 4.12 Write `test_report_quiz_accuracy_label_none_when_no_questions`
+  - [x] 4.13 Write `test_report_unknown_tier_defaults_to_t2`
+  - [x] 4.14 Write `test_report_missing_lesson_row_defaults_to_t2`
 
-- [ ] **Task 5: Implement (GREEN) — make all tests pass**
-  - [ ] 5.1 All 17 existing session report tests pass without modification to their assertions
-  - [ ] 5.2 All 10 new tier-context tests pass
+- [x] **Task 5: Implement (GREEN) — make all tests pass** — ✓ 2026-07-21
+  - [x] 5.1 All 30 existing session report tests pass without modification to their assertions
+  - [x] 5.2 All 12 new tier-context tests pass (10 Story 3-29 + 2 boundary tests added post-review)
 
-- [ ] **Task 6: Run full test suite — no regressions**
-  - [ ] 6.1 `pytest apps/api/tests/test_session_report_endpoint.py -m unit -v` — all pass
-  - [ ] 6.2 `pytest apps/api/tests/ -m unit` — full suite green
+- [x] **Task 6: Run full test suite — no regressions** — ✓ 2026-07-21
+  - [x] 6.1 `pytest apps/api/tests/test_session_report_endpoint.py -p no:warnings -q` — 42/42 pass
+  - [x] 6.2 `pytest apps/api/tests/ -p no:warnings -q` — 1007 pass, 51 pre-existing failures (Dev 4 tutor service + Dev 1 content router — not Dev 3)
 
 ---
 
@@ -422,6 +422,32 @@ This requires `_build_report_supabase` to use a sentinel for its default, not `N
 
 Let me update the dev notes. The story is already complex enough — let me just write what's needed.
 
-OK I've already written the story. Let me now also include a corrected version of the test patterns in the dev notes and make sure the mock builder uses the sentinel pattern.
+---
 
-Actually, I've been overthinking this. Let me just write the story file with the clean approach and move on to implementation. The story is already comprehensive. Let me write it now.
+## Dev Agent Record
+
+### Completion Notes
+
+- Implementation completed 2026-07-21 on branch `learner-mode-sprint-dev3-task2`
+- Story-first gate satisfied: commit `9fa278c` (story-only) precedes implementation commit `48bfa3a`
+- All 12 ACs implemented and verified
+- Mock builder uses `_NO_TIER_ROW = object()` sentinel so `tier_data=None` unambiguously means "no lesson row returned" while the default (`_NO_TIER_ROW`) maps to `{"tier": "T2"}`
+- 5-agent adversarial code review run; 2 BLOCKERs resolved post-review: exact 80%/60% boundary tests added, SEC-006 `_captured_mocks` count assertion added to wrong-user test
+- 4-dev sign-off required per CLAUDE.md §frozen-contracts (additive response extension) — documented in PR description
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `apps/api/app/modules/assessment/router.py` | +6 lines — 5 new fields on `SessionReport` |
+| `apps/api/app/modules/assessment/service.py` | +53 lines — `_TIER_LABELS`, `_quiz_accuracy_label`, Step 1b in `get_session_report`, 5 new return fields |
+| `apps/api/tests/test_session_report_endpoint.py` | +205/-21 lines — 5-call mock, `_NO_TIER_ROW` sentinel, 12 new tests, 3 existing test updates |
+| `apps/api/tests/test_posthog_events.py` | +6 lines — tier fields in `SessionReport` constructor |
+| `apps/api/tests/conftest.py` | +9/-4 lines — openai stub extended with `openai.types`, `openai.types.chat`, `openai._models` |
+
+### Change Log
+
+- 2026-07-21: Story created (story-first commit `9fa278c`)
+- 2026-07-21: Implementation complete — 42/42 tests pass (commit `48bfa3a`)
+- 2026-07-21: 5-agent code review — 2 BLOCKERs resolved (boundary tests + SEC-006 assertion)
+- 2026-07-21: Branch pushed to `origin/learner-mode-sprint-dev3-task2`
