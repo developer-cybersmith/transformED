@@ -485,24 +485,36 @@ class TestAC2SegmentComplexity:
 
 
 class TestAC3QuizGenerator:
+    """Story 3-28: mock format updated from single _QuizQuestionLLM shape to
+    _QuizBatchLLM shape (object with .questions list). Tested behaviours are
+    unchanged — all per-question guards still apply to each batch item."""
+
+    @staticmethod
+    def _q(**kwargs: Any) -> Any:
+        """Build a _QuizQuestionLLM-shaped mock object."""
+        defaults = {
+            "question": "What is spaced repetition?",
+            "options": ["A", "B", "C", "D"],
+            "correct_index": 1,
+            "explanation": "B is correct because...",
+            "difficulty": "medium",
+        }
+        defaults.update(kwargs)
+        return type("Q", (), defaults)()
+
+    @staticmethod
+    def _batch(*questions: Any) -> Any:
+        """Wrap question mock(s) in a _QuizBatchLLM-shaped batch mock."""
+        return type("Batch", (), {"questions": list(questions)})()
+
     @pytest.mark.asyncio
     async def test_single_invocation_makes_exactly_one_provider_call(self) -> None:
         from app.schemas.lesson import QuizQuestion
         from app.modules.content.pipeline.graph import _derive_section_id, quiz_generator_node
 
-        mock_output = type(
-            "Quiz",
-            (),
-            {
-                "question": "What is spaced repetition?",
-                "options": ["A", "B", "C", "D"],
-                "correct_index": 1,
-                "explanation": "B is correct because...",
-                "difficulty": "medium",
-            },
-        )()
+        mock_batch = self._batch(self._q())
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = mock_output
+        mock_provider.complete_structured.return_value = mock_batch
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
@@ -524,19 +536,11 @@ class TestAC3QuizGenerator:
     async def test_five_options_are_truncated_to_exactly_four_not_passed_through(self) -> None:
         from app.modules.content.pipeline.graph import quiz_generator_node
 
-        mock_output = type(
-            "Quiz",
-            (),
-            {
-                "question": "Which is a memory technique?",
-                "options": ["A", "B", "C", "D", "E"],
-                "correct_index": 0,
-                "explanation": "A is correct.",
-                "difficulty": "easy",
-            },
-        )()
+        mock_batch = self._batch(
+            self._q(question="Which is a memory technique?", options=["A", "B", "C", "D", "E"])
+        )
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = mock_output
+        mock_provider.complete_structured.return_value = mock_batch
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
@@ -554,19 +558,14 @@ class TestAC3QuizGenerator:
         nonsensical MCQ."""
         from app.modules.content.pipeline.graph import quiz_generator_node
 
-        mock_output = type(
-            "Quiz",
-            (),
-            {
-                "question": "Which is a memory technique?",
-                "options": ["Spaced repetition", "Spaced repetition", "Spaced repetition", "Spaced repetition"],
-                "correct_index": 0,
-                "explanation": "A is correct.",
-                "difficulty": "easy",
-            },
-        )()
+        mock_batch = self._batch(
+            self._q(
+                question="Which is a memory technique?",
+                options=["Spaced repetition", "Spaced repetition", "Spaced repetition", "Spaced repetition"],
+            )
+        )
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = mock_output
+        mock_provider.complete_structured.return_value = mock_batch
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
@@ -581,19 +580,11 @@ class TestAC3QuizGenerator:
         populated must not ship."""
         from app.modules.content.pipeline.graph import quiz_generator_node
 
-        mock_output = type(
-            "Quiz",
-            (),
-            {
-                "question": "Which is a memory technique?",
-                "options": ["   ", "B", "C", "D"],
-                "correct_index": 0,
-                "explanation": "A is correct.",
-                "difficulty": "easy",
-            },
-        )()
+        mock_batch = self._batch(
+            self._q(question="Which is a memory technique?", options=["   ", "B", "C", "D"])
+        )
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = mock_output
+        mock_provider.complete_structured.return_value = mock_batch
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
@@ -605,19 +596,11 @@ class TestAC3QuizGenerator:
     async def test_too_few_options_is_rejected(self) -> None:
         from app.modules.content.pipeline.graph import quiz_generator_node
 
-        mock_output = type(
-            "Quiz",
-            (),
-            {
-                "question": "Which is a memory technique?",
-                "options": ["A", "B"],
-                "correct_index": 0,
-                "explanation": "A is correct.",
-                "difficulty": "easy",
-            },
-        )()
+        mock_batch = self._batch(
+            self._q(question="Which is a memory technique?", options=["A", "B"])
+        )
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = mock_output
+        mock_provider.complete_structured.return_value = mock_batch
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
@@ -629,19 +612,11 @@ class TestAC3QuizGenerator:
     async def test_out_of_range_correct_index_is_rejected(self) -> None:
         from app.modules.content.pipeline.graph import quiz_generator_node
 
-        mock_output = type(
-            "Quiz",
-            (),
-            {
-                "question": "Which is a memory technique?",
-                "options": ["A", "B", "C", "D"],
-                "correct_index": 7,
-                "explanation": "A is correct.",
-                "difficulty": "easy",
-            },
-        )()
+        mock_batch = self._batch(
+            self._q(question="Which is a memory technique?", correct_index=7)
+        )
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = mock_output
+        mock_provider.complete_structured.return_value = mock_batch
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
@@ -653,19 +628,9 @@ class TestAC3QuizGenerator:
     async def test_blank_question_or_explanation_is_rejected(self) -> None:
         from app.modules.content.pipeline.graph import quiz_generator_node
 
-        mock_output = type(
-            "Quiz",
-            (),
-            {
-                "question": "   ",
-                "options": ["A", "B", "C", "D"],
-                "correct_index": 0,
-                "explanation": "A is correct.",
-                "difficulty": "easy",
-            },
-        )()
+        mock_batch = self._batch(self._q(question="   "))
         mock_provider = AsyncMock()
-        mock_provider.complete_structured.return_value = mock_output
+        mock_provider.complete_structured.return_value = mock_batch
 
         with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
             state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
