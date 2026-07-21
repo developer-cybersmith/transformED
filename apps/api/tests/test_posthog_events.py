@@ -365,6 +365,7 @@ def test_posthog_session_report_event_fired():
         teachback_score=75.0,
         duration_minutes=12.5,
         completed_at="2026-07-03T10:00:00+00:00",
+        learner_dna_snapshot=None,
     )
 
     with patch(

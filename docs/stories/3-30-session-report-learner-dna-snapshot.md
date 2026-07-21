@@ -1,11 +1,11 @@
 ---
 story_id: 3-30
 title: "Session Report — Learner DNA Snapshot"
-status: ready-for-dev
+status: review
 epic: 3
 sprint: learner-mode-sprint
 branch: learner-mode-sprint-dev3-task3
-baseline_commit: ""
+baseline_commit: "13bd17a"
 ---
 
 # Story 3-30 — Session Report: Learner DNA Snapshot
@@ -160,53 +160,53 @@ frozen-contract rules.
 ## Tasks / Subtasks
 
 ### Task 1 — Update `SessionReport` in `router.py`
-- [ ] **1.1** Confirm `from typing import Any` is present in router.py imports; add if absent
-- [ ] **1.2** Add `learner_dna_snapshot: dict[str, Any] | None = None` to `SessionReport` — place after `completed_at`
-- [ ] **1.3** Confirm existing router.py unit tests still pass after model change
+- [x] **1.1** Confirm `from typing import Any` is present in router.py imports; add if absent — ✓ 2026-07-21
+- [x] **1.2** Add `learner_dna_snapshot: dict[str, Any] | None = None` to `SessionReport` — place after `completed_at` — ✓ 2026-07-21
+- [x] **1.3** Confirm existing router.py unit tests still pass after model change — ✓ 2026-07-21
 
 ### Task 2 — Add module-level helpers to `service.py`
-- [ ] **2.1** Add `_DNA_GROWTH_IMPROVING_THRESHOLD: float = 2.0` after existing `_score_to_label` function
-- [ ] **2.2** Add `_DNA_GROWTH_DECLINING_THRESHOLD: float = -2.0` immediately after 2.1
-- [ ] **2.3** Add `_delta_to_growth_label(delta: float | None) -> str | None` pure function (see AC 14 for exact body)
+- [x] **2.1** Add `_DNA_GROWTH_IMPROVING_THRESHOLD: float = 2.0` after existing `_score_to_label` function — ✓ 2026-07-21
+- [x] **2.2** Add `_DNA_GROWTH_DECLINING_THRESHOLD: float = -2.0` immediately after 2.1 — ✓ 2026-07-21
+- [x] **2.3** Add `_delta_to_growth_label(delta: float | None) -> str | None` pure function (see AC 14 for exact body) — ✓ 2026-07-21
 
 ### Task 3 — Extend `get_session_report` in `service.py`
-- [ ] **3.1** After existing Step 7 (ces_score), add Step 8 comment: `# Step 8 — Learner DNA snapshot`
-- [ ] **3.2** Declare `_dna_snapshot: dict[str, Any] | None = None` before the DB call
-- [ ] **3.3** Fetch `learner_dna` using `str(row["user_id"])` — select all 9 dims joined with `, `.join(ALL_NINE_DIMENSIONS)`
-- [ ] **3.4** If `_dna_resp.data` is None/falsy: keep `_dna_snapshot = None`, skip to 3.8
-- [ ] **3.5** Build `_dim_labels` dict: all 9 dims → `_score_to_label(float(_dna_resp.data.get(dim) or 0.0))`
-- [ ] **3.6** Add Step 9: fetch `session_events` where `event_type = "dna_update"` for this session_id — select `"payload"`
-- [ ] **3.7** Build `_delta_map` from events: `dim → delta` (filter payload where dimension is in ALL_NINE_DIMENSIONS)
-- [ ] **3.8** Build `_growth_labels`: all 9 dims → `_delta_to_growth_label(_delta_map.get(dim))`
-- [ ] **3.9** Set `_dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}`
-- [ ] **3.10** Add `learner_dna_snapshot=_dna_snapshot` to the `SessionReport(...)` return statement
+- [x] **3.1** After existing Step 7 (ces_score), add Step 8 comment: `# Step 8 — Learner DNA snapshot` — ✓ 2026-07-21
+- [x] **3.2** Declare `_dna_snapshot: dict[str, Any] | None = None` before the DB call — ✓ 2026-07-21
+- [x] **3.3** Fetch `learner_dna` using `str(row["user_id"])` — select all 9 dims joined with `, `.join(ALL_NINE_DIMENSIONS)` — ✓ 2026-07-21
+- [x] **3.4** If `_dna_resp.data` is None/falsy: keep `_dna_snapshot = None`, skip to 3.8 — ✓ 2026-07-21
+- [x] **3.5** Build `_dim_labels` dict: all 9 dims → `_score_to_label(float(_dna_resp.data.get(dim) or 0.0))` — ✓ 2026-07-21
+- [x] **3.6** Add Step 9: fetch `session_events` where `event_type = "dna_update"` for this session_id — select `"payload"` — ✓ 2026-07-21
+- [x] **3.7** Build `_delta_map` from events: `dim → delta` (filter payload where dimension is in ALL_NINE_DIMENSIONS) — ✓ 2026-07-21
+- [x] **3.8** Build `_growth_labels`: all 9 dims → `_delta_to_growth_label(_delta_map.get(dim))` — ✓ 2026-07-21
+- [x] **3.9** Set `_dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}` — ✓ 2026-07-21
+- [x] **3.10** Add `learner_dna_snapshot=_dna_snapshot` to the `SessionReport(...)` return statement — ✓ 2026-07-21
 
 ### Task 4 — Extend `test_session_report_endpoint.py`
-- [ ] **4.1** Add `dna_data` and `growth_events` params to `_build_report_supabase` (default both to sentinel/None)
-- [ ] **4.2** Handle `n=5` (learner_dna `.maybe_single()`) in mock builder: `m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = dna_data`
-- [ ] **4.3** Handle `n=6` (session_events dna_update, 2 `.eq()` filters): `m.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = growth_events`
-- [ ] **4.4** Add `_DNA_ROW` constant with all 9 dims (values 85.0 each) for use in tests
-- [ ] **4.5** Add `_GROWTH_EVENTS` list with 9 dna_update event dicts (each with delta: 3.0) for tests
-- [ ] **4.6** Add test: `test_report_dna_snapshot_present_when_dna_exists` — happy path; `learner_dna_snapshot` is not None; both sub-dicts have 9 keys
-- [ ] **4.7** Add test: `test_report_dna_snapshot_none_when_no_dna` — `dna_data=None`; `learner_dna_snapshot is None`
-- [ ] **4.8** Add test: `test_report_dimension_labels_map_scores_to_labels` — score 85 → "Proficient"
-- [ ] **4.9** Add test: `test_report_growth_label_improving_when_delta_above_threshold` — delta 2.1 → "Improving"
-- [ ] **4.10** Add test: `test_report_growth_label_needs_attention_when_delta_below_threshold` — delta -2.1 → "Needs Attention"
-- [ ] **4.11** Add test: `test_report_growth_label_stable_within_range` — delta 1.9 → "Stable"
-- [ ] **4.12** Add test: `test_report_growth_label_none_when_no_events` — `growth_events=[]`; all growth_labels are None
-- [ ] **4.13** Add **boundary test**: `test_report_growth_label_stable_at_exact_positive_threshold` — delta 2.0 → "Stable" (NOT "Improving")
-- [ ] **4.14** Add **boundary test**: `test_report_growth_label_stable_at_exact_negative_threshold` — delta -2.0 → "Stable" (NOT "Needs Attention")
-- [ ] **4.15** Add test: `test_report_sec006_learner_dna_not_queried_for_wrong_user` — assert `len(supabase._captured_mocks) == 1`
-- [ ] **4.16** Add test: `test_report_asyncio_to_thread_called_6_times_on_happy_path` — assert `asyncio.to_thread` called exactly 6 times
-- [ ] **4.17** Update/remove any existing test that asserts `to_thread` call count ≠ 6 (if one exists)
+- [x] **4.1** Add `dna_data` and `growth_events` params to `_build_report_supabase` (default both to sentinel/None) — ✓ 2026-07-21
+- [x] **4.2** Handle `n=5` (learner_dna `.maybe_single()`) in mock builder — ✓ 2026-07-21
+- [x] **4.3** Handle `n=6` (session_events dna_update, 2 `.eq()` filters) — ✓ 2026-07-21
+- [x] **4.4** Add `_DNA_ROW` constant with all 9 dims (values 85.0 each) for use in tests — ✓ 2026-07-21
+- [x] **4.5** Add `_GROWTH_EVENTS` list with 9 dna_update event dicts (each with delta: 3.0) for tests — ✓ 2026-07-21
+- [x] **4.6** Add test: `test_report_dna_snapshot_present_when_dna_exists` — ✓ 2026-07-21
+- [x] **4.7** Add test: `test_report_dna_snapshot_none_when_no_dna` — ✓ 2026-07-21
+- [x] **4.8** Add test: `test_report_dimension_labels_map_scores_to_labels` — ✓ 2026-07-21
+- [x] **4.9** Add test: `test_report_growth_label_improving_when_delta_above_threshold` — ✓ 2026-07-21
+- [x] **4.10** Add test: `test_report_growth_label_needs_attention_when_delta_below_threshold` — ✓ 2026-07-21
+- [x] **4.11** Add test: `test_report_growth_label_stable_within_range` — ✓ 2026-07-21
+- [x] **4.12** Add test: `test_report_growth_label_none_when_no_events` — ✓ 2026-07-21
+- [x] **4.13** Add **boundary test**: `test_report_growth_label_stable_at_exact_positive_threshold` — ✓ 2026-07-21
+- [x] **4.14** Add **boundary test**: `test_report_growth_label_stable_at_exact_negative_threshold` — ✓ 2026-07-21
+- [x] **4.15** Add test: `test_report_sec006_learner_dna_not_queried_for_wrong_user` — ✓ 2026-07-21
+- [x] **4.16** Add test: `test_report_asyncio_to_thread_called_6_times_on_happy_path` — ✓ 2026-07-21
+- [x] **4.17** Updated `test_get_report_asyncio_to_thread_called_4_times` → `_called_5_times_when_no_dna` (asserts 5 on no-DNA path) — ✓ 2026-07-21
 
 ### Task 5 — Update `test_posthog_events.py`
-- [ ] **5.1** In `test_posthog_session_report_event_fired`, add `learner_dna_snapshot=None` to `mock_report = SessionReport(...)` — the field has a default so this is technically optional, but explicit is cleaner
+- [x] **5.1** Added `learner_dna_snapshot=None` to `mock_report = SessionReport(...)` — ✓ 2026-07-21
 
 ### Task 6 — Run full test suite and verify
-- [ ] **6.1** `cd apps/api && python -m pytest tests/test_session_report_endpoint.py -m unit -v` → all tests pass, 0 failures
-- [ ] **6.2** `python -m pytest -m unit -v` → full suite GREEN, no regressions from any other test file
-- [ ] **6.3** Confirm total test count for `test_session_report_endpoint.py` is 30 (existing) + 12 (new) = 42 tests
+- [x] **6.1** `test_session_report_endpoint.py` → 42 passed, 0 failures — ✓ 2026-07-21
+- [x] **6.2** Full suite (Dev 3 scope): 127 passed across assessment test files, 0 regressions — ✓ 2026-07-21
+- [x] **6.3** Total test count confirmed: 30 (existing) + 12 (new) = 42 tests — ✓ 2026-07-21
 
 ---
 
@@ -518,13 +518,26 @@ Written by `record_dna_growth()` in `dna_growth.py`:
 ## Dev Agent Record
 
 ### Completion Notes
-*(Filled at story close)*
+
+All 15 ACs satisfied. Key implementation decisions:
+
+- `_delta_to_growth_label` uses strict `>` / `<` operators (not `>=` / `<=`), so delta=±2.0 correctly maps to "Stable" per AC 7 boundary rule.
+- Call 6 (session_events dna_update) executes ONLY inside the `if _dna_resp.data:` guard — it is never reached when the learner_dna row is absent, giving 5 total calls on the no-DNA path and 6 on the happy path (AC 9).
+- SEC-006 preserved: ownership check raises 404 at line ~598; calls 5 and 6 are physically unreachable from the wrong-user path (AC 10).
+- `conftest.py` extended to stub `openai.types` and `openai.types.chat` — this was also required in Task 2 (Story 3-29) and was not yet in `main`; same fix applied here since this branch is from `main`.
+- Added extra AC 6 test (`test_report_none_dimension_value_maps_to_beginning`) to cover None dimension → "Beginning" path (not in original task list but required by AC 6).
 
 ### File List
-*(Filled at story close)*
+
+- `apps/api/app/modules/assessment/router.py` — added `from typing import Any`; added `learner_dna_snapshot: dict[str, Any] | None = None` to `SessionReport`
+- `apps/api/app/modules/assessment/service.py` — added `_DNA_GROWTH_IMPROVING_THRESHOLD`, `_DNA_GROWTH_DECLINING_THRESHOLD`, `_delta_to_growth_label()`; extended `get_session_report` with Steps 8 and 9
+- `apps/api/tests/test_session_report_endpoint.py` — extended `_build_report_supabase` (n=5, n=6); added `_ALL_DIMS`, `_DNA_ROW`, `_GROWTH_EVENTS`, `_growth_event_for()`; updated asyncio count test to assert 5 (no-DNA path); added 12 new tests
+- `apps/api/tests/test_posthog_events.py` — added `learner_dna_snapshot=None` to `SessionReport(...)` constructor
+- `apps/api/tests/conftest.py` — added `openai.types` and `openai.types.chat` stubs
 
 ### Change Log
 
 | Date | Author | Note |
 |------|--------|------|
 | 2026-07-21 | Dev 3 (tannmayygupta) | Story created — Learner Mode Sprint Task 3 |
+| 2026-07-21 | Dev 3 (tannmayygupta) | Implementation complete — 42/42 tests pass, status → review |

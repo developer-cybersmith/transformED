@@ -82,6 +82,20 @@ def _score_to_label(score: float) -> str:
     return "Beginning"
 
 
+_DNA_GROWTH_IMPROVING_THRESHOLD: float = 2.0
+_DNA_GROWTH_DECLINING_THRESHOLD: float = -2.0
+
+
+def _delta_to_growth_label(delta: float | None) -> str | None:
+    if delta is None:
+        return None
+    if delta > _DNA_GROWTH_IMPROVING_THRESHOLD:
+        return "Improving"
+    if delta < _DNA_GROWTH_DECLINING_THRESHOLD:
+        return "Needs Attention"
+    return "Stable"
+
+
 async def grade_quiz(
     *,
     session_id: str,
@@ -691,6 +705,47 @@ async def get_session_report(
     ces_final = row.get("ces_final")
     ces_score: float = float(ces_final) if ces_final is not None else 0.0
 
+    # Step 8 — Learner DNA snapshot (descriptive labels + session growth labels)
+    _dna_snapshot: dict[str, Any] | None = None
+    _dna_select = ", ".join(ALL_NINE_DIMENSIONS)
+    _dna_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("learner_dna")
+            .select(_dna_select)
+            .eq("user_id", str(row["user_id"]))
+            .maybe_single()
+            .execute()
+        )
+    )
+    if _dna_resp.data:
+        _dim_labels: dict[str, str] = {
+            dim: _score_to_label(float(_dna_resp.data.get(dim) or 0.0))
+            for dim in ALL_NINE_DIMENSIONS
+        }
+
+        # Step 9 — session growth events (dna_update) for delta-based growth labels
+        _events_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("session_events")
+                .select("payload")
+                .eq("session_id", session_id)
+                .eq("event_type", "dna_update")
+                .execute()
+            )
+        )
+        _delta_map: dict[str, float | None] = {}
+        for evt in (_events_resp.data or []):
+            payload = evt.get("payload") or {}
+            dim = payload.get("dimension")
+            if dim in ALL_NINE_DIMENSIONS:
+                _delta_map[dim] = payload.get("delta")
+
+        _growth_labels: dict[str, str | None] = {
+            dim: _delta_to_growth_label(_delta_map.get(dim))
+            for dim in ALL_NINE_DIMENSIONS
+        }
+        _dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}
+
     logger.info(
         "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
         session_id,
@@ -710,6 +765,7 @@ async def get_session_report(
         teachback_score=teachback_score,
         duration_minutes=duration_minutes,
         completed_at=completed_at,
+        learner_dna_snapshot=_dna_snapshot,
     )
 
 

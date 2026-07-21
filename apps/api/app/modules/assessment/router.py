@@ -7,6 +7,8 @@ learner DNA retrieval, and onboarding diagnostic submission.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
@@ -42,6 +44,7 @@ class SessionReport(BaseModel):
     teachback_score: float | None
     duration_minutes: float
     completed_at: str | None
+    learner_dna_snapshot: dict[str, Any] | None = None
 
 
 class LearnerDNA(BaseModel):
