@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import type { TutorState } from '@hie/shared/types/ws';
+import type { LocalControlOut } from '@/lib/ws/wireTypes';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 
 const SAVE_THROTTLE_MS = 2000;
@@ -61,6 +62,10 @@ export interface PlayerStore {
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
   quizFiredForSegment: Set<string>;
+  /** Registered by useLessonSocket once connected; null while disconnected.
+   *  Lets non-component code (AudioTimeline's plain functions) send a
+   *  LocalControlOut without holding a direct reference to the socket. */
+  wsSendControl: ((msg: LocalControlOut) => void) | null;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
@@ -87,6 +92,7 @@ export interface PlayerStore {
   exitTeachBack: () => void;
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
+  setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
   updateAudioPosition: (ms: number) => void;
   /** Write current segment/position/quiz progress to localStorage, keyed by lesson_id. No-op with no lesson loaded. */
   saveProgress: () => void;
@@ -111,6 +117,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   playbackRate: 1.0,
   tutorState: 'IDLE',
   quizFiredForSegment: new Set<string>(),
+  wsSendControl: null,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -223,7 +230,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (get().status !== 'TEACH_BACK') return;
     const { lesson, currentSegmentIndex } = get();
     const isLastSegment = !lesson || currentSegmentIndex >= lesson.segments.length - 1;
-    set({ status: 'PLAYING' });
+    // tutorState reset to TEACHING here (not just status) so the *next* segment's
+    // boundary crossing is a genuine edge-transition into CHECKING_IN — see
+    // CheckingInTransition, which is edge-triggered, not a persistent gate.
+    set({ status: 'PLAYING', tutorState: 'TEACHING' });
     if (!isLastSegment) {
       get().advanceSegment();
     }
@@ -248,6 +258,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   setTutorState: (s) => {
     set({ tutorState: s });
+  },
+
+  setWsSendControl: (fn) => {
+    set({ wsSendControl: fn });
   },
 
   updateAudioPosition: (ms) => {

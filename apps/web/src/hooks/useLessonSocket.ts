@@ -79,6 +79,7 @@ export function useLessonSocket(sessionId: string | null) {
         });
         socketRef.current = socket;
         socket.connect(sid, token);
+        usePlayerStore.getState().setWsSendControl((msg) => socketRef.current?.sendControl(msg));
       } catch (err) {
         // Supabase session lookup failed (network/auth error) — degrade gracefully
         // per AC8 rather than leaving an unhandled rejection and a silently-stuck hook.
@@ -94,6 +95,7 @@ export function useLessonSocket(sessionId: string | null) {
       cancelled = true;
       socketRef.current?.disconnect();
       socketRef.current = null;
+      usePlayerStore.getState().setWsSendControl(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, setTutorState]);

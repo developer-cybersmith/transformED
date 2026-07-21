@@ -4,11 +4,13 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
+import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { AudioTimeline } from './AudioTimeline';
 import { SlideRenderer } from './SlideRenderer';
 import { PlayerControls } from './PlayerControls';
 import { QuizOverlay } from './QuizOverlay';
 import { TeachBackModal } from './TeachBackModal';
+import { CheckingInTransition } from './CheckingInTransition';
 
 interface PlayerProps {
   lesson: LessonPackage;
@@ -25,6 +27,10 @@ export default function Player({ lesson }: PlayerProps) {
   const sessionId = usePlayerStore((s) => s.sessionId);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
+
+  // Mounts the lesson WebSocket for the duration of the session — previously
+  // never called anywhere, so the socket never connected during a real lesson.
+  useLessonSocket(sessionId || null);
 
   useEffect(() => {
     loadLesson(lesson);
@@ -107,6 +113,9 @@ export default function Player({ lesson }: PlayerProps) {
             </div>
           </div>
         )}
+
+        {/* Brief CHECKING_IN transition — layers on top of quiz/teach-back when it shows */}
+        <CheckingInTransition />
       </div>
 
       <PlayerControls />
