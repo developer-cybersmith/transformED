@@ -1,5 +1,13 @@
 # Deferred Work
 
+## Deferred from: code review of 4-19-learner-tier-runtime (2026-07-21)
+
+- **No test for `raw_pkg` returned as bytes** [`apps/api/app/core/websocket.py:241`] — `json.loads()` accepts bytes in CPython; no correctness bug. The rest of the codebase (see `_restore_or_init_session`) handles bytes explicitly; consistency gap only. Low priority.
+- **No explicit test for malformed JSON lesson package payload** [`apps/api/app/core/websocket.py:241`] — `json.JSONDecodeError` is correctly caught by `except Exception`; the exception path is already covered generically by `test_g7`. A dedicated corrupt-payload test would confirm the breadth of the catch is intentional, not accidental.
+- **`baseline_commit` in story frontmatter updated inside the impl commit** [`docs/stories/4-19-learner-tier-runtime.md`] — process irregularity; the value was corrected from `a35ede1` to `b390788` in the implementation commit rather than at story-creation time. Cannot be retroactively fixed; document in PR description.
+- **Learner tier + session_id logged at INFO level** [`apps/api/app/core/websocket.py:250`] — potential DPDP Act 2023 concern (tier+session_id linkable to user identity in log aggregation). Pre-existing: session_id is already logged at INFO throughout the same file. Broader PII-in-logs policy decision required before this can be addressed consistently.
+- **`core/websocket.py` imports `modules/tutor/service`** [`apps/api/app/core/websocket.py:238`] — module boundary violation (core → modules). Pre-existing: the same lazy-import bridge is used in three other dispatch helpers in the same file with documented rationale. Address in a future architectural cleanup sprint.
+
 ## Deferred from: code review of 2-5-player-state-persistence (2026-07-06)
 
 - **`quizFiredForSegment` restore is validated only by index-bounds, not segment-ID identity** [`apps/web/src/stores/player.machine.ts`] — if the same `lesson_id` is later regenerated with different segment content that still satisfies the bounds check against the new `segments.length`, previously-fired quiz IDs could be restored and suppress quizzes the student never actually completed in the new content. Would need content-identity validation (e.g. hashing segment IDs) beyond this story's scope.
