@@ -9,6 +9,10 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { full_name: 'Robert', email: 'robert@example.com' } }),
+}));
+
 beforeEach(() => {
   pushMock.mockReset();
 });

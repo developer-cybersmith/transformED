@@ -8,6 +8,10 @@ vi.mock('@/services/settings.service', () => ({
   settingsService: { getProfile: getProfileMock },
 }));
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: null }),
+}));
+
 const PROFILE = {
   id: 'usr_1',
   name: 'J. Robert Oppenheimer',
