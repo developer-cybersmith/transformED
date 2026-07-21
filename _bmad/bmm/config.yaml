@@ -3,8 +3,15 @@
 # Version: 6.8.0
 # Date: 2026-06-11T13:14:10.216Z
 
-planning_artifacts: "{project-root}/_bmad-output/planning-artifacts"
-implementation_artifacts: "{project-root}/_bmad-output/implementation-artifacts"
+# Repointed 2026-07-13: the team's real planning/implementation artifacts live under
+# docs/bmad (5 epic files) and docs/stories (50 story files, Sprint 0 through 4) —
+# _bmad-output/ was only ever populated for Sprint 1 (1-1..1-5) and abandoned since.
+# sprint-status.yaml under implementation_artifacts is NOT the live sprint tracker;
+# docs/dev1-tracker.md is (see CLAUDE.md's Sprint Tracker Auto-Update Rule) — always
+# supply an explicit story number to bmad-create-story rather than relying on this
+# skill's sprint-status.yaml auto-discovery, which has no knowledge of Sprint 2+.
+planning_artifacts: "{project-root}/docs/bmad"
+implementation_artifacts: "{project-root}/docs/stories"
 project_knowledge: "{project-root}/docs"
 user_skill_level: intermediate
 

@@ -1,7 +1,11 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-06 (Dev 2 Sprint 2 is now fully complete, 5/5 tasks: S2-04 Session Report Page (PR #63) and S2-05 Player State Persistence (PR #66) both merged to `main` via full BMAD story workflows with 5-agent review gates — checklist lines below updated to match. Earlier, 2026-07-04: app-wide `apps/web` audit run, 9 issues patched across 8 rounds incl. an `/auth/callback` regression that broke all OAuth/email sign-in, then a `/bmad-code-review` gate on that fix branch itself — merged to `main` as PR #61 (`a75535d`), 201/201 tests. Separately, Story 2-3 Onboarding Assessment Flow — previously checked off below as done — was discovered to have never actually been merged to `main` (implementation commit sat unpushed on its branch); rebased onto current `main`, merged clean, no conflicts — PR #62 (`5c40db1`), 239/239 tests.)
+**Last updated:** 2026-07-13 (Dev 1 Sprint 1 backend content-ingestion pipeline merged to `main`, PR #72 — see status note below. Also, previously, 2026-07-06: Dev 2 Sprint 2 is now fully complete, 5/5 tasks: S2-04 Session Report Page (PR #63) and S2-05 Player State Persistence (PR #66) both merged to `main` via full BMAD story workflows with 5-agent review gates — checklist lines below updated to match. Earlier, 2026-07-04: app-wide `apps/web` audit run, 9 issues patched across 8 rounds incl. an `/auth/callback` regression that broke all OAuth/email sign-in, then a `/bmad-code-review` gate on that fix branch itself — merged to `main` as PR #61 (`a75535d`), 201/201 tests. Separately, Story 2-3 Onboarding Assessment Flow — previously checked off below as done — was discovered to have never actually been merged to `main` (implementation commit sat unpushed on its branch); rebased onto current `main`, merged clean, no conflicts — PR #62 (`5c40db1`), 239/239 tests.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
+
+---
+
+**Status note — 2026-07-13:** Backend content-ingestion pipeline (Sprint 1) merged to `main` 2026-07-13 (PR #72). Sprint 2 backend — lesson generation (11 nodes: `lesson_planner`, `slide_generator`, `summarise_segment`, `quiz_generator`, `segment_complexity`, `jargon_extractor`, `intervention_messages`, `narration_generator`, `tts_node`, `image_generator`, `package_builder`) — is Dev 1's next work, starting now. **Frontend/assessment/tutor should continue building against existing mocks/fixtures** (`apps/web/src/mocks/data/lessonPackage.ts`, test fixtures) until `package_builder` (Story S2-11) lands — please do not build a parallel real-content path or workaround; ping Dev 1 first if a mock is blocking real progress.
 
 ---
 
@@ -64,13 +68,13 @@
 ## Sprint 1 — Weeks 2–3 (Core Pipeline + Player Skeleton)
 
 ### Dev 1 — Infrastructure + Content Pipeline
-- [ ] PyMuPDF text + image + layout extraction node — 🔵 IN PROGRESS (code ready; PDF segmentation testing in progress; image extraction testing pending)
-- [ ] pdfplumber table extraction node
-- [ ] Tesseract OCR fallback node
-- [ ] Structure detection: rule-based (font/TOC/numbering)
-- [ ] Structure detection: GPT-4o-mini LLM validation
-- [ ] Semantic chunking (chapter → section → topic)
-- [ ] text-embedding-3-small + pgvector storage
+- [x] PyMuPDF text + image + layout extraction node — ✓ 2026-07-13, merged to `main` (PR #72). Note: implemented per CLAUDE.md as pypdfium2 + pdftext (PyMuPDF/fitz is AGPL-3.0 banned) — task title predates that decision, kept for tracker continuity.
+- [x] pdfplumber table extraction node — ✓ 2026-07-13, merged to `main` (PR #72); pdfplumber triggers docling for table-markdown extraction
+- [x] Tesseract OCR fallback node — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] Structure detection: rule-based (font/TOC/numbering) — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] Structure detection: GPT-4o-mini LLM validation — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] Semantic chunking (chapter → section → topic) — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] text-embedding-3-small + pgvector storage — ✓ 2026-07-13, merged to `main` (PR #72)
 - [x] lesson_jobs table + ARQ job enqueue — ✓ confirmed live (pipeline submit working)
 - [ ] with_retry() decorator (exponential backoff + jitter)
 - [x] POST /api/content/lessons — route registered, auth wired, 14/14 tests pass. Body: returns `{lesson_id, status:"queued"}`. Supabase storage + ARQ enqueue are TODO stubs (HTTP 501 until implemented). Dev 2 must keep using mock until Supabase integration lands.

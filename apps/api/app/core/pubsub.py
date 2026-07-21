@@ -84,9 +84,13 @@ async def _run_lesson_subscriber(manager: ConnectionManager) -> None:
                     session_id,
                 )
 
-                # Cache the lesson package so the in-process intervention path can read the
-                # segment's pre-generated messages with a single Redis GET (no DB at intervention
-                # time). Best-effort — a cache failure must never break message forwarding.
+                # Caches payload.lesson — the REAL, schema-validated LessonPackage
+                # produced by package_builder_node (Story 2-11, landed 2026-07-16),
+                # not the old flat stub shape. Cache the lesson package so the
+                # in-process intervention path can read the segment's
+                # pre-generated messages with a single Redis GET (no DB at
+                # intervention time). Best-effort — a cache failure must never
+                # break message forwarding.
                 try:
                     lesson = (message.get("payload") or {}).get("lesson")
                     if lesson is not None and _sub_conn is not None:

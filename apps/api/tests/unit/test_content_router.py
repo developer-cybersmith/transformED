@@ -396,3 +396,131 @@ def test_upload_lesson_429_rate_limit() -> None:
 
     assert resp.status_code == 429
     assert "Retry-After" in resp.headers
+
+
+# ── Story S2-LM3: tier param ────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_upload_lesson_accepts_valid_tier_and_persists_it(client: TestClient) -> None:
+    """A valid tier form field is accepted (202) and included in the lessons
+    insert payload."""
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    limiter.reset()  # isolate from other tests' shared IP-based rate-limit bucket
+    lessons_insert_calls: list[dict] = []
+
+    sb = MagicMock()
+
+    def track_table(name: str) -> MagicMock:
+        t = MagicMock()
+        if name == "books":
+            t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
+        elif name == "lessons":
+            def _insert(payload: dict) -> MagicMock:
+                lessons_insert_calls.append(payload)
+                m = MagicMock()
+                m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
+                return m
+            t.insert.side_effect = _insert
+            t.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        elif name == "lesson_jobs":
+            t.insert.return_value.execute.return_value = MagicMock()
+        return t
+
+    sb.table.side_effect = track_table
+    sb.storage.from_.return_value.upload.return_value = MagicMock()
+
+    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-valid-test-sub"}
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app, raise_server_exceptions=True).post(
+            "/api/content/lessons",
+            files={"file": ("t.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+            data={"tier": "T1"},
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 202
+    assert len(lessons_insert_calls) == 1
+    assert lessons_insert_calls[0]["tier"] == "T1"
+
+
+@pytest.mark.unit
+def test_upload_lesson_omitted_tier_defaults_to_t2(client: TestClient) -> None:
+    """Omitting tier entirely defaults to T2 — existing callers unaffected
+    (AC-1)."""
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    limiter.reset()  # isolate from other tests' shared IP-based rate-limit bucket
+    lessons_insert_calls: list[dict] = []
+
+    sb = MagicMock()
+
+    def track_table(name: str) -> MagicMock:
+        t = MagicMock()
+        if name == "books":
+            t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
+        elif name == "lessons":
+            def _insert(payload: dict) -> MagicMock:
+                lessons_insert_calls.append(payload)
+                m = MagicMock()
+                m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
+                return m
+            t.insert.side_effect = _insert
+            t.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        elif name == "lesson_jobs":
+            t.insert.return_value.execute.return_value = MagicMock()
+        return t
+
+    sb.table.side_effect = track_table
+    sb.storage.from_.return_value.upload.return_value = MagicMock()
+
+    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-default-test-sub"}
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app, raise_server_exceptions=True).post(
+            "/api/content/lessons",
+            files={"file": ("t.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 202
+    assert lessons_insert_calls[0]["tier"] == "T2"
+
+
+@pytest.mark.unit
+def test_upload_lesson_invalid_tier_returns_422_before_any_row_created(client: TestClient) -> None:
+    """AC-1: an invalid tier value returns 422 before any DB row (books/
+    lessons/lesson_jobs) or Storage upload is created — never a silent
+    fallback to the default."""
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    limiter.reset()  # isolate from other tests' shared IP-based rate-limit bucket
+    sb = MagicMock()
+    sb.table.side_effect = lambda name: MagicMock()  # any call here is a bug
+
+    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-invalid-test-sub"}
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app, raise_server_exceptions=True).post(
+            "/api/content/lessons",
+            files={"file": ("t.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+            data={"tier": "T99-not-real"},
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 422
+    sb.table.assert_not_called()

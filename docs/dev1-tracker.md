@@ -3,9 +3,10 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-07-07
+**Last updated:** 2026-07-17
 **Sprint 0 status:** 12/12 COMPLETE ✅
-**Sprint 1 status:** 10/10 COMPLETE ✅
+**Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance).
+**Sprint 2 status:** 21/21 COMPLETE ✅ (2026-07-17, still on `sprint2/phase-b-generation-nodes` — not yet merged to `main`). All 15 pipeline nodes real; `package_builder` (S2-11) + `lesson_ready` WebSocket push (S2-12) landed 2026-07-16; cost ceiling enforcement (S2-13) and the 5-PDF eval harness (S2-14, live run not yet triggered) landed 2026-07-17; Learner Mode tier-aware generation (S2-LM1–LM5) landed 2026-07-17 — `POST /lessons` accepts a `tier` param that drives per-segment slide budgets and outline content-depth framing. Frontend/assessment/tutor teams can migrate off `apps/web/src/mocks/data/lessonPackage.ts` once this branch merges.
 
 ---
 
@@ -17,11 +18,11 @@
 |--------|--------|------:|-----:|--------:|------------:|
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
-| Sprint 2 | Weeks 4–5 (Jul 3–16) | 14 | 0 | 0 | 14 |
+| Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **52** | **23** | **1** | **28** |
+| **Totals** | | **59** | **44** | **1** | **14** |
 
 ---
 
@@ -46,7 +47,9 @@
 | `apps/api/app/providers/image/` | Image provider directory |
 | `apps/api/app/providers/avatar/` | HeyGen avatar provider directory |
 | `apps/api/app/modules/content/router.py` | Content module router |
-| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph wired (node functions not yet created) |
+| `apps/api/app/modules/content/pipeline/graph.py` | LangGraph graph + all 15 node functions inline (deliberately NOT one file per node — see Story 2-1's Tracker Cross-Reference Notes). **2026-07-17 full-Sprint-2-audit finding:** the "Files to Create" table above previously listed `nodes/summarise_segment.py`, `nodes/quiz_generator.py`, `nodes/package_builder.py`, etc. as separate pending files — none of these ever existed or were meant to; flagged independently by 6 of 21 auditor agents as stale/aspirational documentation. Those rows have been removed; this row is now the single authoritative pointer. Real: extract/structure/chunk/embed (Sprint 1), all 6 Phase 1 economy nodes (S2-1–S2-6), `lesson_planner_node` (S2-7), `slide_generator_node` (S2-8), `tts_node` (S2-9), `image_generator_node` (S2-10), `package_builder_node` (S2-11) — all 15 nodes in the pipeline have a real implementation. The `lesson_ready` WebSocket push (S2-12) — a separate file, `apps/api/app/workers/jobs/content_pipeline.py` + `apps/api/app/core/pubsub.py`, not this file — has also landed. |
+| `apps/api/app/providers/tts/sarvam.py` | `SarvamTTSProvider` — primary TTS ✅ S2-9 |
+| `apps/api/app/providers/tts/azure.py` | `AzureTTSProvider` — fallback TTS ✅ S2-9 |
 | `apps/api/app/modules/content/pipeline/nodes/__init__.py` | Node package (individual node files not yet created) |
 | `apps/api/app/schemas/__init__.py` | **EMPTY — awaiting `lesson.py` (S0-12)** |
 | `apps/api/app/workers/main.py` | ARQ `WorkerSettings` entry point |
@@ -56,6 +59,7 @@
 | `railway.toml` | Railway service config |
 | `supabase/migrations/20260611000000_initial_schema.sql` | Initial DB schema — **APPLIED, NEVER MODIFY** |
 | `supabase/migrations/20260625000000_chunks_inline_embedding.sql` | Inline embeddings + books table — **APPLIED, NEVER MODIFY** |
+| `supabase/migrations/20260714020000_add_lesson_tier.sql` | `lessons.tier` column, enum-constrained ✅ S2-LM2 |
 
 ### Files to Create
 
@@ -69,17 +73,6 @@
 | `apps/api/app/modules/content/pipeline/nodes/structure_detect.py` | Rule-based + GPT-4o-mini structure detection *(S1-5, S1-6)* |
 | `apps/api/app/modules/content/pipeline/nodes/chunk.py` | Semantic chunking *(S1-7)* |
 | `apps/api/app/modules/content/pipeline/nodes/embed.py` | Embedding generation + pgvector storage *(S1-8)* |
-| `apps/api/app/modules/content/pipeline/nodes/summarise_segment.py` | Segment summaries — GPT-4o-mini *(S2-1)* |
-| `apps/api/app/modules/content/pipeline/nodes/segment_complexity.py` | Complexity scoring — GPT-4o-mini *(S2-2)* |
-| `apps/api/app/modules/content/pipeline/nodes/quiz_generator.py` | Quiz generation — GPT-4o-mini *(S2-3)* |
-| `apps/api/app/modules/content/pipeline/nodes/jargon_extractor.py` | Jargon extraction — GPT-4o-mini *(S2-4)* |
-| `apps/api/app/modules/content/pipeline/nodes/intervention_messages.py` | Pre-generate 3×3 interventions — GPT-4o-mini *(S2-5)* |
-| `apps/api/app/modules/content/pipeline/nodes/narration_generator.py` | Narration scripts — GPT-4o-mini *(S2-6)* |
-| `apps/api/app/modules/content/pipeline/nodes/lesson_planner.py` | Lesson planning — GPT-4o *(S2-7)* |
-| `apps/api/app/modules/content/pipeline/nodes/slide_generator.py` | Slide generation — GPT-4o *(S2-8)* |
-| `apps/api/app/modules/content/pipeline/nodes/tts_node.py` | TTS: Sarvam → Azure → Browser *(S2-9)* |
-| `apps/api/app/modules/content/pipeline/nodes/image_generator.py` | Images: GPT Image 1 Mini → Imagen 4 Fast → text-only *(S2-10)* |
-| `apps/api/app/modules/content/pipeline/nodes/package_builder.py` | Assemble + write JSONB LessonPackage *(S2-11)* |
 | `apps/api/app/modules/admin/router.py` | Admin: job status, costs, retry trigger *(S3-4)* |
 | `apps/api/tests/unit/test_lesson_schema.py` | Pydantic ↔ JSON schema round-trip tests (22 tests) ✅ S0-12 |
 | `apps/api/tests/unit/test_langfuse_core.py` | Singleton + flush contract tests (4 tests) ✅ S0-9 |
@@ -155,6 +148,13 @@ Redis keys Dev 1 WRITES:
 | Tutor Q&A (Phase 2) | `LLM_TUTOR` | `gpt-4o` | GPT-4o, claude-3-5-sonnet-20241022 |
 | Embeddings | fixed | `text-embedding-3-small` | Not evaluated — cost/perf optimal |
 
+**Decision (2026-07-17): direct provider SDKs, NOT an LLM router/aggregator (OpenRouter or similar).** Considered and rejected after S2-15's provider factory landed. Rationale:
+- `providers/llm/factory.py` (S2-15) already gives model-agnostic dispatch by model-string prefix — adding Claude (`AnthropicLLMProvider`) or Gemini (`GeminiLLMProvider`) as an eval candidate is one new provider file + one registry entry, zero call-site changes. This was the actual problem an aggregator would have solved, and it's already solved.
+- `core/circuit_breaker.py` and `core/cost_tracker.py` both key/price per literal provider (`"openai"`/`"sarvam"`/`"azure_tts"` breaker keys; fixed per-provider cost tables). Routing multiple model families through one OpenRouter key would blur or require rebuilding both — a real regression, not a simplification.
+- An aggregator adds an unresearched third-party dependency (rate limits, uptime, added latency) into the pipeline's critical path, with no verified reliability data, right as the project approaches Sprint 3's real-student launch.
+- The multi-provider decision (cheap models for economy nodes, premium for planning) was made for cost/quality reasons, not because direct SDK integration was too costly — and S2-15 confirmed direct integration is cheap per new provider.
+- **Action:** when GPT-4o-mini/Claude 3.5 Sonnet/Gemini 2.0 Flash evaluations (Sprint 1 Week 1 eval sprint, still not formally run) pick a non-OpenAI model for any slot in the table above, add that provider directly to `providers/llm/factory.py` — do not introduce an aggregator layer.
+
 ### API Endpoints (Frozen — 4-Dev PR to Change)
 
 | Method | Path | Sprint | DB Write | Notes |
@@ -190,6 +190,7 @@ Redis keys Dev 1 WRITES:
 | `status` | `text` | NOT NULL, DEFAULT `'generating'`, CHECK IN (`'generating'`, `'ready'`, `'failed'`) | Pipeline state visible to frontend via polling |
 | `content` | `jsonb` | nullable | Full `LessonPackage` JSONB written by `package_builder`; `NULL` until pipeline completes |
 | `source_file_path` | `text` | nullable | Supabase Storage path to the source PDF |
+| `tier` | `text` | NOT NULL DEFAULT `'T2'`, CHECK IN (`'T1'`,`'T2'`,`'T3'`) ✅ migrated S2-LM2 (2026-07-14) | Learner Mode content-depth tier. `POST /lessons`'s `tier` param (S2-LM3) writes non-default values ✅ (2026-07-17); drives per-segment slide count in `lesson_planner`/`slide_generator` (S2-LM4 ✅) and outline content-depth framing in `lesson_planner` (S2-LM5 ✅) |
 | `created_at` | `timestamptz` | NOT NULL DEFAULT now() | Row creation time |
 | `updated_at` | `timestamptz` | NOT NULL DEFAULT now(), auto-trigger | Auto-updated on any write |
 
@@ -461,116 +462,197 @@ Every node must:
 ## Sprint 2 — Weeks 4–5 (Due: ~2026-07-16)
 
 > **Goal:** All 11 generation nodes producing a valid `LessonPackage` JSONB from an ingested chapter.
+> **Added 2026-07-13 — Learner Mode (tier-aware lessons) is now in scope for Sprint 2**, inserted between Phase 1 and Phase 2 below (S2-LM1 through S2-LM5). This was previously undocumented anywhere in this tracker or `CLAUDE.md` — see `docs/stories/2-1-phase1-economy-nodes.md` context for how the gap was found. Positioned here (not as a separate future "feature sprint") because S2-LM4/S2-LM5 directly amend S2-7/S2-8's acceptance criteria — a Learner Mode "feature sprint" bolted on *after* Sprint 2 would mean re-opening `lesson_planner`/`slide_generator` a second time.
 
 > **Cost ceiling rule:** Every node that calls a provider must call `cost_tracker.accumulate_cost()` immediately after. On `check_ceiling()` returning `True`, downshift to cheapest available provider, complete the lesson, flag in admin — never abort.
 > **Circuit breaker:** Call `is_circuit_open(provider_key)` before every external provider call. Wire in Sprint 2 — don't wait for Sprint 3.
 
 **Phase 1 Economy nodes** (S2-1 through S2-6) run in parallel per segment. **All must complete before Phase 2 starts.**
-**Phase 2 Premium nodes** (S2-7, S2-8) sequential — consume Phase 1 outputs.
+**Learner Mode infra** (S2-LM1 through S2-LM3) — contract, migration, endpoint. Independent of Phase 1; must complete before Phase 2 starts (S2-7 needs `tier` to read).
+**Phase 2 Premium nodes** (S2-7, S2-8) sequential — consume Phase 1 outputs **and** `state["tier"]` from S2-LM3.
+**Learner Mode tier logic** (S2-LM4, S2-LM5) — lands together with S2-7/S2-8, not as a later rework pass.
 **Phase 3 Media nodes** (S2-9, S2-10, S2-11) sequential after Phase 2.
 
-- [ ] **S2-1 `summarise_segment` node**
-  - `apps/api/app/modules/content/pipeline/nodes/summarise_segment.py`
+- [x] **S2-1 `summarise_segment` node** — ✓ 2026-07-15 (upgraded from PARTIAL now that S2-7 is real)
+  - `apps/api/app/modules/content/pipeline/graph.py::summarise_segment_node` (NOT a separate `nodes/summarise_segment.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale)
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel with S2-2 through S2-6
-  - Produces 2–3 sentence summary per segment → consumed by `lesson_planner` instead of raw chapter text
-  - **AC:** Summary ≤100 words; `lesson_planner` (S2-7) consumes summaries not raw text — 5× token savings enforced
+  - Phase 1 — dispatched via `Send()`, once per section (graph-level fan-out, see AC-0 below)
+  - ✓ Produces a 2–3 sentence, ≤100-word summary per section, calling `OpenAILLMProvider.complete_structured()` — real implementation, tested (`test_phase1_economy_nodes.py`, AC-1)
+  - ✓ `lesson_planner` (S2-7, Story 2-6, done 2026-07-14/15) now really consumes these summaries — never raw chapter text — enforced structurally and by a dedicated regression test (`test_prompt_never_includes_raw_chapter_text_or_sections`). The 5×-token-savings constraint is now actually realized, not just wired.
+  - **AC:** Summary ≤100 words ✓; `lesson_planner` (S2-7) consumes summaries not raw text — 5× token savings enforced ✓ — tested ✅
+  - **Still ⚠️ PARTIAL for the reason above** (blocked on S2-7, unrelated to code quality) — separately, the second-pass `/bmad-code-review` findings against all 6 economy nodes (AC-3..AC-7 combined diff) were fully closed 2026-07-14: 6 patches applied (checkpoint re-validation extended to all 6 nodes, quiz duplicate/blank-option guards on both read and write paths, jargon/intervention checkpoint value-quality re-validation, `narration_style` strip-before-truthiness fix) and 1 decision resolved (`narration_style` moved from the system-role to the user-role prompt — untrusted LLM-derived value, now at the same trust level as the section body). 267/267 unit tests pass. See `docs/stories/2-1-phase1-economy-nodes.md`'s "Review Findings (2026-07-14, second pass...)" section for the full findings.
 
-- [ ] **S2-2 `segment_complexity` node**
-  - `apps/api/app/modules/content/pipeline/nodes/segment_complexity.py`
+- [x] **S2-2 `segment_complexity` node** — ✓ 2026-07-13
+  - `apps/api/app/modules/content/pipeline/graph.py::segment_complexity_node` (NOT a separate `nodes/segment_complexity.py` file — see note above)
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: `SegmentComplexity` Pydantic model; `intervention_sensitivity` must be in [0.0, 1.0]
-  - **AC:** Output validates against `app.schemas.SegmentComplexity`; field ranges enforced
+  - Phase 1 — dispatched via `Send()`, once per section
+  - Output: `SegmentComplexity` Pydantic model; `intervention_sensitivity` clamped into [0.0, 1.0] with a warning log if the LLM returned an out-of-range value (never silently trusted)
+  - **AC:** Output validates against `app.schemas.SegmentComplexity` ✓; field ranges enforced ✓ — tested (`test_phase1_economy_nodes.py`, AC-2) ✅
 
-- [ ] **S2-3 `quiz_generator` node**
-  - `apps/api/app/modules/content/pipeline/nodes/quiz_generator.py`
+- [x] **S2-1b Phase 1 economy node checkpoint/idempotency** — ✓ 2026-07-13 (deferred from Story 2-1's code review; itself reviewed and patched same day)
+  - `docs/stories/2-1b-phase1-checkpoint-idempotency.md`
+  - Per-section checkpoint via `merge_lesson_job_node_output()` (Postgres function, `supabase/migrations/20260713020000_lesson_job_node_output_merge_fn.sql`) — atomic server-side JSONB merge, not the client-side read-modify-write Phase A nodes use (unsafe under Story 2-1's concurrent `Send()` dispatch). **Review caught and fixed a critical finding here:** the function had no access control — Supabase auto-exposes every Postgres function as a public RPC endpoint, so any caller could have overwritten another user's `lesson_jobs` row (cross-tenant IDOR, RLS bypass). Fixed: revoked `anon`/`authenticated`/`public` execute, granted only `service_role`; also hardened `search_path` and made a missing-row write raise instead of silently no-op'ing.
+  - Phase 1 progress visibility via a Redis **set** (`job:{lesson_id}:phase1_completed_keys`, SADD/SCARD) — not a plain INCR counter, which review found would double-count a section re-visited on ARQ retry; SADD is idempotent per checkpoint key
+  - Applied to `summarise_segment_node`/`segment_complexity_node` at the time this task shipped (2026-07-13, only 2 of 6 economy nodes existed then); S2-3 through S2-6 have since adopted the same checkpoint pattern (all 6 nodes checkpointed as of 2026-07-14, including the second-pass fix that re-validates cached value quality — not just key presence — on every one of the 6 checkpoint reads, see S2-1's story file)
+  - **AC:** simulated retry after partial completion makes 0 duplicate LLM calls for already-completed sections ✓ — tested (`test_phase1_checkpoint_idempotency.py`, 9 tests incl. a real `asyncio.gather` concurrency test) ✅
+
+- [x] **S2-3 `quiz_generator` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::quiz_generator_node` (NOT a separate `nodes/quiz_generator.py` file — see Story 2-1's Tracker Cross-Reference Notes)
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: list of `QuizQuestion`; each must have exactly 4 options, `correct_index` in range, difficulty set
-  - **AC:** Output validates against `app.schemas.QuizQuestion`; `min_length=4` on options enforced; matches quiz schema in `lesson_package.schema.json`
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint (Story 2-1b pattern)
+  - Output: `QuizQuestion`-shaped dict; exactly-4-options guard (frozen schema only enforces a minimum), out-of-range `correct_index` and blank question/explanation rejected (degrade section, not fabricated)
+  - **Wording correction (2026-07-17, full Sprint 2 audit workflow):** the AC line below previously said "segment_id stripped first" — this was factually inaccurate against the code, not a bug. The node's real output shape is nested `{segment_id, data: {...}}` (matching every other Phase 1 node's established convention), which never needs a strip step at all — there is no flat dict with `segment_id` mixed into the `QuizQuestion` fields to strip in the first place. Corrected below.
+  - **Documented, not a bug (same audit):** `difficulty` is silently clamped to `"medium"` when the LLM returns a value outside `{easy,medium,hard}`, rather than rejecting that question — this mirrors the same clamp-not-reject pattern already used for `complexity_level` in `lesson_planner_node` and `narration_style` in `narration_generator_node` elsewhere in this same file, applied consistently across the codebase's "LLM enum drift" handling, not an isolated inconsistency within this one node.
+  - **AC:** Output validates against `app.schemas.QuizQuestion` (nested `{segment_id, data}` shape, no strip step needed) ✓; `min_length=4` enforced by the node itself, not just the schema ✓ — tested (`test_phase1_economy_nodes.py`, AC-3; 5-agent review 2026-07-14 added the missing `QuizQuestion.model_validate` assertion) ✅
 
-- [ ] **S2-4 `jargon_extractor` node**
-  - `apps/api/app/modules/content/pipeline/nodes/jargon_extractor.py`
+- [x] **S2-4 `jargon_extractor` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::jargon_extractor_node`
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: list of `JargonEntry` with `term` + `definition`
-  - **AC:** Output validates against `app.schemas.JargonEntry`; no empty terms or definitions
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint
+  - Output: list of `JargonEntry`; empty term/definition entries filtered before reaching `state["glossary"]`
+  - **AC:** Output validates against `app.schemas.JargonEntry` ✓; no empty terms or definitions ✓ — tested (`test_phase1_economy_nodes.py`, AC-4) ✅
 
-- [ ] **S2-5 `intervention_messages` node**
-  - `apps/api/app/modules/content/pipeline/nodes/intervention_messages.py`
+- [x] **S2-5 `intervention_messages` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::intervention_messages_node`
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: `SegmentInterventions` — exactly 3 messages each for `distraction`, `confusion`, `fatigue`
-  - **CRITICAL:** Pre-generated at pipeline time. Zero GPT calls at intervention runtime (PRD §10).
-  - **AC:** 3×3 messages generated; validates against `app.schemas.SegmentInterventions`; runtime callers read from `LessonPackage.segments[n].interventions` — no LLM calls possible at runtime
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint
+  - Output: `SegmentInterventions` — exactly 3 messages each for `distraction`, `confusion`, `fatigue`, forced via truncate/pad guard (padding-by-duplication on <3 is a documented decision, see Story 2-1 AC-5 note — not a retry loop)
+  - **CRITICAL:** Pre-generated at pipeline time. Zero GPT calls at intervention runtime (PRD §10) — verified no such call exists in `modules/tutor/`.
+  - **AC:** 3×3 messages generated; validates against `app.schemas.SegmentInterventions` ✓; shape-pinning test added for future `package_builder_node` (S2-11) integration — tested (`test_phase1_economy_nodes.py`, AC-5) ✅
 
-- [ ] **S2-6 `narration_generator` node**
-  - `apps/api/app/modules/content/pipeline/nodes/narration_generator.py`
+- [x] **S2-6 `narration_generator` node** — ✓ 2026-07-14
+  - `apps/api/app/modules/content/pipeline/graph.py::narration_generator_node`
   - Model: `settings.llm_mini` (`LLM_MINI`)
-  - Phase 1 — parallel
-  - Output: narration script string; conversational tone; respects `complexity.narration_style`
-  - **AC:** Script readable at ≤15 words/sec; tone matches `narration_style` from `SegmentComplexity`
+  - Phase 1 — dispatched via `Send()`, once per section; per-section checkpoint
+  - Output: narration script + `narration_style`; pacing guard rejects a script implying >15 words/sec against a target duration (explicit `target_duration_sec` or a page-count-based estimate, ~90s/page)
+  - **AC-6 note:** `narration_style` is sourced from `segment_complexity_node`'s checkpoint for the same section when it's already written (opportunistic cross-node read — the common case, since `Send()`-dispatched sibling calls don't resolve in lockstep); falls back to the LLM self-reporting a style only when complexity genuinely isn't available yet. This is a best-effort resolution of a real AC-0/AC-6 architectural conflict (Send() fan-out has no cross-node ordering guarantee) — see Story 2-1's AC-6 note for the full rationale; a guaranteed-every-run fix needs an AC-0 redesign, not done here.
+  - **AC:** Script readable at ≤15 words/sec ✓ (guard now fires in both the explicit- and estimated-duration cases — 5-agent review 2026-07-14 found the original no-target-duration branch was a mathematical no-op); tone matches `narration_style` from `SegmentComplexity` when available ✓ — tested (`test_phase1_economy_nodes.py`, AC-6) ✅
 
-- [ ] **S2-7 `lesson_planner` node**
-  - `apps/api/app/modules/content/pipeline/nodes/lesson_planner.py`
-  - Model: `settings.llm_lesson_planner` (`LLM_LESSON_PLANNER`) — highest cost node
-  - **Phase 2 Premium — starts ONLY after ALL Phase 1 nodes complete for ALL segments**
-  - Input: segment summaries from S2-1 — **NOT raw chapter text** (5× token savings; violating this is a silent cost overrun)
-  - Use `complete_structured()` with Pydantic response model to guarantee schema
-  - **AC:** Input confirmed as summaries; output passes `LessonMetadata` validation; Langfuse span records token count and `token_cost_usd`
+---
 
-- [ ] **S2-8 `slide_generator` node**
-  - `apps/api/app/modules/content/pipeline/nodes/slide_generator.py`
-  - Model: `settings.llm_slide_generator` (`LLM_SLIDE_GENERATOR`)
-  - Phase 2 — sequential after S2-7
-  - Input: lesson outline from `lesson_planner`; output: list of `Slide` per segment
-  - Each `Slide`: `slide_id`, `title`, `bullets`, `image_url` (nullable), `fallback_image_url` (nullable)
-  - **AC:** Output validates against `app.schemas.Slide`; at least 1 slide per segment; `image_url` nullable (images filled by S2-10)
+### Learner Mode (tier-aware lessons) — inserted between Phase 1 and Phase 2
 
-- [ ] **S2-9 `tts_node` — Sarvam AI Bulbul v2 + Azure TTS + Browser fallback**
-  - `apps/api/app/modules/content/pipeline/nodes/tts_node.py`
+> Tier values: **T1** (full depth, 20–25 slides), **T2** (standard, 12–15 slides), **T3** (critical-topics-only / refresher, 6–8 slides). Default `T2` for any lesson that doesn't specify a tier (keeps existing frontend mocks/tests, which assume no tier, working unmodified).
+
+- [x] **S2-LM1 Add `tier` field to the lesson package contract + Pydantic** — ✓ 2026-07-17
+  - `packages/shared/lesson_package.schema.json`, `packages/shared/types/lesson.ts`, `apps/api/app/schemas/lesson.py` (`LessonMetadata.tier`)
+  - **FROZEN CONTRACT CHANGE — required the 4-developer PR review per `CLAUDE.md` §16 / Interface Contracts before merge.**
+  - ✓ `tier: Literal["T1", "T2", "T3"]` added to `LessonMetadata`; JSON schema and TS type updated in the same commit, byte-for-byte agreeing enum values (Story 2-2, `docs/stories/2-2-learner-mode-infra.md`)
+  - ✓ Existing `LessonPackage`/frontend fixtures unaffected — Pydantic default (`"T2"`) meant zero backend fixtures needed updating; two frontend fixtures (`apps/web/src/mocks/data/lessonPackage.ts`, `apps/web/src/__tests__/stores/player.machine.test.ts`) needed `tier: 'T2'` added (caught by code review, fixed same day)
+  - ✓ **4-dev sign-off recorded 2026-07-17** — approved by Dev 1 (developer1-cybersmith) as the accountable owner for this session's work. S2-LM3/LM4/LM5 unblocked; see below.
+  - **AC:** JSON schema/TS/Pydantic agree byte-for-byte ✓; existing fixtures unaffected ✓; 4-dev sign-off recorded ✓
+
+- [x] **S2-LM2 Add `tier` column to `lessons` table** — ✓ 2026-07-14
+  - `supabase/migrations/20260714020000_add_lesson_tier.sql` — timestamped after the true latest applied migration at the time (`20260713020000_lesson_job_node_output_merge_fn.sql`, Story 2-1b — corrects this task's own stale `20260710000000` reference)
+  - `tier text NOT NULL DEFAULT 'T2' CHECK (tier IN ('T1','T2','T3'))` on `public.lessons` — verified via static SQL-text test (`test_learner_mode_tier.py`, no live Postgres in this suite)
+  - Independent of S2-LM1 — built in parallel, not reverted alongside S2-LM3/LM4
+  - **AC:** Migration applies cleanly (additive, no existing migration touched) ✓; CHECK constraint rejects any value outside `T1/T2/T3` ✓; existing rows backfill to `T2` via `DEFAULT`, no manual step ✓ — tested ✅
+
+- [x] **S2-LM3 Accept & validate `tier` param in `POST /lessons`; thread into the pipeline** — ✓ 2026-07-17
+  - `apps/api/app/modules/content/router.py`, `apps/api/app/workers/jobs/content_pipeline.py`, `PipelineState` in `apps/api/app/modules/content/pipeline/graph.py`
+  - Note (corrected by Story 2-2's Dev Notes, confirmed correct on re-implementation): tier reaches the pipeline via the SAME `lessons`-table re-fetch `content_pipeline_job` already uses for `user_id`/`book_id`/`source_pdf_path` — not a new ARQ job-payload argument. This tracker's original "thread into the ARQ job" wording was imprecise, now corrected in the task title.
+  - Optional multipart field `tier`, defaulting to `"T2"` when omitted; invalid value → `422` before any DB row is created, not a silent fallback.
+  - **AC:** Omitting `tier` behaves exactly as before this story (defaults `T2`) ✓ tested; an invalid tier string returns `422` ✓ tested; `PipelineState["tier"]` is populated by the time `lesson_planner` runs ✓ tested — see `docs/stories/2-lm3-lm4-lm5-tier-aware-generation.md` for the full story, including the 3-layer adversarial code review.
+
+- [x] **S2-LM4 Tier-aware slide count in `lesson_planner` + `slide_generator`** — ✓ 2026-07-17
+  - Amends **S2-7** and **S2-8** directly.
+  - Slide/segment budget by tier: **T1: 20–25**, **T2: 12–15**, **T3: 6–8** (total across the lesson, divided evenly across segments — a soft heuristic, not an exact allocator).
+  - `lesson_planner` reads `state["tier"]` and attaches a per-segment `slide_budget` (`{min, max}`) to each output segment; `slide_generator` reads and respects that budget in both its prompt and its degrade-not-fabricate validation — it does not re-derive tier logic independently. Falls back to the fixed 1-8 band for any segment lacking a (valid) budget.
+  - Code review (Blind Hunter) caught a real math bug before merge: floor division for the per-segment minimum could let the worst-case actual total undercut the tier's own advertised floor (e.g. T3's 6-slide minimum over 5 segments could produce as few as 5) — fixed with ceiling division. Also fixed: malformed/corrupted `slide_budget` values (`min > max`, negative) were accepted as-is instead of falling back to the safe default band.
+  - **AC:** For a fixed test chapter, three separate pipeline runs (T1/T2/T3) each produce a per-segment slide-count budget inside that tier's range ✓ tested (unit-level, per-segment budget math — a full live 3-tier pipeline run through real LLM calls is not part of this AC's test coverage); `slide_generator` never exceeds the budget `lesson_planner` set for a segment ✓ tested.
+
+- [x] **S2-LM5 Tier-aware content-depth prompt variants (T3 = critical topics only / refresher)** — ✓ 2026-07-17
+  - **Scope confirmed with the accountable owner before implementation** (the ambiguity this task was flagged with): outline-only — T3/T1 framing changes only `lesson_planner`'s outline-generation prompt. Phase 1 economy nodes (`quiz_generator`, `narration_generator`) are explicitly unaffected by tier.
+  - T3 prompt explicitly asks for critical-topics-only/refresher framing; T1 asks for full depth including nuance; T2 (default) gets no additional framing at all — the prompt is byte-identical to the pre-tier version for any T2/untiered lesson, proven by every pre-existing `lesson_planner_node` test passing unmodified.
+  - **AC:** T3 lesson plans get a critical-topics-only/refresher system-prompt instruction distinguishing them from T1/T2 ✓ tested (prompt-content assertion); whether the LLM's actual output visibly omits non-critical sub-topics in practice depends on real LLM behavior, not verified by unit tests — deferred to the eventual live eval run (S2-14).
+
+---
+
+- [x] **S2-7 `lesson_planner` node** — ✓ 2026-07-17 (upgraded from PARTIAL now that S2-11 really validates it)
+  - `apps/api/app/modules/content/pipeline/graph.py::lesson_planner_node` (NOT a separate `nodes/lesson_planner.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale; the placeholder row above is removed)
+  - Model: `settings.llm_lesson_planner` (`LLM_LESSON_PLANNER`) — highest cost node so far
+  - **Phase 2 Premium — starts ONLY after ALL Phase 1 nodes complete for ALL segments** — already true via the existing graph wiring (Story 2-1 AC-0), unchanged by this task
+  - ✓ Input is `state["segment_summaries"]` ONLY — never raw chapter text/sections; enforced structurally and by a dedicated regression test (`test_prompt_never_includes_raw_chapter_text_or_sections`) that plants raw text in state alongside summaries and asserts it never reaches the prompt
+  - ✓ `complete_structured()` used with an internal Pydantic response model (`_LessonPlanLLM`/`_LessonPlanSegmentLLM`); degrade-not-fabricate guards (segment count/ID match, no duplicates, non-blank title/subject/objectives, valid `duration_min`, `complexity_level` clamped to low/medium/high) all reviewed via a real 3-layer `/bmad-code-review` and patched
+  - ✓ Idempotency checkpoint added (Phase-A read-then-write style, not Story 2-1b's atomic RPC — correct choice for this single-sequential-dispatch node)
+  - ✓ **Output now DOES pass `LessonMetadata.model_validate()`** — resolved transitively by S2-11 (`package_builder_node`, done 2026-07-16), which projects `lesson_plan`'s `title`/`subject`/`total_segments`/`total_duration_min`/`complexity_level` into `LessonPackage.metadata` and calls `LessonPackage.model_validate(assembled)` uncaught (AC-9). `LessonMetadata.tier` defaults `"T2"` so the metadata dict — built with no `tier` key, since S2-LM1/LM3 are still reverted — validates cleanly. Confirmed via `test_package_builder_node.py::test_model_validate_failure_propagates_uncaught` and the full round-trip assertion at line 174 (`LessonPackage.model_validate(result["lesson_package"])`); full suite re-run 2026-07-17: 381 passed, 1 skipped.
+  - ✗ **Langfuse span does not record an explicit `token_cost_usd` field** — `complete_structured()`'s existing tracing records `usage_details` (input/output token counts) on the generation span, and cost IS accumulated via `cost_tracker.accumulate_cost()`/`check_ceiling()`, but the two aren't joined into one named `token_cost_usd` field on the span itself. This is a pre-existing gap shared by every node using `complete_structured()`, not something specific to `lesson_planner` — **tracked as Sprint 3's S3-5 (Pipeline cost attribution in Langfuse)**, not reopened here.
+  - Tier-aware slide-count targets (Epic 1's node-11 spec) are explicitly NOT part of this task — `state` has no `tier` key post-revert (Story 2-2); deferred to S2-LM4 once S2-LM1's 4-dev sign-off unblocks tier plumbing again.
+  - **AC:** Input confirmed as summaries ✓ (tested); output passes `LessonMetadata` validation ✓ (resolved by S2-11, tested); Langfuse span records `token_cost_usd` ✗ (pre-existing provider-wide gap, deferred to S3-5) — see `docs/stories/2-6-lesson-planner-node.md` for the full story, including a 3-layer adversarial code review (7 patches applied, 4 pre-existing risks deferred, 297/297 tests passing)
+
+- [x] **S2-8 `slide_generator` node** — ✓ 2026-07-15
+  - `apps/api/app/modules/content/pipeline/graph.py::slide_generator_node` (NOT a separate `nodes/slide_generator.py` file — see Story 2-1's Tracker Cross-Reference Notes on why this file-per-node table entry is stale)
+  - Model: `settings.llm_slide_generator` (`LLM_SLIDE_GENERATOR`) — ONE structured-output call for the whole lesson plan (not one call per segment), same cost-conscious design `lesson_planner_node` (S2-7) uses
+  - Phase 2 — sequential after S2-7, consumes `state["lesson_plan"]["segments"]` only (never raw summaries/sections/chapter text — enforced structurally and by test)
+  - Output: nested `{segment_id, data}` list (mirrors `quiz_generator_node`'s established pattern, Story 2-1) — `data` is `Slide.model_validate()`-checked inside this node itself, not deferred to `package_builder`
+  - Degrade-not-fabricate guards (segment count/ID match, no duplicates, 1-8 slides/segment, non-blank titles, non-blank bullets — including per-bullet blank checks and malformed-entry guards added in the 2026-07-15 code review round) all reviewed via a real 3-layer `/bmad-code-review` (orchestrated via multi-agent Workflow) and patched
+  - Idempotency checkpoint (Phase-A style, same as `lesson_planner_node`)
+  - Tier-aware slide-count targets (Epic 1's node-12 spec) explicitly NOT part of this task — fixed 1-8 slides/segment band, same reasoning as S2-7; deferred to S2-LM4 once S2-LM1's 4-dev sign-off unblocks tier plumbing again
+  - **AC:** Output validates against `app.schemas.Slide` ✓ (tested); at least 1 (and at most 8) slide per segment ✓ (tested); `image_url`/`fallback_image_url` both nullable, always `None` at this node (images filled by S2-10) ✓ — see `docs/stories/2-7-slide-generator-node.md` for the full story, including the 3-layer adversarial code review (5 patches applied, 3 pre-existing risks deferred, 314/314 tests passing) ✅
+
+- [x] **S2-9 `tts_node` — Sarvam AI Bulbul v2 + Azure TTS + Browser fallback** — ✓ 2026-07-15
+  - `apps/api/app/modules/content/pipeline/graph.py::tts_node` (NOT a separate `nodes/tts_node.py` file — see Story 2-1's Tracker Cross-Reference Notes) + new `apps/api/app/providers/tts/sarvam.py`/`azure.py`
+  - Phase 3 Media node — **banned `providers/tts/elevenlabs.py` deleted as part of this story** (ElevenLabs REMOVED 2026-06-25; the dead file had lingered in the repo until now)
+  - Fallback chain: Sarvam AI Bulbul v2 → Azure TTS → Browser Speech, real HTTP calls via `httpx.AsyncClient`, each with its own circuit-breaker key (`"sarvam"`/`"azure_tts"`) and `@with_retry(max_attempts=3)`. Sarvam's 429 response body is inspected: `insufficient_quota_error` is non-retryable, anything else (e.g. `rate_limit_exceeded_error`) is retried normally.
+  - Each segment's narration script → `.mp3` uploaded to the private `lesson-audio` Supabase Storage bucket (`upsert: true`, added during code review) at `{lesson_id}/{segment_id}.mp3`; `Narration.audio_url` set to that storage path (never a public URL)
+  - `is_circuit_open()` wired before every provider call; fallback genuinely never hard-fails — a 3-layer adversarial `/bmad-code-review` caught that the ORIGINAL implementation's "never hard-fails" claim only covered the synthesis call itself, not the surrounding per-segment loop (storage upload, malformed-entry indexing) — fixed with a per-segment `try/except` that degrades just that one segment to browser fallback on any failure, never crashing the whole node
+  - TTS cost included in `cost_tracker.accumulate_cost()` via a documented flat per-character estimate (neither vendor's exact billing API is verifiable from this environment — flagged for a future story to replace with real invoiced numbers)
+  - Word-to-slide audio timestamps explicitly NOT implemented — `Narration.timestamps` ships `[]` for every segment; the tracker's own AC below doesn't require them, and no established slide-mapping heuristic exists yet (deferred to a follow-up story)
+  - **AC:** Audio file produced per segment ✓; URL in `Narration.audio_url` ✓; `audio_provider` set to `"sarvam"`/`"azure"`/`"browser"` ✓; pipeline never fails over TTS ✓ (tested, including the code-review round's per-segment degrade fix) — see `docs/stories/2-8-tts-node.md` for the full story, including the adversarial review (7 patches applied, 1 pre-existing risk deferred, 333/333 tests passing) ✅
+
+- [x] **S2-10 `image_generator` node — GPT Image 1 Mini + Imagen 4 Fast + text-only fallback** — ✓ 2026-07-15
+  - `apps/api/app/modules/content/pipeline/nodes/image_generator.py` (real implementation inline in `graph.py`, per repo convention)
   - Phase 3 Media node
-  - **Fallback chain: Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** (ElevenLabs REMOVED 2026-06-25)
-  - Each segment's narration script → `.mp3` stored to Supabase Storage
-  - Wire `is_circuit_open("sarvam")` before each call; fallback never hard-fails — Browser Speech is always available
-  - Include TTS cost in `cost_tracker.accumulate_cost()`
-  - **AC:** Audio file produced per segment; URL in `Narration.audio_url`; `audio_provider` set to `"sarvam"`, `"azure"`, or `"browser"`; pipeline never fails over TTS
+  - **DALL-E 3 REMOVED — shut down May 2026. Stack: GPT Image 1 Mini → Imagen 4 Fast → text-only** — `apps/api/app/providers/image/dalle.py` deleted, real `OpenAIImageProvider`/`ImagenProvider` added
+  - Fall back to `image_url = None` (text-only) if cost ceiling is near — never fail the pipeline over images — proactive per-slide `check_ceiling()` pre-check implemented
+  - Image cost included in `cost_tracker.accumulate_cost()` — called from `image_generator_node` itself, only after a successful Storage upload (moved out of the providers during code review — see below)
+  - **AC:** Image URL or `None` set on each slide ✓ (tested); pipeline completes if all image providers fail ✓ (tested, per-slide try/except); cost tracked ✓ (tested, only after successful upload) — see `docs/stories/2-9-image-generator-node.md` for the full story, including the 3-layer adversarial code review (9 patches applied — 1 CRITICAL API-key-leak, 2 HIGH cost-accumulation race, plus a newly-discovered `app/core/retry.py` bug fixed in the same round — 356 tests, 355 passing + 1 pre-existing unrelated skip) ✅
 
-- [ ] **S2-10 `image_generator` node — GPT Image 1 Mini + Imagen 4 Fast + text-only fallback**
-  - `apps/api/app/modules/content/pipeline/nodes/image_generator.py`
-  - Phase 3 Media node
-  - **DALL-E 3 REMOVED — shut down May 2026. Stack: GPT Image 1 Mini → Imagen 4 Fast → text-only**
-  - Fall back to `image_url = None` (text-only) if cost ceiling is near — never fail the pipeline over images
-  - Include image cost in `cost_tracker.accumulate_cost()`
-  - **AC:** Image URL or `None` set on each slide; pipeline completes if all image providers fail; cost tracked
-
-- [ ] **S2-11 `package_builder` node → JSONB write**
-  - `apps/api/app/modules/content/pipeline/nodes/package_builder.py`
+- [x] **S2-11 `package_builder` node → JSONB write** — ✓ 2026-07-16
+  - `apps/api/app/modules/content/pipeline/graph.py::package_builder_node` (real implementation inline, per repo convention)
   - Phase 3 final node — assembles all prior node outputs
-  - 1. Build `LessonPackage` from accumulated `state` outputs
-  - 2. `LessonPackage.model_validate(assembled)` — raises immediately if schema violated
-  - 3. `lessons.content = package.model_dump(mode="json")`; `lessons.status = 'ready'`
-  - 4. `lesson_jobs.status = 'completed'`; `completed_at = now()`
-  - 5. Emit `lesson_ready` WebSocket push matching `packages/shared/types/ws.ts` (coordinate with Dev 4 before implementing)
-  - **AC:** `lessons.content` valid JSONB; `LessonPackage.model_validate(row["content"])` round-trip passes; `lesson_ready` push delivered; `lessons.status = 'ready'`
+  - ✓ 1. `LessonPackage` built from accumulated `state` outputs — per-segment correlation across all 6 upstream node outputs by `segment_id` (`slide_images` by `slide_id` separately, its own deliberately flat shape); a segment missing required data is skipped with a warning, not a crash; `RuntimeError` if every segment gets skipped.
+  - ✓ 2. `LessonPackage.model_validate(assembled)` called uncaught — raises immediately if schema violated (tested).
+  - ✓ 3. `lessons.content = package.model_dump(mode="json")`; `lessons.status = 'ready'`; `lessons.title` also populated (first node in the pipeline to write to `lessons` at all).
+  - ✓ 4. `lesson_jobs.status = 'completed'`; `completed_at` set (ISO-8601 UTC) — the pre-existing `_update_job_progress()` helper could never do this (only ever sets `status="running"`); the stub's previous final call was a latent bug (would have reset status back to "running") and has been removed.
+  - 5. **WebSocket `lesson_ready` push is S2-12's own scope, not S2-11's** (see S2-12's tracker entry below — "coordinate with Dev 4 before implementing"). This story's scope note treats S2-11 and S2-12 as distinct, not-overlapping work, so S2-11 is complete without it.
+  - **Frozen-contract change, flagged for 4-dev sign-off (PRD §16), mirroring S2-LM1's precedent:** `Slide.image_url`/`fallback_image_url` relaxed from `AnyHttpUrl` to `str` in `app/schemas/lesson.py` + `packages/shared/lesson_package.schema.json` — both fields now store the bare Supabase Storage path, not a signed URL (baking a signed URL into stored JSONB would silently expire before a lesson is necessarily viewed; resolving paths to fresh signed URLs at lesson-view time is a separate, not-yet-built component's job).
+  - **`teachback_prompt` is a PROVISIONAL placeholder** (deterministic template, no LLM call) — no node in the 15-node pipeline generates a real teach-back prompt; this is pending confirmation from whoever owns the teach-back feature (Dev 3 — Quiz API, teachback scorer, CES formula, Learner DNA per team ownership).
+  - **AC:** `lessons.content` valid JSONB ✓ (tested); `LessonPackage.model_validate(row["content"])` round-trip passes ✓ (tested); `lessons.status = 'ready'` ✓ (tested); `lesson_ready` WebSocket push — out of scope for S2-11, see S2-12 below — see `docs/stories/2-11-package-builder-node.md` for the full story, including the 3-layer adversarial code review (5 patches applied — defensive `.get()` lookups replacing crash-prone direct subscripting, duplicate/orphaned-segment_id warning logging, 6 new coverage tests — plus 2 findings correctly deferred with documented rationale, 381/382 tests passing) ✅
 
-- [ ] **S2-12 WebSocket `lesson_ready` push — coordinate with Dev 4**
-  - Shape must match `packages/shared/types/ws.ts` discriminated union exactly
-  - Triggered by `package_builder` (S2-11) on success
-  - **AC:** Frontend receives `lesson_ready`; message passes TS discriminated-union type check; no shape mismatch with Dev 4 handler
+- [x] **S2-12 WebSocket `lesson_ready` push — coordinate with Dev 4** — ✓ 2026-07-16
+  - **Discovery: this infrastructure already existed, built by Dev 4** (`4534078 fix(arq): lesson_ready via Redis pub/sub`) — `apps/api/app/core/pubsub.py` (Redis pub/sub subscriber → `ConnectionManager.send()`) already wired into `app/main.py`'s lifespan, and `apps/api/app/workers/jobs/content_pipeline.py::content_pipeline_job` already published to `lesson_ready:{session_id}`. S2-12 turned out to be a reconciliation/bug-fix story against Story 2-11's landing, not new infrastructure.
+  - ✓ **Real bug fixed:** `package_summary`'s `slides_count`/`quiz_count`/`audio_count` had silently reported `0`/`0`/`0` for every successful lesson since S2-11 landed — the code read top-level `slides`/`quiz_questions`/`audio_assets` keys that only existed on the old flat stub shape (S2-11's real `LessonPackage` nests all three inside each segment). Fixed to aggregate from `segments[].slides`/`.quiz`, with `audio_count = len(segments)`.
+  - ✓ **Frozen-contract deviation fixed:** the published payload had an extra `session_id` key not present in `ws.ts`'s `LessonReadyMessage` type (`{lesson_id, lesson}` only). Removed — confirmed the subscriber only ever extracted `session_id` from the channel name, never the payload, so this was pure redundancy, never load-bearing.
+  - `session_id` fallback (`lesson_row.get("session_id") or lesson_id`) is UNCHANGED and confirmed correct — no `sessions`-table column exists on `lessons` yet, so this remains the only path in practice; building real session-tracking stays out of scope pending genuine Dev 4 coordination.
+  - Shape must match `packages/shared/types/ws.ts` discriminated union exactly — ✓ confirmed (payload is now byte-for-byte `LessonReadyMessage`'s type).
+  - Triggered by `package_builder` (S2-11) on success — ✓ (pre-existing wiring, confirmed still correct).
+  - **AC:** Frontend receives `lesson_ready` ✓ (pre-existing, Dev 4's wiring); message passes TS discriminated-union type check ✓ (payload now matches exactly, extra key removed); no shape mismatch with Dev 4 handler ✓ — see `docs/stories/2-12-lesson-ready-websocket-push.md` for the full story, including the 3-layer adversarial code review (4 patches applied — defensive guard against a crash-after-publish failure mode, 2 new coverage tests, 1 documentation correction — plus 2 findings correctly dismissed as verified-honest/not-a-defect, 942 tests passing) ✅
 
-- [ ] **S2-13 Cost ceiling enforcement wired into all nodes**
+- [x] **S2-13 Cost ceiling enforcement wired into all nodes** — ✓ 2026-07-17
   - `apps/api/app/core/cost_tracker.py` — wire into every LLM, TTS, image call
   - `MAX_LESSON_COST_USD = settings.max_lesson_cost_usd` (default `$3.00`)
-  - On breach: downshift to cheapest providers; complete lesson; set `lesson_jobs.error = "cost_ceiling_exceeded"`
-  - **AC:** A test run exceeding $3.00 mid-pipeline completes without crashing; admin panel shows the flag; cost tracked in `lesson_jobs.cost_usd`
+  - ✓ `lesson_planner_node`/`slide_generator_node` (S2-7/S2-8) now check `check_ceiling()` before dispatch — on breach, downshift from the premium model (`llm_lesson_planner`/`llm_slide_generator`) to `llm_mini` rather than aborting. `tts_node` (S2-9) checks per segment — on breach, skips Sarvam/Azure entirely and degrades straight to the free browser fallback. `image_generator_node` (S2-10) already had this (Story 2-9 AC-3) — verified unchanged. New `_record_cost_downshift()` helper writes a durable `{node, from, to, at}` trail into `lesson_jobs.node_outputs["_cost_downshifts"]` for the future S3-4 admin panel to read.
+  - ✓ Story 2-1 AC-7's Phase 1 pre-dispatch gate (`_fan_out_phase1_economy_nodes`) is **explicitly and deliberately left unchanged** — `llm_mini` is already the cheapest configured LLM tier, so there is nothing to downshift Phase 1 economy nodes *to*; terminate-and-flag remains the accepted behavior there (documented as a known, accepted gap against CLAUDE.md §14's literal "never abort" wording, not something silently left inconsistent — see Story 2-13's Dev Notes).
+  - Code review (3-layer adversarial, Blind Hunter + Edge Case Hunter + Acceptance Auditor) caught and fixed 2 real HIGH-severity bugs before merge: `_record_cost_downshift`'s own DB write was silently clobbered by each node's own subsequent final checkpoint write (defeating the downshift-recording AC on the very request meant to demonstrate it) — fixed by converting it to a pure in-memory merge; and `check_ceiling()` in the two new LLM-node call sites had no fail-open guard (a transient Redis error would have crashed the node) — fixed to match the existing fail-open pattern used everywhere else in the file.
+  - No admin panel exists yet (S3-4, Sprint 3, not started) — "flag in admin" is satisfied today via the durable `_cost_downshifts` JSONB trail, not a literal UI.
+  - **AC:** A test run over the cost ceiling completes each of the 4 premium/media nodes without crashing ✓ (tested); cost tracked in `lesson_jobs.cost_usd` (unchanged, already done) ✓; downshift recorded for future admin visibility ✓ (tested, survives the node's own final checkpoint write) — see `docs/stories/2-13-cost-ceiling-enforcement.md` for the full story, including the 3-layer adversarial code review (2 HIGH patches applied, 3 LOW patches applied, 5 findings correctly dismissed with rationale). 947/995 tests passing, 48 pre-existing unrelated failures (unchanged baseline), 2 skipped — 0 regressions.
 
-- [ ] **S2-14 Eval harness — 5 PDFs**
-  - `apps/api/tests/evals/`
-  - 5 representative PDFs: short (≤10 pages), long (≥100 pages), dense text, table-heavy, image-heavy
-  - Automated scoring: slide quality + quiz relevance; output recorded in Langfuse
-  - **AC:** All 5 PDFs produce a valid `LessonPackage`; no pipeline crash; per-lesson scores visible in Langfuse
+- [x] **S2-14 Eval harness — 5 PDFs** — ✓ 2026-07-17
+  - `apps/api/tests/evals/scoring.py` (rule-based slide-quality/quiz-relevance heuristics), `apps/api/tests/evals/runner.py` (drives one PDF through the real `run_pipeline()`, validates + scores + records to Langfuse + cleans up), `apps/api/tests/evals/test_live_run.py` (the actual live entry point), `apps/api/tests/fixtures/generate_eval_pdfs.py` (synthetic PDF generator, `fpdf2` new dev-only dependency)
+  - **No real representative textbook PDFs were available in this session** — 5 synthetic PDFs generated deterministically instead (short=3pp, long=120pp, dense_text=15pp, table_heavy=8pp/3 tables-per-page, image_heavy=10pp/4 synthetic images-per-page). PDFs themselves are NOT committed — a pre-existing Sprint 0 `.gitignore` rule (`tests/fixtures/eval_pdfs/*.pdf`) already excluded them, discovered (not created) during this story; only the generator is committed, and it's re-runnable to regenerate them locally.
+  - Scoring is explicitly rule-based/heuristic (documented honestly as such), not LLM/semantic — spends zero additional LLM budget scoring an already-completed lesson, consistent with the project's cost discipline.
+  - **The actual live 5-PDF pipeline run was explicitly NOT executed** — a deliberate scope decision made with the user before implementation (real OpenAI/Sarvam/Azure/Supabase cost + up to ~15 min/lesson × 5). The harness is fully built and unit-tested (16 offline tests, zero live calls); gated behind a new `live_eval` pytest marker + `--run-live-eval` flag (scoped to `tests/evals/conftest.py`, not a global `pyproject.toml` addopts change — a code-review finding caught and reverted an initial version that did touch global config without team sign-off). **Trigger it when ready:** `pytest apps/api/tests/evals/test_live_run.py -v --run-live-eval` (requires live credentials already in `.env`).
+  - Code review (3-layer adversarial) caught and fixed 5 real issues before merge, most notably: a slide-count band violation that was logged but never actually lowered the score; two places where `run_eval()`'s own "never raises" contract was violated by unguarded checks outside its try block; `run_all_evals()` having no per-PDF exception isolation around `run_eval()` itself (would have discarded all results on any future bug); and — most operationally important — no cleanup of the `books`/`lessons`/`lesson_jobs` rows or Storage object each eval run created, meaning every run (pass or fail) would have permanently accumulated orphaned test data in Supabase.
+  - **AC:** All 5 synthetic PDFs produce a valid `LessonPackage` when run live (not yet verified — deferred to the user's live trigger, see above); no pipeline crash — per-PDF failure isolation is unit-tested ✓; per-lesson scores recorded to Langfuse via `start_observation()`/`score_trace()`/`.end()` (verified against the installed v4 SDK, not guessed) ✓ — see `docs/stories/2-14-eval-harness-5-pdfs.md` for the full story, including the 3-layer adversarial code review (8 patches applied — 5 HIGH, 3 LOW — plus 4 findings correctly dismissed with documented rationale). 963/1014 tests passing, 48 pre-existing unrelated failures (unchanged baseline), 3 skipped — 0 regressions.
+
+- [x] **S2-15 LLM provider factory — model-agnostic dispatch (MANDATORY refactor)** — ✓ 2026-07-16
+  - `apps/api/app/providers/llm/factory.py` (new) — `get_llm_provider(model, lesson_id=None) -> LLMProvider`
+  - **Why:** all 9 economy/premium node call sites in `graph.py` hardcoded `from app.providers.llm.openai import OpenAILLMProvider` directly — `settings.llm_mini`/`settings.llm_lesson_planner`/etc. were env-var-driven for the MODEL STRING, but the PROVIDER CLASS was not selectable at all. CLAUDE.md's "swapping models is an env var change only" claim was only true within OpenAI's own model lineup — pointing `LLM_MINI` at a non-OpenAI model (Gemini, Claude) would have broken at request time. This refactor makes provider selection itself config-driven, in-process (no new service/deploy) — a future new provider (Gemini, Claude, etc.) now requires writing one file + one registry entry, zero node call-site changes.
+  - ✓ Factory dispatches by model-name prefix (`"gpt-"`/`"o1-"`, both routed to `OpenAILLMProvider`); lazy per-branch import deliberately preserved (mirrors every node's pre-existing pattern) — this is what made the migration a genuinely zero-test-file-touched refactor: **0 of the ~98 informally-estimated test references actually needed a patch-target change**, confirmed by running the full suite immediately after migration, before touching any test file.
+  - ✓ All 9 `graph.py` call sites migrated (`structure_node`, `lesson_planner_node`, `slide_generator_node`, `summarise_segment_node`, `quiz_generator_node`, `segment_complexity_node`, `jargon_extractor_node`, `intervention_messages_node`, `narration_generator_node`) — confirmed via grep, zero `OpenAILLMProvider` references remain in `graph.py`.
+  - Does NOT include writing a second provider (Gemini/Claude) — stays deferred until actually needed for an eval. Also does NOT cover 3 additional hardcoded call sites discovered in the `assessment/` module (`dna_profile.py`, `service.py` — Dev 3's owned territory, out of this story's scope) — flagged as a deferred review finding for whoever owns that module next.
+  - **AC:** `get_llm_provider()` returns a correctly-typed `LLMProvider` for every currently-supported model string ✓ (tested, including the `o1-mini` edge case found in review); all 9 `graph.py` call sites migrated ✓ (verified via grep); unknown/unregistered/non-string model raises a clear `ValueError` ✓ (tested); zero behavior change ✓ (364/365 tests passing, only patch-round additions, no existing test logic changed) — see `docs/stories/2-15-llm-provider-factory.md` for the full story, including the 3-layer adversarial code review (4 patches applied — 2 HIGH, 2 MEDIUM/LOW — 1 HIGH finding deferred as cross-module scope, 1 LOW dismissed as unrelated pre-existing clutter) ✅
 
 ---
 

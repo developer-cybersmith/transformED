@@ -8,6 +8,7 @@ export type ComplexityLevel = 'low' | 'medium' | 'high';
 export type AudioProvider = 'sarvam' | 'azure' | 'browser';
 export type QuizType = 'mcq' | 'concept_check';
 export type QuizDifficulty = 'easy' | 'medium' | 'hard';
+export type LessonTier = 'T1' | 'T2' | 'T3';
 
 export interface LessonMetadata {
   title: string;
@@ -15,6 +16,7 @@ export interface LessonMetadata {
   total_segments: number;
   estimated_duration_mins: number;
   complexity_level: string;
+  tier: LessonTier;
 }
 
 export interface SegmentComplexity {
