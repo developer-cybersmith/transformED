@@ -17,11 +17,11 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 7 | 6 | 0 | 1 |
+| Sprint 3 | Weeks 6–7 | 7 | 7 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
+| Sprint 4 | Weeks 8–9 | 6 | 0 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **44** | **36** | **0** | **8** |
+| **Total** | | **45** | **37** | **0** | **8** |
 
 Update this table each time a task is checked off below.
 
@@ -689,8 +689,24 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Story: `docs/stories/3-29-session-report-tier-context.md` — status: done
   - Branch: `learner-mode-sprint-dev3-task2` — pushed to origin; PR to `master-learner-mode-sprint-dev3` pending
 
-- [ ] **Task 3 — (next task — not started)**
-  - Branch will be: `learner-mode-sprint-dev3-task3` (created fresh from `main`)
+- [x] **Task 3 — Session report Learner DNA snapshot (Story 3-30)** — ✓ 2026-07-21
+  - Extended `GET /api/assessment/session/{id}/report` with `learner_dna_snapshot: dict[str, Any] | None = None` (additive, default=None)
+  - Snapshot contains `dimension_labels` (descriptive text, no raw floats) + `growth_labels` (Improving/Declining/Stable/None)
+  - Module-level constants `_DNA_GROWTH_IMPROVING_THRESHOLD=2.0`, `_DNA_GROWTH_DECLINING_THRESHOLD=-2.0`; pure `_delta_to_growth_label()` function
+  - 5-agent adversarial review APPROVED; 2 BLOCKERs patched (maybe_single None guard + isinstance payload guard)
+  - 42 unit tests GREEN (30 existing + 12 new); conftest.py openai stub extended
+  - Story: `docs/stories/3-30-session-report-learner-dna-snapshot.md` — status: done
+  - Branch: `learner-mode-sprint-dev3-task3` — merged to `master-learner-mode-sprint-dev3`
+
+- [x] **Task 4 — Re-assessment prompt after 10 sessions (Story 3-31)** — ✓ 2026-07-22
+  - `_REASSESSMENT_INTERVAL = 10` constant in `dna_fusion.py`; Step 7 sets `user:{uid}:reassessment_due = "1"` after every 10th session
+  - `redis=None` default on `fuse_learner_dna()` preserves backward compat — Dev 4 must pass `redis=get_redis()` to activate
+  - `get_learner_dna_data()` reads flag with strict `val == "1"` check; `redis=None` → `reassessment_due: false`
+  - Re-assessment bypass in `submit_onboarding_diagnostic`: deletes `onboarding_done` key before SET NX guard so returning users can re-submit
+  - 5-agent adversarial review: 4 BLOCKERs + 5 IMPROVEMENTs found and resolved
+  - 23 unit tests (15 original + 8 review-mandated); 174 regression tests PASS
+  - Story: `docs/stories/3-31-reassessment-prompt.md` — status: done
+  - Branch: `learner-mode-sprint-dev3-task4` — merged to `master-learner-mode-sprint-dev3`
 
 ---
 
@@ -734,6 +750,8 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Identify the step with the highest drop-off rate
   - Document top 2 drop-off hypotheses with supporting event data
   - **AC:** Funnel dashboard exists in PostHog; drop-off analysis written in `docs/sprint4-funnel-analysis.md`
+
+  > **Note (2026-07-22):** Sprint 4 has 6 tasks (not 5). This task was present in the tracker but omitted from the dashboard count. Dashboard corrected to 6.
 
 ---
 
