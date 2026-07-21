@@ -717,7 +717,7 @@ async def get_session_report(
             .execute()
         )
     )
-    if _dna_resp.data:
+    if _dna_resp is not None and _dna_resp.data:
         _dim_labels: dict[str, str] = {
             dim: _score_to_label(float(_dna_resp.data.get(dim) or 0.0))
             for dim in ALL_NINE_DIMENSIONS
@@ -735,7 +735,9 @@ async def get_session_report(
         )
         _delta_map: dict[str, float | None] = {}
         for evt in (_events_resp.data or []):
-            payload = evt.get("payload") or {}
+            payload = evt.get("payload")
+            if not isinstance(payload, dict):
+                continue
             dim = payload.get("dimension")
             if dim in ALL_NINE_DIMENSIONS:
                 _delta_map[dim] = payload.get("delta")

@@ -1,7 +1,7 @@
 ---
 story_id: 3-30
 title: "Session Report — Learner DNA Snapshot"
-status: review
+status: done
 epic: 3
 sprint: learner-mode-sprint
 branch: learner-mode-sprint-dev3-task3
@@ -511,7 +511,39 @@ Written by `record_dna_growth()` in `dna_growth.py`:
 ---
 
 ## Senior Developer Review (AI)
-*(Filled after /bmad-code-review)*
+
+**Review date:** 2026-07-21
+**Branch:** `learner-mode-sprint-dev3-task3`
+**Outcome:** CHANGES REQUESTED → PATCHED → APPROVED
+
+5-agent adversarial review ran in parallel. Two BLOCKERs found and patched immediately. One IMPROVEMENT applied. Full test suite: 55 PASS, 0 FAIL after patches.
+
+### Agent Layers
+
+| Layer | Verdict | Findings |
+|-------|---------|----------|
+| Story Quality | Changes Requested | BLOCKER: `if _dna_resp.data:` crashes on no-DNA path; High: existing asyncio count test mutated (spec contradiction, Task 4.17 wins) |
+| Blind Hunter (Security) | Pass | No IDOR, no injection vectors; Medium: delta type not coerced (low risk — app-internal JSONB); Low: conftest stub scope (noted) |
+| Test Coverage | Changes Requested | BLOCKER: `learner_dna_snapshot` absent from HTTP-layer required_keys; Improvements: single-dim tests don't verify other 8 dims, no raw-None supabase path test |
+| AC Completeness | Changes Requested | BLOCKER (same as Story Quality #1): `if _dna_resp is None` guard absent; spec Dev Notes guard (`isinstance(payload, dict)`) absent; HTTP-layer required_keys gap |
+| Process Integrity | Pass with Note | Additive field (`default=None`) is backward-compatible; frozen contract note: this is additive only, no client breakage. No LLM calls, no hardcoded models, no banned imports. |
+
+### Action Items
+
+- [x] **BLOCKER-1 (service.py:720)**: `if _dna_resp.data:` → `if _dna_resp is not None and _dna_resp.data:` — guards against `maybe_single().execute()` returning `None` directly (documented bug pattern at service.py:946-950). ✓ PATCHED 2026-07-21
+- [x] **BLOCKER-2 (service.py:738)**: `payload = evt.get("payload") or {}` → `payload = evt.get("payload"); if not isinstance(payload, dict): continue` — spec Dev Notes explicitly require this guard; `or {}` doesn't handle truthy non-dict JSONB values. ✓ PATCHED 2026-07-21
+- [x] **IMPROVEMENT (test:689)**: Add `"learner_dna_snapshot"` to `required_keys` set in `test_http_get_report_returns_200` — field must be present in HTTP response JSON. ✓ PATCHED 2026-07-21
+- [ ] **DEFER**: Single-dimension growth event tests don't assert the other 8 dims remain `None` — not a crash risk (record_dna_growth writes 1 event/dim/session); defer to next story iteration.
+- [ ] **DEFER**: No test for raw `None` from `maybe_single().execute()` directly (supabase returns `None`, not `APIResponse(data=None)`) — production code now safe after BLOCKER-1 patch; mock update deferred.
+- [ ] **NOTE (AC 15)**: PR description must explicitly state additive nature (`default=None`, backward-compatible). Included in PR description below.
+
+### Post-Patch Verification
+
+```
+55 passed in 6.22s
+```
+
+All 42 Story 3-30 tests + 13 PostHog tests pass. No regressions in session report suite.
 
 ---
 

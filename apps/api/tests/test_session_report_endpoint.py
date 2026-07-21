@@ -685,6 +685,7 @@ def test_http_get_report_returns_200():
         "teachback_score",
         "duration_minutes",
         "completed_at",
+        "learner_dna_snapshot",
     }
     assert required_keys.issubset(body.keys())
 
