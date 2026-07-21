@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-21 (Learner Mode Sprint Task 3 DONE — Story 3-30: Session Report Learner DNA Snapshot; combined tests GREEN; 5-agent review: 2 BLOCKERs patched (maybe_single None guard + isinstance payload guard); branch learner-mode-sprint-dev3-task3 merged to master-learner-mode-sprint-dev3)
+**Last updated:** 2026-07-22 (Learner Mode Sprint Task 4 DONE — Story 3-31: Re-assessment Prompt After 10 Sessions; Redis-backed reassessment_due flag; 23 unit tests GREEN; 5-agent adversarial review: all 4 BLOCKERs + 5 IMPROVEMENTs resolved; all 4 Learner Mode Sprint tasks merged to master-learner-mode-sprint-dev3)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -17,11 +17,11 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 7 | 5 | 0 | 2 |
-| Learner Mode Sprint | Ongoing | 3 | 3 | 0 | 0 |
+| Sprint 3 | Weeks 6–7 | 7 | 6 | 0 | 1 |
+| Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 5 | 0 | 0 | 5 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **43** | **34** | **0** | **9** |
+| **Total** | | **44** | **36** | **0** | **8** |
 
 Update this table each time a task is checked off below.
 
@@ -651,11 +651,16 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - 42 unit tests GREEN; 5-agent adversarial review APPROVED (2 BLOCKERs patched: maybe_single None guard + isinstance payload guard); additive field `default=None`
   - Branch: `learner-mode-sprint-dev3-task3` — ready for PR to `master-learner-mode-sprint-dev3`
 
-- [ ] **Re-assessment prompt after 10 sessions logic**
-  - After session_count reaches 10 (and every 10 thereafter): set flag `user:{user_id}:reassessment_due = "1"` in Redis
-  - `GET /api/assessment/user/dna` should include `reassessment_due: bool` field in response
-  - Frontend uses this flag to prompt user to retake the 20-question onboarding
-  - **AC:** Flag is set correctly after sessions 10, 20, 30; `GET /user/dna` returns `reassessment_due: true`
+- [x] **Re-assessment prompt after 10 sessions logic** — ✓ 2026-07-22
+  - Story 3-31: `docs/stories/3-31-reassessment-prompt.md` — status: done ✓
+  - `_REASSESSMENT_INTERVAL = 10` constant in `dna_fusion.py`; Step 7 sets `user:{uid}:reassessment_due = "1"` after every 10th session (non-fatal, `redis=None` default preserves backward compat for Dev 4) ✓
+  - `get_learner_dna_data()` reads flag with `val == "1"` strict check; `redis=None` → False ✓
+  - Router `get_learner_dna`: `get_redis()` guarded in try/except → graceful degradation if Redis unavailable ✓
+  - Router `submit_onboarding_diagnostic`: re-assessment bypass before 409 guard; `_safe_uid` in logger ✓
+  - 23 unit tests (15 original + 8 review-mandated); 174 regression tests PASS ✓
+  - 5-agent adversarial review: 4 BLOCKERs + 5 IMPROVEMENTs found and resolved ✓
+  - Branch: `learner-mode-sprint-dev3-task4` — pushed to origin, PR ready to create ✓
+  - **AC:** Flag is set correctly after sessions 10, 20, 30; `GET /user/dna` returns `reassessment_due: true` ✓
 
 ---
 

@@ -7,6 +7,7 @@ learner DNA retrieval, and onboarding diagnostic submission.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
@@ -14,6 +15,8 @@ from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel 
 
 from app.core.posthog_client import capture_event
 from app.dependencies import CurrentUser
+
+logger = logging.getLogger(__name__)
 
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
@@ -154,11 +157,17 @@ async def get_learner_dna(
 ) -> LearnerDNA:
     """Return the learner DNA profile for the authenticated user."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.core.redis import get_redis  # lazy — prevents circular import at module load
     from app.modules.assessment.service import get_analytics_consent, get_learner_dna_data
 
     user_id: str = current_user["sub"]
     supabase = get_supabase()
-    body = await get_learner_dna_data(user_id=user_id, supabase=supabase)
+    redis_client = None
+    try:
+        redis_client = get_redis()
+    except Exception:
+        pass  # non-fatal: reassessment_due defaults to False if Redis unavailable
+    body = await get_learner_dna_data(user_id=user_id, supabase=supabase, redis=redis_client)
     consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
     capture_event(
         distinct_id=user_id,
@@ -191,10 +200,20 @@ async def submit_onboarding_diagnostic(
 
     user_id: str = current_user["sub"]
     onboarding_key = f"user:{user_id}:onboarding_done"
+    reassessment_key = f"user:{user_id}:reassessment_due"
 
     # Atomic SET NX eliminates the TOCTOU race between a read-check and a later write.
     # Returns True if key was newly set; None/False if key already existed.
     redis = get_redis()
+
+    # Re-assessment bypass: if the re-assessment flag is set, the user is allowed to
+    # resubmit the onboarding form. Delete the idempotency key so SET NX succeeds below.
+    try:
+        if await redis.get(reassessment_key) is not None:
+            await redis.delete(onboarding_key)
+    except Exception:
+        pass  # non-fatal: idempotency guard still runs normally if this check fails
+
     was_set = await redis.set(onboarding_key, "1", nx=True)
     if not was_set:
         raise HTTPException(
@@ -212,4 +231,14 @@ async def submit_onboarding_diagnostic(
         # Release the lock so the user can retry after a transient failure.
         await redis.delete(onboarding_key)
         raise
+
+    # Clear re-assessment flag — the fresh onboarding resets the cycle (non-fatal).
+    _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+    try:
+        await redis.delete(reassessment_key)
+    except Exception as exc:
+        logger.warning(
+            "onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc
+        )
+
     return result

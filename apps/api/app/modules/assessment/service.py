@@ -973,6 +973,7 @@ async def get_learner_dna_data(
     *,
     user_id: str,
     supabase: Client,
+    redis: Any = None,
 ) -> dict[str, Any]:
     """Fetch the learner_dna row for a user and return it as a plain dict.
 
@@ -980,8 +981,11 @@ async def get_learner_dna_data(
     Returns a zero-state dict if no learner_dna row exists yet (user not onboarded).
 
     Args:
-        user_id: User UUID from the decoded JWT.
+        user_id:  User UUID from the decoded JWT.
         supabase: Synchronous Supabase client.
+        redis:    Optional async Redis client. When provided, checks
+                  user:{user_id}:reassessment_due for the re-assessment flag.
+                  Non-fatal: Redis failures return False for reassessment_due.
 
     Raises:
         HTTPException 404: No learner_dna row found for this user.
@@ -1006,11 +1010,25 @@ async def get_learner_dna_data(
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
         )
     row = resp.data
+
+    # ── Re-assessment flag (non-fatal Redis read) ─────────────────────────────
+    reassessment_due: bool = False
+    if redis is not None:
+        _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+        try:
+            val = await redis.get(f"user:{user_id}:reassessment_due")
+            reassessment_due = val == "1"
+        except Exception as exc:
+            logger.warning(
+                "get_learner_dna_data: redis check failed user=%s: %s", _safe_uid, exc
+            )
+            reassessment_due = False
+
     return {
         "user_id": str(row["user_id"]),
         "badge_labels": row.get("badge_labels") or [],
         "profile_text": row.get("profile_text"),
         "session_count": int(row.get("session_count") or 0),
-        "reassessment_due": False,
+        "reassessment_due": reassessment_due,
         "last_updated": row.get("last_updated"),
     }
