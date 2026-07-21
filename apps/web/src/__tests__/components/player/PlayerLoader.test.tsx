@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { useEffect } from 'react';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
+
+const { getMountCount, resetMountCount, incrementMountCount } = vi.hoisted(() => {
+  let mountCount = 0;
+  return {
+    getMountCount: () => mountCount,
+    resetMountCount: () => { mountCount = 0; },
+    incrementMountCount: () => { mountCount += 1; },
+  };
+});
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -12,10 +22,15 @@ vi.mock('@/hooks/useLesson', () => ({
 // We resolve it to the actual component after controlling the hook state.
 vi.mock('next/dynamic', () => ({
   default: (importFn: () => Promise<{ default: React.ComponentType<unknown> }>, opts?: { loading?: () => React.ReactNode }) => {
-    // In jsdom, return a stub that renders the loading fallback or a placeholder
-    const MockPlayer = ({ lesson }: { lesson: typeof mockLessonPackage }) => (
-      <div data-testid="player-stub">{lesson.metadata.title}</div>
-    );
+    // In jsdom, return a stub that renders the loading fallback or a placeholder.
+    // The mount-effect increments a module-level counter (not React state) so a
+    // real unmount+remount (vs. an in-place prop update) is observable across renders.
+    const MockPlayer = ({ lesson }: { lesson: typeof mockLessonPackage }) => {
+      useEffect(() => {
+        incrementMountCount();
+      }, []);
+      return <div data-testid="player-stub">{lesson.metadata.title}</div>;
+    };
     return MockPlayer;
   },
 }));
@@ -33,6 +48,7 @@ const mockUseLesson = vi.mocked(useLesson);
 describe('PlayerLoader', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetMountCount();
   });
 
   it('renders PlayerSkeleton while lesson is loading', () => {
@@ -90,6 +106,32 @@ describe('PlayerLoader', () => {
     render(<PlayerLoader lessonId="lesson_xyz" />);
 
     expect(mockUseLesson).toHaveBeenCalledWith('lesson_xyz');
+  });
+
+  it('remounts Player (not just re-renders) when the loaded lesson changes to a different lesson_id (S2-06 review fix)', () => {
+    const lessonA = { ...mockLessonPackage, lesson_id: 'lesson_A' };
+    const lessonB = { ...mockLessonPackage, lesson_id: 'lesson_B' };
+
+    mockUseLesson.mockReturnValue({ lesson: lessonA, isLoading: false, error: null });
+    const { rerender } = render(<PlayerLoader lessonId="lesson_A" />);
+    expect(getMountCount()).toBe(1);
+
+    mockUseLesson.mockReturnValue({ lesson: lessonB, isLoading: false, error: null });
+    rerender(<PlayerLoader lessonId="lesson_B" />);
+
+    // A same-key prop update would leave the mount effect from firing only once total;
+    // a real remount (via key={lesson.lesson_id}) fires it again for the fresh instance.
+    expect(getMountCount()).toBe(2);
+  });
+
+  it('does NOT remount Player when re-rendering with the same lesson_id', () => {
+    mockUseLesson.mockReturnValue({ lesson: mockLessonPackage, isLoading: false, error: null });
+    const { rerender } = render(<PlayerLoader lessonId="lesson_mock_1" />);
+    expect(getMountCount()).toBe(1);
+
+    rerender(<PlayerLoader lessonId="lesson_mock_1" />);
+
+    expect(getMountCount()).toBe(1);
   });
 
   it('error state takes priority over loading state', () => {

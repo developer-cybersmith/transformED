@@ -82,6 +82,24 @@ describe('CheckingInTransition (S2-06 AC5/AC8/AC9)', () => {
     expect(screen.queryByText(/checking in/i)).not.toBeNull();
   });
 
+  it('hides immediately if tutorState changes away from CHECKING_IN before the auto-hide timer fires (review fix)', () => {
+    vi.useFakeTimers();
+    render(<CheckingInTransition />);
+
+    act(() => {
+      usePlayerStore.setState({ tutorState: 'CHECKING_IN' });
+    });
+    expect(screen.queryByText(/checking in/i)).not.toBeNull();
+
+    // Only 100ms in — well before the 500ms auto-hide timer would fire.
+    act(() => {
+      vi.advanceTimersByTime(100);
+      usePlayerStore.setState({ tutorState: 'TEACHING' });
+    });
+
+    expect(screen.queryByText(/checking in/i)).toBeNull();
+  });
+
   it('does NOT re-trigger if tutorState is set to CHECKING_IN again without an intervening value change (no-op, same value)', () => {
     vi.useFakeTimers();
     render(<CheckingInTransition />);

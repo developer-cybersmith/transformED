@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Search, Bell, Flame, Settings, LogOut } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
+import { getInitials } from "@/lib/utils";
 
 export function TopUtilityBar() {
     const { user, logout } = useAuth();
@@ -20,9 +20,18 @@ export function TopUtilityBar() {
                 setIsProfileMenuOpen(false);
             }
         }
+        // Review fix: menu exposed aria-haspopup/aria-expanded but had no
+        // keyboard way to dismiss it.
+        function handleEscape(event: KeyboardEvent) {
+            if (event.key === "Escape") setIsProfileMenuOpen(false);
+        }
 
         document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
+        document.addEventListener("keydown", handleEscape);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("keydown", handleEscape);
+        };
     }, [isProfileMenuOpen]);
 
     const displayName = user?.full_name || user?.email || "Guest";
@@ -81,7 +90,9 @@ export function TopUtilityBar() {
                         className="relative group focus:outline-none flex items-center gap-3 pl-3 pr-2 py-1.5 rounded-full hover:bg-neutral-100/50 transition-colors"
                     >
                         <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-[var(--accent-primary)] to-[var(--accent-primary-hover)] flex items-center justify-center text-white font-medium text-sm shadow-md overflow-hidden">
-                            <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=random&color=fff`} alt="Profile" className="w-full h-full object-cover" />
+                            {/* Only initials (never the full name/email) are sent to this
+                                third-party CDN as the avatar seed — review fix. */}
+                            <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(getInitials(displayName))}&background=random&color=fff`} alt="Profile" className="w-full h-full object-cover" />
                         </div>
                     </button>
 

@@ -55,5 +55,9 @@ export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
   if (error) return <LessonErrorState />;
   if (isLoading) return <PlayerSkeleton />;
   if (!lesson) return <LessonErrorState />;
-  return <Player lesson={lesson} />;
+  // Keyed by lesson_id so a client-side navigation between two different lessons
+  // (S1-08 useLesson refetch) fully remounts Player rather than reusing the same
+  // instance — avoids useLessonSocket/loadLesson racing against a stale sessionId
+  // left over from the previous lesson (S2-06 review finding).
+  return <Player key={lesson.lesson_id} lesson={lesson} />;
 }

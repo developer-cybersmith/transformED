@@ -31,9 +31,18 @@ export function Sidebar() {
                 setIsAccountMenuOpen(false);
             }
         }
+        // Review fix: menus exposed aria-haspopup/aria-expanded but had no
+        // keyboard way to dismiss them.
+        function handleEscape(event: KeyboardEvent) {
+            if (event.key === "Escape") setIsAccountMenuOpen(false);
+        }
 
         document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
+        document.addEventListener("keydown", handleEscape);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("keydown", handleEscape);
+        };
     }, [isAccountMenuOpen]);
 
     return (

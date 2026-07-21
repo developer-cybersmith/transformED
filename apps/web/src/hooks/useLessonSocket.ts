@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { AttentionSignalMessage, ServerMessage } from '@hie/shared/types/ws';
+import type { LocalControlOut } from '@/lib/ws/wireTypes';
 import { LessonSocket, type LessonSocketStatus } from '@/lib/ws/lessonSocket';
 import { usePlayerStore } from '@/stores/player.machine';
 import { createClient } from '@/lib/supabase/client';
@@ -66,6 +67,12 @@ export function useLessonSocket(sessionId: string | null) {
       }
     }
 
+    // Named per-effect-run so cleanup can check identity before nulling the
+    // store field — guards against a stale instance's cleanup (e.g. React 18
+    // StrictMode's mount-cleanup-remount, or fast sessionId churn) clobbering a
+    // fresher instance's live send function (review finding).
+    const sendControl: (msg: LocalControlOut) => void = (msg) => socketRef.current?.sendControl(msg);
+
     async function init(): Promise<void> {
       try {
         const supabase = createClient();
@@ -79,7 +86,7 @@ export function useLessonSocket(sessionId: string | null) {
         });
         socketRef.current = socket;
         socket.connect(sid, token);
-        usePlayerStore.getState().setWsSendControl((msg) => socketRef.current?.sendControl(msg));
+        usePlayerStore.getState().setWsSendControl(sendControl);
       } catch (err) {
         // Supabase session lookup failed (network/auth error) — degrade gracefully
         // per AC8 rather than leaving an unhandled rejection and a silently-stuck hook.
@@ -95,7 +102,9 @@ export function useLessonSocket(sessionId: string | null) {
       cancelled = true;
       socketRef.current?.disconnect();
       socketRef.current = null;
-      usePlayerStore.getState().setWsSendControl(null);
+      if (usePlayerStore.getState().wsSendControl === sendControl) {
+        usePlayerStore.getState().setWsSendControl(null);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, setTutorState]);

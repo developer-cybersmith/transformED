@@ -5,6 +5,7 @@ import { ArrowRight, UploadCloud, BookOpen } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
+import { getFirstName } from "@/lib/utils";
 
 export interface HeroSectionProps {
     continueLessonId?: string;
@@ -14,9 +15,11 @@ export function HeroSection({ continueLessonId }: HeroSectionProps) {
     const router = useRouter();
     const { user } = useAuth();
 
-    // Extract first name (or part of email before @) to be friendly
+    // Extract first name (or part of email before @) to be friendly.
+    // getFirstName trims/filters whitespace so a leading-space full_name never
+    // produces a blank greeting (review fix).
     const rawName = user?.full_name || user?.email?.split('@')[0] || "Guest";
-    const firstName = rawName.split(" ")[0];
+    const firstName = getFirstName(rawName) || "there";
 
     return (
         <motion.section

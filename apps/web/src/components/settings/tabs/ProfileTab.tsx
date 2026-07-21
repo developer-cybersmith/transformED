@@ -30,6 +30,10 @@ export function ProfileTab() {
 
     const displayName = user?.full_name || profile.name;
     const displayEmail = user?.email || profile.email;
+    // Seed the avatar with a stable id, never the real name/email — dicebear
+    // generates an illustrated avatar from a hash of the seed, so this loses
+    // no visual uniqueness while not leaking PII to a third-party CDN (review fix).
+    const avatarSeed = user?.id || profile.id;
 
     return (
         <div className="flex flex-col gap-8 w-full max-w-3xl pt-8">
@@ -41,7 +45,7 @@ export function ProfileTab() {
                     <div className="w-32 h-32 rounded-2xl bg-gradient-to-tr from-[var(--color-light-bg)] to-[var(--color-soft-panel)] p-1 flex items-center justify-center shadow-sm">
                         <div className="w-full h-full rounded-xl bg-white flex items-center justify-center overflow-hidden relative">
                             <img
-                                src={`https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(displayName)}&backgroundColor=f8fafc`}
+                                src={`https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(avatarSeed)}&backgroundColor=f8fafc`}
                                 alt="Profile Avatar"
                                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                             />

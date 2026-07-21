@@ -19,11 +19,17 @@ export function CheckingInTransition() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (tutorState !== 'CHECKING_IN') return;
-    // Deliberately synchronous: this must show the instant tutorState edges into
-    // CHECKING_IN, with no one-tick flash of "not visible" first — a real browser
-    // timer (external system) is what actually drives the auto-hide below.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Deliberately synchronous: this must show/hide the instant tutorState edges,
+    // with no one-tick flash first — a real browser timer (external system) is
+    // what actually drives the auto-hide below.
+    if (tutorState !== 'CHECKING_IN') {
+      // Review fix: without this, a tutorState change away from CHECKING_IN
+      // before the timer below fires left `visible` stuck true forever — the
+      // effect's cleanup only cleared the timer, never called setVisible(false).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setVisible(false);
+      return;
+    }
     setVisible(true);
     const timer = setTimeout(() => setVisible(false), TRANSITION_VISIBLE_MS);
     return () => clearTimeout(timer);

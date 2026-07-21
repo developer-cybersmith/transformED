@@ -3,18 +3,23 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HeroSection } from '@/components/dashboard/sections/HeroSection';
 
-const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
+const { pushMock, useAuthMock } = vi.hoisted(() => ({
+  pushMock: vi.fn(),
+  useAuthMock: vi.fn(),
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { full_name: 'Robert', email: 'robert@example.com' } }),
+  useAuth: useAuthMock,
 }));
 
 beforeEach(() => {
   pushMock.mockReset();
+  useAuthMock.mockReset();
+  useAuthMock.mockReturnValue({ user: { full_name: 'Robert', email: 'robert@example.com' } });
 });
 
 describe('HeroSection', () => {
@@ -43,5 +48,19 @@ describe('HeroSection', () => {
     await user.click(screen.getByText('Upload PDF'));
 
     expect(pushMock).toHaveBeenCalledWith('/upload');
+  });
+
+  it('does not render a blank greeting for a leading-space full_name (review fix)', () => {
+    useAuthMock.mockReturnValue({ user: { full_name: ' Robert', email: 'robert@example.com' } });
+    render(<HeroSection />);
+
+    expect(screen.getByText(/good evening, robert/i)).not.toBeNull();
+  });
+
+  it('falls back to "there" instead of a blank greeting when full_name is whitespace-only', () => {
+    useAuthMock.mockReturnValue({ user: { full_name: '   ', email: 'robert@example.com' } });
+    render(<HeroSection />);
+
+    expect(screen.getByText(/good evening, there/i)).not.toBeNull();
   });
 });

@@ -153,4 +153,27 @@ describe('useLessonSocket', () => {
 
     expect(usePlayerStore.getState().wsSendControl).toBeNull();
   });
+
+  it('a stale instance unmounting after a fresher instance has taken over does not clobber the fresher one (review fix)', async () => {
+    const first = renderHook(() => useLessonSocket('sess_1'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendControl).not.toBeNull());
+    const firstSendControl = usePlayerStore.getState().wsSendControl;
+
+    // A second, fresher instance connects (e.g. StrictMode double-invoke, or fast
+    // sessionId churn) before the first one has unmounted.
+    renderHook(() => useLessonSocket('sess_2'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    act(() => FakeWebSocket.instances[1].simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendControl).not.toBe(firstSendControl));
+    const secondSendControl = usePlayerStore.getState().wsSendControl;
+
+    // The stale first instance unmounts last — its cleanup must not null out the
+    // second instance's still-live send function.
+    first.unmount();
+
+    expect(usePlayerStore.getState().wsSendControl).toBe(secondSendControl);
+    expect(usePlayerStore.getState().wsSendControl).not.toBeNull();
+  });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { KeyRound, X } from "lucide-react";
@@ -22,10 +22,21 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [success, setSuccess] = useState(false);
+    const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Portal target isn't available during SSR — flip to true post-hydration.
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setIsMounted(true);
+    }, []);
+
+    // Clears the post-success auto-close timer on unmount — otherwise a stale
+    // timer from a session the user already manually closed could fire
+    // handleClose() against a since-reopened modal (review fix).
+    useEffect(() => {
+        return () => {
+            if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+        };
     }, []);
 
     function reset() {
@@ -38,12 +49,20 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
     }
 
     function handleClose() {
+        if (closeTimerRef.current) {
+            clearTimeout(closeTimerRef.current);
+            closeTimerRef.current = null;
+        }
         reset();
         onClose();
     }
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        // Reentrancy guard — a fast double-submit (double click / double Enter)
+        // before React commits isSubmitting could otherwise fire two concurrent
+        // signInWithPassword + updateUser sequences (review fix).
+        if (isSubmitting) return;
         setError(null);
 
         if (newPassword.length < 8) {
@@ -52,6 +71,10 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
         }
         if (newPassword !== confirmPassword) {
             setError("New password and confirmation do not match.");
+            return;
+        }
+        if (newPassword === currentPassword) {
+            setError("New password must be different from your current password.");
             return;
         }
 
@@ -75,7 +98,16 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
                 password: currentPassword,
             });
             if (reauthError) {
-                setError("Current password is incorrect.");
+                // Distinguish actual wrong-password from network/rate-limit/server
+                // failures — collapsing all of these into "incorrect password" is
+                // misleading and gives the user the wrong next action (review fix).
+                if (reauthError.status === 429) {
+                    setError("Too many attempts — please wait a moment and try again.");
+                } else if (reauthError.status && reauthError.status >= 500) {
+                    setError("Something went wrong on our end. Please try again.");
+                } else {
+                    setError("Current password is incorrect.");
+                }
                 return;
             }
 
@@ -86,7 +118,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
             }
 
             setSuccess(true);
-            setTimeout(handleClose, 1500);
+            closeTimerRef.current = setTimeout(handleClose, 1500);
         } catch {
             setError("Something went wrong. Please try again.");
         } finally {
@@ -151,6 +183,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
                                     <input
                                         type="password"
                                         required
+                                        autoComplete="current-password"
                                         value={currentPassword}
                                         onChange={(e) => setCurrentPassword(e.target.value)}
                                         className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
@@ -162,6 +195,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
                                         type="password"
                                         required
                                         minLength={8}
+                                        autoComplete="new-password"
                                         value={newPassword}
                                         onChange={(e) => setNewPassword(e.target.value)}
                                         className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
@@ -173,6 +207,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
                                         type="password"
                                         required
                                         minLength={8}
+                                        autoComplete="new-password"
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}
                                         className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"

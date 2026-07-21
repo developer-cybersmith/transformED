@@ -4,7 +4,7 @@ baseline_commit: "131ff6a153ebe1284ceeda4f4900711c63219da2"
 
 # Story 2-6: Segment-End Detection → CHECKING_IN State
 
-Status: review
+Status: done
 
 ## Story
 
@@ -57,7 +57,18 @@ so that my progress is tracked server-side for the tutor state machine (CLAUDE.m
   - [x] 5.4 `apps/web/src/__tests__/hooks/useLessonSocket.test.ts`: added cases asserting `usePlayerStore.getState().wsSendControl` becomes a function once the socket connects (and forwards to the real `FakeWebSocket`), and becomes `null` again after unmount
   - [x] 5.5 `apps/web/src/__tests__/components/player/Player.test.tsx`: mocked `useLessonSocket` and asserted it's called with the store's `sessionId`; asserted `CheckingInTransition` becomes visible when `tutorState` is `CHECKING_IN`
 
-## Dev Notes
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2-master` vs `main`, 2026-07-21. Acceptance Auditor found zero AC violations — all 12 ACs traced and confirmed. Findings below are from Blind Hunter + Edge Case Hunter.
+
+- [x] [Review][Patch] `Player.tsx` mounts `useLessonSocket` with a possibly-stale `sessionId` on client-side navigation between two lessons — `useLessonSocket(sessionId || null)` is called during render, before the `useEffect` that calls `loadLesson(lesson)` (which regenerates `sessionId`) has run. If `Player` is reused across a client-side navigation from one `/lesson/[id]` to another without a full remount, the hook briefly connects using the *previous* lesson's stale `sessionId` before tearing down and reconnecting with the correct one a tick later. **Resolved (user decision, 2026-07-21):** force `Player` to remount per lesson via `key={lesson.lesson_id}` in `PlayerLoader.tsx` — eliminates this whole class of stale-state bugs, not just this one. Fixed: `PlayerLoader.tsx` now renders `<Player key={lesson.lesson_id} .../>`; 2 new `PlayerLoader.test.tsx` tests (remounts on lesson_id change, does not remount on same id). [apps/web/src/components/player/Player.tsx, apps/web/src/components/player/PlayerLoader.tsx] (edge)
+- [x] [Review][Patch] `CheckingInTransition` can get stuck visible forever if `tutorState` changes away from `'CHECKING_IN'` before the 500ms auto-hide timer fires — the effect's early-return branch (`if (tutorState !== 'CHECKING_IN') return;`) never calls `setVisible(false)`; only the timer does. A `tutorState` change to any other value while `visible` is still `true` and the timer hasn't elapsed leaves the full-bleed overlay permanently covering the quiz/teach-back UI, with no future code path to hide it. Fixed: the early-return branch now also calls `setVisible(false)`; new regression test confirms it hides immediately on an away-transition mid-timer. [apps/web/src/components/player/CheckingInTransition.tsx] (blind+edge)
+- [x] [Review][Patch] `wsSendControl` is a single global store field written by per-`useLessonSocket`-instance effects with no instance-identity check — if two instances of the hook are ever mounted out of strict lockstep (React 18 StrictMode double-invoke, fast `sessionId` churn), a stale instance's unconditional `setWsSendControl(null)` cleanup can null out a fresher instance's live send function, silently dropping subsequent `segment_complete` sends. Fixed: cleanup now only nulls the store field if it still holds this instance's own `sendControl` closure; new test simulates two overlapping instances and confirms the stale one's unmount doesn't clobber the fresher one. [apps/web/src/hooks/useLessonSocket.ts] (blind)
+- [x] [Review][Defer] Optimistic `setTutorState('CHECKING_IN')` unconditionally overwrites whatever `tutorState` currently holds, with no check of its prior value — deferred, by-design for this story's scope (Dev Notes' "Timing constraint" explicitly chose this trade-off), and no other `tutorState` value is ever set outside `'IDLE'`/`'TEACHING'`/`'CHECKING_IN'` in this sprint. Revisit once Sprint 3 wires `INTERVENING`/`QUIZZING` as real, independently-arriving states. [apps/web/src/components/player/AudioTimeline.tsx] (blind)
+- [x] [Review][Defer] `segment_complete` is silently and permanently dropped (no queue/retry) if the WebSocket hasn't finished connecting yet when a segment boundary fires — deferred, consistent with this system's already-documented fire-and-forget semantics elsewhere (`docs/ws-message-contract.md`'s "no delivery guarantee, no replay" note for `lesson_ready`); fixing this is a genuine architecture change (a send queue/reconciliation mechanism) beyond this story's scope. [apps/web/src/components/player/AudioTimeline.tsx, apps/web/src/lib/ws/lessonSocket.ts] (edge)
+
+**Dismissed as noise/false-positive:** none — every finding raised had real merit and was triaged into a category above.
+
 
 ### Timing constraint — why AC6/AC7/AC8 exist (read this before touching `CheckingInTransition`)
 
@@ -133,6 +144,10 @@ Claude Sonnet 5 (claude-sonnet-5)
 - No changes to the frozen `packages/shared/types/ws.ts` contract, `apps/web/src/lib/ws/wireTypes.ts`, or `apps/web/src/lib/ws/lessonSocket.ts` — all three already had everything this story needed.
 - Backend dependency (Dev 4's `state_change`-on-every-transition fix) remains unverified end-to-end — his branch (`sprint2/s2-1-state-change-broadcast`) isn't pushed yet. All new tests run against `FakeWebSocket`/direct store manipulation, consistent with the story's documented "not a blocker" posture. A real integration check is still a follow-up once his branch/PR lands.
 
+### Review Round (2026-07-21)
+
+5-agent adversarial review run against `sprint2-master` vs `main` (Blind Hunter, Edge Case Hunter, Acceptance Auditor — Test Coverage/AC Completeness folded into the Acceptance Auditor pass per this project's actual 3-layer skill implementation). Acceptance Auditor: 0 AC violations. 1 decision-needed (resolved with user: force `Player` remount via `key={lesson.lesson_id}`), 3 patches applicable to this story (all applied, RED→GREEN, with a real revert-and-confirm check on each before restoring the fix), 2 deferred (documented above, real but out of this story's scope). Full `apps/web` suite 373/373 passing after all patches (across both this story's and the unrelated sidebar-task's fixes on the same branch); `tsc --noEmit` clean; `eslint` clean (0 errors) on every touched file.
+
 ### File List
 
 **Files CREATED:**
@@ -142,10 +157,14 @@ Claude Sonnet 5 (claude-sonnet-5)
 **Files MODIFIED:**
 - `apps/web/src/stores/player.machine.ts` — added `wsSendControl` field + `setWsSendControl` action, `LocalControlOut` type import; `exitTeachBack()` resets `tutorState` to `'TEACHING'`
 - `apps/web/src/__tests__/stores/player.machine.test.ts` — new `wsSendControl` describe block (3 tests), 2 new `exitTeachBack` tutorState-reset tests, `wsSendControl: null` added to the shared `beforeEach` reset
-- `apps/web/src/hooks/useLessonSocket.ts` — registers/clears `wsSendControl` in the player store on connect/cleanup
-- `apps/web/src/__tests__/hooks/useLessonSocket.test.ts` — 2 new tests (register-on-connect + forwards to socket, clear-on-unmount), `wsSendControl: null` added to the existing `beforeEach` reset
+- `apps/web/src/hooks/useLessonSocket.ts` — registers/clears `wsSendControl` in the player store on connect/cleanup; review round added an instance-identity guard before nulling on cleanup
+- `apps/web/src/__tests__/hooks/useLessonSocket.test.ts` — 2 new tests (register-on-connect + forwards to socket, clear-on-unmount); review round added 1 more (stale-instance-doesn't-clobber-fresher-instance)
 - `apps/web/src/components/player/AudioTimeline.tsx` — sends `segment_complete` + optimistic `setTutorState('CHECKING_IN')` at all 3 `enterQuiz()` call sites
 - `apps/web/src/__tests__/components/player/AudioTimeline.test.ts` — 3 new tests, `wsSendControl: null` added to `beforeEach`, `vi` import added
+- `apps/web/src/components/player/CheckingInTransition.tsx` — review round added `setVisible(false)` to the early-return branch (was previously silent, leaving `visible` stuck `true` on an away-transition mid-timer)
+- `apps/web/src/__tests__/components/player/CheckingInTransition.test.tsx` — review round added 1 new regression test
+- `apps/web/src/components/player/PlayerLoader.tsx` — review round added `key={lesson.lesson_id}` to force `Player` to remount per lesson
+- `apps/web/src/__tests__/components/player/PlayerLoader.test.tsx` — review round added 2 new tests (remounts on lesson_id change; does not remount on same id)
 - `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` — 3 new tests (`handleEnded`'s two call sites + the already-quizzed no-send case), `wsSendControl: null` added to `beforeEach`
 - `apps/web/src/components/player/Player.tsx` — mounts `useLessonSocket(sessionId || null)` and `CheckingInTransition`
 - `apps/web/src/__tests__/components/player/Player.test.tsx` — mocked `useLessonSocket` via `vi.mock`, 2 new tests (hook called with `sessionId`, `CheckingInTransition` becomes visible)
@@ -154,3 +173,4 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 - 2026-07-20: Story created via `bmad-create-story` — Sprint 2 extra task (S2-06 in `docs/dev2-sprint-tracker.md`), branch `sprint2/s2-6-segment-checkin`, committed story-only per the story-first gate.
 - 2026-07-20: All 5 tasks implemented in RED→GREEN order; 15 new tests across 6 files (`player.machine.test.ts` +5, `useLessonSocket.test.ts` +2, `AudioTimeline.test.ts` +3, `AudioTimeline.component.test.tsx` +3, `CheckingInTransition.test.tsx` +6 new file, `Player.test.tsx` +2); full `apps/web` suite 336/336 passing; `tsc --noEmit` and `eslint` clean; story marked `review`.
+- 2026-07-21: 5-agent adversarial code review run against `sprint2-master` vs `main`. 0 AC violations. 1 decision resolved with the user (force `Player` remount via `key={lesson.lesson_id}`), 3 patches applied (`CheckingInTransition` stuck-visible fix, `wsSendControl` instance-identity guard, `PlayerLoader` remount key) with 4 new tests, 2 deferred (documented, out of scope). Full `apps/web` suite 373/373 passing; `tsc --noEmit` and `eslint` clean. Story marked `done`.

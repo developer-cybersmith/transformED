@@ -2,6 +2,11 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story 2-6 (2026-07-21, segment-checkin, branch `sprint2-master`)
+
+- **Optimistic `setTutorState('CHECKING_IN')` unconditionally overwrites whatever `tutorState` currently holds, with no check of its prior value** — deferred, by-design for this story's scope (the story's own "Timing constraint" Dev Notes explicitly chose this trade-off), and no `tutorState` value outside `'IDLE'`/`'TEACHING'`/`'CHECKING_IN'` is ever set in this sprint. Revisit once Sprint 3 wires `INTERVENING`/`QUIZZING` as real, independently-arriving states. [`apps/web/src/components/player/AudioTimeline.tsx`]
+- **`segment_complete` is silently and permanently dropped (no queue/retry) if the WebSocket hasn't finished connecting yet when a segment boundary fires** — deferred, consistent with this system's already-documented fire-and-forget semantics elsewhere (`docs/ws-message-contract.md`'s "no delivery guarantee, no replay" note for `lesson_ready`); fixing this is a genuine architecture change (a send queue/reconciliation mechanism), beyond this story's scope. [`apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/lib/ws/lessonSocket.ts`]
+
 ## Deferred from: code review of story-2.2 (2026-07-14, Learner Mode infra)
 
 - **Unbounded `tier` Form field is parsed before the file's streaming size guard** — a theoretical memory/CPU amplification vector (pair a tiny/invalid file with an oversized `tier` text field); framework-dependent (Starlette's own multipart limits may already bound this), not confirmed exploitable from the diff alone. Deferred — pre-existing multipart-parsing pattern in this endpoint, not introduced by tier specifically. [`apps/api/app/modules/content/router.py`]
