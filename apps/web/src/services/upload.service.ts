@@ -20,9 +20,12 @@ export interface LessonStatusResponse {
 export const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024;
 
 export const uploadService = {
-    uploadLesson: (file: File) => {
+    uploadLesson: (file: File, tier?: string) => {
         const formData = new FormData();
         formData.append('file', file);
+        // Omitted entirely when unset — the backend's own Form(DEFAULT_TIER, ...)
+        // default applies server-side (apps/api/app/modules/content/router.py).
+        if (tier) formData.append('tier', tier);
         // No explicit Content-Type here — axios/the browser must generate the
         // multipart boundary themselves; forcing the header strips it and the
         // backend fails to parse the body.

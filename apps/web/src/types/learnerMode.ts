@@ -7,6 +7,15 @@ export interface LearnerTierOption {
   disclaimer?: string;
 }
 
+// S2-09: maps the frontend's descriptive tier id to the backend's T1/T2/T3
+// contract (apps/api/app/schemas/lesson.py) — deep=full depth, balanced=standard
+// default, refresher=critical-topics-only. See docs/stories/2-lm3-lm4-lm5-tier-aware-generation.md.
+export const LEARNER_TIER_TO_BACKEND: Record<LearnerTier, 'T1' | 'T2' | 'T3'> = {
+  deep: 'T1',
+  balanced: 'T2',
+  refresher: 'T3',
+};
+
 export const LEARNER_TIER_OPTIONS: LearnerTierOption[] = [
   {
     id: 'deep',
