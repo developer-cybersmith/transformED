@@ -983,3 +983,41 @@ async def test_planner_batched_duplicate_id_count_preserved_still_rejected() -> 
         await lesson_planner_node(_base_state(segment_summaries=summaries))
 
     sb.table.return_value.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_planner_completes_with_messy_title_derived_segment_ids() -> None:
+    """Story 2-18 regression (REAL node path, not a format replica): segment_ids
+    derived from messy how-to titles (embedded newlines/spaces) must not corrupt
+    lesson_planner's prompt list — the node completes without tripping the
+    unknown/duplicate/count guards, and graph.py:1099 emits one line per segment."""
+    from app.modules.content.pipeline.graph import _derive_section_id, lesson_planner_node
+
+    messy = ["5.\nJobs", "The Water Cycle", "1. Click\r\nEnd Process"]
+    summaries = [
+        {"segment_id": _derive_section_id({"title": t}, i), "summary": f"summary {i}"}
+        for i, t in enumerate(messy)
+    ]
+
+    captured: dict[str, Any] = {}
+
+    def _echo(*args: Any, **kwargs: Any) -> Any:
+        captured["messages"] = args[0]
+        return _make_plan_llm(_ids_from_messages(args))
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _echo
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert result["lesson_plan"]["total_segments"] == len(summaries)
+    user_msg = captured["messages"][1]["content"]
+    assert len(user_msg.split("\n")) == len(summaries), (
+        "one prompt line per segment (graph.py:1099)"
+    )
