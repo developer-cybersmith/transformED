@@ -672,3 +672,47 @@ async def test_narration_timestamps_populated_and_contiguous() -> None:
             assert set(t) == {"slide_id", "start_ms", "end_ms"}
             assert t["start_ms"] < t["end_ms"]
         assert [t["slide_id"] for t in ts] == [s["slide_id"] for s in seg["slides"]]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_multi_slide_segment_track_and_settings_flow() -> None:
+    """Story 2-19 (AC-1/AC-2/AC-3 through the REAL node): a segment with >=2
+    slides gets a contiguous multi-entry track, and the estimated duration is
+    driven by settings.narration_words_per_minute (proves the wiring uses the
+    setting, not a hardcoded value)."""
+    from app.config import get_settings
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    slides_multi = [
+        SLIDES[0],
+        {
+            "segment_id": "sec_0",
+            "data": {
+                "slide_id": "slide_sec_0_1",
+                "title": "More Entropy",
+                "bullets": ["Point A2"],
+                "image_url": None,
+                "fallback_image_url": None,
+            },
+        },
+        SLIDES[1],
+    ]
+    slide_images_multi = [*SLIDE_IMAGES, {"slide_id": "slide_sec_0_1", "image_url": None}]
+
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(
+            _base_state(slides=slides_multi, slide_images=slide_images_multi)
+        )
+
+    seg0 = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    ts = seg0["narration"]["timestamps"]
+    assert len(ts) == 2, "two slides -> two timestamps"
+    assert [t["slide_id"] for t in ts] == ["slide_sec_0_0", "slide_sec_0_1"]
+    assert ts[0]["start_ms"] == 0
+    assert ts[0]["end_ms"] == ts[1]["start_ms"], "contiguous across entries"
+    assert ts[0]["start_ms"] < ts[0]["end_ms"] and ts[1]["start_ms"] < ts[1]["end_ms"]
+    # sec_0 script "Entropy measures disorder." = 3 words; duration must use the setting.
+    wpm = get_settings().narration_words_per_minute
+    assert ts[-1]["end_ms"] == round(3 / wpm * 60_000), "duration derived from the wpm setting"

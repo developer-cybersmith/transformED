@@ -3322,6 +3322,9 @@ def _estimate_slide_timestamps(
     n = len(slides)
     if n == 0:
         return []
+    # Defence-in-depth: `words_per_minute` is guarded by Settings(gt=0) at the
+    # only call site, but this is now a public module symbol — never divide by 0.
+    words_per_minute = max(words_per_minute, 1)
     word_count = len(script.split())
     total_ms = (
         round(word_count / words_per_minute * 60_000)
@@ -3555,7 +3558,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             **narration,
             "timestamps": _estimate_slide_timestamps(
                 slides_with_images,
-                narration.get("script", ""),
+                # `or ""` guards a present-but-None script value (not just a
+                # missing key), keeping the empty-script -> default fallback.
+                narration.get("script") or "",
                 words_per_minute=settings.narration_words_per_minute,
                 default_ms_per_slide=settings.default_ms_per_slide,
             ),

@@ -98,3 +98,30 @@ def test_track_invariants_hold_for_any_shape(word_count: int, n_slides: int) -> 
     )
     assert len(ts) == n_slides
     _assert_valid_track(ts)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("n_slides", [3, 8, 50])
+def test_track_valid_at_duration_floor(n_slides: int) -> None:
+    """Force total_ms to the >=1ms/slide floor (tiny word count vs huge wpm) so
+    the `max(total_ms, n)` clamp actually fires — proves the track stays valid in
+    the pathological small-duration regime (the regime the wpm=150 sweep can't
+    reach)."""
+    ts = _estimate_slide_timestamps(
+        _slides(n_slides), "w", words_per_minute=1_000_000_000, default_ms_per_slide=DEFAULT_MS
+    )
+    assert len(ts) == n_slides
+    _assert_valid_track(ts)
+    assert ts[-1]["end_ms"] == n_slides, "total_ms clamped to n (>=1ms per slide)"
+
+
+@pytest.mark.unit
+def test_config_defaults_and_gt0_guards() -> None:
+    """AC-4: defaults 150/5000 and the gt=0 guards are present on the settings."""
+    from app.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["narration_words_per_minute"].default == 150
+    assert fields["default_ms_per_slide"].default == 5000
+    assert any(getattr(m, "gt", None) == 0 for m in fields["narration_words_per_minute"].metadata)
+    assert any(getattr(m, "gt", None) == 0 for m in fields["default_ms_per_slide"].metadata)

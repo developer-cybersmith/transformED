@@ -61,6 +61,20 @@ fidelity.
 - [x] Task 3: Tests (AC-6) — ✓ 2026-07-22 — `test_narration_timestamps.py` (29: per-slide, contiguity/monotonic/first-0/last-duration, empty-script fallback, single-slide, no-slides, property test over 24 word×slide shapes) + package-level `test_narration_timestamps_populated_and_contiguous`.
 - [x] Task 4: Regression — ✓ 2026-07-22 — 528 passed / 1 skipped; `mypy app` = 0; ruff clean.
 
+## Senior Developer Review (AI) — 3-agent (5 BMAD layers), 2026-07-22
+
+**Outcome: APPROVE after fixes.** Security/Edge proved the track invariants (contiguity, monotonicity, `start<end`, first `start=0`, last `end=duration`, int types) hold across the whole `word_count × n` space — **no High/Med correctness defect**. AC-Completeness + Process-Integrity PASS (contract-exact, no drift, story-first gate honored, honest scope). Test-Coverage: accept-with-follow-ups. Applied:
+
+- **[Med, tests] property sweep never reached the clamp floor** → added `test_track_valid_at_duration_floor` (huge wpm forces `total_ms → n`, proving validity in the small-duration regime).
+- **[Med, tests] package test was single-slide only** → added `test_multi_slide_segment_track_and_settings_flow` (a ≥2-slide segment through the real node, asserting contiguity across entries **and** that the duration is derived from `settings.narration_words_per_minute` — proving the setting flows, not a hardcoded value).
+- **[Low, code] `narration.get("script", "")` didn't guard a present-but-`None` script** → `narration.get("script") or ""` (preserves the empty-script fallback; avoids an `AttributeError`).
+- **[Low, code] helper is now a public symbol** → `words_per_minute = max(words_per_minute, 1)` defence-in-depth against divide-by-zero.
+- **[Low, tests] config defaults/guards** → `test_config_defaults_and_gt0_guards`.
+
+**Refuted / no action:** `slide_id=None` fails **loud** at `LessonPackage` validation (not silent, not new). AC-5 ("tts still `[]`") already covered by `test_tts_node.py:98`.
+
+**Verification (post-fix):** 533 passed / 1 skipped; `mypy app` = 0; ruff clean.
+
 ## Dev Agent Record — Completion Notes
 
 `_estimate_slide_timestamps` (pure) distributes a segment's slides across an estimated duration (`word_count / wpm × 60_000`, or `default_ms_per_slide × n` when the script is empty), producing a contiguous `{slide_id, start_ms, end_ms}` track (first `start_ms=0`, each `start=prev end`, `start<end`, last `end=duration`). Wired into `package_builder_node`'s per-segment loop where both slides and the narration script are available. `tts_node` unchanged (still `[]` — it has no slide context, AC-5). Estimate only; real forced-alignment stays deferred.
