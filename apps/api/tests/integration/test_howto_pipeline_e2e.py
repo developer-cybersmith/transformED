@@ -30,7 +30,11 @@ import app.providers.llm.openai  # noqa: E402,F401  # isort: skip
 # Each numbered step is detected as a heading by the rule-based detector; the
 # body paragraph keeps sections above the coalesce min-floor so the ~20 steps
 # exercise the MAX-count cap (bounding to structure_max_sections), not just the
-# min-floor merge. One title contains an embedded newline (the "5.\nJobs" prod bug).
+# min-floor merge. Titles contain spaces + a period ("1. Click the Start button"),
+# so the derived segment_id must be slugified to stay storage-safe (Story 2-18) —
+# that's what the _SAFE_SEGMENT_ID_RE assertion bites on here. (The newline-in-
+# title path from Story 2-20 is unit-tested separately; the rule-based regex
+# truncates a heading at a newline, so it can't be reproduced via this path.)
 _BODY = (
     "Follow the on-screen instruction carefully and confirm the result before you "
     "continue to the next step. This paragraph gives the step enough body text to "
@@ -40,7 +44,7 @@ _STEPS = [
     "Start",
     "Open Task Manager",
     "Processes",
-    "End\nProcess",
+    "End Process",
     "Confirm",
     "Details",
     "Performance",
@@ -177,7 +181,7 @@ def _segment_ids_from_messages(messages: list[dict[str, str]]) -> list[str]:
     ]
 
 
-def _make_dispatch() -> Any:
+def _make_dispatch(slides_per_segment: int = 1) -> Any:
     from app.modules.content.pipeline.graph import (
         _JargonEntryLLM,
         _JargonListLLM,
@@ -264,9 +268,10 @@ def _make_dispatch() -> Any:
                         segment_id=i,
                         slides=[
                             _SlideLLM(
-                                title=f"Slide for {i}"[:60],
+                                title=f"Slide {n} for {i}"[:60],
                                 bullets=["Do the action", "Then continue"],
                             )
+                            for n in range(slides_per_segment)
                         ],
                     )
                     for i in ids
@@ -279,25 +284,18 @@ def _make_dispatch() -> Any:
     return provider
 
 
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_howto_runs_through_real_graph_and_produces_valid_package() -> None:
-    from app.modules.content.pipeline.graph import _SAFE_SEGMENT_ID_RE, run_pipeline
+async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1) -> dict[str, Any]:
+    """Run the REAL graph on `howto` with only external providers mocked."""
+    from app.modules.content.pipeline.graph import run_pipeline
 
-    provider = _make_dispatch()
+    provider = _make_dispatch(slides_per_segment=slides_per_segment)
     fake = _StatefulSupabaseFake()
-    _redis = _AsyncRedis()
     # Seed the extract checkpoint so extract_node cache-hits and feeds the real
     # how-to text into the REAL structure detection (bypasses the PDF subprocess).
     fake.node_outputs = {
-        "extract": {
-            "raw_text": HOWTO_TEXT,
-            "extracted_images": [],
-            "font_blocks": [],
-            "page_count": 3,
-        }
+        "extract": {"raw_text": howto, "extracted_images": [], "font_blocks": [], "page_count": 3}
     }
-
+    redis = _AsyncRedis()
     with (
         patch("app.core.db.get_supabase", return_value=fake),
         patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
@@ -312,11 +310,17 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
             "app.modules.content.pipeline.graph._generate_image_with_fallback",
             new=AsyncMock(return_value=("data:image/png;base64,AAAA", "imagen")),
         ),
-        patch("app.core.redis.get_redis", return_value=_redis),
+        patch("app.core.redis.get_redis", return_value=redis),
     ):
-        package = await run_pipeline(
-            FAKE_LESSON_ID, chapter_content=HOWTO_TEXT, book_id=FAKE_BOOK_ID
-        )
+        return await run_pipeline(lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_howto_runs_through_real_graph_and_produces_valid_package() -> None:
+    from app.modules.content.pipeline.graph import _SAFE_SEGMENT_ID_RE
+
+    package = await _run_howto(HOWTO_TEXT, FAKE_LESSON_ID)
 
     # ── AC-2: valid against the FROZEN JSON schema (real Dev1->Dev2 contract) ──
     schema_path = (
@@ -342,3 +346,28 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
         for a, b in zip(ts, ts[1:], strict=False):
             assert a["end_ms"] == b["start_ms"], "timestamps must be contiguous"
         assert len(seg["slides"]) >= 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_multi_slide_segment_gets_contiguous_timestamps_e2e() -> None:
+    """Story 2-19 (contiguity) made load-bearing end-to-end: a SHORT how-to yields
+    few sections, so each segment's tier slide-budget allows several slides — the
+    real _estimate_slide_timestamps then produces a multi-entry track whose
+    contiguity/monotonicity is asserted through the real graph (the 20-step case
+    lands at ~1 slide/segment, making its contiguity loop vacuous)."""
+    short = "\n\n".join(
+        f"{i}. Click the {name} button\n{_BODY}"
+        for i, name in enumerate(["Start", "Open", "Confirm", "Close"], start=1)
+    )
+    package = await _run_howto(short, "dddddddd-1111-2222-3333-444444444444", slides_per_segment=3)
+
+    multi = [s for s in package["segments"] if len(s["slides"]) >= 2]
+    assert multi, "expected >=1 multi-slide segment (few sections -> larger slide budget)"
+    ts = multi[0]["narration"]["timestamps"]
+    assert len(ts) == len(multi[0]["slides"]), "one timestamp per slide"
+    assert ts[0]["start_ms"] == 0
+    for a, b in zip(ts, ts[1:], strict=False):
+        assert a["end_ms"] == b["start_ms"], "contiguous across multiple slides"
+        assert a["start_ms"] < a["end_ms"], "non-degenerate window"
+    assert ts[-1]["start_ms"] < ts[-1]["end_ms"]
