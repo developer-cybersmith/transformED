@@ -4,7 +4,7 @@ baseline_commit: 9dcda1775aaaae3d8a13304c07499541f2fbbb2d
 
 # Story 2.19: Populate narration timestamps so the player's slide-sync works
 
-Status: ready-for-dev
+Status: review
 
 > **BUG (HIGH), from the 2026-07-22 Dev1↔Dev2 audit.** `tts_node` ships `narration.timestamps: []` for every segment (Story 2-8 deferred it as "permanent scope"). The player derives `currentSlideId` **solely** from `narration.timestamps` with no fallback, so with `[]` it renders no slide during playback — the splash stays on screen for the whole lesson. This makes the core lesson-player experience non-functional for real pipeline output.
 
@@ -56,10 +56,23 @@ fidelity.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Config (AC-4) — add `narration_words_per_minute`, `default_ms_per_slide`.
-- [ ] Task 2: `_estimate_slide_timestamps(slides, script, *, wpm, default_ms_per_slide)` pure helper (AC-1..AC-3) + wire into `package_builder_node`'s per-segment assembly (set `narration = {**narration, "timestamps": ...}`).
-- [ ] Task 3: Tests (AC-6) — RED first.
-- [ ] Task 4: Regression — full unit suite + ruff + mypy green.
+- [x] Task 1: Config (AC-4) — ✓ 2026-07-22 — `narration_words_per_minute=150` (gt=0), `default_ms_per_slide=5000` (gt=0).
+- [x] Task 2: `_estimate_slide_timestamps` pure helper + wired into `package_builder_node` (sets `narration = {**narration, "timestamps": ...}` on a copy before it's written). `package_builder` now loads `settings`. — ✓ 2026-07-22
+- [x] Task 3: Tests (AC-6) — ✓ 2026-07-22 — `test_narration_timestamps.py` (29: per-slide, contiguity/monotonic/first-0/last-duration, empty-script fallback, single-slide, no-slides, property test over 24 word×slide shapes) + package-level `test_narration_timestamps_populated_and_contiguous`.
+- [x] Task 4: Regression — ✓ 2026-07-22 — 528 passed / 1 skipped; `mypy app` = 0; ruff clean.
+
+## Dev Agent Record — Completion Notes
+
+`_estimate_slide_timestamps` (pure) distributes a segment's slides across an estimated duration (`word_count / wpm × 60_000`, or `default_ms_per_slide × n` when the script is empty), producing a contiguous `{slide_id, start_ms, end_ms}` track (first `start_ms=0`, each `start=prev end`, `start<end`, last `end=duration`). Wired into `package_builder_node`'s per-segment loop where both slides and the narration script are available. `tts_node` unchanged (still `[]` — it has no slide context, AC-5). Estimate only; real forced-alignment stays deferred.
+
+**Verification:** 528 passed / 1 skipped (0 regressions); `mypy app` = 0; ruff clean. Baseline `main` @ `9dcda17`.
+
+**File List:**
+- `apps/api/app/config.py` — 2 new settings (MODIFIED)
+- `apps/api/app/modules/content/pipeline/graph.py` — `_estimate_slide_timestamps` + package_builder wiring + `settings` load (MODIFIED)
+- `apps/api/tests/unit/test_narration_timestamps.py` — helper tests (NEW)
+- `apps/api/tests/unit/test_package_builder_node.py` — package-level timestamp test (MODIFIED)
+- `docs/stories/2-19-narration-timestamps.md` — this story (NEW)
 
 ## Dev Notes
 

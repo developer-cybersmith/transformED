@@ -647,3 +647,28 @@ async def test_invalid_tier_string_in_state_falls_back_to_t2_not_passed_through(
 
     package = LessonPackage.model_validate(result["lesson_package"])
     assert package.metadata.tier == "T2"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_timestamps_populated_and_contiguous() -> None:
+    """Story 2-19 (AC-1/AC-2): package_builder fills narration.timestamps
+    (tts_node ships []), one per slide, contiguous from 0 — so the player's
+    slide-sync (binary search) and segment-end quiz boundary work."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    sb, _, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state())
+
+    for seg in result["lesson_package"]["segments"]:
+        ts = seg["narration"]["timestamps"]
+        assert len(ts) == len(seg["slides"]), "one timestamp per slide"
+        assert ts[0]["start_ms"] == 0
+        for a, b in zip(ts, ts[1:], strict=False):
+            assert a["end_ms"] == b["start_ms"], "contiguous"
+        for t in ts:
+            assert set(t) == {"slide_id", "start_ms", "end_ms"}
+            assert t["start_ms"] < t["end_ms"]
+        assert [t["slide_id"] for t in ts] == [s["slide_id"] for s in seg["slides"]]

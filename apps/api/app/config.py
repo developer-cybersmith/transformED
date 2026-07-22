@@ -263,6 +263,27 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Narration timestamps (Story 2-19, package_builder) ────────────────────
+    narration_words_per_minute: int = Field(
+        default=150,
+        gt=0,
+        description=(
+            "Assumed narration speaking rate used to ESTIMATE each segment's audio "
+            "duration from its script word count, so package_builder can distribute "
+            "the segment's slides across a contiguous timestamp track (real "
+            "forced-alignment / word timing remains deferred)."
+        ),
+    )
+    default_ms_per_slide: int = Field(
+        default=5000,
+        gt=0,
+        description=(
+            "Fallback per-slide duration (ms) when a segment's narration script is "
+            "empty (word_count 0), so the estimated timestamp track is still "
+            "non-degenerate (start_ms < end_ms)."
+        ),
+    )
+
     # ── Embeddings (Node 4) ───────────────────────────────────────────────────
     embedding_model: str = Field(
         default="text-embedding-3-small",
