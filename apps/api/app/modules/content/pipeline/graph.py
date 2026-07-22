@@ -462,6 +462,7 @@ async def structure_node(state: PipelineState) -> PipelineState:
     from app.core.db import get_supabase
     from app.modules.content.pipeline.nodes.structure_detection import (
         build_section_bodies,
+        coalesce_sections,
         detect_headings,
     )
     from app.providers.llm.factory import get_llm_provider
@@ -546,6 +547,36 @@ async def structure_node(state: PipelineState) -> PipelineState:
                 "[%s] structure_node: LLM validation failed — using rule-based fallback",
                 lesson_id,
             )
+
+    # KNOWN LIMITATION (Story 2-16 RC-2, deferred to Story 2-17): the LLM
+    # validation above is effectively dead for real chapters. _build_structure_prompt
+    # shows the LLM only raw_text[:6000], while the >= 90%-coverage guard compares
+    # against len(raw_text), so any chapter longer than ~6000/0.9 ≈ 6666 chars can
+    # never adopt the LLM output — rule-based detection always wins. Story 2-17
+    # (boundary-only LLM validation) is the proper fix. Do NOT "fix" this by
+    # comparing against min(len(raw_text), 6000): that accepts LLM output covering
+    # only the first 6000 chars, silently discarding the rest (data loss).
+
+    # ── Bound over-segmentation (Story 2-16 RC-1) ─────────────────────────────
+    # A step-by-step how-to PDF makes detect_headings treat each numbered step as
+    # a heading, yielding dozens of tiny sections that then crash lesson_planner's
+    # 1:1 guard. Coalesce (text-preserving) to a sane, bounded count before any
+    # downstream node sees `sections`. Applies to whichever path won above.
+    before_count = len(sections_list)
+    sections_list = coalesce_sections(
+        sections_list,
+        min_chars=settings.structure_min_section_chars,
+        max_sections=settings.structure_max_sections,
+    )
+    if len(sections_list) != before_count:
+        logger.info(
+            "[%s] structure_node: coalesced %d -> %d sections (min_chars=%d, max_sections=%d)",
+            lesson_id,
+            before_count,
+            len(sections_list),
+            settings.structure_min_section_chars,
+            settings.structure_max_sections,
+        )
 
     # ── Write checkpoint to lesson_jobs ───────────────────────────────────────
     structure_cache: dict[str, Any] = {"sections": sections_list}
@@ -1036,6 +1067,49 @@ _TIER_PROMPT_FRAMING: dict[str, str] = {
 }
 
 
+def _planner_system_prompt(tier_framing: str) -> str:
+    """The lesson_planner system prompt, shared by the single-call and batched
+    paths (Story 2-16 RC-3) so both issue an identical instruction."""
+    return (
+        "Produce a lesson plan outline from the section summaries below. "
+        "Return an overall title, subject, 2-5 learning objectives, an "
+        "overall complexity_level (low/medium/high), and return EXACTLY "
+        "one outline segment per summary provided, echoing back each "
+        "summary's segment_id UNCHANGED — do not invent, merge, split, "
+        "omit, or reorder segment_ids. For each segment, provide a short "
+        "title and an estimated duration_min (minutes of narration/slide "
+        "time for that segment)." + tier_framing + _UNTRUSTED_CONTENT_GUARD
+    )
+
+
+async def _run_planner_batch(
+    provider: Any,  # noqa: ANN401 — provider type imported locally to avoid a circular import
+    model: str,
+    batch: list[dict[str, Any]],
+    tier_framing: str,
+    lesson_id: str,
+) -> _LessonPlanLLM:
+    """Run one lesson_planner LLM completion over a batch of segment summaries.
+
+    Story 2-16 (RC-3): calling the planner one batch at a time keeps each
+    structured completion small enough that the model reliably echoes every
+    segment_id 1:1 — long single-shot enumerations collapse (44-in/10-out).
+    Same provider/model/prompt as the single-call path. Raises (does not
+    fabricate) when the provider returns no parsed response."""
+    summaries_text = "\n".join(f"- segment_id={s['segment_id']}: {s['summary']}" for s in batch)
+    messages = [
+        {"role": "system", "content": _planner_system_prompt(tier_framing)},
+        {"role": "user", "content": summaries_text},
+    ]
+    response: _LessonPlanLLM | None = await provider.complete_structured(
+        messages, model, _LessonPlanLLM
+    )
+    if response is None:
+        logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
+        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response")
+    return response
+
+
 async def lesson_planner_node(state: PipelineState) -> PipelineState:
     """Node 5 (Phase 2 Premium, Story 2-6/S2-7): generate a structured lesson
     plan from Phase 1's segment summaries.
@@ -1149,30 +1223,57 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         tier = _DEFAULT_TIER
     tier_framing = _TIER_PROMPT_FRAMING.get(tier, "")
 
-    summaries_text = "\n".join(
-        f"- segment_id={s['segment_id']}: {s['summary']}" for s in segment_summaries
-    )
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "Produce a lesson plan outline from the section summaries below. "
-                "Return an overall title, subject, 2-5 learning objectives, an "
-                "overall complexity_level (low/medium/high), and return EXACTLY "
-                "one outline segment per summary provided, echoing back each "
-                "summary's segment_id UNCHANGED — do not invent, merge, split, "
-                "omit, or reorder segment_ids. For each segment, provide a short "
-                "title and an estimated duration_min (minutes of narration/slide "
-                "time for that segment)." + tier_framing + _UNTRUSTED_CONTENT_GUARD
-            ),
-        },
-        {"role": "user", "content": summaries_text},
-    ]
-
-    response = await provider.complete_structured(messages, model, _LessonPlanLLM)
-    if response is None:
-        logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
-        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response")
+    # Story 2-16 (RC-3): a single completion asked to echo back many segment_ids
+    # collapses the list (44-in/10-out crashed the whole job). At or below
+    # settings.lesson_planner_batch_size this is a single call (unchanged
+    # behaviour); above it, split into ordered batches so each completion is
+    # small enough to echo 1:1, then reassemble. The degrade-not-fabricate guard
+    # block below runs on the assembled response exactly as before, so a batch
+    # that drops/duplicates an id is still caught.
+    batch_size = settings.lesson_planner_batch_size
+    if len(segment_summaries) <= batch_size:
+        response = await _run_planner_batch(
+            provider, model, segment_summaries, tier_framing, lesson_id
+        )
+    else:
+        batches = [
+            segment_summaries[i : i + batch_size]
+            for i in range(0, len(segment_summaries), batch_size)
+        ]
+        logger.info(
+            "[%s] lesson_planner_node: %d summaries > batch_size %d — planning in %d batches",
+            lesson_id,
+            len(segment_summaries),
+            batch_size,
+            len(batches),
+        )
+        collected_segments: list[_LessonPlanSegmentLLM] = []
+        plan_head: _LessonPlanLLM | None = None
+        for batch in batches:
+            batch_response = await _run_planner_batch(
+                provider, model, batch, tier_framing, lesson_id
+            )
+            if plan_head is None:
+                plan_head = batch_response
+            collected_segments.extend(batch_response.segments)
+        # len(batches) >= 2 here, so plan_head was assigned on the first iteration.
+        assert plan_head is not None
+        # Plan-level fields (title/subject/objectives/complexity) come from the
+        # FIRST batch only; the segment list is the concatenation of every batch.
+        # Accepted limitation: for a very long chapter the "overall" objectives
+        # reflect the first `batch_size` summaries, not all of them. This path is
+        # latent in the default config (structure_max_sections=15 == the batch
+        # size, so a coalesced chapter never exceeds it and takes the single-call
+        # path); it only engages if an operator raises structure_max_sections
+        # above lesson_planner_batch_size. per-segment durations still sum over
+        # ALL assembled segments below, so total_duration_min stays correct.
+        response = _LessonPlanLLM(
+            title=plan_head.title,
+            subject=plan_head.subject,
+            objectives=plan_head.objectives,
+            complexity_level=plan_head.complexity_level,
+            segments=collected_segments,
+        )
 
     # ── AC-6 degrade-not-fabricate guards — no per-section redundancy exists
     # for this premium node, so a wrong response is rejected wholesale rather
