@@ -1096,7 +1096,9 @@ async def _run_planner_batch(
     segment_id 1:1 — long single-shot enumerations collapse (44-in/10-out).
     Same provider/model/prompt as the single-call path. Raises (does not
     fabricate) when the provider returns no parsed response."""
-    summaries_text = "\n".join(f"- segment_id={s['segment_id']}: {s['summary']}" for s in batch)
+    summaries_text = "\n".join(
+        f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
+    )
     messages = [
         {"role": "system", "content": _planner_system_prompt(tier_framing)},
         {"role": "user", "content": summaries_text},
@@ -1534,7 +1536,8 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     }
 
     segments_text = "\n".join(
-        f"- segment_id={s['segment_id']}: {s['title']} — {s['summary']} "
+        f"- segment_id={s['segment_id']}: {_single_line(s['title'])} — "
+        f"{_single_line(s['summary'])} "
         f"(produce {budget_by_id[s['segment_id']][0]} to "
         f"{budget_by_id[s['segment_id']][1]} slides for this segment)"
         for s in plan_segments
@@ -1594,10 +1597,31 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         seg_min, seg_max = budget_by_id.get(
             seg.segment_id, (_MIN_SLIDES_PER_SEGMENT, _MAX_SLIDES_PER_SEGMENT)
         )
-        if not (seg_min <= len(seg.slides) <= seg_max):
-            raise RuntimeError(
-                f"lesson_id={lesson_id}: slide_generator segment {seg.segment_id!r} has "
-                f"{len(seg.slides)} slides (must be {seg_min}-{seg_max} per its slide_budget)"
+        # Story 2-22: the slide_budget is a soft target, not an integrity
+        # invariant — degrade this segment rather than failing the whole deck
+        # (which discarded every other valid slide-set). Over-budget → truncate
+        # to seg_max (respects the cost intent); under-budget → accept as-is (a
+        # soft-min miss is not worth failing a lesson). The integrity guards
+        # above (count/unknown/duplicate) and the blank-title/bullet guards
+        # below still reject a genuinely broken response wholesale.
+        if len(seg.slides) > seg_max:
+            logger.warning(
+                "[%s] slide_generator_node: segment %s returned %d slides > seg_max %d "
+                "— truncating to budget",
+                lesson_id,
+                seg.segment_id,
+                len(seg.slides),
+                seg_max,
+            )
+            seg.slides = list(seg.slides)[:seg_max]
+        elif len(seg.slides) < seg_min:
+            logger.warning(
+                "[%s] slide_generator_node: segment %s returned %d slides < seg_min %d "
+                "— accepting under-budget",
+                lesson_id,
+                seg.segment_id,
+                len(seg.slides),
+                seg_min,
             )
         for slide in seg.slides:
             if not slide.title.strip():
@@ -1677,6 +1701,19 @@ _SECTION_ID_TITLE_MAX = 60
 # Any run of characters outside [A-Za-z0-9] becomes a single '-'. Simple char
 # class with '+' — linear, no catastrophic backtracking.
 _SECTION_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _single_line(text: Any) -> str:  # noqa: ANN401 — accepts any LLM/section field value
+    """Collapse every whitespace run (incl. newlines/CR/tabs) to a single space.
+
+    Story 2-20: free-text fields (summary, title) are interpolated into
+    single-line prompt list entries (``- segment_id={id}: {summary}``); an
+    embedded newline would split one logical entry into two, injecting a spurious
+    list line and tripping the echo-back guards. Unlike `_derive_section_id`'s
+    slug, this KEEPS the text readable (the LLM needs it) — it only neutralises
+    line breaks.
+    """
+    return " ".join(str(text).split())
 
 
 def _derive_section_id(section: dict[str, Any], index: int) -> str:
@@ -3349,6 +3386,70 @@ def _estimate_slide_timestamps(
     return timestamps
 
 
+# ── Story 2-21: neutral, schema-valid defaults for degrade-not-drop ───────────
+# A segment WITH slides is never discarded for a missing economy output (an LLM
+# refusal returned []); these backfill the missing part so its succeeded work
+# (quiz, summary, slides, jargon) survives instead of vanishing. Each is a
+# neutral, valid value — not invented analysis/content.
+_DEGRADED_INTERVENTION_MSGS = [
+    "Let's keep going — you're doing fine.",
+    "Take a breath and refocus when you're ready.",
+    "You've got this — one step at a time.",
+]
+
+
+def _default_complexity() -> dict[str, Any]:
+    """Neutral SegmentComplexity (segment_id already stripped) — assumes 'medium'
+    when no complexity analysis is available for this segment."""
+    return {
+        "level": "medium",
+        "cognitive_load": "moderate",
+        "abstraction_level": "concrete",
+        "prerequisite_concepts": [],
+        "narration_style": "conversational",
+        "quiz_difficulty": "medium",
+        "intervention_sensitivity": 0.5,
+    }
+
+
+def _fallback_narration() -> dict[str, Any]:
+    """Browser-fallback Narration (no server audio) — the same 'no audio' state
+    tts_node itself emits on failure. `timestamps` is filled by the caller's
+    Story 2-19 estimation block from the segment's slides."""
+    return {"script": "", "audio_url": "", "audio_provider": "browser", "timestamps": []}
+
+
+def _default_interventions() -> dict[str, Any]:
+    """Neutral SegmentInterventions (3 generic encouragement messages per type)."""
+    return {
+        "distraction": list(_DEGRADED_INTERVENTION_MSGS),
+        "confusion": list(_DEGRADED_INTERVENTION_MSGS),
+        "fatigue": list(_DEGRADED_INTERVENTION_MSGS),
+    }
+
+
+def _build_teachback_prompt(title: Any, jargon_entries: list[dict[str, Any]]) -> str:  # noqa: ANN401
+    """Story 2-23: build the teach-back prompt so it names the concepts the Dev3
+    scorer grades against (the segment's jargon terms = its `key_concepts`),
+    keeping the shown prompt aligned with the scoring basis. Single-line; falls
+    back to the generic form when the segment has no jargon."""
+    clean_title = _single_line(title) or "this section"
+    # Dedup case-insensitively, consistent with package_builder's glossary dedup
+    # (key = term.strip().lower()), so a term repeated across jargon entries (or
+    # differing only in case/whitespace) is listed once.
+    terms: list[str] = []
+    seen: set[str] = set()
+    for j in jargon_entries:
+        term = _single_line(j.get("term") or "")
+        if not term or term.lower() in seen:
+            continue
+        seen.add(term.lower())
+        terms.append(term)
+    if terms:
+        return f"In your own words, explain {clean_title}. Try to cover: {', '.join(terms)}."
+    return f"In your own words, explain what you learned about {clean_title}."
+
+
 async def package_builder_node(state: PipelineState) -> PipelineState:
     """Node 15 (Story 2-11/S2-11): assemble all prior node outputs into a
     schema-validated LessonPackage, write it to `lessons`, and mark the
@@ -3508,6 +3609,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     segments_out: list[dict[str, Any]] = []
     seen_terms: set[str] = set()
     glossary_out: list[dict[str, Any]] = []
+    degraded_segment_ids: list[str] = []  # Story 2-21: aggregate degradation signal
 
     for index, plan_seg in enumerate(plan_segments):
         segment_id = plan_seg.get("segment_id")
@@ -3526,24 +3628,38 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         interventions = interventions_by_id.get(segment_id)
         slides_data = slides_by_segment.get(segment_id, [])
 
-        if complexity is None or narration is None or interventions is None or not slides_data:
-            missing = [
-                name
-                for name, present in (
-                    ("complexity", complexity is not None),
-                    ("narration", narration is not None),
-                    ("interventions", interventions is not None),
-                    ("slides", bool(slides_data)),
-                )
-                if not present
-            ]
+        # Story 2-21: only `slides` is genuinely mandatory (the Segment schema
+        # requires min_length=1 slides — a slideless segment can't render). A
+        # segment WITH slides is never dropped for a missing economy output;
+        # backfill neutral, schema-valid defaults so its succeeded parts survive.
+        if not slides_data:
             logger.warning(
-                "[%s] package_builder_node: segment %s missing %s — skipping segment",
+                "[%s] package_builder_node: segment %s has no slides — skipping "
+                "(a segment needs >=1 slide to render)",
                 lesson_id,
                 segment_id,
-                missing,
             )
             continue
+
+        degraded: list[str] = []
+        if complexity is None:
+            complexity = _default_complexity()
+            degraded.append("complexity")
+        if narration is None:
+            narration = _fallback_narration()
+            degraded.append("narration")
+        if interventions is None:
+            interventions = _default_interventions()
+            degraded.append("interventions")
+        if degraded:
+            degraded_segment_ids.append(segment_id)
+            logger.warning(
+                "[%s] package_builder_node: segment %s degraded — backfilled neutral "
+                "defaults for %s (succeeded parts preserved)",
+                lesson_id,
+                segment_id,
+                degraded,
+            )
 
         slides_with_images = [
             {**slide, "image_url": image_url_by_slide_id.get(cast("str", slide.get("slide_id")))}
@@ -3593,12 +3709,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 "slides": slides_with_images,
                 "narration": narration,
                 "quiz": quiz_by_segment.get(segment_id, []),
-                # PROVISIONAL placeholder (Story 2-11 review — no node in the
-                # 15-node pipeline generates a teach-back prompt; this is a
-                # deterministic, zero-cost stand-in pending confirmation from
-                # whoever owns the teach-back feature, not a finalized design).
-                "teachback_prompt": f"In your own words, explain what you learned "
-                f"about {plan_seg.get('title', 'this section')}.",
+                # Story 2-23: surface the concepts the Dev3 scorer actually grades
+                # against (segment.jargon terms = its `key_concepts`) so the shown
+                # prompt aligns with the scoring basis. Still a provisional
+                # placeholder, but no longer scoring against unshown concepts.
+                "teachback_prompt": _build_teachback_prompt(
+                    plan_seg.get("title", "this section"), jargon_entries
+                ),
                 "jargon": jargon_entries,
                 "interventions": interventions,
             }
@@ -3606,6 +3723,24 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 
     if not segments_out:
         raise RuntimeError(f"lesson_id={lesson_id}: package_builder produced zero usable segments")
+
+    # Story 2-21 (review finding): per-segment backfill (above) is logged one
+    # segment at a time — surface an AGGREGATE signal so widespread degradation
+    # (e.g. a systemic economy-node/provider outage hitting every segment) is not
+    # invisible behind a lesson that still ships status="ready". Recorded into
+    # lesson_jobs.node_outputs for admin visibility, mirroring cost-downshift
+    # recording (CLAUDE.md §14).
+    if degraded_segment_ids:
+        logger.warning(
+            "[%s] package_builder_node: %d of %d packaged segments shipped DEGRADED "
+            "(backfilled defaults for a missing economy output): %s — lesson marked "
+            "ready but at reduced quality; investigate a possible systemic "
+            "economy-node failure",
+            lesson_id,
+            len(degraded_segment_ids),
+            len(segments_out),
+            degraded_segment_ids,
+        )
 
     assembled: dict[str, Any] = {
         "lesson_id": lesson_id,
@@ -3660,7 +3795,15 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             "status": "completed",
             "completed_at": completed_at,
             "last_node": "package_builder",
-            "node_outputs": {**node_outputs, "package_builder": lesson_package},
+            "node_outputs": {
+                **node_outputs,
+                "package_builder": lesson_package,
+                # Admin-visible degradation record (Story 2-21). Empty list = none.
+                "package_builder_degraded": {
+                    "segment_ids": degraded_segment_ids,
+                    "total_segments": len(segments_out),
+                },
+            },
         }
     ).eq("lesson_id", lesson_id).execute()
 
