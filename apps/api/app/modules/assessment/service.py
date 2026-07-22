@@ -7,12 +7,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, status
 from supabase import Client
 
 from app.config import get_settings
+from app.core.db import rows, single_row
 from app.core.posthog_client import capture_event
 from app.modules.assessment.onboarding_questions import (
     ALL_NINE_DIMENSIONS,
@@ -57,9 +58,10 @@ async def get_analytics_consent(user_id: str, supabase: Client) -> bool:
                 .execute()
             )
         )
-        if resp.data is None:
+        row = single_row(resp)
+        if row is None:
             return False
-        return bool(resp.data.get("analytics_consent", False))
+        return bool(row.get("analytics_consent", False))
     except Exception as exc:
         logger.warning("PostHog consent check failed user=%s: %s", user_id, exc)
         return False  # fail-safe: suppress events when consent check fails
@@ -130,12 +132,13 @@ async def grade_quiz(
             .execute()
         )
     )
-    if session_resp.data is None:
+    session_row = single_row(session_resp)
+    if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id!r} not found.",
         )
-    if str(session_resp.data["user_id"]) != str(user_id):
+    if str(session_row["user_id"]) != str(user_id):
         # SEC-006: Return 404 to prevent session enumeration oracle.
         # Attacker must not distinguish "belongs to someone else" from "doesn't exist".
         raise HTTPException(
@@ -143,7 +146,7 @@ async def grade_quiz(
             detail="Session not found or access denied.",
         )
     # IDOR guard — session must belong to the requested lesson
-    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
+    if str(session_row.get("lesson_id", "")) != str(lesson_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this lesson.",
@@ -159,13 +162,14 @@ async def grade_quiz(
             .execute()
         )
     )
-    if lesson_resp.data is None or lesson_resp.data.get("content") is None:
+    lesson_row = single_row(lesson_resp)
+    if lesson_row is None or lesson_row.get("content") is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Lesson {lesson_id!r} not found or has no generated content.",
         )
 
-    content: dict[str, Any] = lesson_resp.data["content"]
+    content: dict[str, Any] = lesson_row["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
     # Step 3 — Find the segment
@@ -204,7 +208,7 @@ async def grade_quiz(
     count_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("quiz_attempts")
-            .select("id", count="exact")
+            .select("id", count=cast("Any", "exact"))
             .eq("session_id", session_id)
             .eq("segment_id", segment_id)
             .execute()
@@ -383,19 +387,20 @@ async def grade_teachback(
             .execute()
         )
     )
-    if session_resp.data is None:
+    session_row = single_row(session_resp)
+    if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id!r} not found.",
         )
-    if str(session_resp.data["user_id"]) != str(user_id):
+    if str(session_row["user_id"]) != str(user_id):
         # SEC-006: Return 404 to prevent session enumeration oracle.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or access denied.",
         )
     # IDOR guard — session must belong to the requested lesson
-    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
+    if str(session_row.get("lesson_id", "")) != str(lesson_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this lesson.",
@@ -411,13 +416,14 @@ async def grade_teachback(
             .execute()
         )
     )
-    if lesson_resp.data is None or lesson_resp.data.get("content") is None:
+    lesson_row = single_row(lesson_resp)
+    if lesson_row is None or lesson_row.get("content") is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Lesson {lesson_id!r} not found or has no generated content.",
         )
 
-    content: dict[str, Any] = lesson_resp.data["content"]
+    content: dict[str, Any] = lesson_row["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
     # Step 3 — Find the segment
@@ -438,7 +444,7 @@ async def grade_teachback(
     count_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
-            .select("id", count="exact")
+            .select("id", count=cast("Any", "exact"))
             .eq("session_id", session_id)
             .eq("segment_id", segment_id)
             .execute()
@@ -587,12 +593,13 @@ async def get_session_report(
             .execute()
         )
     )
-    if session_resp.data is None:
+    session_row = single_row(session_resp)
+    if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found.",
         )
-    db_user_id = session_resp.data.get("user_id")
+    db_user_id = session_row.get("user_id")
     if str(db_user_id) != str(user_id):
         # SEC-006: Return 404 (not 403) — identical message prevents enumeration oracle.
         raise HTTPException(
@@ -600,7 +607,7 @@ async def get_session_report(
             detail="Session not found.",
         )
 
-    row = session_resp.data
+    row = session_row
 
     # Step 2 — Quiz stats from quiz_attempts
     quiz_resp = await asyncio.to_thread(
@@ -611,7 +618,7 @@ async def get_session_report(
             .execute()
         )
     )
-    quiz_rows: list[dict[str, Any]] = quiz_resp.data or []
+    quiz_rows: list[dict[str, Any]] = rows(quiz_resp)
     total_quiz = len(quiz_rows)
     correct_count = sum(1 for r in quiz_rows if r.get("is_correct") is True)
     quiz_score: float | None = (
@@ -628,7 +635,7 @@ async def get_session_report(
             .execute()
         )
     )
-    tb_rows: list[dict[str, Any]] = tb_resp.data or []
+    tb_rows: list[dict[str, Any]] = rows(tb_resp)
     teachback_count = len(tb_rows)
     if teachback_count > 0:
         sum_scores = sum(r.get("score", 0) or 0 for r in tb_rows)
@@ -642,7 +649,7 @@ async def get_session_report(
     events_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("session_events")
-            .select("id", count="exact")
+            .select("id", count=cast("Any", "exact"))
             .eq("session_id", session_id)
             .eq("event_type", "intervention_triggered")
             .execute()
@@ -892,12 +899,12 @@ async def get_learner_dna_data(
     # response object with .data = None) when zero rows match — the original
     # `resp.data is None` check crashed with AttributeError for exactly the
     # expected "not onboarded yet" case, 500ing instead of the intended 404.
-    if resp is None or resp.data is None:
+    row = single_row(resp)
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
         )
-    row = resp.data
     return {
         "user_id": str(row["user_id"]),
         "badge_labels": row.get("badge_labels") or [],

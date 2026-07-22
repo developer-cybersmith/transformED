@@ -44,9 +44,9 @@ import logging
 import math
 import operator
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, TypedDict, cast
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -55,6 +55,7 @@ from pydantic import BaseModel
 
 # Single source of truth for the Learner Mode tier default (also used by
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
+from app.core.db import rows, single_row
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
@@ -188,13 +189,16 @@ def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:  # no
     receives ad-hoc settings objects — a 0/negative wait_for must be impossible.
     """
     page_estimate = max(1, pdf_size_bytes // 30_000)
-    return max(
-        1.0,
-        min(
-            settings.extract_timeout_base_s + settings.extract_timeout_per_page_s * page_estimate,
-            float(settings.extract_timeout_cap_s),
-            float(settings.arq_job_timeout_s - 300),
-        ),
+    return float(
+        max(
+            1.0,
+            min(
+                settings.extract_timeout_base_s
+                + settings.extract_timeout_per_page_s * page_estimate,
+                float(settings.extract_timeout_cap_s),
+                float(settings.arq_job_timeout_s - 300),
+            ),
+        )
     )
 
 
@@ -235,7 +239,8 @@ async def extract_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "extract" in node_outputs:
         cached = node_outputs["extract"]
@@ -477,7 +482,8 @@ async def structure_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "structure" in node_outputs:
         cached = node_outputs["structure"]
@@ -621,7 +627,8 @@ async def chunk_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "chunk" in node_outputs:
         cached = node_outputs["chunk"]
@@ -671,7 +678,7 @@ async def chunk_node(state: PipelineState) -> PipelineState:
         raise RuntimeError(
             f"chunk_node: chapters insert returned no data for lesson_id={lesson_id}"
         )
-    chapter_id: str = chapter_resp.data[0]["chapter_id"]
+    chapter_id: str = rows(chapter_resp)[0]["chapter_id"]
 
     # ── Bulk-upsert chunk rows (embedding column left NULL — Story 1.5 fills it) ─
     # Zero-token chunks (empty section bodies) are excluded from DB to prevent
@@ -758,7 +765,8 @@ async def embed_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "embed" in node_outputs:
         cached = node_outputs["embed"]
@@ -796,7 +804,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
                 .range(offset, offset + page_size - 1)
                 .execute()
             )
-            page: list[dict[str, Any]] = page_resp.data or []
+            page: list[dict[str, Any]] = cast("list[dict[str, Any]]", page_resp.data or [])
             rows.extend(page)
             if len(page) < page_size:
                 return rows
@@ -891,7 +899,10 @@ async def embed_node(state: PipelineState) -> PipelineState:
             ]
             try:
                 await asyncio.to_thread(
-                    lambda rows=rows: (
+                    # mypy cannot infer a keyword-defaulted lambda passed to
+                    # asyncio.to_thread (ParamSpec limitation); the default-capture
+                    # idiom is intentional, so a rewrite would alter runtime behavior.
+                    lambda rows=rows: (  # type: ignore[misc]
                         supabase.table("chunks").upsert(rows, on_conflict="chunk_id").execute()
                     )
                 )
@@ -1161,7 +1172,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "lesson_planner" in node_outputs:
         cached = node_outputs["lesson_planner"]
@@ -1457,7 +1469,8 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "slide_generator" in node_outputs:
         cached = node_outputs["slide_generator"]
@@ -1696,7 +1709,7 @@ def _get_section_body(
     asymmetry meant a long section's summary/score could be based on only its
     first ~6000 characters with zero trace of that happening).
     """
-    body = section.get("body", "")
+    body: str = section.get("body", "")
     if len(body) > max_chars:
         logger.warning(
             "[%s] section %s body truncated to %d chars (was %d) before LLM call",
@@ -1760,7 +1773,8 @@ async def _read_phase1_checkpoint(
         .maybe_single()
         .execute()
     )
-    node_outputs: dict[str, Any] = ((resp.data or {}) if resp else {}).get("node_outputs") or {}
+    resp_row = single_row(resp)
+    node_outputs: dict[str, Any] = (resp_row or {}).get("node_outputs") or {}
     cached = node_outputs.get(key)
     if cached is None:
         return None
@@ -1834,9 +1848,9 @@ async def _increment_phase1_progress(
     try:
         redis = get_redis()
         set_key = f"job:{lesson_id}:phase1_completed_keys"
-        await redis.sadd(set_key, checkpoint_key)
+        await cast("Awaitable[int]", redis.sadd(set_key, checkpoint_key))
         await redis.expire(set_key, 86_400)
-        completed = await redis.scard(set_key)
+        completed = await cast("Awaitable[int]", redis.scard(set_key))
         logger.info(
             "[%s] Phase 1 progress: %s/%s sections complete",
             lesson_id,
@@ -2886,7 +2900,8 @@ async def tts_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "tts_node" in node_outputs:
         cached = node_outputs["tts_node"]
@@ -3138,7 +3153,8 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "image_generator" in node_outputs:
         cached = node_outputs["image_generator"]
@@ -3283,7 +3299,8 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         .single()
         .execute()
     )
-    node_outputs: dict[str, Any] = (jobs_resp.data or {}).get("node_outputs") or {}
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
 
     if "package_builder" in node_outputs:
         logger.info("[%s] package_builder_node: cache hit", lesson_id)
@@ -3446,7 +3463,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             continue
 
         slides_with_images = [
-            {**slide, "image_url": image_url_by_slide_id.get(slide.get("slide_id"))}
+            {**slide, "image_url": image_url_by_slide_id.get(cast("str", slide.get("slide_id")))}
             for slide in slides_data
         ]
 
@@ -3654,7 +3671,8 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
         )
         sections = sections[:_MAX_PHASE1_SECTIONS]
 
-    base = {k: state[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    state_any: dict[str, Any] = cast("dict[str, Any]", state)
+    base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
     # Uses _PHASE1_INSTRUMENTED_NODES (all 6 as of Story 2-1 AC-3..AC-6), not
@@ -3677,7 +3695,7 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     # MemorySaver for in-process checkpointing (PostgresSaver is BANNED per PRD §24)
     checkpointer = MemorySaver()
 
-    graph: StateGraph = StateGraph(PipelineState)
+    graph: StateGraph[Any] = StateGraph(PipelineState)
 
     # Register all 14 nodes
     graph.add_node("extract", extract_node)

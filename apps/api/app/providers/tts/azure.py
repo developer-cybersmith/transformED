@@ -71,12 +71,17 @@ class AzureTTSProvider(TTSProvider):
             f"</speak>"
         )
 
+        # settings.azure_tts_key is typed Optional; coerce to str so the header
+        # map is dict[str, str]. A configured Azure fallback always has a key,
+        # so this is types-only — the same header value is sent at runtime.
+        api_key = self._api_key or ""
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"https://{self._region}.tts.speech.microsoft.com/cognitiveservices/v1",
                     headers={
-                        "Ocp-Apim-Subscription-Key": self._api_key,
+                        "Ocp-Apim-Subscription-Key": api_key,
                         "Content-Type": "application/ssml+xml",
                         "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
                     },

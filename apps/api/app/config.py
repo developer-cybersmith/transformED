@@ -328,4 +328,4 @@ def get_settings() -> Settings:
 
         settings = get_settings()
     """
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

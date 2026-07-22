@@ -11,9 +11,11 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
     from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
@@ -56,7 +58,7 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
     and a flat dict.  Handles quiz_accuracy=None and teachback_score=None.
     """
     # Unwrap WsMessage envelope if present
-    data: dict[str, Any] = payload.get("payload") or payload  # type: ignore[assignment]
+    data: dict[str, Any] = payload.get("payload") or payload
 
     session_id = data.get("session_id")
     if not session_id:
@@ -248,12 +250,14 @@ async def process_attention_signal(
     await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)  # ces_computation (s3-3)
 
     # Prepend to history and trim to keep only the last _CES_HISTORY_MAX values
-    await redis.lpush(history_key, ces)
-    await redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1)
+    await cast("Awaitable[int]", redis.lpush(history_key, ces))
+    await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
     await redis.expire(history_key, _CES_WINDOW_TTL)
 
     # Read history to evaluate the intervention trigger
-    history_raw: list[str] = await redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+    history_raw: list[str] = await cast(
+        "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+    )
 
     intervention_dispatched = False
 

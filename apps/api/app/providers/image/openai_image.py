@@ -92,11 +92,17 @@ class OpenAIImageProvider(ImageProvider):
             response = await self._client.images.generate(
                 model="gpt-image-1-mini",
                 prompt=prompt,
-                size=size,  # type: ignore[arg-type]
+                size=size,
                 n=1,
             )
 
-            b64_json = getattr(response.data[0], "b64_json", None)
+            # response.data is typed Optional by the OpenAI SDK; None/empty means
+            # no usable image data — same ValueError the b64 check raises below.
+            data = response.data
+            if data is None:
+                raise ValueError("GPT Image 1 Mini returned an empty response (no b64_json)")
+
+            b64_json = getattr(data[0], "b64_json", None)
             if not b64_json:
                 raise ValueError("GPT Image 1 Mini returned an empty response (no b64_json)")
 
