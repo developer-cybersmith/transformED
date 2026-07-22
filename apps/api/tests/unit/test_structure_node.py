@@ -132,6 +132,12 @@ async def test_structure_node_happy_path() -> None:
         ),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): structure_node now coalesces sections. These
+        # adoption tests use a no-op floor (bodies are small synthetic docs);
+        # coalesce behaviour is covered directly in test_coalesce_sections.py and
+        # the node-level wiring is covered by test_structure_node_coalesces_*.
+        mock_settings.return_value.structure_min_section_chars = 10
+        mock_settings.return_value.structure_max_sections = 60
         result = await structure_node(state)
 
     sections = result.get("sections", [])
@@ -203,6 +209,12 @@ async def test_structure_node_llm_failure_falls_back() -> None:
         ),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): structure_node now coalesces sections. These
+        # adoption tests use a no-op floor (bodies are small synthetic docs);
+        # coalesce behaviour is covered directly in test_coalesce_sections.py and
+        # the node-level wiring is covered by test_structure_node_coalesces_*.
+        mock_settings.return_value.structure_min_section_chars = 10
+        mock_settings.return_value.structure_max_sections = 60
         # Must not raise even though LLM failed
         result = await structure_node(state)
 
@@ -231,6 +243,12 @@ async def test_structure_node_empty_input_fallback() -> None:
         ),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): structure_node now coalesces sections. These
+        # adoption tests use a no-op floor (bodies are small synthetic docs);
+        # coalesce behaviour is covered directly in test_coalesce_sections.py and
+        # the node-level wiring is covered by test_structure_node_coalesces_*.
+        mock_settings.return_value.structure_min_section_chars = 10
+        mock_settings.return_value.structure_max_sections = 60
         result = await structure_node(state)
 
     sections = result.get("sections", [])
@@ -262,6 +280,12 @@ async def test_structure_node_writes_checkpoint() -> None:
         ),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): structure_node now coalesces sections. These
+        # adoption tests use a no-op floor (bodies are small synthetic docs);
+        # coalesce behaviour is covered directly in test_coalesce_sections.py and
+        # the node-level wiring is covered by test_structure_node_coalesces_*.
+        mock_settings.return_value.structure_min_section_chars = 10
+        mock_settings.return_value.structure_max_sections = 60
         await structure_node(state)
 
     jobs_mock = sb.table("lesson_jobs")
@@ -440,3 +464,40 @@ def test_ac11_multi_heading_chapter_produces_three_or_more_sections() -> None:
     assert len(sections) >= 3, (
         f"Expected ≥ 3 sections for a 20-page chapter with numbered headings; got {len(sections)}"
     )
+
+
+@pytest.mark.unit
+async def test_structure_node_coalesces_oversegmented_rule_based() -> None:
+    """Story 2-16 (RC-1) wiring: a how-to doc whose rule-based detection yields
+    many step-sections is coalesced to <= structure_max_sections by the node,
+    losing no text (this is the exact production blocker shape)."""
+    from app.modules.content.pipeline.graph import structure_node
+
+    body_pad = "Follow the detailed on-screen instruction carefully here. " * 6  # ~348 chars
+    steps = "\n\n".join(f"{i}. Click Button Number {i}\n{body_pad}marker{i}" for i in range(1, 31))
+    state = {**_base_state(), "raw_text": steps}
+    sb = _make_supabase_mock(node_outputs={})
+    # LLM validation raises -> deterministic rule-based path, then coalesce.
+    _mock_class, _mock_instance, modules_patch = _make_provider_mock(
+        side_effect=RuntimeError("llm unavailable")
+    )
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch.dict("sys.modules", modules_patch),
+        patch(
+            "app.modules.content.pipeline.graph._update_job_progress",
+            new_callable=AsyncMock,
+        ),
+    ):
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        mock_settings.return_value.structure_min_section_chars = 200
+        mock_settings.return_value.structure_max_sections = 8
+        result = await structure_node(state)
+
+    sections = result["sections"]
+    assert len(sections) == 8, f"must be capped at max_sections=8; got {len(sections)}"
+    joined = " ".join(s["body"] for s in sections) + " " + " ".join(s["title"] for s in sections)
+    for i in range(1, 31):
+        assert f"marker{i}" in joined, f"step {i} body was dropped — text loss!"
