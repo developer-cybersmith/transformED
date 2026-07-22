@@ -4,7 +4,7 @@ baseline_commit: 7da95e48ddde7b9ba0f8a03cbeec8f42f9c928d0
 
 # Story 2.24: Real-graph integration test on a step-numbered how-to (the missing layer)
 
-Status: ready-for-dev
+Status: review
 
 > **TEST-INFRA / remediation, from the 2026-07-22 audit.** The audit's #1 systemic gap: *no test ever executes the real graph* — every test mocks node boundaries with clean fixtures, and the boundaries are exactly where the bug class lives (over-segmentation, count-mismatch, newline-in-id, space-in-id, empty-timestamps, whole-segment-drop). This story adds a real `run_pipeline()` end-to-end test on a **step-numbered how-to** input (the failure class), mocking ONLY external providers, that would have caught all of the above.
 
@@ -22,10 +22,10 @@ Status: ready-for-dev
 5. **AC-5 — runs in CI (no cost, no network).** No real provider/network calls; deterministic; marked so it runs in the default suite.
 
 ## Tasks / Subtasks
-- [ ] Task 1: `tests/integration/` harness — `StatefulSupabaseFake`, `dispatching_llm_provider` (per-`response_format` valid instances; planner/slide echo the prompt's segment_ids), TTS/image/cost mocks.
-- [ ] Task 2: `tests/integration/test_howto_pipeline_e2e.py` — run_pipeline on step-numbered how-to text; assert AC-2/AC-3.
-- [ ] Task 3: JSON-schema contract assertion against `lesson_package.schema.json`.
-- [ ] Task 4: green in the default unit+integration suite; ruff + mypy clean.
+- [x] Task 1: `tests/integration/` harness — `StatefulSupabaseFake`, `dispatching_llm_provider` (per-`response_format` valid instances; planner/slide echo the prompt's segment_ids), TTS/image/cost mocks.
+- [x] Task 2: `tests/integration/test_howto_pipeline_e2e.py` — run_pipeline on step-numbered how-to text; assert AC-2/AC-3.
+- [x] Task 3: JSON-schema contract assertion against `lesson_package.schema.json`.
+- [x] Task 4: green in the default unit+integration suite; ruff + mypy clean.
 
 ## Dev Notes
 - `run_pipeline(lesson_id, chapter_content=...)` (graph.py:4005) runs the graph from `extract`; with `chapter_content` set and no PDF, extraction uses the raw text.
@@ -39,4 +39,8 @@ Status: ready-for-dev
 | 2026-07-22 | Test-infra story from the audit (the missing real-graph integration layer). | Dev 1 |
 
 ## Dev Agent Record
-_(to be completed during dev-story)_
+**Completed 2026-07-22.** `tests/integration/test_howto_pipeline_e2e.py` drives the REAL compiled graph via `run_pipeline(chapter_content=<20-step how-to>)` — reusable `_StatefulSupabaseFake` (accumulates node_outputs, chapters.insert→id, chunks→[] so embed no-ops) + a dispatching LLM provider (valid instance per response_format; planner/slide echo the prompt's segment_ids) + TTS/image/cost/redis mocks. The structure LLM path is dead (RC-2) so the REAL `detect_headings`+`coalesce_sections` run — verified by the `LLM sections cover 1/… (<90%) — rejecting` log. Asserts: JSON-schema validation against the frozen `lesson_package.schema.json`; 2..15 bounded segments with unique ids; every segment_id matches `_SAFE_SEGMENT_ID_RE`; non-empty contiguous timestamps. CI updated to run `tests/unit tests/integration`.
+
+**Verification:** 544 passed / 1 skipped (unit+integration); mypy 0; ruff clean.
+
+**File List:** `apps/api/tests/integration/test_howto_pipeline_e2e.py` (NEW); `.github/workflows/ci.yml` (run tests/integration); this story.
