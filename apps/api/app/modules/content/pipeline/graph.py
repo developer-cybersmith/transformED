@@ -1667,40 +1667,49 @@ def _cap_words(text: str, max_words: int) -> str:
     return " ".join(words[:max_words])
 
 
-# Story 2-18: cap the title portion of a derived segment_id. This id is embedded
-# verbatim into single-line LLM prompt entries (lesson_planner `summaries_text`,
-# slide_generator), so it must stay short and single-line no matter how messy the
-# rule-based heading detector's "title" is.
+# Story 2-18: bound the title portion of a derived segment_id, and slugify it to
+# the SAME charset the storage-path validator (`_SAFE_SEGMENT_ID_RE`, [A-Za-z0-9_-])
+# accepts. This id is embedded verbatim into single-line LLM prompt entries
+# (lesson_planner `summaries_text`, slide_generator) AND used to build Supabase
+# Storage object paths ({lesson_id}/{segment_id}.mp3, {lesson_id}/{slide_id}.png),
+# so it must be a short, single-TOKEN string with no whitespace/punctuation.
 _SECTION_ID_TITLE_MAX = 60
+# Any run of characters outside [A-Za-z0-9] becomes a single '-'. Simple char
+# class with '+' — linear, no catastrophic backtracking.
+_SECTION_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
 def _derive_section_id(section: dict[str, Any], index: int) -> str:
-    """Build a segment_id that's always unique per section, and always a safe
-    single-line token.
+    """Build a segment_id that's always unique per section and always a safe
+    single-TOKEN identifier (matches `_SAFE_SEGMENT_ID_RE`, ``[A-Za-z0-9_-]``).
 
     Combining the section's own index (which never repeats within a chapter)
     with its title (for human readability) prevents two same-titled or
     blank-titled sections (e.g. two "Introduction" sections) from colliding —
     `operator.add` concatenates Phase 1 outputs with no dedup, so a collision
     here means `lesson_planner` receives two summaries/scores sharing one key
-    (Story 2-1 review finding).
+    (Story 2-1 review finding). Uniqueness is guaranteed by ``index``, so no
+    title information is load-bearing (AC-2) — the title is purely cosmetic.
 
-    Story 2-18: the title is sanitized before it is embedded. It comes from the
-    rule-based heading detector, which on how-to PDFs mis-picks numbered steps
-    and sentence fragments — one real title was literally "5.\\nJobs" (embedded
-    newline). Because this id is written into single-line prompt entries like
-    ``- segment_id={id}: {summary}``, an embedded newline splits one logical
-    list line into two, corrupting the list the LLM must echo back 1:1 and
-    tripping the ``unknown segment_id`` guard. We collapse every whitespace run
-    (spaces/tabs/newlines/CR) to a single space, drop non-printable characters,
-    and cap the length. Uniqueness is guaranteed by ``index`` regardless of how
-    the title collapses (AC-2), so no title information is load-bearing here.
+    Story 2-18: the title comes from the rule-based heading detector, which on
+    how-to PDFs mis-picks numbered steps / sentence fragments (one real title
+    was literally "5.\\nJobs"). This id is (a) written into single-line prompt
+    entries like ``- segment_id={id}: {summary}`` where any whitespace splits the
+    line and corrupts the list the LLM must echo back 1:1 (the reported bug), and
+    (b) embedded into Supabase Storage object paths validated by
+    ``_SAFE_SEGMENT_ID_RE = ^[A-Za-z0-9_-]+`` in `tts_node`/`image_generator_node`
+    — a title with a space (i.e. virtually every real multi-word heading) fails
+    that gate and silently degrades server-side TTS audio / slide images to the
+    fallback. Slugifying to ``[A-Za-z0-9-]`` fixes BOTH: no whitespace/colon to
+    split a prompt line, and the whole id passes the storage-path validator.
     """
     raw_title = section.get("title") or "section"
-    # split() collapses ALL whitespace (incl. \n, \r, \t) and strips.
-    collapsed = " ".join(str(raw_title).split())
-    cleaned = "".join(ch for ch in collapsed if ch.isprintable())
-    title = cleaned[:_SECTION_ID_TITLE_MAX].strip() or "section"
+    # Bound work before regex/slug on untrusted, possibly-huge heading text.
+    raw_title = str(raw_title)[: _SECTION_ID_TITLE_MAX * 4]
+    # Collapse every run of non-[A-Za-z0-9] (whitespace, punctuation, control,
+    # unicode) to a single '-', then trim and cap. Result is [A-Za-z0-9-] only.
+    slug = _SECTION_ID_UNSAFE_RE.sub("-", raw_title).strip("-")
+    title = slug[:_SECTION_ID_TITLE_MAX].strip("-") or "section"
     return f"section_{index}_{title}"
 
 

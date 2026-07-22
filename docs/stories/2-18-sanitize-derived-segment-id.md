@@ -46,7 +46,9 @@ An id containing `\n` splits one logical list entry into two physical lines, cor
 
 ## Acceptance Criteria
 
-1. **AC-1 — `segment_id` is always a safe single-line token.** `_derive_section_id` sanitizes the title before embedding it: collapse every run of whitespace (spaces, tabs, newlines, CR) to a single space, drop non-printable/control characters, strip, and cap the title portion to a bounded length (`_SECTION_ID_TITLE_MAX`). The returned id contains no `\n`, `\r`, or `\t`. A blank / whitespace-only / all-control title falls back to `"section"`.
+1. **AC-1 — `segment_id` is always a safe single-TOKEN identifier.** `_derive_section_id` slugifies the title before embedding it: every run of characters outside `[A-Za-z0-9]` (whitespace, punctuation, control, unicode) collapses to a single `-`, trimmed, and the title portion is capped to `_SECTION_ID_TITLE_MAX`. The returned id contains no whitespace (`\n`/`\r`/`\t`/space) and no `:`/`=` (the prompt-line delimiters). A blank / whitespace-only / all-control / all-punctuation title falls back to `"section"`. Input is length-bounded before slugging (untrusted heading text).
+
+7. **AC-7 — the derived id satisfies the storage-path validator (`_SAFE_SEGMENT_ID_RE`).** `_derive_section_id`'s output must match `^[A-Za-z0-9_-]+\Z`. **This closes a HIGH-severity latent bug the audit surfaced:** the id is embedded into Supabase Storage object paths (`{lesson_id}/{segment_id}.mp3`, `{lesson_id}/{slide_id}.png`) which `tts_node` (`graph.py:2974`) and `image_generator_node` (`graph.py:3219`) validate against `_SAFE_SEGMENT_ID_RE`. The previous space-preserving id (`section_0_The Water Cycle`) **failed that gate for virtually every real multi-word heading**, silently degrading server-side TTS audio (`audio_url=""`) and slide images (`image_url=None`) to fallback while the lesson still "completed". Slugifying to `[A-Za-z0-9-]` makes the id pass, restoring audio + images. A regression test cross-checks `_derive_section_id` output against `_SAFE_SEGMENT_ID_RE` for realistic titles.
 2. **AC-2 — Uniqueness per section is preserved.** The `section_{index}_` prefix still guarantees uniqueness even when two different titles collapse/truncate to the same string (the Story 2-1 collision concern the function exists for). No two sections in one chapter can produce the same id.
 3. **AC-3 — The planner prompt line count equals the segment count.** For any set of segment_summaries whose ids come from `_derive_section_id` (including messy titles with embedded newlines), `summaries_text.split("\n")` has exactly one line per segment — the corruption that tripped the guard cannot recur.
 4. **AC-4 — No behavior change for well-formed titles beyond the bounded length.** A clean title like `"Introduction"` still yields `section_{index}_Introduction`; only messy titles are altered. Existing Phase 1 / planner / package-builder tests pass unmodified.
@@ -59,11 +61,25 @@ An id containing `\n` splits one logical list entry into two physical lines, cor
 - [x] Task 2: Tests (AC-3, AC-5) — ✓ 2026-07-22 — `tests/unit/test_derive_section_id.py` (18 cases incl. the `"5.\nJobs"` repro and the planner prompt line-count assertion).
 - [x] Task 3: Regression — ✓ 2026-07-22 — 489 passed / 1 skipped; `mypy app` = 0; ruff check + format clean.
 
+## Senior Developer Review (AI) — review + systemic audit, 2026-07-22
+
+5-layer review of the fix + a systemic Dev1↔Dev2 audit (25 agents). The review **caught that the first version of this fix was incomplete** and the audit found the same root cause firing as a HIGH latent bug — both now addressed by the slugify upgrade:
+
+- **[Med → fixed] Security: single-LINE ≠ single-TOKEN.** Collapsing whitespace to a *space* left `section_4_5. Jobs`; a space (or a `:` from titles like `1. Step: do X`) still lets a whitespace-tokenizing consumer truncate the id to `section_4_5.` — reproducing the guard trip. Upgraded to slugify to `[A-Za-z0-9-]`.
+- **[High → fixed] Derive/validate charset mismatch (audit).** `_derive_section_id` allowed spaces but `_SAFE_SEGMENT_ID_RE` (tts/image storage-path gate) rejects them → every real multi-word-titled lesson silently lost server-side audio + images. The slug fix aligns producer and consumer (AC-7 + cross-check test).
+- **[Med → fixed] Test coverage: prompt-line-count test was a format replica; slide_generator sink uncovered.** Added a **real-node** `lesson_planner_node` regression test (exercises `graph.py:1099`) + a slide_generator-sink line test (Dev 2's request for coverage in the node files).
+- **[Low → fixed] perf: whole untrusted title processed before cap.** Input now length-bounded before slug.
+- **[Low → added] boundary (60/61), all-control fallback, storage-charset cross-check** tests.
+
+**Dev 2's cross-check (independent manual read) — all incorporated:** slide_generator identical sink (covered by the chokepoint fix + sink test); uniqueness is index-based (`graph.py:3684` enumerate) — confirmed collision-safe; coalesce keeps survivor title verbatim; the dead `sec["id"]` re-sequencing in `coalesce_sections` (noted as a follow-up cleanup).
+
+**Deferred to follow-up stories (found by the audit, NOT this bug's scope):** narration `timestamps=[]` breaking player slide-sync (High); `title`/`summary` newline in the planner/slide prompt lines — the *other half* of the same line (Med); partial Phase-1 per-section drop in package_builder (Med); slide_generator wholesale-reject on one bad slide count (Med); teachback prompt/scoring drift (Med). See the audit report.
+
 ## Dev Agent Record — Completion Notes
 
 Single-chokepoint fix in `_derive_section_id` (fixes all 6 Phase 1 nodes and both prompt sinks at once). Sanitize = collapse all whitespace → single space, drop non-printables, cap 60, fallback `"section"`. Uniqueness stays index-based (AC-2). No call-site changes; package-builder grouping keys stay consistent because every consumer reads the derived id, never re-derives.
 
-**Verification:** 489 passed / 1 skipped (was 471; +18 new, 0 regressions); `mypy app` = 0; ruff clean. Baseline `main` @ `a14d660` (mypy-green after #76/#80).
+**Verification (post review+audit upgrade):** 498 passed / 1 skipped (0 regressions); `mypy app` = 0; ruff clean. Fix upgraded from whitespace-collapse to **slugify `[A-Za-z0-9-]`** — closes the reported newline bug, the echo-token issue, AND the HIGH storage-path charset mismatch (audio/images). Baseline `main` @ `a14d660`.
 
 **File List:**
 - `apps/api/app/modules/content/pipeline/graph.py` — `_SECTION_ID_TITLE_MAX` + sanitized `_derive_section_id` (MODIFIED)
