@@ -1667,8 +1667,16 @@ def _cap_words(text: str, max_words: int) -> str:
     return " ".join(words[:max_words])
 
 
+# Story 2-18: cap the title portion of a derived segment_id. This id is embedded
+# verbatim into single-line LLM prompt entries (lesson_planner `summaries_text`,
+# slide_generator), so it must stay short and single-line no matter how messy the
+# rule-based heading detector's "title" is.
+_SECTION_ID_TITLE_MAX = 60
+
+
 def _derive_section_id(section: dict[str, Any], index: int) -> str:
-    """Build a segment_id that's always unique per section.
+    """Build a segment_id that's always unique per section, and always a safe
+    single-line token.
 
     Combining the section's own index (which never repeats within a chapter)
     with its title (for human readability) prevents two same-titled or
@@ -1676,8 +1684,23 @@ def _derive_section_id(section: dict[str, Any], index: int) -> str:
     `operator.add` concatenates Phase 1 outputs with no dedup, so a collision
     here means `lesson_planner` receives two summaries/scores sharing one key
     (Story 2-1 review finding).
+
+    Story 2-18: the title is sanitized before it is embedded. It comes from the
+    rule-based heading detector, which on how-to PDFs mis-picks numbered steps
+    and sentence fragments — one real title was literally "5.\\nJobs" (embedded
+    newline). Because this id is written into single-line prompt entries like
+    ``- segment_id={id}: {summary}``, an embedded newline splits one logical
+    list line into two, corrupting the list the LLM must echo back 1:1 and
+    tripping the ``unknown segment_id`` guard. We collapse every whitespace run
+    (spaces/tabs/newlines/CR) to a single space, drop non-printable characters,
+    and cap the length. Uniqueness is guaranteed by ``index`` regardless of how
+    the title collapses (AC-2), so no title information is load-bearing here.
     """
-    title = section.get("title") or "section"
+    raw_title = section.get("title") or "section"
+    # split() collapses ALL whitespace (incl. \n, \r, \t) and strips.
+    collapsed = " ".join(str(raw_title).split())
+    cleaned = "".join(ch for ch in collapsed if ch.isprintable())
+    title = cleaned[:_SECTION_ID_TITLE_MAX].strip() or "section"
     return f"section_{index}_{title}"
 
 

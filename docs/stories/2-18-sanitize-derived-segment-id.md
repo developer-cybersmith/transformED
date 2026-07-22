@@ -4,7 +4,7 @@ baseline_commit: a14d660fe3c67a196ffad44880672f479d4fa6ac
 
 # Story 2.18: Sanitize derived `segment_id` (unsanitized title corrupts the planner prompt)
 
-Status: ready-for-dev
+Status: review
 
 > **BUG / BLOCKER story.** Same how-to PDF as Story 2-16, failing on a *different* guard one line further down in `lesson_planner_node`. Story 2-16's fix works (8 sections, not 44; planner got 8 segments, not 10 — count-mismatch gone). This is a new, adjacent defect: a section title containing a newline gets baked verbatim into a `segment_id`, corrupting the single-line prompt list the LLM must echo back, tripping the `unknown segment_id(s)` guard.
 
@@ -55,9 +55,20 @@ An id containing `\n` splits one logical list entry into two physical lines, cor
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Sanitizer (AC-1, AC-2) — add `_SECTION_ID_TITLE_MAX` + rewrite `_derive_section_id` to collapse whitespace, strip non-printables, cap length, fallback to `"section"`.
-- [ ] Task 2: Tests (AC-3, AC-5) — RED first: `_derive_section_id` unit tests + a planner-prompt line-count test.
-- [ ] Task 3: Regression — full unit suite + ruff + mypy green.
+- [x] Task 1: Sanitizer (AC-1, AC-2) — ✓ 2026-07-22 — added `_SECTION_ID_TITLE_MAX=60`; `_derive_section_id` now collapses whitespace (`" ".join(str(title).split())`), drops non-printables, caps to 60, falls back to `"section"`; `section_{index}_` prefix retained for uniqueness.
+- [x] Task 2: Tests (AC-3, AC-5) — ✓ 2026-07-22 — `tests/unit/test_derive_section_id.py` (18 cases incl. the `"5.\nJobs"` repro and the planner prompt line-count assertion).
+- [x] Task 3: Regression — ✓ 2026-07-22 — 489 passed / 1 skipped; `mypy app` = 0; ruff check + format clean.
+
+## Dev Agent Record — Completion Notes
+
+Single-chokepoint fix in `_derive_section_id` (fixes all 6 Phase 1 nodes and both prompt sinks at once). Sanitize = collapse all whitespace → single space, drop non-printables, cap 60, fallback `"section"`. Uniqueness stays index-based (AC-2). No call-site changes; package-builder grouping keys stay consistent because every consumer reads the derived id, never re-derives.
+
+**Verification:** 489 passed / 1 skipped (was 471; +18 new, 0 regressions); `mypy app` = 0; ruff clean. Baseline `main` @ `a14d660` (mypy-green after #76/#80).
+
+**File List:**
+- `apps/api/app/modules/content/pipeline/graph.py` — `_SECTION_ID_TITLE_MAX` + sanitized `_derive_section_id` (MODIFIED)
+- `apps/api/tests/unit/test_derive_section_id.py` — new tests (NEW)
+- `docs/stories/2-18-sanitize-derived-segment-id.md` — this story (NEW)
 
 ## Dev Notes
 
