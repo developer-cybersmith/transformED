@@ -298,9 +298,9 @@ async def test_top_level_glossary_deduplicates_across_segments() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_segment_missing_complexity_is_skipped_others_still_assembled() -> None:
-    """AC-5: a segment missing a required upstream field degrades (is
-    skipped), it does not crash the whole node."""
+async def test_segment_missing_complexity_is_degraded_not_dropped() -> None:
+    """Story 2-21: a segment with slides but missing complexity is KEPT with a
+    neutral default complexity, not dropped — its succeeded parts survive."""
     from app.modules.content.pipeline.graph import package_builder_node
 
     incomplete_scores = [c for c in COMPLEXITY_SCORES if c["segment_id"] != "sec_0"]
@@ -310,13 +310,17 @@ async def test_segment_missing_complexity_is_skipped_others_still_assembled() ->
         result = await package_builder_node(_base_state(complexity_scores=incomplete_scores))
 
     package = result["lesson_package"]
-    assert len(package["segments"]) == 1
-    assert package["segments"][0]["segment_id"] == "sec_1"
+    assert len(package["segments"]) == 2
+    seg0 = next(s for s in package["segments"] if s["segment_id"] == "sec_0")
+    assert seg0["complexity"]["level"] == "medium", "neutral default backfilled"
+    assert seg0["slides"], "succeeded slides preserved"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_segment_missing_narration_is_skipped() -> None:
+async def test_segment_missing_narration_is_degraded_not_dropped() -> None:
+    """Story 2-21: a segment missing narration is KEPT with a browser-fallback
+    Narration (no server audio), not dropped; timestamps still come from slides."""
     from app.modules.content.pipeline.graph import package_builder_node
 
     incomplete_audio = [a for a in AUDIO_ASSETS if a["segment_id"] != "sec_1"]
@@ -326,13 +330,18 @@ async def test_segment_missing_narration_is_skipped() -> None:
         result = await package_builder_node(_base_state(audio_assets=incomplete_audio))
 
     package = result["lesson_package"]
-    assert len(package["segments"]) == 1
-    assert package["segments"][0]["segment_id"] == "sec_0"
+    assert len(package["segments"]) == 2
+    seg1 = next(s for s in package["segments"] if s["segment_id"] == "sec_1")
+    assert seg1["narration"]["audio_provider"] == "browser"
+    assert seg1["narration"]["audio_url"] == ""
+    assert len(seg1["narration"]["timestamps"]) == len(seg1["slides"])
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_segment_missing_interventions_is_skipped() -> None:
+async def test_segment_missing_interventions_is_degraded_not_dropped() -> None:
+    """Story 2-21: a segment missing interventions is KEPT with neutral default
+    intervention messages (3 per type), not dropped."""
     from app.modules.content.pipeline.graph import package_builder_node
 
     incomplete_interventions = [i for i in INTERVENTION_PROMPTS if i["segment_id"] != "sec_0"]
@@ -344,8 +353,10 @@ async def test_segment_missing_interventions_is_skipped() -> None:
         )
 
     package = result["lesson_package"]
-    assert len(package["segments"]) == 1
-    assert package["segments"][0]["segment_id"] == "sec_1"
+    assert len(package["segments"]) == 2
+    seg0 = next(s for s in package["segments"] if s["segment_id"] == "sec_0")
+    assert len(seg0["interventions"]["distraction"]) == 3
+    assert len(seg0["interventions"]["confusion"]) == 3
 
 
 @pytest.mark.unit
@@ -366,16 +377,17 @@ async def test_segment_with_zero_slides_is_skipped() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_all_segments_missing_data_raises_runtime_error_and_writes_nothing() -> None:
-    """AC-6: zero usable segments must raise, not silently write an unusable
-    'ready' lesson."""
+async def test_all_segments_without_slides_raises_runtime_error_and_writes_nothing() -> None:
+    """Story 2-21/AC-4: 'zero usable segments' raises ONLY when every segment
+    lacks slides (a genuine empty lesson) — no longer for a recoverable missing
+    field like complexity (see test_missing_complexity_for_all_segments_...)."""
     from app.modules.content.pipeline.graph import package_builder_node
 
     sb, jobs_table, lessons_table = _mock_supabase()
 
     with patch("app.core.db.get_supabase", return_value=sb):
         with pytest.raises(RuntimeError, match="zero usable segments"):
-            await package_builder_node(_base_state(complexity_scores=[]))
+            await package_builder_node(_base_state(slides=[], slide_images=[]))
 
     # The 95%-progress marker call (status="running") is expected and fine —
     # only the completion write (status="completed") and the lessons-table
@@ -716,3 +728,58 @@ async def test_multi_slide_segment_track_and_settings_flow() -> None:
     # sec_0 script "Entropy measures disorder." = 3 words; duration must use the setting.
     wpm = get_settings().narration_words_per_minute
     assert ts[-1]["end_ms"] == round(3 / wpm * 60_000), "duration derived from the wpm setting"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_complexity_for_all_segments_completes_degraded() -> None:
+    """Story 2-21: the OLD failure mode — complexity_scores=[] used to raise
+    'zero usable segments'; now both slide-bearing segments are kept, degraded,
+    and the lesson completes."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    sb, _, lessons_table = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(complexity_scores=[]))
+
+    package = result["lesson_package"]
+    assert len(package["segments"]) == 2
+    for seg in package["segments"]:
+        assert seg["complexity"]["level"] == "medium"
+    lessons_table.update.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_teachback_prompt_surfaces_jargon_terms() -> None:
+    """Story 2-23: the teach-back prompt names the segment's jargon terms (the
+    Dev3 scorer's key_concepts), aligning the shown prompt with the scoring."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state())
+
+    for seg in result["lesson_package"]["segments"]:
+        terms = [j["term"] for j in seg["jargon"]]
+        if terms:
+            assert "Try to cover:" in seg["teachback_prompt"]
+            for term in terms:
+                assert " ".join(term.split()) in seg["teachback_prompt"]
+        else:
+            assert "Try to cover:" not in seg["teachback_prompt"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_teachback_prompt_generic_when_no_jargon() -> None:
+    """Story 2-23 AC-2: no jargon -> the existing generic prompt (no 'cover' clause)."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(glossary=[]))
+
+    for seg in result["lesson_package"]["segments"]:
+        assert "Try to cover:" not in seg["teachback_prompt"]
+        assert "explain what you learned about" in seg["teachback_prompt"]

@@ -397,8 +397,10 @@ async def test_duplicate_segment_id_is_rejected() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_zero_slides_for_a_segment_is_rejected() -> None:
-    """AC-4/AC-7: a segment with 0 slides is rejected."""
+async def test_zero_slides_for_a_segment_is_accepted_under_budget() -> None:
+    """Story 2-22: an under-budget count (here 0) is accepted, not rejected
+    wholesale — that segment contributes no slides (package_builder later drops a
+    slideless segment); the OTHER segments' slides survive."""
     from app.modules.content.pipeline.graph import slide_generator_node
 
     mock_provider = AsyncMock()
@@ -415,14 +417,20 @@ async def test_zero_slides_for_a_segment_is_rejected() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
     ):
-        with pytest.raises(RuntimeError, match="slides"):
-            await slide_generator_node(_base_state())
+        result = await slide_generator_node(_base_state())
+
+    counts: dict[str, int] = {}
+    for s in result["slides"]:
+        counts[s["segment_id"]] = counts.get(s["segment_id"], 0) + 1
+    assert counts.get("sec_0", 0) == 0, "0-slide segment accepted, contributes nothing"
+    assert counts["sec_1"] == 1 and counts["sec_2"] == 1, "other segments intact"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_too_many_slides_for_a_segment_is_rejected() -> None:
-    """AC-4/AC-7: a segment with more than 8 slides is rejected."""
+async def test_too_many_slides_for_a_segment_is_truncated_to_budget() -> None:
+    """Story 2-22: an over-budget count (9 > global max 8) is TRUNCATED to
+    seg_max, not rejected wholesale — the other segments survive."""
     from app.modules.content.pipeline.graph import slide_generator_node
 
     mock_provider = AsyncMock()
@@ -442,8 +450,13 @@ async def test_too_many_slides_for_a_segment_is_rejected() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
     ):
-        with pytest.raises(RuntimeError, match="slides"):
-            await slide_generator_node(_base_state())
+        result = await slide_generator_node(_base_state())
+
+    counts: dict[str, int] = {}
+    for s in result["slides"]:
+        counts[s["segment_id"]] = counts.get(s["segment_id"], 0) + 1
+    assert counts["sec_0"] == 8, "9 slides truncated to the global max of 8"
+    assert counts["sec_1"] == 1 and counts["sec_2"] == 1, "other segments intact"
 
 
 @pytest.mark.unit
@@ -737,11 +750,10 @@ async def test_segment_specific_slide_budget_used_in_prompt_and_validated() -> N
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_response_violating_segment_specific_budget_is_rejected() -> None:
-    """AC-5: a response with 7 slides for a segment whose slide_budget caps
-    it at 5 must be REJECTED, even though 7 is well within the fixed global
-    1-8 band — proving validation uses the per-segment budget, not the
-    global one."""
+async def test_response_over_segment_specific_budget_is_truncated_to_that_budget() -> None:
+    """Story 2-22: 7 slides for a segment whose per-segment slide_budget caps it
+    at 5 is TRUNCATED to 5 (proving the per-segment budget is used, not the
+    global 1-8 band), not rejected wholesale."""
     from app.modules.content.pipeline.graph import slide_generator_node
 
     segments_with_budget = [{**seg, "slide_budget": {"min": 3, "max": 5}} for seg in PLAN_SEGMENTS]
@@ -762,20 +774,25 @@ async def test_response_violating_segment_specific_budget_is_rejected() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
     ):
-        with pytest.raises(RuntimeError, match="must be 3-5 per its slide_budget"):
-            await slide_generator_node(
-                _base_state(
-                    lesson_plan={
-                        "title": "T",
-                        "subject": "S",
-                        "objectives": ["X"],
-                        "complexity_level": "medium",
-                        "total_segments": 3,
-                        "total_duration_min": 15.0,
-                        "segments": segments_with_budget,
-                    }
-                )
+        result = await slide_generator_node(
+            _base_state(
+                lesson_plan={
+                    "title": "T",
+                    "subject": "S",
+                    "objectives": ["X"],
+                    "complexity_level": "medium",
+                    "total_segments": 3,
+                    "total_duration_min": 15.0,
+                    "segments": segments_with_budget,
+                }
             )
+        )
+
+    counts: dict[str, int] = {}
+    for s in result["slides"]:
+        counts[s["segment_id"]] = counts.get(s["segment_id"], 0) + 1
+    assert counts["sec_0"] == 5, "7 slides truncated to the per-segment budget max of 5"
+    assert counts["sec_1"] == 4 and counts["sec_2"] == 5, "within-budget segments untouched"
 
 
 @pytest.mark.unit

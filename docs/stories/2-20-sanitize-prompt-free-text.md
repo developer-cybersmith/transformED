@@ -4,7 +4,7 @@ baseline_commit: 52ff4df76a580a45b540f33d569206977a6672e3
 
 # Story 2.20: Sanitize free-text (title/summary) in single-line LLM prompt lists
 
-Status: ready-for-dev
+Status: review
 
 > **BUG (MED), from the 2026-07-22 audit.** Story 2-18 hardened the `segment_id` half of the `- segment_id={id}: {summary}` prompt line, but the free-text halves (`summary` in `lesson_planner`, `title`+`summary` in `slide_generator`) are still interpolated **unsanitized**. A newline in a summary (natural: a bulleted ≤100-word summary passed verbatim by `_cap_words`; or adversarial: PDF prompt-injection) splits one logical list entry into two, injecting a spurious `- segment_id=...` line → the LLM mis-echoes ids → the same `count/unknown/duplicate` guards trip → the sequential PREMIUM node hard-fails after all Phase-1 spend.
 
@@ -31,4 +31,6 @@ Status: ready-for-dev
 | 2026-07-22 | Bug story from the Dev1↔Dev2 audit (MED: unsanitized free-text half of the prompt line 2-18 fixed for ids). | Dev 1 |
 
 ## Dev Agent Record
-_(to be completed during dev-story)_
+**Completed 2026-07-22.** `_single_line` helper collapses whitespace runs; applied to `summary` in `_run_planner_batch` (graph.py:1099) and `title`+`summary` in slide_generator's `segments_text` (graph.py:1537). Real-node planner test proves a newline (incl. an injected `- segment_id=` payload) no longer splits the prompt line. 537 passed; mypy 0; ruff clean.
+
+**File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.

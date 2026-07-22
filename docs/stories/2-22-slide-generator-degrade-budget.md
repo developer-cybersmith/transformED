@@ -4,7 +4,7 @@ baseline_commit: 52ff4df76a580a45b540f33d569206977a6672e3
 
 # Story 2.22: slide_generator degrades per-segment on off-budget slide count (no wholesale reject)
 
-Status: ready-for-dev
+Status: review
 
 > **BUG (MED), from the 2026-07-22 audit.** `slide_generator_node` raises `RuntimeError` on the **first** segment whose slide count falls outside its `slide_budget` (`graph.py:1597`), discarding every valid slide-set and failing the whole premium node — after `lesson_planner` and all Phase-1 spend. Unlike `lesson_planner` (which batches) and Phase-1 (which degrades per section), it trusts one large multi-segment completion to be exactly right for every segment.
 
@@ -36,4 +36,6 @@ The slide_budget is a soft target, not an integrity invariant. Replace the whole
 | 2026-07-22 | Bug story from the Dev1↔Dev2 audit (MED: one off-budget segment fails the whole deck). | Dev 1 |
 
 ## Dev Agent Record
-_(to be completed during dev-story)_
+**Completed 2026-07-22.** Budget `raise` replaced with per-segment clamp — over-budget truncates to seg_max, under-budget accepted; integrity guards (count/unknown/duplicate/blank-title) unchanged. Tests updated: 9→8 truncated, 7→5 per-segment-budget truncated, 0 accepted (others intact). 537 passed; mypy 0; ruff clean.
+
+**File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.

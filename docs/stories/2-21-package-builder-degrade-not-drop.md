@@ -4,7 +4,7 @@ baseline_commit: 52ff4df76a580a45b540f33d569206977a6672e3
 
 # Story 2.21: package_builder degrades a segment instead of dropping it whole
 
-Status: ready-for-dev
+Status: review
 
 > **BUG (MED), from the 2026-07-22 audit.** `package_builder_node` requires complexity AND narration AND interventions AND slides for each plan segment (`graph.py:3478`); if any is missing (an economy node returned `[]` on an LLM refusal), it **skips the entire segment** — discarding the parts that DID succeed (quiz, summary, slides). If enough segments drop, it raises "produced zero usable segments" **after the full Phase-1 + planner + tts + image spend**.
 
@@ -43,4 +43,6 @@ Each backfill is logged as a degrade. "zero usable segments" now only fires when
 | 2026-07-22 | Bug story from the Dev1↔Dev2 audit (MED: whole-segment drop discards succeeded work + zero-segments after spend). | Dev 1 |
 
 ## Dev Agent Record
-_(to be completed during dev-story)_
+**Completed 2026-07-22.** `_default_complexity`/`_fallback_narration`/`_default_interventions` builders; gate reworked — skip only on no-slides, backfill+log otherwise; 'zero usable segments' now fires only when all segments lack slides. Tests: missing complexity/narration/interventions each KEPT (degraded), no-slides skipped, all-no-slides raises, complexity_scores=[] now completes. 537 passed; mypy 0; ruff clean.
+
+**File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.

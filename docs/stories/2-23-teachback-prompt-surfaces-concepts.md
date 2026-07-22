@@ -4,7 +4,7 @@ baseline_commit: 52ff4df76a580a45b540f33d569206977a6672e3
 
 # Story 2.23: teach-back prompt surfaces the concepts it is graded against
 
-Status: ready-for-dev
+Status: review
 
 > **BUG (MED, producer/consumer drift), from the 2026-07-22 audit.** `package_builder` writes a placeholder `teachback_prompt` = "In your own words, explain what you learned about {title}." The Dev3 teach-back scorer (`assessment/service.py:440`) ignores that prompt and grades the student's answer against the segment's **jargon terms** (`key_concepts = [j["term"] for j in segment.jargon]`). The student answers an open-ended question but is scored on specific concepts the prompt never surfaces → a correct, complete answer can be marked incomplete, depressing the CES teach-back contribution.
 
@@ -36,4 +36,6 @@ Dev1 owns `package_builder` and the `teachback_prompt` field (an explicitly prov
 | 2026-07-22 | Bug story from the Dev1↔Dev2 audit (MED/PLAUSIBLE: shown prompt vs graded concepts drift). | Dev 1 |
 
 ## Dev Agent Record
-_(to be completed during dev-story)_
+**Completed 2026-07-22.** `_build_teachback_prompt(title, jargon_entries)` surfaces the segment's jargon terms (the Dev3 scorer's `key_concepts`) when present; generic form otherwise; single-line via `_single_line`. No Dev3 change. Tests: terms surfaced with-jargon, generic without. 537 passed; mypy 0; ruff clean.
+
+**File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.
