@@ -3300,6 +3300,55 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     return {**state, "slide_images": slide_images_out, "progress_pct": 93.0}
 
 
+def _estimate_slide_timestamps(
+    slides: list[dict[str, Any]],
+    script: str,
+    *,
+    words_per_minute: int,
+    default_ms_per_slide: int,
+) -> list[dict[str, Any]]:
+    """Distribute a segment's slides across an ESTIMATED narration duration.
+
+    Story 2-19: `tts_node` ships `timestamps: []`; the player needs a contiguous
+    ``{slide_id, start_ms, end_ms}`` track to sync slides (binary search by time)
+    and to fire the segment-end quiz (``timestamps.at(-1).end_ms``). We estimate
+    the segment's audio duration from the script word count at `words_per_minute`
+    and split it evenly across the slides — real forced-alignment / word-level
+    timing remains deferred (Story 2-8's original scope). Guarantees (AC-1/AC-2):
+    one entry per slide, first ``start_ms == 0``, each ``start_ms == previous
+    end_ms`` (contiguous), ``start_ms < end_ms`` (non-degenerate), last
+    ``end_ms == estimated duration``.
+    """
+    n = len(slides)
+    if n == 0:
+        return []
+    # Defence-in-depth: `words_per_minute` is guarded by Settings(gt=0) at the
+    # only call site, but this is now a public module symbol — never divide by 0.
+    words_per_minute = max(words_per_minute, 1)
+    word_count = len(script.split())
+    total_ms = (
+        round(word_count / words_per_minute * 60_000)
+        if word_count > 0
+        else default_ms_per_slide * n
+    )
+    total_ms = max(total_ms, n)  # ≥ 1 ms per slide so windows never collapse
+    timestamps: list[dict[str, Any]] = []
+    prev_end = 0
+    for i, slide in enumerate(slides):
+        start_ms = prev_end
+        if i == n - 1:
+            end_ms = max(total_ms, start_ms + 1)
+        else:
+            end_ms = round((i + 1) * total_ms / n)
+            if end_ms <= start_ms:
+                end_ms = start_ms + 1
+        timestamps.append(
+            {"slide_id": slide.get("slide_id"), "start_ms": start_ms, "end_ms": end_ms}
+        )
+        prev_end = end_ms
+    return timestamps
+
+
 async def package_builder_node(state: PipelineState) -> PipelineState:
     """Node 15 (Story 2-11/S2-11): assemble all prior node outputs into a
     schema-validated LessonPackage, write it to `lessons`, and mark the
@@ -3316,6 +3365,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     re-writing of both lessons/lesson_jobs (a completed lesson must not be
     re-validated/re-written on an ARQ retry that reaches this node again).
     """
+    from app.config import get_settings
     from app.core.db import get_supabase
     from app.schemas.lesson import LessonPackage
 
@@ -3323,6 +3373,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     logger.info("[%s] package_builder_node: assembling lesson package", lesson_id)
 
     supabase = get_supabase()
+    settings = get_settings()
 
     jobs_resp = (
         supabase.table("lesson_jobs")
@@ -3498,6 +3549,22 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             {**slide, "image_url": image_url_by_slide_id.get(cast("str", slide.get("slide_id")))}
             for slide in slides_data
         ]
+
+        # Story 2-19: tts_node ships timestamps=[] (it has no slide context), which
+        # leaves the player unable to sync slides. Synthesize an estimated
+        # contiguous timestamp track here, where both the segment's slides and its
+        # narration script are available.
+        narration = {
+            **narration,
+            "timestamps": _estimate_slide_timestamps(
+                slides_with_images,
+                # `or ""` guards a present-but-None script value (not just a
+                # missing key), keeping the empty-script -> default fallback.
+                narration.get("script") or "",
+                words_per_minute=settings.narration_words_per_minute,
+                default_ms_per_slide=settings.default_ms_per_slide,
+            ),
+        }
 
         jargon_entries = jargon_by_segment.get(segment_id, [])
         for jargon_entry in jargon_entries:
