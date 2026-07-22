@@ -3434,7 +3434,17 @@ def _build_teachback_prompt(title: Any, jargon_entries: list[dict[str, Any]]) ->
     keeping the shown prompt aligned with the scoring basis. Single-line; falls
     back to the generic form when the segment has no jargon."""
     clean_title = _single_line(title) or "this section"
-    terms = [t for j in jargon_entries if (t := _single_line(j.get("term") or ""))]
+    # Dedup case-insensitively, consistent with package_builder's glossary dedup
+    # (key = term.strip().lower()), so a term repeated across jargon entries (or
+    # differing only in case/whitespace) is listed once.
+    terms: list[str] = []
+    seen: set[str] = set()
+    for j in jargon_entries:
+        term = _single_line(j.get("term") or "")
+        if not term or term.lower() in seen:
+            continue
+        seen.add(term.lower())
+        terms.append(term)
     if terms:
         return f"In your own words, explain {clean_title}. Try to cover: {', '.join(terms)}."
     return f"In your own words, explain what you learned about {clean_title}."
@@ -3599,6 +3609,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     segments_out: list[dict[str, Any]] = []
     seen_terms: set[str] = set()
     glossary_out: list[dict[str, Any]] = []
+    degraded_segment_ids: list[str] = []  # Story 2-21: aggregate degradation signal
 
     for index, plan_seg in enumerate(plan_segments):
         segment_id = plan_seg.get("segment_id")
@@ -3641,6 +3652,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             interventions = _default_interventions()
             degraded.append("interventions")
         if degraded:
+            degraded_segment_ids.append(segment_id)
             logger.warning(
                 "[%s] package_builder_node: segment %s degraded — backfilled neutral "
                 "defaults for %s (succeeded parts preserved)",
@@ -3712,6 +3724,24 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     if not segments_out:
         raise RuntimeError(f"lesson_id={lesson_id}: package_builder produced zero usable segments")
 
+    # Story 2-21 (review finding): per-segment backfill (above) is logged one
+    # segment at a time — surface an AGGREGATE signal so widespread degradation
+    # (e.g. a systemic economy-node/provider outage hitting every segment) is not
+    # invisible behind a lesson that still ships status="ready". Recorded into
+    # lesson_jobs.node_outputs for admin visibility, mirroring cost-downshift
+    # recording (CLAUDE.md §14).
+    if degraded_segment_ids:
+        logger.warning(
+            "[%s] package_builder_node: %d of %d packaged segments shipped DEGRADED "
+            "(backfilled defaults for a missing economy output): %s — lesson marked "
+            "ready but at reduced quality; investigate a possible systemic "
+            "economy-node failure",
+            lesson_id,
+            len(degraded_segment_ids),
+            len(segments_out),
+            degraded_segment_ids,
+        )
+
     assembled: dict[str, Any] = {
         "lesson_id": lesson_id,
         "book_id": state.get("book_id", ""),
@@ -3765,7 +3795,15 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             "status": "completed",
             "completed_at": completed_at,
             "last_node": "package_builder",
-            "node_outputs": {**node_outputs, "package_builder": lesson_package},
+            "node_outputs": {
+                **node_outputs,
+                "package_builder": lesson_package,
+                # Admin-visible degradation record (Story 2-21). Empty list = none.
+                "package_builder_degraded": {
+                    "segment_ids": degraded_segment_ids,
+                    "total_segments": len(segments_out),
+                },
+            },
         }
     ).eq("lesson_id", lesson_id).execute()
 

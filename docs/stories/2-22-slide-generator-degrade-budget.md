@@ -39,3 +39,7 @@ The slide_budget is a soft target, not an integrity invariant. Replace the whole
 **Completed 2026-07-22.** Budget `raise` replaced with per-segment clamp — over-budget truncates to seg_max, under-budget accepted; integrity guards (count/unknown/duplicate/blank-title) unchanged. Tests updated: 9→8 truncated, 7→5 per-segment-budget truncated, 0 accepted (others intact). 537 passed; mypy 0; ruff clean.
 
 **File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.
+
+## Senior Developer Review (AI) — 5-agent, 2026-07-22
+5-agent review: added the under-budget-but-nonzero acceptance test and the truncation order-preservation test (first seg_max slides kept). Layer 5 PASS.
+Post-fix: 543 passed / 1 skipped; mypy 0; ruff clean.

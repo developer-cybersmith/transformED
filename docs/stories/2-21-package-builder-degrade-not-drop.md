@@ -46,3 +46,7 @@ Each backfill is logged as a degrade. "zero usable segments" now only fires when
 **Completed 2026-07-22.** `_default_complexity`/`_fallback_narration`/`_default_interventions` builders; gate reworked — skip only on no-slides, backfill+log otherwise; 'zero usable segments' now fires only when all segments lack slides. Tests: missing complexity/narration/interventions each KEPT (degraded), no-slides skipped, all-no-slides raises, complexity_scores=[] now completes. 537 passed; mypy 0; ruff clean.
 
 **File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.
+
+## Senior Developer Review (AI) — 5-agent, 2026-07-22
+5-agent review (Blind Hunter, CONFIRMED Med): per-segment backfill could ship a wholly-degraded lesson as 'ready' with only per-segment warnings. Added an AGGREGATE signal — a summary WARNING + a `package_builder_degraded` record (segment_ids + total) in lesson_jobs.node_outputs for admin visibility. Added all-three-missing-at-once + node_outputs-record tests. Layer 5 PASS.
+Post-fix: 543 passed / 1 skipped; mypy 0; ruff clean.

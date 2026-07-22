@@ -39,3 +39,7 @@ Dev1 owns `package_builder` and the `teachback_prompt` field (an explicitly prov
 **Completed 2026-07-22.** `_build_teachback_prompt(title, jargon_entries)` surfaces the segment's jargon terms (the Dev3 scorer's `key_concepts`) when present; generic form otherwise; single-line via `_single_line`. No Dev3 change. Tests: terms surfaced with-jargon, generic without. 537 passed; mypy 0; ruff clean.
 
 **File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.
+
+## Senior Developer Review (AI) — 5-agent, 2026-07-22
+5-agent review (CONFIRMED Med): AC-1's case-insensitive dedup clause was unimplemented — added dedup in `_build_teachback_prompt` (key=term.lower(), matching the glossary dedup) + a dedup test. Layer 5 PASS.
+Post-fix: 543 passed / 1 skipped; mypy 0; ruff clean.

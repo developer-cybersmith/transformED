@@ -783,3 +783,74 @@ async def test_teachback_prompt_generic_when_no_jargon() -> None:
     for seg in result["lesson_package"]["segments"]:
         assert "Try to cover:" not in seg["teachback_prompt"]
         assert "explain what you learned about" in seg["teachback_prompt"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_teachback_prompt_dedups_jargon_terms_case_insensitively() -> None:
+    """Story 2-23 AC-1: repeated jargon terms (incl. case/whitespace variants)
+    are listed once in the teach-back prompt, consistent with glossary dedup."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    glossary = [
+        {"segment_id": "sec_0", "data": {"term": "Entropy", "definition": "d"}},
+        {"segment_id": "sec_0", "data": {"term": "entropy ", "definition": "d2"}},  # dup
+        {"segment_id": "sec_0", "data": {"term": "Order", "definition": "d3"}},
+    ]
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(glossary=glossary))
+
+    seg0 = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    tb = seg0["teachback_prompt"]
+    cover = tb.split("Try to cover:")[1]  # only the concept list, not the title
+    assert cover.lower().count("entropy") == 1, "duplicate term listed once in the cover clause"
+    assert "Order" in cover
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_segment_missing_all_three_economy_outputs_is_degraded_not_dropped() -> None:
+    """Story 2-21: a slide-bearing segment missing complexity AND narration AND
+    interventions simultaneously is still KEPT, with all three backfilled."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    inc_c = [c for c in COMPLEXITY_SCORES if c["segment_id"] != "sec_0"]
+    inc_a = [a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"]
+    inc_i = [i for i in INTERVENTION_PROMPTS if i["segment_id"] != "sec_0"]
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(
+            _base_state(complexity_scores=inc_c, audio_assets=inc_a, intervention_prompts=inc_i)
+        )
+
+    package = result["lesson_package"]
+    assert len(package["segments"]) == 2
+    seg0 = next(s for s in package["segments"] if s["segment_id"] == "sec_0")
+    assert seg0["complexity"]["level"] == "medium"
+    assert seg0["narration"]["audio_provider"] == "browser"
+    assert len(seg0["interventions"]["distraction"]) == 3
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_degraded_segments_recorded_in_node_outputs_for_admin() -> None:
+    """Story 2-21 (review finding): widespread degradation is surfaced — the
+    degraded segment ids are recorded in lesson_jobs.node_outputs, not just a
+    per-segment warning."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    inc_c = [c for c in COMPLEXITY_SCORES if c["segment_id"] != "sec_0"]
+    sb, jobs_table, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        await package_builder_node(_base_state(complexity_scores=inc_c))
+
+    # find the completion write (the one carrying package_builder_degraded)
+    rec = None
+    for call in jobs_table.update.call_args_list:
+        payload = call[0][0]
+        if "package_builder_degraded" in payload.get("node_outputs", {}):
+            rec = payload["node_outputs"]["package_builder_degraded"]
+    assert rec is not None, "degradation must be recorded for admin visibility"
+    assert rec["segment_ids"] == ["sec_0"]
+    assert rec["total_segments"] == 2

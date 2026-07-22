@@ -34,3 +34,7 @@ Status: review
 **Completed 2026-07-22.** `_single_line` helper collapses whitespace runs; applied to `summary` in `_run_planner_batch` (graph.py:1099) and `title`+`summary` in slide_generator's `segments_text` (graph.py:1537). Real-node planner test proves a newline (incl. an injected `- segment_id=` payload) no longer splits the prompt line. 537 passed; mypy 0; ruff clean.
 
 **File List:** `apps/api/app/modules/content/pipeline/graph.py`; test files updated per story; this story.
+
+## Senior Developer Review (AI) — 5-agent, 2026-07-22
+5-agent review: added the missing slide_generator-sink real-node test (High test-gap — the planner sink was tested, the slide_generator sink was code-only). Layer 5 PASS.
+Post-fix: 543 passed / 1 skipped; mypy 0; ruff clean.
