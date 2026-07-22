@@ -54,12 +54,15 @@ A Windows Task Manager how-to PDF (105,248 chars) uploaded through the normal fl
 
 4. **AC-4 — RC-2 documented and deferred, not silently touched.** `structure_node`'s LLM-adoption logic (6000-char prompt, 90%-coverage guard) is left functionally unchanged. A code comment references follow-up **Story 2-17 (boundary-only LLM structure validation)** and states the ≈6,666-char unsatisfiability limitation explicitly. A stub story file `docs/stories/2-17-boundary-only-structure-validation.md` (Status: backlog) is created capturing the redesign. **The window/guard one-liner (comparing against `min(len(raw_text), 6000)`) is explicitly forbidden** — it accepts LLM output covering only the first 6000 chars, silently discarding the rest, violating degrade-not-fabricate.
 
-5. **AC-5 — Regression-safe + new coverage.** All existing unit tests pass **unmodified** (the batching threshold and single-call path guarantee the ≤-threshold tests are unaffected; coalescing defaults are calibrated so `test_ac11_multi_heading_chapter_produces_three_or_more_sections` still yields ≥3). New tests added:
-   - `test_coalesce_collapses_oversegmented_howto` — ~44 short "step" sections → `≤ structure_max_sections`.
-   - `test_coalesce_preserves_all_body_text` — concatenation of coalesced bodies contains every original body substring (no data loss).
-   - `test_coalesce_below_cap_is_noop` — a small, above-floor section list is returned unchanged.
-   - `test_planner_batches_above_threshold_produces_full_plan` — `batch_size + N` summaries → assembled plan has exactly that many segments, 1:1, all ids present.
-   - `test_planner_single_call_path_unchanged_below_threshold` — ≤ threshold → exactly one `complete_structured` call (existing behaviour).
+5. **AC-5 — Regression-safe + new coverage.** Existing test *assertions* are unchanged; three test files' settings-mock fixtures (`test_structure_node.py`, `test_lesson_planner_node.py`, `test_pipeline_tier1.py`) gain the three new numeric settings fields — a foreseen fixture-plumbing change (the `int < MagicMock` break from extending `Settings`), not an assertion/logic change, and set to no-op coalesce bounds so those tests keep exercising exactly what they did before. Coalescing defaults are calibrated so `test_ac11_multi_heading_chapter_produces_three_or_more_sections` still yields ≥3. New tests added:
+   - `test_coalesce_collapses_oversegmented_howto_via_cap` / `test_coalesce_merges_subfloor_sections` — ~44 "step" sections → `≤ structure_max_sections`.
+   - `test_coalesce_preserves_all_body_text_and_titles` / `test_coalesce_folds_absorbed_titles_into_body` — every original body **and title** substring survives (no data loss).
+   - `test_coalesce_first_section_below_floor_folds_forward` — the sub-floor first-section forward-merge edge.
+   - `test_coalesce_cap_buckets_are_contiguous` — the O(n) bucketing groups sections contiguously.
+   - `test_coalesce_below_cap_and_above_floor_is_noop`, `test_coalesce_max_sections_zero_disables_cap`, `test_coalesce_single_subfloor_section_is_kept`, `test_coalesce_empty_list_returns_empty`, `test_coalesce_merged_section_spans_both_page_ranges` — no-op / degenerate branches.
+   - `test_config_defaults_and_planner_batch_invariant` — defaults 200/15/15, the `structure_max_sections ≤ lesson_planner_batch_size` invariant, and the `gt=0`/`ge=1` Field guards.
+   - `test_structure_node_coalesces_oversegmented_rule_based`, `test_structure_node_coalesces_adopted_llm_output`, `test_structure_node_keeps_three_headed_sections_post_coalesce` — node-level wiring on **both** the rule-based and adopted-LLM paths, plus the ≥3 calibration margin.
+   - `test_planner_batches_above_threshold_produces_full_plan`, `test_planner_single_call_path_unchanged_below_threshold`, `test_planner_batch_boundaries` (n = 15/16/30), `test_planner_batched_dropped_id_still_rejected`, `test_planner_batched_duplicate_id_count_preserved_still_rejected` — batching happy path, boundaries, and both count-shrinking and count-preserving guard-integrity cases.
    - Existing `test_mismatched_segment_count_is_rejected_not_checkpointed` / `test_unknown_segment_id_is_rejected` remain green (single-call path).
 
 6. **AC-6 — Architectural constraints preserved.** degrade-not-fabricate (all merges/batches are text-preserving and echo real content); no hardcoded models; hierarchical Chapter→Section→Topic processing (no full-chapter single call introduced); `lesson_planner_node` still receives `segment_summaries` only, never raw text (AC-1 of Story 2-6 / the 5× cost constraint); `providers/` abstraction respected (all LLM calls via `get_llm_provider` / `complete_structured`).
@@ -107,6 +110,37 @@ No Celery / PostgresSaver; no `fitz`/PyMuPDF; providers abstraction only; pin La
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-22 | Bug story created from Dev 2 blocker report + 5-agent audit (3/3 root causes CONFIRMED). Scope: fix RC-1 + RC-3, defer RC-2 to Story 2-17. | Dev 1 (BMAD create-story) |
+
+## Senior Developer Review (AI) — 5-agent adversarial, 2026-07-22
+
+**Outcome: APPROVE after fixes applied.** All 5 required BMAD layers ran (Story Quality, Blind Hunter/Security, Test Coverage, AC Completeness, Process Integrity).
+
+| Layer | Verdict | Notes |
+|-------|---------|-------|
+| 1 — Story Quality | PASS | Story-first gate clean (`dddfb4b` story-only first, `aaea083` impl). AC-5 wording tightened; dropped-id test enumerated. Its "stale mypy baseline" note was a **false positive** — `main` is `cdc984e`, PR #76 unmerged, verified via `git`. |
+| 2 — Blind Hunter (Security) | Changes requested → **fixed** | 2 Med DoS + Lows (below). |
+| 3 — Test Coverage | Gaps → **fixed** | 1 High + Meds (below). |
+| 4 — AC Completeness | PASS (no violations) | GAP-1 (AC-11 calibration on bypass path) closed with a node-level ≥3 test; GAP-2 (defaults untested) closed. |
+| 5 — Process Integrity | PASS | All 9 locked rules clean (no hardcoded models, providers abstraction, degrade-not-fabricate, summaries-only, hierarchical, no banned deps, one-discipline, config pattern, tracker rule). |
+
+### Action Items — resolved
+
+- [x] **[Med, Security] `lesson_planner_batch_size ≤ 0` crashed the planner** (`range(…, 0)` / empty batches → `plan_head` None). Added `gt=0` guard; `structure_max_sections` `ge=1`; `structure_min_section_chars` `ge=0`. Test: `test_config_defaults_and_planner_batch_invariant`.
+- [x] **[Med, Security] `coalesce_sections` cap was O(n²) over an uncapped section count** (adversarial-upload worker-pin). Replaced smallest-adjacent-pair search with **O(n) contiguous bucketing**. Test: `test_coalesce_cap_buckets_are_contiguous`.
+- [x] **[High, Tests] first-section-below-floor forward-merge branch untested.** Added `test_coalesce_first_section_below_floor_folds_forward`.
+- [x] **[Med, Tests] title-fold not asserted.** Added `test_coalesce_folds_absorbed_titles_into_body`.
+- [x] **[Med, Tests] batch boundaries (n=15/16/30) untested.** Added parametrized `test_planner_batch_boundaries`.
+- [x] **[Med, Tests] count-preserving duplicate-id not exercised via batches.** Added `test_planner_batched_duplicate_id_count_preserved_still_rejected`.
+- [x] **[Med, Tests] coalesce on adopted-LLM path untested.** Added `test_structure_node_coalesces_adopted_llm_output`.
+- [x] **[Low, Tests] degenerate `max_sections=0` / single sub-floor seed.** Added `test_coalesce_max_sections_zero_disables_cap`, `test_coalesce_single_subfloor_section_is_kept`.
+
+### Accepted / documented (non-blocking Lows)
+
+- **Plan-level fields from first batch only** — documented in `lesson_planner_node`; latent in default config (`structure_max_sections=15 == lesson_planner_batch_size`, so batching never triggers unless reconfigured). `total_duration_min` still sums all segments.
+- **No mid-loop cost re-check across planner batches** — bounded (≤ `_MAX_PHASE1_SECTIONS`=60 calls), matches the pre-existing single-check placement; not changed.
+- **RC-2 (dead LLM structure validation) + its `<90%`-rejection characterization test** — deferred to Story 2-17 (non-blocking once RC-1 bounds section count).
+
+Post-fix verification: **471 passed / 1 skipped**; ruff check + format clean; `mypy app` = 215 (baseline, zero new).
 
 ## Dev Agent Record
 

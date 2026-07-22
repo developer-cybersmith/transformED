@@ -232,6 +232,7 @@ class Settings(BaseSettings):
     # ── Structure segmentation bounds (Story 2-16, RC-1 over-segmentation) ─────
     structure_min_section_chars: int = Field(
         default=200,
+        ge=0,
         description=(
             "Minimum body length (chars) for a detected section to stand alone. "
             "Sections below this are coalesced into a neighbour (text-preserving) "
@@ -240,6 +241,7 @@ class Settings(BaseSettings):
     )
     structure_max_sections: int = Field(
         default=15,
+        ge=1,
         description=(
             "Upper bound on sections handed to the generation pipeline. Above "
             "this, adjacent sections are merged (text-preserving) down to the "
@@ -252,6 +254,7 @@ class Settings(BaseSettings):
     # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
     lesson_planner_batch_size: int = Field(
         default=15,
+        gt=0,
         description=(
             "Max segment summaries sent to lesson_planner in a single LLM "
             "completion. Above this, summaries are split into ordered batches so "

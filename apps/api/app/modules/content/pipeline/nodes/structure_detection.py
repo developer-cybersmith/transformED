@@ -219,18 +219,26 @@ def coalesce_sections(
         merged_first = _merge_two(kept[0], kept[1])
         kept = [merged_first, *kept[2:]]
 
-    # ── Pass 2: max-count cap via smallest-adjacent-pair merges ───────────────
-    if max_sections >= 1:
-        while len(kept) > max_sections:
-            best_i = 0
-            best_len = None
-            for i in range(len(kept) - 1):
-                combined = len(kept[i].get("body", "")) + len(kept[i + 1].get("body", ""))
-                if best_len is None or combined < best_len:
-                    best_len = combined
-                    best_i = i
-            kept[best_i] = _merge_two(kept[best_i], kept[best_i + 1])
-            del kept[best_i + 1]
+    # ── Pass 2: max-count cap via O(n) contiguous bucketing ───────────────────
+    # Distribute the kept sections into `max_sections` contiguous, near-equal
+    # buckets and merge each bucket in place. Contiguous (order-preserving) and
+    # O(n) — deliberately NOT an O(n^2) smallest-adjacent-pair search, which an
+    # adversarial upload (tens of thousands of above-floor numbered lines) could
+    # grind on in the ARQ worker before the downstream fan-out cap ever applies.
+    if max_sections >= 1 and len(kept) > max_sections:
+        n = len(kept)
+        base, extra = divmod(n, max_sections)  # n > max_sections >= 1 => base >= 1
+        bucketed: list[dict[str, Any]] = []
+        idx = 0
+        for b in range(max_sections):
+            size = base + (1 if b < extra else 0)
+            group = kept[idx : idx + size]
+            idx += size
+            merged = group[0]
+            for nxt in group[1:]:
+                merged = _merge_two(merged, nxt)
+            bucketed.append(merged)
+        kept = bucketed
 
     # ── Re-sequence ids ──────────────────────────────────────────────────────
     for i, sec in enumerate(kept):

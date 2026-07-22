@@ -1247,7 +1247,14 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         # len(batches) >= 2 here, so plan_head was assigned on the first iteration.
         assert plan_head is not None
         # Plan-level fields (title/subject/objectives/complexity) come from the
-        # first batch; the segment list is the concatenation of every batch.
+        # FIRST batch only; the segment list is the concatenation of every batch.
+        # Accepted limitation: for a very long chapter the "overall" objectives
+        # reflect the first `batch_size` summaries, not all of them. This path is
+        # latent in the default config (structure_max_sections=15 == the batch
+        # size, so a coalesced chapter never exceeds it and takes the single-call
+        # path); it only engages if an operator raises structure_max_sections
+        # above lesson_planner_batch_size. per-segment durations still sum over
+        # ALL assembled segments below, so total_duration_min stays correct.
         response = _LessonPlanLLM(
             title=plan_head.title,
             subject=plan_head.subject,

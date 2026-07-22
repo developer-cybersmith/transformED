@@ -895,3 +895,91 @@ async def test_planner_batched_dropped_id_still_rejected() -> None:
         await lesson_planner_node(_base_state(segment_summaries=summaries))
 
     sb.table.return_value.update.assert_not_called()
+
+
+def _ids_from_messages(args: tuple[Any, ...]) -> list[str]:
+    """Extract the segment_ids a batch was asked to plan, from its user message."""
+    return [
+        line.split("segment_id=")[1].split(":")[0]
+        for line in args[0][1]["content"].splitlines()
+        if "segment_id=" in line
+    ]
+
+
+def _make_plan_llm(ids: list[str]) -> Any:
+    from app.modules.content.pipeline.graph import _LessonPlanLLM, _LessonPlanSegmentLLM
+
+    return _LessonPlanLLM(
+        title="Full Plan",
+        subject="Subject",
+        objectives=["Obj one", "Obj two"],
+        complexity_level="medium",
+        segments=[
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"T {sid}", duration_min=3.0) for sid in ids
+        ],
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("n", "expected_calls"),
+    [
+        (15, 1),  # == batch_size -> single call (boundary)
+        (16, 2),  # batch_size + 1 -> 15 + 1 (one-element final batch)
+        (30, 2),  # exact multiple -> 15 + 15 (no remainder)
+    ],
+)
+async def test_planner_batch_boundaries(n: int, expected_calls: int) -> None:
+    """Story 2-16 RC-3: the <= vs > batch_size boundary and remainder handling."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"S{i}."} for i in range(n)]
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = lambda *a, **k: _make_plan_llm(
+        _ids_from_messages(a)
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert mock_provider.complete_structured.call_count == expected_calls
+    plan = result["lesson_plan"]
+    assert plan["total_segments"] == n
+    assert [s["segment_id"] for s in plan["segments"]] == [f"sec_{i}" for i in range(n)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_planner_batched_duplicate_id_count_preserved_still_rejected() -> None:
+    """Story 2-16 RC-3 / AC-6: a count-PRESERVING corruption (a batch duplicates
+    one id and omits another) still trips the duplicate-id guard on the assembly
+    — batching does not open a hole in the guards."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    n = 20
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"S{i}."} for i in range(n)]
+
+    def _corrupt(*args: Any, **kwargs: Any) -> Any:
+        ids = _ids_from_messages(args)
+        # keep the count identical but duplicate the first id in place of the last
+        if len(ids) >= 2:
+            ids = [*ids[:-1], ids[0]]
+        return _make_plan_llm(ids)
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _corrupt
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        pytest.raises(RuntimeError, match="duplicate"),
+    ):
+        await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    sb.table.return_value.update.assert_not_called()
