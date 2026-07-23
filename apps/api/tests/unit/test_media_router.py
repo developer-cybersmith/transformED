@@ -155,6 +155,22 @@ def test_signed_url_404_storage_object_missing(client_factory: ClientFactory) ->
     assert resp.status_code == 404
 
 
+@pytest.mark.unit
+def test_signed_url_404_storage_response_missing_signed_url_key(
+    client_factory: ClientFactory,
+) -> None:
+    """A storage response missing the expected key (or a None value) 404s
+    rather than raising an unhandled KeyError/AttributeError as a 500."""
+    sb = _make_supabase_mock()
+    sb.storage.from_.return_value.create_signed_url.return_value = {"signedURL": None}
+    client = client_factory(sb)
+    with patch("app.modules.media.router.get_supabase", return_value=sb):
+        resp = client.get(
+            "/api/media/signed-url", params={"bucket": "lesson-audio", "path": FAKE_PATH}
+        )
+    assert resp.status_code == 404
+
+
 # ── AC-4: existing expires_in bounds unchanged ────────────────────────────────
 
 

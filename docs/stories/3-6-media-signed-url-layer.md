@@ -4,7 +4,7 @@ baseline_commit: caff943977a001c2b34da3e3a3f338cb83fcba83
 
 # Story 3.6: Media signed-URL layer (finish `GET /api/media/signed-url`)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -37,6 +37,7 @@ so that the bare storage paths `package_builder_node` stores in `audio_url`/`ima
 - **Storage paths this unblocks** (from `apps/api/app/modules/content/pipeline/graph.py`): `audio_path = f"{lesson_id}/{segment_id}.mp3"` (bucket `lesson-audio`, graph.py:3046) and `image_path = f"{lesson_id}/{slide_id}.png"` (bucket `lesson-images`, graph.py:3300). Both already pass the `_ALLOWED_BUCKETS` check.
 - **Why bare paths are stored, not signed URLs (do not "fix" this the other way):** `apps/api/app/schemas/lesson.py:89-95` and `package_builder_node`'s docstring (graph.py:3458-3462) are explicit — baking a signed URL into `lessons.content` JSONB at build time would expire (Supabase max ~7 days) before a lesson is necessarily viewed. Resolving at view time via this endpoint is the correct place; do not move signing into `package_builder_node`.
 - **Frontend follow-up (explicitly NOT this story — AC-5):** there is currently no real REST endpoint serving a real `LessonPackage` to the player (`apps/web/src/services/lesson.service.ts` and the player components all run on `apps/web/src/mocks/`; the only real delivery path today is the `lesson_ready` WebSocket push + a 24h Redis cache, `apps/api/app/core/pubsub.py:97`). Whoever builds the real "GET lesson content" path next should either (a) have the player call `GET /api/media/signed-url` per asset before rendering `<audio src>`/`<img src>`, or (b) resolve signed URLs server-side when serving lesson content — either is compatible with this story's endpoint; picking between them is that future story's call, not this one's.
+- **Pre-existing, disclosed gap — 2 of the 5 allowlisted buckets don't follow the `{lesson_id}/...` path convention this endpoint assumes** (found during code review, verified against actual upload sites, not introduced by this story): `source-pdfs` objects are keyed `{user_id}/{book_id}/{filename}` (`content/router.py:209-214` — first segment is a `user_id`, not a `lesson_id`) and `avatar-clips` objects are lesson-independent static keys like `clips/intro_default.mp4` (`providers/avatar/heygen.py:37-40`, which self-signs internally and never calls this endpoint). Both already fail closed (404, non-leaking) via this endpoint rather than succeeding incorrectly — `source-pdfs`'s UUID-shaped `user_id` prefix passes `_parse_lesson_id` but then fails the `lessons` table lookup; `avatar-clips`' literal `"clips"` prefix isn't a UUID and 404s before any DB call. No lesson ever loses access through this endpoint because of it — but if a future story wants `source-pdfs` signing through this endpoint (e.g. a "download my original PDF" feature), it will need bucket-specific ownership logic (check against `books.user_id`, not `lessons.user_id`), not a naive reuse of `_parse_lesson_id`. `lesson-slides` has no producer code anywhere in the repo yet — its real path format is undetermined.
 - **Testing standards:** mirror the mocking style of existing router tests (e.g. `apps/api/tests/unit/test_bucket_manifest.py` or `content` router tests) — mock `app.core.db.get_supabase`, override `CurrentUser` via FastAPI `app.dependency_overrides`, use `TestClient`/`httpx.AsyncClient` per whatever the existing test files already use (check `apps/api/tests/unit/conftest.py` for the established fixture pattern before writing new ones).
 
 ### Project Structure Notes
@@ -57,6 +58,7 @@ so that the bare storage paths `package_builder_node` stores in `audio_url`/`ima
 |------|--------|--------|
 | 2026-07-23 | Story created from the 2026-07-22 audit's HIGH #3 finding. | Dev 1 |
 | 2026-07-23 | Implemented (RED→GREEN): ownership check + real signing call, replacing the 501 stub. 8 new tests, 553/553+1 skipped full suite green, ruff+mypy clean, zero `apps/web` touches. | Dev 1 |
+| 2026-07-23 | Addressed 5-agent code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor): fixed signed-URL key extraction to match the codebase's established single-key pattern (`heygen.py`'s `result["signedURL"]`) instead of guessing 3 key spellings, and closed the uncaught-`AttributeError`/`KeyError` gap on a malformed storage response. 1 new regression test (9 total). Path-traversal and non-lesson-bucket concerns investigated and either refuted (traversal — object-key store, not filesystem) or disclosed as a pre-existing, non-regressing gap (bucket/path-convention mismatch) in Dev Notes. | Dev 1 |
 
 ## Dev Agent Record
 
@@ -78,10 +80,15 @@ Claude Opus 4.8 (Sonnet 5 session default)
 - `create_signed_url`'s return dict key is defensively read as `signedURL` / `signedUrl` / `signed_url` (storage3 2.31.0 pinned per `uv.lock`; guards against minor client-version key drift without adding a hard dependency on internals) — any exception from the storage call, or a response missing all three keys, maps to 404 (AC-3).
 - Confirmed via `git status --short` that only `apps/api/app/modules/media/router.py` (UPDATE) and `apps/api/tests/unit/test_media_router.py` (NEW) changed — no `apps/web/**` files touched (AC-5). An unrelated `uv.lock` drift (pyjwt `crypto` extra, picked up incidentally by `uv run`) was reverted before commit — out of this story's scope.
 - Frontend wiring (player calling this endpoint, or a future "GET lesson content" endpoint resolving signed URLs server-side) remains an explicit follow-up per AC-5/Dev Notes — not implemented here.
+- **Code review (5-agent gate) findings and disposition:**
+  - **FIXED** — signed-URL key extraction guessed 3 possible key spellings (`signedURL`/`signedUrl`/`signed_url`) instead of the codebase's one established, evidenced key (`heygen.py:80`'s `result["signedURL"]`); also left a `None`/malformed-response path uncaught outside the `try` (AttributeError/KeyError → unhandled 500). Fixed by moving the key access inside the `try` and using the single canonical key. New regression test added.
+  - **REFUTED** — path traversal via `..` in `path` (e.g. `{owned_lesson_id}/../{other}/audio.mp3`): investigated; Supabase Storage is a flat object-key store with no filesystem traversal semantics, and `path` is never passed to a local filesystem API — the malformed key simply fails to match any real object (404). Not exploitable; no fix needed.
+  - **DISCLOSED, not fixed (pre-existing, not a regression)** — `source-pdfs` and `avatar-clips` buckets don't follow the `{lesson_id}/...` convention this endpoint assumes; both already fail closed (404) rather than leaking, so no story ACs are violated. See Dev Notes for detail and the fix a future story would need.
+  - **NOT ACTIONED (spec-mandated or out of scope)** — broad `except Exception` on the storage call is required by AC-3 itself; DB-query exception handling intentionally mirrors `get_lesson`'s existing unwrapped behavior per Dev Notes ("mirror exactly"); rate limiting / RLS defense-in-depth are project-wide, cross-cutting concerns tracked separately (not introduced or worsened by this story).
 
 ### File List
 
 - `apps/api/app/modules/media/router.py` (UPDATE) — implemented `_parse_lesson_id`, ownership check, real `create_signed_url` call, replacing the `501` stub.
-- `apps/api/tests/unit/test_media_router.py` (NEW) — 8 tests covering AC-1 through AC-4/AC-6.
+- `apps/api/tests/unit/test_media_router.py` (NEW) — 9 tests covering AC-1 through AC-4/AC-6, including the review-driven regression test.
 - `docs/stories/3-6-media-signed-url-layer.md` (this file).
 - `docs/dev1-tracker.md` (UPDATE, story-first commit) — added S3-6 entry + dashboard totals.

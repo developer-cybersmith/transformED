@@ -92,14 +92,18 @@ async def get_signed_url(
     if not lesson or lesson.get("user_id") != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
 
+    # "signedURL" is the one key the supabase client's storage3 actually returns
+    # (matches the established pattern at providers/avatar/heygen.py:80) — a
+    # missing/None key, or the call itself raising, are both treated as the
+    # object not existing rather than surfaced as a 500.
     try:
         signed = supabase.storage.from_(bucket).create_signed_url(path, expires_in)
+        signed_url = signed["signedURL"]
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Storage object not found"
         ) from exc
 
-    signed_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
     if not signed_url:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Storage object not found"
