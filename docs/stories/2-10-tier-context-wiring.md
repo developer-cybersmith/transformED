@@ -4,7 +4,7 @@ baseline_commit: 17fea79ca22bac41daa20d3b929480b64f86d0ea
 
 # Story 2.10: Wire Tier Context into Player + Session Report (completes S2-10)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -33,22 +33,22 @@ Use the values in this story (verified against the real story file + its tests),
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1): `apps/web/src/components/player/Player.tsx` — add a `_TIER_LABELS` (or equivalently named) local constant mapping `LessonTier → string` matching the backend exactly, and render the mapped label in the existing pre-slide metadata block (alongside `total_segments`/`estimated_duration_mins`).
-  - [ ] 1.1 RED: a test asserting the correct label renders for a T1 lesson, and a second tier value renders a different label.
-  - [ ] 1.2 GREEN.
-- [ ] Task 2 (AC: 2): `apps/web/src/types/assessment.ts` — add the 6 new `SessionReport` fields and the new `LearnerDnaSnapshot`/`DnaDimension`/`DnaDimensionLabel`/`DnaGrowthLabel` types, using the corrected label values from this story's Source section (not the HTML guide's).
-- [ ] Task 3 (AC: 3): `apps/web/src/components/reports/SessionReport.tsx` — replace the raw `quiz_score` percentage render with `quiz_correct_count`/`quiz_total_questions` counts + `quiz_accuracy_label` (with a null fallback).
-  - [ ] 3.1 RED: update the existing `'renders quiz accuracy as a real percentage'` test in `SessionReport.test.tsx` to instead assert the new counts+label display (this is an intentional behavior change per AC-3, not a regression — same pattern as prior stories in this codebase updating a test to match a deliberately changed contract). Add a new test for `quiz_accuracy_label === null`.
-  - [ ] 3.2 GREEN.
-- [ ] Task 4 (AC: 4): `SessionReport.tsx` — display `tier_label`.
-  - [ ] 4.1 RED: a test asserting `tier_label` text appears.
-  - [ ] 4.2 GREEN.
-- [ ] Task 5 (AC: 5, 6): `SessionReport.tsx` — add a DNA snapshot section: a small `DIMENSION_DISPLAY_NAMES` mapping (snake_case key → human-readable name) and rendering of all 9 `dimension_labels` + conditional `growth_labels` indicators, gated on `learner_dna_snapshot !== null`.
-  - [ ] 5.1 RED: tests for (a) all 9 dimension labels shown when present, (b) section entirely absent when `learner_dna_snapshot` is `null`, (c) a single `null` growth entry shows no indicator for that dimension while a non-null one elsewhere still does.
-  - [ ] 5.2 GREEN.
-- [ ] Task 6 (AC: 7, 8): Full regression pass — confirm every pre-existing `SessionReport.test.tsx` test not touched by Task 3 still passes unmodified; add a regression test asserting no raw dimension score/delta number ever appears in rendered text.
-- [ ] Task 7 (AC: 8): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
-- [ ] Task 8: Tracker update — mark S2-10 done in `docs/dev2-sprint-tracker.md` and `docs/master-tracker.md` once merged.
+- [x] Task 1 (AC: 1): `apps/web/src/components/player/Player.tsx` — added `TIER_LABELS` local constant mapping `LessonTier → string` matching the backend exactly. Placed as a persistent absolutely-positioned badge in the slide area (top-left corner), not in the "before any slide is active" block — discovered during implementation that `currentSlideId` is set almost immediately after mount in real use, so that block is rarely visible; a persistent overlay was needed instead to actually satisfy "visible in the player chrome."
+  - [x] 1.1 RED: a test asserting the correct label renders for a T1 lesson, and a second tier value renders a different label.
+  - [x] 1.2 GREEN.
+- [x] Task 2 (AC: 2): `apps/web/src/types/assessment.ts` — added the 6 new `SessionReport` fields and the new `LearnerDnaSnapshot`/`DnaDimension`/`DnaDimensionLabel`/`DnaGrowthLabel` types, using the corrected label values from this story's Source section (not the HTML guide's). Also updated 2 pre-existing type-conformance test fixtures in `assessment.test.ts` that were missing the new required fields (caught by `tsc`, not a functional test failure).
+- [x] Task 3 (AC: 3): `apps/web/src/components/reports/SessionReport.tsx` — replaced the raw `quiz_score` percentage render with `quiz_correct_count`/`quiz_total_questions` counts + `quiz_accuracy_label` (with a null fallback).
+  - [x] 3.1 RED: updated the existing `'renders quiz accuracy as a real percentage'` test in `SessionReport.test.tsx` to instead assert the new counts+label display; added a new test for `quiz_accuracy_label === null`; also updated the pre-existing "zero-attempt session" test, which previously gated its fallback-message assertion on `quiz_score === null` alone and needed the new zero-question fields added to actually exercise the new fallback condition.
+  - [x] 3.2 GREEN.
+- [x] Task 4 (AC: 4): `SessionReport.tsx` — displays `tier_label`.
+  - [x] 4.1 RED: a test asserting `tier_label` text appears.
+  - [x] 4.2 GREEN.
+- [x] Task 5 (AC: 5, 6): `SessionReport.tsx` — added a `DnaSnapshotSection` component: `DIMENSION_DISPLAY_NAMES` mapping (snake_case key → human-readable name) and rendering of all 9 `dimension_labels` + conditional `growth_labels` indicators (`↑`/`→`/`↓`), gated on `learner_dna_snapshot !== null`.
+  - [x] 5.1 RED: tests for (a) all 9 dimension labels shown when present, (b) section entirely absent when `learner_dna_snapshot` is `null`, (c) a single `null` growth entry shows no indicator for that dimension while a non-null one elsewhere still does.
+  - [x] 5.2 GREEN.
+- [x] Task 6 (AC: 7, 8): Full regression pass — confirmed every pre-existing `SessionReport.test.tsx` test not touched by Task 3 still passes unmodified; added a regression test (scoped to the DNA section's own text content, not the whole report, to avoid false positives from legitimate numbers elsewhere on the page like quiz counts/minutes studied) asserting no raw dimension score/delta number ever appears.
+- [x] Task 7 (AC: 8): Full `apps/web` suite green (395/395, 46 files); `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 8: Tracker update — `docs/dev2-sprint-tracker.md` gained a dated cross-team note. `docs/master-tracker.md` has no Learner Mode section on this branch at all yet (it lives on the still-unmerged `feature-learner-mode` branch, same as S2-07–S2-09's own tracker entries) — nothing to check off here; will reconcile whenever that branch merges.
 
 ## Dev Notes
 
@@ -136,4 +136,44 @@ Vitest + `@testing-library/react`, matching `SessionReport.test.tsx`'s existing 
 
 ## Dev Agent Record
 
-_Pending implementation._
+### Agent Model Used
+
+Claude Sonnet 5 (claude-sonnet-5)
+
+### Debug Log References
+
+- `npx vitest run src/__tests__/components/player/Player.test.tsx` — RED: 2/9 failed (new tier-badge tests; `getByText('Standard')`/`'Full-Depth'` not found). First implementation attempt (badge inside the `!currentSlideId` pre-slide block) still failed — `currentSlideId` gets set almost immediately after mount via `restoreProgress`, so that block was already effectively dead UI. Moved the badge to a persistent absolutely-positioned overlay instead. GREEN after that: 9/9 passed.
+- `npx tsc --noEmit -p tsconfig.json` after Task 2 — caught 2 pre-existing `SessionReport` object literals in `assessment.test.ts` missing the new required fields (a compile error, not a runtime test failure); fixed by extending both fixtures.
+- `npx vitest run src/__tests__/components/reports/SessionReport.test.tsx` — RED: 3/11 failed after Task 3/4 tests added (counts+label test, null-fallback test, tier_label test). GREEN after implementation: 11/11. Also caught and fixed the pre-existing "zero-attempt session" test, which needed the new zero-question fields added to still exercise its fallback-message assertion under the new `quiz_accuracy_label`-gated condition (was previously gated on `quiz_score === null` alone).
+- `npx vitest run src/__tests__/components/reports/SessionReport.test.tsx` (Task 5) — RED: 2/14 failed (dna-snapshot-section tests; the null-case test passed trivially since nothing rendered it yet). GREEN after implementation: 14/14.
+- Full suite: `npx vitest run` — 395/395 passing across 46 files.
+- `npx tsc --noEmit -p tsconfig.json` — clean.
+- `npx eslint` on every touched file — 0 errors, 0 warnings.
+- No HALT conditions hit — no new dependencies, no ambiguous requirements, no 3-consecutive-failure loop. One self-caught correction during implementation (Task 1's badge placement, documented above) and one self-caught test-scoping issue (the "never renders a raw DNA number" regression test initially checked the whole report container, which would have false-positived on legitimate numbers like quiz counts and minutes studied elsewhere on the page — scoped to the DNA section's own `textContent` instead, before ever running it).
+
+### Completion Notes List
+
+- `Player.tsx`: `TIER_LABELS` constant (`T1→Full-Depth`, `T2→Standard`, `T3→Refresher`, matching the backend's own `_TIER_LABELS` dict exactly). Rendered as a persistent `absolute top-3 left-3` badge inside the slide area's `relative flex-1` container — visible regardless of playback/slide state, not gated on `!currentSlideId`.
+- `types/assessment.ts`: added `DnaDimension` (9-value union), `DnaDimensionLabel`, `DnaGrowthLabel`, `LearnerDnaSnapshot`, and the 6 new `SessionReport` fields. Values verified against `docs/stories/3-29-...md`/`3-30-...md`'s actual ACs/tests, not Dev 3's HTML guide (which has 2 stale label values — see story's Source section).
+- `SessionReport.tsx`: replaced the raw `${Math.round(report.quiz_score * 10) / 10}% correct` render with `"{quiz_correct_count} / {quiz_total_questions} correct"` + a `quiz_accuracy_label` line (falls back to the existing `'No quiz questions this session'` copy when the label is `null`, matching the pre-existing `quiz_score === null` fallback copy exactly, just re-gated on the new field). Added `tier_label` display under the page heading. Added a new `DnaSnapshotSection` sub-component: `DIMENSION_DISPLAY_NAMES` (snake_case → title case), 9-dimension grid with `dimension_labels` always shown and a `GROWTH_INDICATORS` arrow (`↑`/`→`/`↓`) shown only when that dimension's `growth_labels` entry is non-null. Entire section omitted when `learner_dna_snapshot` is `null`.
+- `quiz_score` was kept in the `SessionReport` TS type (still a real, used API field) — only its *rendering* as visible text was removed, per AC-3's exact scope.
+- No changes to `useSessionReport.ts`, `packages/shared/types/lesson.ts`, `PlayerControls.tsx`, or any backend file — both consumed endpoints (Stories 3-29/3-30) were already fully shipped and merged before this story started.
+- Story 3-28 (variable quiz count / question ID format) explicitly NOT touched — separate, not-yet-scoped work per this story's own "What NOT to do."
+
+### File List
+
+**Files MODIFIED:**
+- `apps/web/src/components/player/Player.tsx` — tier badge added
+- `apps/web/src/components/reports/SessionReport.tsx` — raw quiz percentage replaced with counts+label; `tier_label` displayed; new `DnaSnapshotSection` added
+- `apps/web/src/types/assessment.ts` — 6 new `SessionReport` fields; new `DnaDimension`/`DnaDimensionLabel`/`DnaGrowthLabel`/`LearnerDnaSnapshot` types
+- `apps/web/src/__tests__/components/player/Player.test.tsx` — 2 new tests (tier badge, T1 vs T2 label)
+- `apps/web/src/__tests__/components/reports/SessionReport.test.tsx` — `FULL_REPORT` fixture extended with 6 new fields; 1 existing test updated (raw-percentage → counts+label), 1 existing test updated (zero-attempt session fallback fields), 5 new tests (null-label fallback, tier_label, DNA section present/absent, growth-label null handling, no-raw-DNA-numbers regression)
+- `apps/web/src/__tests__/types/assessment.test.ts` — 2 existing `SessionReport` object literals extended with the 6 new required fields
+- `docs/dev2-sprint-tracker.md` — dated cross-team note added
+
+### Change Log
+
+| Date | Change | Author |
+|------|--------|--------|
+| 2026-07-23 | Story created — completes Dev 2's S2-10, unblocked by Dev 3's Stories 3-29/3-30. Branch `sprint2/s2-10-tier-context-wiring` off `sprint2-master`. Corrected the HTML integration guide's stale DNA label values against the actual shipped story files/tests before writing ACs. | Dev 2 |
+| 2026-07-23 | All 8 tasks implemented in strict RED→GREEN order. 8 new/updated tests across 3 test files; full `apps/web` suite 395/395 passing (46 files); `tsc --noEmit` clean; `eslint` clean. Tracker updated. Story marked `review`. | Dev 2 |
