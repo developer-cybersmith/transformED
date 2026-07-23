@@ -1,5 +1,10 @@
 # Deferred Work
 
+## Deferred from: code review of 4-21-learner-ws-tier (2026-07-23)
+
+- **Repeated `session_start` re-overrides tier mid-session (no idempotency guard)** [`apps/api/app/core/websocket.py`] — a client that sends `session_start` twice re-writes the tier keys and re-dispatches the FSM event each time. A second `session_start` carrying a different tier mid-session would change `qa_phase_seconds` underneath an in-progress Q&A phase (the FSM itself rejects the IDLE→TEACHING re-transition, but the tier keys are overwritten first). Low severity; a guard needs a product decision on whether mid-session tier changes are ever legitimate.
+- **No observability when a present-but-invalid tier is rejected** [`apps/api/app/core/websocket.py:320`] — the `if isinstance(tier, str) and tier in _VALID_TIERS` guard falls through silently on a near-miss value (`"t1"`, `"T1 "`), so a malformed client tier is indistinguishable from "no tier sent." A targeted `logger.debug` on the reject-with-non-None-value path would aid debugging without adding noise to the common no-tier case. Low priority.
+
 ## Deferred from: code review of 4-19-learner-tier-runtime (2026-07-21)
 
 - **No test for `raw_pkg` returned as bytes** [`apps/api/app/core/websocket.py:241`] — `json.loads()` accepts bytes in CPython; no correctness bug. The rest of the codebase (see `_restore_or_init_session`) handles bytes explicitly; consistency gap only. Low priority.
