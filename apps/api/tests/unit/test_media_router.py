@@ -141,7 +141,10 @@ def test_signed_url_200_success(client_factory: ClientFactory) -> None:
         )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["signed_url"] == "https://supabase.example.com/storage/v1/object/sign/lesson-audio/seg-01.mp3?token=abc"
+    assert (
+        body["signed_url"]
+        == "https://supabase.example.com/storage/v1/object/sign/lesson-audio/seg-01.mp3?token=abc"
+    )
     assert body["expires_in"] == 1800
     sb.storage.from_.return_value.create_signed_url.assert_called_once_with(FAKE_PATH, 1800)
 
