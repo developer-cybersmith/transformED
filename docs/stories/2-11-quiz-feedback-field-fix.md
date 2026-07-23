@@ -4,7 +4,7 @@ baseline_commit: e44518facd64cb17065f2175946866998c65865d
 
 # Story 2.11: Fix Quiz Feedback Field-Name Mismatch (Dev 2 counterpart to Story 3-28)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -66,7 +66,16 @@ And `QuizOverlay.tsx` renders `f.correct ? ... : ...` and `{f.message}` (lines 1
 - [x] Task 6 (AC: 7): Full `apps/web` suite green (400/400, 46 files); `tsc --noEmit` clean; `eslint` clean on every touched file.
 - [x] Task 7: Tracker update — `docs/dev2-sprint-tracker.md` gained a dated cross-team note.
 
-## Dev Notes
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2/s2-11-variable-quiz-count` vs `sprint2-master`, 2026-07-23.
+
+- [x] [Review][Patch] AC-7 partially unmet: no test asserts the correct/incorrect **styling** (`text-emerald-400`/`text-red-400`) on the score-summary feedback list — every fixture used across the whole test file only ever has `is_correct: true` entries, so the `f.is_correct === false` branch is completely untested. AC-7 explicitly requires asserting styling, not just that text appears. 2-way corroborated (blind+auditor independently). [apps/web/src/__tests__/components/player/QuizOverlay.test.tsx] (blind+auditor)
+- [x] [Review][Patch] Dead/no-op `% 4` in the 3-question test (`THREE_QUESTIONS[i].options[i % 4]`) — `i` only ever ranges 0-2, so the modulo never wraps; harmless but reads as if it does something it doesn't. [apps/web/src/__tests__/components/player/QuizOverlay.test.tsx] (blind)
+
+**Dismissed as noise/false-positive/out-of-scope (14):** "frozen-contract change with no evidence of 4-dev PR review" — refuted: `feedback`'s internal dict shape was never an actual reviewed contract to begin with (the backend's own Pydantic model deliberately leaves it as `list[dict[str, Any]]`, unenforced); the frozen-contract header protects the *named* `QuizResult` fields (`score`, `correct_count`, etc.), not an already-wrong, never-agreed-upon nested shape. "Blocking `[DEV1-SPRINT2-PENDING]` comment deleted without evidence the dependency shipped" — refuted; this story's own Dev Notes explicitly pre-authorized the removal, and this session independently verified long ago that the referenced work shipped. "Unenforceable backend parity, no schema/codegen" — real but pre-existing, codebase-wide gap (matches this session's S2-10 review precedent for the identical class of finding), far outside this bug-fix's scope. "Backwards layering" (`types/assessment.ts` importing from `lib/assessment.ts`) — this is literally one of the two options AC-5 itself offered, deliberately chosen over a third duplicate declaration; `tsc --noEmit` confirmed clean, no circular-import break. Untested nullable `correct_option`/`selected_option` — neither field is actually rendered anywhere in `QuizOverlay.tsx` today, so a null value there has zero practical rendering risk; worth a test only once/if the UI starts using them. Inconsistent test-fixture ids (`RESULT` still uses `q_1`/`q_2` while `THREE_QUESTIONS` uses realistic ids) — cosmetic; `RESULT` is an unrelated, reused submission-response fixture, and the realistic-id round-trip is already independently proven through `THREE_QUESTIONS`'s own dedicated test. Verbose/ticket-tagged test names — matches this codebase's established test-naming convention throughout this same file and others. "No evidence other consumers of the renamed fields were checked" — refuted; grepped during story-writing and confirmed only `QuizOverlay.tsx` and the two test files reference these types. Unexercised `correct_index`/`question` fields — intentionally included to match AC-1's explicit "match the real backend shape exactly" requirement, not scope creep, even though the component doesn't render them yet. Ad hoc "verify against the real Python" comments instead of enforced typing/codegen — same pre-existing gap as the unenforceable-parity finding above. 4 Edge Case Hunter findings (`result.feedback` non-array; `is_correct` truthy-non-boolean; `question_id` undefined/duplicate; `explanation` null) — all trace to backend-guaranteed, required, correctly-typed Python fields (`QuizResult.feedback` is a required Pydantic field; `is_correct`/`question_id`/`explanation` all originate from real booleans/unique ids/required non-null strings in `service.py`/`schemas.py`) — none reachable via any real backend response, matching this session's established precedent for dismissing defensive guards against contractually-impossible backend values.
+
+
 
 ### Current state of every file this story touches (read directly, not assumed)
 
@@ -147,6 +156,8 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `npx eslint` on every touched file — 0 errors, 0 warnings.
 - No HALT conditions hit — no new dependencies, no ambiguous requirements, no 3-consecutive-failure loop. Confirmed (not fixed) that AC-3/AC-4 needed zero code changes: the 3-question/realistic-id test passed on its first run.
 
+**Review Round (2026-07-23):** 2 patches applied (correct/incorrect styling test — closing a real AC-7 gap independently corroborated by both Blind Hunter and the Acceptance Auditor; dead `% 4` modulo removed), 0 deferred, 14 dismissed (mostly refuted false-positives from diff-only review context, or backend-guaranteed-unreachable edge cases). The styling-test patch was verified via revert-and-confirm: temporarily reverted `QuizOverlay.tsx`'s conditional class back to always-`text-emerald-400`, confirmed genuine RED (1/11 failed), restored, confirmed GREEN (11/11). Full `apps/web` suite: 401/401 passing across 46 files after both patches (up from this story's pre-review 400); `tsc --noEmit` clean; `eslint` clean (0 new warnings).
+
 ### Completion Notes List
 
 - `lib/assessment.ts`: `QuizFeedbackItem` corrected to the real backend shape — `is_correct`/`explanation`/`question`/`correct_index`/`correct_option`/`selected_option`, matching `service.py::grade_quiz`'s dict literal exactly.
@@ -154,6 +165,10 @@ Claude Sonnet 5 (claude-sonnet-5)
 - Confirmed, not fixed: `QuizOverlay.tsx`'s question iteration, progress indicator ("X / N", shown only when `questions.length > 1`), and full-answer-array submission logic already correctly handle 1–5 questions per segment with no changes needed. `question_id` is treated as a fully opaque string throughout — the backend's format change (`quiz_{segment_id}` → `quiz_{segment_id}_{index}`) required zero frontend changes.
 - `types/assessment.ts`: `QuizResult.feedback` now imports and reuses `lib/assessment.ts`'s `QuizFeedbackItem[]` instead of maintaining a third, independently-wrong shape. This type module's `QuizResult`/`QuizAnswer`/`QuizSubmission` remain otherwise unused at runtime (only their own test imports them) — not restructured further, per this story's own scope limits.
 - No backend changes, no changes to `packages/shared/types/lesson.ts`'s `QuizQuestion` type, no changes to `QuizOverlay.tsx`'s submission/iteration logic beyond the field-name fix.
+
+**Review Round completion notes:**
+- `QuizOverlay.test.tsx`: 1 new test proving `is_correct: true`/`false` map to `text-emerald-400`/`text-red-400` respectively — the one real gap this review round found (AC-7's styling assertion was never actually exercised until now). The dead `% 4` in the 3-question test was replaced with a plain `[i]` index (harmless either way since `i` never exceeded 2, but the modulo read as if it did something).
+- No production code changes were needed for the styling fix itself — `QuizOverlay.tsx`'s `f.is_correct ? 'text-emerald-400' : 'text-red-400'` conditional was already correct from Task 2; only test coverage was missing.
 
 ### File List
 
@@ -165,9 +180,14 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `apps/web/src/__tests__/types/assessment.test.ts` — 1 fixture corrected to the full real feedback shape
 - `docs/dev2-sprint-tracker.md` — dated cross-team note added
 
+**Files MODIFIED (Review Round):**
+- `apps/web/src/components/player/QuizOverlay.tsx` — verified via revert-and-confirm only, no net change
+- `apps/web/src/__tests__/components/player/QuizOverlay.test.tsx` — 1 new test (correct/incorrect styling); dead `% 4` removed
+
 ### Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created — Dev 2 counterpart to Dev 3's Story 3-28. Investigation found the count-handling already works; the real gap is a pre-existing feedback field-name mismatch between `QuizOverlay.tsx`/`lib/assessment.ts` and the actual backend contract, verified directly against `service.py`. Branch `sprint2/s2-11-variable-quiz-count` off `sprint2-master`. | Dev 2 |
 | 2026-07-23 | All 7 tasks implemented in strict RED→GREEN order. 2 new tests, 2 fixtures corrected; full `apps/web` suite 400/400 passing (46 files); `tsc --noEmit` clean; `eslint` clean. Tracker updated. Story marked `review`. | Dev 2 |
+| 2026-07-23 | 5-agent adversarial review run against `sprint2/s2-11-variable-quiz-count` vs `sprint2-master`; 2 patches applied (correct/incorrect styling test, dead modulo removed), 14 dismissed. Full suite 401/401 passing, `tsc --noEmit` and `eslint` clean; story marked `done`. | Dev 2 |

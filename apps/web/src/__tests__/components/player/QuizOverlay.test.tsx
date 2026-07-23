@@ -156,7 +156,7 @@ describe('QuizOverlay', () => {
     expect(screen.getByText('1 / 3')).not.toBeNull();
 
     for (let i = 0; i < THREE_QUESTIONS.length; i++) {
-      await userEvent.click(screen.getByText(THREE_QUESTIONS[i].options[i % 4]));
+      await userEvent.click(screen.getByText(THREE_QUESTIONS[i].options[i]));
       await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
       if (i < THREE_QUESTIONS.length - 1) {
         await userEvent.click(screen.getByRole('button', { name: 'Next question' }));
@@ -208,6 +208,36 @@ describe('QuizOverlay', () => {
     // result (and its feedback list) renders once submitQuiz resolves, on the
     // last question's Submit -- no need to click Continue to see it.
     await waitFor(() => expect(screen.getByText('Nice work.')).not.toBeNull());
+  });
+
+  it('styles score summary feedback by is_correct -- emerald for correct, red for incorrect (review fix)', async () => {
+    submitQuizMock.mockResolvedValue({
+      session_id: 'sess_1', score: 50, correct_count: 1, total_count: 2, ces_contribution: 0.1,
+      feedback: [
+        {
+          question_id: 'q_1', question: QUESTIONS[0].question, is_correct: true,
+          correct_index: 0, correct_option: QUESTIONS[0].options[0],
+          selected_option: QUESTIONS[0].options[0], explanation: 'Correct feedback.',
+        },
+        {
+          question_id: 'q_2', question: QUESTIONS[1].question, is_correct: false,
+          correct_index: 1, correct_option: QUESTIONS[1].options[1],
+          selected_option: QUESTIONS[1].options[0], explanation: 'Incorrect feedback.',
+        },
+      ],
+    });
+    render(<QuizOverlay questions={QUESTIONS} />);
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next question' }));
+    await userEvent.click(screen.getByText(QUESTIONS[1].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Correct feedback.').className).toMatch(/text-emerald-400/);
+      expect(screen.getByText('Incorrect feedback.').className).toMatch(/text-red-400/);
+    });
   });
 
   it('Continue exits the quiz even when the API call fails — never blocks progress', async () => {
