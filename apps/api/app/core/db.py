@@ -9,12 +9,9 @@ architecture requires going through Supabase's REST/PostgREST layer.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import Any, cast
 
 from supabase import Client, create_client
-
-if TYPE_CHECKING:
-    pass
 
 from app.config import Settings, get_settings
 
@@ -62,3 +59,35 @@ def get_supabase() -> Client:
         _supabase_client = init_supabase()
 
     return _supabase_client
+
+
+# ── Typed response-boundary helpers ───────────────────────────────────────────
+# postgrest types a response's `.data` as a recursive JSON union and a
+# `.single()`/`.maybe_single()` execute() as `... | None`, so any `.data`,
+# `.get(...)`, or `[key]` access trips mypy's union-attr/index/call-overload
+# even though the code is correct at runtime. These helpers narrow that boundary
+# in ONE place. They are pure narrowing — `cast` has ZERO runtime effect; the
+# returned value is exactly `resp.data` (or None/[] when there is no data).
+
+
+def single_row(resp: Any) -> dict[str, Any] | None:  # noqa: ANN401 — postgrest response type varies
+    """Return a single-row response's `.data` as a typed dict, or None.
+
+    Zero behavior change: equivalent to `resp.data` — `cast` only informs the
+    type checker of the shape postgrest's recursive JSON return type obscures.
+    """
+    if resp is None:
+        return None
+    return cast("dict[str, Any] | None", resp.data)
+
+
+def rows(resp: Any) -> list[dict[str, Any]]:  # noqa: ANN401 — postgrest response type varies
+    """Return a multi-row response's `.data` as a typed list of dicts (or []).
+
+    Zero behavior change beyond treating a missing/None payload as an empty
+    list (a select's `.data` is a list at runtime); `cast` is a no-op.
+    """
+    if resp is None:
+        return []
+    data = resp.data
+    return cast("list[dict[str, Any]]", data) if data is not None else []

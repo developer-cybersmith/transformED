@@ -187,7 +187,7 @@ async def _restore_or_init_session(session_id: str) -> str | None:
     Never raises — the WebSocket handshake must not fail on a Redis blip (degrade to fresh init).
     """
     try:
-        from app.core.redis import get_redis  # type: ignore[import]
+        from app.core.redis import get_redis
 
         existing = await get_redis().get(f"tutor_state:{session_id}")
         if existing:
@@ -216,7 +216,7 @@ async def _init_session_state(session_id: str) -> None:
     re-raises.
     """
     try:
-        from app.core.redis import get_redis  # type: ignore[import]
+        from app.core.redis import get_redis
 
         redis = get_redis()
         await redis.set(f"tutor_state:{session_id}", "IDLE", ex=86400)
@@ -244,7 +244,7 @@ async def _handle_session_start(session_id: str) -> None:
         # Lazy import — tutor module depends on core, not the other way round.
         # Go through the service layer (mirrors _handle_attention_signal); start_session
         # calls dispatch_event(session_id, "session_start") → IDLE → TEACHING.
-        from app.modules.tutor.service import start_session  # type: ignore[import]
+        from app.modules.tutor.service import start_session
 
         await start_session(session_id)
         logger.info("[tutor:%s] session_start dispatched → TEACHING", session_id)
@@ -259,7 +259,7 @@ async def _handle_tutor_event(session_id: str, event: str) -> None:
     bad client message never crashes the WS receive loop (mirrors ``_handle_session_start``).
     """
     try:
-        from app.modules.tutor.service import advance_tutor_state  # type: ignore[import]
+        from app.modules.tutor.service import advance_tutor_state
 
         await advance_tutor_state(session_id, event)
         logger.info("[tutor:%s] client event dispatched: %s", session_id, event)
@@ -274,7 +274,7 @@ async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> 
     """
     try:
         # Lazy import — tutor module depends on core, not the other way round
-        from app.modules.tutor.service import process_attention_signal  # type: ignore[import]
+        from app.modules.tutor.service import process_attention_signal
 
         result = await process_attention_signal(session_id=session_id, signal=payload)
         await manager.send(

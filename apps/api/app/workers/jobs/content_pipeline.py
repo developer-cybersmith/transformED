@@ -44,7 +44,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
                    retry up to ``WorkerSettings.max_tries`` times.
     """
     from app.core.cost_tracker import clear_lesson_cost
-    from app.core.db import get_supabase
+    from app.core.db import get_supabase, single_row
     from app.modules.content.pipeline.graph import run_pipeline
 
     logger.info("content_pipeline_job START lesson_id=%s", lesson_id)
@@ -63,7 +63,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             .single()
             .execute()
         )
-        lesson_row: dict[str, Any] = result.data or {}
+        lesson_row: dict[str, Any] = single_row(result) or {}
 
         user_id: str = lesson_row.get("user_id", "")
         source_pdf_path: str = lesson_row.get("source_file_path", "")

@@ -73,7 +73,13 @@ class HeyGenAvatarProvider(AvatarProvider):
                 path=object_path,
                 expires_in=_SIGNED_URL_EXPIRY,
             )
-            signed_url: str = result["signedURL"]
+            # result["signedURL"] is typed Optional by the supabase client; a
+            # successful create_signed_url always returns the URL. Guard None so
+            # the annotated str return type holds — types-only, the None branch
+            # is unreachable in a successful call.
+            signed_url = result["signedURL"]
+            if signed_url is None:
+                raise RuntimeError("Supabase returned no signedURL for the avatar clip")
             logger.debug(
                 "Signed URL generated for clip_type='%s' path='%s'", clip_type, object_path
             )

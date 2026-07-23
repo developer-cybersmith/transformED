@@ -20,6 +20,7 @@ column). Default is False — no events are sent without explicit user consent.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import posthog
 
@@ -47,7 +48,7 @@ def capture_event(
     *,
     distinct_id: str,
     event: str,
-    properties: dict,
+    properties: dict[str, Any],
     analytics_consent: bool = False,
 ) -> None:
     """Fire a PostHog event if PostHog is configured AND the user has consented.
@@ -73,6 +74,6 @@ def capture_event(
     if not analytics_consent:
         return
     try:
-        posthog.capture(distinct_id, event, properties)
+        posthog.capture(event, distinct_id=distinct_id, properties=properties)
     except Exception as exc:
         logger.warning("PostHog capture failed event=%r: %s", event, exc)

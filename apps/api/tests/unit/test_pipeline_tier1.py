@@ -193,6 +193,10 @@ async def test_structure_guard_rejects_llm_output_with_tiny_bodies() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)
 
     sections = result["sections"]
@@ -227,6 +231,10 @@ async def test_structure_guard_adopts_faithful_llm_output() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)
 
     sections = result["sections"]
@@ -268,6 +276,10 @@ async def test_structure_guard_llm_raises_keeps_rule_based_sections() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)  # must NOT raise
 
     sections = result["sections"]
@@ -311,6 +323,10 @@ async def test_structure_guard_empty_raw_text_skips_llm_keeps_rule_based(
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)
 
     # LLM never called — no tokens burned, no hallucination window
@@ -349,6 +365,10 @@ async def test_structure_guard_adopts_llm_output_at_exact_90_percent_boundary() 
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)
 
     sections = result["sections"]
@@ -386,6 +406,10 @@ async def test_structure_guard_duplicated_bodies_pass_length_proxy() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)
 
     # Documents (does not endorse) current behavior: duplicated bodies adopted.

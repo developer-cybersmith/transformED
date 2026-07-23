@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, status
 
@@ -109,7 +109,7 @@ async def ingest_events(
 
 async def write_system_events(
     *,
-    rows: list[dict],
+    rows: list[dict[str, Any]],
     supabase: Any,  # noqa: ANN401
 ) -> int:
     """Insert system-generated session_events rows. Non-fatal.
@@ -230,7 +230,7 @@ async def get_session_summary(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to compute session duration.",
                 ) from err
-        return val
+        return cast("datetime | None", val)
 
     started_at = _parse_ts(session_row.get("started_at"))
     ended_at = _parse_ts(session_row.get("ended_at"))

@@ -127,7 +127,7 @@ def _compute_signals(
         sigs["persistence"] = _NEUTRAL
     else:
         # Group by segment_id to detect retry pattern per segment
-        seg_attempts: dict[str, list[dict]] = defaultdict(list)
+        seg_attempts: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in tb_rows:
             seg_attempts[row["segment_id"]].append(row)
 
@@ -208,6 +208,8 @@ async def fuse_learner_dna(
     # Service-role client bypasses RLS; .eq("user_id", user_id) filters are the access gate.
     from fastapi import HTTPException, status  # local import avoids circular dependency
 
+    from app.core.db import rows, single_row
+
     # ── Step 1: Read session row ───────────────────────────────────────────────
     try:
         session_resp = await asyncio.to_thread(
@@ -228,12 +230,13 @@ async def fuse_learner_dna(
             detail="Could not read session data.",
         ) from exc
 
-    if session_resp.data is None:
+    session_data = single_row(session_resp)
+    if session_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found.",
         )
-    session_row = session_resp.data
+    session_row = session_data
 
     # Guard: IDOR check
     if str(session_row.get("user_id", "")) != str(user_id):
@@ -265,7 +268,7 @@ async def fuse_learner_dna(
                 .execute()
             )
         )
-        quiz_rows = quiz_resp.data or []
+        quiz_rows = rows(quiz_resp)
     except Exception as exc:
         logger.warning("DNA fusion: quiz read failed session=%s: %s", session_id, exc)
 
@@ -278,7 +281,7 @@ async def fuse_learner_dna(
                 .execute()
             )
         )
-        tb_rows = tb_resp.data or []
+        tb_rows = rows(tb_resp)
     except Exception as exc:
         logger.warning("DNA fusion: teachback read failed session=%s: %s", session_id, exc)
 
@@ -291,7 +294,7 @@ async def fuse_learner_dna(
                 .execute()
             )
         )
-        event_rows = events_resp.data or []
+        event_rows = rows(events_resp)
     except Exception as exc:
         logger.warning("DNA fusion: events read failed session=%s: %s", session_id, exc)
 
@@ -315,8 +318,9 @@ async def fuse_learner_dna(
                 .execute()
             )
         )
-        if dna_resp.data is not None:
-            old_row = dna_resp.data
+        dna_data = single_row(dna_resp)
+        if dna_data is not None:
+            old_row = dna_data
             old_session_count = int(old_row.get("session_count") or 0)
     except Exception as exc:
         logger.warning("DNA fusion: learner_dna read failed user=%s: %s", user_id, exc)
