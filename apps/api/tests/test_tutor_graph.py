@@ -854,3 +854,193 @@ async def test_state_change_broadcast_payload_matches_ws_ts_contract(mocker) -> 
     assert isinstance(payload["session_id"], str)
     assert isinstance(payload["from_state"], str)
     assert isinstance(payload["to_state"], str)
+
+
+# ── Story 4-20: QUIZZING deadline enforcement ─────────────────────────────────
+
+
+def _deadline_redis(sid: str, *, state: str = "TEACHING", qa_secs: str | None = "300") -> AsyncMock:
+    """Key-aware Redis for deadline tests.
+
+    GET returns *state* for ``tutor_state:{sid}``, *qa_secs* for
+    ``session:{sid}:qa_phase_seconds``, and None for everything else.
+    SET side-effect updates the tutor_state store so chained dispatches see
+    the post-transition value.
+    """
+    store: dict[str, str] = {f"tutor_state:{sid}": state}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"session:{sid}:qa_phase_seconds":
+            return qa_secs
+        return store.get(key)
+
+    async def _set(key: str, value, **kw):
+        store[key] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    return redis
+
+
+@pytest.mark.unit
+async def test_quizzing_node_writes_quiz_deadline_at(mocker) -> None:
+    """AC1: entering QUIZZING writes quiz_deadline_at = int(time.time()) + qa_phase_seconds."""
+    import time as _time
+
+    sid = "s-qdl-write"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs="300")
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1, "quiz_deadline_at must be written exactly once"
+    written = int(deadline_calls[0].args[1])
+    assert before + 300 <= written <= after + 300
+    assert deadline_calls[0].kwargs.get("ex") == 86400
+
+
+@pytest.mark.unit
+async def test_quizzing_node_uses_t1_qa_seconds(mocker) -> None:
+    """AC1: T1 tier qa_phase_seconds (600 s) is honoured — deadline is +600 s."""
+    import time as _time
+
+    sid = "s-qdl-t1"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs="600")
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1
+    written = int(deadline_calls[0].args[1])
+    assert before + 600 <= written <= after + 600
+
+
+@pytest.mark.unit
+async def test_quizzing_node_fallback_300_when_qa_seconds_missing(mocker) -> None:
+    """AC1: missing qa_phase_seconds key → quizzing_node falls back to 300 s (T2 default)."""
+    import time as _time
+
+    sid = "s-qdl-fb"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs=None)  # no qa_phase_seconds key
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1
+    written = int(deadline_calls[0].args[1])
+    assert before + 300 <= written <= after + 300
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_expired_deadline_auto_quiz_complete(mocker) -> None:
+    """AC4: expired quiz_deadline_at → advance_tutor_state auto-dispatches quiz_complete via
+    the REAL FSM (dispatch_event not mocked) → session lands in TEACHING."""
+    import time as _time
+
+    sid = "s-qdl-e2e"
+    expired = str(int(_time.time()) - 60)
+
+    store: dict = {"state": "QUIZZING"}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return store["state"]
+        if key == f"session:{sid}:quiz_deadline_at":
+            return expired
+        return None
+
+    async def _set(key: str, value, **kw):
+        if key.startswith("tutor_state:"):
+            store["state"] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    redis.delete = AsyncMock(return_value=1)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    assert store["state"] == "TEACHING"
+    redis.delete.assert_awaited_once_with(f"session:{sid}:quiz_deadline_at")
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_not_expired_deadline_normal_flow(mocker) -> None:
+    """AC5/AC6: deadline not yet expired → student quiz_complete dispatched normally → TEACHING."""
+    import time as _time
+
+    sid = "s-qdl-active"
+    future = str(int(_time.time()) + 3600)
+
+    store: dict = {"state": "QUIZZING"}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return store["state"]
+        if key == f"session:{sid}:quiz_deadline_at":
+            return future
+        return None
+
+    async def _set(key: str, value, **kw):
+        if key.startswith("tutor_state:"):
+            store["state"] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    assert store["state"] == "TEACHING"
+    redis.delete.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_missing_deadline_no_auto_advance(mocker) -> None:
+    """AC6: missing quiz_deadline_at → _quiz_deadline_expired returns False → normal dispatch."""
+    sid = "s-qdl-none"
+
+    store: dict = {"state": "QUIZZING"}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return store["state"]
+        return None  # no quiz_deadline_at
+
+    async def _set(key: str, value, **kw):
+        if key.startswith("tutor_state:"):
+            store["state"] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    assert store["state"] == "TEACHING"
+    redis.delete.assert_not_called()

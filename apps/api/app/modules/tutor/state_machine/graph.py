@@ -216,6 +216,22 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.debug("[tutor:%s] → QUIZZING", session_id)
     await _persist_state(session_id, TutorState.QUIZZING)
+
+    # Record tier-based Q&A deadline (best-effort; never crash the transition).
+    try:
+        import time as _time  # noqa: PLC0415
+
+        from app.core.redis import get_redis  # type: ignore[import]  # noqa: PLC0415
+
+        redis = get_redis()
+        qa_raw = await redis.get(f"session:{session_id}:qa_phase_seconds")
+        qa_secs = int(qa_raw) if qa_raw else 300  # T2 default
+        deadline = int(_time.time()) + qa_secs
+        await redis.set(f"session:{session_id}:quiz_deadline_at", str(deadline), ex=86400)
+        logger.info("[tutor:%s] QUIZZING deadline set: +%ds", session_id, qa_secs)
+    except Exception:  # noqa: BLE001
+        logger.warning("[tutor:%s] quiz_deadline_at write failed — proceeding without deadline", session_id)
+
     return {**state, "current_state": TutorState.QUIZZING}
 
 
