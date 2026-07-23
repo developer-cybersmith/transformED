@@ -161,7 +161,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 await _handle_attention_signal(session_id, payload)
 
             elif msg_type == "session_start":
-                await _handle_session_start(session_id)
+                # payload is the already-decoded json.loads(raw) dict — no re-parse needed.
+                await _handle_session_start(session_id, payload=payload)
 
             elif msg_type in _TUTOR_CLIENT_EVENTS:
                 await _handle_tutor_event(session_id, msg_type)
@@ -294,12 +295,59 @@ async def _seed_learner_tier(session_id: str) -> None:
 # ── Dispatch helpers ───────────────────────────────────────────────────────────
 
 
-async def _handle_session_start(session_id: str) -> None:
-    """Dispatch a ``session_start`` event → IDLE → TEACHING transition.
+async def _handle_session_start(session_id: str, payload: dict[str, Any] | None = None) -> None:
+    """Dispatch a ``session_start`` event → IDLE → TEACHING transition, optionally
+    seeding the learner tier from the WebSocket payload first.
+
+    Learner tier (Story 4-21 — WS override path)
+    --------------------------------------------
+    If the client sends a valid ``learner_tier`` (``T1``/``T2``/``T3``) in the
+    ``session_start`` payload, it is written to ``session:{sid}:learner_tier`` and
+    ``session:{sid}:qa_phase_seconds`` (24 h TTL — same keys as Story 4-19).
+
+    Precedence: Story 4-19 seeds the tier from the cached lesson package during
+    ``connect()``; this handler runs later (``session_start`` arrives *after* the
+    connection is established), so a WS-payload tier overwrites the lesson-package
+    value — the client holds the fresher student profile. An absent / ``None`` /
+    unrecognised tier makes **no** write, so 4-19's value (if any) is preserved.
+
+    Caveat (multi-connection, last-writer-wins): the "WS tier wins" ordering is
+    guaranteed only *per connection*. ``ConnectionManager`` allows multiple
+    connections per ``session_id`` (desktop + mobile), and 4-19 re-seeds on every
+    connect / reconnect — so a second connection's 4-19 seed can land *after* this
+    override and revert it to the lesson-package tier. This is accepted as
+    last-writer-wins: the tier only tunes the Q&A-phase duration (no data/access
+    impact) and any drift self-heals on the next ``session_start``. Coordinating
+    the two writers is tracked as deferred work (code review 2026-07-23).
 
     Imported lazily to avoid circular imports between core and modules.
     Mirrors the error contract of ``_handle_attention_signal``: never re-raises.
     """
+    # Tier override from the WS payload (best-effort; failure must not block dispatch).
+    tier = (payload or {}).get("learner_tier")
+    if isinstance(tier, str) and tier in _VALID_TIERS:
+        try:
+            from app.core.redis import get_redis  # type: ignore[import]  # noqa: PLC0415
+            from app.modules.tutor.service import qa_phase_seconds as _qa  # type: ignore[import]  # noqa: PLC0415
+
+            redis = get_redis()
+            qa_secs = _qa(tier)
+            # Write both keys atomically via a pipeline so a partial failure can never leave a
+            # half-seeded (fresh tier + stale duration) pair — mirrors Story 4-19's
+            # _seed_learner_tier invariant for these same keys.
+            pipe = redis.pipeline(transaction=False)
+            pipe.set(f"session:{session_id}:learner_tier", tier, ex=86400)
+            pipe.set(f"session:{session_id}:qa_phase_seconds", str(qa_secs), ex=86400)
+            await pipe.execute()
+            logger.info(
+                "[tutor:%s] learner_tier=%s qa_phase=%ss set from session_start WS payload",
+                session_id,
+                tier,
+                qa_secs,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("learner tier WS seeding failed for %s — continuing", session_id)
+
     try:
         # Lazy import — tutor module depends on core, not the other way round.
         # Go through the service layer (mirrors _handle_attention_signal); start_session

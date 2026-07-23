@@ -1,6 +1,6 @@
 # WebSocket Message Contract
 
-**Status:** Proposed for Dev 2 sign-off · **Owner:** Dev 4 · **Last updated:** 2026-06-30
+**Status:** Proposed for Dev 2 sign-off · **Owner:** Dev 4 · **Last updated:** 2026-07-23
 
 This document is the authoritative record of the **live WebSocket wire protocol** for HIE — every
 message the backend actually sends and accepts on `/ws/{session_id}`, with concrete examples.
@@ -30,7 +30,7 @@ Routed in [`apps/api/app/core/websocket.py`](../apps/api/app/core/websocket.py) 
 | `type` | Shape | In `ws.ts`? | Source |
 |--------|-------|-------------|--------|
 | `attention_signal` | nested `{type, payload:{session_id, quiz_accuracy, teachback_score, behavioral_score, head_pose_score, blink_rate}}` | ✅ `AttentionSignalMessage` (the only `ClientMessage`) | `websocket.py:150` → `_handle_attention_signal` |
-| `session_start` | **flat** `{type:"session_start"}` | ❌ not in `ClientMessage` | `websocket.py:153` → `_handle_session_start` |
+| `session_start` | **flat** `{type:"session_start", learner_tier?:"T1"\|"T2"\|"T3"}` | ❌ not in `ClientMessage` | `websocket.py:153` → `_handle_session_start` |
 | `ping` | **flat** `{type:"ping"}` | ❌ not in `ClientMessage` | `websocket.py:159` |
 | 9 flow events (see below) | **flat** `{type:"<event>"}` | ❌ none in `ClientMessage` | `websocket.py:156` → `_handle_tutor_event` |
 
@@ -60,9 +60,14 @@ may be `null` when not available this window.
 > The backend parser also tolerates a flat (un-enveloped) signal, but the **nested envelope above is the
 > contract** — clients should always send the `payload`-wrapped form.
 
-**`session_start`** — begin the session (drives IDLE → TEACHING).
+**`session_start`** — begin the session (drives IDLE → TEACHING). May carry an optional
+`learner_tier` (Story 4-21): when present and one of `"T1" | "T2" | "T3"`, the backend writes
+`session:{sid}:learner_tier` + `session:{sid}:qa_phase_seconds`, **overriding** the value Story 4-19
+seeded from the cached lesson package (the client holds the fresher student profile). Absent means
+"use the lesson-package value, or the T2 default." An unrecognised value is ignored (no write).
+Off-contract — not in the `ws.ts` `ClientMessage` union (see gap (a) below).
 ```json
-{ "type": "session_start" }
+{ "type": "session_start", "learner_tier": "T2" }
 ```
 
 **`ping`** — keepalive; server replies with `pong`.
@@ -226,7 +231,8 @@ needs the **4-dev `ws.ts` PR** to resolve — that PR is gated on the sign-off b
 `session_start`, `ping`, and the 9 flow events are accepted by the server but `ClientMessage` only
 contains `AttentionSignalMessage`. A strict TS client cannot construct them.
 **Proposed resolution:** add a `ControlMessage` union (`session_start`, `ping`, the 9 flow events as flat
-`{type}` messages) and fold it into `ClientMessage`.
+`{type}` messages) and fold it into `ClientMessage`. When this lands, `session_start` should carry the
+optional `learner_tier?: "T1" | "T2" | "T3"` field added by Story 4-21 (off-contract today).
 
 ### (b) Outbound `pong` absent from `ServerMessage`
 The server replies to `ping` with `{type:"pong"}`, but `pong` is not in `ServerMessage`.
