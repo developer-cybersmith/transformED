@@ -178,7 +178,11 @@ describe('assessment types', () => {
       correct_count: 3,
       total_count: 4,
       ces_contribution: 0.75,
-      feedback: [{ question_id: 'q_001', correct: true, explanation: 'Great.' }],
+      feedback: [{
+        question_id: 'q_001', question: 'Q?', is_correct: true,
+        correct_index: 0, correct_option: 'A', selected_option: 'A',
+        explanation: 'Great.',
+      }],
     };
     expect(result.ces_contribution).toBe(0.75);
   });

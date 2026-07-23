@@ -1,6 +1,8 @@
 // Assessment API contract types — matches Dev 3 OpenAPI spec (docs/openapi-assessment.json)
 // Do not modify field names without a 4-developer PR review (frozen interface contract).
 
+import type { QuizFeedbackItem } from '@/lib/assessment';
+
 // ── Shared building blocks ────────────────────────────────────────────────
 
 export interface QuizAnswer {
@@ -31,7 +33,9 @@ export interface QuizResult {
   correct_count: number;
   total_count: number;
   ces_contribution: number;
-  feedback: Array<{ [key: string]: unknown }>;
+  // Reuses lib/assessment.ts's QuizFeedbackItem rather than re-declaring a
+  // third, drifting copy of the same real backend shape (S2-11 review fix).
+  feedback: QuizFeedbackItem[];
 }
 
 // ── POST /api/assessment/teachback ────────────────────────────────────────

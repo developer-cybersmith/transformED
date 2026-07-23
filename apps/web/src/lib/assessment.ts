@@ -16,10 +16,18 @@ export interface QuizSubmitPayload {
   answers: QuizAnswer[];
 }
 
+// Matches apps/api/app/modules/assessment/service.py::grade_quiz's per-question
+// feedback dict exactly -- QuizResult.feedback is untyped (list[dict[str, Any]])
+// on the backend, so this shape only exists here and in that dict literal;
+// verify against the real Python before changing (S2-11 review fix).
 export interface QuizFeedbackItem {
   question_id: string;
-  correct: boolean;
-  message: string;
+  question: string;
+  is_correct: boolean;
+  correct_index: number;
+  correct_option: string | null;
+  selected_option: string | null;
+  explanation: string;
 }
 
 export interface QuizResult {

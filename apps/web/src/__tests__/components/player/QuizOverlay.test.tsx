@@ -35,15 +35,58 @@ const QUESTIONS: QuizQuestion[] = [
   },
 ];
 
+// Realistic tier-aware fixture (S2-11 / Story 3-28): 3 questions for one
+// segment, using the real quiz_{segment_id}_{index} id format instead of the
+// placeholder q_1/q_2 -- the id must round-trip unparsed regardless of shape.
+const THREE_QUESTIONS: QuizQuestion[] = [
+  {
+    question_id: 'quiz_section_2_6_0',
+    type: 'mcq',
+    question: 'Question one?',
+    options: ['A', 'B', 'C', 'D'],
+    correct_index: 0,
+    explanation: 'Explanation one.',
+    difficulty: 'medium',
+  },
+  {
+    question_id: 'quiz_section_2_6_1',
+    type: 'mcq',
+    question: 'Question two?',
+    options: ['A', 'B', 'C', 'D'],
+    correct_index: 1,
+    explanation: 'Explanation two.',
+    difficulty: 'medium',
+  },
+  {
+    question_id: 'quiz_section_2_6_2',
+    type: 'mcq',
+    question: 'Question three?',
+    options: ['A', 'B', 'C', 'D'],
+    correct_index: 2,
+    explanation: 'Explanation three.',
+    difficulty: 'medium',
+  },
+];
+
 const RESULT = {
   session_id: 'sess_1',
   score: 100,
   correct_count: 2,
   total_count: 2,
   ces_contribution: 0.2,
+  // Real backend shape (apps/api/app/modules/assessment/service.py::grade_quiz)
+  // -- is_correct/explanation, not correct/message (review-motivated fix, S2-11).
   feedback: [
-    { question_id: 'q_1', correct: true, message: 'Nice work.' },
-    { question_id: 'q_2', correct: true, message: 'Exactly right.' },
+    {
+      question_id: 'q_1', question: QUESTIONS[0].question, is_correct: true,
+      correct_index: 0, correct_option: QUESTIONS[0].options[0],
+      selected_option: QUESTIONS[0].options[0], explanation: 'Nice work.',
+    },
+    {
+      question_id: 'q_2', question: QUESTIONS[1].question, is_correct: true,
+      correct_index: 1, correct_option: QUESTIONS[1].options[1],
+      selected_option: QUESTIONS[1].options[1], explanation: 'Exactly right.',
+    },
   ],
 };
 
@@ -106,6 +149,33 @@ describe('QuizOverlay', () => {
     expect((screen.getByRole('button', { name: 'Submit' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('handles a 3-question segment (T1-tier count) with realistic quiz_{segment_id}_{index} ids, submitting all 3 unparsed (S2-11 / Story 3-28 confirmation)', async () => {
+    usePlayerStore.setState({ sessionId: 'sess_42' });
+    render(<QuizOverlay questions={THREE_QUESTIONS} />);
+
+    expect(screen.getByText('1 / 3')).not.toBeNull();
+
+    for (let i = 0; i < THREE_QUESTIONS.length; i++) {
+      await userEvent.click(screen.getByText(THREE_QUESTIONS[i].options[i]));
+      await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+      if (i < THREE_QUESTIONS.length - 1) {
+        await userEvent.click(screen.getByRole('button', { name: 'Next question' }));
+      }
+    }
+
+    await waitFor(() =>
+      expect(submitQuizMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answers: [
+            { question_id: 'quiz_section_2_6_0', response_index: 0, response_time_ms: expect.any(Number) },
+            { question_id: 'quiz_section_2_6_1', response_index: 1, response_time_ms: expect.any(Number) },
+            { question_id: 'quiz_section_2_6_2', response_index: 2, response_time_ms: expect.any(Number) },
+          ],
+        })
+      )
+    );
+  });
+
   it('submits all collected answers with session/lesson/segment ids on the last question', async () => {
     usePlayerStore.setState({ sessionId: 'sess_42' });
     render(<QuizOverlay questions={QUESTIONS} />);
@@ -127,6 +197,47 @@ describe('QuizOverlay', () => {
         ],
       })
     );
+  });
+
+  it('shows the score summary feedback using the real backend field names (is_correct/explanation, not correct/message) (S2-11 review fix)', async () => {
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    // result (and its feedback list) renders once submitQuiz resolves, on the
+    // last question's Submit -- no need to click Continue to see it.
+    await waitFor(() => expect(screen.getByText('Nice work.')).not.toBeNull());
+  });
+
+  it('styles score summary feedback by is_correct -- emerald for correct, red for incorrect (review fix)', async () => {
+    submitQuizMock.mockResolvedValue({
+      session_id: 'sess_1', score: 50, correct_count: 1, total_count: 2, ces_contribution: 0.1,
+      feedback: [
+        {
+          question_id: 'q_1', question: QUESTIONS[0].question, is_correct: true,
+          correct_index: 0, correct_option: QUESTIONS[0].options[0],
+          selected_option: QUESTIONS[0].options[0], explanation: 'Correct feedback.',
+        },
+        {
+          question_id: 'q_2', question: QUESTIONS[1].question, is_correct: false,
+          correct_index: 1, correct_option: QUESTIONS[1].options[1],
+          selected_option: QUESTIONS[1].options[0], explanation: 'Incorrect feedback.',
+        },
+      ],
+    });
+    render(<QuizOverlay questions={QUESTIONS} />);
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next question' }));
+    await userEvent.click(screen.getByText(QUESTIONS[1].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Correct feedback.').className).toMatch(/text-emerald-400/);
+      expect(screen.getByText('Incorrect feedback.').className).toMatch(/text-red-400/);
+    });
   });
 
   it('Continue exits the quiz even when the API call fails — never blocks progress', async () => {
