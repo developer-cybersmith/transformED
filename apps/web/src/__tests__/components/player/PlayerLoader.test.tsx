@@ -179,11 +179,11 @@ describe('PlayerLoader', () => {
     const lessonA = { ...mockLessonPackage, lesson_id: 'lesson_A' };
     const lessonB = { ...mockLessonPackage, lesson_id: 'lesson_B' };
 
-    mockUseLesson.mockReturnValue({ lesson: lessonA, isLoading: false, error: null });
+    mockUseLesson.mockReturnValue({ lesson: lessonA, isLoading: false, error: null, status: 'ready', serverError: null });
     const { rerender } = render(<PlayerLoader lessonId="lesson_A" />);
     expect(getMountCount()).toBe(1);
 
-    mockUseLesson.mockReturnValue({ lesson: lessonB, isLoading: false, error: null });
+    mockUseLesson.mockReturnValue({ lesson: lessonB, isLoading: false, error: null, status: 'ready', serverError: null });
     rerender(<PlayerLoader lessonId="lesson_B" />);
 
     // A same-key prop update would leave the mount effect from firing only once total;
@@ -192,7 +192,7 @@ describe('PlayerLoader', () => {
   });
 
   it('does NOT remount Player when re-rendering with the same lesson_id', () => {
-    mockUseLesson.mockReturnValue({ lesson: mockLessonPackage, isLoading: false, error: null });
+    mockUseLesson.mockReturnValue({ lesson: mockLessonPackage, isLoading: false, error: null, status: 'ready', serverError: null });
     const { rerender } = render(<PlayerLoader lessonId="lesson_mock_1" />);
     expect(getMountCount()).toBe(1);
 
