@@ -78,3 +78,26 @@ def assert_required_buckets(client: Any) -> None:  # noqa: ANN401
         )
 
     logger.info("Storage buckets verified (all private): %s", sorted(REQUIRED_BUCKETS))
+
+
+def sign_storage_path(
+    client: Any,  # noqa: ANN401
+    bucket: str,
+    path: str,
+    expires_in: int = 3600,
+) -> str | None:
+    """Return a signed URL for a storage object, or None on any failure.
+
+    Shared by media/router.py (Story 3-6) and content/router.py (Story 1-6)
+    so the fragile "call create_signed_url, pull the signedURL key" logic
+    lives in exactly one place. "signedURL" is the one key storage3 actually
+    returns (matches the established pattern at providers/avatar/heygen.py).
+    A missing/None key, or the call itself raising, are both treated as the
+    object not existing — callers decide how to surface that (404 vs a
+    degrade-to-empty fallback), this helper only ever returns the URL or None.
+    """
+    try:
+        signed = client.storage.from_(bucket).create_signed_url(path, expires_in)
+        return signed["signedURL"] or None
+    except Exception:
+        return None

@@ -4,7 +4,7 @@ baseline_commit: 70a73264983607db3bb5a79b7957e21501d77c17
 
 # Story 1.6: `GET /api/content/lessons/{id}` returns real `content` (Sprint 1 gap-fix)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -27,12 +27,12 @@ so that the endpoint fulfills the frozen contract it's had since Sprint 1, and D
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 4): `apps/api/app/core/storage.py` — new module, `sign_storage_path(supabase, bucket, path, expires_in=3600) -> str | None`.
-- [ ] Task 2 (AC: 4): Refactor `media/router.py:get_signed_url` to call `sign_storage_path()` instead of its inline try/except — zero behavior change, existing 10 tests pass unmodified.
-- [ ] Task 3 (AC: 1, 2, 3, 5, 6): `content/router.py` — add `content` field to `LessonStatusResponse`; add a `_resolve_lesson_content(content: dict, supabase) -> LessonPackage` helper; wire it into `get_lesson` only, gated on `status == "ready"` and non-null `content`.
-- [ ] Task 4 (AC: 7): Confirm `list_lessons` is untouched (it calls the same `_row_to_status_response` — verify that helper does NOT call `_resolve_lesson_content`; only `get_lesson` does, as an explicit extra step after the shared helper).
-- [ ] Task 5 (AC: 8): New tests in `test_content_router.py`; re-run `test_media_router.py` to confirm zero regressions from the DRY refactor.
-- [ ] Task 6 (AC: 8): Full unit suite green; `ruff check .`, `ruff format --check .`, `mypy app/` all clean. Confirm zero `apps/web/**` touches.
+- [x] Task 1 (AC: 4): `apps/api/app/core/storage.py` — new module, `sign_storage_path(supabase, bucket, path, expires_in=3600) -> str | None`.
+- [x] Task 2 (AC: 4): Refactor `media/router.py:get_signed_url` to call `sign_storage_path()` instead of its inline try/except — zero behavior change, existing 10 tests pass unmodified.
+- [x] Task 3 (AC: 1, 2, 3, 5, 6): `content/router.py` — add `content` field to `LessonStatusResponse`; add a `_resolve_lesson_content(content: dict, supabase) -> LessonPackage` helper; wire it into `get_lesson` only, gated on `status == "ready"` and non-null `content`.
+- [x] Task 4 (AC: 7): Confirm `list_lessons` is untouched (it calls the same `_row_to_status_response` — verify that helper does NOT call `_resolve_lesson_content`; only `get_lesson` does, as an explicit extra step after the shared helper).
+- [x] Task 5 (AC: 8): New tests in `test_content_router.py`; re-run `test_media_router.py` to confirm zero regressions from the DRY refactor.
+- [x] Task 6 (AC: 8): Full unit suite green; `ruff check .`, `ruff format --check .`, `mypy app/` all clean. Confirm zero `apps/web/**` touches.
 
 ## Dev Notes
 
@@ -63,6 +63,7 @@ so that the endpoint fulfills the frozen contract it's had since Sprint 1, and D
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created — Sprint 1 gap discovered while building Story 3-6. | Dev 1 |
+| 2026-07-23 | Implemented (RED→GREEN): shared `sign_storage_path()` helper, media/router.py refactored onto it (zero behavior change), `content` wired into `get_lesson` only. 16 new tests, 564/564+1 skipped full suite green, ruff+format+mypy clean, zero `apps/web` touches. | Dev 1 |
 
 ## Dev Agent Record
 
@@ -72,6 +73,29 @@ Claude Opus 4.8 (Sonnet 5 session default)
 
 ### Debug Log References
 
+- `uv run pytest tests/unit/test_storage_helper.py -q` — RED: 5 failed (`ImportError: cannot import name 'sign_storage_path'`). GREEN after implementation: 5 passed.
+- `uv run pytest tests/unit/test_content_router.py -q -k "ready or content"` — RED: 4 failed (`KeyError: 'content'`). GREEN after implementation: all passed.
+- **Self-caught bug during GREEN**: `_resolve_lesson_content` initially mutated its `content` dict argument in place; the second new test's fixture (reusing the same module-level `_READY_CONTENT_DICT` object) came back double-signed, revealing the mutation. Fixed with `copy.deepcopy(content)` at the top of the function — now a pure function, matches how `lesson["content"]` arrives fresh per-request in production anyway, but avoids the footgun for any future caller that might share/cache the dict.
+- `uv run pytest tests/unit/test_media_router.py -q` — 10/10 still pass, unmodified, after the DRY refactor onto `sign_storage_path()` (AC-4 zero-behavior-change requirement).
+- `uv run pytest tests/unit tests/integration -q` — one unrelated regression caught and fixed: `test_bucket_manifest.py`'s static scanner flagged `core/storage.py:bucket` as a new unresolvable dynamic bucket reference (the `.storage.from_(bucket)` call moved out of `media/router.py` into the new shared helper) and flagged the old `modules/media/router.py:bucket` allowlist entry as stale. Updated `_MANUAL_DYNAMIC_REFERENCES` accordingly with a justification reflecting the actual call sites (media router's already-allowlisted `bucket`; content router's hardcoded `"lesson-audio"`/`"lesson-images"` literals only). 564 passed, 1 skipped after the fix.
+- `uv run ruff check .` / `ruff format --check .` / `uv run mypy app/` — all clean, repo-wide.
+
 ### Completion Notes List
 
+- `sign_storage_path()` in `apps/api/app/core/storage.py` (appended to the existing bucket-provisioning module, not a new file — `core/storage.py` already existed with `assert_required_buckets`/`REQUIRED_BUCKETS` from Story 2-0) is the single implementation of "call `create_signed_url`, pull the `signedURL` key, catch any failure → `None`" — used by both `media/router.py` (Story 3-6, refactored) and `content/router.py` (this story).
+- `get_lesson` resolves `content` only when `status == "ready"` and the JSONB column is non-null; `list_lessons` shares the same `LessonStatusResponse` model but never calls `_resolve_lesson_content` — verified by a dedicated regression test asserting `sb.storage.from_.assert_not_called()` on a list request even with a ready-with-content row (AC-7).
+- Per-asset signing failures degrade only that asset (`""` for `audio_url`, `None` for `image_url`) without failing the rest of the response (AC-3) — verified by a test where `create_signed_url` raises for the audio path only.
+- `Slide.fallback_image_url` is never touched by the resolution logic, matching the confirmed fact that no pipeline node ever sets it to anything but `None`.
+- Disclosed, not fixed (per Dev Notes / AC out of scope): one-asset-at-a-time signing (N+M calls per lesson view) rather than a hypothetical Supabase batch-signing endpoint — a future perf pass once real usage volume is known.
+- Frontend handoff unblocked: Dev 2 can now swap `apps/web/src/mocks/data/lessonPackage.ts` for a real call to `GET /api/content/lessons/{id}` and get pre-signed URLs with no new frontend logic — confirmed zero `apps/web/**` files touched by this story.
+
 ### File List
+
+- `apps/api/app/core/storage.py` (UPDATE) — added `sign_storage_path()` to the existing bucket-provisioning module.
+- `apps/api/app/modules/media/router.py` (UPDATE) — refactored `get_signed_url` onto the shared helper; zero behavior change.
+- `apps/api/app/modules/content/router.py` (UPDATE) — `content` field on `LessonStatusResponse`; `_resolve_lesson_content()` helper; wired into `get_lesson` only.
+- `apps/api/tests/unit/test_storage_helper.py` (NEW) — 5 tests for `sign_storage_path()`.
+- `apps/api/tests/unit/test_content_router.py` (UPDATE) — 4 new tests (signed-URL resolution, degrade-on-failure, non-ready regression, list-never-attaches regression).
+- `apps/api/tests/unit/test_bucket_manifest.py` (UPDATE) — `_MANUAL_DYNAMIC_REFERENCES` updated to reflect the refactor (removed stale entry, added the new shared-helper entry with justification).
+- `docs/stories/1-6-lesson-content-endpoint.md` (this file).
+- `docs/dev1-tracker.md` (UPDATE, story-first commit) — Sprint 1 status note.
