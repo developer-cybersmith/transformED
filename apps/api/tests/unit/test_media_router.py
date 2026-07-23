@@ -82,6 +82,7 @@ def test_signed_url_404_wrong_owner(client_factory: ClientFactory) -> None:
             "/api/media/signed-url", params={"bucket": "lesson-audio", "path": FAKE_PATH}
         )
     assert resp.status_code == 404
+    assert resp.json()["detail"] == "Lesson not found"
 
 
 @pytest.mark.unit
@@ -93,6 +94,9 @@ def test_signed_url_404_lesson_not_found(client_factory: ClientFactory) -> None:
             "/api/media/signed-url", params={"bucket": "lesson-audio", "path": FAKE_PATH}
         )
     assert resp.status_code == 404
+    # Identical message/shape to the wrong-owner case (AC-1) — never
+    # distinguish "doesn't exist" from "not yours" (would leak existence).
+    assert resp.json()["detail"] == "Lesson not found"
 
 
 # ── AC-2: malformed path handling ─────────────────────────────────────────────
@@ -156,13 +160,30 @@ def test_signed_url_404_storage_object_missing(client_factory: ClientFactory) ->
 
 
 @pytest.mark.unit
+def test_signed_url_404_storage_response_none_signed_url(
+    client_factory: ClientFactory,
+) -> None:
+    """A storage response with a None-valued key 404s rather than
+    returning a null signed_url as if it were success."""
+    sb = _make_supabase_mock()
+    sb.storage.from_.return_value.create_signed_url.return_value = {"signedURL": None}
+    client = client_factory(sb)
+    with patch("app.modules.media.router.get_supabase", return_value=sb):
+        resp = client.get(
+            "/api/media/signed-url", params={"bucket": "lesson-audio", "path": FAKE_PATH}
+        )
+    assert resp.status_code == 404
+
+
+@pytest.mark.unit
 def test_signed_url_404_storage_response_missing_signed_url_key(
     client_factory: ClientFactory,
 ) -> None:
-    """A storage response missing the expected key (or a None value) 404s
-    rather than raising an unhandled KeyError/AttributeError as a 500."""
+    """A storage response entirely missing the expected key raises KeyError
+    internally, caught by the broad except and 404'd rather than
+    surfacing as an unhandled 500."""
     sb = _make_supabase_mock()
-    sb.storage.from_.return_value.create_signed_url.return_value = {"signedURL": None}
+    sb.storage.from_.return_value.create_signed_url.return_value = {}
     client = client_factory(sb)
     with patch("app.modules.media.router.get_supabase", return_value=sb):
         resp = client.get(

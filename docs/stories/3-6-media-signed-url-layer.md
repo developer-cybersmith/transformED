@@ -89,6 +89,20 @@ Claude Opus 4.8 (Sonnet 5 session default)
 ### File List
 
 - `apps/api/app/modules/media/router.py` (UPDATE) — implemented `_parse_lesson_id`, ownership check, real `create_signed_url` call, replacing the `501` stub.
-- `apps/api/tests/unit/test_media_router.py` (NEW) — 9 tests covering AC-1 through AC-4/AC-6, including the review-driven regression test.
+- `apps/api/tests/unit/test_media_router.py` (NEW) — 10 tests covering AC-1 through AC-4/AC-6, including 2 review-driven regression tests and 2 test-rigor additions from the Test Coverage layer.
+
+## Senior Developer Review (AI)
+
+**Date:** 2026-07-23 · **Outcome:** Approve
+
+5 adversarial layers per the BMAD Code Review Gate:
+
+1. **Story Quality** — Pass. All 6 ACs objectively testable; story-first commit (`ce3cea4`) verified chronologically first and touching only the story file + tracker; implementation scope matches stated ACs exactly, no creep.
+2. **Blind Hunter (Security)** — 1 finding fixed: signed-URL key extraction guessed 3 key spellings instead of the codebase's one established key (`heygen.py:80`'s `result["signedURL"]`), also leaving a `None`-response path uncaught outside the `try` (AttributeError → unhandled 500). Fixed. Path-traversal concern raised and refuted (Supabase Storage is a flat object-key store, no filesystem traversal semantics — verified against actual upload/consumption code). No rate-limiting / RLS-defense-in-depth / DB-exception-handling findings actioned — all are either spec-mandated (AC-3), cross-cutting and tracked elsewhere, or intentionally mirror `get_lesson`'s existing pattern per Dev Notes.
+3. **Test Coverage** — 2 minor gaps found and closed: AC-1's 404 tests didn't assert the response `detail` text (the "identical message, no distinguishing leak" requirement was itself unverified) — added; the dict-missing-key (vs. `None`-valued key) branch of storage-response handling was untested — added. No false-confidence tests found; mocks are shaped to match the real Supabase client call chain, not vacuous.
+4. **AC Completeness** (Acceptance Auditor) — 2 findings, both investigated: a genuine ruff-line-length flag was checked and did NOT reproduce (`ruff check` passes — pycodestyle's long-unbreakable-token exception applies to the URL literal); the signed-URL key-guessing finding was real and is the same one fixed under Blind Hunter above. All 6 ACs independently confirmed satisfied; confirmed zero `apps/web/**` touches (AC-5).
+5. **Process Integrity** — Pass. No LLM/model calls in this module (pure Supabase Storage signing); story-first gate honored (verified via `git show --stat` on the story-only commit); branch naming (`sprint3/s3-6-media-signed-url`) and fresh-cut-from-`main` verified; Sprint Tracker Auto-Update Rule fully satisfied in one commit (checkbox, date, dashboard counts, header date together); no frozen-contract, migration, or banned-library touches.
+
+**Action items:** none outstanding — all findings from layers 2–4 were fixed in commit `8cc5c6f` and this follow-up test-rigor pass; layer 1 and 5 raised no findings.
 - `docs/stories/3-6-media-signed-url-layer.md` (this file).
 - `docs/dev1-tracker.md` (UPDATE, story-first commit) — added S3-6 entry + dashboard totals.
