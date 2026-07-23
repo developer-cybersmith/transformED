@@ -4,7 +4,7 @@ baseline_commit: ca7906119b0a0ee7d58b80eb96ed7240d3a4836b
 
 # Story 1.7: Wire Player to Real Lesson Content (Dev 2 counterpart to Story 1-6)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -46,7 +46,20 @@ so that "This lesson could not be loaded" stops appearing for every real (non-mo
 - [x] Task 6 (AC: 8): Full `apps/web` suite green (339/339, 42 files); `tsc --noEmit` clean; `eslint` clean on every touched file (0 new warnings — 2 pre-existing warnings in `PlayerLoader.test.tsx`'s unrelated `next/dynamic` mock stub, not introduced by this story).
 - [x] Task 7: Tracker update — `docs/master-tracker.md`'s "Lesson load from real API" line checked off; `docs/dev2-sprint-tracker.md` gained a dated cross-team note referencing this story and Story 1-6.
 
-## Dev Notes
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint1/s1-7-wire-real-lesson-content` vs `main`, 2026-07-23.
+
+- [x] [Review][Patch] `AudioTimeline.tsx`'s `audio_url === ''` degrade prevents a broken player but doesn't prevent a *stuck* one — since `<audio>` never has a `src`, `timeupdate`/`ended` never fire, so `processTimeUpdate`'s quiz-boundary check and `handleEnded`'s advance/quiz logic never run; a student lands on that segment and the lesson never progresses. This is the AC-6 "not silently hanging" requirement, not yet met — 3-way corroborated by Blind Hunter, Edge Case Hunter, and the Acceptance Auditor independently. [apps/web/src/components/player/AudioTimeline.tsx:79-85,114-158] (blind+edge+auditor)
+- [x] [Review][Patch] `PlayerLoader.tsx` checks the generic SWR `error` before the `status`-derived branches — a single transient revalidation failure during polling (SWR retains the last good `data`/`status` across a failed poll by default) flashes a lesson that's still genuinely `running`/`queued` to the permanent error page instead of staying on "still generating." [apps/web/src/components/player/PlayerLoader.tsx:67] (blind+edge)
+- [x] [Review][Patch] `PlayerLoader.tsx` renders `<Player>` on bare `lesson` truthiness, not gated on `status === 'ready'` — an unrecognized/future status value with a non-null `content` would render the player unconditionally. Not reachable via the real backend's own contract (content is only ever populated atomically with `status === 'ready'`, per Story 1-6), but cheap to guard defensively. [apps/web/src/components/player/PlayerLoader.tsx:67-74] (edge)
+- [x] [Review][Patch] `useLesson.ts`'s `POLL_INTERVAL_MS` (3000ms) doesn't match `UploadFlow.tsx`'s existing, already-shipped real-polling-interval convention (5000ms) — align for consistency. Backoff/jitter beyond a flat interval was also raised but dismissed: matches this codebase's existing `UploadFlow.tsx` polling precedent exactly, not a new anti-pattern. [apps/web/src/hooks/useLesson.ts] (blind)
+- [x] [Review][Patch] No test proves a backend contract violation (`status: 'ready'` with `content: null`) degrades to the generic error state rather than crashing — add one regression test. [apps/web/src/__tests__/components/player/PlayerLoader.test.tsx] (blind)
+- [x] [Review][Defer] No ceiling on how long `PlayerLoader` will keep polling a `running`/`queued` lesson — a stuck backend job polls forever with only a spinner, no "this is taking longer than usual" fallback. Real gap, but the exact policy (timeout duration, UX/copy) is a product decision outside this story's stated scope — disclosed here as a known limitation, matching this same story's existing signed-URL-expiry disclosure, rather than either building it unprompted or blocking on a decision for a non-blocking gap. [apps/web/src/components/player/PlayerLoader.tsx] (blind+edge)
+
+**Dismissed as noise/false-positive (9):** "endpoint path documentation mismatch" — refuted, the comment's shorthand ("GET /lessons/{id}") matches the FastAPI route's own literal path suffix before its `/content` prefix mount, not a real inconsistency. No runtime schema validation of the API response — pre-existing, codebase-wide convention (every service in this codebase trusts TS types only), not introduced or worsened here. Pending-seek effect not audited for `hasAudio` — confirmed a harmless no-op on a src-less `<audio>` in both real browsers and jsdom. `refreshIntervalFor` "only tests wiring not behavior" — matches this suite's established fully-mocked-SWR unit-test convention throughout `useLesson.test.ts`. Module cohesion (`LessonStatus`/`LessonStatusResponse` living in `upload.service.ts`) — the story's own Dev Notes explicitly chose this reuse to avoid a second hand-duplicated interface; moving it is unrequested refactoring beyond scope. "Cross-team coordination comments deleted, not resolved" — false; refuted by full context the Blind Hunter didn't have access to (Dev 1's Story 1-6 + explicit handoff doc IS the resolution). Test-suite churn (no fixture/override factory for `mockUseLesson`) — stylistic preference, a new test-fixture pattern would be scope creep. `lesson.service.ts`'s `lessonId` not URL-encoded — pre-existing pattern, identical to the sibling `upload.service.ts::getLessonStatus` this story was explicitly told to mirror; fixing only one side would be inconsistent and fixing both is out of scope here. `onLoadedMetadata` never firing on a no-audio segment (stale duration) — same root cause as the first patch above; once that auto-advances the segment, the stale value's window shrinks to negligible and isn't worth a separate fix.
+
+
 
 ### Current state of every file this story touches (read directly, not assumed)
 
@@ -131,6 +144,7 @@ Vitest + `@testing-library/react`, matching this codebase's existing patterns in
 | 2026-07-23 | Story created — Dev 2 counterpart to Dev 1's Story 1-6, per Dev 1's own handoff doc. Branch `sprint1/s1-7-wire-real-lesson-content` off `main`. | Dev 2 |
 | 2026-07-23 | Corrected AC-3/Dev Notes during implementation: the wire status value is `"running"` (and `"queued"`), NOT `"generating"` as originally drafted — `content/router.py`'s `_map_status()` translates the DB column value `"generating"` to the wire value `"running"`; matched `upload.service.ts`'s/`UploadFlow.tsx`'s existing convention exactly rather than inventing a second status vocabulary. | Dev 2 |
 | 2026-07-23 | All 7 tasks implemented in strict RED→GREEN order. 8 new/updated tests across 4 files; full `apps/web` suite 339/339 passing (42 files); `tsc --noEmit` clean; `eslint` clean (0 new warnings). Tracker updated. Story marked `review`. | Dev 2 |
+| 2026-07-23 | 5-agent adversarial review run against `sprint1/s1-7-wire-real-lesson-content` vs `main`; 5 patches applied (stuck-segment fix, transient-poll-error reorder, ready-gate tightening, poll-interval alignment, contract-violation test), 1 deferred (polling ceiling, disclosed), 9 dismissed. Full suite 342/342 passing, `tsc --noEmit` and `eslint` clean; story marked `done`. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -149,6 +163,8 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `npx eslint` on every touched file — 0 errors; 2 pre-existing warnings in `PlayerLoader.test.tsx`'s unrelated `next/dynamic` mock stub (unused `importFn`/`opts` params), present before this story's diff, not introduced by it.
 - No HALT conditions hit — no new dependencies, no ambiguous requirements, no 3-consecutive-failure loop. One self-caught correction during implementation (see Change Log): the story's own AC-3 draft used the wrong wire status value (`"generating"` instead of `"running"`), caught by reading `content/router.py`'s actual `_map_status()` before writing `useLesson.ts`, not after shipping a dead branch.
 
+**Review Round (2026-07-23):** 5 patches applied (3-way corroborated stuck-segment fix, transient-poll-error branch reorder, ready-gate tightening, poll-interval alignment, contract-violation regression test), 1 deferred (polling ceiling — disclosed as a known limitation, matching this story's own signed-URL-expiry precedent), 9 dismissed as noise/false-positive/out-of-scope. All 5 patches verified via RED→GREEN: the stuck-segment fix's RED confirmed `status` stayed `'PLAYING'` forever without the fix (`handleEnded()` never invoked); the transient-poll-error fix's RED confirmed the old branch order rendered the permanent error page instead of the generating state. Full `apps/web` suite: 342/342 passing across 42 files after all 5 patches (up from this story's pre-review 339); `tsc --noEmit` clean; `eslint` clean (0 new warnings) on every file touched this round.
+
 ### Completion Notes List
 
 - `lesson.service.ts`: `getLessonPackage` now calls `api.get<LessonStatusResponse>(`content/lessons/${id}`)` via the shared authenticated client — same client/pattern `upload.service.ts` already used. `getLesson`/`updateProgress` untouched (still mock-backed, regression-tested). Removed the stale `[DEV1-SPRINT2-PENDING]` comment block.
@@ -158,6 +174,14 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `AudioTimeline.tsx`: derived `hasAudio = Boolean(segment?.narration.audio_url)`; the `<audio>` element's `src` is now `undefined` (attribute omitted entirely) rather than `""` when there's no audio, and the play/pause effect's guard clause returns early when `!hasAudio`, added to its dependency array. Removed the stale `[DEV1-SPRINT2-PENDING]` comment block.
 - No changes to `lesson.service.ts`'s `getLesson`/`updateProgress`, `useLessonSocket.ts`, `Player.tsx`, or any `packages/shared` frozen contract.
 - Tracker: `docs/master-tracker.md`'s "Lesson load from real API" line checked off; `docs/dev2-sprint-tracker.md` gained a dated cross-team note. Sprint 2's stale dashboard numbers in `docs/dev2-sprint-tracker.md` were intentionally left untouched — they reconcile whenever `sprint2-master`/`feature-learner-mode` (still separate, unmerged branches) land on `main`, which is outside this Sprint-1-scoped story.
+
+**Review Round completion notes:**
+- `AudioTimeline.tsx`: the play/pause effect now short-circuits when `!hasAudio` — if `status === 'PLAYING'`, it calls `handleEnded()` (hoisted function declaration, safe to call before its textual definition) immediately instead of waiting for an `ended` event that can never fire on a src-less `<audio>` element. Reuses `handleEnded`'s existing, already-tested advance/quiz logic rather than duplicating it.
+- `PlayerLoader.tsx`: reordered so `status`-derived branches (`running`/`queued`/`failed`/`ready`) are checked before the generic SWR `error`/`isLoading` fallbacks — SWR retains the last good `data` (and therefore `status`) across a failed background revalidation, so this ordering keeps a still-generating lesson on the generating state through a transient poll blip instead of flashing to the permanent error page. The `ready` render is now gated on `status === 'ready' && lesson`, not bare `lesson` truthiness (defensive-only; not reachable via the real backend's own atomic status/content contract).
+- `useLesson.ts`: `POLL_INTERVAL_MS` changed from 3000 to 5000 to match `UploadFlow.tsx`'s established polling cadence exactly.
+- `PlayerLoader.test.tsx`: 2 new tests (transient-poll-error-during-running regression; ready+null-content contract-violation regression).
+- `AudioTimeline.component.test.tsx`: 1 new test (no-audio segment auto-advances/quizzes rather than freezing).
+- Deferred (not fixed): the polling-ceiling gap, documented in `docs/stories/deferred-work.md` and in this story's own Review Findings above.
 
 ### File List
 
@@ -176,3 +200,11 @@ Claude Sonnet 5 (claude-sonnet-5)
 **Files CREATED:**
 - `apps/web/src/__tests__/services/lesson.service.test.ts` — new, 5 tests (real endpoint call, no mock fallback, rejection propagation, `getLesson`/`updateProgress` regression)
 - `docs/stories/1-7-wire-player-to-real-lesson-content.md` — this file
+
+**Files MODIFIED (Review Round):**
+- `apps/web/src/components/player/AudioTimeline.tsx` — no-audio segment now drives `handleEnded()` immediately instead of hanging forever
+- `apps/web/src/components/player/PlayerLoader.tsx` — status-derived branches reordered before the generic error fallback; ready-render gated on `status === 'ready' && lesson`
+- `apps/web/src/hooks/useLesson.ts` — `POLL_INTERVAL_MS` aligned to 5000 (matches `UploadFlow.tsx`)
+- `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` — 1 new regression test
+- `apps/web/src/__tests__/components/player/PlayerLoader.test.tsx` — 2 new regression tests
+- `docs/stories/deferred-work.md` — 1 new deferred entry (polling ceiling)

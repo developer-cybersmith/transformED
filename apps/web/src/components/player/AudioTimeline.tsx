@@ -75,8 +75,15 @@ export function AudioTimeline() {
   // this dependency the new element would never receive a .play() call and
   // playback would silently freeze despite the UI still showing "playing".
   useEffect(() => {
+    if (!hasAudio) {
+      // Nothing will ever load, so 'ended'/'timeupdate' can never fire for this
+      // segment (review fix) -- drive the same advance/quiz logic handleEnded
+      // uses immediately instead of leaving the lesson stuck here forever.
+      if (status === 'PLAYING') handleEnded();
+      return;
+    }
     const audio = audioRef.current;
-    if (!audio || !hasAudio) return;
+    if (!audio) return;
     if (status === 'PLAYING') {
       audio.play().catch(() => {});
     } else {

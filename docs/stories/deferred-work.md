@@ -2,6 +2,10 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story 1-7 (2026-07-23, wire player to real lesson content)
+
+- **`PlayerLoader.tsx` polls a `running`/`queued` lesson with no ceiling** — a stuck backend job (crash, hung ARQ job) leaves the student on an infinite "still generating" spinner forever, with no "this is taking longer than usual" fallback or escape hatch. Real gap introduced by this story's own new polling behavior, but the exact policy (timeout duration, what to show/offer once it fires) is a product/UX decision outside this story's stated scope. Deferred rather than either building an arbitrary timeout unprompted or blocking the story on a non-blocking decision — matches this same story's own precedent of disclosing the signed-URL-expiry limitation rather than solving it. [`apps/web/src/components/player/PlayerLoader.tsx`]
+
 ## Deferred from: code review of story-2.2 (2026-07-14, Learner Mode infra)
 
 - **Unbounded `tier` Form field is parsed before the file's streaming size guard** — a theoretical memory/CPU amplification vector (pair a tiny/invalid file with an oversized `tier` text field); framework-dependent (Starlette's own multipart limits may already bound this), not confirmed exploitable from the diff alone. Deferred — pre-existing multipart-parsing pattern in this endpoint, not introduced by tier specifically. [`apps/api/app/modules/content/router.py`]

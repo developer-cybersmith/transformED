@@ -64,12 +64,19 @@ interface PlayerLoaderProps {
 export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
   const { lesson, isLoading, error, status, serverError } = useLesson(lessonId);
 
-  if (error) return <LessonErrorState />;
-  if (isLoading) return <PlayerSkeleton />;
+  // Status-derived states take priority over the generic SWR `error` (review
+  // fix): SWR retains the last good data/status across a failed background
+  // revalidation, so a single transient poll failure must not flash a lesson
+  // that's still genuinely running/queued to the permanent error page.
   // "running"/"queued" (still generating) is a normal state a direct-navigated
   // (bookmark/refresh/back-button) request can land on -- not an error.
   if (status === 'running' || status === 'queued') return <LessonGeneratingState />;
   if (status === 'failed') return <LessonErrorState message={serverError} />;
-  if (!lesson) return <LessonErrorState />;
-  return <Player lesson={lesson} />;
+  // Gated on status === 'ready' (not just lesson truthiness, review fix) --
+  // content is only ever populated atomically with status 'ready' by the
+  // real backend, but this keeps that invariant enforced defensively too.
+  if (status === 'ready' && lesson) return <Player lesson={lesson} />;
+  if (error) return <LessonErrorState />;
+  if (isLoading) return <PlayerSkeleton />;
+  return <LessonErrorState />;
 }

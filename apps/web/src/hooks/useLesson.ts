@@ -20,7 +20,9 @@ interface UseLessonResult {
 // !== 'queued' && !== 'running' convention (the DB column value is
 // "generating", but content/router.py's _map_status() translates that to the
 // wire value "running" -- there is no "generating" on the wire).
-const POLL_INTERVAL_MS = 3000;
+// Matches UploadFlow.tsx's existing, already-shipped real polling-interval
+// convention exactly (review fix) -- was 3000ms, an inconsistent one-off.
+const POLL_INTERVAL_MS = 5000;
 
 function refreshIntervalFor(data: LessonStatusResponse | null | undefined): number {
   if (!data) return 0;

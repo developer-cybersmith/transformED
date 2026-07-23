@@ -94,6 +94,31 @@ describe('PlayerLoader', () => {
     expect(screen.queryByText('This lesson could not be loaded. Please try again.')).toBeNull();
   });
 
+  it('stays on the "still generating" state during a transient SWR poll error, instead of flashing to the error page (review fix)', () => {
+    // SWR retains the last good data/status across a failed background
+    // revalidation -- a flaky network blip mid-poll must not override a
+    // still-genuinely-running lesson with the permanent error page.
+    mockUseLesson.mockReturnValue({
+      lesson: null, isLoading: false, error: new Error('transient poll failure'), status: 'running', serverError: null,
+    });
+
+    render(<PlayerLoader lessonId="lesson_1" />);
+
+    expect(screen.getByTestId('lesson-generating')).toBeDefined();
+    expect(screen.queryByTestId('lesson-error')).toBeNull();
+  });
+
+  it('shows the generic error, not a crash, when status is ready but content is unexpectedly null (backend contract violation, review fix)', () => {
+    mockUseLesson.mockReturnValue({
+      lesson: null, isLoading: false, error: null, status: 'ready', serverError: null,
+    });
+
+    render(<PlayerLoader lessonId="lesson_1" />);
+
+    expect(screen.getByTestId('lesson-error')).toBeDefined();
+    expect(screen.queryByTestId('player-stub')).toBeNull();
+  });
+
   it('renders LessonErrorState when hook returns an error', () => {
     mockUseLesson.mockReturnValue({
       lesson: null,

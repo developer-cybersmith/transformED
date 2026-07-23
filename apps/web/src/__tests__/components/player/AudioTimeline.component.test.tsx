@@ -61,6 +61,25 @@ describe('AudioTimeline — audio_url can be "" (per-asset signing failure degra
     expect(audio?.getAttribute('src')).toBeNull();
     expect(playMock).not.toHaveBeenCalled();
   });
+
+  it('does not permanently freeze on a segment with no audio -- advances/quizzes immediately since ended/timeupdate can never fire (review fix)', () => {
+    const lessonWithMissingAudio = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithMissingAudio);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    // No audio ever loads for this segment, so nothing will ever fire 'ended' --
+    // the component must drive the quiz/advance logic itself rather than wait
+    // for an event that can never come.
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+  });
 });
 
 describe('AudioTimeline — segment replay does not freeze playback', () => {
