@@ -7,9 +7,8 @@ Call get_settings() everywhere — never instantiate Settings() directly.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Annotated
 
-from pydantic import Field, HttpUrl, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,8 +30,12 @@ class Settings(BaseSettings):
     # ── Supabase ──────────────────────────────────────────────────────────────
     supabase_url: str = Field(..., description="Supabase project URL")
     supabase_anon_key: str = Field(..., description="Supabase anon/public key")
-    supabase_service_role_key: str = Field(..., description="Supabase service-role key (never expose to client)")
-    supabase_jwt_secret: str = Field(..., description="JWT secret from Supabase dashboard — used for local verification")
+    supabase_service_role_key: str = Field(
+        ..., description="Supabase service-role key (never expose to client)"
+    )
+    supabase_jwt_secret: str = Field(
+        ..., description="JWT secret from Supabase dashboard — used for local verification"
+    )
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     redis_url: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")
@@ -41,7 +44,9 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(..., description="OpenAI API key")
 
     # ── Anthropic (Phase 2, optional) ─────────────────────────────────────────
-    anthropic_api_key: str | None = Field(default=None, description="Anthropic API key — optional, Phase 2 only")
+    anthropic_api_key: str | None = Field(
+        default=None, description="Anthropic API key — optional, Phase 2 only"
+    )
 
     # ── Google AI ──────────────────────────────────────────────────────────────
     google_api_key: str | None = Field(
@@ -56,11 +61,20 @@ class Settings(BaseSettings):
     # ── TTS providers ─────────────────────────────────────────────────────────
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
     sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
-    sarvam_voice_id: str = Field(default="meera", description="Sarvam Bulbul v2 speaker name for narration synthesis")
-    azure_tts_key: str | None = Field(default=None, description="Azure Cognitive Services TTS key — fallback")
+    sarvam_voice_id: str = Field(
+        default="meera", description="Sarvam Bulbul v2 speaker name for narration synthesis"
+    )
+    azure_tts_key: str | None = Field(
+        default=None, description="Azure Cognitive Services TTS key — fallback"
+    )
     azure_tts_region: str = Field(default="centralindia", description="Azure TTS region")
-    azure_tts_voice: str = Field(default="en-IN-NeerjaNeural", description="Azure neural voice for fallback narration synthesis")
-    elevenlabs_api_key: str | None = Field(default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam")
+    azure_tts_voice: str = Field(
+        default="en-IN-NeerjaNeural",
+        description="Azure neural voice for fallback narration synthesis",
+    )
+    elevenlabs_api_key: str | None = Field(
+        default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam"
+    )
 
     # ── HeyGen ────────────────────────────────────────────────────────────────
     heygen_api_key: str = Field(..., description="HeyGen API key for avatar clips")
@@ -68,7 +82,9 @@ class Settings(BaseSettings):
     # ── Langfuse ──────────────────────────────────────────────────────────────
     langfuse_public_key: str = Field(..., description="Langfuse public key")
     langfuse_secret_key: str = Field(..., description="Langfuse secret key")
-    langfuse_host: str = Field(default="https://cloud.langfuse.com", description="Langfuse host URL")
+    langfuse_host: str = Field(
+        default="https://cloud.langfuse.com", description="Langfuse host URL"
+    )
 
     # ── PostHog ───────────────────────────────────────────────────────────────
     posthog_api_key: str = Field(
@@ -77,7 +93,9 @@ class Settings(BaseSettings):
     )
     posthog_host: str = Field(
         default="https://us.i.posthog.com",
-        description="PostHog ingest endpoint (change to https://eu.i.posthog.com for EU data residency)",
+        description=(
+            "PostHog ingest endpoint (change to https://eu.i.posthog.com for EU data residency)"
+        ),
     )
 
     # ── Sentry ────────────────────────────────────────────────────────────────
@@ -99,19 +117,30 @@ class Settings(BaseSettings):
     # Defaults below are conservative (confirmed working). Swap via env vars to test.
     llm_lesson_planner: str = Field(
         default="gpt-4o",
-        description="Premium model for lesson-planner node. Eval candidates: gpt-4o, claude-3-5-sonnet-20241022, o1-mini.",
+        description=(
+            "Premium model for lesson-planner node. "
+            "Eval candidates: gpt-4o, claude-3-5-sonnet-20241022, o1-mini."
+        ),
     )
     llm_slide_generator: str = Field(
         default="gpt-4o",
-        description="Premium model for slide-generator node. Shares eval candidates with llm_lesson_planner.",
+        description=(
+            "Premium model for slide-generator node. "
+            "Shares eval candidates with llm_lesson_planner."
+        ),
     )
     llm_mini: str = Field(
         default="gpt-4o-mini",
-        description="Economy model for quiz, jargon, complexity, narration, intervention nodes. Eval candidates: gpt-4o-mini, gemini-2.0-flash.",
+        description=(
+            "Economy model for quiz, jargon, complexity, narration, intervention nodes. "
+            "Eval candidates: gpt-4o-mini, gemini-2.0-flash."
+        ),
     )
     llm_tutor: str = Field(
         default="gpt-4o",
-        description="Model for Phase 2 tutor Q&A. Eval candidates: gpt-4o, claude-3-5-sonnet-20241022.",
+        description=(
+            "Model for Phase 2 tutor Q&A. Eval candidates: gpt-4o, claude-3-5-sonnet-20241022."
+        ),
     )
 
     # ── CES weights (PRD §11) ─────────────────────────────────────────────────
@@ -126,7 +155,7 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _ces_weights_must_sum_to_one(self) -> "Settings":
+    def _ces_weights_must_sum_to_one(self) -> Settings:
         total = (
             self.ces_weight_quiz
             + self.ces_weight_teachback
@@ -136,8 +165,7 @@ class Settings(BaseSettings):
         )
         if abs(total - 1.0) > 0.001:
             raise ValueError(
-                f"CES weights must sum to 1.0 (got {total:.4f}). "
-                "Check CES_WEIGHT_* env vars."
+                f"CES weights must sum to 1.0 (got {total:.4f}). Check CES_WEIGHT_* env vars."
             )
         return self
 
@@ -146,7 +174,9 @@ class Settings(BaseSettings):
         default=5,
         ge=1,
         le=50,
-        description="Number of most-recent completed sessions to average for the per-learner CES baseline",
+        description=(
+            "Number of most-recent completed sessions to average for the per-learner CES baseline"
+        ),
     )
     ces_baseline_ttl_seconds: int = Field(
         default=86400,
@@ -179,7 +209,10 @@ class Settings(BaseSettings):
     # ── PDF extraction ────────────────────────────────────────────────────────
     ocr_text_yield_threshold: int = Field(
         default=50,
-        description="Min chars/page from pdfplumber before Tesseract OCR fallback (env: OCR_TEXT_YIELD_THRESHOLD)",
+        description=(
+            "Min chars/page from pdfplumber before Tesseract OCR fallback "
+            "(env: OCR_TEXT_YIELD_THRESHOLD)"
+        ),
     )
 
     # ── Chunking (Node 3) ─────────────────────────────────────────────────────
@@ -196,21 +229,76 @@ class Settings(BaseSettings):
         description="tiktoken encoding name used for token counting (must match embedding model)",
     )
 
+    # ── Structure segmentation bounds (Story 2-16, RC-1 over-segmentation) ─────
+    structure_min_section_chars: int = Field(
+        default=200,
+        ge=0,
+        description=(
+            "Minimum body length (chars) for a detected section to stand alone. "
+            "Sections below this are coalesced into a neighbour (text-preserving) "
+            "so numbered how-to steps are not each treated as a section."
+        ),
+    )
+    structure_max_sections: int = Field(
+        default=15,
+        ge=1,
+        description=(
+            "Upper bound on sections handed to the generation pipeline. Above "
+            "this, adjacent sections are merged (text-preserving) down to the "
+            "cap — keeps lesson density in the T2 range and keeps lesson_planner "
+            "reliable. Independent of and well below the _MAX_PHASE1_SECTIONS "
+            "fan-out DoS cap (60)."
+        ),
+    )
+
+    # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
+    lesson_planner_batch_size: int = Field(
+        default=15,
+        gt=0,
+        description=(
+            "Max segment summaries sent to lesson_planner in a single LLM "
+            "completion. Above this, summaries are split into ordered batches so "
+            "the model reliably echoes every segment_id 1:1; at or below it the "
+            "planner makes exactly one call (unchanged behaviour)."
+        ),
+    )
+
+    # ── Narration timestamps (Story 2-19, package_builder) ────────────────────
+    narration_words_per_minute: int = Field(
+        default=150,
+        gt=0,
+        description=(
+            "Assumed narration speaking rate used to ESTIMATE each segment's audio "
+            "duration from its script word count, so package_builder can distribute "
+            "the segment's slides across a contiguous timestamp track (real "
+            "forced-alignment / word timing remains deferred)."
+        ),
+    )
+    default_ms_per_slide: int = Field(
+        default=5000,
+        gt=0,
+        description=(
+            "Fallback per-slide duration (ms) when a segment's narration script is "
+            "empty (word_count 0), so the estimated timestamp track is still "
+            "non-degenerate (start_ms < end_ms)."
+        ),
+    )
+
     # ── Embeddings (Node 4) ───────────────────────────────────────────────────
     embedding_model: str = Field(
         default="text-embedding-3-small",
         description="OpenAI embedding model — outputs 1536-dim vectors; fixed for Sprint 1. "
-                    "Stored embeddings are NEVER regenerated (CLAUDE.md rule).",
+        "Stored embeddings are NEVER regenerated (CLAUDE.md rule).",
     )
     embedding_dimensions: int = Field(
         default=1536,
         description="Output vector dimensions of the embedding model. "
-                    "Must match the model; stored in embedding_metadata per chunk.",
+        "Must match the model; stored in embedding_metadata per chunk.",
     )
     embed_batch_token_budget: int = Field(
         default=100_000,
         description="Max tokens per OpenAI embeddings request batch (API hard cap is 300k). "
-                    "Batches are packed by chunk token_count up to this budget (Story 2-0 AC-6).",
+        "Batches are packed by chunk token_count up to this budget (Story 2-0 AC-6).",
     )
 
     # ── ARQ / pipeline timeouts (Story 2-0 AC-5) ──────────────────────────────
@@ -232,14 +320,14 @@ class Settings(BaseSettings):
     extract_timeout_per_page_s: float = Field(
         default=3.0,
         description="Per-page allowance added to the extraction timeout (seconds/page). "
-                    "Calibrated 2026-07-10 against a real 41-page table-bearing PDF: "
-                    "page-scoped docling extraction measured 206-216s while the old "
-                    "120 + 1.3s/page formula granted only 183.7s — table pages cost "
-                    "docling ML time the flat rate must absorb.",
+        "Calibrated 2026-07-10 against a real 41-page table-bearing PDF: "
+        "page-scoped docling extraction measured 206-216s while the old "
+        "120 + 1.3s/page formula granted only 183.7s — table pages cost "
+        "docling ML time the flat rate must absorb.",
     )
 
     @model_validator(mode="after")
-    def _extract_timeout_must_fit_inside_arq_timeout(self) -> "Settings":
+    def _extract_timeout_must_fit_inside_arq_timeout(self) -> Settings:
         required = self.extract_timeout_cap_s + 300
         if self.arq_job_timeout_s < required:
             raise ValueError(
@@ -261,4 +349,4 @@ def get_settings() -> Settings:
 
         settings = get_settings()
     """
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

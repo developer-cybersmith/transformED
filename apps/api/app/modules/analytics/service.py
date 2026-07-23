@@ -5,30 +5,32 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
-KNOWN_EVENT_TYPES: frozenset[str] = frozenset({
-    "tab_switch",
-    "retry_after_fail",
-    "jargon_hover",
-    "quiz_skip",
-    "teachback_skip",
-    "intervention_acknowledged",
-    "segment_complete",
-    "session_start",
-    "session_end",
-})
+KNOWN_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "tab_switch",
+        "retry_after_fail",
+        "jargon_hover",
+        "quiz_skip",
+        "teachback_skip",
+        "intervention_acknowledged",
+        "segment_complete",
+        "session_start",
+        "session_end",
+    }
+)
 
 
 async def ingest_events(
     *,
     events: list[Any],
     user_id: str,
-    supabase: Any,
+    supabase: Any,  # noqa: ANN401
 ) -> dict[str, int]:
     """Validate session ownership and bulk-insert a batch of analytics events.
 
@@ -48,11 +50,13 @@ async def ingest_events(
     session_ids: list[str] = list({str(e.session_id) for e in events})
 
     ownership_resp = await asyncio.to_thread(
-        lambda: supabase.table("sessions")
-        .select("session_id")
-        .in_("session_id", session_ids)
-        .eq("user_id", user_id)
-        .execute()
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id")
+            .in_("session_id", session_ids)
+            .eq("user_id", user_id)
+            .execute()
+        )
     )
     authorized_ids: set[str] = {str(r["session_id"]) for r in (ownership_resp.data or [])}
     requested_ids: set[str] = set(session_ids)
@@ -105,8 +109,8 @@ async def ingest_events(
 
 async def write_system_events(
     *,
-    rows: list[dict],
-    supabase: Any,
+    rows: list[dict[str, Any]],
+    supabase: Any,  # noqa: ANN401
 ) -> int:
     """Insert system-generated session_events rows. Non-fatal.
 
@@ -140,7 +144,7 @@ async def get_session_summary(
     *,
     session_id: str,
     user_id: str,
-    supabase: Any,
+    supabase: Any,  # noqa: ANN401
 ) -> dict[str, Any]:
     """Return aggregated analytics for a session.
 
@@ -158,11 +162,13 @@ async def get_session_summary(
     """
     # Step 1 — Ownership check (SEC-006: identical 404 for missing and IDOR)
     session_resp = await asyncio.to_thread(
-        lambda: supabase.table("sessions")
-        .select("session_id, user_id, lesson_id, ces_final, started_at, ended_at")
-        .eq("session_id", session_id)
-        .maybe_single()
-        .execute()
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id, ces_final, started_at, ended_at")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
     )
     if session_resp.data is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
@@ -173,35 +179,38 @@ async def get_session_summary(
 
     # Step 2 — Single session_events query; aggregate all three metrics in Python
     events_resp = await asyncio.to_thread(
-        lambda: supabase.table("session_events")
-        .select("event_type")
-        .eq("session_id", session_id)
-        .limit(10_000)
-        .execute()
+        lambda: (
+            supabase.table("session_events")
+            .select("event_type")
+            .eq("session_id", session_id)
+            .limit(10_000)
+            .execute()
+        )
     )
     events_rows = events_resp.data or []
     events_count = len(events_rows)
     distraction_events = sum(
-        1 for r in events_rows
-        if r.get("event_type") in {"tab_switch", "intervention_acknowledged"}
+        1 for r in events_rows if r.get("event_type") in {"tab_switch", "intervention_acknowledged"}
     )
-    page_views = sum(
-        1 for r in events_rows
-        if r.get("event_type") == "segment_complete"
-    )
+    page_views = sum(1 for r in events_rows if r.get("event_type") == "segment_complete")
 
-    # Step 3 — Attention events (0 rows when none recorded; attention_consent enforcement is Sprint 3 DPDP hardening)
+    # Step 3 — Attention events (0 rows when none recorded; attention_consent
+    # enforcement is Sprint 3 DPDP hardening)
     attn_resp = await asyncio.to_thread(
-        lambda: supabase.table("attention_events")
-        .select("gaze_score, head_pose_score, blink_rate")
-        .eq("session_id", session_id)
-        .limit(10_000)
-        .execute()
+        lambda: (
+            supabase.table("attention_events")
+            .select("gaze_score, head_pose_score, blink_rate")
+            .eq("session_id", session_id)
+            .limit(10_000)
+            .execute()
+        )
     )
     attn_rows = attn_resp.data or []
 
     gaze_vals = [float(r["gaze_score"]) for r in attn_rows if r.get("gaze_score") is not None]
-    head_vals = [float(r["head_pose_score"]) for r in attn_rows if r.get("head_pose_score") is not None]
+    head_vals = [
+        float(r["head_pose_score"]) for r in attn_rows if r.get("head_pose_score") is not None
+    ]
     blink_vals = [float(r["blink_rate"]) for r in attn_rows if r.get("blink_rate") is not None]
 
     avg_attention = round(sum(gaze_vals) / len(gaze_vals), 4) if gaze_vals else 0.0
@@ -209,28 +218,24 @@ async def get_session_summary(
     total_blinks = int(round(sum(blink_vals))) if blink_vals else 0
 
     # Step 4 — Duration in seconds (0.0 if either timestamp is absent)
-    def _parse_ts(val: Any) -> datetime | None:
+    def _parse_ts(val: Any) -> datetime | None:  # noqa: ANN401
         if val is None:
             return None
         if isinstance(val, str):
             try:
                 return datetime.fromisoformat(val.replace("Z", "+00:00"))
-            except ValueError:
-                logger.error(
-                    "analytics: corrupt timestamp string=%r session=%r", val, session_id
-                )
+            except ValueError as err:
+                logger.error("analytics: corrupt timestamp string=%r session=%r", val, session_id)
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to compute session duration.",
-                )
-        return val
+                ) from err
+        return cast("datetime | None", val)
 
     started_at = _parse_ts(session_row.get("started_at"))
     ended_at = _parse_ts(session_row.get("ended_at"))
     duration_seconds = (
-        round((ended_at - started_at).total_seconds(), 2)
-        if ended_at and started_at
-        else 0.0
+        round((ended_at - started_at).total_seconds(), 2) if ended_at and started_at else 0.0
     )
 
     return {

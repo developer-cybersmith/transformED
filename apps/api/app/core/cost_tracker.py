@@ -47,7 +47,9 @@ async def accumulate_cost(lesson_id: str, cost_usd: float) -> float:
     # Refresh TTL on every write so long-running lessons don't expire mid-flight
     await redis.expire(key, _COST_KEY_TTL_SECONDS)
 
-    logger.debug("Lesson %s — accumulated cost +$%.6f → total $%.6f", lesson_id, cost_usd, new_total)
+    logger.debug(
+        "Lesson %s — accumulated cost +$%.6f → total $%.6f", lesson_id, cost_usd, new_total
+    )
     return new_total
 
 

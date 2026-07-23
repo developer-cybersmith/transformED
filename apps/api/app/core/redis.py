@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 
 from redis.asyncio import ConnectionPool, Redis
-from redis.asyncio.connection import SSLConnection
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,7 @@ async def close_redis() -> None:
     logger.info("Redis connection pool closed")
 
 
-def get_redis() -> Redis:  # type: ignore[type-arg]
+def get_redis() -> Redis:
     """Return a Redis client bound to the shared ConnectionPool.
 
     Raises:

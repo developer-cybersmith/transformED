@@ -23,7 +23,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # ── Group A — _init_session_state ──────────────────────────────────────────────
 
 
@@ -124,8 +123,8 @@ async def test_c1_g2_cooldown_active_blocks_intervention(mocker):
 @pytest.mark.unit
 async def test_c2_g2_no_cooldown_below_max_allows_intervention(mocker):
     mock_redis = AsyncMock()
-    mock_redis.exists = AsyncMock(return_value=0)   # not in cooldown
-    mock_redis.get = AsyncMock(return_value="1")    # count = 1, below max of 3
+    mock_redis.exists = AsyncMock(return_value=0)  # not in cooldown
+    mock_redis.get = AsyncMock(return_value="1")  # count = 1, below max of 3
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     mock_settings = MagicMock()
@@ -142,8 +141,8 @@ async def test_c2_g2_no_cooldown_below_max_allows_intervention(mocker):
 @pytest.mark.unit
 async def test_c3_g2_at_max_count_blocks_intervention(mocker):
     mock_redis = AsyncMock()
-    mock_redis.exists = AsyncMock(return_value=0)   # not in cooldown
-    mock_redis.get = AsyncMock(return_value="3")    # count == max of 3 → must block
+    mock_redis.exists = AsyncMock(return_value=0)  # not in cooldown
+    mock_redis.get = AsyncMock(return_value="3")  # count == max of 3 → must block
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     mock_settings = MagicMock()
@@ -205,7 +204,8 @@ async def test_e1_flow_event_dispatches_to_fsm(mocker):
 @pytest.mark.unit
 @pytest.mark.parametrize("event", ["distraction_detected", "fatigue_detected", "session_reset"])
 async def test_e2_server_only_event_rejected_by_service(event):
-    """Server/engine/admin-only events must NOT be client-drivable — advance_tutor_state rejects them."""
+    """Server/engine/admin-only events must NOT be client-drivable — advance_tutor_state
+    rejects them."""
     from app.modules.tutor.service import advance_tutor_state
 
     with pytest.raises(ValueError):
@@ -214,7 +214,8 @@ async def test_e2_server_only_event_rejected_by_service(event):
 
 @pytest.mark.unit
 async def test_e3_tutor_event_failure_does_not_raise(mocker):
-    """A transient FSM error during a flow event must be swallowed at the WS boundary (B2 analog)."""
+    """A transient FSM error during a flow event must be swallowed at the WS boundary
+    (B2 analog)."""
     mocker.patch(
         "app.modules.tutor.state_machine.graph.dispatch_event",
         side_effect=RuntimeError("FSM crash"),
@@ -239,7 +240,8 @@ def test_e4_client_event_allowlists_match():
 
 @pytest.mark.unit
 async def test_f1_reconnect_syncs_state_and_no_reset(mocker):
-    """A reconnect (tutor_state present) pushes a state_change sync and does NOT reset the session."""
+    """A reconnect (tutor_state present) pushes a state_change sync and does NOT reset the
+    session."""
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value="QUIZZING")
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
@@ -262,7 +264,8 @@ async def test_f1_reconnect_syncs_state_and_no_reset(mocker):
 
 @pytest.mark.unit
 async def test_f5_reconnect_decodes_bytes_state(mocker):
-    """Restore handles a bytes tutor_state (real redis without decode_responses) and any state value."""
+    """Restore handles a bytes tutor_state (real redis without decode_responses) and any state
+    value."""
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value=b"TEACH_BACK")
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
@@ -275,15 +278,19 @@ async def test_f5_reconnect_decodes_bytes_state(mocker):
     ws.send_json.assert_called_once_with(
         {
             "type": "state_change",
-            "payload": {"session_id": "sess-bytes", "from_state": "TEACH_BACK", "to_state": "TEACH_BACK"},
+            "payload": {
+                "session_id": "sess-bytes",
+                "from_state": "TEACH_BACK",
+                "to_state": "TEACH_BACK",
+            },
         }
     )
 
 
 @pytest.mark.unit
 async def test_f6_reconnect_send_failure_does_not_break_connect(mocker):
-    """If the reconnecting socket is already gone, the failed sync send must not break connect, and the
-    dead socket is dropped from the registry (no leak)."""
+    """If the reconnecting socket is already gone, the failed sync send must not break connect,
+    and the dead socket is dropped from the registry (no leak)."""
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value="TEACHING")
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
@@ -358,6 +365,9 @@ async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
     mock_redis.get.assert_awaited_once_with(f"tutor_state:{sid}")
     # Synced to the client via the frozen state_change (from == to), and NOT reset.
     ws.send_json.assert_called_once_with(
-        {"type": "state_change", "payload": {"session_id": sid, "from_state": state, "to_state": state}}
+        {
+            "type": "state_change",
+            "payload": {"session_id": sid, "from_state": state, "to_state": state},
+        }
     )
     mock_redis.set.assert_not_called()

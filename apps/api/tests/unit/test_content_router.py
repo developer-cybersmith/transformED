@@ -7,6 +7,7 @@ External I/O (network, Redis, DB) is fully mocked.
 
 from __future__ import annotations
 
+import copy
 import io
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -75,7 +76,10 @@ def _make_supabase_mock(
     jobs_mock.update.return_value.eq.return_value.execute.return_value = MagicMock()
     jobs_select_resp = MagicMock()
     jobs_select_resp.data = [{"error": lesson_error}] if lesson_error else []
-    jobs_mock.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = jobs_select_resp
+    jobs_select = jobs_mock.select.return_value
+    jobs_select.eq.return_value.order.return_value.limit.return_value.execute.return_value = (
+        jobs_select_resp
+    )
 
     # ── Dispatch by table name ────────────────────────────────────────────────
     _table_map = {
@@ -143,21 +147,29 @@ def test_upload_lesson_db_insert_order(client: TestClient) -> None:
     call_order: list[str] = []
 
     sb = MagicMock()
-    # Track insert calls by table name
-    original_table = sb.table.side_effect
 
+    # Track insert calls by table name
     def track_table(name: str) -> MagicMock:
         t = MagicMock()
         insert_exec = MagicMock()
         if name == "books":
             insert_exec.data = [{"book_id": FAKE_BOOK_ID}]
-            t.insert.return_value.execute.side_effect = lambda: (call_order.append("books"), insert_exec)[1]
+            t.insert.return_value.execute.side_effect = lambda: (
+                call_order.append("books"),
+                insert_exec,
+            )[1]
         elif name == "lessons":
             insert_exec.data = [{"lesson_id": FAKE_LESSON_ID}]
-            t.insert.return_value.execute.side_effect = lambda: (call_order.append("lessons"), insert_exec)[1]
+            t.insert.return_value.execute.side_effect = lambda: (
+                call_order.append("lessons"),
+                insert_exec,
+            )[1]
             t.update.return_value.eq.return_value.execute.return_value = MagicMock()
         elif name == "lesson_jobs":
-            t.insert.return_value.execute.side_effect = lambda: (call_order.append("lesson_jobs"), MagicMock())[1]
+            t.insert.return_value.execute.side_effect = lambda: (
+                call_order.append("lesson_jobs"),
+                MagicMock(),
+            )[1]
         return t
 
     sb.table.side_effect = track_table
@@ -245,7 +257,11 @@ def test_get_lesson_404_wrong_user() -> None:
         "title": None,
         "created_at": "2026-06-28T00:00:00Z",
     }
-    sb.table("lessons").select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = lesson_row
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
 
     app.dependency_overrides[get_current_user] = lambda: other_user
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
@@ -265,7 +281,9 @@ def test_get_lesson_404_not_found() -> None:
     from app.main import app
 
     sb = MagicMock()
-    sb.table("lessons").select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = None
 
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
@@ -276,6 +294,284 @@ def test_get_lesson_404_not_found() -> None:
     app.dependency_overrides.clear()
 
     assert resp.status_code == 404
+
+
+# ── GET /lessons/{lesson_id} — Story 1-6: content + signed URLs ──────────────
+
+_AUDIO_PATH = f"{FAKE_LESSON_ID}/seg_1.mp3"
+_IMAGE_PATH = f"{FAKE_LESSON_ID}/sl_1.png"
+
+_READY_CONTENT_DICT: dict[str, Any] = {
+    "lesson_id": FAKE_LESSON_ID,
+    "book_id": FAKE_BOOK_ID,
+    "chapter_id": "44444444-4444-4444-4444-444444444444",
+    "created_at": "2026-06-25T00:00:00Z",
+    "metadata": {
+        "title": "Test Lesson",
+        "subject": "Testing",
+        "total_segments": 1,
+        "estimated_duration_mins": 5.0,
+        "complexity_level": "medium",
+    },
+    "segments": [
+        {
+            "segment_id": "seg_1",
+            "segment_index": 0,
+            "title": "Segment 1",
+            "summary": "Summary text",
+            "complexity": {
+                "level": "medium",
+                "cognitive_load": "moderate",
+                "abstraction_level": "concrete",
+                "prerequisite_concepts": [],
+                "narration_style": "conversational",
+                "quiz_difficulty": "medium",
+                "intervention_sensitivity": 0.5,
+            },
+            "slides": [
+                {
+                    "slide_id": "sl_1",
+                    "title": "Slide 1",
+                    "bullets": ["Point 1"],
+                    "image_url": _IMAGE_PATH,
+                    "fallback_image_url": None,
+                }
+            ],
+            "narration": {
+                "script": "Hello world.",
+                "audio_url": _AUDIO_PATH,
+                "audio_provider": "azure",
+                "timestamps": [{"slide_id": "sl_1", "start_ms": 0, "end_ms": 3000}],
+            },
+            "quiz": [],
+            "teachback_prompt": "Explain in your own words.",
+            "jargon": [],
+            "interventions": {
+                "distraction": ["A", "B", "C"],
+                "confusion": ["D", "E", "F"],
+                "fatigue": ["G", "H", "I"],
+            },
+        }
+    ],
+    "glossary": [],
+}
+
+
+def _make_ready_supabase_mock(sign_side_effect: object) -> MagicMock:
+    sb = MagicMock()
+    lesson_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "ready",
+        "title": "Test Lesson",
+        "content": _READY_CONTENT_DICT,
+        "created_at": "2026-06-28T00:00:00Z",
+    }
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
+    sb.storage.from_.return_value.create_signed_url.side_effect = sign_side_effect
+    return sb
+
+
+@pytest.mark.unit
+def test_get_lesson_ready_resolves_signed_urls() -> None:
+    """AC-1/AC-2: a ready lesson's content embeds SIGNED urls, not bare paths."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    def _sign(path: str, expires_in: int) -> dict[str, str]:
+        return {"signedURL": f"https://signed.example.com/{path}?exp={expires_in}"}
+
+    sb = _make_ready_supabase_mock(_sign)
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    segment = body["content"]["segments"][0]
+    assert segment["narration"]["audio_url"] == f"https://signed.example.com/{_AUDIO_PATH}?exp=3600"
+    assert segment["slides"][0]["image_url"] == f"https://signed.example.com/{_IMAGE_PATH}?exp=3600"
+    assert segment["slides"][0]["fallback_image_url"] is None
+
+    calls = sb.storage.from_.call_args_list
+    assert any(c.args == ("lesson-audio",) for c in calls)
+    assert any(c.args == ("lesson-images",) for c in calls)
+    sb.storage.from_.return_value.create_signed_url.assert_any_call(_AUDIO_PATH, 3600)
+    sb.storage.from_.return_value.create_signed_url.assert_any_call(_IMAGE_PATH, 3600)
+
+
+@pytest.mark.unit
+def test_get_lesson_ready_degrades_one_asset_on_signing_failure() -> None:
+    """AC-3: one asset failing to sign degrades ONLY that asset, not the
+    whole response."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    def _sign(path: str, _expires_in: int) -> dict[str, str]:
+        if path == _AUDIO_PATH:
+            raise RuntimeError("storage outage")
+        return {"signedURL": f"https://signed.example.com/{path}"}
+
+    sb = _make_ready_supabase_mock(_sign)
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    segment = resp.json()["content"]["segments"][0]
+    assert segment["narration"]["audio_url"] == ""  # degraded, not dropped
+    assert segment["slides"][0]["image_url"] == f"https://signed.example.com/{_IMAGE_PATH}"
+
+
+@pytest.mark.unit
+def test_get_lesson_generating_status_content_is_none(client: TestClient) -> None:
+    """AC-1 regression: a non-ready lesson's content stays None (matches
+    test_get_lesson_200's underlying fixture, status='generating')."""
+    resp = client.get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+    assert resp.status_code == 200
+    assert resp.json()["content"] is None
+
+
+@pytest.mark.unit
+def test_get_lesson_ready_but_null_content_column_stays_none() -> None:
+    """AC-1 edge case: status=='ready' with a null content column (should
+    be unreachable in practice — package_builder writes both together —
+    but the endpoint's own guard must hold either way) returns content=None,
+    not a crash, and makes no signing calls."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = MagicMock()
+    lesson_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "ready",
+        "title": "Test Lesson",
+        "content": None,
+        "created_at": "2026-06-28T00:00:00Z",
+    }
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["content"] is None
+    sb.storage.from_.assert_not_called()
+
+
+@pytest.mark.unit
+def test_get_lesson_corrupted_content_is_not_silently_swallowed() -> None:
+    """AC-6, full HTTP path: malformed stored content (our own
+    package_builder's data, corrupted) must raise through get_lesson as an
+    unhandled 500 — never silently degrade to content=None or a 200 with
+    partial data, which would hide real data corruption from the caller."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = MagicMock()
+    corrupted_content = {**copy.deepcopy(_READY_CONTENT_DICT), "segments": []}  # min_length=1
+    lesson_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "ready",
+        "title": "Test Lesson",
+        "content": corrupted_content,
+        "created_at": "2026-06-28T00:00:00Z",
+    }
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app, raise_server_exceptions=False).get(
+            f"/api/content/lessons/{FAKE_LESSON_ID}"
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 500
+
+
+@pytest.mark.unit
+def test_resolve_lesson_content_does_not_mutate_input() -> None:
+    """Regression (caught during Story 1-6 development): the raw content
+    dict passed in must not be mutated — a prior version signed URLs
+    in place, corrupting a shared/cached dict for any second reader."""
+    from app.modules.content.router import _resolve_lesson_content
+
+    original = copy.deepcopy(_READY_CONTENT_DICT)
+    sb = MagicMock()
+    sb.storage.from_.return_value.create_signed_url.return_value = {
+        "signedURL": "https://signed.example.com/x"
+    }
+
+    _resolve_lesson_content(_READY_CONTENT_DICT, sb)
+
+    assert _READY_CONTENT_DICT == original
+
+
+@pytest.mark.unit
+def test_resolve_lesson_content_null_segments_raises_validation_not_typeerror() -> None:
+    """Edge case (Edge Case Hunter, Story 1-6 review): `segments` explicitly
+    present as JSON null (not merely absent) must not crash the resolution
+    LOOP with a raw TypeError — `.get("segments", [])` only defaults on a
+    MISSING key, not an explicit None, so `or []` is required. The lesson
+    is still malformed (LessonPackage requires >=1 segment) and correctly
+    raises via model_validate (AC-6), just not mid-loop."""
+    from pydantic import ValidationError
+
+    from app.modules.content.router import _resolve_lesson_content
+
+    sb = MagicMock()
+    content_with_null_segments = {**copy.deepcopy(_READY_CONTENT_DICT), "segments": None}
+    with pytest.raises(ValidationError):
+        _resolve_lesson_content(content_with_null_segments, sb)
+    sb.storage.from_.assert_not_called()  # loop never ran — nothing to sign
+
+
+@pytest.mark.unit
+def test_resolve_lesson_content_null_slides_raises_validation_not_typeerror() -> None:
+    """Same as above for a segment's `slides` being explicitly null."""
+    from pydantic import ValidationError
+
+    from app.modules.content.router import _resolve_lesson_content
+
+    sb = MagicMock()
+    content_with_null_slides = copy.deepcopy(_READY_CONTENT_DICT)
+    content_with_null_slides["segments"][0]["slides"] = None
+    with pytest.raises(ValidationError):
+        _resolve_lesson_content(content_with_null_slides, sb)
 
 
 # ── GET /lessons ──────────────────────────────────────────────────────────────
@@ -297,6 +593,43 @@ def test_list_lessons_respects_limit_offset(client: TestClient) -> None:
     """limit and offset query params are forwarded to Supabase."""
     resp = client.get("/api/content/lessons?limit=5&offset=10")
     assert resp.status_code == 200
+
+
+@pytest.mark.unit
+def test_list_lessons_never_attaches_content() -> None:
+    """AC-7: even a ready lesson with content in the DB row never gets
+    content resolved/attached in the LIST response — only get_lesson does.
+    No signing calls should happen at all for a list request."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = MagicMock()
+    ready_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "ready",
+        "title": "Test Lesson",
+        "content": _READY_CONTENT_DICT,
+        "created_at": "2026-06-28T00:00:00Z",
+    }
+    list_resp = MagicMock()
+    list_resp.data = [ready_row]
+    lessons_select = sb.table("lessons").select.return_value.eq.return_value
+    lessons_select.order.return_value.range.return_value.execute.return_value = list_resp
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get("/api/content/lessons")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body[0]["status"] == "ready"
+    assert body[0]["content"] is None
+    sb.storage.from_.assert_not_called()
 
 
 # ── Status mapping ────────────────────────────────────────────────────────────
@@ -419,11 +752,13 @@ def test_upload_lesson_accepts_valid_tier_and_persists_it(client: TestClient) ->
         if name == "books":
             t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
         elif name == "lessons":
+
             def _insert(payload: dict) -> MagicMock:
                 lessons_insert_calls.append(payload)
                 m = MagicMock()
                 m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
                 return m
+
             t.insert.side_effect = _insert
             t.update.return_value.eq.return_value.execute.return_value = MagicMock()
         elif name == "lesson_jobs":
@@ -468,11 +803,13 @@ def test_upload_lesson_omitted_tier_defaults_to_t2(client: TestClient) -> None:
         if name == "books":
             t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
         elif name == "lessons":
+
             def _insert(payload: dict) -> MagicMock:
                 lessons_insert_calls.append(payload)
                 m = MagicMock()
                 m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
                 return m
+
             t.insert.side_effect = _insert
             t.update.return_value.eq.return_value.execute.return_value = MagicMock()
         elif name == "lesson_jobs":
@@ -482,7 +819,10 @@ def test_upload_lesson_omitted_tier_defaults_to_t2(client: TestClient) -> None:
     sb.table.side_effect = track_table
     sb.storage.from_.return_value.upload.return_value = MagicMock()
 
-    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-default-test-sub"}
+    app.dependency_overrides[get_current_user] = lambda: {
+        **FAKE_USER,
+        "sub": "tier-default-test-sub",
+    }
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
 
     with patch("app.modules.content.router.get_supabase", return_value=sb):
@@ -510,7 +850,10 @@ def test_upload_lesson_invalid_tier_returns_422_before_any_row_created(client: T
     sb = MagicMock()
     sb.table.side_effect = lambda name: MagicMock()  # any call here is a bug
 
-    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-invalid-test-sub"}
+    app.dependency_overrides[get_current_user] = lambda: {
+        **FAKE_USER,
+        "sub": "tier-invalid-test-sub",
+    }
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
 
     with patch("app.modules.content.router.get_supabase", return_value=sb):

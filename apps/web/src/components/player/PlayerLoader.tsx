@@ -25,14 +25,14 @@ function PlayerSkeleton() {
   );
 }
 
-function LessonErrorState() {
+function LessonErrorState({ message }: { message?: string | null }) {
   return (
     <div
       className="flex-1 flex flex-col items-center justify-center p-6 text-center"
       data-testid="lesson-error"
     >
       <p className="text-neutral-400 mb-6">
-        This lesson could not be loaded. Please try again.
+        {message || 'This lesson could not be loaded. Please try again.'}
       </p>
       <Link
         href="/dashboard"
@@ -45,19 +45,42 @@ function LessonErrorState() {
   );
 }
 
+function LessonGeneratingState() {
+  return (
+    <div
+      className="flex-1 flex flex-col items-center justify-center p-6 text-center"
+      data-testid="lesson-generating"
+    >
+      <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-6" />
+      <p className="text-neutral-400">This lesson is still generating. Hang tight...</p>
+    </div>
+  );
+}
+
 interface PlayerLoaderProps {
   lessonId: string;
 }
 
 export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
-  const { lesson, isLoading, error } = useLesson(lessonId);
+  const { lesson, isLoading, error, status, serverError } = useLesson(lessonId);
 
-  if (error) return <LessonErrorState />;
-  if (isLoading) return <PlayerSkeleton />;
-  if (!lesson) return <LessonErrorState />;
+  // Status-derived states take priority over the generic SWR `error` (review
+  // fix): SWR retains the last good data/status across a failed background
+  // revalidation, so a single transient poll failure must not flash a lesson
+  // that's still genuinely running/queued to the permanent error page.
+  // "running"/"queued" (still generating) is a normal state a direct-navigated
+  // (bookmark/refresh/back-button) request can land on -- not an error.
+  if (status === 'running' || status === 'queued') return <LessonGeneratingState />;
+  if (status === 'failed') return <LessonErrorState message={serverError} />;
+  // Gated on status === 'ready' (not just lesson truthiness, review fix) --
+  // content is only ever populated atomically with status 'ready' by the
+  // real backend, but this keeps that invariant enforced defensively too.
   // Keyed by lesson_id so a client-side navigation between two different lessons
   // (S1-08 useLesson refetch) fully remounts Player rather than reusing the same
   // instance — avoids useLessonSocket/loadLesson racing against a stale sessionId
   // left over from the previous lesson (S2-06 review finding).
-  return <Player key={lesson.lesson_id} lesson={lesson} />;
+  if (status === 'ready' && lesson) return <Player key={lesson.lesson_id} lesson={lesson} />;
+  if (error) return <LessonErrorState />;
+  if (isLoading) return <PlayerSkeleton />;
+  return <LessonErrorState />;
 }

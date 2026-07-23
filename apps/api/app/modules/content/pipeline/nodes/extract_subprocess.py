@@ -50,7 +50,7 @@ _docling_converter: Any = None
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _page_text(pdfium_page: Any) -> str:
+def _page_text(pdfium_page: Any) -> str:  # noqa: ANN401
     """Extract raw text from a pypdfium2 page (empty string if none)."""
     try:
         textpage = pdfium_page.get_textpage()
@@ -60,7 +60,7 @@ def _page_text(pdfium_page: Any) -> str:
         return ""
 
 
-def _page_table_count(plumb_page: Any) -> int:
+def _page_table_count(plumb_page: Any) -> int:  # noqa: ANN401
     """Count tables on a page via pdfplumber (detection only, no cell extraction).
 
     ``find_tables()`` locates table bboxes without extracting cell text —
@@ -77,7 +77,7 @@ def _page_table_count(plumb_page: Any) -> int:
         return 0
 
 
-def _release_page(plumb_page: Any, pdfium_page: Any) -> None:
+def _release_page(plumb_page: Any, pdfium_page: Any) -> None:  # noqa: ANN401
     """AC-3: free per-page caches every loop iteration so RSS stays O(1 page).
 
     Each release call is individually guarded — a failure to release must
@@ -114,7 +114,7 @@ def _group_table_runs(table_page_idxs: list[int], page_count: int) -> list[tuple
     return runs
 
 
-def _get_docling_converter() -> Any:
+def _get_docling_converter() -> Any:  # noqa: ANN401
     """Return the lazily-created, subprocess-wide docling DocumentConverter.
 
     Docling-internal OCR is disabled: scanned pages are handled by our own
@@ -123,13 +123,13 @@ def _get_docling_converter() -> Any:
     """
     global _docling_converter  # noqa: PLW0603
     if _docling_converter is None:
-        from docling.datamodel.base_models import (  # type: ignore[import-not-found]
+        from docling.datamodel.base_models import (
             InputFormat,
         )
-        from docling.datamodel.pipeline_options import (  # type: ignore[import-not-found]
+        from docling.datamodel.pipeline_options import (
             PdfPipelineOptions,
         )
-        from docling.document_converter import (  # type: ignore[import-not-found]
+        from docling.document_converter import (
             DocumentConverter,
             PdfFormatOption,
         )
@@ -141,9 +141,9 @@ def _get_docling_converter() -> Any:
     return _docling_converter
 
 
-def _build_sub_pdf(pdf_doc: Any, start: int, end: int, sub_path: str) -> None:
+def _build_sub_pdf(pdf_doc: Any, start: int, end: int, sub_path: str) -> None:  # noqa: ANN401
     """Write pages ``start..end`` (inclusive) of *pdf_doc* to *sub_path*."""
-    import pypdfium2 as pdfium  # type: ignore[import-not-found]
+    import pypdfium2 as pdfium
 
     sub = pdfium.PdfDocument.new()
     try:
@@ -184,7 +184,7 @@ def _table_rows_to_markdown(rows: list[list[Any]]) -> str:
     if not rows:
         return ""
 
-    def _cell(value: Any) -> str:
+    def _cell(value: Any) -> str:  # noqa: ANN401
         if value is None:
             return ""
         return str(value).replace("\n", " ").replace("|", "\\|").strip()
@@ -212,7 +212,7 @@ def _append_fallback_tables(pdf_path: str, table_idxs: list[int], page_texts: li
     if not table_idxs:
         return
     try:
-        import pdfplumber  # type: ignore[import-not-found]
+        import pdfplumber
 
         with pdfplumber.open(pdf_path) as plumb_pdf:
             for idx in table_idxs:
@@ -233,7 +233,7 @@ def _append_fallback_tables(pdf_path: str, table_idxs: list[int], page_texts: li
 
 
 def _convert_table_runs(
-    pdf_doc: Any,
+    pdf_doc: Any,  # noqa: ANN401
     pdf_path: str,
     page_texts: list[str],
     table_page_idxs: list[int],
@@ -291,10 +291,10 @@ def _convert_table_runs(
     return sorted(docling_pages)
 
 
-def _ocr_page_text(pdfium_page: Any, img_dir: str, page_num: int) -> str:
+def _ocr_page_text(pdfium_page: Any, img_dir: str, page_num: int) -> str:  # noqa: ANN401
     """Render a pypdfium2 page at 300 DPI and run Tesseract OCR on it."""
     try:
-        import pytesseract  # type: ignore[import-not-found]
+        import pytesseract
 
         bitmap = pdfium_page.render(scale=300 / 72)
         pil_img = bitmap.to_pil()
@@ -307,8 +307,8 @@ def _ocr_page_text(pdfium_page: Any, img_dir: str, page_num: int) -> str:
 
 
 def _extract_page_images(
-    pdfium_page: Any,
-    plumb_page: Any,
+    pdfium_page: Any,  # noqa: ANN401
+    plumb_page: Any,  # noqa: ANN401
     img_dir: str,
     page_num: int,
 ) -> list[dict[str, Any]]:
@@ -386,7 +386,7 @@ def _extract_font_blocks(pdf_path: str) -> list[dict[str, Any]]:
     detection to infer heading hierarchy from font name, size, and bold flag.
     """
     try:
-        from pdftext.extraction import dictionary_output  # type: ignore[import-not-found]
+        from pdftext.extraction import dictionary_output
 
         pages_data: list[dict[str, Any]] = dictionary_output(pdf_path)
         font_blocks: list[dict[str, Any]] = []
@@ -396,19 +396,23 @@ def _extract_font_blocks(pdf_path: str) -> list[dict[str, Any]]:
                 for line in block.get("lines", []):
                     for span in line.get("spans", []):
                         font_info = span.get("font", {})
-                        font_blocks.append({
-                            "text": span.get("text", ""),
-                            "bbox": span.get("bbox", [0, 0, 0, 0]),
-                            "font": {
-                                "name": font_info.get("name", ""),
-                                "size": float(font_info.get("size", 12.0)),
-                                "bold": bool(font_info.get("bold", False)),
-                            },
-                            "page": page_num,
-                        })
+                        font_blocks.append(
+                            {
+                                "text": span.get("text", ""),
+                                "bbox": span.get("bbox", [0, 0, 0, 0]),
+                                "font": {
+                                    "name": font_info.get("name", ""),
+                                    "size": float(font_info.get("size", 12.0)),
+                                    "bold": bool(font_info.get("bold", False)),
+                                },
+                                "page": page_num,
+                            }
+                        )
         return font_blocks
     except Exception:  # noqa: BLE001
-        logger.warning("pdftext font extraction failed for %s — font_blocks will be empty", pdf_path)
+        logger.warning(
+            "pdftext font extraction failed for %s — font_blocks will be empty", pdf_path
+        )
         return []
 
 
@@ -439,8 +443,8 @@ def extract_pdf(pdf_path: str, img_dir: str, ocr_threshold: int) -> dict[str, An
         ``{"raw_text": str, "page_count": int, "image_files": list,
         "font_blocks": list, "tables_detected": int, "docling_pages": list}``
     """
-    import pdfplumber  # type: ignore[import-not-found]
-    import pypdfium2 as pdfium  # type: ignore[import-not-found]
+    import pdfplumber
+    import pypdfium2 as pdfium
 
     page_texts: list[str] = []
     image_files: list[dict[str, Any]] = []
@@ -510,9 +514,7 @@ def extract_pdf(pdf_path: str, img_dir: str, ocr_threshold: int) -> dict[str, An
 def main() -> None:
     """CLI entry point — called by the ARQ worker's extract_node subprocess."""
     if len(sys.argv) < 4:  # noqa: PLR2004
-        sys.stderr.write(
-            "Usage: extract_subprocess <pdf_path> <img_dir> <ocr_threshold>\n"
-        )
+        sys.stderr.write("Usage: extract_subprocess <pdf_path> <img_dir> <ocr_threshold>\n")
         sys.exit(1)
 
     pdf_path_arg = sys.argv[1]

@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from langfuse import Langfuse
 from openai import AsyncOpenAI
 
 from app.config import get_settings
@@ -28,7 +29,7 @@ _PROVIDER_KEY = "openai"
 _EMBED_COST_PER_1K_USD = 0.00002
 
 
-def _safe_trace(call: Callable[[], Any]) -> Any | None:
+def _safe_trace(call: Callable[[], Any]) -> Any | None:  # noqa: ANN401
     """Run a Langfuse tracing call; observability failures must NEVER fail the pipeline."""
     try:
         return call()
@@ -48,6 +49,7 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         self._model = settings.embedding_model
         # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to
         # no-tracing, never crash the provider mid-job.
+        self._langfuse: Langfuse | None
         try:
             self._langfuse = get_langfuse()
         except Exception:
@@ -83,9 +85,10 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         # Tracing is best-effort — the OpenAI call must never fail because of it.
         # self._langfuse is None when init failed (AC-3) — skip tracing entirely.
         generation = None
-        if self._langfuse is not None:
+        langfuse = self._langfuse
+        if langfuse is not None:
             generation = _safe_trace(
-                lambda: self._langfuse.start_observation(
+                lambda: langfuse.start_observation(
                     name="openai.embeddings",
                     as_type="generation",
                     model=self._model,
@@ -125,9 +128,7 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
-                _safe_trace(
-                    lambda: generation.update(level="ERROR", status_message=error_message)
-                )
+                _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
             await record_failure(_PROVIDER_KEY)
             raise
 

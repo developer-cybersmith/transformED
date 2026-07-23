@@ -11,6 +11,7 @@ Unit tests for onboarding assessment scoring:
 All tests are @pytest.mark.unit — no real Supabase, Redis, or LLM connections.
 asyncio.to_thread is shimmed via mock_to_thread fixture (same pattern as quiz tests).
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -31,8 +32,10 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 # ── HTTP-layer client ─────────────────────────────────────────────────────────
 
+
 async def _fake_user() -> dict:
     return {"sub": "user-onb-001", "email": "onboarding@example.com"}
+
 
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
@@ -40,6 +43,7 @@ _app.include_router(router, prefix="/api/assessment")
 _client = TestClient(_app, raise_server_exceptions=False)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_20_responses(
     selected_index: int = 2,
@@ -49,48 +53,67 @@ def _make_20_responses(
     """Build 20 valid OnboardingAnswer dicts (c1-c8, e1-e5, s1-s7)."""
     responses: list[dict[str, Any]] = []
     for i in range(1, 9):
-        responses.append({
-            "question_id": f"c{i}",
-            "dimension": dimension_override if dimension_override else "cognitive",
-            "selected_index": index_override if index_override is not None else selected_index,
-            "selected_text": f"Option {selected_index}",
-        })
+        responses.append(
+            {
+                "question_id": f"c{i}",
+                "dimension": dimension_override if dimension_override else "cognitive",
+                "selected_index": index_override if index_override is not None else selected_index,
+                "selected_text": f"Option {selected_index}",
+            }
+        )
     for i in range(1, 6):
-        responses.append({
-            "question_id": f"e{i}",
-            "dimension": dimension_override if dimension_override else "emotional",
-            "selected_index": index_override if index_override is not None else selected_index,
-            "selected_text": f"Option {selected_index}",
-        })
+        responses.append(
+            {
+                "question_id": f"e{i}",
+                "dimension": dimension_override if dimension_override else "emotional",
+                "selected_index": index_override if index_override is not None else selected_index,
+                "selected_text": f"Option {selected_index}",
+            }
+        )
     for i in range(1, 8):
-        responses.append({
-            "question_id": f"s{i}",
-            "dimension": dimension_override if dimension_override else "self_direction",
-            "selected_index": index_override if index_override is not None else selected_index,
-            "selected_text": f"Option {selected_index}",
-        })
+        responses.append(
+            {
+                "question_id": f"s{i}",
+                "dimension": dimension_override if dimension_override else "self_direction",
+                "selected_index": index_override if index_override is not None else selected_index,
+                "selected_text": f"Option {selected_index}",
+            }
+        )
     return responses
 
 
 def _make_onboarding_answers(selected_index: int = 2):
     """Return list of OnboardingAnswer objects (for service-layer tests)."""
     from app.modules.assessment.schemas import OnboardingAnswer
+
     answers = []
     for i in range(1, 9):
-        answers.append(OnboardingAnswer(
-            question_id=f"c{i}", dimension="cognitive",
-            selected_index=selected_index, selected_text=f"Option {selected_index}",
-        ))
+        answers.append(
+            OnboardingAnswer(
+                question_id=f"c{i}",
+                dimension="cognitive",
+                selected_index=selected_index,
+                selected_text=f"Option {selected_index}",
+            )
+        )
     for i in range(1, 6):
-        answers.append(OnboardingAnswer(
-            question_id=f"e{i}", dimension="emotional",
-            selected_index=selected_index, selected_text=f"Option {selected_index}",
-        ))
+        answers.append(
+            OnboardingAnswer(
+                question_id=f"e{i}",
+                dimension="emotional",
+                selected_index=selected_index,
+                selected_text=f"Option {selected_index}",
+            )
+        )
     for i in range(1, 8):
-        answers.append(OnboardingAnswer(
-            question_id=f"s{i}", dimension="self_direction",
-            selected_index=selected_index, selected_text=f"Option {selected_index}",
-        ))
+        answers.append(
+            OnboardingAnswer(
+                question_id=f"s{i}",
+                dimension="self_direction",
+                selected_index=selected_index,
+                selected_text=f"Option {selected_index}",
+            )
+        )
     return answers
 
 
@@ -111,8 +134,10 @@ def _mock_analytics_consent(monkeypatch) -> None:
 @pytest.fixture
 def mock_to_thread(monkeypatch):
     """Shim asyncio.to_thread to run synchronously for MagicMock chain compatibility."""
+
     async def _sync_shim(func, *args, **kwargs):
         return func(*args, **kwargs)
+
     monkeypatch.setattr("app.modules.assessment.service.asyncio.to_thread", _sync_shim)
 
 
@@ -121,8 +146,8 @@ def _build_onboarding_supabase(
     upsert_error=None,
 ) -> MagicMock:
     """Build mock Supabase client for process_onboarding call order:
-       1st call: onboarding_responses INSERT
-       2nd call: learner_dna UPSERT
+    1st call: onboarding_responses INSERT
+    2nd call: learner_dna UPSERT
     """
     mock = MagicMock()
 
@@ -150,17 +175,23 @@ def _build_onboarding_supabase(
 @pytest.mark.unit
 def test_migration_unique_constraint_file_exists() -> None:
     """AC #15: Migration 20260703000000_onboarding_unique_constraint.sql must exist."""
-    migration_path = _REPO_ROOT / "supabase" / "migrations" / "20260703000000_onboarding_unique_constraint.sql"
+    migration_path = (
+        _REPO_ROOT / "supabase" / "migrations" / "20260703000000_onboarding_unique_constraint.sql"
+    )
     assert migration_path.exists(), (
-        "Missing migration file: supabase/migrations/20260703000000_onboarding_unique_constraint.sql. "
-        "Create it to close the Sprint 0 finding: no UNIQUE(user_id, question_id) on onboarding_responses."
+        "Missing migration file: supabase/migrations/"
+        "20260703000000_onboarding_unique_constraint.sql. "
+        "Create it to close the Sprint 0 finding: no UNIQUE(user_id, question_id) "
+        "on onboarding_responses."
     )
 
 
 @pytest.mark.unit
 def test_migration_unique_constraint_sql_content() -> None:
     """AC #15: Migration must contain the UNIQUE constraint SQL on the correct table/columns."""
-    migration_path = _REPO_ROOT / "supabase" / "migrations" / "20260703000000_onboarding_unique_constraint.sql"
+    migration_path = (
+        _REPO_ROOT / "supabase" / "migrations" / "20260703000000_onboarding_unique_constraint.sql"
+    )
     content = migration_path.read_text(encoding="utf-8").lower()
     assert "onboarding_responses" in content, "Migration must reference onboarding_responses table"
     assert "unique" in content, "Migration must contain UNIQUE keyword"
@@ -177,6 +208,7 @@ def test_migration_unique_constraint_sql_content() -> None:
 def test_onboarding_answer_importable_from_schemas() -> None:
     """AC #13: OnboardingAnswer must be in schemas.py, not only router.py."""
     from app.modules.assessment.schemas import OnboardingAnswer  # noqa: F401
+
     assert OnboardingAnswer is not None
 
 
@@ -184,6 +216,7 @@ def test_onboarding_answer_importable_from_schemas() -> None:
 def test_onboarding_submission_importable_from_schemas() -> None:
     """AC #13: OnboardingDiagnosticSubmission must be in schemas.py."""
     from app.modules.assessment.schemas import OnboardingDiagnosticSubmission  # noqa: F401
+
     assert OnboardingDiagnosticSubmission is not None
 
 
@@ -191,6 +224,7 @@ def test_onboarding_submission_importable_from_schemas() -> None:
 def test_onboarding_result_importable_from_schemas() -> None:
     """AC #12: OnboardingResult must be in schemas.py."""
     from app.modules.assessment.schemas import OnboardingResult  # noqa: F401
+
     assert OnboardingResult is not None
 
 
@@ -198,7 +232,9 @@ def test_onboarding_result_importable_from_schemas() -> None:
 def test_onboarding_answer_rejects_invalid_dimension() -> None:
     """AC #3: OnboardingAnswer must reject dimension values outside the allowed Literal set."""
     from pydantic import ValidationError
+
     from app.modules.assessment.schemas import OnboardingAnswer
+
     with pytest.raises(ValidationError):
         OnboardingAnswer(
             question_id="c1",
@@ -212,11 +248,15 @@ def test_onboarding_answer_rejects_invalid_dimension() -> None:
 def test_onboarding_answer_rejects_negative_index() -> None:
     """AC #4: OnboardingAnswer.selected_index must reject negative values."""
     from pydantic import ValidationError
+
     from app.modules.assessment.schemas import OnboardingAnswer
+
     with pytest.raises(ValidationError):
         OnboardingAnswer(
-            question_id="c1", dimension="cognitive",
-            selected_index=-1, selected_text="Option A",
+            question_id="c1",
+            dimension="cognitive",
+            selected_index=-1,
+            selected_text="Option A",
         )
 
 
@@ -224,11 +264,15 @@ def test_onboarding_answer_rejects_negative_index() -> None:
 def test_onboarding_answer_rejects_index_over_3() -> None:
     """AC #4: OnboardingAnswer.selected_index must reject values > 3."""
     from pydantic import ValidationError
+
     from app.modules.assessment.schemas import OnboardingAnswer
+
     with pytest.raises(ValidationError):
         OnboardingAnswer(
-            question_id="c1", dimension="cognitive",
-            selected_index=4, selected_text="Option A",
+            question_id="c1",
+            dimension="cognitive",
+            selected_index=4,
+            selected_text="Option A",
         )
 
 
@@ -236,9 +280,13 @@ def test_onboarding_answer_rejects_index_over_3() -> None:
 def test_onboarding_submission_rejects_19_responses() -> None:
     """AC #2: OnboardingDiagnosticSubmission must reject fewer than 20 responses."""
     from pydantic import ValidationError
+
     from app.modules.assessment.schemas import OnboardingAnswer, OnboardingDiagnosticSubmission
+
     responses = [
-        OnboardingAnswer(question_id=f"c{i}", dimension="cognitive", selected_index=1, selected_text="A")
+        OnboardingAnswer(
+            question_id=f"c{i}", dimension="cognitive", selected_index=1, selected_text="A"
+        )
         for i in range(1, 20)  # only 19
     ]
     with pytest.raises(ValidationError):
@@ -249,9 +297,13 @@ def test_onboarding_submission_rejects_19_responses() -> None:
 def test_onboarding_submission_rejects_21_responses() -> None:
     """AC #2: OnboardingDiagnosticSubmission must reject more than 20 responses."""
     from pydantic import ValidationError
+
     from app.modules.assessment.schemas import OnboardingAnswer, OnboardingDiagnosticSubmission
+
     responses = [
-        OnboardingAnswer(question_id=f"c{i}", dimension="cognitive", selected_index=1, selected_text="A")
+        OnboardingAnswer(
+            question_id=f"c{i}", dimension="cognitive", selected_index=1, selected_text="A"
+        )
         for i in range(1, 23)  # 22 responses, all cognitive just to fill it
     ]
     with pytest.raises(ValidationError):
@@ -260,14 +312,24 @@ def test_onboarding_submission_rejects_21_responses() -> None:
 
 @pytest.mark.unit
 def test_onboarding_result_has_no_raw_dimension_score_fields() -> None:
-    """AC #12: OnboardingResult must NOT have numeric dimension fields (no raw scores to students)."""
+    """AC #12: OnboardingResult must NOT have numeric dimension fields
+    (no raw scores to students)."""
     from app.modules.assessment.schemas import OnboardingResult
-    result = OnboardingResult(badge_labels=["Pattern Thinker"], profile_text="You learn visually.", session_count=0)
+
+    result = OnboardingResult(
+        badge_labels=["Pattern Thinker"], profile_text="You learn visually.", session_count=0
+    )
     result_dict = result.model_dump()
     forbidden_fields = [
-        "pattern_recognition", "logical_deduction", "processing_speed",
-        "frustration_tolerance", "persistence", "help_seeking",
-        "goal_orientation", "curiosity_index", "study_independence",
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
     ]
     for field in forbidden_fields:
         assert field not in result_dict, (
@@ -285,6 +347,7 @@ def test_onboarding_result_has_no_raw_dimension_score_fields() -> None:
 def test_question_subdimension_map_has_20_entries() -> None:
     """QUESTION_SUBDIMENSION_MAP must have exactly 20 entries (c1-c8, e1-e5, s1-s7)."""
     from app.modules.assessment.onboarding_questions import QUESTION_SUBDIMENSION_MAP
+
     assert len(QUESTION_SUBDIMENSION_MAP) == 20, (
         f"Expected 20 question mappings, got {len(QUESTION_SUBDIMENSION_MAP)}. "
         "All 20 onboarding questions (c1-c8, e1-e5, s1-s7) must be mapped."
@@ -295,19 +358,26 @@ def test_question_subdimension_map_has_20_entries() -> None:
 def test_question_subdimension_map_covers_all_ids() -> None:
     """All 20 question IDs must be present: c1-c8, e1-e5, s1-s7."""
     from app.modules.assessment.onboarding_questions import QUESTION_SUBDIMENSION_MAP
+
     expected_ids = (
-        [f"c{i}" for i in range(1, 9)] +
-        [f"e{i}" for i in range(1, 6)] +
-        [f"s{i}" for i in range(1, 8)]
+        [f"c{i}" for i in range(1, 9)]
+        + [f"e{i}" for i in range(1, 6)]
+        + [f"s{i}" for i in range(1, 8)]
     )
     for qid in expected_ids:
-        assert qid in QUESTION_SUBDIMENSION_MAP, f"Question ID '{qid}' missing from QUESTION_SUBDIMENSION_MAP"
+        assert qid in QUESTION_SUBDIMENSION_MAP, (
+            f"Question ID '{qid}' missing from QUESTION_SUBDIMENSION_MAP"
+        )
 
 
 @pytest.mark.unit
 def test_question_subdimension_map_valid_subdimensions() -> None:
     """All mapped sub-dimension values must be one of the 9 valid learner_dna column names."""
-    from app.modules.assessment.onboarding_questions import QUESTION_SUBDIMENSION_MAP, ALL_NINE_DIMENSIONS
+    from app.modules.assessment.onboarding_questions import (
+        ALL_NINE_DIMENSIONS,
+        QUESTION_SUBDIMENSION_MAP,
+    )
+
     valid = set(ALL_NINE_DIMENSIONS)
     for qid, subdim in QUESTION_SUBDIMENSION_MAP.items():
         assert subdim in valid, (
@@ -320,13 +390,21 @@ def test_question_subdimension_map_valid_subdimensions() -> None:
 def test_all_nine_dimensions_constant_complete() -> None:
     """ALL_NINE_DIMENSIONS must contain exactly the 9 learner_dna column names."""
     from app.modules.assessment.onboarding_questions import ALL_NINE_DIMENSIONS
+
     expected = {
-        "pattern_recognition", "logical_deduction", "processing_speed",
-        "frustration_tolerance", "persistence", "help_seeking",
-        "goal_orientation", "curiosity_index", "study_independence",
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
     }
     assert set(ALL_NINE_DIMENSIONS) == expected, (
-        f"ALL_NINE_DIMENSIONS mismatch. Expected {sorted(expected)}, got {sorted(ALL_NINE_DIMENSIONS)}"
+        f"ALL_NINE_DIMENSIONS mismatch. Expected {sorted(expected)}, "
+        f"got {sorted(ALL_NINE_DIMENSIONS)}"
     )
 
 
@@ -334,11 +412,13 @@ def test_all_nine_dimensions_constant_complete() -> None:
 def test_badge_thresholds_no_iq_eq_sq() -> None:
     """AC #10: BADGE_THRESHOLDS labels must not contain IQ, EQ, or SQ language."""
     from app.modules.assessment.onboarding_questions import BADGE_THRESHOLDS
+
     for subdim, label in BADGE_THRESHOLDS.items():
         label_lower = label.lower()
         for banned in ["iq", "eq", "sq", "intelligence quotient", "emotional quotient"]:
             assert banned not in label_lower, (
-                f"Badge label for '{subdim}' contains banned IQ/EQ/SQ term: '{banned}' in '{label}'. "
+                f"Badge label for '{subdim}' contains banned IQ/EQ/SQ term: "
+                f"'{banned}' in '{label}'. "
                 "CLAUDE.md: badge_labels must use plain English."
             )
 
@@ -352,6 +432,7 @@ def test_badge_thresholds_no_iq_eq_sq() -> None:
 def test_dpdp_disclaimer_ends_with_required_phrase() -> None:
     """AC #8: DPDP_DISCLAIMER must end with '— Pursuant to DPDP Act 2023.'"""
     from app.modules.assessment.prompts import DPDP_DISCLAIMER
+
     assert DPDP_DISCLAIMER.endswith("— Pursuant to DPDP Act 2023."), (
         f"DPDP_DISCLAIMER does not end with required phrase. Got: ...{DPDP_DISCLAIMER[-50:]!r}"
     )
@@ -361,6 +442,7 @@ def test_dpdp_disclaimer_ends_with_required_phrase() -> None:
 def test_dpdp_disclaimer_no_iq_eq_sq() -> None:
     """AC #10: DPDP_DISCLAIMER must not contain IQ/EQ/SQ language."""
     from app.modules.assessment.prompts import DPDP_DISCLAIMER
+
     disclaimer_lower = DPDP_DISCLAIMER.lower()
     for banned in ["iq", "eq", "sq", "intelligence quotient"]:
         assert banned not in disclaimer_lower, f"DPDP_DISCLAIMER contains banned term: '{banned}'"
@@ -369,10 +451,12 @@ def test_dpdp_disclaimer_no_iq_eq_sq() -> None:
 @pytest.mark.unit
 async def test_generate_onboarding_profile_appends_dpdp_disclaimer() -> None:
     """AC #8: generate_onboarding_profile must append DPDP_DISCLAIMER to LLM output."""
-    from app.modules.assessment.prompts import generate_onboarding_profile, DPDP_DISCLAIMER
+    from app.modules.assessment.prompts import DPDP_DISCLAIMER, generate_onboarding_profile
 
     mock_provider = MagicMock()
-    mock_provider.complete = AsyncMock(return_value="You tend to learn visually and prefer patterns.")
+    mock_provider.complete = AsyncMock(
+        return_value="You tend to learn visually and prefer patterns."
+    )
 
     with patch("app.modules.assessment.prompts.get_settings") as mock_settings:
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
@@ -401,10 +485,14 @@ async def test_generate_onboarding_profile_uses_llm_mini() -> None:
         await generate_onboarding_profile(badge_labels=["Curious Explorer"], provider=mock_provider)
 
     # Verify provider.complete was called with model=settings.llm_mini (not hardcoded)
-    assert mock_provider.complete.called, "provider.complete must be called by generate_onboarding_profile"
+    assert mock_provider.complete.called, (
+        "provider.complete must be called by generate_onboarding_profile"
+    )
     call_kwargs = mock_provider.complete.call_args
     assert call_kwargs is not None
-    actual_model = call_kwargs.kwargs.get("model") or (call_kwargs.args[1] if len(call_kwargs.args) > 1 else None)
+    actual_model = call_kwargs.kwargs.get("model") or (
+        call_kwargs.args[1] if len(call_kwargs.args) > 1 else None
+    )
     assert actual_model == "gpt-4o-mini", (
         f"AC #14: provider.complete must be called with model=settings.llm_mini ('gpt-4o-mini'), "
         f"got model={actual_model!r}"
@@ -420,6 +508,7 @@ async def test_generate_onboarding_profile_uses_llm_mini() -> None:
 def test_compute_dimension_scores_all_max() -> None:
     """AC #6: selected_index=3 → all 9 dimensions should score 100.0."""
     from app.modules.assessment.service import _compute_dimension_scores
+
     answers = _make_onboarding_answers(selected_index=3)
     scores = _compute_dimension_scores(answers)
     for dim, val in scores.items():
@@ -432,6 +521,7 @@ def test_compute_dimension_scores_all_max() -> None:
 def test_compute_dimension_scores_all_min() -> None:
     """AC #6: selected_index=0 → all 9 dimensions should score 0.0."""
     from app.modules.assessment.service import _compute_dimension_scores
+
     answers = _make_onboarding_answers(selected_index=0)
     scores = _compute_dimension_scores(answers)
     for dim, val in scores.items():
@@ -444,6 +534,7 @@ def test_compute_dimension_scores_all_min() -> None:
 def test_compute_dimension_scores_index_1_normalization() -> None:
     """AC #6: selected_index=1 → normalized = round((1/3)*100, 2) = 33.33."""
     from app.modules.assessment.service import _compute_dimension_scores
+
     answers = _make_onboarding_answers(selected_index=1)
     scores = _compute_dimension_scores(answers)
     expected = round((1 / 3) * 100, 2)  # 33.33
@@ -456,8 +547,9 @@ def test_compute_dimension_scores_index_1_normalization() -> None:
 @pytest.mark.unit
 def test_compute_dimension_scores_returns_all_9_dimensions() -> None:
     """AC #6: _compute_dimension_scores must return all 9 sub-dimension keys."""
-    from app.modules.assessment.service import _compute_dimension_scores
     from app.modules.assessment.onboarding_questions import ALL_NINE_DIMENSIONS
+    from app.modules.assessment.service import _compute_dimension_scores
+
     answers = _make_onboarding_answers(selected_index=2)
     scores = _compute_dimension_scores(answers)
     assert set(scores.keys()) == set(ALL_NINE_DIMENSIONS), (
@@ -469,14 +561,23 @@ def test_compute_dimension_scores_returns_all_9_dimensions() -> None:
 def test_compute_badge_labels_high_scores_produce_badges() -> None:
     """AC #10: scores ≥ 70 should produce badge labels."""
     from app.modules.assessment.service import _compute_badge_labels
+
     scores = {
-        "pattern_recognition": 80.0, "logical_deduction": 75.0, "processing_speed": 65.0,
-        "frustration_tolerance": 90.0, "persistence": 50.0, "help_seeking": 55.0,
-        "goal_orientation": 70.0, "curiosity_index": 45.0, "study_independence": 85.0,
+        "pattern_recognition": 80.0,
+        "logical_deduction": 75.0,
+        "processing_speed": 65.0,
+        "frustration_tolerance": 90.0,
+        "persistence": 50.0,
+        "help_seeking": 55.0,
+        "goal_orientation": 70.0,
+        "curiosity_index": 45.0,
+        "study_independence": 85.0,
     }
     labels = _compute_badge_labels(scores)
     assert "Pattern Thinker" in labels, "pattern_recognition=80 should yield 'Pattern Thinker'"
-    assert "Resilient Learner" in labels, "frustration_tolerance=90 should yield 'Resilient Learner'"
+    assert "Resilient Learner" in labels, (
+        "frustration_tolerance=90 should yield 'Resilient Learner'"
+    )
     assert "Goal-Oriented" in labels, "goal_orientation=70 should yield 'Goal-Oriented'"
     # Below threshold — should NOT appear
     assert "Quick Processor" not in labels, "processing_speed=65 (below 70) should not yield badge"
@@ -486,11 +587,21 @@ def test_compute_badge_labels_high_scores_produce_badges() -> None:
 def test_compute_badge_labels_no_iq_eq_sq() -> None:
     """AC #10: All badge labels must be plain English — no IQ/EQ/SQ."""
     from app.modules.assessment.service import _compute_badge_labels
-    scores = {dim: 100.0 for dim in [
-        "pattern_recognition", "logical_deduction", "processing_speed",
-        "frustration_tolerance", "persistence", "help_seeking",
-        "goal_orientation", "curiosity_index", "study_independence",
-    ]}
+
+    scores = dict.fromkeys(
+        [
+            "pattern_recognition",
+            "logical_deduction",
+            "processing_speed",
+            "frustration_tolerance",
+            "persistence",
+            "help_seeking",
+            "goal_orientation",
+            "curiosity_index",
+            "study_independence",
+        ],
+        100.0,
+    )
     labels = _compute_badge_labels(scores)
     for label in labels:
         label_lower = label.lower()
@@ -517,17 +628,18 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
             mock_settings.return_value.llm_mini = "gpt-4o-mini"
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_s:
                 mock_prompts_s.return_value.llm_mini = "gpt-4o-mini"
-                await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+                await process_onboarding(
+                    responses=answers, user_id="user-onb-001", supabase=supabase
+                )
 
     # Check the upsert call for session_count=0
     upsert_calls = supabase.table.call_args_list
     # Second table call is learner_dna upsert
     assert len(upsert_calls) >= 2
-    upsert_table_mock = supabase.table.side_effect  # can't inspect side_effect directly
     # Verify by checking the mock's upsert was called (indirect check via insert + upsert mocks)
     # The upsert mock is the second element in side_effect list
     # We build supabase fresh per test, so we can inspect the call
-    learner_dna_mock = _build_onboarding_supabase()
+    _build_onboarding_supabase()
     # Re-run to capture the actual upsert payload
     answers2 = _make_onboarding_answers(selected_index=2)
     supabase2 = MagicMock()
@@ -538,11 +650,13 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
     insert_mock.insert.return_value.execute.return_value = MagicMock(data=[], error=None)
 
     upsert_mock = MagicMock()
+
     def _capture_upsert(data, **kwargs):
         upsert_data_captured.update(data if isinstance(data, dict) else {})
         m = MagicMock()
         m.execute.return_value = MagicMock(data=[{"user_id": "user-onb-001"}], error=None)
         return m
+
     upsert_mock.upsert.side_effect = _capture_upsert
 
     supabase2.table.side_effect = [insert_mock, upsert_mock]
@@ -555,21 +669,23 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
             mock_settings2.return_value.llm_mini = "gpt-4o-mini"
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
-                await process_onboarding(responses=answers2, user_id="user-onb-001", supabase=supabase2)
+                await process_onboarding(
+                    responses=answers2, user_id="user-onb-001", supabase=supabase2
+                )
 
     assert upsert_data_captured.get("session_count") == 0, (
-        f"learner_dna upsert must have session_count=0, got {upsert_data_captured.get('session_count')}"
+        f"learner_dna upsert must have session_count=0, "
+        f"got {upsert_data_captured.get('session_count')}"
     )
     # AC #6: all 9 dimension keys must be present and in 0-100 range
     from app.modules.assessment.onboarding_questions import ALL_NINE_DIMENSIONS
+
     for dim in ALL_NINE_DIMENSIONS:
         assert dim in upsert_data_captured, (
             f"AC #6: dimension '{dim}' missing from learner_dna upsert payload"
         )
         score = upsert_data_captured[dim]
-        assert 0.0 <= score <= 100.0, (
-            f"AC #6: dimension '{dim}' score must be 0-100, got {score}"
-        )
+        assert 0.0 <= score <= 100.0, f"AC #6: dimension '{dim}' score must be 0-100, got {score}"
     # AC #8 (DB): profile_text must be persisted in learner_dna, not just returned in HTTP response
     assert "profile_text" in upsert_data_captured, (
         "AC #8 (DB): profile_text must be included in learner_dna upsert payload"
@@ -583,6 +699,7 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
 async def test_process_onboarding_insert_error_duplicate_returns_409(mock_to_thread) -> None:
     """AC #17: onboarding_responses insert with unique violation → HTTP 409."""
     from fastapi import HTTPException
+
     from app.modules.assessment.service import process_onboarding
 
     dup_error = MagicMock()
@@ -602,6 +719,7 @@ async def test_process_onboarding_insert_error_duplicate_returns_409(mock_to_thr
 async def test_process_onboarding_insert_error_non_duplicate_returns_500(mock_to_thread) -> None:
     """AC #16: onboarding_responses insert failure (non-duplicate) → HTTP 500."""
     from fastapi import HTTPException
+
     from app.modules.assessment.service import process_onboarding
 
     generic_error = MagicMock()
@@ -663,31 +781,40 @@ async def test_process_onboarding_returns_onboarding_result(mock_to_thread) -> N
                     responses=answers, user_id="user-onb-001", supabase=supabase
                 )
 
-    assert isinstance(result, OnboardingResult), (
-        f"Expected OnboardingResult, got {type(result)}"
-    )
+    assert isinstance(result, OnboardingResult), f"Expected OnboardingResult, got {type(result)}"
     # Verify no raw numeric dimension scores in the response
     result_dict = result.model_dump()
-    for field in ["pattern_recognition", "logical_deduction", "processing_speed",
-                  "frustration_tolerance", "persistence", "help_seeking",
-                  "goal_orientation", "curiosity_index", "study_independence"]:
+    for field in [
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
+    ]:
         assert field not in result_dict, f"OnboardingResult must not expose '{field}' to students"
 
 
 @pytest.mark.unit
 async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> None:
-    """AC #5: All 20 onboarding_responses rows must have response_value=selected_index and dimension_tag=dimension."""
+    """AC #5: All 20 onboarding_responses rows must have response_value=selected_index
+    and dimension_tag=dimension."""
     from app.modules.assessment.service import process_onboarding
 
     answers = _make_onboarding_answers(selected_index=2)
     insert_rows_captured: list[dict] = []
 
     insert_mock = MagicMock()
+
     def _capture_insert(rows):
         insert_rows_captured.extend(rows if isinstance(rows, list) else [rows])
         m = MagicMock()
         m.execute.return_value = MagicMock(data=[], error=None)
         return m
+
     insert_mock.insert.side_effect = _capture_insert
 
     upsert_mock = MagicMock()
@@ -706,17 +833,21 @@ async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> 
             mock_settings.return_value.llm_mini = "gpt-4o-mini"
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
-                await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+                await process_onboarding(
+                    responses=answers, user_id="user-onb-001", supabase=supabase
+                )
 
     assert len(insert_rows_captured) == 20, (
         f"AC #5: Expected 20 rows in onboarding_responses, got {len(insert_rows_captured)}"
     )
-    for i, (row, ans) in enumerate(zip(insert_rows_captured, answers)):
+    for i, (row, ans) in enumerate(zip(insert_rows_captured, answers, strict=False)):
         assert row["response_value"] == ans.selected_index, (
-            f"AC #5: Row {i} response_value must equal selected_index ({ans.selected_index}), got {row['response_value']}"
+            f"AC #5: Row {i} response_value must equal selected_index ({ans.selected_index}), "
+            f"got {row['response_value']}"
         )
         assert row["dimension_tag"] == ans.dimension, (
-            f"AC #5: Row {i} dimension_tag must equal dimension ({ans.dimension!r}), got {row['dimension_tag']!r}"
+            f"AC #5: Row {i} dimension_tag must equal dimension ({ans.dimension!r}), "
+            f"got {row['dimension_tag']!r}"
         )
         assert row["user_id"] == "user-onb-001", f"AC #5: Row {i} user_id mismatch"
         assert row["question_id"] == ans.question_id, f"AC #5: Row {i} question_id mismatch"
@@ -726,6 +857,7 @@ async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> 
 async def test_process_onboarding_upsert_error_returns_500(mock_to_thread) -> None:
     """BLOCKER: learner_dna upsert failure must raise HTTP 500 (not silently lock user out)."""
     from fastapi import HTTPException
+
     from app.modules.assessment.service import process_onboarding
 
     upsert_error = MagicMock()
@@ -742,7 +874,9 @@ async def test_process_onboarding_upsert_error_returns_500(mock_to_thread) -> No
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
                 with pytest.raises(HTTPException) as exc_info:
-                    await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+                    await process_onboarding(
+                        responses=answers, user_id="user-onb-001", supabase=supabase
+                    )
 
     assert exc_info.value.status_code == 500, (
         f"Expected 500 for learner_dna upsert error, got {exc_info.value.status_code}"
@@ -767,7 +901,12 @@ def test_http_422_when_fewer_than_20_responses() -> None:
 @pytest.mark.unit
 def test_http_422_when_more_than_20_responses() -> None:
     """AC #2: POST /onboarding/submit with 21 responses → 422 Unprocessable Entity."""
-    extra = {"question_id": "c1", "dimension": "cognitive", "selected_index": 1, "selected_text": "A"}
+    extra = {
+        "question_id": "c1",
+        "dimension": "cognitive",
+        "selected_index": 1,
+        "selected_text": "A",
+    }
     payload = {"responses": _make_20_responses() + [extra]}
     response = _client.post("/api/assessment/onboarding/submit", json=payload)
     assert response.status_code == 422, (
@@ -822,7 +961,8 @@ def test_http_409_when_onboarding_already_done() -> None:
         )
 
     assert response.status_code == 409, (
-        f"Expected 409 for already-done onboarding, got {response.status_code}: {response.text[:200]}"
+        f"Expected 409 for already-done onboarding, "
+        f"got {response.status_code}: {response.text[:200]}"
     )
 
 
@@ -847,7 +987,10 @@ def test_http_201_on_success() -> None:
 
     with patch("app.core.redis.get_redis", return_value=mock_redis):
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
-            with patch("app.modules.assessment.service.process_onboarding", new=AsyncMock(return_value=mock_result)):
+            with patch(
+                "app.modules.assessment.service.process_onboarding",
+                new=AsyncMock(return_value=mock_result),
+            ):
                 response = _client.post(
                     "/api/assessment/onboarding/submit",
                     json={"responses": _make_20_responses()},
@@ -879,7 +1022,10 @@ def test_http_redis_set_called_after_success() -> None:
 
     with patch("app.core.redis.get_redis", return_value=mock_redis):
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
-            with patch("app.modules.assessment.service.process_onboarding", new=AsyncMock(return_value=mock_result)):
+            with patch(
+                "app.modules.assessment.service.process_onboarding",
+                new=AsyncMock(return_value=mock_result),
+            ):
                 _client.post(
                     "/api/assessment/onboarding/submit",
                     json={"responses": _make_20_responses()},
@@ -904,7 +1050,10 @@ def test_http_response_no_raw_dimension_scores() -> None:
 
     with patch("app.core.redis.get_redis", return_value=mock_redis):
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
-            with patch("app.modules.assessment.service.process_onboarding", new=AsyncMock(return_value=mock_result)):
+            with patch(
+                "app.modules.assessment.service.process_onboarding",
+                new=AsyncMock(return_value=mock_result),
+            ):
                 response = _client.post(
                     "/api/assessment/onboarding/submit",
                     json={"responses": _make_20_responses()},
@@ -912,9 +1061,17 @@ def test_http_response_no_raw_dimension_scores() -> None:
 
     assert response.status_code == 201
     body = response.json()
-    for field in ["pattern_recognition", "logical_deduction", "processing_speed",
-                  "frustration_tolerance", "persistence", "help_seeking",
-                  "goal_orientation", "curiosity_index", "study_independence"]:
+    for field in [
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
+    ]:
         assert field not in body, (
             f"Response body must not expose raw dimension score '{field}'. "
             "CLAUDE.md: no clinical scores shown to students."
@@ -941,7 +1098,10 @@ def test_http_profile_text_no_raw_numeric_scores() -> None:
 
     with patch("app.core.redis.get_redis", return_value=mock_redis):
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
-            with patch("app.modules.assessment.service.process_onboarding", new=AsyncMock(return_value=mock_result)):
+            with patch(
+                "app.modules.assessment.service.process_onboarding",
+                new=AsyncMock(return_value=mock_result),
+            ):
                 response = _client.post(
                     "/api/assessment/onboarding/submit",
                     json={"responses": _make_20_responses()},
@@ -951,7 +1111,7 @@ def test_http_profile_text_no_raw_numeric_scores() -> None:
     body = response.json()
     assert "profile_text" in body
     # AC #9: profile_text must NOT contain raw numeric patterns (e.g. "67.50", "33.33")
-    raw_float_pattern = re.compile(r'\b\d+\.\d+\b')
+    raw_float_pattern = re.compile(r"\b\d+\.\d+\b")
     assert raw_float_pattern.search(body["profile_text"]) is None, (
         f"AC #9 violated: profile_text contains a raw numeric score. "
         f"Content: {body['profile_text']!r}"

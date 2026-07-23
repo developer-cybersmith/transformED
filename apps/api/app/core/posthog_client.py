@@ -16,9 +16,11 @@ DPDP Act 2023 compliance: capture_event() requires analytics_consent=True
 (explicitly passed by each call site after checking the users.analytics_consent
 column). Default is False — no events are sent without explicit user consent.
 """
+
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import posthog
 
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 # the correct safe default when credentials are unavailable.
 try:
     from app.config import get_settings as _get_settings
+
     _s = _get_settings()
     posthog.api_key = _s.posthog_api_key
     posthog.host = _s.posthog_host
@@ -45,7 +48,7 @@ def capture_event(
     *,
     distinct_id: str,
     event: str,
-    properties: dict,
+    properties: dict[str, Any],
     analytics_consent: bool = False,
 ) -> None:
     """Fire a PostHog event if PostHog is configured AND the user has consented.
@@ -71,6 +74,6 @@ def capture_event(
     if not analytics_consent:
         return
     try:
-        posthog.capture(distinct_id, event, properties)
+        posthog.capture(event, distinct_id=distinct_id, properties=properties)
     except Exception as exc:
         logger.warning("PostHog capture failed event=%r: %s", event, exc)

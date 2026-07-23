@@ -131,18 +131,12 @@ def build_section_bodies(
     sections: list[dict[str, Any]] = []
     for i, cand in enumerate(candidates):
         start_offset = cand["char_offset"] + len(cand["text"])
-        end_offset = (
-            candidates[i + 1]["char_offset"]
-            if i + 1 < len(candidates)
-            else total_chars
-        )
+        end_offset = candidates[i + 1]["char_offset"] if i + 1 < len(candidates) else total_chars
 
         body = raw_text[start_offset:end_offset].strip()
         page_start = estimate_page(cand["char_offset"], total_chars, total_pages)
         if i + 1 < len(candidates):
-            next_page = estimate_page(
-                candidates[i + 1]["char_offset"], total_chars, total_pages
-            )
+            next_page = estimate_page(candidates[i + 1]["char_offset"], total_chars, total_pages)
             page_end = max(page_start, next_page - 1)
         else:
             page_end = max(total_pages, page_start)
@@ -159,3 +153,94 @@ def build_section_bodies(
         )
 
     return sections
+
+
+# Coarsest → finest, so a merged section adopts the coarsest level among members.
+_LEVEL_RANK = {"chapter": 0, "section": 1, "topic": 2}
+
+
+def _merge_two(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    """Merge section ``b`` into ``a`` (a precedes b). Text-preserving: b's title
+    and body are folded into a's body so no source text is ever dropped. The
+    merged section keeps a's title, the coarsest level of the two, and spans
+    both page ranges."""
+    b_title = (b.get("title") or "").strip()
+    b_body = (b.get("body") or "").strip()
+    folded = "\n".join(part for part in (b_title, b_body) if part)
+    merged_body = a.get("body", "")
+    if folded:
+        merged_body = f"{merged_body}\n\n{folded}" if merged_body else folded
+    a_level = a.get("level", "topic")
+    b_level = b.get("level", "topic")
+    coarser = a_level if _LEVEL_RANK.get(a_level, 2) <= _LEVEL_RANK.get(b_level, 2) else b_level
+    return {
+        **a,
+        "level": coarser,
+        "body": merged_body,
+        "page_start": min(a.get("page_start", 1), b.get("page_start", 1)),
+        "page_end": max(a.get("page_end", 1), b.get("page_end", 1)),
+    }
+
+
+def coalesce_sections(
+    sections: list[dict[str, Any]],
+    *,
+    min_chars: int,
+    max_sections: int,
+) -> list[dict[str, Any]]:
+    """Bound an over-segmented section list without losing any source text.
+
+    Two text-preserving passes (Story 2-16, RC-1):
+      1. **Min-body floor** — any section whose ``body`` is shorter than
+         ``min_chars`` is folded into the previously-kept section (or, if it is
+         the first section, the next one is folded into it). This collapses
+         numbered how-to steps that were mis-detected as headings.
+      2. **Max-count cap** — while more than ``max_sections`` remain, repeatedly
+         merge the adjacent pair with the smallest combined body length until the
+         count reaches the cap.
+
+    Bodies concatenate (with the absorbed section's title folded in), so the
+    union of the returned bodies contains every original body — nothing is
+    dropped. ``id``s are re-sequenced ``s0..sN``. A list already within bounds is
+    returned unchanged (aside from id re-sequencing being a no-op)."""
+    if not sections:
+        return sections
+
+    # ── Pass 1: min-body floor merge ─────────────────────────────────────────
+    kept: list[dict[str, Any]] = []
+    for sec in sections:
+        body = (sec.get("body") or "").strip()
+        if len(body) < min_chars and kept:
+            kept[-1] = _merge_two(kept[-1], sec)
+        else:
+            kept.append(dict(sec))
+    # A sub-floor first section couldn't merge backwards above; fold it forward.
+    if len(kept) >= 2 and len((kept[0].get("body") or "").strip()) < min_chars:
+        merged_first = _merge_two(kept[0], kept[1])
+        kept = [merged_first, *kept[2:]]
+
+    # ── Pass 2: max-count cap via O(n) contiguous bucketing ───────────────────
+    # Distribute the kept sections into `max_sections` contiguous, near-equal
+    # buckets and merge each bucket in place. Contiguous (order-preserving) and
+    # O(n) — deliberately NOT an O(n^2) smallest-adjacent-pair search, which an
+    # adversarial upload (tens of thousands of above-floor numbered lines) could
+    # grind on in the ARQ worker before the downstream fan-out cap ever applies.
+    if max_sections >= 1 and len(kept) > max_sections:
+        n = len(kept)
+        base, extra = divmod(n, max_sections)  # n > max_sections >= 1 => base >= 1
+        bucketed: list[dict[str, Any]] = []
+        idx = 0
+        for b in range(max_sections):
+            size = base + (1 if b < extra else 0)
+            group = kept[idx : idx + size]
+            idx += size
+            merged = group[0]
+            for nxt in group[1:]:
+                merged = _merge_two(merged, nxt)
+            bucketed.append(merged)
+        kept = bucketed
+
+    # ── Re-sequence ids ──────────────────────────────────────────────────────
+    for i, sec in enumerate(kept):
+        sec["id"] = f"s{i}"
+    return kept

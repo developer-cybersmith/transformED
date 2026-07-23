@@ -16,9 +16,10 @@ ARCHITECT DECISIONS implemented here:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from redis.asyncio import Redis
 
@@ -64,12 +65,10 @@ async def _run_lesson_subscriber(manager: ConnectionManager) -> None:
                 logger.info("lesson_ready subscriber: pmessage channel=%s", channel)
 
                 session_id: str = channel.removeprefix("lesson_ready:")
-                logger.info(
-                    "lesson_ready subscriber: extracted session_id=%s", session_id
-                )
+                logger.info("lesson_ready subscriber: extracted session_id=%s", session_id)
 
                 try:
-                    message: dict = json.loads(data)
+                    message: dict[str, Any] = json.loads(data)
                 except json.JSONDecodeError:
                     logger.error(
                         "lesson_ready subscriber: malformed JSON on channel=%s data=%r",
@@ -104,19 +103,15 @@ async def _run_lesson_subscriber(manager: ConnectionManager) -> None:
             raise  # DECISION 3: shutdown signal — do not restart
         except Exception:
             wait: float = min(2**attempt, 30)
-            logger.exception(
-                "lesson subscriber crashed; reconnect in %.1fs", wait
-            )
+            logger.exception("lesson subscriber crashed; reconnect in %.1fs", wait)
             if _sub_conn is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await _sub_conn.aclose()
-                except Exception:
-                    pass
             await asyncio.sleep(wait)
             attempt += 1
 
 
-async def start_lesson_ready_listener(manager: ConnectionManager) -> asyncio.Task:
+async def start_lesson_ready_listener(manager: ConnectionManager) -> asyncio.Task[Any]:
     """Start the ``lesson_ready:*`` pub/sub listener as a background asyncio.Task.
 
     Called once during FastAPI lifespan startup (DECISION 2).  The returned
@@ -128,7 +123,7 @@ async def start_lesson_ready_listener(manager: ConnectionManager) -> asyncio.Tas
     Returns:
         The running ``asyncio.Task`` — caller must ``task.cancel()`` on shutdown.
     """
-    task: asyncio.Task = asyncio.create_task(
+    task: asyncio.Task[Any] = asyncio.create_task(
         _run_lesson_subscriber(manager),
         name="lesson_ready_subscriber",
     )

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser
@@ -95,11 +95,15 @@ async def ingest_events(
 async def get_session_summary(
     session_id: str,
     current_user: CurrentUser,
-) -> SessionSummary:
+) -> dict[str, Any]:
     """Return aggregated analytics for a completed or in-progress session.
 
     Aggregates from session_events and attention_events tables.
     Attention metrics default to 0.0 if the user has not consented (RLS enforces consent).
+
+    The service returns a plain dict; the ``response_model=SessionSummary`` on the
+    route decorator validates and serializes it — the declared return type reflects
+    the actual runtime object (a dict), not the response schema.
     """
     from app.core.db import get_supabase
     from app.modules.analytics.service import get_session_summary as _get_session_summary

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
                    retry up to ``WorkerSettings.max_tries`` times.
     """
     from app.core.cost_tracker import clear_lesson_cost
-    from app.core.db import get_supabase
+    from app.core.db import get_supabase, single_row
     from app.modules.content.pipeline.graph import run_pipeline
 
     logger.info("content_pipeline_job START lesson_id=%s", lesson_id)
@@ -62,7 +63,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             .single()
             .execute()
         )
-        lesson_row: dict[str, Any] = result.data or {}
+        lesson_row: dict[str, Any] = single_row(result) or {}
 
         user_id: str = lesson_row.get("user_id", "")
         source_pdf_path: str = lesson_row.get("source_file_path", "")
@@ -99,12 +100,12 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # previous write ('ready' + lesson_package) failed with PGRST204 at the
         # end of every otherwise-successful run. The full LessonPackage is
         # persisted to lessons.content by package_builder (S2-11).
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         supabase.table("lesson_jobs").update(
             {
                 "status": "completed",
-                "completed_at": datetime.now(tz=timezone.utc).isoformat(),
+                "completed_at": datetime.now(tz=UTC).isoformat(),
             }
         ).eq("lesson_id", lesson_id).execute()
 
@@ -120,6 +121,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
 
         # ── 4b. Notify client via Redis pub/sub ──────────────────────────────
         import json
+
         from app.core.redis import get_redis
 
         redis = get_redis()
@@ -207,9 +209,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             # BaseException, not Exception: a second cancel arriving while the
             # shielded write runs must not mask the original cancellation (we
             # still re-raise the outer CancelledError below).
-            logger.warning(
-                "Failed to record cancellation for lesson_id=%s", lesson_id
-            )
+            logger.warning("Failed to record cancellation for lesson_id=%s", lesson_id)
         logger.warning("content_pipeline_job CANCELLED lesson_id=%s", lesson_id)
         raise  # Cancellation must always propagate
 
@@ -233,7 +233,7 @@ _LESSON_JOBS_TO_LESSONS_STATUS: dict[str, str] = {
 
 
 async def _update_lesson_status(
-    supabase: Any,
+    supabase: Any,  # noqa: ANN401
     lesson_id: str,
     status: str,
     error: str | None = None,
@@ -251,7 +251,9 @@ async def _update_lesson_status(
 
         supabase.table("lesson_jobs").update(payload).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
-        logger.warning("Failed to update lesson status for lesson_id=%s status=%s", lesson_id, status)
+        logger.warning(
+            "Failed to update lesson status for lesson_id=%s status=%s", lesson_id, status
+        )
 
     lessons_status = _LESSON_JOBS_TO_LESSONS_STATUS.get(status)
     if lessons_status is None:
@@ -260,6 +262,10 @@ async def _update_lesson_status(
         # lessons has no `error` column (initial_schema.sql) — the error detail
         # lives on lesson_jobs.error only; router.py's get_lesson() already
         # reads it from there when lessons.status == 'failed'.
-        supabase.table("lessons").update({"status": lessons_status}).eq("lesson_id", lesson_id).execute()
+        supabase.table("lessons").update({"status": lessons_status}).eq(
+            "lesson_id", lesson_id
+        ).execute()
     except Exception:  # noqa: BLE001
-        logger.warning("Failed to update lessons.status for lesson_id=%s status=%s", lesson_id, lessons_status)
+        logger.warning(
+            "Failed to update lessons.status for lesson_id=%s status=%s", lesson_id, lessons_status
+        )

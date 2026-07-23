@@ -33,8 +33,18 @@ def _default_under_cost_ceiling():
 FAKE_LESSON_ID = "50505050-5050-5050-5050-505050505050"
 
 NARRATION_SCRIPTS: list[dict[str, Any]] = [
-    {"segment_id": "sec_0", "script": "Welcome to the lesson.", "narration_style": "conversational", "word_count": 4},
-    {"segment_id": "sec_1", "script": "Here is how it works.", "narration_style": "explanatory", "word_count": 5},
+    {
+        "segment_id": "sec_0",
+        "script": "Welcome to the lesson.",
+        "narration_style": "conversational",
+        "word_count": 4,
+    },
+    {
+        "segment_id": "sec_1",
+        "script": "Here is how it works.",
+        "narration_style": "explanatory",
+        "word_count": 5,
+    },
 ]
 
 
@@ -180,7 +190,9 @@ async def test_over_ceiling_skips_paid_providers_and_downshifts_to_browser() -> 
     # node's OWN final checkpoint write, and fire once for the whole node
     # run (2 segments both over ceiling), not once per segment.
     checkpoint_calls = [
-        c.args[0] for c in sb.table.return_value.update.call_args_list if "node_outputs" in c.args[0]
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
     ]
     assert len(checkpoint_calls) == 1
     written_node_outputs = checkpoint_calls[0]["node_outputs"]
@@ -220,7 +232,12 @@ async def test_idempotency_cache_hit_skips_all_synthesis() -> None:
     cached_assets = [
         {
             "segment_id": "sec_0",
-            "data": {"script": "cached", "audio_url": "x/sec_0.mp3", "audio_provider": "sarvam", "timestamps": []},
+            "data": {
+                "script": "cached",
+                "audio_url": "x/sec_0.mp3",
+                "audio_provider": "sarvam",
+                "timestamps": [],
+            },
         }
     ]
     mock_sarvam = AsyncMock()
@@ -335,7 +352,12 @@ async def test_unsafe_segment_id_degrades_to_browser_fallback() -> None:
     mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
     sb = _mock_supabase()
 
-    unsafe_entry = {"segment_id": "../../etc/passwd", "script": "hi", "narration_style": "x", "word_count": 1}
+    unsafe_entry = {
+        "segment_id": "../../etc/passwd",
+        "script": "hi",
+        "narration_style": "x",
+        "word_count": 1,
+    }
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),

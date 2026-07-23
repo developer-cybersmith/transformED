@@ -71,7 +71,9 @@ async def is_circuit_open(provider: str) -> bool:
             if elapsed >= RECOVERY_TIMEOUT_SECONDS:
                 # Promote to HALF_OPEN — allow one probe
                 await redis.set(state_key, CircuitState.HALF_OPEN)
-                logger.info("Circuit for '%s' promoted to HALF_OPEN after %ds", provider, int(elapsed))
+                logger.info(
+                    "Circuit for '%s' promoted to HALF_OPEN after %ds", provider, int(elapsed)
+                )
                 return False
         return True  # Still within recovery timeout
 
@@ -90,7 +92,9 @@ async def record_failure(provider: str) -> None:
         # First failure in window — set TTL
         await redis.expire(failures_key, FAILURE_WINDOW_SECONDS)
 
-    logger.warning("Circuit breaker: failure %d/%d for provider '%s'", failures, FAILURE_THRESHOLD, provider)
+    logger.warning(
+        "Circuit breaker: failure %d/%d for provider '%s'", failures, FAILURE_THRESHOLD, provider
+    )
 
     if failures >= FAILURE_THRESHOLD:
         state_raw = await redis.get(state_key)
@@ -112,7 +116,7 @@ async def record_failure(provider: str) -> None:
             sentry_sdk.capture_message(
                 f"Circuit breaker OPENED for AI provider '{provider}'",
                 level="error",
-                extras={  # type: ignore[call-arg]
+                extras={
                     "provider": provider,
                     "failures": failures,
                     "threshold": FAILURE_THRESHOLD,

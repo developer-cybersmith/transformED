@@ -37,8 +37,7 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER_KEY = "imagen"
 _IMAGEN_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "imagen-4.0-fast-generate-001:predict"
+    "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-fast-generate-001:predict"
 )
 
 # Imagen 4 Fast pricing (USD per image) — documented placeholder, not a
@@ -77,7 +76,9 @@ class ImagenProvider(ImageProvider):
             RuntimeError: with the API key redacted — see module docstring.
         """
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected")
+            raise RuntimeError(
+                f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
+            )
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

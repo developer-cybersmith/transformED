@@ -11,7 +11,12 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
+    from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +32,8 @@ class NormalizedSignal:
     """Internal representation of an attention signal after boundary mapping."""
 
     session_id: str
-    quiz_accuracy: float | None       # None when quiz not yet attempted
-    teachback_score: float | None     # None when teach-back skipped
+    quiz_accuracy: float | None  # None when quiz not yet attempted
+    teachback_score: float | None  # None when teach-back skipped
     behavioral_score: float
     head_pose_score: float
     blink_rate: float
@@ -53,7 +58,7 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
     and a flat dict.  Handles quiz_accuracy=None and teachback_score=None.
     """
     # Unwrap WsMessage envelope if present
-    data: dict[str, Any] = payload.get("payload") or payload  # type: ignore[assignment]
+    data: dict[str, Any] = payload.get("payload") or payload
 
     session_id = data.get("session_id")
     if not session_id:
@@ -101,15 +106,16 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
 def compute_ces(signal: NormalizedSignal) -> float:
     """Weighted Cognitive Engagement Score on the 0–100 scale (PRD §11).
 
-    ``CES = (Σ signalᵢ × weightᵢ) × 100`` using the frozen ``settings.ces_weight_*`` weights, matching
-    Dev 3's ``ces_contribution`` scale contract (assessment/service.py) so ``ces_threshold = 50`` is
-    correct.
+    ``CES = (Σ signalᵢ × weightᵢ) × 100`` using the frozen ``settings.ces_weight_*``
+    weights, matching Dev 3's ``ces_contribution`` scale contract
+    (assessment/service.py) so ``ces_threshold = 50`` is correct.
 
-    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None`` (not yet attempted
-    / skipped). The weight of any ``None`` signal is redistributed proportionally across the present
-    signals (each present weight ÷ sum-of-present-weights). This generalises the §11 teachback-``None``
-    rule — when only teachback is ``None`` the present weights sum to 0.75, so each is divided by 0.75,
-    reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
+    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None``
+    (not yet attempted / skipped). The weight of any ``None`` signal is redistributed
+    proportionally across the present signals (each present weight ÷
+    sum-of-present-weights). This generalises the §11 teachback-``None`` rule — when
+    only teachback is ``None`` the present weights sum to 0.75, so each is divided by
+    0.75, reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
     """
     from app.config import get_settings
 
@@ -184,7 +190,7 @@ async def advance_tutor_state(session_id: str, event: str) -> None:
     await dispatch_event(session_id, event)
 
 
-async def _segment_intervention_messages(session_id: str, redis: Any) -> dict[str, Any]:
+async def _segment_intervention_messages(session_id: str, redis: Redis) -> dict[str, Any]:
     """Return the current segment's ``intervention_messages`` from the cached LessonPackage.
 
     Returns ``{}`` on any miss (no cache / parse error / no segments / bad index). Performs ONLY
@@ -244,12 +250,14 @@ async def process_attention_signal(
     await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)  # ces_computation (s3-3)
 
     # Prepend to history and trim to keep only the last _CES_HISTORY_MAX values
-    await redis.lpush(history_key, ces)
-    await redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1)
+    await cast("Awaitable[int]", redis.lpush(history_key, ces))
+    await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
     await redis.expire(history_key, _CES_WINDOW_TTL)
 
     # Read history to evaluate the intervention trigger
-    history_raw: list[str] = await redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+    history_raw: list[str] = await cast(
+        "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+    )
 
     intervention_dispatched = False
 

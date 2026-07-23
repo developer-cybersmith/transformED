@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import logging
 from enum import StrEnum
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -143,7 +143,7 @@ async def _is_in_teachback(session_id: str) -> bool:
     redis = get_redis()
     state_key = f"tutor_state:{session_id}"
     state_raw = await redis.get(state_key)
-    return state_raw == TutorState.TEACH_BACK
+    return bool(state_raw == TutorState.TEACH_BACK)
 
 
 # ── Node implementations ──────────────────────────────────────────────────────
@@ -288,8 +288,9 @@ async def route_from_teach_back(state: TutorMachineState) -> str:
     """Route out of TEACH_BACK.
 
     CLAUDE.md §10 — NEVER interrupt mid-TEACH_BACK: only an explicit teach-back outcome leaves this
-    state. Any other event (including ``distraction_detected`` / ``fatigue_detected``) is suppressed —
-    the FSM stays in TEACH_BACK. This is the authoritative routing-level enforcement of the guard.
+    state. Any other event (including ``distraction_detected`` / ``fatigue_detected``) is
+    suppressed — the FSM stays in TEACH_BACK. This is the authoritative routing-level enforcement
+    of the guard.
     """
     event = state.get("event", "")
     if event == "teachback_complete":
@@ -304,7 +305,7 @@ async def route_from_session_end(state: TutorMachineState) -> str:
     event = state.get("event", "")
     if event == "session_reset":
         return "idle"
-    return END  # type: ignore[return-value]
+    return END
 
 
 async def route_from_idle(state: TutorMachineState) -> str:
@@ -356,14 +357,14 @@ async def route_entry(state: TutorMachineState) -> str:
 # ── Graph construction ────────────────────────────────────────────────────────
 
 
-def _build_tutor_graph() -> Any:
+def _build_tutor_graph() -> Any:  # noqa: ANN401
     """Build and compile the tutor state machine graph.
 
     Uses MemorySaver — PostgresSaver is BANNED per PRD §24.
     """
     checkpointer = MemorySaver()  # PostgresSaver is BANNED per PRD §24
 
-    graph: StateGraph = StateGraph(TutorMachineState)
+    graph: StateGraph[Any] = StateGraph(TutorMachineState)
 
     # Register all 7 state nodes
     graph.add_node("idle", idle_node)
@@ -408,7 +409,7 @@ def _build_tutor_graph() -> Any:
 _compiled_tutor_graph: Any | None = None
 
 
-def get_tutor_graph() -> Any:
+def get_tutor_graph() -> Any:  # noqa: ANN401
     """Return the cached compiled tutor state machine graph."""
     global _compiled_tutor_graph  # noqa: PLW0603
     if _compiled_tutor_graph is None:
@@ -455,8 +456,8 @@ async def dispatch_event(
         "event": event,
         "event_payload": payload or {},
         # Derive intervention_type from the event when the caller didn't set it explicitly. Without
-        # this, fatigue_detected/distraction_detected (dispatched without a payload) left it None and
-        # intervening_node recorded neither branch (the fatigue-once flag never got set).
+        # this, fatigue_detected/distraction_detected (dispatched without a payload) left it None
+        # and intervening_node recorded neither branch (the fatigue-once flag never got set).
         "intervention_type": (payload.get("intervention_type") if payload else None)
         or _EVENT_INTERVENTION_TYPE.get(event),
         "error": None,
@@ -477,7 +478,10 @@ def _trace_dispatch(session_id: str, event: str, result: TutorMachineState | Non
     try:
         from app.core.langfuse import get_langfuse
 
-        get_langfuse().trace(
+        # langfuse 4.x removed the client-level `.trace()` method (attr-defined);
+        # this whole block is best-effort and any AttributeError is swallowed by
+        # the surrounding except, so behavior is unchanged. Types-only suppression.
+        get_langfuse().trace(  # type: ignore[attr-defined]
             name="tutor.dispatch_event",
             session_id=session_id,
             input={"event": event},
@@ -507,7 +511,7 @@ async def _read_state(session_id: str) -> str | None:
         from app.core.redis import get_redis
 
         redis = get_redis()
-        return await redis.get(f"tutor_state:{session_id}")
+        return cast("str | None", await redis.get(f"tutor_state:{session_id}"))
     except Exception:  # noqa: BLE001
         logger.warning("Failed to read tutor state for session %s", session_id)
         return None

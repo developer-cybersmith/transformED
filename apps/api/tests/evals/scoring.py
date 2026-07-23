@@ -73,7 +73,9 @@ def score_slide_quality(lesson_package: dict[str, Any]) -> EvalScore:
     issues: list[str] = []
 
     for segment in segments:
-        segment_id = segment.get("segment_id", "<unknown>") if isinstance(segment, dict) else "<unknown>"
+        segment_id = (
+            segment.get("segment_id", "<unknown>") if isinstance(segment, dict) else "<unknown>"
+        )
         slides = segment.get("slides", []) if isinstance(segment, dict) else []
         if not slides:
             issues.append(f"segment {segment_id}: zero slides")
@@ -93,7 +95,9 @@ def score_slide_quality(lesson_package: dict[str, Any]) -> EvalScore:
 
         for slide in slides:
             total_slides += 1
-            slide_id = slide.get("slide_id", "<unknown>") if isinstance(slide, dict) else "<unknown>"
+            slide_id = (
+                slide.get("slide_id", "<unknown>") if isinstance(slide, dict) else "<unknown>"
+            )
             title = (slide.get("title") or "").strip() if isinstance(slide, dict) else ""
             bullets = slide.get("bullets", []) if isinstance(slide, dict) else []
 
@@ -111,7 +115,10 @@ def score_slide_quality(lesson_package: dict[str, Any]) -> EvalScore:
                         issues.append(f"slide {slide_id}: blank bullet at index {i}")
                         slide_ok = False
                     elif len(bullet_text) > _MAX_BULLET_CHARS:
-                        issues.append(f"slide {slide_id}: bullet {i} exceeds {_MAX_BULLET_CHARS} chars (wall of text)")
+                        issues.append(
+                            f"slide {slide_id}: bullet {i} exceeds "
+                            f"{_MAX_BULLET_CHARS} chars (wall of text)"
+                        )
                         slide_ok = False
             if slide_ok:
                 passing_slides += 1
@@ -154,10 +161,15 @@ def score_quiz_relevance(lesson_package: dict[str, Any]) -> EvalScore:
 
             question_ok = True
             if len(options) != _REQUIRED_QUIZ_OPTIONS:
-                issues.append(f"question {question_id}: {len(options)} options, expected {_REQUIRED_QUIZ_OPTIONS}")
+                issues.append(
+                    f"question {question_id}: {len(options)} options, "
+                    f"expected {_REQUIRED_QUIZ_OPTIONS}"
+                )
                 question_ok = False
             if not isinstance(correct_index, int) or not (0 <= correct_index < len(options)):
-                issues.append(f"question {question_id}: correct_index {correct_index!r} out of range")
+                issues.append(
+                    f"question {question_id}: correct_index {correct_index!r} out of range"
+                )
                 question_ok = False
             if not question_text:
                 issues.append(f"question {question_id}: blank question text")

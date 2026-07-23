@@ -17,7 +17,7 @@ Coverage:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -77,15 +77,14 @@ _ATTN_DATA = [
 ]
 
 
-def _build_summary_supabase(
-    *, session_data=_SESSION_ROW, events_data=None, attn_data=None
-):
+def _build_summary_supabase(*, session_data=_SESSION_ROW, events_data=None, attn_data=None):
     """Call-order-aware Supabase mock for the summary endpoint.
 
     DB call order:
       1 → sessions         .select(...).eq(...).maybe_single().execute()
       2 → session_events   .select("event_type").eq(...).limit(10_000).execute()
-      3 → attention_events .select("gaze_score, head_pose_score, blink_rate").eq(...).limit(10_000).execute()
+      3 → attention_events .select("gaze_score, head_pose_score, blink_rate")
+                           .eq(...).limit(10_000).execute()
     """
     mock = MagicMock()
     call_count = [0]
@@ -97,7 +96,8 @@ def _build_summary_supabase(
         m = MagicMock()
         captured[n] = m
         if n == 1:
-            m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
+            chain = m.select.return_value.eq.return_value.maybe_single.return_value
+            chain.execute.return_value.data = session_data
         elif n == 2:
             # .select().eq().limit().execute() — limit was added to cap unbounded fetches
             m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
@@ -117,6 +117,7 @@ def _build_summary_supabase(
 @pytest.fixture(autouse=True)
 def _mock_to_thread(monkeypatch):
     """Shim asyncio.to_thread so sync lambdas run inline in tests."""
+
     async def _run(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
@@ -141,18 +142,24 @@ def test_unauthenticated_request_rejected():
 @pytest.mark.unit
 def test_returns_200_with_full_summary_shape():
     """Happy path: 200, all 11 required fields present, and identity fields match DB values."""
-    supabase_mock = _build_summary_supabase(
-        events_data=_EVENTS_DATA, attn_data=_ATTN_DATA
-    )
+    supabase_mock = _build_summary_supabase(events_data=_EVENTS_DATA, attn_data=_ATTN_DATA)
     with patch("app.core.db.get_supabase", return_value=supabase_mock):
         response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
 
     assert response.status_code == 200
     body = response.json()
     required_fields = {
-        "session_id", "user_id", "lesson_id", "ces_score",
-        "avg_attention", "distraction_events", "total_blinks",
-        "avg_head_pose_score", "page_views", "duration_seconds", "events_count",
+        "session_id",
+        "user_id",
+        "lesson_id",
+        "ces_score",
+        "avg_attention",
+        "distraction_events",
+        "total_blinks",
+        "avg_head_pose_score",
+        "page_views",
+        "duration_seconds",
+        "events_count",
     }
     missing = required_fields - body.keys()
     assert not missing, f"Response missing fields: {missing}"
@@ -250,7 +257,11 @@ def test_duration_seconds_calculated_from_timestamps():
 @pytest.mark.unit
 def test_duration_seconds_handles_iso_string_timestamps():
     """ISO 8601 string timestamps ('Z' suffix) are parsed correctly."""
-    session = {**_SESSION_ROW, "started_at": "2026-07-01T09:00:00Z", "ended_at": "2026-07-01T09:15:30Z"}
+    session = {
+        **_SESSION_ROW,
+        "started_at": "2026-07-01T09:00:00Z",
+        "ended_at": "2026-07-01T09:15:30Z",
+    }
     supabase_mock = _build_summary_supabase(session_data=session)
     with patch("app.core.db.get_supabase", return_value=supabase_mock):
         response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
@@ -466,9 +477,7 @@ def test_ces_score_zero_is_valid():
 @pytest.mark.unit
 def test_supabase_called_in_correct_table_order():
     """Service must query tables in order: sessions → session_events → attention_events."""
-    supabase_mock = _build_summary_supabase(
-        events_data=_EVENTS_DATA, attn_data=_ATTN_DATA
-    )
+    supabase_mock = _build_summary_supabase(events_data=_EVENTS_DATA, attn_data=_ATTN_DATA)
     with patch("app.core.db.get_supabase", return_value=supabase_mock):
         response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
 
@@ -489,9 +498,7 @@ def test_no_llm_calls_made_by_service():
     Patches OpenAILLMProvider.complete (not the constructor) to catch calls from any
     pre-instantiated singleton, not just newly constructed instances.
     """
-    supabase_mock = _build_summary_supabase(
-        events_data=_EVENTS_DATA, attn_data=_ATTN_DATA
-    )
+    supabase_mock = _build_summary_supabase(events_data=_EVENTS_DATA, attn_data=_ATTN_DATA)
     with patch("app.core.db.get_supabase", return_value=supabase_mock):
         with patch("app.providers.llm.openai.OpenAILLMProvider.complete") as mock_complete:
             response = client.get(f"/api/analytics/session/{SESSION_ID}/summary")
@@ -516,7 +523,10 @@ def test_ces_score_zero_when_ces_final_is_null():
 
 @pytest.mark.unit
 def test_asyncio_to_thread_called_three_times():
-    """Service wraps all 3 DB calls in asyncio.to_thread — none may call supabase directly (AC 15)."""
+    """Service wraps all 3 DB calls in asyncio.to_thread.
+
+    None may call supabase directly (AC 15).
+    """
     call_count = [0]
 
     async def _counting_shim(fn, *args, **kwargs):
@@ -530,8 +540,8 @@ def test_asyncio_to_thread_called_three_times():
 
     assert response.status_code == 200
     assert call_count[0] == 3, (
-        f"Expected asyncio.to_thread called 3 times (sessions + session_events + attention_events), "
-        f"got {call_count[0]}"
+        f"Expected asyncio.to_thread called 3 times "
+        f"(sessions + session_events + attention_events), got {call_count[0]}"
     )
 
 

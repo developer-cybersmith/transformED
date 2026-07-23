@@ -36,7 +36,7 @@ jobs:
         run: mypy app
 
       - name: Unit tests
-        run: pytest tests/unit -x -q
+        run: pytest tests/unit tests/integration -x -q
         env:
           SUPABASE_URL: http://localhost:54321
           SUPABASE_ANON_KEY: test

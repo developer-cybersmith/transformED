@@ -27,7 +27,7 @@ tests/unit/test_bucket_manifest.py)."""
 _MISSING = object()
 
 
-def _bucket_field(bucket: Any, field: str) -> Any:
+def _bucket_field(bucket: Any, field: str) -> Any:  # noqa: ANN401
     """Read `field` from a bucket entry that may be an object or a dict."""
     value = getattr(bucket, field, _MISSING)
     if value is _MISSING and isinstance(bucket, dict):
@@ -35,7 +35,7 @@ def _bucket_field(bucket: Any, field: str) -> Any:
     return value
 
 
-def assert_required_buckets(client: Any) -> None:
+def assert_required_buckets(client: Any) -> None:  # noqa: ANN401
     """Fail fast unless every required bucket exists AND is private.
 
     Raises RuntimeError (never KeyError/AttributeError) with an actionable
@@ -62,9 +62,7 @@ def assert_required_buckets(client: Any) -> None:
 
     missing = REQUIRED_BUCKETS - visibility.keys()
     if missing:
-        raise RuntimeError(
-            f"Missing storage buckets: {sorted(missing)} — apply migrations"
-        )
+        raise RuntimeError(f"Missing storage buckets: {sorted(missing)} — apply migrations")
 
     public = sorted(
         name
@@ -79,6 +77,28 @@ def assert_required_buckets(client: Any) -> None:
             "in the dashboard"
         )
 
-    logger.info(
-        "Storage buckets verified (all private): %s", sorted(REQUIRED_BUCKETS)
-    )
+    logger.info("Storage buckets verified (all private): %s", sorted(REQUIRED_BUCKETS))
+
+
+def sign_storage_path(
+    client: Any,  # noqa: ANN401
+    bucket: str,
+    path: str,
+    expires_in: int = 3600,
+) -> str | None:
+    """Return a signed URL for a storage object, or None on any failure.
+
+    Shared by media/router.py (Story 3-6) and content/router.py (Story 1-6)
+    so the fragile "call create_signed_url, pull the signedURL key" logic
+    lives in exactly one place. "signedURL" is the one key storage3 actually
+    returns (matches the established pattern at providers/avatar/heygen.py).
+    A missing/None key, or the call itself raising, are both treated as the
+    object not existing — callers decide how to surface that (404 vs a
+    degrade-to-empty fallback), this helper only ever returns the URL or None.
+    """
+    try:
+        signed = client.storage.from_(bucket).create_signed_url(path, expires_in)
+        return signed["signedURL"] or None
+    except Exception:
+        logger.warning("Signing failed for %s/%s", bucket, path, exc_info=True)
+        return None

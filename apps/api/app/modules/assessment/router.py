@@ -71,6 +71,7 @@ async def submit_quiz(
     """Grade a quiz submission and update the session's CES score."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
     from app.modules.assessment.service import grade_quiz
+
     return await grade_quiz(
         session_id=body.session_id,
         lesson_id=body.lesson_id,
@@ -93,6 +94,7 @@ async def submit_teachback(
     """Evaluate a student's typed teach-back response using the GPT-4o-mini rubric."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
     from app.modules.assessment.service import grade_teachback
+
     return await grade_teachback(
         session_id=body.session_id,
         lesson_id=body.lesson_id,
