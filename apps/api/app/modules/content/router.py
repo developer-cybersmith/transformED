@@ -7,6 +7,7 @@ Handles PDF upload → lesson pipeline dispatch and lesson status/retrieval.
 from __future__ import annotations
 
 import contextlib
+import copy
 import logging
 import os
 import re
@@ -28,6 +29,7 @@ from pydantic import BaseModel
 
 from app.core.db import get_supabase, rows, single_row
 from app.core.rate_limit import _get_user_key, limiter
+from app.core.storage import sign_storage_path
 from app.dependencies import ArqRedis, CurrentUser
 
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
@@ -36,6 +38,7 @@ from app.dependencies import ArqRedis, CurrentUser
 # here previously duplicated graph.py's, a DRY violation inviting drift).
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
+from app.schemas.lesson import LessonPackage
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,10 @@ class LessonStatusResponse(BaseModel):
     error: str | None = None
     created_at: str | None = None
     completed_at: str | None = None
+    # Story 1-6: populated by get_lesson ONLY (never list_lessons — resolving
+    # every asset's signed URL for every row in a paginated list would be an
+    # N-lessons x M-assets signing storm).
+    content: LessonPackage | None = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -87,6 +94,38 @@ def _row_to_status_response(
         created_at=str(lesson["created_at"]) if lesson.get("created_at") else None,
         completed_at=str(lesson["completed_at"]) if lesson.get("completed_at") else None,
     )
+
+
+def _resolve_lesson_content(
+    content: dict[str, Any],
+    supabase: Any,  # noqa: ANN401
+) -> LessonPackage:
+    """Resolve every Narration.audio_url/Slide.image_url in a raw content
+    dict (as stored in lessons.content JSONB) to a real signed URL.
+
+    Degrades a single asset to its established "no media" fallback on a
+    signing failure ("" for audio_url — required non-optional str;
+    None for image_url — optional) rather than failing the whole lesson.
+    fallback_image_url is never touched — the pipeline never sets it to
+    anything but None (Story 1-6 Dev Notes).
+
+    Trusted internal data (our own package_builder wrote it) — a
+    LessonPackage.model_validate failure after resolution indicates real
+    corruption and is allowed to raise, not silently swallowed.
+
+    Pure function — does not mutate the `content` dict passed in.
+    """
+    content = copy.deepcopy(content)
+    for segment in content.get("segments") or []:
+        narration = segment.get("narration") or {}
+        audio_path = narration.get("audio_url")
+        if audio_path:
+            narration["audio_url"] = sign_storage_path(supabase, "lesson-audio", audio_path) or ""
+        for slide in segment.get("slides") or []:
+            image_path = slide.get("image_url")
+            if image_path:
+                slide["image_url"] = sign_storage_path(supabase, "lesson-images", image_path)
+    return LessonPackage.model_validate(content)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -321,7 +360,10 @@ async def get_lesson(
         if jobs_rows:
             error = jobs_rows[0].get("error")
 
-    return _row_to_status_response(lesson, error=error)
+    resp = _row_to_status_response(lesson, error=error)
+    if lesson.get("status") == "ready" and lesson.get("content"):
+        resp.content = _resolve_lesson_content(lesson["content"], supabase)
+    return resp
 
 
 @router.get(

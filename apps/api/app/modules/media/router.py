@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.core.db import get_supabase, single_row
+from app.core.storage import sign_storage_path
 from app.dependencies import CurrentUser
 
 router = APIRouter(tags=["media"])
@@ -92,19 +93,8 @@ async def get_signed_url(
     if not lesson or lesson.get("user_id") != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
 
-    # "signedURL" is the one key the supabase client's storage3 actually returns
-    # (matches the established pattern at providers/avatar/heygen.py:80) — a
-    # missing/None key, or the call itself raising, are both treated as the
-    # object not existing rather than surfaced as a 500.
-    try:
-        signed = supabase.storage.from_(bucket).create_signed_url(path, expires_in)
-        signed_url = signed["signedURL"]
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Storage object not found"
-        ) from exc
-
-    if not signed_url:
+    signed_url = sign_storage_path(supabase, bucket, path, expires_in)
+    if signed_url is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Storage object not found"
         )

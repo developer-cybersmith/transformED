@@ -49,11 +49,13 @@ _PROVISIONED = set(REQUIRED_BUCKETS)
 # scanner test so this list cannot rot.
 _MANUAL_DYNAMIC_REFERENCES: frozenset[str] = frozenset(
     {
-        # get_signed_url's `bucket` is a request query param constrained to the
-        # module's _ALLOWED_BUCKETS allowlist before any storage call; the
-        # .storage.from_(bucket) text is currently only a TODO docstring and the
-        # endpoint returns 501. Runtime values are covered by the allowlist check.
-        "modules/media/router.py:bucket",
+        # sign_storage_path()'s `bucket` param (Story 1-6) is a shared helper
+        # used by both media/router.py's get_signed_url (bucket already
+        # validated against _ALLOWED_BUCKETS before this call) and
+        # content/router.py's _resolve_lesson_content (called only with the
+        # hardcoded literals "lesson-audio"/"lesson-images", never raw user
+        # input). No call site passes an unvalidated value.
+        "core/storage.py:bucket",
     }
 )
 
