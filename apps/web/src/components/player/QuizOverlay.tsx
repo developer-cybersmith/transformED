@@ -9,10 +9,6 @@ interface QuizOverlayProps {
   questions: QuizQuestion[];
 }
 
-// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
-// package_builder (Story S2-11, not yet built). Do not build a parallel
-// real-content path here -- this will be reconciled when Sprint 2 lands.
-// Ping Dev 1 (developer1-cybersmith) before changing this shape.
 export function QuizOverlay({ questions }: QuizOverlayProps) {
   const exitQuiz = usePlayerStore((s) => s.exitQuiz);
   const sessionId = usePlayerStore((s) => s.sessionId);
@@ -164,8 +160,8 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
               </span>
             </p>
             {result.feedback.map((f) => (
-              <p key={f.question_id} className={f.correct ? 'text-emerald-400' : 'text-red-400'}>
-                {f.message}
+              <p key={f.question_id} className={f.is_correct ? 'text-emerald-400' : 'text-red-400'}>
+                {f.explanation}
               </p>
             ))}
           </div>

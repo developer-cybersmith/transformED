@@ -4,7 +4,7 @@ baseline_commit: e44518facd64cb17065f2175946866998c65865d
 
 # Story 2.11: Fix Quiz Feedback Field-Name Mismatch (Dev 2 counterpart to Story 3-28)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -54,17 +54,17 @@ And `QuizOverlay.tsx` renders `f.correct ? ... : ...` and `{f.message}` (lines 1
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1): `apps/web/src/lib/assessment.ts` — update `QuizFeedbackItem` to the real backend shape.
-  - [ ] 1.1 Write failing tests first (RED) if any type-level test is added; otherwise this is confirmed at the component level in Task 2.
-  - [ ] 1.2 Implement (GREEN).
-- [ ] Task 2 (AC: 2, 6): `apps/web/src/components/player/QuizOverlay.tsx` — render `f.is_correct`/`f.explanation` instead of `f.correct`/`f.message`.
-  - [ ] 2.1 RED: update `QuizOverlay.test.tsx`'s `RESULT` fixture to the real shape; the existing feedback-rendering assertions should now genuinely fail against the current (buggy) component code — confirm this is real RED (revert-and-confirm if the failure looks suspicious, matching this session's established discipline), not a false pass.
-  - [ ] 2.2 GREEN.
-- [ ] Task 3 (AC: 3): Add a test with 3+ questions for one segment, confirming progress indicator, per-question advance, and full-array submission all still work at a higher count than the existing 2-question tests exercise.
-- [ ] Task 4 (AC: 4): Add a test using realistic `_0`/`_1`-suffixed `question_id` values (e.g. `quiz_section_2_6_0`, `quiz_section_2_6_1`) instead of the placeholder `q_1`/`q_2`, confirming selection/submission round-trips the id unchanged and unparsed.
-- [ ] Task 5 (AC: 5): `apps/web/src/types/assessment.ts` — correct `QuizResult`'s `feedback` field shape; update `assessment.test.ts`'s corresponding fixture/assertions if needed.
-- [ ] Task 6 (AC: 7): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
-- [ ] Task 7: Tracker update — note this fix in `docs/dev2-sprint-tracker.md`.
+- [x] Task 1 (AC: 1): `apps/web/src/lib/assessment.ts` — updated `QuizFeedbackItem` to the real backend shape (`is_correct`, `explanation`, `question`, `correct_index`, `correct_option`, `selected_option`).
+  - [x] 1.1 Confirmed at the component level in Task 2 (no separate type-level test needed).
+  - [x] 1.2 GREEN.
+- [x] Task 2 (AC: 2, 6): `apps/web/src/components/player/QuizOverlay.tsx` — renders `f.is_correct`/`f.explanation` instead of `f.correct`/`f.message`. Also removed the stale `[DEV1-SPRINT2-PENDING]` comment block.
+  - [x] 2.1 RED: updated `QuizOverlay.test.tsx`'s `RESULT` fixture to the real shape, then discovered the existing suite never actually asserted on the feedback list's rendered content at all — added a new dedicated test to get genuine RED, confirmed it failed against the unfixed component before implementing.
+  - [x] 2.2 GREEN.
+- [x] Task 3 (AC: 3): Added a 3-question test (`THREE_QUESTIONS` fixture) — passed on first run with zero code changes, confirming the story's premise that count-handling already worked.
+- [x] Task 4 (AC: 4): Same test uses realistic `quiz_section_2_6_0`/`_1`/`_2`-suffixed `question_id` values instead of placeholder `q_1`/`q_2`, confirming the id round-trips unparsed through selection → submission.
+- [x] Task 5 (AC: 5): `apps/web/src/types/assessment.ts` — `QuizResult.feedback` now reuses `lib/assessment.ts`'s `QuizFeedbackItem[]` instead of a third, independently-drifting `Array<{[key:string]: unknown}>` declaration. Updated the one `assessment.test.ts` fixture that used yet another (partially wrong) ad-hoc shape.
+- [x] Task 6 (AC: 7): Full `apps/web` suite green (400/400, 46 files); `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 7: Tracker update — `docs/dev2-sprint-tracker.md` gained a dated cross-team note.
 
 ## Dev Notes
 
@@ -134,4 +134,40 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`, matching `Qui
 
 ## Dev Agent Record
 
-_Pending implementation._
+### Agent Model Used
+
+Claude Sonnet 5 (claude-sonnet-5)
+
+### Debug Log References
+
+- `npx vitest run src/__tests__/components/player/QuizOverlay.test.tsx` — after updating `RESULT`'s fixture shape alone, all 9 existing tests still passed unmodified — confirmed by inspection that none of them actually asserted on `result.feedback`'s rendered text. Added a new dedicated test (`'shows the score summary feedback using the real backend field names...'`) to get genuine RED: 1/9 failed as expected (`'Nice work.'` not found, since `f.explanation` was `undefined` against the unfixed `f.message` render). GREEN after implementation: 9/9 passed, then 10/10 after Task 3/4's test was added.
+- `npx tsc --noEmit -p tsconfig.json` after Task 5 — caught the `assessment.test.ts` fixture that used yet a third ad-hoc feedback shape (`{question_id, correct, explanation}`, mixing old and new field names); fixed to the full real shape.
+- Full suite: `npx vitest run` — 400/400 passing across 46 files.
+- `npx tsc --noEmit -p tsconfig.json` — clean.
+- `npx eslint` on every touched file — 0 errors, 0 warnings.
+- No HALT conditions hit — no new dependencies, no ambiguous requirements, no 3-consecutive-failure loop. Confirmed (not fixed) that AC-3/AC-4 needed zero code changes: the 3-question/realistic-id test passed on its first run.
+
+### Completion Notes List
+
+- `lib/assessment.ts`: `QuizFeedbackItem` corrected to the real backend shape — `is_correct`/`explanation`/`question`/`correct_index`/`correct_option`/`selected_option`, matching `service.py::grade_quiz`'s dict literal exactly.
+- `QuizOverlay.tsx`: score-summary feedback now renders `f.is_correct`/`f.explanation`. This was a live bug — every quiz submission's feedback list has been rendering blank/`undefined` text in production, unrelated to Story 3-28's question-count change. Removed the stale `[DEV1-SPRINT2-PENDING]` comment (the dependency it named shipped long ago).
+- Confirmed, not fixed: `QuizOverlay.tsx`'s question iteration, progress indicator ("X / N", shown only when `questions.length > 1`), and full-answer-array submission logic already correctly handle 1–5 questions per segment with no changes needed. `question_id` is treated as a fully opaque string throughout — the backend's format change (`quiz_{segment_id}` → `quiz_{segment_id}_{index}`) required zero frontend changes.
+- `types/assessment.ts`: `QuizResult.feedback` now imports and reuses `lib/assessment.ts`'s `QuizFeedbackItem[]` instead of maintaining a third, independently-wrong shape. This type module's `QuizResult`/`QuizAnswer`/`QuizSubmission` remain otherwise unused at runtime (only their own test imports them) — not restructured further, per this story's own scope limits.
+- No backend changes, no changes to `packages/shared/types/lesson.ts`'s `QuizQuestion` type, no changes to `QuizOverlay.tsx`'s submission/iteration logic beyond the field-name fix.
+
+### File List
+
+**Files MODIFIED:**
+- `apps/web/src/lib/assessment.ts` — `QuizFeedbackItem` corrected to the real backend shape
+- `apps/web/src/components/player/QuizOverlay.tsx` — feedback render uses `is_correct`/`explanation`; stale comment removed
+- `apps/web/src/types/assessment.ts` — `QuizResult.feedback` now reuses `lib/assessment.ts`'s `QuizFeedbackItem[]`
+- `apps/web/src/__tests__/components/player/QuizOverlay.test.tsx` — `RESULT` fixture corrected; 1 new regression test (feedback field names); 1 new test (3-question segment + realistic ids)
+- `apps/web/src/__tests__/types/assessment.test.ts` — 1 fixture corrected to the full real feedback shape
+- `docs/dev2-sprint-tracker.md` — dated cross-team note added
+
+### Change Log
+
+| Date | Change | Author |
+|------|--------|--------|
+| 2026-07-23 | Story created — Dev 2 counterpart to Dev 3's Story 3-28. Investigation found the count-handling already works; the real gap is a pre-existing feedback field-name mismatch between `QuizOverlay.tsx`/`lib/assessment.ts` and the actual backend contract, verified directly against `service.py`. Branch `sprint2/s2-11-variable-quiz-count` off `sprint2-master`. | Dev 2 |
+| 2026-07-23 | All 7 tasks implemented in strict RED→GREEN order. 2 new tests, 2 fixtures corrected; full `apps/web` suite 400/400 passing (46 files); `tsc --noEmit` clean; `eslint` clean. Tracker updated. Story marked `review`. | Dev 2 |
