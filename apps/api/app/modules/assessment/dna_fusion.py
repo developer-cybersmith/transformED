@@ -46,6 +46,10 @@ _SLOW_RESPONSE_MS = 60_000  # avg response_time_ms ≥ this → processing_speed
 _TEACHBACK_LOW_SCORE = 60  # teachback score below this triggers persistence retry check
 _NEUTRAL = 50.0  # default signal / old value when no data
 
+# After every _REASSESSMENT_INTERVAL sessions the flag user:{uid}:reassessment_due is set
+# in Redis, signalling the frontend to prompt for a fresh 20-question diagnostic.
+_REASSESSMENT_INTERVAL: int = 10
+
 _NINE_DIMENSIONS = (
     "pattern_recognition",
     "logical_deduction",
@@ -170,6 +174,7 @@ async def fuse_learner_dna(
     session_id: str,
     supabase: Client,
     settings: Settings,
+    redis: Any = None,
 ) -> dict[str, float] | None:
     """Blend this session's behavioural signals into the user's Learner DNA profile.
 
@@ -186,6 +191,10 @@ async def fuse_learner_dna(
         session_id: UUID of the just-ended session.
         supabase:   Synchronous supabase-py v2 client (service-role key, RLS bypassed).
         settings:   App settings (carries dna_ema_retain).
+        redis:      Optional async Redis client. When provided and session_count reaches
+                    a multiple of _REASSESSMENT_INTERVAL, sets the reassessment flag key
+                    user:{user_id}:reassessment_due. Non-fatal: Redis failures log WARNING
+                    and do not prevent the function from returning new_dims.
 
     Returns:
         Dict of {dimension: new_value} for all 9 dimensions, or None if the
@@ -382,6 +391,24 @@ async def fuse_learner_dna(
         )
     except Exception as exc:
         logger.warning("DNA fusion: growth tracking failed session=%s: %s", _safe_sid_growth, exc)
+
+    # ── Step 7: Set re-assessment flag in Redis (non-fatal) ──────────────────
+    new_count = old_session_count + 1
+    if new_count % _REASSESSMENT_INTERVAL == 0 and redis is not None:
+        _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+        try:
+            await redis.set(f"user:{user_id}:reassessment_due", "1")
+            logger.info(
+                "DNA fusion: reassessment flag set for user=%s at count=%d",
+                _safe_uid,
+                new_count,
+            )
+        except Exception as exc:
+            logger.warning(
+                "DNA fusion: reassessment flag set failed user=%s: %s",
+                _safe_uid,
+                exc,
+            )
 
     logger.info(
         "DNA fusion: updated user=%s session=%s session_count=%d",

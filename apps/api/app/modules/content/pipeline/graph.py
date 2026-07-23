@@ -1,4 +1,4 @@
-"""
+﻿"""
 Content pipeline LangGraph graph.
 
 Node order (15 nodes) — corrected 2026-07-13, Story 2-1 AC-0
@@ -998,6 +998,15 @@ _TIER_TOTAL_SLIDE_BAND: dict[str, tuple[int, int]] = {
     "T1": (20, 25),
     "T2": (12, 15),
     "T3": (6, 8),
+}
+# Story 3-28 (AC-4): per-tier MCQ count band for quiz_generator_node.
+# T1 = full-depth comprehension (3-5 Qs), T2 = standard (2-3 Qs),
+# T3 = refresher (1-2 Qs). Module-level constant — quiz counts have no
+# runtime-tunability requirement (unlike CES weights).
+_TIER_QUIZ_COUNT_BAND: dict[str, tuple[int, int]] = {
+    "T1": (3, 5),
+    "T2": (2, 3),
+    "T3": (1, 2),
 }
 # _DEFAULT_TIER imported at module top (see imports block) from
 # app.schemas.lesson.DEFAULT_TIER — the single source of truth, replacing a
@@ -2021,6 +2030,19 @@ class _QuizQuestionLLM(BaseModel):
     difficulty: str
 
 
+class _QuizBatchLLM(BaseModel):
+    """Story 3-28: batch structured-output target for quiz_generator_node.
+
+    Wraps a list of _QuizQuestionLLM so the node can request N questions in a
+    single LLM call rather than N separate calls. Each element is validated
+    individually after parsing — the batch schema is deliberately permissive
+    (no min/maxItems) so partial valid responses survive rather than the
+    entire call failing Pydantic validation.
+    """
+
+    questions: list[_QuizQuestionLLM]
+
+
 def _normalize_option(option: str) -> str:
     """Normalize a quiz option for duplicate comparison — case/whitespace
     variants (e.g. `"Spaced repetition"` vs `"Spaced repetition "` or
@@ -2057,25 +2079,48 @@ def _quiz_data_is_valid_shape(cached: dict[str, Any]) -> bool:
     return isinstance(correct_index, int) and 0 <= correct_index < len(options)
 
 
+def _quiz_batch_is_valid_shape(cached: dict[str, Any]) -> bool:
+    """Story 3-28 (AC-9): validate a batch-shaped quiz checkpoint.
+
+    Replaces _quiz_data_is_valid_shape as the extra_validate predicate for the
+    quiz_generator checkpoint reader. A batch checkpoint must have a non-empty
+    "questions" list where every element passes the per-question shape check.
+
+    Deliberately rejects the OLD single-question shape {"segment_id": ...,
+    "data": {...}} — "data" key absent from required_keys means the
+    _read_phase1_checkpoint required_keys check catches it first, but a belt-
+    and-suspenders defence here ensures any future shape drift is also caught.
+    """
+    questions = cached.get("questions")
+    if not isinstance(questions, list) or len(questions) == 0:
+        return False
+    return all(isinstance(q, dict) and _quiz_data_is_valid_shape(q) for q in questions)
+
+
 async def quiz_generator_node(state: PipelineState) -> PipelineState:
-    """Node 8 (Story 2-1 AC-3): generate one MCQ for one section.
+    """Node 8 (Story 2-1 AC-3, extended Story 3-28): generate N MCQs for one section.
+
+    Story 3-28 extends the original single-question node to produce a tier-aware
+    batch of questions per segment. N is determined by _TIER_QUIZ_COUNT_BAND[tier]:
+    T1 → 3-5, T2 → 2-3, T3 → 1-2. A single LLM call fetches the batch (AC-15).
 
     Send()-dispatched once per section (see AC-0). Returns only this node's
     own reduced key (fan-out-safe — a concurrent write to a non-reducer key
     across parallel dispatches raises LangGraph's InvalidUpdateError).
 
-    Output shape (2026-07-14 review finding — Acceptance Auditor, decision
-    resolved same day): `{"segment_id": ..., "data": {...QuizQuestion fields}}`
-    — nested, not flat. `QuizQuestion` is a frozen schema with `extra="forbid"`
-    and no `segment_id` field, so a flat dict with `segment_id` mixed in fails
-    `QuizQuestion.model_validate()` without a strip step first (contradicting
-    AC-3's "output validates against QuizQuestion" text as directly as
-    written). But `state["quiz_questions"]` is built via `operator.add` across
-    concurrent Send() dispatches completing in arbitrary order — segment_id
-    can't simply be dropped either, or `package_builder` (S2-11) has no way
-    to know which segment a question belongs to once results are merged.
-    Nesting satisfies both: `entry["segment_id"]` for correlation,
-    `QuizQuestion.model_validate(entry["data"])` for zero-reshaping validation.
+    Output shape: list of {"segment_id": ..., "data": {...QuizQuestion fields}}
+    entries — one per valid question. package_builder_node's existing
+    _group_by_segment_id helper naturally groups multiple entries for the same
+    segment_id into Segment.quiz without any change (AC-11).
+
+    Per-question guards (AC-6): all validation from Story 2-1 applies to each
+    question individually — invalid questions are rejected per-item (logged), the
+    rest are kept (AC-8 partial-success). Only a total failure (0 valid questions)
+    degrades to an empty return (AC-7, "degrade never crash" invariant).
+
+    Checkpoint shape change (AC-9): {"segment_id": ..., "questions": [...]} — old
+    single-question checkpoints {"segment_id": ..., "data": {...}} fail the new
+    required_keys check and are treated as cache-misses, triggering a re-run.
     """
     from app.config import get_settings
     from app.providers.llm.factory import get_llm_provider
@@ -2086,19 +2131,31 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     checkpoint_key = f"quiz_generator:{section_id}"
     logger.info("[%s] quiz_generator_node: %s", lesson_id, section_id)
 
-    # Story 2-1b: idempotency guard — see summarise_segment_node for rationale.
+    # AC-14: resolve tier and look up question-count band; fall back to T2 on unknown tier.
+    tier = state.get("tier", _DEFAULT_TIER)
+    if tier not in _TIER_QUIZ_COUNT_BAND:
+        logger.warning(
+            "[%s] quiz_generator_node: %s — unknown tier %r, falling back to T2 band",
+            lesson_id, section_id, tier,
+        )
+        tier = _DEFAULT_TIER
+    n_min, n_max = _TIER_QUIZ_COUNT_BAND[tier]
+
+    # Story 2-1b / AC-9: idempotency guard — new batch checkpoint shape.
+    # Old single-question checkpoints (required_keys includes "data") fail the
+    # required_keys check for "questions" and are treated as cache-misses.
     cached = await _read_phase1_checkpoint(
         lesson_id,
         checkpoint_key,
-        required_keys=("segment_id", "data"),
-        extra_validate=_quiz_data_is_valid_shape,
+        required_keys=("segment_id", "questions"),
+        extra_validate=_quiz_batch_is_valid_shape,
     )
     if cached is not None:
         logger.info(
             "[%s] quiz_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"quiz_questions": [cached]}
+        return {"quiz_questions": cached["questions"]}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
@@ -2107,93 +2164,119 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         {
             "role": "system",
             "content": (
-                "Write one multiple-choice question testing understanding of "
-                "this section. Provide exactly 4 distinct answer options, the "
+                f"Write {n_min} to {n_max} multiple-choice questions testing understanding of "
+                "this section. For each question, provide exactly 4 distinct answer options, the "
                 "0-based index of the correct option, a brief explanation, and "
-                "a difficulty (easy/medium/hard)." + _UNTRUSTED_CONTENT_GUARD
+                "a difficulty (easy/medium/hard)."
+                + _UNTRUSTED_CONTENT_GUARD
             ),
         },
         {"role": "user", "content": body},
     ]
-    response = await provider.complete_structured(messages, settings.llm_mini, _QuizQuestionLLM)
-    if response is None:
+
+    # AC-15: single LLM call per segment using _QuizBatchLLM structured output.
+    response = await provider.complete_structured(messages, settings.llm_mini, _QuizBatchLLM)
+    if response is None or not response.questions:
         logger.warning(
             "[%s] quiz_generator_node: %s — LLM returned no parsed response, skipping",
-            lesson_id,
-            section_id,
+            lesson_id, section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"quiz_questions": []}
 
-    async def _reject(reason: str) -> PipelineState:
+    # AC-6: validate and collect each question individually.
+    # AC-8: partial batches are accepted — skip invalid questions, keep valid ones.
+    valid_results: list[dict[str, Any]] = []
+    raw_questions = list(response.questions)[:n_max]  # truncate super-large batches
+
+    for i, raw_q in enumerate(raw_questions):
+        options = list(raw_q.options)
+
+        if len(options) > 4:
+            logger.warning(
+                "[%s] quiz_generator_node: %s[%d] — LLM returned %d options, truncating to 4",
+                lesson_id, section_id, i, len(options),
+            )
+            options = options[:4]
+
+        if len(options) < 4:
+            logger.warning(
+                "[%s] quiz_generator_node: %s[%d] — only %d options (<4), skipping question",
+                lesson_id, section_id, i, len(options),
+            )
+            continue
+
+        correct_index = raw_q.correct_index
+        if not (0 <= correct_index < len(options)):
+            logger.warning(
+                "[%s] quiz_generator_node: %s[%d] — correct_index %d out of range, skipping",
+                lesson_id, section_id, i, correct_index,
+            )
+            continue
+
+        question_text = raw_q.question.strip()
+        explanation_text = raw_q.explanation.strip()
+        if not question_text or not explanation_text:
+            logger.warning(
+                "[%s] quiz_generator_node: %s[%d] — blank question/explanation, skipping",
+                lesson_id, section_id, i,
+            )
+            continue
+
+        if not all(o.strip() for o in options):
+            logger.warning(
+                "[%s] quiz_generator_node: %s[%d] — blank option text, skipping",
+                lesson_id, section_id, i,
+            )
+            continue
+
+        if len({_normalize_option(o) for o in options}) < len(options):
+            logger.warning(
+                "[%s] quiz_generator_node: %s[%d] — duplicate option text, skipping",
+                lesson_id, section_id, i,
+            )
+            continue
+
+        difficulty = raw_q.difficulty if raw_q.difficulty in ("easy", "medium", "hard") else "medium"
+
+        valid_results.append({
+            "segment_id": section_id,
+            "data": {
+                "question_id": f"quiz_{section_id}_{len(valid_results)}",
+                "type": "mcq",
+                "question": question_text,
+                "options": options,
+                "correct_index": correct_index,
+                "explanation": explanation_text,
+                "difficulty": difficulty,
+            },
+        })
+
+    # AC-8: warn if below expected minimum (do NOT discard valid questions).
+    if 0 < len(valid_results) < n_min:
         logger.warning(
-            "[%s] quiz_generator_node: %s — %s, rejecting", lesson_id, section_id, reason
+            "[%s] quiz_generator_node: %s — only %d valid question(s) (expected %d–%d for tier %s)",
+            lesson_id, section_id, len(valid_results), n_min, n_max, tier,
+        )
+
+    # AC-7: degrade gracefully if every question failed validation.
+    if not valid_results:
+        logger.warning(
+            "[%s] quiz_generator_node: %s — no valid questions in batch, returning empty",
+            lesson_id, section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         return {"quiz_questions": []}
 
-    options = list(response.options)
-    if len(options) > 4:
-        logger.warning(
-            "[%s] quiz_generator_node: %s — LLM returned %d options, truncating to 4",
-            lesson_id,
-            section_id,
-            len(options),
-        )
-        options = options[:4]
-    elif len(options) < 4:
-        return await _reject(f"LLM returned only {len(options)} options (<4)")
-
-    correct_index = response.correct_index
-    if not (0 <= correct_index < len(options)):
-        return await _reject(
-            f"correct_index {correct_index} out of range for {len(options)} options"
-        )
-
-    question_text = response.question.strip()
-    explanation_text = response.explanation.strip()
-    if not question_text or not explanation_text:
-        return await _reject("blank question/explanation")
-
-    # 2026-07-14 review finding (Edge Case Hunter): nothing previously stopped
-    # a degenerate option set (all 4 identical, or the correct answer's own
-    # text blank while distractors are populated) from shipping as a
-    # nonsensical MCQ. Reject rather than fabricate a fix — mirrors this
-    # node's existing degrade-not-fabricate pattern for every other guard.
-    #
-    # 2026-07-14 review finding, second pass (Blind Hunter + Edge Case Hunter,
-    # independently): the original guards only checked the CORRECT option for
-    # blankness (a blank distractor like options=["Answer A", "", "Answer C",
-    # "Answer D"] passed every check) and compared options with strict `==`
-    # (a trailing-whitespace or case-only near-duplicate slipped through).
-    # Now: every option must be non-blank, and duplicates are compared on
-    # normalized (`.strip().lower()`) form while the original text still ships.
-    if not all(o.strip() for o in options):
-        return await _reject("blank option text")
-    if len({_normalize_option(o) for o in options}) < len(options):
-        return await _reject("duplicate option text")
-
-    difficulty = (
-        response.difficulty if response.difficulty in ("easy", "medium", "hard") else "medium"
-    )
-
-    result: dict[str, Any] = {
+    # AC-9: write batch-shaped checkpoint.
+    batch_checkpoint: dict[str, Any] = {
         "segment_id": section_id,
-        "data": {
-            "question_id": f"quiz_{section_id}",
-            "type": "mcq",
-            "question": question_text,
-            "options": options,
-            "correct_index": correct_index,
-            "explanation": explanation_text,
-            "difficulty": difficulty,
-        },
+        "questions": valid_results,
     }
-
-    await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+    await _write_phase1_checkpoint(lesson_id, checkpoint_key, batch_checkpoint)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"quiz_questions": [result]}
+    return {"quiz_questions": valid_results}
 
 
 def _clamp(value: float, lo: float, hi: float, *, label: str) -> float:
