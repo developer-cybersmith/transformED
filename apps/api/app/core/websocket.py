@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -30,6 +31,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
+
+# Session IDs must be standard UUIDs (lowercase hex + hyphens). Validated at the route
+# boundary to prevent Redis key-namespace traversal via crafted session_id values.
+_SESSION_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 # Client-drivable tutor lifecycle events accepted as inbound WS control messages (same category as
 # "ping" / "session_start" — flat control messages, not the ws.ts payload union). Server/engine-only
@@ -133,6 +140,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     - Sending attention / computer-vision signals to the tutor engine.
     - Receiving lesson_ready, intervention, and ping events from the server.
     """
+    if not _SESSION_ID_RE.match(session_id):
+        await websocket.close(code=4003)
+        return
     await manager.connect(websocket, session_id)
 
     try:
@@ -180,6 +190,9 @@ async def _restore_or_init_session(session_id: str) -> str | None:
     the caller can push ``state_sync`` to the client; the session is NOT reset. Otherwise initialise a
     fresh session and return ``None``.
 
+    Tier seeding runs on BOTH paths so that a session which connected before the lesson package was
+    cached can pick up its learner tier on the first reconnect after generation completes.
+
     Never raises — the WebSocket handshake must not fail on a Redis blip (degrade to fresh init).
     """
     try:
@@ -189,6 +202,7 @@ async def _restore_or_init_session(session_id: str) -> str | None:
         if existing:
             state = existing.decode() if isinstance(existing, (bytes, bytearray)) else str(existing)
             logger.info("WS reconnect: session=%s restoring state=%s", session_id, state)
+            await _seed_learner_tier(session_id)
             return state
     except Exception:
         logger.warning("reconnect-state read failed for %s — initialising fresh", session_id)
@@ -208,8 +222,7 @@ async def _init_session_state(session_id: str) -> None:
     imports in this file (avoids the core ↔ tutor circular import).
 
     Error contract: a Redis failure must never crash the WebSocket
-    ``accept()`` handshake, so the whole body is best-effort and never
-    re-raises.
+    ``accept()`` handshake, so every block is best-effort and never re-raises.
     """
     try:
         from app.core.redis import get_redis  # type: ignore[import]
@@ -223,6 +236,59 @@ async def _init_session_state(session_id: str) -> None:
         logger.info("WS session initialised: session=%s", session_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to init session state for %s: %s", session_id, e)
+
+    await _seed_learner_tier(session_id)
+
+
+_VALID_TIERS: frozenset[str] = frozenset({"T1", "T2", "T3"})
+
+
+async def _seed_learner_tier(session_id: str) -> None:
+    """Best-effort learner tier seeding from the cached lesson package.
+
+    Reads ``lesson_package:{session_id}`` from Redis.  If present and
+    ``metadata.learner_tier`` is a valid tier string (T1/T2/T3), atomically
+    writes ``session:{session_id}:learner_tier`` and
+    ``session:{session_id}:qa_phase_seconds`` (both 24 h TTL).
+
+    Security guards:
+    - ``session_id`` is validated at the route boundary before this is called.
+    - ``tier`` is validated against the allowlist before any Redis write.
+    - ``metadata`` is type-checked to prevent AttributeError on non-dict payloads.
+    - Both keys are written via a pipeline to avoid a half-seeded state on
+      partial failure.
+
+    Called from both ``_init_session_state`` (fresh connect) and the reconnect
+    branch of ``_restore_or_init_session`` so that a session which connected
+    before lesson generation completed can pick up its tier on reconnect.
+
+    Never raises — a failure must not affect the WebSocket handshake.
+    """
+    try:
+        import json as _json  # noqa: PLC0415
+
+        from app.core.redis import get_redis  # type: ignore[import]
+        from app.modules.tutor.service import qa_phase_seconds as _qa  # type: ignore[import]
+
+        _redis = get_redis()
+        raw_pkg = await _redis.get(f"lesson_package:{session_id}")
+        if not raw_pkg:
+            return
+        pkg = _json.loads(raw_pkg)
+        metadata = pkg.get("metadata")
+        if not isinstance(metadata, dict):
+            return
+        tier = metadata.get("learner_tier")
+        if tier not in _VALID_TIERS:
+            return
+        qa_secs = _qa(tier)
+        pipe = _redis.pipeline(transaction=False)
+        pipe.set(f"session:{session_id}:learner_tier", tier, ex=86400)
+        pipe.set(f"session:{session_id}:qa_phase_seconds", str(qa_secs), ex=86400)
+        await pipe.execute()
+        logger.info("WS session learner tier=%s qa_phase=%ss for %s", tier, qa_secs, session_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("learner tier seeding failed for %s — continuing without tier", session_id)
 
 
 # ── Dispatch helpers ───────────────────────────────────────────────────────────

@@ -130,6 +130,29 @@ def compute_ces(signal: NormalizedSignal) -> float:
     return max(0.0, min(100.0, ces))
 
 
+# ── Learner Mode helpers ──────────────────────────────────────────────────────
+
+
+def qa_phase_seconds(tier: str | None) -> int:
+    """Map a learner tier string to Q&A phase duration in seconds.
+
+    T1 (beginner) → longest Q&A window (default 600 s / 10 min)
+    T2 (intermediate) → standard window (default 300 s / 5 min)
+    T3 (advanced) → shortest window (default 150 s / 2.5 min)
+    Unknown / None → T2 default (300 s)
+
+    All durations are env-var tunable via ``settings.learner_tier_*_qa_seconds``.
+    """
+    from app.config import get_settings
+
+    s = get_settings()
+    return {
+        "T1": s.learner_tier_t1_qa_seconds,
+        "T2": s.learner_tier_t2_qa_seconds,
+        "T3": s.learner_tier_t3_qa_seconds,
+    }.get(tier or "", s.learner_tier_default_qa_seconds)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
