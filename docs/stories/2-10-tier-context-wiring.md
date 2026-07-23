@@ -4,7 +4,7 @@ baseline_commit: 17fea79ca22bac41daa20d3b929480b64f86d0ea
 
 # Story 2.10: Wire Tier Context into Player + Session Report (completes S2-10)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -15,14 +15,14 @@ so that "78% quiz accuracy" means something different — and is shown as such �
 **Source:** this is Dev 2's own Sprint 2 task **S2-10** (`docs/dev2-sprint-tracker.md` §11) — "Tier Badge on Player + Session Report." It was investigated twice and deferred both times: first on 2026-07-18 (no tier data path existed anywhere), then re-investigated on 2026-07-21 after S2-09 landed and split into two halves — an unblocked **player half** (the lesson's own tier was already available client-side, just never displayed) and a blocked **session-report half** (the `SessionReport` API response had no `tier` field at all). The session-report half is now unblocked: Dev 3 shipped **Story 3-29** (`tier`/`tier_label`/`quiz_total_questions`/`quiz_correct_count`/`quiz_accuracy_label` on `GET /session/{id}/report`) and **Story 3-30** (`learner_dna_snapshot`), both merged to `main` (PR #77/#78, `f7c758b`/`96ae37a`) as part of the Learner Mode Sprint. This story wires both halves, and additionally fixes a real bug found while scoping this: `SessionReport.tsx` currently displays `quiz_score` as a raw percentage, which is exactly the "Pitfall 2" violation Dev 3's own frontend integration guide (`docs/lm-sprint-frontend-integration.html`) calls out.
 
 **Important correction versus Dev 3's HTML integration guide — verified against the actual shipped code/tests, not assumed:** the HTML guide's `DimensionLabel`/`GrowthLabel` types are stale relative to what actually shipped:
-- Guide says `DimensionLabel = 'Beginning' | 'Developing' | 'Proficient' | 'Advanced'`. **Actual** (confirmed in `docs/stories/3-30-session-report-learner-dna-snapshot.md`'s AC-5/AC-6, reusing the existing `_score_to_label()` helper): `'Proficient'` (≥75) | `'Developing'` (≥60) | `'Emerging'` (≥40) | `'Beginning'` (<40) — **no `'Advanced'` tier exists**, and `'Emerging'` replaces one of the guide's bands.
+- Guide says `DimensionLabel = 'Beginning' | 'Developing' | 'Proficient' | 'Advanced'`. **Actual** (confirmed directly against `apps/api/app/modules/assessment/service.py`'s `_score_to_label()` on `main`, not just the story doc — this story's own first draft of this table was itself incomplete, caught in the review round): `'Exceptional'` (≥90) | `'Proficient'` (≥75) | `'Developing'` (≥60) | `'Emerging'` (≥40) | `'Beginning'` (<40) — **5 bands, not 4** — **no `'Advanced'` tier exists** (the real top band is `'Exceptional'`), and `'Emerging'` replaces one of the guide's bands.
 - Guide says `GrowthLabel = 'Improving' | 'Stable' | 'Declining' | null`. **Actual** (AC-7): `'Improving'` (delta > 2.0) | `'Stable'` (-2.0 ≤ delta ≤ 2.0, boundary-inclusive both ends) | `'Needs Attention'` (delta < -2.0) | `null`. **There is no `'Declining'` value — it's `'Needs Attention'`.**
 
 Use the values in this story (verified against the real story file + its tests), not the HTML guide's, wherever they conflict.
 
 ## Acceptance Criteria
 
-1. **AC-1 — Tier badge on the player.** `Player.tsx` displays the lesson's tier as a human-readable label (e.g. "Full-Depth") somewhere in the existing pre-slide metadata area, using `lesson.metadata.tier` (`'T1'|'T2'|'T3'`, already a required field on the frozen `LessonPackage` type — no backend work needed). Label mapping must match the backend's own `_TIER_LABELS` exactly: `T1 → 'Full-Depth'`, `T2 → 'Standard'`, `T3 → 'Refresher'` (do not invent different copy).
+1. **AC-1 — Tier badge on the player.** `Player.tsx` displays the lesson's tier as a human-readable label (e.g. "Full-Depth"), persistently visible during playback (not just before the first slide loads — `currentSlideId` is set almost immediately after mount in real use, so a placement gated on "before any slide is active" would rarely actually be seen), using `lesson.metadata.tier` (`'T1'|'T2'|'T3'`, already a required field on the frozen `LessonPackage` type — no backend work needed). Label mapping must match the backend's own `_TIER_LABELS` exactly: `T1 → 'Full-Depth'`, `T2 → 'Standard'`, `T3 → 'Refresher'` (do not invent different copy), with a safe fallback (e.g. the T2/Standard default) for any unrecognized/missing tier value.
 2. **AC-2 — `SessionReport` TS type gains the 6 new fields.** `apps/web/src/types/assessment.ts`'s `SessionReport` interface gains: `tier: 'T1' | 'T2' | 'T3'`, `tier_label: string`, `quiz_total_questions: number`, `quiz_correct_count: number`, `quiz_accuracy_label: 'Strong' | 'Developing' | 'Needs Review' | null`, `learner_dna_snapshot: LearnerDnaSnapshot | null`. New `LearnerDnaSnapshot` type: `{ dimension_labels: Record<DnaDimension, DnaDimensionLabel>; growth_labels: Record<DnaDimension, DnaGrowthLabel | null> }` with `DnaDimensionLabel = 'Beginning' | 'Emerging' | 'Developing' | 'Proficient'` and `DnaGrowthLabel = 'Improving' | 'Stable' | 'Needs Attention'` (the corrected values, per the Source section above) over the 9 `DnaDimension` names (`pattern_recognition`, `logical_deduction`, `processing_speed`, `frustration_tolerance`, `persistence`, `help_seeking`, `goal_orientation`, `curiosity_index`, `study_independence`).
 3. **AC-3 — fix the raw-percentage bug.** `SessionReport.tsx` must never render `quiz_score` as visible text. Replace the current `${Math.round(report.quiz_score * 10) / 10}% correct` line with the absolute counts (`"{quiz_correct_count} / {quiz_total_questions} correct"`) plus a `quiz_accuracy_label` badge/pill (falling back to something like "No quiz questions this session" when the label is `null`, matching the existing `teachback_score === null` fallback pattern already in this file). `quiz_score` stays in the TS type (still a real API field, used elsewhere for CES) — it just must never be rendered as text on this page.
 4. **AC-4 — tier context shown on the report.** The report displays `tier_label` (e.g. "Full-Depth Session").
@@ -50,7 +50,21 @@ Use the values in this story (verified against the real story file + its tests),
 - [x] Task 7 (AC: 8): Full `apps/web` suite green (395/395, 46 files); `tsc --noEmit` clean; `eslint` clean on every touched file.
 - [x] Task 8: Tracker update — `docs/dev2-sprint-tracker.md` gained a dated cross-team note. `docs/master-tracker.md` has no Learner Mode section on this branch at all yet (it lives on the still-unmerged `feature-learner-mode` branch, same as S2-07–S2-09's own tracker entries) — nothing to check off here; will reconcile whenever that branch merges.
 
-## Dev Notes
+### Review Findings
+
+5-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against branch `sprint2/s2-10-tier-context-wiring` vs `sprint2-master`, 2026-07-23.
+
+- [x] [Review][Patch] `DnaDimensionLabel` union is missing a real backend label value: `'Exceptional'`. Independently verified against `apps/api/app/modules/assessment/service.py`'s actual `_score_to_label()` on `main` (not just the referenced story doc) — it has 5 bands, not 4: `Exceptional` (≥90), `Proficient` (≥75), `Developing` (≥60), `Emerging` (≥40), `Beginning` (<40). This story's own "Authoritative field values" section only listed 4 — a real gap in the story's own research, not just the implementation. Any user with a dimension score ≥90 gets a `dimension_labels` value outside the declared FE union. [apps/web/src/types/assessment.ts] (auditor, independently verified)
+- [x] [Review][Patch] No fallback for an unrecognized/missing `lesson.metadata.tier` — `TIER_LABELS[lesson.metadata.tier]` renders the literal string `undefined` for any legacy/malformed lesson package. [apps/web/src/components/player/Player.tsx] (blind+edge)
+- [x] [Review][Patch] No fallback for an unrecognized growth label — `GROWTH_INDICATORS[growth]` renders `undefined` inside the indicator span if the backend ever sends a value outside the 3 known ones. [apps/web/src/components/reports/SessionReport.tsx] (blind+edge)
+- [x] [Review][Patch] AC-8 test coverage gap: no test exercises the T3 ("Refresher") tier badge — only T1 and T2 are covered. [apps/web/src/__tests__/components/player/Player.test.tsx] (auditor)
+- [x] [Review][Patch] AC-1's wording ("somewhere in the existing pre-slide metadata area") is now stale relative to what was actually built and already justified in this story's own Dev Notes/Dev Agent Record (a persistent overlay, not the pre-slide block, because `currentSlideId` is set almost immediately after mount in real use). Doc-only fix: reword AC-1 to describe the actual, deliberate placement. (auditor)
+- [x] [Review][Defer] `Player.tsx`'s `TIER_LABELS` is a hand-duplicated copy of the backend's `_TIER_LABELS` dict (kept in sync only by a code comment), while `SessionReport.tsx` instead trusts a server-supplied `tier_label` string for the same concept — two different strategies in the same story, because `LessonPackage.metadata` only carries the raw `tier` code, never a computed label, unlike `SessionReport`. No shared-constant/codegen mechanism exists to keep the two in sync; fixing this properly means either adding a `tier_label` field to the shared `LessonPackage` type (a frozen-contract, cross-team-reviewed change) or building a codegen/shared-config bridge — both real, larger efforts outside this story's scope. [apps/web/src/components/player/Player.tsx] (blind)
+- [x] [Review][Defer] Dev 3's `docs/lm-sprint-frontend-integration.html` has 2 stale label values (a fabricated `'Advanced'` dimension label, a fabricated `'Declining'` growth label — and, per this review round's own finding above, also misses the real `'Exceptional'` band). Not fixed in this diff since it's Dev 3's own authored document, not ours to silently edit — worth a follow-up message to Dev 3 flagging all 3 discrepancies. [docs/lm-sprint-frontend-integration.html] (blind)
+
+**Dismissed as noise/false-positive (8):** "interface brace balance suspect" in `assessment.ts` — refuted, `tsc --noEmit` confirmed a clean compile; the diff-only reviewer misjudged hunk boundaries without full-file context. "`Player.tsx` reading `lesson.metadata.tier` without a `lesson.ts` touch may be an undisclosed frozen-contract change" — refuted, `tier` was already a required field on `LessonMetadata` before this story (confirmed multiple times this session, including by this same story's own Dev Notes). "`[DEV1-SPRINT2-PENDING]` comment removed with zero evidence the dependency shipped" — refuted; extensively verified this session (Stories 1-6, 2-16, 2-18, S2-11's `package_builder`, etc. all confirmed shipped and merged). Vacuous `expect(...).not.toBeNull()` assertions on `getByText` (which throws rather than returning null on a miss) — pre-existing, established convention used throughout this exact test file (and others) before this diff, not introduced by this story. No consistency check between `quiz_accuracy_label` and the raw counts — the backend guarantees this correlation server-side via a pure derivation function (Story 3-29 AC-5); matches this same file's existing trust-the-API-contract convention for `ces_score`/`ces_breakdown`. Redundant `aria-label`+`title` on the growth indicator — harmless, minor stylistic duplication, not a functional bug. `DnaSnapshotSection` assuming all 9 dimension keys are always present — backend guarantee (Story 3-30 AC-4: all 9 populated together from one onboarding fusion, no partial-rollout mechanism exists in the deployed system). `tier_label` paragraph reusing the same class as the `completed_at` paragraph — cosmetic, no AC requires distinct styling.
+
+
 
 ### Current state of every file this story touches (read directly, not assumed)
 
@@ -151,6 +165,8 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `npx eslint` on every touched file — 0 errors, 0 warnings.
 - No HALT conditions hit — no new dependencies, no ambiguous requirements, no 3-consecutive-failure loop. One self-caught correction during implementation (Task 1's badge placement, documented above) and one self-caught test-scoping issue (the "never renders a raw DNA number" regression test initially checked the whole report container, which would have false-positived on legitimate numbers like quiz counts and minutes studied elsewhere on the page — scoped to the DNA section's own `textContent` instead, before ever running it).
 
+**Review Round (2026-07-23):** 5 patches applied (missing `'Exceptional'` DNA label — independently verified against the real backend `_score_to_label()`, not just the story doc; tier fallback; growth-label fallback; T3 badge test; AC-1 reworded), 2 deferred (`TIER_LABELS` duplication risk; Dev 3's HTML guide has 3 stale/incomplete label values, disclosed for a future follow-up message), 8 dismissed. One self-caught test-design correction during the patch round: the first RED test for the growth-label fallback asserted `container.textContent).not.toMatch(/undefined/)`, which passed trivially even before any fix — React silently renders `undefined` children as nothing, not the literal text, so the real defect (a blank icon with a stale `aria-label`/`title`) was never actually exercised. Rewrote the test to check `indicator.textContent).not.toBe('')` instead, confirmed genuine RED, then fixed it. Full `apps/web` suite: 398/398 passing across 46 files after all 5 patches (up from this story's pre-review 395); `tsc --noEmit` clean; `eslint` clean (0 new warnings).
+
 ### Completion Notes List
 
 - `Player.tsx`: `TIER_LABELS` constant (`T1→Full-Depth`, `T2→Standard`, `T3→Refresher`, matching the backend's own `_TIER_LABELS` dict exactly). Rendered as a persistent `absolute top-3 left-3` badge inside the slide area's `relative flex-1` container — visible regardless of playback/slide state, not gated on `!currentSlideId`.
@@ -159,6 +175,15 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `quiz_score` was kept in the `SessionReport` TS type (still a real, used API field) — only its *rendering* as visible text was removed, per AC-3's exact scope.
 - No changes to `useSessionReport.ts`, `packages/shared/types/lesson.ts`, `PlayerControls.tsx`, or any backend file — both consumed endpoints (Stories 3-29/3-30) were already fully shipped and merged before this story started.
 - Story 3-28 (variable quiz count / question ID format) explicitly NOT touched — separate, not-yet-scoped work per this story's own "What NOT to do."
+
+**Review Round completion notes:**
+- `types/assessment.ts`: `DnaDimensionLabel` gained `'Exceptional'` (the real 5th band, ≥90); the module comment was corrected to cite the actual backend source function, not just the story doc.
+- `Player.tsx`: `TIER_LABELS[lesson.metadata.tier] ?? TIER_LABELS.T2` — an unrecognized/missing tier now falls back to the Standard/T2 label instead of rendering "undefined".
+- `SessionReport.tsx`: `GROWTH_INDICATORS[growth] ?? '•'` — an unrecognized growth value now shows a neutral dot instead of a blank icon.
+- `Player.test.tsx`: 2 new tests (T3/Refresher label; unrecognized-tier fallback).
+- `SessionReport.test.tsx`: 1 new test (unrecognized-growth-label fallback), rewritten once after the first version was found not to reproduce the actual defect.
+- `docs/stories/2-10-tier-context-wiring.md`: AC-1 reworded to describe the actual persistent-badge placement; the Source section's dimension-label table corrected to include `'Exceptional'`.
+- Deferred (not fixed): `TIER_LABELS` frontend/backend duplication risk, and Dev 3's HTML guide's 3 stale label values — both documented in `docs/stories/deferred-work.md`.
 
 ### File List
 
@@ -171,9 +196,18 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `apps/web/src/__tests__/types/assessment.test.ts` — 2 existing `SessionReport` object literals extended with the 6 new required fields
 - `docs/dev2-sprint-tracker.md` — dated cross-team note added
 
+**Files MODIFIED (Review Round):**
+- `apps/web/src/types/assessment.ts` — added `'Exceptional'` to `DnaDimensionLabel`; corrected the module comment's source citation
+- `apps/web/src/components/player/Player.tsx` — tier-label fallback added
+- `apps/web/src/components/reports/SessionReport.tsx` — growth-label fallback added
+- `apps/web/src/__tests__/components/player/Player.test.tsx` — 2 new tests (T3, unrecognized-tier fallback)
+- `apps/web/src/__tests__/components/reports/SessionReport.test.tsx` — 1 new test (unrecognized-growth fallback)
+- `docs/stories/deferred-work.md` — 2 new deferred entries
+
 ### Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created — completes Dev 2's S2-10, unblocked by Dev 3's Stories 3-29/3-30. Branch `sprint2/s2-10-tier-context-wiring` off `sprint2-master`. Corrected the HTML integration guide's stale DNA label values against the actual shipped story files/tests before writing ACs. | Dev 2 |
 | 2026-07-23 | All 8 tasks implemented in strict RED→GREEN order. 8 new/updated tests across 3 test files; full `apps/web` suite 395/395 passing (46 files); `tsc --noEmit` clean; `eslint` clean. Tracker updated. Story marked `review`. | Dev 2 |
+| 2026-07-23 | 5-agent adversarial review run against `sprint2/s2-10-tier-context-wiring` vs `sprint2-master`; 5 patches applied (missing 'Exceptional' DNA label caught by independently re-verifying against the real backend source, tier/growth fallbacks, T3 test, AC-1 reworded), 2 deferred, 8 dismissed. Full suite 398/398 passing, `tsc --noEmit` and `eslint` clean; story marked `done`. | Dev 2 |

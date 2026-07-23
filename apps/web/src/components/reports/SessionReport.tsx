@@ -49,7 +49,7 @@ function DnaSnapshotSection({ snapshot }: { snapshot: LearnerDnaSnapshot }) {
                 {snapshot.dimension_labels[dim]}
                 {growth !== null && (
                   <span data-testid={`dna-growth-${dim}`} aria-label={growth} title={growth}>
-                    {GROWTH_INDICATORS[growth]}
+                    {GROWTH_INDICATORS[growth] ?? '•'}
                   </span>
                 )}
               </span>

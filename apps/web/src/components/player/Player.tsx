@@ -59,7 +59,7 @@ export default function Player({ lesson }: PlayerProps) {
             leaving that block rarely visible. */}
         <div className="absolute top-3 left-3 z-10">
           <span className="px-3 py-1 rounded-full bg-black/40 backdrop-blur-sm text-neutral-200 text-xs font-medium uppercase tracking-wide">
-            {TIER_LABELS[lesson.metadata.tier]}
+            {TIER_LABELS[lesson.metadata.tier] ?? TIER_LABELS.T2}
           </span>
         </div>
 

@@ -60,10 +60,12 @@ export interface TeachbackResult {
 // ── GET /api/assessment/session/{session_id}/report ───────────────────────
 
 // Story 3-30 (learner_dna_snapshot). Label values verified against the actual
-// shipped backend (docs/stories/3-30-session-report-learner-dna-snapshot.md's
-// ACs/tests) -- NOT Dev 3's HTML integration guide, whose DimensionLabel/
-// GrowthLabel definitions are stale (no 'Advanced' dimension label exists;
-// the growth label is 'Needs Attention', not 'Declining').
+// shipped backend (apps/api/app/modules/assessment/service.py's
+// _score_to_label()/_delta_to_growth_label(), not just the story doc) -- NOT
+// Dev 3's HTML integration guide, whose DimensionLabel/GrowthLabel
+// definitions are stale/incomplete (no 'Advanced' dimension label exists;
+// the growth label is 'Needs Attention', not 'Declining'; and the guide
+// omits the real 'Exceptional' band entirely -- review-round fix).
 export type DnaDimension =
   | 'pattern_recognition'
   | 'logical_deduction'
@@ -75,7 +77,7 @@ export type DnaDimension =
   | 'curiosity_index'
   | 'study_independence';
 
-export type DnaDimensionLabel = 'Beginning' | 'Emerging' | 'Developing' | 'Proficient';
+export type DnaDimensionLabel = 'Beginning' | 'Emerging' | 'Developing' | 'Proficient' | 'Exceptional';
 export type DnaGrowthLabel = 'Improving' | 'Stable' | 'Needs Attention';
 
 export interface LearnerDnaSnapshot {

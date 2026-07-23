@@ -173,6 +173,43 @@ describe('SessionReport', () => {
     expect(dnaSection.textContent).not.toMatch(/\b\d{1,3}(\.\d+)?\b/);
   });
 
+  it('falls back gracefully instead of rendering "undefined" for an unrecognized growth label (review fix)', () => {
+    useSessionReportMock.mockReturnValue({
+      report: {
+        ...FULL_REPORT,
+        learner_dna_snapshot: {
+          dimension_labels: {
+            pattern_recognition: 'Proficient', logical_deduction: 'Developing',
+            processing_speed: 'Emerging', frustration_tolerance: 'Beginning',
+            persistence: 'Proficient', help_seeking: 'Developing',
+            goal_orientation: 'Emerging', curiosity_index: 'Beginning',
+            study_independence: 'Proficient',
+          },
+          growth_labels: {
+            // Simulates a backend value outside the known union (e.g. a
+            // legacy/renamed label) reaching the frontend unchanged.
+            pattern_recognition: 'Declining' as unknown as 'Improving',
+            logical_deduction: null, processing_speed: 'Stable',
+            frustration_tolerance: 'Needs Attention', persistence: null,
+            help_seeking: 'Improving', goal_orientation: 'Stable',
+            curiosity_index: 'Needs Attention', study_independence: null,
+          },
+        },
+      },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    // GROWTH_INDICATORS[growth] evaluates to undefined for an unrecognized
+    // value, and React silently renders undefined as nothing (not the literal
+    // text "undefined") -- the real defect is a blank icon with a stale
+    // aria-label/title, not visible "undefined" text.
+    const indicator = screen.getByTestId('dna-growth-pattern_recognition');
+    expect(indicator.textContent).not.toBe('');
+  });
+
   it('never renders a raw CES or teach-back number — only descriptive labels', () => {
     useSessionReportMock.mockReturnValue({ report: FULL_REPORT, isLoading: false, error: undefined });
 
