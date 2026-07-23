@@ -100,4 +100,5 @@ def sign_storage_path(
         signed = client.storage.from_(bucket).create_signed_url(path, expires_in)
         return signed["signedURL"] or None
     except Exception:
+        logger.warning("Signing failed for %s/%s", bucket, path, exc_info=True)
         return None

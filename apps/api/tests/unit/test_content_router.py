@@ -7,6 +7,7 @@ External I/O (network, Redis, DB) is fully mocked.
 
 from __future__ import annotations
 
+import copy
 import io
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -443,6 +444,134 @@ def test_get_lesson_generating_status_content_is_none(client: TestClient) -> Non
     resp = client.get(f"/api/content/lessons/{FAKE_LESSON_ID}")
     assert resp.status_code == 200
     assert resp.json()["content"] is None
+
+
+@pytest.mark.unit
+def test_get_lesson_ready_but_null_content_column_stays_none() -> None:
+    """AC-1 edge case: status=='ready' with a null content column (should
+    be unreachable in practice — package_builder writes both together —
+    but the endpoint's own guard must hold either way) returns content=None,
+    not a crash, and makes no signing calls."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = MagicMock()
+    lesson_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "ready",
+        "title": "Test Lesson",
+        "content": None,
+        "created_at": "2026-06-28T00:00:00Z",
+    }
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["content"] is None
+    sb.storage.from_.assert_not_called()
+
+
+@pytest.mark.unit
+def test_get_lesson_corrupted_content_is_not_silently_swallowed() -> None:
+    """AC-6, full HTTP path: malformed stored content (our own
+    package_builder's data, corrupted) must raise through get_lesson as an
+    unhandled 500 — never silently degrade to content=None or a 200 with
+    partial data, which would hide real data corruption from the caller."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = MagicMock()
+    corrupted_content = {**copy.deepcopy(_READY_CONTENT_DICT), "segments": []}  # min_length=1
+    lesson_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "ready",
+        "title": "Test Lesson",
+        "content": corrupted_content,
+        "created_at": "2026-06-28T00:00:00Z",
+    }
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app, raise_server_exceptions=False).get(
+            f"/api/content/lessons/{FAKE_LESSON_ID}"
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 500
+
+
+@pytest.mark.unit
+def test_resolve_lesson_content_does_not_mutate_input() -> None:
+    """Regression (caught during Story 1-6 development): the raw content
+    dict passed in must not be mutated — a prior version signed URLs
+    in place, corrupting a shared/cached dict for any second reader."""
+    from app.modules.content.router import _resolve_lesson_content
+
+    original = copy.deepcopy(_READY_CONTENT_DICT)
+    sb = MagicMock()
+    sb.storage.from_.return_value.create_signed_url.return_value = {
+        "signedURL": "https://signed.example.com/x"
+    }
+
+    _resolve_lesson_content(_READY_CONTENT_DICT, sb)
+
+    assert _READY_CONTENT_DICT == original
+
+
+@pytest.mark.unit
+def test_resolve_lesson_content_null_segments_raises_validation_not_typeerror() -> None:
+    """Edge case (Edge Case Hunter, Story 1-6 review): `segments` explicitly
+    present as JSON null (not merely absent) must not crash the resolution
+    LOOP with a raw TypeError — `.get("segments", [])` only defaults on a
+    MISSING key, not an explicit None, so `or []` is required. The lesson
+    is still malformed (LessonPackage requires >=1 segment) and correctly
+    raises via model_validate (AC-6), just not mid-loop."""
+    from pydantic import ValidationError
+
+    from app.modules.content.router import _resolve_lesson_content
+
+    sb = MagicMock()
+    content_with_null_segments = {**copy.deepcopy(_READY_CONTENT_DICT), "segments": None}
+    with pytest.raises(ValidationError):
+        _resolve_lesson_content(content_with_null_segments, sb)
+    sb.storage.from_.assert_not_called()  # loop never ran — nothing to sign
+
+
+@pytest.mark.unit
+def test_resolve_lesson_content_null_slides_raises_validation_not_typeerror() -> None:
+    """Same as above for a segment's `slides` being explicitly null."""
+    from pydantic import ValidationError
+
+    from app.modules.content.router import _resolve_lesson_content
+
+    sb = MagicMock()
+    content_with_null_slides = copy.deepcopy(_READY_CONTENT_DICT)
+    content_with_null_slides["segments"][0]["slides"] = None
+    with pytest.raises(ValidationError):
+        _resolve_lesson_content(content_with_null_slides, sb)
 
 
 # ── GET /lessons ──────────────────────────────────────────────────────────────

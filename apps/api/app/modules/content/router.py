@@ -116,12 +116,12 @@ def _resolve_lesson_content(
     Pure function — does not mutate the `content` dict passed in.
     """
     content = copy.deepcopy(content)
-    for segment in content.get("segments", []):
+    for segment in content.get("segments") or []:
         narration = segment.get("narration") or {}
         audio_path = narration.get("audio_url")
         if audio_path:
             narration["audio_url"] = sign_storage_path(supabase, "lesson-audio", audio_path) or ""
-        for slide in segment.get("slides", []):
+        for slide in segment.get("slides") or []:
             image_path = slide.get("image_url")
             if image_path:
                 slide["image_url"] = sign_storage_path(supabase, "lesson-images", image_path)
