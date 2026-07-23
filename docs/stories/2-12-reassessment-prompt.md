@@ -18,6 +18,8 @@ so that I can choose to retake the 20-question diagnostic and get more accurate 
 - **`onboardingService.getLearnerDna()` already exists** (`apps/web/src/services/onboarding.service.ts:8-9`) and already calls the real `GET /assessment/user/dna` endpoint. No new service function needed.
 - **Resubmission is confirmed to need no special-casing on the frontend.** Read the actual backend submit endpoint (`apps/api/app/modules/assessment/router.py:209-215`, `main`): when `reassessment_due` is set, the backend deletes its own idempotency lock *before* the `SET NX` check, so the exact same `POST /onboarding/submit` call that would otherwise 409 for an already-onboarded user instead succeeds (201) and clears the reassessment flag afterward. The frontend genuinely does not need a different code path for first-time vs. re-assessment submission.
 
+> **⚠️ Post-review correction (2026-07-23):** the "verified directly against the real shipped backend" claim above was checked against `main`, but is **false for `sprint2-master`** — the branch this story's own branch is built off and will actually merge into. Confirmed independently three ways (Edge Case Hunter, Acceptance Auditor, and a direct `git merge-base --is-ancestor` check run by the dev agent): `main` and `sprint2-master` have fully diverged; `git show sprint2-master:apps/api/app/modules/assessment/service.py` still hardcodes `"reassessment_due": False` unconditionally, and `sprint2-master`'s `POST /onboarding/submit` has no reassessment-bypass logic at all. **Practical consequence: on `sprint2-master` today, `reassessment_due` can never actually be `true` — this entire feature (mount-check fix + dashboard banner) is currently inert (unreachable, not broken) until Dev 3's Story 3-31 backend commits (`1f713d3` et al.) are merged into `sprint2-master`.** The frontend code itself is correct against the real, eventual contract and is forward-compatible — no code change was made in response to this finding — but do not expect to see this feature functionally light up in a `sprint2-master` build until that backend sync happens. See the Senior Developer Review section below.
+
 **But there IS a real, blocking gap that must be fixed as part of this story** — found by tracing what actually happens today if a student clicks a hypothetical "Take Assessment" CTA and lands on `/onboarding`:
 
 `apps/web/src/components/onboarding/OnboardingFlow.tsx`'s mount effect (lines 81-107) calls `getLearnerDna()` and, on ANY success response (200), unconditionally does `clearPersistedProgress(); router.push("/dashboard")` — it never inspects `reassessment_due` at all. **An already-onboarded student navigating to `/onboarding` today is bounced straight back to `/dashboard` before ever seeing the question flow, even if `reassessment_due` is `true` and the backend would genuinely accept a resubmission.** Without fixing this, a "Take Assessment" CTA would be completely non-functional — it would link to a page that immediately redirects away. This story must fix that mount-check logic, not just add a banner.
@@ -48,6 +50,15 @@ so that I can choose to retake the 20-question diagnostic and get more accurate 
 - [x] Task 4: Mount `<ReassessmentPrompt />` in `apps/web/src/app/(dashboard)/dashboard/page.tsx` (a Server Component — mounting a `"use client"` component inside it is normal Next.js App Router usage, no other change to this file needed).
 - [x] Task 5 (AC: 8): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 - [x] Task 6: Tracker update — note this in `docs/dev2-sprint-tracker.md`.
+
+### Review Follow-ups (AI)
+
+- [x] [AI-Review][Medium] `ReassessmentPrompt.tsx`'s dismiss-state was keyed only on `session_count`, with no `user_id` — a shared/public-machine multi-account leak (dismissal by one user suppresses the prompt for a different user landing on the same `session_count`). Fixed: dismiss key is now `dismissed_reassessment_prompt_{user_id}_at_session_{session_count}`.
+- [x] [AI-Review][Medium] `OnboardingFlow.tsx`'s reassessment-due branch resumed any persisted `sessionStorage` progress with no check that it belonged to *this* reassessment instance — a stale abandoned attempt from an earlier due `session_count` could silently resume against a later, different one. Fixed: `PersistedProgress` now carries `dueSessionCount`; resume is only honored when it matches the current `dna.session_count`. (Also fixed a related bug this surfaced: `loadPersistedProgress()` was reconstructing the returned object field-by-field and silently dropping the new `dueSessionCount` field — added it to the reconstruction.)
+- [x] [AI-Review][Low] `ReassessmentPrompt.tsx` returned `null` for the whole component (including `AnimatePresence`) on dismiss, so the intended exit fade never actually played. Fixed: the dismiss/not-due condition is now evaluated as a conditionally-rendered child *inside* an always-mounted `AnimatePresence`, with an `exit` transition, so `AnimatePresence` can properly animate removal.
+- [x] [AI-Review][Low] No `aria-live`/`role="status"` on the banner, so screen readers wouldn't announce it appearing asynchronously after the client-side fetch resolves. Fixed: added `role="status" aria-live="polite"`.
+- [ ] [AI-Review][Low] Duplicate `GET /assessment/user/dna` calls between `ReassessmentPrompt` and `OnboardingFlow` (no shared cache) — explicitly accepted per AC-6's own reasoning; deferred, not a defect.
+- [ ] [AI-Review][High — branch state, not a code defect] `sprint2-master` lacks Story 3-31's backend entirely (see the post-review correction note under Story/Context above) — this frontend story's code is correct and forward-compatible, but the feature is inert until Dev 3's backend commits are synced into `sprint2-master`. No frontend code change applies here; flagged for Dev 2/Dev 1 coordination before this is expected to demo functionally.
 
 ## Dev Notes
 
@@ -121,12 +132,37 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`. For `Onboardi
 - [Source: apps/api/app/modules/assessment/router.py] — `LearnerDNA` model, `GET /user/dna`, `POST /onboarding/submit`'s reassessment bypass logic, read via `git show main:...`
 - [Source: apps/web/src/types/assessment.ts, apps/web/src/services/onboarding.service.ts, apps/web/src/components/onboarding/OnboardingFlow.tsx, apps/web/src/app/(dashboard)/dashboard/page.tsx, apps/web/src/components/dashboard/sections/HeroSection.tsx, apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx] — all read in full this session, current state documented above
 
+## Senior Developer Review (AI)
+
+**Date:** 2026-07-23
+**Outcome:** Changes Requested → all actionable findings resolved this session (see Review Follow-ups above)
+**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs) — per CLAUDE.md's BMAD Code Review Gate.
+
+### Findings
+
+| # | Severity | Source | Finding | Resolution |
+|---|----------|--------|---------|------------|
+| 1 | Medium | Blind Hunter | Dismiss key not scoped to `user_id` — shared-browser multi-account leak | Fixed |
+| 2 | Medium | Blind Hunter + Edge Case Hunter (corroborated 2/3) | Stale persisted progress could resume across different reassessment instances | Fixed |
+| 3 | Low | Blind Hunter | `AnimatePresence` exit animation was a no-op (early `return null` unmounted the whole tree) | Fixed |
+| 4 | Low | Edge Case Hunter | No `aria-live`/`role="status"` on the async-appearing banner | Fixed |
+| 5 | Low/informational | Edge Case Hunter | Duplicate `getLearnerDna()` calls (dashboard + onboarding), no shared cache | Deferred — explicitly accepted trade-off per AC-6 |
+| 6 | **High** | Edge Case Hunter + Acceptance Auditor (corroborated 2/3), independently verified by dev agent via `git merge-base --is-ancestor` | `sprint2-master` (this story's actual merge target) has fully diverged from `main` and lacks Story 3-31's backend entirely — `reassessment_due` can never be `true` on this branch until Dev 3's backend commits sync over. The story's "verified... not assumed" framing was accurate against `main` but overclaimed relative to the branch it targets. | Documented — see the post-review correction note in Story/Context and Review Follow-ups; no frontend code change applies; flagged for cross-team coordination before functional demo |
+
+### Non-issues checked and dismissed
+
+- `types/assessment.ts`/`onboarding.service.ts` contract match — verified true, unchanged as scoped.
+- `localStorage` key collision with `sessionStorage`'s `onboarding_progress_v1` — distinct storage areas, no collision.
+- `OnboardingFlow.tsx`'s 404/401/500 `.catch()` and `cancelled` guard — untouched by the diff, composes correctly with the new branch.
+- All 8 ACs independently re-verified against the diff by the Acceptance Auditor — satisfied (AC-5/AC-6's backend-transparency premise carved out per finding #6 above).
+
 ## Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created — Dev 2 counterpart to Dev 3's Story 3-31. Confirmed end-to-end feasibility by reading the real backend code (type already matches, resubmission needs no special-casing) and found a real blocking gap in `OnboardingFlow.tsx`'s mount check that must be fixed for a "Take Assessment" CTA to work at all. Branch `sprint2/s2-12-reassessment-prompt` off `sprint2-master`. | Dev 2 |
 | 2026-07-23 | Implemented all 6 tasks (RED→GREEN throughout). Fixed `OnboardingFlow.tsx`'s mount-check to inspect `reassessment_due`; created `ReassessmentPrompt.tsx` (dismissible dashboard banner, dismissal keyed on `session_count`); mounted it on the dashboard page. Full `apps/web` suite (47 files / 409 tests), `tsc --noEmit`, and `eslint` all clean. Tracker note added. Status → review. | Dev 2 |
+| 2026-07-23 | 5-agent code review round (Blind Hunter, Edge Case Hunter, Acceptance Auditor + Story Quality/Process Integrity per gate). Applied 4 patches (user_id-scoped dismiss key, reassessment-instance-scoped progress resume incl. a `loadPersistedProgress()` field-drop bug this surfaced, real `AnimatePresence` exit animation, `aria-live`/`role="status"`). Documented (not code-patched) a High-severity branch-parity finding: `sprint2-master` lacks Story 3-31's backend, so the feature is currently inert on this branch pending a backend sync — corrected the story's Dev Notes accordingly. Full suite now 47 files / 412 tests, all clean (tsc, eslint). | Dev 2 |
 
 ## Dev Agent Record
 
@@ -140,9 +176,10 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`. For `Onboardi
 ### Completion Notes
 
 - All 6 tasks complete, all ACs (1–8) satisfied.
-- Full `apps/web` test suite: 47 files, 409 tests, all passing (no regressions).
+- Post-review: full `apps/web` test suite: 47 files, 412 tests, all passing (no regressions) — up from 409 after the review round added 3 more tests (user_id-scoping regression test, stale-progress-mismatch test, matching-progress-resumes test).
 - `tsc --noEmit`: clean. `eslint` on all touched files: clean.
 - No backend changes. No changes to `types/assessment.ts` or `onboarding.service.ts` (both were already correct, as scoped).
+- See Senior Developer Review section for the 3-agent review round and the High-severity branch-parity finding (documented, not code-patched — `sprint2-master` lacks Story 3-31's backend).
 
 ### File List
 

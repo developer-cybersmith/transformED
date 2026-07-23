@@ -98,6 +98,30 @@ describe('OnboardingFlow', () => {
     expect(screen.getByText(QUESTIONS[0].text)).not.toBeNull();
   });
 
+  it('does NOT resume stale persisted progress from a different reassessment session_count', async () => {
+    window.sessionStorage.setItem(
+      'onboarding_progress_v1',
+      JSON.stringify({ current: 3, answers: { [QUESTIONS[0].id]: 0 }, disclaimerAcknowledged: true, dueSessionCount: 10 })
+    );
+    getLearnerDnaMock.mockResolvedValueOnce({ ...REASSESSMENT_DUE_DNA, session_count: 20 });
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(/not a clinical assessment/i)).not.toBeNull());
+  });
+
+  it('resumes persisted progress when it matches the current reassessment session_count', async () => {
+    window.sessionStorage.setItem(
+      'onboarding_progress_v1',
+      JSON.stringify({ current: 3, answers: { [QUESTIONS[0].id]: 0 }, disclaimerAcknowledged: true, dueSessionCount: 10 })
+    );
+    getLearnerDnaMock.mockResolvedValueOnce(REASSESSMENT_DUE_DNA);
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(QUESTIONS[3].text)).not.toBeNull());
+  });
+
   it('redirects to /signin if the mount-time check returns 401 (expired session)', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(UNAUTHENTICATED);
 

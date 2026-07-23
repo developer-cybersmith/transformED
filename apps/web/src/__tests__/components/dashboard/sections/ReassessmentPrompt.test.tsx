@@ -28,6 +28,11 @@ const DUE_AT_10: LearnerDNA = {
   last_updated: '2026-07-01T00:00:00Z',
 };
 
+const DUE_AT_10_OTHER_USER: LearnerDNA = {
+  ...DUE_AT_10,
+  user_id: 'user_2',
+};
+
 const NOT_DUE: LearnerDNA = {
   ...DUE_AT_10,
   session_count: 5,
@@ -97,7 +102,7 @@ describe('ReassessmentPrompt', () => {
     await waitFor(() => expect(screen.getByText(/update my profile/i)).not.toBeNull());
 
     await user.click(screen.getByLabelText(/dismiss/i));
-    expect(container.textContent).toBe('');
+    await waitFor(() => expect(container.textContent).toBe(''));
 
     unmount();
     getLearnerDnaMock.mockResolvedValueOnce(DUE_AT_10);
@@ -118,6 +123,21 @@ describe('ReassessmentPrompt', () => {
 
     const DUE_AT_20: LearnerDNA = { ...DUE_AT_10, session_count: 20 };
     getLearnerDnaMock.mockResolvedValueOnce(DUE_AT_20);
+    render(<ReassessmentPrompt />);
+
+    await waitFor(() => expect(screen.getByText(/update my profile/i)).not.toBeNull());
+  });
+
+  it('a dismissal by one user_id does NOT suppress the prompt for a different user_id sharing the same browser', async () => {
+    getLearnerDnaMock.mockResolvedValueOnce(DUE_AT_10);
+    const user = userEvent.setup();
+
+    const { unmount } = render(<ReassessmentPrompt />);
+    await waitFor(() => expect(screen.getByText(/update my profile/i)).not.toBeNull());
+    await user.click(screen.getByLabelText(/dismiss/i));
+    unmount();
+
+    getLearnerDnaMock.mockResolvedValueOnce(DUE_AT_10_OTHER_USER);
     render(<ReassessmentPrompt />);
 
     await waitFor(() => expect(screen.getByText(/update my profile/i)).not.toBeNull());
