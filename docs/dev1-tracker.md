@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-07-17
+**Last updated:** 2026-07-23
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance).
 **Sprint 2 status:** 21/21 COMPLETE ✅ (2026-07-17, still on `sprint2/phase-b-generation-nodes` — not yet merged to `main`). All 15 pipeline nodes real; `package_builder` (S2-11) + `lesson_ready` WebSocket push (S2-12) landed 2026-07-16; cost ceiling enforcement (S2-13) and the 5-PDF eval harness (S2-14, live run not yet triggered) landed 2026-07-17; Learner Mode tier-aware generation (S2-LM1–LM5) landed 2026-07-17 — `POST /lessons` accepts a `tier` param that drives per-segment slide budgets and outline content-depth framing. Frontend/assessment/tutor teams can migrate off `apps/web/src/mocks/data/lessonPackage.ts` once this branch merges.
@@ -19,10 +19,10 @@
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 5 | 1 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 6 | 1 | 0 | 5 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **59** | **44** | **1** | **14** |
+| **Totals** | | **60** | **44** | **1** | **15** |
 
 ---
 
@@ -684,6 +684,10 @@ Every node must:
 - [ ] **S3-5 Pipeline cost attribution in Langfuse**
   - All pipeline nodes — each Langfuse span must include `token_cost_usd` in metadata
   - **AC:** Langfuse dashboard shows cost breakdown per node per lesson; no node missing cost attribution
+
+- [ ] **S3-6 Media signed-URL layer** — added from 2026-07-22 audit (HIGH #3)
+  - `apps/api/app/modules/media/router.py` — finish `GET /api/media/signed-url` (currently 501 stub)
+  - **AC:** ownership-verified signing (IDOR-safe) for `lesson-audio`/`lesson-images` paths; malformed/unowned paths 404, not 500; backend-only (no frontend player changes — see `docs/stories/3-6-media-signed-url-layer.md`)
 
 ---
 
