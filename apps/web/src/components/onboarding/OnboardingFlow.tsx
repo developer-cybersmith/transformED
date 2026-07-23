@@ -82,11 +82,23 @@ export function OnboardingFlow() {
         let cancelled = false;
         onboardingService
             .getLearnerDna()
-            .then(() => {
-                if (!cancelled) {
-                    clearPersistedProgress();
-                    router.push("/dashboard");
+            .then((dna) => {
+                if (cancelled) return;
+                if (dna.reassessment_due) {
+                    // Due for a re-assessment — proceed into the same disclaimer/questions
+                    // flow a first-time user gets rather than redirecting away.
+                    const persisted = loadPersistedProgress();
+                    if (persisted?.disclaimerAcknowledged) {
+                        setCurrent(persisted.current);
+                        setAnswers(persisted.answers);
+                        setPhase("questions");
+                    } else {
+                        setPhase("disclaimer");
+                    }
+                    return;
                 }
+                clearPersistedProgress();
+                router.push("/dashboard");
             })
             .catch((err) => {
                 if (cancelled) return;

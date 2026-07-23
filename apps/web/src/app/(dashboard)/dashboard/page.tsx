@@ -1,4 +1,5 @@
 import { HeroSection } from "@/components/dashboard/sections/HeroSection";
+import { ReassessmentPrompt } from "@/components/dashboard/sections/ReassessmentPrompt";
 import { ContinueLearningCard } from "@/components/dashboard/sections/ContinueLearningCard";
 import { QuickActions } from "@/components/dashboard/sections/QuickActions";
 import { LearningPulse } from "@/components/dashboard/sections/LearningPulse";
@@ -13,6 +14,9 @@ export default async function DashboardPage() {
         <div className="w-full max-w-[1400px] mx-auto pt-6 flex flex-col gap-10">
             {/* 1. Compact Hero Section */}
             <HeroSection continueLessonId={dashboardData?.continueLearning?.id} />
+
+            {/* 1b. Re-Assessment Prompt (self-contained, only renders when due) */}
+            <ReassessmentPrompt />
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
 

@@ -4,7 +4,7 @@ baseline_commit: 79b46ce79ef07a6f71737bab2e6e97079b35e9b0
 
 # Story 2.12: Re-Assessment Prompt After 10 Sessions (Dev 2 counterpart to Story 3-31)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -35,19 +35,19 @@ so that I can choose to retake the 20-question diagnostic and get more accurate 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 7): `apps/web/src/components/onboarding/OnboardingFlow.tsx` — update the mount-check `.then()` branch to inspect `reassessment_due` before deciding to redirect vs. proceed into the flow.
-  - [ ] 1.1 RED: a test with `getLearnerDnaMock.mockResolvedValueOnce({..., reassessment_due: true})` asserting the disclaimer/questions phase renders, NOT a redirect to `/dashboard`.
-  - [ ] 1.2 RED: a test with `reassessment_due: false` (or omitted, matching today's existing tests) confirming the existing redirect-to-dashboard behavior is unchanged — this should already pass without modification if Task 1.2's implementation is done correctly; treat any break here as a real regression.
-  - [ ] 1.3 GREEN.
-- [ ] Task 2 (AC: 2, 4): Create `apps/web/src/components/dashboard/sections/ReassessmentPrompt.tsx` — a client component that calls `onboardingService.getLearnerDna()` on mount, renders a dismissible banner when `reassessment_due === true`, with a CTA button navigating to `/onboarding` (`useRouter().push('/onboarding')`, matching `HeroSection.tsx`'s existing navigation pattern). Renders nothing while loading, on fetch failure, or when not due.
-  - [ ] 2.1 RED: tests for renders-when-due / absent-when-not-due / absent-on-fetch-failure / CTA-navigates.
-  - [ ] 2.2 GREEN.
-- [ ] Task 3 (AC: 3): Dismiss behavior — clicking a dismiss control hides the banner and persists that to `localStorage` keyed on the specific `session_count`; a later mount with a *different* `session_count` (even if still `reassessment_due: true`) shows the prompt again.
-  - [ ] 3.1 RED: tests for dismiss-hides-and-persists-across-remount, and dismiss-at-session-10-does-not-suppress-session-20.
-  - [ ] 3.2 GREEN.
-- [ ] Task 4: Mount `<ReassessmentPrompt />` in `apps/web/src/app/(dashboard)/dashboard/page.tsx` (a Server Component — mounting a `"use client"` component inside it is normal Next.js App Router usage, no other change to this file needed).
-- [ ] Task 5 (AC: 8): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
-- [ ] Task 6: Tracker update — note this in `docs/dev2-sprint-tracker.md`.
+- [x] Task 1 (AC: 1, 7): `apps/web/src/components/onboarding/OnboardingFlow.tsx` — update the mount-check `.then()` branch to inspect `reassessment_due` before deciding to redirect vs. proceed into the flow.
+  - [x] 1.1 RED: a test with `getLearnerDnaMock.mockResolvedValueOnce({..., reassessment_due: true})` asserting the disclaimer/questions phase renders, NOT a redirect to `/dashboard`.
+  - [x] 1.2 RED: a test with `reassessment_due: false` (or omitted, matching today's existing tests) confirming the existing redirect-to-dashboard behavior is unchanged — this should already pass without modification if Task 1.2's implementation is done correctly; treat any break here as a real regression.
+  - [x] 1.3 GREEN.
+- [x] Task 2 (AC: 2, 4): Create `apps/web/src/components/dashboard/sections/ReassessmentPrompt.tsx` — a client component that calls `onboardingService.getLearnerDna()` on mount, renders a dismissible banner when `reassessment_due === true`, with a CTA button navigating to `/onboarding` (`useRouter().push('/onboarding')`, matching `HeroSection.tsx`'s existing navigation pattern). Renders nothing while loading, on fetch failure, or when not due.
+  - [x] 2.1 RED: tests for renders-when-due / absent-when-not-due / absent-on-fetch-failure / CTA-navigates.
+  - [x] 2.2 GREEN.
+- [x] Task 3 (AC: 3): Dismiss behavior — clicking a dismiss control hides the banner and persists that to `localStorage` keyed on the specific `session_count`; a later mount with a *different* `session_count` (even if still `reassessment_due: true`) shows the prompt again.
+  - [x] 3.1 RED: tests for dismiss-hides-and-persists-across-remount, and dismiss-at-session-10-does-not-suppress-session-20.
+  - [x] 3.2 GREEN.
+- [x] Task 4: Mount `<ReassessmentPrompt />` in `apps/web/src/app/(dashboard)/dashboard/page.tsx` (a Server Component — mounting a `"use client"` component inside it is normal Next.js App Router usage, no other change to this file needed).
+- [x] Task 5 (AC: 8): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 6: Tracker update — note this in `docs/dev2-sprint-tracker.md`.
 
 ## Dev Notes
 
@@ -126,7 +126,29 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`. For `Onboardi
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created — Dev 2 counterpart to Dev 3's Story 3-31. Confirmed end-to-end feasibility by reading the real backend code (type already matches, resubmission needs no special-casing) and found a real blocking gap in `OnboardingFlow.tsx`'s mount check that must be fixed for a "Take Assessment" CTA to work at all. Branch `sprint2/s2-12-reassessment-prompt` off `sprint2-master`. | Dev 2 |
+| 2026-07-23 | Implemented all 6 tasks (RED→GREEN throughout). Fixed `OnboardingFlow.tsx`'s mount-check to inspect `reassessment_due`; created `ReassessmentPrompt.tsx` (dismissible dashboard banner, dismissal keyed on `session_count`); mounted it on the dashboard page. Full `apps/web` suite (47 files / 409 tests), `tsc --noEmit`, and `eslint` all clean. Tracker note added. Status → review. | Dev 2 |
 
 ## Dev Agent Record
 
-_Pending implementation._
+### Implementation Plan
+
+- **Task 1** — `OnboardingFlow.tsx`'s mount-check `.then()` callback changed from `.then(() => {...})` (discarding the resolved value) to `.then((dna) => {...})`. When `dna.reassessment_due` is true, the same branching logic used in the `.catch()` for "not onboarded yet" (persisted-progress resume vs. fresh disclaimer) is reused, instead of the redirect-to-dashboard path.
+- **Task 2/3** — `ReassessmentPrompt.tsx` is a new, self-contained client component. It does its own `onboardingService.getLearnerDna()` fetch on mount (independent of the dashboard page's existing `dashboardService.getDashboard()` server-side call). Dismissal is stored in `localStorage` under `dismissed_reassessment_prompt_at_session_{session_count}` — keying on the specific count (not a single boolean) is what makes a session-20 prompt survive a session-10 dismissal, per AC-3.
+- **Task 4** — mounted directly in the Server Component `dashboard/page.tsx`; no `"use client"` boundary issues since `ReassessmentPrompt` declares its own directive.
+- Confirmed via revert-and-confirm discipline that the dismiss-persistence test (`dismissing hides the prompt and persists across a remount...`) is a genuine RED without the `localStorage` check in `isDismissed()` — temporarily neutered it, saw exactly 1 failure among the 7 new tests, then restored.
+
+### Completion Notes
+
+- All 6 tasks complete, all ACs (1–8) satisfied.
+- Full `apps/web` test suite: 47 files, 409 tests, all passing (no regressions).
+- `tsc --noEmit`: clean. `eslint` on all touched files: clean.
+- No backend changes. No changes to `types/assessment.ts` or `onboarding.service.ts` (both were already correct, as scoped).
+
+### File List
+
+- `apps/web/src/components/onboarding/OnboardingFlow.tsx` (MODIFIED)
+- `apps/web/src/components/dashboard/sections/ReassessmentPrompt.tsx` (NEW)
+- `apps/web/src/app/(dashboard)/dashboard/page.tsx` (MODIFIED)
+- `apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx` (MODIFIED)
+- `apps/web/src/__tests__/components/dashboard/sections/ReassessmentPrompt.test.tsx` (NEW)
+- `docs/dev2-sprint-tracker.md` (MODIFIED — tracker note only)
