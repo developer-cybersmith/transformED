@@ -37,6 +37,12 @@ const EXISTING_DNA: LearnerDNA = {
   last_updated: '2026-06-01T00:00:00Z',
 };
 
+const REASSESSMENT_DUE_DNA: LearnerDNA = {
+  ...EXISTING_DNA,
+  session_count: 10,
+  reassessment_due: true,
+};
+
 // isAxiosError: true is required — OnboardingFlow uses axios.isAxiosError(), not duck-typing.
 const NOT_ONBOARDED = { isAxiosError: true, response: { status: 404 } };
 const UNAUTHENTICATED = { isAxiosError: true, response: { status: 401 } };
@@ -77,6 +83,43 @@ describe('OnboardingFlow', () => {
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/dashboard'));
     expect(screen.queryByText(/not a clinical assessment/i)).toBeNull();
+  });
+
+  it('proceeds into the disclaimer/questions flow instead of redirecting when reassessment_due is true', async () => {
+    getLearnerDnaMock.mockResolvedValueOnce(REASSESSMENT_DUE_DNA);
+    const user = userEvent.setup();
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(/not a clinical assessment/i)).not.toBeNull());
+    expect(pushMock).not.toHaveBeenCalledWith('/dashboard');
+
+    await user.click(screen.getByText('I Understand, Begin Assessment'));
+    expect(screen.getByText(QUESTIONS[0].text)).not.toBeNull();
+  });
+
+  it('does NOT resume stale persisted progress from a different reassessment session_count', async () => {
+    window.sessionStorage.setItem(
+      'onboarding_progress_v1',
+      JSON.stringify({ current: 3, answers: { [QUESTIONS[0].id]: 0 }, disclaimerAcknowledged: true, dueSessionCount: 10 })
+    );
+    getLearnerDnaMock.mockResolvedValueOnce({ ...REASSESSMENT_DUE_DNA, session_count: 20 });
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(/not a clinical assessment/i)).not.toBeNull());
+  });
+
+  it('resumes persisted progress when it matches the current reassessment session_count', async () => {
+    window.sessionStorage.setItem(
+      'onboarding_progress_v1',
+      JSON.stringify({ current: 3, answers: { [QUESTIONS[0].id]: 0 }, disclaimerAcknowledged: true, dueSessionCount: 10 })
+    );
+    getLearnerDnaMock.mockResolvedValueOnce(REASSESSMENT_DUE_DNA);
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(QUESTIONS[3].text)).not.toBeNull());
   });
 
   it('redirects to /signin if the mount-time check returns 401 (expired session)', async () => {
