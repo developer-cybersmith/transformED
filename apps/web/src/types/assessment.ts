@@ -59,6 +59,32 @@ export interface TeachbackResult {
 
 // ── GET /api/assessment/session/{session_id}/report ───────────────────────
 
+// Story 3-30 (learner_dna_snapshot). Label values verified against the actual
+// shipped backend (apps/api/app/modules/assessment/service.py's
+// _score_to_label()/_delta_to_growth_label(), not just the story doc) -- NOT
+// Dev 3's HTML integration guide, whose DimensionLabel/GrowthLabel
+// definitions are stale/incomplete (no 'Advanced' dimension label exists;
+// the growth label is 'Needs Attention', not 'Declining'; and the guide
+// omits the real 'Exceptional' band entirely -- review-round fix).
+export type DnaDimension =
+  | 'pattern_recognition'
+  | 'logical_deduction'
+  | 'processing_speed'
+  | 'frustration_tolerance'
+  | 'persistence'
+  | 'help_seeking'
+  | 'goal_orientation'
+  | 'curiosity_index'
+  | 'study_independence';
+
+export type DnaDimensionLabel = 'Beginning' | 'Emerging' | 'Developing' | 'Proficient' | 'Exceptional';
+export type DnaGrowthLabel = 'Improving' | 'Stable' | 'Needs Attention';
+
+export interface LearnerDnaSnapshot {
+  dimension_labels: Record<DnaDimension, DnaDimensionLabel>;
+  growth_labels: Record<DnaDimension, DnaGrowthLabel | null>;
+}
+
 export interface SessionReport {
   session_id: string;
   user_id: string;
@@ -79,6 +105,15 @@ export interface SessionReport {
   teachback_score: number | null;
   duration_minutes: number;
   completed_at: string | null;
+  // Story 3-29 additions — tier is defaulted to 'T2'/'Standard' server-side
+  // when the lessons row is missing/unrecognized; never absent or null.
+  tier: 'T1' | 'T2' | 'T3';
+  tier_label: string;
+  quiz_total_questions: number;
+  quiz_correct_count: number;
+  quiz_accuracy_label: 'Strong' | 'Developing' | 'Needs Review' | null;
+  // Story 3-30 addition — null when the user has no learner_dna row yet.
+  learner_dna_snapshot: LearnerDnaSnapshot | null;
 }
 
 // ── GET /api/assessment/user/dna ──────────────────────────────────────────

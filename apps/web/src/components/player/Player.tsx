@@ -16,10 +16,14 @@ interface PlayerProps {
   lesson: LessonPackage;
 }
 
-// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
-// package_builder (Story S2-11, not yet built). Do not build a parallel
-// real-content path here -- this will be reconciled when Sprint 2 lands.
-// Ping Dev 1 (developer1-cybersmith) before changing this shape.
+// Matches the backend's own _TIER_LABELS dict exactly (apps/api/app/modules/
+// assessment/service.py) -- do not invent different copy (S2-10).
+const TIER_LABELS: Record<LessonPackage['metadata']['tier'], string> = {
+  T1: 'Full-Depth',
+  T2: 'Standard',
+  T3: 'Refresher',
+};
+
 // Default export required by next/dynamic
 export default function Player({ lesson }: PlayerProps) {
   const loadLesson = usePlayerStore((s) => s.loadLesson);
@@ -49,6 +53,16 @@ export default function Player({ lesson }: PlayerProps) {
 
       {/* Slide area — all slides rendered simultaneously; only active is visible */}
       <div className="relative flex-1">
+        {/* Tier badge — persistent, visible regardless of playback state (S2-10).
+            Not placed in the "before any slide is active" block below since
+            currentSlideId is set almost immediately after mount in real use,
+            leaving that block rarely visible. */}
+        <div className="absolute top-3 left-3 z-10">
+          <span className="px-3 py-1 rounded-full bg-black/40 backdrop-blur-sm text-neutral-200 text-xs font-medium uppercase tracking-wide">
+            {TIER_LABELS[lesson.metadata.tier] ?? TIER_LABELS.T2}
+          </span>
+        </div>
+
         {segment?.slides.map((slide) => (
           <SlideRenderer
             key={slide.slide_id}

@@ -62,6 +62,43 @@ describe('Player — lesson complete (ENDED) screen', () => {
   });
 });
 
+describe('Player — tier badge (S2-10)', () => {
+  it('shows the mapped tier label for the lesson\'s tier (T2 -> Standard)', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    expect(screen.getByText('Standard')).not.toBeNull();
+  });
+
+  it('shows a different label for a different tier (T1 -> Full-Depth)', () => {
+    const t1Lesson = { ...mockLessonPackage, metadata: { ...mockLessonPackage.metadata, tier: 'T1' as const } };
+
+    render(<Player lesson={t1Lesson} />);
+
+    expect(screen.getByText('Full-Depth')).not.toBeNull();
+    expect(screen.queryByText('Standard')).toBeNull();
+  });
+
+  it('shows the T3 label (Refresher)', () => {
+    const t3Lesson = { ...mockLessonPackage, metadata: { ...mockLessonPackage.metadata, tier: 'T3' as const } };
+
+    render(<Player lesson={t3Lesson} />);
+
+    expect(screen.getByText('Refresher')).not.toBeNull();
+  });
+
+  it('falls back gracefully instead of rendering "undefined" for an unrecognized/missing tier (review fix)', () => {
+    const badLesson = {
+      ...mockLessonPackage,
+      metadata: { ...mockLessonPackage.metadata, tier: 'T99' as unknown as 'T1' },
+    };
+
+    render(<Player lesson={badLesson} />);
+
+    expect(screen.queryByText('undefined')).toBeNull();
+    expect(screen.getByText('Standard')).not.toBeNull();
+  });
+});
+
 describe('Player — restores saved progress on mount (S2-05)', () => {
   it('restores segment index, slide, and quizFiredForSegment from a valid saved snapshot', () => {
     localStorage.setItem(

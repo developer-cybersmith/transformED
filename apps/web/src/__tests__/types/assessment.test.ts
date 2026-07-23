@@ -124,6 +124,12 @@ describe('assessment types', () => {
       teachback_score: null,
       duration_minutes: 18,
       completed_at: '2026-06-26T10:00:00Z',
+      tier: 'T2',
+      tier_label: 'Standard',
+      quiz_total_questions: 4,
+      quiz_correct_count: 3,
+      quiz_accuracy_label: 'Strong',
+      learner_dna_snapshot: null,
     };
     expect(report.duration_minutes).toBe(18);
     expect(Object.keys(report)).not.toContain('duration_seconds');
@@ -141,6 +147,12 @@ describe('assessment types', () => {
       teachback_score: null,
       duration_minutes: 5,
       completed_at: null,
+      tier: 'T2',
+      tier_label: 'Standard',
+      quiz_total_questions: 0,
+      quiz_correct_count: 0,
+      quiz_accuracy_label: null,
+      learner_dna_snapshot: null,
     };
     expect(Object.keys(report.ces_breakdown).sort()).toEqual(
       ['behavioral', 'blink', 'head_pose', 'quiz', 'teachback']
