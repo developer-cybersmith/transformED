@@ -4,7 +4,7 @@ baseline_commit: caff943977a001c2b34da3e3a3f338cb83fcba83
 
 # Story 3.6: Media signed-URL layer (finish `GET /api/media/signed-url`)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -25,10 +25,10 @@ so that the bare storage paths `package_builder_node` stores in `audio_url`/`ima
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 2): Add a `_parse_lesson_id(path: str) -> str | None` helper — split on first `/`, validate the prefix as a UUID, return `None` on any failure.
-- [ ] Task 2 (AC: 1, 3): Implement the ownership check (`supabase.table("lessons").select("user_id").eq("lesson_id", ...).maybe_single().execute()`) and the real `create_signed_url` call in `get_signed_url`, replacing the `501` stub. Wrap the storage call in a try/except → 404 on any exception (do not leak storage error internals).
-- [ ] Task 3 (AC: 6): `apps/api/tests/unit/test_media_router.py` — new file, mocking `app.core.db.get_supabase` and `CurrentUser`.
-- [ ] Task 4 (AC: 4, 6): Full unit suite green; `ruff`/`mypy` clean; confirm no `apps/web` files touched (`git diff --stat` scoped to `apps/api` + `docs/`).
+- [x] Task 1 (AC: 1, 2): Add a `_parse_lesson_id(path: str) -> str | None` helper — split on first `/`, validate the prefix as a UUID, return `None` on any failure.
+- [x] Task 2 (AC: 1, 3): Implement the ownership check (`supabase.table("lessons").select("user_id").eq("lesson_id", ...).maybe_single().execute()`) and the real `create_signed_url` call in `get_signed_url`, replacing the `501` stub. Wrap the storage call in a try/except → 404 on any exception (do not leak storage error internals).
+- [x] Task 3 (AC: 6): `apps/api/tests/unit/test_media_router.py` — new file, mocking `app.core.db.get_supabase` and `CurrentUser`.
+- [x] Task 4 (AC: 4, 6): Full unit suite green; `ruff`/`mypy` clean; confirm no `apps/web` files touched (`git diff --stat` scoped to `apps/api` + `docs/`).
 
 ## Dev Notes
 
@@ -56,6 +56,7 @@ so that the bare storage paths `package_builder_node` stores in `audio_url`/`ima
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created from the 2026-07-22 audit's HIGH #3 finding. | Dev 1 |
+| 2026-07-23 | Implemented (RED→GREEN): ownership check + real signing call, replacing the 501 stub. 8 new tests, 553/553+1 skipped full suite green, ruff+mypy clean, zero `apps/web` touches. | Dev 1 |
 
 ## Dev Agent Record
 
@@ -65,6 +66,22 @@ Claude Opus 4.8 (Sonnet 5 session default)
 
 ### Debug Log References
 
+- `uv run pytest tests/unit/test_media_router.py -q` — RED: 8 failed (`AttributeError: ... does not have the attribute 'get_supabase'` — module didn't import it pre-implementation).
+- `uv run pytest tests/unit/test_media_router.py -q` — GREEN: 8 passed after implementation.
+- `uv run pytest tests/unit tests/integration -q` — 553 passed, 1 skipped (no regressions).
+- `uv run ruff check .` / `uv run mypy app/` — both clean, repo-wide.
+
 ### Completion Notes List
 
+- `_parse_lesson_id` splits `path` on the first `/`, validates the prefix as a UUID via `uuid.UUID(...)`, returns `None` on any malformed input (no slash, empty prefix, non-UUID) — caller maps `None` to 404 without ever touching the DB (`sb.table.assert_not_called()` asserted in both malformed-path tests).
+- Ownership check mirrors `content/router.py:get_lesson` exactly: same non-distinguishing 404 for "lesson not found" vs "lesson owned by someone else" (AC-1/AC-2 — no IDOR existence leak).
+- `create_signed_url`'s return dict key is defensively read as `signedURL` / `signedUrl` / `signed_url` (storage3 2.31.0 pinned per `uv.lock`; guards against minor client-version key drift without adding a hard dependency on internals) — any exception from the storage call, or a response missing all three keys, maps to 404 (AC-3).
+- Confirmed via `git status --short` that only `apps/api/app/modules/media/router.py` (UPDATE) and `apps/api/tests/unit/test_media_router.py` (NEW) changed — no `apps/web/**` files touched (AC-5). An unrelated `uv.lock` drift (pyjwt `crypto` extra, picked up incidentally by `uv run`) was reverted before commit — out of this story's scope.
+- Frontend wiring (player calling this endpoint, or a future "GET lesson content" endpoint resolving signed URLs server-side) remains an explicit follow-up per AC-5/Dev Notes — not implemented here.
+
 ### File List
+
+- `apps/api/app/modules/media/router.py` (UPDATE) — implemented `_parse_lesson_id`, ownership check, real `create_signed_url` call, replacing the `501` stub.
+- `apps/api/tests/unit/test_media_router.py` (NEW) — 8 tests covering AC-1 through AC-4/AC-6.
+- `docs/stories/3-6-media-signed-url-layer.md` (this file).
+- `docs/dev1-tracker.md` (UPDATE, story-first commit) — added S3-6 entry + dashboard totals.

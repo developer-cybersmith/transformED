@@ -7,9 +7,12 @@ never needs the service-role key.
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
+from app.core.db import get_supabase, single_row
 from app.dependencies import CurrentUser
 
 router = APIRouter(tags=["media"])
@@ -31,6 +34,22 @@ class SignedUrlResponse(BaseModel):
     expires_in: int  # seconds
 
 
+def _parse_lesson_id(path: str) -> str | None:
+    """Extract and validate the `{lesson_id}/...` prefix of a storage path.
+
+    Returns None (caller 404s) on any malformed input — no `/` separator,
+    empty prefix, or a prefix that isn't a valid UUID. Never raises.
+    """
+    prefix = path.split("/", 1)[0] if "/" in path else ""
+    if not prefix:
+        return None
+    try:
+        uuid.UUID(prefix)
+    except ValueError:
+        return None
+    return prefix
+
+
 @router.get(
     "/signed-url",
     response_model=SignedUrlResponse,
@@ -45,12 +64,10 @@ async def get_signed_url(
     """Return a time-limited signed URL for a storage object.
 
     Validates that the caller owns the referenced lesson before signing
-    to prevent insecure direct object reference (IDOR).
-
-    TODO (Sprint 1):
-    1. Validate that bucket is in _ALLOWED_BUCKETS.
-    2. Parse lesson_id from path prefix and verify ownership.
-    3. Call supabase.storage.from_(bucket).create_signed_url(path, expires_in).
+    to prevent insecure direct object reference (IDOR). Mirrors the
+    ownership-check pattern in `content/router.py:get_lesson` — a
+    nonexistent lesson and an unowned lesson return the identical 404,
+    never distinguishing which (would leak existence to a non-owner).
     """
     if bucket not in _ALLOWED_BUCKETS:
         raise HTTPException(
@@ -58,5 +75,34 @@ async def get_signed_url(
             detail=f"Bucket '{bucket}' is not allowed. Valid buckets: {sorted(_ALLOWED_BUCKETS)}",
         )
 
-    # TODO: ownership check + actual signing
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Not implemented yet")
+    lesson_id = _parse_lesson_id(path)
+    if lesson_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+
+    supabase = get_supabase()
+    lesson_resp = (
+        supabase.table("lessons")
+        .select("user_id")
+        .eq("lesson_id", lesson_id)
+        .maybe_single()
+        .execute()
+    )
+    lesson = single_row(lesson_resp)
+    user_id: str = current_user["sub"]
+    if not lesson or lesson.get("user_id") != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lesson not found")
+
+    try:
+        signed = supabase.storage.from_(bucket).create_signed_url(path, expires_in)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Storage object not found"
+        ) from exc
+
+    signed_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url")
+    if not signed_url:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Storage object not found"
+        )
+
+    return SignedUrlResponse(signed_url=signed_url, expires_in=expires_in)

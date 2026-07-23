@@ -19,10 +19,10 @@
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 6 | 1 | 0 | 5 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 6 | 2 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **60** | **44** | **1** | **15** |
+| **Totals** | | **60** | **45** | **1** | **14** |
 
 ---
 
@@ -685,9 +685,9 @@ Every node must:
   - All pipeline nodes — each Langfuse span must include `token_cost_usd` in metadata
   - **AC:** Langfuse dashboard shows cost breakdown per node per lesson; no node missing cost attribution
 
-- [ ] **S3-6 Media signed-URL layer** — added from 2026-07-22 audit (HIGH #3)
-  - `apps/api/app/modules/media/router.py` — finish `GET /api/media/signed-url` (currently 501 stub)
-  - **AC:** ownership-verified signing (IDOR-safe) for `lesson-audio`/`lesson-images` paths; malformed/unowned paths 404, not 500; backend-only (no frontend player changes — see `docs/stories/3-6-media-signed-url-layer.md`)
+- [x] **S3-6 Media signed-URL layer** — ✓ 2026-07-23 — added from 2026-07-22 audit (HIGH #3)
+  - `apps/api/app/modules/media/router.py` — finish `GET /api/media/signed-url` (was a 501 stub)
+  - **AC:** ownership-verified signing (IDOR-safe) for `lesson-audio`/`lesson-images` paths; malformed/unowned paths 404, not 500; backend-only (no frontend player changes — see `docs/stories/3-6-media-signed-url-layer.md`) ✅
 
 ---
 
