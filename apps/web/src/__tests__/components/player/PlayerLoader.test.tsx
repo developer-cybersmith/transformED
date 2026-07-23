@@ -36,7 +36,7 @@ describe('PlayerLoader', () => {
   });
 
   it('renders PlayerSkeleton while lesson is loading', () => {
-    mockUseLesson.mockReturnValue({ lesson: null, isLoading: true, error: null });
+    mockUseLesson.mockReturnValue({ lesson: null, isLoading: true, error: null, status: undefined, serverError: null });
 
     render(<PlayerLoader lessonId="lesson_1" />);
 
@@ -45,10 +45,13 @@ describe('PlayerLoader', () => {
     expect(screen.queryByTestId('player-stub')).toBeNull();
   });
 
-  it('renders LessonErrorState when the fetch completes with a null lesson (no explicit error)', () => {
-    // A completed fetch (isLoading: false) with no lesson and no error is treated as
-    // an error state, not a skeleton — see PlayerLoader.tsx's own comment on this branch.
-    mockUseLesson.mockReturnValue({ lesson: null, isLoading: false, error: null });
+  it('renders LessonErrorState when the fetch completes with a null lesson (no explicit error, no status)', () => {
+    // A completed fetch (isLoading: false) with no lesson, no error, and no
+    // status is treated as an error state, not a skeleton — genuinely unexpected
+    // shape, distinct from the real running/failed states covered below.
+    mockUseLesson.mockReturnValue({
+      lesson: null, isLoading: false, error: null, status: undefined, serverError: null,
+    });
 
     render(<PlayerLoader lessonId="lesson_1" />);
 
@@ -56,11 +59,48 @@ describe('PlayerLoader', () => {
     expect(screen.queryByTestId('player-skeleton')).toBeNull();
   });
 
+  it('renders a distinct "still generating" state (not the error page) when status is running (S1-7)', () => {
+    mockUseLesson.mockReturnValue({
+      lesson: null, isLoading: false, error: null, status: 'running', serverError: null,
+    });
+
+    render(<PlayerLoader lessonId="lesson_1" />);
+
+    expect(screen.getByTestId('lesson-generating')).toBeDefined();
+    expect(screen.queryByTestId('lesson-error')).toBeNull();
+    expect(screen.queryByTestId('player-skeleton')).toBeNull();
+  });
+
+  it('renders a distinct "still generating" state when status is queued (S1-7)', () => {
+    mockUseLesson.mockReturnValue({
+      lesson: null, isLoading: false, error: null, status: 'queued', serverError: null,
+    });
+
+    render(<PlayerLoader lessonId="lesson_1" />);
+
+    expect(screen.getByTestId('lesson-generating')).toBeDefined();
+    expect(screen.queryByTestId('lesson-error')).toBeNull();
+  });
+
+  it('surfaces the real backend error message when status is failed, instead of the generic message (S1-7)', () => {
+    mockUseLesson.mockReturnValue({
+      lesson: null, isLoading: false, error: null, status: 'failed', serverError: 'Cost ceiling exceeded',
+    });
+
+    render(<PlayerLoader lessonId="lesson_1" />);
+
+    expect(screen.getByTestId('lesson-error')).toBeDefined();
+    expect(screen.getByText('Cost ceiling exceeded')).toBeDefined();
+    expect(screen.queryByText('This lesson could not be loaded. Please try again.')).toBeNull();
+  });
+
   it('renders LessonErrorState when hook returns an error', () => {
     mockUseLesson.mockReturnValue({
       lesson: null,
       isLoading: false,
       error: new Error('Lesson not found'),
+      status: undefined,
+      serverError: null,
     });
 
     render(<PlayerLoader lessonId="lesson_404" />);
@@ -74,6 +114,8 @@ describe('PlayerLoader', () => {
       lesson: mockLessonPackage,
       isLoading: false,
       error: null,
+      status: 'ready',
+      serverError: null,
     });
 
     render(<PlayerLoader lessonId="lesson_mock_1" />);
@@ -85,7 +127,7 @@ describe('PlayerLoader', () => {
   });
 
   it('passes the lessonId to useLesson', () => {
-    mockUseLesson.mockReturnValue({ lesson: null, isLoading: true, error: null });
+    mockUseLesson.mockReturnValue({ lesson: null, isLoading: true, error: null, status: undefined, serverError: null });
 
     render(<PlayerLoader lessonId="lesson_xyz" />);
 
@@ -97,6 +139,8 @@ describe('PlayerLoader', () => {
       lesson: null,
       isLoading: true,
       error: new Error('Network error'),
+      status: undefined,
+      serverError: null,
     });
 
     render(<PlayerLoader lessonId="lesson_1" />);

@@ -25,14 +25,14 @@ function PlayerSkeleton() {
   );
 }
 
-function LessonErrorState() {
+function LessonErrorState({ message }: { message?: string | null }) {
   return (
     <div
       className="flex-1 flex flex-col items-center justify-center p-6 text-center"
       data-testid="lesson-error"
     >
       <p className="text-neutral-400 mb-6">
-        This lesson could not be loaded. Please try again.
+        {message || 'This lesson could not be loaded. Please try again.'}
       </p>
       <Link
         href="/dashboard"
@@ -45,15 +45,31 @@ function LessonErrorState() {
   );
 }
 
+function LessonGeneratingState() {
+  return (
+    <div
+      className="flex-1 flex flex-col items-center justify-center p-6 text-center"
+      data-testid="lesson-generating"
+    >
+      <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-6" />
+      <p className="text-neutral-400">This lesson is still generating. Hang tight...</p>
+    </div>
+  );
+}
+
 interface PlayerLoaderProps {
   lessonId: string;
 }
 
 export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
-  const { lesson, isLoading, error } = useLesson(lessonId);
+  const { lesson, isLoading, error, status, serverError } = useLesson(lessonId);
 
   if (error) return <LessonErrorState />;
   if (isLoading) return <PlayerSkeleton />;
+  // "running"/"queued" (still generating) is a normal state a direct-navigated
+  // (bookmark/refresh/back-button) request can land on -- not an error.
+  if (status === 'running' || status === 'queued') return <LessonGeneratingState />;
+  if (status === 'failed') return <LessonErrorState message={serverError} />;
   if (!lesson) return <LessonErrorState />;
   return <Player lesson={lesson} />;
 }

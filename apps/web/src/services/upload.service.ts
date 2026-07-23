@@ -1,4 +1,5 @@
 import { api } from '@/lib/api';
+import type { LessonPackage } from '@hie/shared/types/lesson';
 
 export interface LessonUploadResponse {
     lesson_id: string;
@@ -15,6 +16,10 @@ export interface LessonStatusResponse {
     error: string | null;
     created_at: string | null;
     completed_at: string | null;
+    // Populated by GET /lessons/{id} only when status=="ready" (Story 1-6);
+    // always null for "queued"/"running"/"failed". Media URLs inside are
+    // already server-resolved signed URLs -- never bare storage paths.
+    content: LessonPackage | null;
 }
 
 export const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024;

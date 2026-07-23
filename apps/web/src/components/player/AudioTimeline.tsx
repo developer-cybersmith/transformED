@@ -9,10 +9,6 @@ import { usePlayerStore } from '@/stores/player.machine';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 export { binarySearchTimestamps };
 
-// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
-// package_builder (Story S2-11, not yet built). Do not build a parallel
-// real-content path here -- this will be reconciled when Sprint 2 lands.
-// Ping Dev 1 (developer1-cybersmith) before changing this shape.
 /**
  * Core audio-tick handler. Reads Zustand store via getState() to avoid stale closures
  * in the onTimeUpdate callback (fires at ~30 Hz). Exported for unit testing.
@@ -66,6 +62,10 @@ export function AudioTimeline() {
   const playbackRate = usePlayerStore((s) => s.playbackRate);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
+  // Empty string is a real, reachable value now — a per-asset server-side
+  // signing failure degrades just that one asset (Story 1-6/1-7), it doesn't
+  // fail the whole lesson. There's nothing to play; don't attempt to.
+  const hasAudio = Boolean(segment?.narration.audio_url);
 
   // Status drives audio — audio never drives status (S1-01 invariant).
   // Also re-runs on currentSegmentIndex: replaying a previously-quizzed segment
@@ -76,13 +76,13 @@ export function AudioTimeline() {
   // playback would silently freeze despite the UI still showing "playing".
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !hasAudio) return;
     if (status === 'PLAYING') {
       audio.play().catch(() => {});
     } else {
       audio.pause();
     }
-  }, [status, currentSegmentIndex]);
+  }, [status, currentSegmentIndex, hasAudio]);
 
   // Apply pending seek from the store then clear it
   useEffect(() => {
@@ -151,7 +151,7 @@ export function AudioTimeline() {
     <audio
       key={segment.segment_id}
       ref={audioRef}
-      src={segment.narration.audio_url}
+      src={hasAudio ? segment.narration.audio_url : undefined}
       preload="metadata"
       onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}
