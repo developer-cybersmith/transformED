@@ -18,13 +18,18 @@ import pytest
 def _stub_openai_package() -> None:
     """Stub the openai pip package so provider modules import without a real install.
 
-    embed_node and OpenAIEmbeddingsProvider do `from openai import AsyncOpenAI`
-    inside function/class bodies. Without this stub the import fails when the
-    openai package is not installed in the test environment.
+    Stubs all submodules referenced at import time in app/providers/llm/openai.py
+    and app/providers/embeddings/openai.py so the unit test suite runs without
+    a live OpenAI SDK (or if setdefault replaces the real package on a fresh run).
     """
     stub = MagicMock()
     sys.modules.setdefault("openai", stub)
+    sys.modules.setdefault("openai.types", stub.types)
+    sys.modules.setdefault("openai.types.chat", stub.types.chat)
+    sys.modules.setdefault("openai._models", stub._models)
     sys.modules.setdefault("openai.AsyncOpenAI", stub.AsyncOpenAI)
+    sys.modules.setdefault("openai.types", stub.types)
+    sys.modules.setdefault("openai.types.chat", stub.types.chat)
 
 
 @pytest.fixture(autouse=True, scope="session")

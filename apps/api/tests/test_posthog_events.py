@@ -364,6 +364,13 @@ def test_posthog_session_report_event_fired():
         teachback_score=75.0,
         duration_minutes=12.5,
         completed_at="2026-07-03T10:00:00+00:00",
+        # Story 3-29 required tier-context fields
+        tier="T2",
+        tier_label="Standard",
+        quiz_total_questions=5,
+        quiz_correct_count=4,
+        quiz_accuracy_label="Strong",
+        learner_dna_snapshot=None,  # Story 3-30 added
     )
 
     with patch(

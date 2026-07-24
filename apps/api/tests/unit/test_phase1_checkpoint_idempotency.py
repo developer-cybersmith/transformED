@@ -108,16 +108,19 @@ class TestCheckpointCacheHit:
 
     @pytest.mark.asyncio
     async def test_quiz_generator_skips_llm_call_on_cache_hit(self) -> None:
-        """Story 2-1 AC-3 gained the same checkpoint pattern as AC-1/AC-2 —
-        review finding (2026-07-14): only summarise_segment/segment_complexity
-        had cache-hit coverage; this closes the gap for quiz_generator_node."""
+        """Story 3-28 (AC-9): cache-hit uses new batch checkpoint shape.
+
+        Checkpoint format changed from single-question {"segment_id": ..., "data": {...}}
+        to batch {"segment_id": ..., "questions": [...]}. The LLM must NOT be
+        called when a valid batch checkpoint exists.
+        """
         from app.modules.content.pipeline.graph import _derive_section_id, quiz_generator_node
 
         section_id = _derive_section_id(SECTION_0, 0)
-        cached_quiz = {
+        q0 = {
             "segment_id": section_id,
             "data": {
-                "question_id": f"quiz_{section_id}",
+                "question_id": f"quiz_{section_id}_0",
                 "type": "mcq",
                 "question": "Already-computed question?",
                 "options": ["A", "B", "C", "D"],
@@ -126,7 +129,12 @@ class TestCheckpointCacheHit:
                 "difficulty": "medium",
             },
         }
-        mock_jobs_table = _make_jobs_table({f"quiz_generator:{section_id}": cached_quiz})
+        # Story 3-28 AC-9: batch-shaped checkpoint — "questions" key, not "data".
+        cached_batch = {
+            "segment_id": section_id,
+            "questions": [q0],
+        }
+        mock_jobs_table = _make_jobs_table({f"quiz_generator:{section_id}": cached_batch})
 
         mock_supabase = MagicMock()
         mock_supabase.table.return_value = mock_jobs_table
@@ -141,7 +149,7 @@ class TestCheckpointCacheHit:
             result = await quiz_generator_node(state)
 
         mock_provider.complete_structured.assert_not_called()
-        assert result["quiz_questions"] == [cached_quiz]
+        assert result["quiz_questions"] == [q0]
 
     @pytest.mark.asyncio
     async def test_jargon_extractor_skips_llm_call_on_cache_hit(self) -> None:

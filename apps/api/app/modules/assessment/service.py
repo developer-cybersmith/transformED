@@ -84,6 +84,46 @@ def _score_to_label(score: float) -> str:
     return "Beginning"
 
 
+# Story 3-29 — tier-context constants and helpers
+
+_TIER_LABELS: dict[str, str] = {
+    "T1": "Full-Depth",
+    "T2": "Standard",
+    "T3": "Refresher",
+}
+
+
+def _quiz_accuracy_label(accuracy: float, total: int) -> str | None:
+    """Map quiz accuracy to a descriptive label (no raw floats to students).
+
+    Returns None when total == 0 — cannot evaluate accuracy with zero questions.
+    Thresholds: Strong ≥80%, Developing ≥60%, Needs Review <60%.
+    """
+    if total == 0:
+        return None
+    if accuracy >= 0.8:
+        return "Strong"
+    if accuracy >= 0.6:
+        return "Developing"
+    return "Needs Review"
+
+
+# Story 3-30 — Learner DNA growth-label constants and helper
+
+_DNA_GROWTH_IMPROVING_THRESHOLD: float = 2.0
+_DNA_GROWTH_DECLINING_THRESHOLD: float = -2.0
+
+
+def _delta_to_growth_label(delta: float | None) -> str | None:
+    if delta is None:
+        return None
+    if delta > _DNA_GROWTH_IMPROVING_THRESHOLD:
+        return "Improving"
+    if delta < _DNA_GROWTH_DECLINING_THRESHOLD:
+        return "Needs Attention"
+    return "Stable"
+
+
 async def grade_quiz(
     *,
     session_id: str,
@@ -564,8 +604,8 @@ async def get_session_report(
 ) -> SessionReport:
     """Aggregate a completed session's assessment data into a SessionReport.
 
-    Reads from sessions, quiz_attempts, teachback_attempts, and session_events.
-    No LLM calls — pure DB aggregation and arithmetic.
+    Reads from sessions, lessons (tier), quiz_attempts, teachback_attempts,
+    and session_events. No LLM calls — pure DB aggregation and arithmetic.
 
     Args:
         session_id: UUID of the session to report on.
@@ -574,7 +614,7 @@ async def get_session_report(
 
     Returns:
         SessionReport with ces_score, ces_breakdown, quiz_score, teachback_score,
-        interventions_count, duration_minutes, completed_at.
+        interventions_count, duration_minutes, completed_at, tier context fields.
 
     Raises:
         HTTPException 404: Session not found.
@@ -608,6 +648,23 @@ async def get_session_report(
         )
 
     row = session_row
+    
+    # Step 1b — Fetch lesson tier for contextualised report (Story 3-29)
+    _lesson_id = str(row.get("lesson_id") or "")
+    tier = "T2"  # safe default — matches lessons.tier DEFAULT 'T2'
+    if _lesson_id:
+        _tier_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("lessons")
+                .select("tier")
+                .eq("lesson_id", _lesson_id)
+                .maybe_single()
+                .execute()
+            )
+        )
+        if _tier_resp.data and _tier_resp.data.get("tier") in _TIER_LABELS:
+            tier = _tier_resp.data["tier"]
+    tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
     quiz_resp = await asyncio.to_thread(
@@ -698,6 +755,49 @@ async def get_session_report(
     ces_final = row.get("ces_final")
     ces_score: float = float(ces_final) if ces_final is not None else 0.0
 
+    # Step 8 — Learner DNA snapshot (descriptive labels + session growth labels)
+    _dna_snapshot: dict[str, Any] | None = None
+    _dna_select = ", ".join(ALL_NINE_DIMENSIONS)
+    _dna_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("learner_dna")
+            .select(_dna_select)
+            .eq("user_id", str(row["user_id"]))
+            .maybe_single()
+            .execute()
+        )
+    )
+    if _dna_resp is not None and _dna_resp.data:
+        _dim_labels: dict[str, str] = {
+            dim: _score_to_label(float(_dna_resp.data.get(dim) or 0.0))
+            for dim in ALL_NINE_DIMENSIONS
+        }
+
+        # Step 9 — session growth events (dna_update) for delta-based growth labels
+        _events_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("session_events")
+                .select("payload")
+                .eq("session_id", session_id)
+                .eq("event_type", "dna_update")
+                .execute()
+            )
+        )
+        _delta_map: dict[str, float | None] = {}
+        for evt in (_events_resp.data or []):
+            payload = evt.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            dim = payload.get("dimension")
+            if dim in ALL_NINE_DIMENSIONS:
+                _delta_map[dim] = payload.get("delta")
+
+        _growth_labels: dict[str, str | None] = {
+            dim: _delta_to_growth_label(_delta_map.get(dim))
+            for dim in ALL_NINE_DIMENSIONS
+        }
+        _dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}
+
     logger.info(
         "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
         session_id,
@@ -717,6 +817,14 @@ async def get_session_report(
         teachback_score=teachback_score,
         duration_minutes=duration_minutes,
         completed_at=completed_at,
+        # Story 3-29 tier-context fields
+        tier=tier,
+        tier_label=tier_label,
+        quiz_total_questions=total_quiz,
+        quiz_correct_count=correct_count,
+        quiz_accuracy_label=_quiz_accuracy_label(quiz_accuracy, total_quiz),
+        # Story 3-30 Learner DNA snapshot
+        learner_dna_snapshot=_dna_snapshot,
     )
 
 
@@ -872,6 +980,7 @@ async def get_learner_dna_data(
     *,
     user_id: str,
     supabase: Client,
+    redis: Any = None,
 ) -> dict[str, Any]:
     """Fetch the learner_dna row for a user and return it as a plain dict.
 
@@ -879,8 +988,11 @@ async def get_learner_dna_data(
     Returns a zero-state dict if no learner_dna row exists yet (user not onboarded).
 
     Args:
-        user_id: User UUID from the decoded JWT.
+        user_id:  User UUID from the decoded JWT.
         supabase: Synchronous Supabase client.
+        redis:    Optional async Redis client. When provided, checks
+                  user:{user_id}:reassessment_due for the re-assessment flag.
+                  Non-fatal: Redis failures return False for reassessment_due.
 
     Raises:
         HTTPException 404: No learner_dna row found for this user.
@@ -905,11 +1017,25 @@ async def get_learner_dna_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
         )
+        
+    # ── Re-assessment flag (non-fatal Redis read) ─────────────────────────────
+    reassessment_due: bool = False
+    if redis is not None:
+        _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+        try:
+            val = await redis.get(f"user:{user_id}:reassessment_due")
+            reassessment_due = val == "1"
+        except Exception as exc:
+            logger.warning(
+                "get_learner_dna_data: redis check failed user=%s: %s", _safe_uid, exc
+            )
+            reassessment_due = False
+
     return {
         "user_id": str(row["user_id"]),
         "badge_labels": row.get("badge_labels") or [],
         "profile_text": row.get("profile_text"),
         "session_count": int(row.get("session_count") or 0),
-        "reassessment_due": False,
+        "reassessment_due": reassessment_due,
         "last_updated": row.get("last_updated"),
     }
