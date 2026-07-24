@@ -4,7 +4,7 @@ baseline_commit: "a35ede1"
 
 # Story 4-20: Learner Mode — Q&A Phase Length Enforced in State Machine
 
-**Status:** review
+**Status:** done
 **Priority:** Medium
 **Sprint:** Learner Mode (Feature Sprint)
 
@@ -184,3 +184,36 @@ All 6 ACs satisfied. Test counts: `test_tutor_graph.py` 50/50 (44 original + 6 n
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-23 | Dev 4 (AI) | Initial implementation of Story 4-20 — all 6 ACs complete |
+| 2026-07-23 | Dev 4 (AI) | 5-agent adversarial code review — 8 patches, 9 deferred, 5 dismissed |
+
+---
+
+## Senior Developer Review (AI)
+
+**Date:** 2026-07-23
+**Outcome:** Changes Requested — 8 patches required before merge
+
+### Review Findings
+
+**Patches (8 — must be resolved before merge):**
+
+- [x] [Review][Patch] `quizzing_node` — add bounds check on `qa_phase_seconds` (clamp 30–3600 s) to prevent deadline backdating via a malicious Redis write setting it to 0 or negative [`apps/api/app/modules/tutor/state_machine/graph.py:228`]
+- [x] [Review][Patch] Fix flawed mock in `test_advance_tutor_state_non_quizzing_state_normal_dispatch` — `redis.get = AsyncMock(return_value="TEACHING")` returns `"TEACHING"` for ALL keys including `quiz_deadline_at`, causing `float("TEACHING")` to raise inside `_quiz_deadline_expired` whose bare `except` then returns `False` — test passes for the wrong reason; replace with key-aware side_effect [`apps/api/tests/test_tutor_service.py`]
+- [x] [Review][Patch] Add T3 (150 s) test for `quizzing_node` deadline write — AC1 explicitly names T1/T2/T3 but no test exercises `qa_secs="150"` [`apps/api/tests/test_tutor_graph.py`]
+- [x] [Review][Patch] Add test: non-`quiz_complete` client event (e.g. `segment_complete`) submitted while QUIZZING + expired deadline → verifies `quiz_complete` is dispatched instead and original event is dropped (AC2 substitution guarantee is currently unproven) [`apps/api/tests/test_tutor_service.py`]
+- [x] [Review][Patch] Add test: corrupt (non-numeric) `quiz_deadline_at` value in Redis → `_quiz_deadline_expired` returns `False` without raising [`apps/api/tests/test_tutor_service.py`]
+- [x] [Review][Patch] Add assertion `result.intervention_dispatched is False` to `test_process_attention_quizzing_expired_deadline_dispatches_quiz_complete` [`apps/api/tests/test_tutor_service.py`]
+- [x] [Review][Patch] Add test: QUIZZING + expired deadline + two consecutive below-threshold CES values simultaneously → only `quiz_complete` dispatched, not also `distraction_detected` (double-dispatch scenario) [`apps/api/tests/test_tutor_service.py`]
+- [x] [Review][Patch] Add test: `quizzing_node` Redis failure during `quiz_deadline_at` write → exception caught, node still returns `current_state == QUIZZING` (best-effort branch) [`apps/api/tests/test_tutor_graph.py`]
+
+**Deferred (pre-existing or deliberate MVP trade-offs):**
+
+- [x] [Review][Defer] IDOR: `session_id` in Redis keys has no ownership check beyond JWT auth at WebSocket boundary [`service.py`] — deferred, pre-existing architecture
+- [x] [Review][Defer] Forced state transition via Redis key injection (writing `quiz_deadline_at = 0`) — pre-existing Redis trust model; same exposure exists for all `session:*` keys [`service.py`] — deferred, pre-existing
+- [x] [Review][Defer] TOCTOU cross-function race between `advance_tutor_state` and `process_attention_signal` — delete-before-dispatch is the intended atomic guard; inherent in async event-driven architecture — deferred, architectural
+- [x] [Review][Defer] DoS via attention signal flooding deadline check — no new unauthenticated surface vs pre-existing pattern — deferred, pre-existing
+- [x] [Review][Defer] Log injection via unescaped `session_id` in logger calls — JWT validates session_id at auth boundary; pre-existing log pattern throughout service — deferred, pre-existing
+- [x] [Review][Defer] `quiz_deadline_at` 24h TTL does not couple to actual session lifetime — session_id reuse is a broader architecture question — deferred, pre-existing
+- [x] [Review][Defer] 13 pre-existing `test_tutor_service.py` failures — documented in Dev Agent Record, out of scope — deferred, pre-existing
+- [x] [Review][Defer] `baseline_commit` SHA retroactively set inside implementation commit — cannot retroactively fix; document in PR — deferred, acknowledged
+- [x] [Review][Defer] Timed-out quiz (`quiz_accuracy=None`) indistinguishable from completed quiz in data layer — deliberate MVP trade-off per story Context section — deferred, deliberate MVP decision

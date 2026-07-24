@@ -306,13 +306,18 @@ async def process_attention_signal(
 
     intervention_dispatched = False
 
+    # Read tutor state once — used by both the CES intervention guard and the deadline check below.
+    # CLAUDE.md §10: CES monitoring ONLY active in TEACHING state.
+    state_raw = await redis.get(f"tutor_state:{session_id}")
+
     if len(history_raw) >= 2:
         # Index 0 is most recent (LPUSH prepends)
         recent = [float(v) for v in history_raw[:2]]
         cooldown_key = f"tutor_cooldown:{session_id}"
         in_cooldown = await redis.exists(cooldown_key)
 
-        if all(v < settings.ces_threshold for v in recent) and not in_cooldown:
+        # Enforce CLAUDE.md §10: CES interventions only fire in TEACHING state.
+        if state_raw == "TEACHING" and all(v < settings.ces_threshold for v in recent) and not in_cooldown:
             logger.info(
                 "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching distraction_detected",
                 session_id,
@@ -352,7 +357,7 @@ async def process_attention_signal(
     # This attention-signal path (fires every ~5 s) is the primary deadline enforcer
     # when the student is not actively submitting client events.
     # Delete-before-dispatch guard prevents double-fire from concurrent signals.
-    state_raw = await redis.get(f"tutor_state:{session_id}")
+    # state_raw is already populated above (used for CES guard too).
     if state_raw == "QUIZZING" and await _quiz_deadline_expired(session_id, redis):
         deleted = await redis.delete(f"session:{session_id}:quiz_deadline_at")
         if deleted:

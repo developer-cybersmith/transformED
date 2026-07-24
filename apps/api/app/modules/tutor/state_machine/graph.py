@@ -226,6 +226,7 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
         redis = get_redis()
         qa_raw = await redis.get(f"session:{session_id}:qa_phase_seconds")
         qa_secs = int(qa_raw) if qa_raw else 300  # T2 default
+        qa_secs = max(30, min(3600, qa_secs))  # clamp: prevent deadline backdating via Redis injection
         deadline = int(_time.time()) + qa_secs
         await redis.set(f"session:{session_id}:quiz_deadline_at", str(deadline), ex=86400)
         logger.info("[tutor:%s] QUIZZING deadline set: +%ds", session_id, qa_secs)

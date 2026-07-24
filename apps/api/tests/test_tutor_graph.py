@@ -1044,3 +1044,50 @@ async def test_advance_tutor_state_missing_deadline_no_auto_advance(mocker) -> N
 
     assert store["state"] == "TEACHING"
     redis.delete.assert_not_called()
+
+
+# ── Story 4-20 review patches ─────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_quizzing_node_uses_t3_qa_seconds(mocker) -> None:
+    """AC1: T3 tier qa_phase_seconds (150 s) is honoured — deadline is +150 s."""
+    import time as _time
+
+    sid = "s-qdl-t3"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs="150")
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1
+    written = int(deadline_calls[0].args[1])
+    assert before + 150 <= written <= after + 150
+
+
+@pytest.mark.unit
+async def test_quizzing_node_redis_failure_still_returns_quizzing(mocker) -> None:
+    """quizzing_node Redis failure during quiz_deadline_at write is best-effort:
+    exception is caught and the FSM still returns QUIZZING state."""
+    sid = "s-qdl-fail"
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="300")  # qa_phase_seconds present
+
+    async def _set(key: str, value, **kw):
+        if "quiz_deadline_at" in key:
+            raise RuntimeError("redis unavailable")
+        # tutor_state:* write succeeds (used by _persist_state inside the same mock)
+
+    redis.set = AsyncMock(side_effect=_set)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import quizzing_node
+
+    result = await quizzing_node({"session_id": sid, "current_state": "CHECKING_IN"})
+
+    assert result["current_state"].value == "QUIZZING"
