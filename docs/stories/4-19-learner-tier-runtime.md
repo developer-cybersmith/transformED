@@ -1,6 +1,6 @@
 ---
 baseline_commit: "b390788"
-status: review
+status: done
 ---
 
 # Story 4-19: Learner Mode — Session Runtime Reads Tier from Lesson Package
