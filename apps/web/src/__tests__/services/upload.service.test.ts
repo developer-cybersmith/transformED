@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, expectTypeOf } from 'vitest';
 
 const { postMock, getMock } = vi.hoisted(() => ({
   postMock: vi.fn(),
@@ -41,6 +41,44 @@ describe('uploadService.uploadLesson', () => {
 
     const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' });
     await expect(uploadService.uploadLesson(file)).rejects.toBe(error);
+  });
+
+  it('appends tier to FormData when provided (S2-09)', async () => {
+    const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' });
+    postMock.mockResolvedValue({ data: { lesson_id: 'lsn_1', job_id: 'job_1', status: 'queued' } });
+
+    await uploadService.uploadLesson(file, 'T3');
+
+    const [, body] = postMock.mock.calls[0];
+    expect(body.get('tier')).toBe('T3');
+  });
+
+  it('omits the tier field entirely when not provided, relying on the backend default (S2-09)', async () => {
+    const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' });
+    postMock.mockResolvedValue({ data: { lesson_id: 'lsn_1', job_id: 'job_1', status: 'queued' } });
+
+    await uploadService.uploadLesson(file);
+
+    const [, body] = postMock.mock.calls[0];
+    expect(body.has('tier')).toBe(false);
+  });
+
+  it('only accepts the backend\'s closed T1/T2/T3 union at compile time, not an arbitrary string (review fix)', () => {
+    expectTypeOf(uploadService.uploadLesson).parameter(1).toEqualTypeOf<'T1' | 'T2' | 'T3' | undefined>();
+  });
+
+  it('appends a defined-but-falsy tier value rather than treating it as unset (review fix — definedness, not truthiness)', async () => {
+    const file = new File(['%PDF-1.4'], 'chapter.pdf', { type: 'application/pdf' });
+    postMock.mockResolvedValue({ data: { lesson_id: 'lsn_1', job_id: 'job_1', status: 'queued' } });
+
+    // Bypasses the compile-time union on purpose — simulates a caller that got
+    // past the type system (e.g. an `as any` bug) to prove the runtime check
+    // is definedness-based, not truthiness-based.
+    await uploadService.uploadLesson(file, '' as unknown as 'T1');
+
+    const [, body] = postMock.mock.calls[0];
+    expect(body.has('tier')).toBe(true);
+    expect(body.get('tier')).toBe('');
   });
 });
 

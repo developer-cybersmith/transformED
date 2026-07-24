@@ -6,6 +6,8 @@ import { UploadCloud, CheckCircle, AlertCircle, Loader2, Play } from "lucide-rea
 import { useRouter } from "next/navigation";
 import { uploadService, extractErrorMessage, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
 import { Button } from "@/components/ui/button";
+import { ModeSelection } from "@/components/dashboard/upload/ModeSelection";
+import { LEARNER_TIER_OPTIONS, LEARNER_TIER_TO_BACKEND, type LearnerTier } from "@/types/learnerMode";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
@@ -17,13 +19,20 @@ const MAX_POLL_ATTEMPTS = 240;
 export function UploadFlow() {
     const [file, setFile] = useState<File | null>(null);
     const [dragActive, setDragActive] = useState(false);
-    const [uploadState, setUploadState] = useState<'idle' | 'processing' | 'completed' | 'error'>('idle');
+    const [uploadState, setUploadState] = useState<'idle' | 'selecting-mode' | 'processing' | 'completed' | 'error'>('idle');
     const [statusMessage, setStatusMessage] = useState<string>('');
     const [errorMessage, setErrorMessage] = useState<string>('');
     const [lessonId, setLessonId] = useState<string>('');
+    const [selectedTier, setSelectedTier] = useState<LearnerTier | null>(null);
 
     const router = useRouter();
     const inputRef = useRef<HTMLInputElement>(null);
+    // Captures the tier at the moment processing starts, without making it a
+    // reactive dependency of the upload effect below — a later selectedTier
+    // change (e.g. a mis-click followed by a different card, landing during
+    // the exit-animation window) must not re-trigger a second, separately
+    // billed upload call (review fix).
+    const selectedTierAtUploadRef = useRef<LearnerTier | null>(null);
 
     const handleDrag = (e: React.DragEvent) => {
         e.preventDefault();
@@ -59,8 +68,24 @@ export function UploadFlow() {
             return;
         }
         setFile(selectedFile);
+        setUploadState('selecting-mode');
+    };
+
+    const handleTierSelect = (tier: LearnerTier) => {
+        selectedTierAtUploadRef.current = tier;
+        setSelectedTier(tier);
         setUploadState('processing');
         setStatusMessage('Uploading...');
+    };
+
+    const handleCancelModeSelection = () => {
+        setFile(null);
+        setSelectedTier(null);
+        // Allows re-selecting the exact same file through the native file
+        // dialog afterwards — browsers don't fire a `change` event if the
+        // input's FileList is unchanged from last time.
+        if (inputRef.current) inputRef.current.value = '';
+        setUploadState('idle');
     };
 
     useEffect(() => {
@@ -127,8 +152,9 @@ export function UploadFlow() {
             }
         };
 
+        const tierAtEntry = selectedTierAtUploadRef.current;
         uploadService
-            .uploadLesson(file)
+            .uploadLesson(file, tierAtEntry ? LEARNER_TIER_TO_BACKEND[tierAtEntry] : undefined)
             .then((res) => {
                 if (cancelled) return;
                 setStatusMessage('Processing...');
@@ -144,7 +170,14 @@ export function UploadFlow() {
             cancelled = true;
             if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         };
+        // selectedTier is deliberately NOT a dependency — see selectedTierAtUploadRef above.
     }, [uploadState, file]);
+
+    // Gated on a successful lookup, not just selectedTier being truthy — avoids
+    // ever rendering an empty visible pill if the two ever desync (review fix).
+    const selectedTierOption = selectedTier
+        ? LEARNER_TIER_OPTIONS.find((option) => option.id === selectedTier)
+        : undefined;
 
     return (
         <AnimatePresence mode="wait">
@@ -187,6 +220,32 @@ export function UploadFlow() {
                 </motion.div>
             )}
 
+            {uploadState === 'selecting-mode' && (
+                <motion.div
+                    key="selecting-mode"
+                    initial={{ opacity: 0, y: 20, filter: "blur(10px)" }}
+                    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                    transition={{ duration: 0.6 }}
+                    className="w-full relative z-10 flex flex-col items-center"
+                >
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-2 text-center">
+                        How do you want to learn this?
+                    </h3>
+                    <p className="text-neutral-500 max-w-md text-center mb-8">
+                        Choose a pace before HIE builds your lesson.
+                    </p>
+                    <ModeSelection onSelect={handleTierSelect} />
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCancelModeSelection}
+                        className="mt-8 text-neutral-400 hover:text-neutral-600 hover:bg-transparent"
+                    >
+                        Choose a different file
+                    </Button>
+                </motion.div>
+            )}
+
             {uploadState === 'processing' && (
                 <motion.div
                     key="processing"
@@ -194,6 +253,9 @@ export function UploadFlow() {
                     animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.6 }}
+                    // data-selected-tier is not rendered as visible text — it's a forward-compatible
+                    // hook for the S2-10 tier-badge story, which decides where/how to surface it.
+                    data-selected-tier={selectedTier ?? undefined}
                     className="w-full relative z-10 bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-16 shadow-2xl border border-neutral-100 flex flex-col items-center justify-center min-h-[400px] text-center"
                 >
                     {/* Pulsing Outer Glow + indeterminate spinner — the backend reports no percentage/stage data */}
@@ -211,6 +273,14 @@ export function UploadFlow() {
                     <p className="text-neutral-500 max-w-sm leading-relaxed">
                         Establishing intelligence matrix, compiling timeline sequences, and synthesizing audio overlays.
                     </p>
+                    {selectedTierOption && (
+                        <span
+                            data-testid="selected-tier-label"
+                            className="mt-5 inline-flex items-center px-3 py-1 rounded-full bg-[var(--accent-secondary)] text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wide"
+                        >
+                            {selectedTierOption.label}
+                        </span>
+                    )}
                 </motion.div>
             )}
 

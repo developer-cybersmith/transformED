@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-23 (S2-06 corrected to DONE — it was already fully implemented, 5-agent reviewed, and merged into `sprint2-master` on 2026-07-21, but this file was never updated after that; caught when the user flagged the discrepancy. Sprint 2's official numbered list is now 6/6. Story 2-12 also completed today. See both entries below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (6/6 done) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 COMPLETE (6/6) |
+| **Last Updated** | 2026-07-23 (`feature-learner-mode` merged into `sprint2-master` — reconciles S2-07/S2-08/S2-09 (Learner Mode mode-selection, tier disclaimers, wire-tier-into-lesson-creation, all 5-agent reviewed) alongside S2-10 (tier badge, done directly on `sprint2-master`). S2-06 was also corrected to DONE today — it was already fully implemented, 5-agent reviewed, and merged into `sprint2-master` on 2026-07-21, but this file was never updated after that; caught when the user flagged the discrepancy. **Sprint 2 is now fully complete: 10/10 (S2-01–S2-10), plus S2-11 and S2-12 shipped on top.** ) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 done) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 COMPLETE (10/10) |
 
 ---
 
@@ -32,11 +32,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 6 | **6** | 0 | **0** |
+| Sprint 2 | Weeks 4–5 | 10 | **10** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **51** | **25** | **0** | **26** |
+| **Total** | **10 weeks** | **55** | **29** | **0** | **26** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1058,7 +1058,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** ✅ 6/6 done — S2-06 (segment-end → CHECKING_IN) completed 2026-07-21, see entry below  
+**Period:** Weeks 4–5 | **Status:** ✅ 10/10 done — S2-01–S2-06 plus Learner Mode S2-07–S2-10 all complete, see entries below  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1232,6 +1232,8 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 ### S2-06 — Segment-End Detection → CHECKING_IN State — ✓ 2026-07-21
 **Priority:** P2  
 **Status:** ✅ DONE. Dev 4 replied to the escalation below confirming his fix (`dispatch_event` in `graph.py` now broadcasts `state_change` on every real FSM transition) — merged and unit-tested (44/44 passing) on his side, but not yet pushed/merged to `main` at the time. Per user instruction, proceeded to implement and ship this story built and tested against `FakeWebSocket` (same posture S1-07/S2-04 were already shipped against for their own backend dependencies) rather than wait on his push — a live end-to-end check against his real backend is a follow-up once his branch lands, not a design unknown (the wire shape is already frozen in `packages/shared/types/ws.ts`). Implemented via full BMAD story `docs/stories/2-6-segment-checkin.md` (branch `sprint2/s2-6-segment-checkin`, merged into `sprint2-master`): `useLessonSocket` now mounted live in `Player.tsx`; `AudioTimeline.tsx` sends `segment_complete` + an optimistic `setTutorState('CHECKING_IN')` at all 3 segment-boundary call sites, with zero added latency to the (unchanged) client-authoritative quiz trigger; new `CheckingInTransition.tsx` renders an edge-triggered ~500ms "Checking in…" overlay. 5-agent review round applied 3 patches (stuck-visible fix, `wsSendControl` instance-identity guard, `PlayerLoader` remount-per-lesson key) and deferred 2 (documented, out of scope). Full `apps/web` suite 373/373 passing at merge time. **This was the last open item in Dev 2's official Sprint 2 list — Sprint 2 is now 6/6 done.**  
+**Files modified:** `src/components/player/Player.tsx`, `src/components/player/AudioTimeline.tsx`, `src/stores/player.machine.ts`, new `src/components/player/CheckingInTransition.tsx`, `src/hooks/useLessonSocket.ts`, plus all their tests
+
 **Files likely touched:** `src/components/player/Player.tsx` or `PlayerLoader.tsx` (mount the socket), `src/components/player/AudioTimeline.tsx` (send on segment boundary), `src/stores/player.machine.ts` (`tutorState` already exists), a new CHECKING_IN UI component (none exists, blocked)
 
 **Investigated 2026-07-06 — found the actual gap is larger than the master tracker's 2026-07-02 note suggested.** That note read as "just wire the send side," implying the receive side was already live. Verified against the actual code:
@@ -1283,6 +1285,100 @@ None of these three ever call `manager.send()`. Confirmed by reading all three f
 </details>
 
 **Recommendation:** given the real architectural decision buried in this "line item" and the fact that nothing here has ever been scoped into acceptance criteria, run this as a full BMAD story (`bmad-create-story` → `bmad-dev-story` → 5-agent review) rather than a quick patch — same rigor as S2-01 through S2-05, once Dev 4 unblocks the receive side (or a decision is made to ship the send-side half alone in the meantime).
+
+</details>
+
+---
+
+### S2-07 — Learner Mode Selection Screen — ✅ 2026-07-14
+**Priority:** High  
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/2-7-mode-selection-screen.md` on branch `sprint2/s2-7-mode-selection` (branched from `sprint1/s1-8-upload-real-api`, not main — see branch note below), feeds into feature master `feature-learner-mode`. 5-agent adversarial review complete (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 0 decision-needed, 3 patch, 2 defer, 2 dismissed. All 3 patches applied (see below); the 2 deferred items are tracked in `_bmad-output/implementation-artifacts/deferred-work.md`.  
+**Files created:** `src/types/learnerMode.ts`, `src/components/dashboard/upload/ModeSelection.tsx`, `src/__tests__/components/dashboard/upload/ModeSelection.test.tsx`  
+**Files modified:** `src/components/dashboard/upload/UploadFlow.tsx` (new `'selecting-mode'` state, `handleTierSelect`/`handleCancelModeSelection`), `src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` (existing tests updated to select a tier before the upload call fires — an intentional, in-scope behavior change, not a regression)
+
+**Branch note:** this task's branch — and the 3 remaining Learner Mode tasks (S2-08, S2-09, S2-10) — are cut from `sprint1/s1-8-upload-real-api` rather than `main`, since that branch carries real unmerged auth/upload backend fixes this feature builds directly on top of (`UploadFlow.tsx`). Task branches stay local; each merges into the dedicated feature master `feature-learner-mode` (not `sprint2-master`), which is what gets pushed and PR'd.
+
+New feature: **Learner Mode** — student picks a tier before generation begins. The mode-selection screen now appears right after a file is dropped/selected and size-validated, **before** the upload POST fires (not after upload completes — confirmed with the user; this lines up with S2-09 needing the tier known before that POST is made). 3 cards:
+- **Deep** (full-depth lesson, no time constraint)
+- **Balanced** (time-boxed depth)
+- **Refresher** (condensed review only)
+
+**Scope boundary (per story):** this task is the selection screen only. Tier disclaimers (S2-08), sending the tier to the backend (S2-09 — no field exists in `POST /api/content/lessons` yet, needs Dev 1 sign-off), and the tier badge on player/report (S2-10) are separate, not-yet-started follow-on tasks. `selectedTier` is captured in `UploadFlow.tsx` component state only (surfaced via a non-visible `data-selected-tier` attribute for S2-10 to pick up later) — not yet persisted or sent anywhere.
+
+**Acceptance criteria:**
+- [x] Screen renders after a file is selected/size-validated, before the upload POST fires
+- [x] 3 selectable cards, real `<button>`s: Deep / Balanced / Refresher, each with a one-line description
+- [x] Clicking a card is both the selection and the confirmation — captures the tier and immediately proceeds to upload (no separate "Continue" button)
+- [x] "Choose a different file" returns to the idle drop zone without ever calling the upload API
+- [x] Oversized-file rejection path unaffected (still short-circuits to the error state before reaching mode-selection)
+- [x] No regression to Story 1-8's upload/polling behavior once a tier is picked — byte-for-byte the same from that point on
+
+15 new/updated tests from initial implementation (4 in `ModeSelection.test.tsx`, 11 in `UploadFlow.test.tsx`) + 5 more from the review-patch pass (2 in `ModeSelection.test.tsx`, 3 in `UploadFlow.test.tsx`) = 20 total. Full `apps/web` suite: 337/337 passing. `tsc --noEmit` clean. `eslint`: 0 errors, 37 warnings (all pre-existing, 0 new).
+
+**Review patches applied:** `handleCancelModeSelection` now clears `file`/`selectedTier`/the file input value (so re-picking the same file after cancelling works); tier cards now have `focus-visible` ring styling matching `Button`'s pattern; `ModeSelection` moves focus to the first card on mount so keyboard users land on the screen without re-tabbing.
+
+**Deferred (tracked in `_bmad-output/implementation-artifacts/deferred-work.md`):** no drag-and-drop guard on the new screen (pre-existing gap, needs a broader fix across all non-idle screens); tier choice has no functional effect on generation yet (by design — S2-09's job — but current copy oversells it).
+
+---
+
+### S2-08 — Tier Disclaimers — ✅ 2026-07-14
+**Priority:** Medium  
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/2-8-tier-disclaimers.md` on branch `sprint2/s2-8-tier-disclaimers` (branched from `feature-learner-mode`, which already has S2-07 merged in), feeds into feature master `feature-learner-mode`  
+**Files modified:** `src/types/learnerMode.ts` (new `disclaimer?: string` field on `LearnerTierOption` + copy for `balanced`/`refresher`), `src/components/dashboard/upload/ModeSelection.tsx` (conditional inline disclaimer block, `AlertTriangle` icon + amber tint), `src/__tests__/components/dashboard/upload/ModeSelection.test.tsx` (4 new tests)
+
+Per-tier inline warning-style disclaimer shown on the mode selection screen:
+- **Deep:** no disclaimer
+- **Balanced:** time-deficit warning ("Content may be trimmed or condensed to fit your available time.")
+- **Refresher:** refresher-only warning ("Assumes you already have prior mastery — not a full first-pass lesson.")
+
+**Acceptance criteria:**
+- [x] Deep card shows no disclaimer
+- [x] Balanced card shows a time-deficit inline warning
+- [x] Refresher card shows a refresher-only inline warning
+- [x] Disclaimers styled consistently as an inline warning (icon + tinted background, not a modal/toast) — no reusable `Alert` component existed in the codebase, so this is kept local to `ModeSelection.tsx` per the story's explicit scope
+- [x] No regression to S2-07's card click/focus-visible/mount-autofocus behavior; `UploadFlow.tsx` and its tests untouched (confirmed via `git diff --stat`)
+
+11 tests total in `ModeSelection.test.tsx` (6 unmodified from S2-07 + 5 new). Full `apps/web` suite: 342/342 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings.
+
+**5-agent adversarial review (2026-07-14) — 2 patches applied, 3 dismissed as noise:** disclaimer text now has a screen-reader-only "Warning:" prefix so assistive tech can distinguish it from the description (button accessible names were a flat concatenation before); the `option.disclaimer &&` render guard is now an explicit `option.disclaimer && option.disclaimer.trim().length > 0 ? (...) : null`, codifying the "must be entirely absent, not empty string" invariant in code rather than only in a comment. Dismissed: a claim that `AlertTriangle` needed explicit `aria-hidden` (verified false by reading `lucide-react`'s installed source — it already sets this automatically), a false "new dependency" concern (`lucide-react` is already used elsewhere in this codebase), and a "brittle exact-count test" critique (the `toHaveLength(2)` test is intentionally behavioral).
+
+---
+
+### S2-09 — Wire Selected Tier into Lesson Creation — ✓ 2026-07-21 (implemented, pending 5-agent code review)
+**Priority:** Medium  
+**Status:** ✅ DONE — implementation + tests complete; code review not yet run  
+**Files modified:** `apps/web/src/types/learnerMode.ts` (new `LEARNER_TIER_TO_BACKEND` mapping), `apps/web/src/services/upload.service.ts` (`uploadLesson` gains `tier?` param), `apps/web/src/components/dashboard/upload/UploadFlow.tsx` (call site + visible tier label), plus both files' tests
+
+Unblocked 2026-07-21 once Dev 1's Sprint 2 Phase B backend merge (PR #74) landed `tier: Form(...)` on `POST /lessons` (multipart, default `T2`, 422 on invalid — confirmed by reading `apps/api/app/modules/content/router.py`/`apps/api/app/schemas/lesson.py` directly, not assumed). Mapping confirmed by matching backend semantics (`docs/stories/2-lm3-lm4-lm5-tier-aware-generation.md`) to the existing frontend tier descriptions: `deep→T1`, `balanced→T2`, `refresher→T3`. Full story: `docs/stories/2-9-wire-tier-into-lesson-creation.md`. Branch `sprint2/s2-09-wire-tier` off `feature-learner-mode` (task branch kept local, merged into the feature master per standing convention).
+
+**Acceptance criteria:**
+- [x] Selected tier included in the lesson-creation request body (`FormData.append('tier', ...)`, mapped T1/T2/T3)
+- [x] Chosen tier displayed on the generating/progress screen (`data-testid="selected-tier-label"`)
+- [x] No regression to the existing upload flow — tier omitted entirely (not defaulted client-side) when unset, relying on the backend's own `T2` default
+
+**Note:** `GET /lessons/{id}` still doesn't echo `tier` back — this story only wires the send side (upload-time). S2-10 (below) is now unblocked to re-scope, but will still need its own decision on how the player/session report actually gets a tier value (no read-back path exists yet).
+
+---
+
+### S2-10 — Tier Badge on Player + Session Report
+**Priority:** Low  
+**Status:** 🔲 NOT STARTED — re-investigated 2026-07-21 now that S2-09 has landed. **Splits into two genuinely different states — see below.** <!-- added 2026-07-14 -->  
+**Files to modify:** `src/components/player/Player.tsx` (unblocked), `src/components/reports/SessionReport.tsx` (still blocked — cross-team)
+
+Small badge showing the lesson's tier and duration, e.g. `Deep · 45 min`.
+
+**Originally investigated 2026-07-18** (branch `sprint2/s2-10-tier-badge`, no commits, story creation halted): confirmed neither target component had any data path for a tier value. **Decision (user, 2026-07-18): defer S2-10 until S2-09 lands.**
+
+**Re-investigated 2026-07-21, after S2-09:**
+- **Player side — genuinely unblocked, no cross-team dependency.** `packages/shared/types/lesson.ts`'s `LessonMetadata` now has a required `tier: LessonTier` field (Dev1's PR #74, self-certified §16-compatible — see `docs/reports/s16-lessonpackage-compat.md`), and `package_builder_node` explicitly bakes the `lessons.tier` column value into it. `Player.tsx` already receives the full `LessonPackage` as a prop — `lesson.metadata.tier` is real, present data today. This half needs no backend work at all.
+- **Session report side — still blocked, and it's a different blocker than before.** `apps/web/src/types/assessment.ts`'s `SessionReport` interface (the frozen-ish contract from story 3-19, owned by **Dev 3**'s assessment module) has no `tier` field — confirmed by reading `apps/api/app/modules/assessment/router.py`'s response model directly (also no `tier`). S2-09 never touched this; it only wired the upload-time send (`lessons.tier` column), not anything Dev 3's assessment/session-report endpoint reads. Adding `tier` to `SessionReport` is a small, additive, non-breaking change in spirit — but it's Dev 3's contract to change, per team-ownership rules (CLAUDE.md §"modules communicate only through service layer" / per-dev file ownership) — not something to add unilaterally from the frontend side.
+
+**Decision needed:** ship the player badge now (fully unblocked) and split the session-report badge into its own follow-up pending a small ask to Dev 3, or hold both halves together as one task until Dev 3's field lands. Not yet decided — ask before implementing either half.
+
+**Acceptance criteria (unchanged, split per the above once a path is chosen):**
+- [ ] Badge visible in the lesson player (header/chrome area)
+- [ ] Same badge shown on the session report (S2-04)
+- [ ] Badge format: `{Tier label} · {duration} min`
 
 ---
 
