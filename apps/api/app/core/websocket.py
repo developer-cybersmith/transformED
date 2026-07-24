@@ -279,7 +279,8 @@ async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> 
         result = await process_attention_signal(session_id=session_id, signal=payload)
         await manager.send(
             session_id,
-            {"type": "attention_ack", "payload": {"session_id": session_id, "ces": result.ces}},
+            # PRD §18: never expose raw clinical/CES scores to the student client — ack only.
+            {"type": "attention_ack", "payload": {"session_id": session_id, "status": "ok"}},
         )
     except ImportError:
         # Tutor service not yet implemented — log and skip gracefully
