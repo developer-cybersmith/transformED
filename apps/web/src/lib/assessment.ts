@@ -53,10 +53,15 @@ export interface TeachBackSubmitPayload {
   response_text: string;
 }
 
+// Descriptive labels only ("Strong"/"Developing"/etc.) -- backend Story 3-14
+// changed this from dict[str, float] to dict[str, str]. Raw numeric sub-scores
+// are never returned to students (CLAUDE.md Learner DNA display rules).
+// Verify against apps/api/app/modules/assessment/schemas.py::TeachbackResult
+// and service.py::grade_teachback before changing (S2-13 review fix).
 export interface RubricScores {
-  accuracy: number;
-  completeness: number;
-  clarity: number;
+  accuracy: string;
+  completeness: string;
+  clarity: string;
 }
 
 export interface TeachBackResult {

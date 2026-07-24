@@ -4,7 +4,7 @@ baseline_commit: f482b909d808cf6ec7cf225652fe1cd93bfb1e5a
 
 # Story 2.13: Fix Assessment Library Test Gaps & Type Drift (from Sprint 2 test audit)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -59,18 +59,18 @@ Backend Story 3-14 changed `rubric_scores` from raw numeric sub-scores to descri
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 3, 4): Fix `RubricScores` in `lib/assessment.ts` to match the real backend (string labels), update the stale numeric fixture in `TeachBackModal.test.tsx`.
-  - [ ] 1.1 RED: temporarily is not applicable here (this is a type-only change with no behavior change) — instead, confirm the full existing test suite still passes unchanged after the type/fixture edit (a type change can't have a meaningful RED phase of its own; the safety check is that nothing regresses).
-  - [ ] 1.2 GREEN: make the edit, run `tsc --noEmit` and the full suite.
-- [ ] Task 2 (AC: 1): Add a direct `submitQuiz` test to `apps/web/src/__tests__/lib/assessment.test.ts`.
-  - [ ] 2.1 RED: write the test importing the real `submitQuiz`, confirm it fails without the mock wiring in place (e.g. before adding the `api.post` mock) to prove the test actually exercises real code, not a stub.
-  - [ ] 2.2 GREEN.
-- [ ] Task 3 (AC: 2): Add a direct `submitTeachBack` test, same pattern.
-  - [ ] 3.1 RED, 3.2 GREEN — same discipline as Task 2.
-- [ ] Task 4 (AC: 5, 6): Fix `types/assessment.ts`'s `TeachbackResult.rubric_scores` to reuse `lib/assessment.ts`'s (now-corrected) `RubricScores`, and fix the self-referential test.
-  - [ ] 4.1 RED: revert the type reuse temporarily (keep the old inline wrong shape) and confirm the updated test at AC-6 genuinely fails against it — proving the new test isn't tautological. Restore the fix.
-  - [ ] 4.2 GREEN.
-- [ ] Task 5 (AC: 7): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 3, 4): Fix `RubricScores` in `lib/assessment.ts` to match the real backend (string labels), update the stale numeric fixture in `TeachBackModal.test.tsx`.
+  - [x] 1.1 Confirmed full suite passes unchanged after the type/fixture edit (type-only change, no behavior change).
+  - [x] 1.2 GREEN: `tsc --noEmit` clean, full suite green.
+- [x] Task 2 (AC: 1): Add a direct `submitQuiz` test to `apps/web/src/__tests__/lib/assessment.test.ts`.
+  - [x] 2.1 RED: temporarily broke the real endpoint string (`/assessment/quiz-TEMP-BROKEN`), confirmed the new test genuinely failed, restored — proves the test exercises real code, not a stub.
+  - [x] 2.2 GREEN.
+- [x] Task 3 (AC: 2): Add a direct `submitTeachBack` test, same pattern.
+  - [x] 3.1 RED (same revert-and-confirm technique), 3.2 GREEN.
+- [x] Task 4 (AC: 5, 6): Fix `types/assessment.ts`'s `TeachbackResult.rubric_scores` to reuse `lib/assessment.ts`'s (now-corrected) `RubricScores`, and fix the self-referential test.
+  - [x] 4.1 RED: reverted the type reuse temporarily (old inline wrong shape) — `tsc --noEmit` genuinely failed (3 `TS2322` errors) against the updated test, proving it's no longer tautological. Restored the fix.
+  - [x] 4.2 GREEN.
+- [x] Task 5 (AC: 7): Full `apps/web` suite green (48 files / 436 tests); `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -108,7 +108,27 @@ Vitest. For Tasks 2/3, match `getSessionReport`'s existing mocking pattern in `a
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created from the Sprint 2 test audit's 2 High-severity findings, plus one additional stale-type finding (`RubricScores` still modeling raw numbers post backend Story 3-14's switch to string labels) discovered while verifying Finding 2 against the real backend. Branch `sprint2/s2-13-assessment-test-fixes` off `sprint2-master`. | Dev 2 |
+| 2026-07-23 | Implemented all 5 tasks (RED→GREEN throughout, with genuine revert-and-confirm checks on both the new `submitQuiz`/`submitTeachBack` tests and the fixed `TeachbackResult` test). Full suite 48 files / 436 tests passing, `tsc --noEmit` and `eslint` clean. Status → review. | Dev 2 |
 
 ## Dev Agent Record
 
-_Pending implementation._
+### Implementation Plan
+
+- **Task 1** — `RubricScores` corrected to `{accuracy: string; completeness: string; clarity: string}`, verified against `apps/api/app/modules/assessment/schemas.py`/`service.py` directly (not assumed). `TeachBackModal.tsx` was confirmed (full read) to never consume `rubric_scores` contents, so this is a pure type-correctness fix with zero runtime behavior change — the existing "never a numeric score or rubric breakdown" regression test stayed green throughout.
+- **Tasks 2/3** — `submitQuiz`/`submitTeachBack` tests added to `apps/web/src/__tests__/lib/assessment.test.ts`, mocking only `api.post` (not `@/lib/assessment` itself), following `getSessionReport`'s existing pattern exactly. Each RED-confirmed by temporarily renaming the real endpoint string (e.g. `/assessment/quiz-TEMP-BROKEN`) and observing the new test fail, then restoring — proving the tests genuinely exercise the real implementation.
+- **Task 4** — `types/assessment.ts`'s `TeachbackResult.rubric_scores` now reuses `RubricScores` imported from `@/lib/assessment`, mirroring the existing `QuizResult.feedback` → `QuizFeedbackItem` reuse pattern from Story 2-11. The self-referential test at `__tests__/types/assessment.test.ts` was rewritten to assert `typeof result.rubric_scores.accuracy === 'string'` and the exact 3-key set — RED-confirmed by temporarily reverting the type to its old wrong inline shape and observing `tsc --noEmit` genuinely fail (3 `TS2322` errors), proving the test is no longer tautological.
+
+### Completion Notes
+
+- All 5 tasks complete, all ACs (1–7) satisfied.
+- Full `apps/web` test suite: 48 files, 436 tests, all passing (+2 from before this story: the new `submitQuiz`/`submitTeachBack` direct tests).
+- `tsc --noEmit`: clean. `eslint` on all touched files: clean.
+- No backend changes. No changes to request-side types (already verified correct). No changes to `getSessionReport` (already the reference pattern).
+
+### File List
+
+- `apps/web/src/lib/assessment.ts` (MODIFIED — `RubricScores` type fix)
+- `apps/web/src/types/assessment.ts` (MODIFIED — `TeachbackResult.rubric_scores` reuse fix)
+- `apps/web/src/__tests__/lib/assessment.test.ts` (MODIFIED — added `submitQuiz`/`submitTeachBack` direct tests)
+- `apps/web/src/__tests__/types/assessment.test.ts` (MODIFIED — fixed the self-referential `TeachbackResult` test)
+- `apps/web/src/__tests__/components/player/TeachBackModal.test.tsx` (MODIFIED — updated stale numeric `rubric_scores` fixture)

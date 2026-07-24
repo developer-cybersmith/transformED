@@ -15,7 +15,7 @@ vi.mock('@/lib/assessment', () => ({
 
 const RESULT = {
   session_id: 'sess_1',
-  rubric_scores: { accuracy: 80, completeness: 60, clarity: 90 },
+  rubric_scores: { accuracy: 'Strong', completeness: 'Developing', clarity: 'Strong' },
   overall_score: 76,
   ces_contribution: 0.1,
   feedback: 'Nice explanation of the core idea!',

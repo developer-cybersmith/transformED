@@ -1,7 +1,7 @@
 // Assessment API contract types — matches Dev 3 OpenAPI spec (docs/openapi-assessment.json)
 // Do not modify field names without a 4-developer PR review (frozen interface contract).
 
-import type { QuizFeedbackItem } from '@/lib/assessment';
+import type { QuizFeedbackItem, RubricScores } from '@/lib/assessment';
 
 // ── Shared building blocks ────────────────────────────────────────────────
 
@@ -49,13 +49,10 @@ export interface TeachbackSubmission {
 
 export interface TeachbackResult {
   session_id: string;
-  rubric_scores: {
-    accuracy?: number;
-    depth?: number;
-    clarity?: number;
-    relevance?: number;
-    [key: string]: number | undefined;
-  };
+  // Reuses lib/assessment.ts's RubricScores rather than re-declaring a third,
+  // drifting copy of the same real backend shape (S2-13 review fix, same
+  // precedent as QuizResult.feedback above).
+  rubric_scores: RubricScores;
   overall_score: number;
   ces_contribution: number;
   feedback: string;
