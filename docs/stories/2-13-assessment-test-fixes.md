@@ -81,7 +81,7 @@ Backend Story 3-14 changed `rubric_scores` from raw numeric sub-scores to descri
 - **`apps/web/src/components/player/TeachBackModal.tsx`** — confirmed via full read: never accesses `result.rubric_scores` or `result.overall_score`, only `result.feedback`. AC-4's fixture change is behavior-neutral.
 - **`apps/web/src/__tests__/components/player/TeachBackModal.test.tsx`** — `RESULT` fixture at line 18 is the only place needing the string-label update; no assertion elsewhere in this file touches `rubric_scores`.
 - **`apps/web/src/types/assessment.ts`** — `QuizResult.feedback` (lines 30-39) already reuses `QuizFeedbackItem` from `lib/assessment.ts` (S2-11 precedent) with a comment explaining why. `TeachbackResult` (lines 50-62) is the one field left un-reused.
-- **`apps/web/src/__tests__/types/assessment.test.ts`** (full file, 189 lines) — the `TeachbackResult` test at line 162 is the only one needing a fix; all 9 other cases were independently re-verified as correct against the real, live types (confirmed in the Sprint 2 audit).
+- **`apps/web/src/__tests__/types/assessment.test.ts`** (full file, 189 lines) — the `TeachbackResult` test at line 162 is the only one needing a fix; all 10 other cases (11 total in the file) were independently re-verified as correct against the real, live types (confirmed in the Sprint 2 audit — corrected count per this story's own review round, which caught this file's own miscount).
 - **Backend (read-only, verified via `Read`/`Grep`, never modify):** `apps/api/app/modules/assessment/schemas.py:62-70` (`TeachbackResult` Pydantic model — `rubric_scores: dict[str, str]`), `apps/api/app/modules/assessment/service.py:347-556` (`grade_teachback` — confirms exactly 3 keys, `_score_to_label()` string outputs), `apps/api/app/modules/assessment/schemas.py:26-36, 53-59` (`QuizAnswer`/`QuizSubmission`/`TeachbackSubmission` — confirmed field names already match `lib/assessment.ts`'s request-side types exactly; no request-shape changes needed, only response-shape).
 
 ### What NOT to do
@@ -103,12 +103,39 @@ Vitest. For Tasks 2/3, match `getSessionReport`'s existing mocking pattern in `a
 - [Source: apps/web/src/__tests__/lib/assessment.test.ts] — `getSessionReport`'s existing test, the pattern to extend
 - [Source: docs/stories/2-11-quiz-feedback-field-fix.md] — the precedent this story generalizes (same bug class, Quiz side, fixed then; TeachBack side, fixed now)
 
+## Senior Developer Review (AI)
+
+**Date:** 2026-07-23
+**Outcome:** Approve — no code patches required.
+**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs) — per CLAUDE.md's BMAD Code Review Gate.
+
+### Findings
+
+| # | Severity | Source | Finding | Resolution |
+|---|----------|--------|---------|------------|
+| 1 | High (dismissed) | Blind Hunter | Apparent duplicate `feedback` key / unterminated string in `TeachBackModal.test.tsx` | **False positive** — an artifact of the dev agent's own hand-transcription of the diff into the Blind Hunter's prompt (diff-only agents receive pasted text, not a live `git diff`). Verified the real file directly: single clean `feedback` key, no syntax error. The full suite (436/436) already ran green before this review round, which would have been impossible had this been real. |
+| 2 | Medium (refuted) | Blind Hunter | `RubricScores`'s narrower, all-required shape could break other consumers reading `.depth`/`.relevance` or a partial object | Refuted by Edge Case Hunter with repo access: grepped all of `apps/web/src` — zero other consumers of `RubricScores`/`rubric_scores` exist besides the two touched files. |
+| 3 | Medium (refuted) | Blind Hunter | Test mock updated to string labels but component logic not shown in diff — risk of numeric rendering mismatch | Refuted — `TeachBackModal.tsx` was fully read (both by the dev agent before implementing and independently by both Edge Case Hunter and Acceptance Auditor during review): it only ever reads `result.feedback`, never `rubric_scores`/`overall_score`. Zero behavior change. |
+| 4 | Low (accepted) | Blind Hunter | No runtime schema validation on the real API response shape | Accepted, out of scope — consistent with this file's own existing convention (`getSessionReport` has no runtime validation either); would require a schema-validation library across the whole module, well beyond this story. |
+| 5 | Low (accepted) | Edge Case Hunter | New `submitQuiz` test's mocked `feedback: []` doesn't exercise a populated feedback array | Accepted — the test's `toEqual(responseData)` still catches endpoint/payload/passthrough drift regardless; feedback-array shape is already covered by `QuizOverlay.test.tsx` and the `QuizResult` type test. |
+| 6 | Low (fixed) | Acceptance Auditor | Dev Notes miscounted `types/assessment.test.ts`'s pre-existing test count as "9 others" when the file has 11 total (10 others) | Fixed — corrected the count in Dev Notes. |
+
+### Non-issues independently re-verified
+
+- Backend citations (`schemas.py:62-70`, `service.py:546-556`) confirmed real and accurate by both Edge Case Hunter and Acceptance Auditor, reading the actual files, not trusting the story's own claims.
+- `_score_to_label()` confirmed a total function (no branch omits a key) — the all-3-keys-required TS shape is backend-guaranteed, not just assumed.
+- Test payloads in the new `submitQuiz`/`submitTeachBack` tests confirmed to match the real production call sites in `QuizOverlay.tsx`/`TeachBackModal.tsx` field-for-field.
+- `TeachBackResult` (lib/assessment.ts) vs `TeachbackResult` (types/assessment.ts) — confirmed no import mix-up anywhere.
+- Story-first gate honored (story-only commit `4c0f55a` chronologically first, implementation in `3339b45`).
+- All 7 ACs independently re-verified satisfied by the Acceptance Auditor, including an independent `vitest run`/`tsc`/`eslint` pass on the checked-out branch (not just trusting the story's own claims).
+
 ## Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-23 | Story created from the Sprint 2 test audit's 2 High-severity findings, plus one additional stale-type finding (`RubricScores` still modeling raw numbers post backend Story 3-14's switch to string labels) discovered while verifying Finding 2 against the real backend. Branch `sprint2/s2-13-assessment-test-fixes` off `sprint2-master`. | Dev 2 |
 | 2026-07-23 | Implemented all 5 tasks (RED→GREEN throughout, with genuine revert-and-confirm checks on both the new `submitQuiz`/`submitTeachBack` tests and the fixed `TeachbackResult` test). Full suite 48 files / 436 tests passing, `tsc --noEmit` and `eslint` clean. Status → review. | Dev 2 |
+| 2026-07-23 | 3-agent code review round. 1 High finding dismissed as a review-prompt transcription artifact (verified against the real file); 2 Medium findings refuted by repo-access cross-checks; 2 Low findings accepted as out-of-scope/non-regressions; 1 trivial Dev Notes miscount fixed. No code changes required — approved as-is. | Dev 2 |
 
 ## Dev Agent Record
 
