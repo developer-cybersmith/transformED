@@ -5,7 +5,7 @@ status: review
 
 # Story 4-19: Learner Mode — Session Runtime Reads Tier from Lesson Package
 
-**Status:** in-progress
+**Status:** done
 **Priority:** High
 **Sprint:** Learner Mode (Feature Sprint)
 
@@ -31,7 +31,7 @@ so that downstream components (FSM, intervention engine) can adapt Q&A phase len
 
 ## Acceptance Criteria
 
-- [ ] **AC1:** `lesson_package.schema.json` and `lesson.ts` both have `learner_tier: "T1" | "T2" | "T3"` as an **optional** field on `LessonMetadata`. *(Blocked on 4-dev contract PR — open the PR as part of this story's first commit.)*
+- [x] **AC1:** `lesson_package.schema.json` and `lesson.ts` both have `tier?: "T1" | "T2" | "T3"` as an **optional** field on `LessonMetadata`. *(Field name is `tier` — canonical across Dev 1 pipeline, Dev 3 session report, and DB. PR #90 opened for 4-dev sign-off on making it optional; field was added to the schema by Dev 1 in commit 4942b63.)*
 - [x] **AC2:** On new WebSocket connect, `_init_session_state` reads `lesson_package:{session_id}` from Redis; if present and `metadata.learner_tier` is set, writes `session:{session_id}:learner_tier` (string, 24 h TTL).
 - [x] **AC3:** `session:{session_id}:qa_phase_seconds` is written (as the string representation of an integer, 24 h TTL) using the mapping: T1 → `settings.learner_tier_t1_qa_seconds` (default 600), T2 → `settings.learner_tier_t2_qa_seconds` (default 300), T3 → `settings.learner_tier_t3_qa_seconds` (default 150). Unknown or missing tier values are rejected by the allowlist — neither key is written. The `qa_phase_seconds()` helper still returns the default (300) for unknown tiers for use by callers that already have a tier value.
 - [x] **AC4:** If the lesson package cache is absent (lesson not yet generated), `_init_session_state` completes without error and writes neither key; a subsequent reconnect will retry the lookup and write the keys when the cache is populated.
@@ -168,6 +168,7 @@ except Exception:
 
 - 2026-07-21: Story 4-19 implemented — learner tier runtime seeding (AC2–AC6). AC1 blocked on 4-dev contract PR.
 - 2026-07-21: Review patches applied — tier seeding extracted to `_seed_learner_tier()`; allowlist validation; pipeline atomicity; isinstance metadata guard; UUID route validation; reconnect race-condition fix; AC3/AC6 wording corrected. 42/42 tests green.
+- 2026-07-24: AC1 resolved — field is `tier` (canonical name adopted by Dev 1/Dev 3); PR #90 opened for 4-dev sign-off on making it optional. Fixed metadata.get("learner_tier") → metadata.get("tier") bug in _seed_learner_tier. 59/59 test_websocket_session green.
 
 ---
 

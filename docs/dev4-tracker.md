@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-23 (Stories 4-20 + 4-21 Completed + merged to dev4/learner-module; Learner Mode 2/3 done, 4-19 Partial on external contract PR)
-**Overall status:** 30/39 Completed · 7 Partial · 2 Not Started
+**Last updated:** 2026-07-24 (Story 4-19 learner-tier-runtime all 6 ACs done; Learner Mode sprint complete 3/3; PR #90 for 4-dev contract sign-off on optional tier field)
+**Overall status:** 31/39 Completed · 6 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -19,9 +19,9 @@
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
-| Learner Mode | Feature Sprint | 3 | 2 | 1 | 0 |
+| Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **39** | **30** | **7** | **2** |
+| **Total** | | **39** | **31** | **6** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -606,13 +606,14 @@ MAX_DISTRACTION_PER_SESSION=3
 > **Goal:** Session runtime adapts Q&A phase duration and pacing based on the learner tier embedded in the lesson package.
 
 <!-- CHECK:learner_tier_runtime -->
-- [Partial] **Session runtime reads tier from lesson package; sets duration + Q&A phase length** `[High]` ⚠️ PARTIAL — AC2–AC6 implemented + tested; AC1 blocked on 4-dev contract PR (lesson_package.schema.json + lesson.ts)
-  - Story: `docs/stories/4-19-learner-tier-runtime.md`
-  - On session start, read `learner_tier` from `LessonPackage` (field TBD — requires shared contract addition; 4-dev PR flagged in story)
+- [Completed] **Session runtime reads tier from lesson package; sets duration + Q&A phase length** ✅ 2026-07-24 (all 6 ACs done; PR #90 opened for 4-dev sign-off on making `tier` optional in frozen schema) `[High]`
+  - Story: `docs/stories/4-19-learner-tier-runtime.md` (status `done`)
+  - AC1: `LessonMetadata.tier?` (optional) in both frozen files; PR #90 opened for 4-dev review; `_seed_learner_tier` bug fixed (was reading `learner_tier`, corrected to `tier`)
+  - AC2–AC6: `_seed_learner_tier()` reads `lesson_package:{sid}` cache; writes `session:{sid}:learner_tier` + `session:{sid}:qa_phase_seconds` via pipeline (24h TTL)
   - Store tier in Redis: `session:{session_id}:learner_tier` (24h TTL)
   - Use tier to derive Q&A phase length: T1→600s, T2→300s, T3→150s; write `session:{session_id}:qa_phase_seconds`
-  - New settings: `LEARNER_TIER_T1_QA_SECONDS`, `LEARNER_TIER_T2_QA_SECONDS`, `LEARNER_TIER_T3_QA_SECONDS`, `LEARNER_TIER_DEFAULT_QA_SECONDS`
-  - **AC:** Given a lesson package with `learner_tier = "T1"`, the session initialises with Q&A phase length = 10 min; T2 → 5 min; T3 → 2.5 min
+  - Settings: `LEARNER_TIER_T1_QA_SECONDS`, `LEARNER_TIER_T2_QA_SECONDS`, `LEARNER_TIER_T3_QA_SECONDS`, `LEARNER_TIER_DEFAULT_QA_SECONDS`
+  - **AC:** Given a lesson package with `tier = "T1"`, session initialises with Q&A phase = 10 min; T2 → 5 min; T3 → 2.5 min ✅
 
 <!-- CHECK:learner_qa_phase_length -->
 - [Completed] **Q&A phase length per tier enforced in state machine (T1:10 min, T2:5 min, T3:2.5 min)** ✅ 2026-07-23 (merged to `dev4/learner-module`; review patches — 8 issues resolved; +568 test lines in test_tutor_graph/test_tutor_service) `[Medium]`
