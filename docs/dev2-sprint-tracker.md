@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-13 (`main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/6) |
+| **Last Updated** | 2026-07-23 (S2-06 corrected to DONE — it was already fully implemented, 5-agent reviewed, and merged into `sprint2-master` on 2026-07-21, but this file was never updated after that; caught when the user flagged the discrepancy. Sprint 2's official numbered list is now 6/6. Story 2-12 also completed today. See both entries below.) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (6/6 done) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 COMPLETE (6/6) |
 
 ---
 
@@ -32,11 +32,11 @@
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 6 | **5** | 0 | **1** |
+| Sprint 2 | Weeks 4–5 | 6 | **6** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **51** | **24** | **0** | **27** |
+| **Total** | **10 weeks** | **51** | **25** | **0** | **26** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -1058,7 +1058,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 5/6 done — S2-06 (segment-end → CHECKING_IN) newly added 2026-07-06, not blocked, not started  
+**Period:** Weeks 4–5 | **Status:** ✅ 6/6 done — S2-06 (segment-end → CHECKING_IN) completed 2026-07-21, see entry below  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1229,9 +1229,9 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 
 ---
 
-### S2-06 — Segment-End Detection → CHECKING_IN State
+### S2-06 — Segment-End Detection → CHECKING_IN State — ✓ 2026-07-21
 **Priority:** P2  
-**Status:** 🔴 PARTIALLY BLOCKED — escalated to Dev 4 2026-07-06, holding on the receive-side half. Added 2026-07-06 (tracked in `docs/master-tracker.md`'s Dev 2 Sprint 2 checklist since 2026-07-02 but never had its own entry in this file's S2-xx numbering; brought in here after the user flagged it was missing from a Sprint 2 status review). Branch `sprint2/s2-6-segment-checkin` created; BMAD story creation paused at the escalation, not yet resumed.  
+**Status:** ✅ DONE. Dev 4 replied to the escalation below confirming his fix (`dispatch_event` in `graph.py` now broadcasts `state_change` on every real FSM transition) — merged and unit-tested (44/44 passing) on his side, but not yet pushed/merged to `main` at the time. Per user instruction, proceeded to implement and ship this story built and tested against `FakeWebSocket` (same posture S1-07/S2-04 were already shipped against for their own backend dependencies) rather than wait on his push — a live end-to-end check against his real backend is a follow-up once his branch lands, not a design unknown (the wire shape is already frozen in `packages/shared/types/ws.ts`). Implemented via full BMAD story `docs/stories/2-6-segment-checkin.md` (branch `sprint2/s2-6-segment-checkin`, merged into `sprint2-master`): `useLessonSocket` now mounted live in `Player.tsx`; `AudioTimeline.tsx` sends `segment_complete` + an optimistic `setTutorState('CHECKING_IN')` at all 3 segment-boundary call sites, with zero added latency to the (unchanged) client-authoritative quiz trigger; new `CheckingInTransition.tsx` renders an edge-triggered ~500ms "Checking in…" overlay. 5-agent review round applied 3 patches (stuck-visible fix, `wsSendControl` instance-identity guard, `PlayerLoader` remount-per-lesson key) and deferred 2 (documented, out of scope). Full `apps/web` suite 373/373 passing at merge time. **This was the last open item in Dev 2's official Sprint 2 list — Sprint 2 is now 6/6 done.**  
 **Files likely touched:** `src/components/player/Player.tsx` or `PlayerLoader.tsx` (mount the socket), `src/components/player/AudioTimeline.tsx` (send on segment boundary), `src/stores/player.machine.ts` (`tutorState` already exists), a new CHECKING_IN UI component (none exists, blocked)
 
 **Investigated 2026-07-06 — found the actual gap is larger than the master tracker's 2026-07-02 note suggested.** That note read as "just wire the send side," implying the receive side was already live. Verified against the actual code:
