@@ -159,16 +159,17 @@ describe('assessment types', () => {
     );
   });
 
-  it('TeachbackResult has overall_score and rubric_scores', () => {
+  it('TeachbackResult.rubric_scores is descriptive string labels (accuracy/completeness/clarity) — not raw numeric sub-scores', () => {
     const result: TeachbackResult = {
       session_id: 'sess_001',
-      rubric_scores: { accuracy: 0.9, depth: 0.7, clarity: 0.8, relevance: 0.85 },
+      rubric_scores: { accuracy: 'Strong', completeness: 'Developing', clarity: 'Strong' },
       overall_score: 0.81,
       ces_contribution: 0.81,
       feedback: 'Strong answer.',
     };
     expect(result.overall_score).toBe(0.81);
-    expect(result.rubric_scores.accuracy).toBe(0.9);
+    expect(typeof result.rubric_scores.accuracy).toBe('string');
+    expect(Object.keys(result.rubric_scores).sort()).toEqual(['accuracy', 'clarity', 'completeness']);
   });
 
   it('QuizResult has ces_contribution field', () => {
