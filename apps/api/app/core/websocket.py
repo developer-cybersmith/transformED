@@ -248,7 +248,7 @@ async def _seed_learner_tier(session_id: str) -> None:
     """Best-effort learner tier seeding from the cached lesson package.
 
     Reads ``lesson_package:{session_id}`` from Redis.  If present and
-    ``metadata.learner_tier`` is a valid tier string (T1/T2/T3), atomically
+    ``metadata.tier`` is a valid tier string (T1/T2/T3), atomically
     writes ``session:{session_id}:learner_tier`` and
     ``session:{session_id}:qa_phase_seconds`` (both 24 h TTL).
 
@@ -279,7 +279,7 @@ async def _seed_learner_tier(session_id: str) -> None:
         metadata = pkg.get("metadata")
         if not isinstance(metadata, dict):
             return
-        tier = metadata.get("learner_tier")
+        tier = metadata.get("tier")
         if tier not in _VALID_TIERS:
             return
         qa_secs = _qa(tier)

@@ -390,10 +390,10 @@ async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
 
 
 def _make_pkg(tier: str | None) -> str:
-    """Return a minimal lesson_package JSON with the given learner_tier."""
+    """Return a minimal lesson_package JSON with the given tier."""
     pkg: dict = {"metadata": {"title": "Test"}, "segments": []}
     if tier is not None:
-        pkg["metadata"]["learner_tier"] = tier
+        pkg["metadata"]["tier"] = tier
     return json.dumps(pkg)
 
 
@@ -500,7 +500,7 @@ async def test_g5_missing_cache_writes_no_tier_keys(mocker):
 
 @pytest.mark.unit
 async def test_g6_missing_tier_field_writes_no_tier_keys(mocker):
-    """AC4: package present, no learner_tier field → pipeline never created, no tier keys written."""
+    """AC4: package present, no tier field → pipeline never created, no tier keys written."""
     mock_redis, mock_pipe = _make_redis_with_pipeline(_make_pkg(None))
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
     _mock_settings(mocker)
