@@ -195,6 +195,11 @@ async def test_e1_flow_event_dispatches_to_fsm(mocker):
     """A client-drivable lifecycle event is dispatched into the tutor FSM."""
     mock_dispatch = AsyncMock()
     mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+    # advance_tutor_state now reads tutor_state from Redis for the deadline guard;
+    # patch get_redis so the test doesn't need a running Redis pool.
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)  # not QUIZZING → deadline check skipped
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     from app.core.websocket import _handle_tutor_event
 
