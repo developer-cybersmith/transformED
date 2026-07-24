@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-23 (Story 4-21 learner-ws-tier — Completed + merged; Story 4-20 marked Partial pending merge)
-**Overall status:** 29/39 Completed · 8 Partial · 2 Not Started
+**Last updated:** 2026-07-23 (Stories 4-20 + 4-21 Completed + merged to dev4/learner-module; Learner Mode 2/3 done, 4-19 Partial on external contract PR)
+**Overall status:** 30/39 Completed · 7 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -19,9 +19,9 @@
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
-| Learner Mode | Feature Sprint | 3 | 1 | 2 | 0 |
+| Learner Mode | Feature Sprint | 3 | 2 | 1 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **39** | **29** | **8** | **2** |
+| **Total** | | **39** | **30** | **7** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -615,7 +615,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Given a lesson package with `learner_tier = "T1"`, the session initialises with Q&A phase length = 10 min; T2 → 5 min; T3 → 2.5 min
 
 <!-- CHECK:learner_qa_phase_length -->
-- [Partial] **Q&A phase length per tier enforced in state machine (T1:10 min, T2:5 min, T3:2.5 min)** `[Medium]` ⚠️ PARTIAL — implemented + in review on branch `learner/4-20-qa-phase-length` (commit `22057b2`, story status `review`); NOT yet merged into `dev4/learner-module`
+- [Completed] **Q&A phase length per tier enforced in state machine (T1:10 min, T2:5 min, T3:2.5 min)** ✅ 2026-07-23 (merged to `dev4/learner-module`; review patches — 8 issues resolved; +568 test lines in test_tutor_graph/test_tutor_service) `[Medium]`
   - Story: `docs/stories/4-20-learner-qa-phase-length.md`
   - `quizzing_node` writes `session:{session_id}:quiz_deadline_at` (Unix timestamp) on QUIZZING entry
   - Deadline check in `advance_tutor_state` + `process_attention_signal`: auto-dispatch `quiz_complete` on expiry (never `quiz_failed` — never gate progress)
