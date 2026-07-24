@@ -3,10 +3,10 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-21 (Story 4-19 learner-tier-runtime — AC2–AC6 implemented, AC1 blocked on contract PR)
-**Overall status:** 28/39 Completed · 7 Partial · 4 Not Started
+**Last updated:** 2026-07-23 (Story 4-21 learner-ws-tier — Completed + merged; Story 4-20 marked Partial pending merge)
+**Overall status:** 29/39 Completed · 8 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
-**Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
+**Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
 ---
 
@@ -19,9 +19,9 @@
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
-| Learner Mode | Feature Sprint | 3 | 0 | 1 | 2 |
+| Learner Mode | Feature Sprint | 3 | 1 | 2 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **39** | **28** | **6** | **5** |
+| **Total** | | **39** | **29** | **8** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -615,7 +615,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Given a lesson package with `learner_tier = "T1"`, the session initialises with Q&A phase length = 10 min; T2 → 5 min; T3 → 2.5 min
 
 <!-- CHECK:learner_qa_phase_length -->
-- [Not Started] **Q&A phase length per tier enforced in state machine (T1:10 min, T2:5 min, T3:2.5 min)** `[Medium]`
+- [Partial] **Q&A phase length per tier enforced in state machine (T1:10 min, T2:5 min, T3:2.5 min)** `[Medium]` ⚠️ PARTIAL — implemented + in review on branch `learner/4-20-qa-phase-length` (commit `22057b2`, story status `review`); NOT yet merged into `dev4/learner-module`
   - Story: `docs/stories/4-20-learner-qa-phase-length.md`
   - `quizzing_node` writes `session:{session_id}:quiz_deadline_at` (Unix timestamp) on QUIZZING entry
   - Deadline check in `advance_tutor_state` + `process_attention_signal`: auto-dispatch `quiz_complete` on expiry (never `quiz_failed` — never gate progress)
@@ -624,8 +624,9 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** Unit test: FSM with backdated `quiz_deadline_at` → auto `quiz_complete` fires; not-yet-expired → no-op; T1→600s, T2→300s, T3→150s enforced end-to-end
 
 <!-- CHECK:learner_ws_tier -->
-- [Not Started] **Learner tier included in WebSocket session-start message (WS contract addition)** `[Medium]`
-  - Story: `docs/stories/4-21-learner-ws-tier.md`
+- [Completed] **Learner tier included in WebSocket session-start message (WS contract addition)** ✅ 2026-07-23 (merged to `dev4/learner-module` via PR #88; 3-layer adversarial review; 59 tests green) `[Medium]`
+  - Story: `docs/stories/4-21-learner-ws-tier.md` (status `done`)
+  - Tier keys written atomically via `redis.pipeline()` (torn-write fix from review); multi-connection precedence documented as last-writer-wins
   - `_handle_session_start` reads `learner_tier` from the WS payload dict; overwrites Redis tier keys if valid T1/T2/T3
   - `session_start` is already off-contract (flat control message); no frozen `ws.ts` change required for this story
   - Document `learner_tier?` field in `docs/ws-message-contract.md`

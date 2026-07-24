@@ -244,20 +244,22 @@ Anti-deadlock: after Week 1 schema freeze, each dev mocks the other's interface.
 
 ## Sprint Tracker Auto-Update Rule
 
-Whenever you mark any task complete in `docs/dev1-tracker.md` — either because you just implemented it or the user confirms it is done — you MUST immediately, in the same response:
+The Dev 4 tracker is `docs/dev4-tracker.md`. It uses three-state labels — `[Not Started]` / `[Partial]` / `[Completed]` — one per task, each tagged with a `<!-- CHECK:tag -->` marker, and is auto-maintained by `scripts/check_dev4_progress.py` (flips `[Not Started]`↔`[Completed]` by code presence; never downgrades a human-set `[Partial]`).
 
-1. Change the task checkbox from `- [ ]` to `- [x]`
-2. Append ` — ✓ YYYY-MM-DD` (today's date) to the task title line
-3. Update the **Quick Status Dashboard** table at the top of the file (increment Done, decrement Not Started or Partial on the correct sprint row, and update Totals)
-4. Update **Last updated** in the header to today's date
+Whenever you finish implementing a task, or the user confirms one is done — either way, in the same response — you MUST:
 
-Do this without being asked. Never mark a task complete without also updating the dashboard. Never update the dashboard without also updating the header date.
+1. Set the task's label to `[Completed]` and append ` ✅ YYYY-MM-DD (short note)` to the task title line. Use `[Partial]` (with a `⚠️ PARTIAL — <reason>` note) when the code exists but is untested, unmerged, or blocked on an external dependency.
+2. Update the **Quick Status Dashboard** table at the top of the file (adjust Completed / Partial / Not Started on the correct sprint row, and update the **Total** row so the columns still sum to 39).
+3. Update **Last updated** and **Overall status** in the header to today's date and the new counts.
+4. Prefer running `python scripts/check_dev4_progress.py` to auto-apply label changes and print the authoritative per-sprint counts — then reconcile the dashboard/header to match its output. The script updates labels only, not the dashboard table.
+
+Do this without being asked. Never mark a task complete without also updating the dashboard. Never update the dashboard without also updating the header date. Keep the dashboard totals consistent with the script's reported counts.
 
 ## Sprint Task Branch Rule
 
 **Apply automatically — do not wait to be asked.**
 
-When you begin implementing any sprint task from `docs/dev1-tracker.md`, the very first action before any file edit must be to create a dedicated git branch.
+When you begin implementing any sprint task from `docs/dev4-tracker.md`, the very first action before any file edit must be to create a dedicated git branch.
 
 ### Branch naming
 

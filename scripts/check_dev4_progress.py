@@ -2,7 +2,7 @@
 Dev 4 sprint tracker auto-checker.
 
 Scans the codebase for evidence that each task is done, then updates
-docs/dev4-websocket-tutor-tracker.md, which uses three-state labels:
+docs/dev4-tracker.md, which uses three-state labels:
 ``[Not Started]`` / ``[Partial]`` / ``[Completed]``.
 
 Safety contract: this script auto-advances tasks between ``[Not Started]`` and
@@ -25,7 +25,7 @@ from pathlib import Path
 # ── Repo root (one level above scripts/) ────────────────────────────────────
 ROOT = Path(__file__).parent.parent
 API = ROOT / "apps" / "api" / "app"
-TRACKER = ROOT / "docs" / "dev4-websocket-tutor-tracker.md"
+TRACKER = ROOT / "docs" / "dev4-tracker.md"
 
 
 # ── Check helpers ─────────────────────────────────────────────────────────────
@@ -295,6 +295,40 @@ def _build_checks() -> dict[str, object]:
         # ── Week 10 ───────────────────────────────────────────────────────────
         "ws_launch_stability": lambda: file_exists("docs", "week10-ws-launch-sign-off.md"),
         "interventions_production": lambda: file_exists("docs", "week10-intervention-verification.md"),
+        # ── Learner Mode (Feature Sprint) ─────────────────────────────────────
+        # 4-19: session runtime derives Q&A phase length from the learner tier and
+        # seeds it into Redis. Detected by the qa_phase_seconds() helper + the tier key.
+        "learner_tier_runtime": lambda: (
+            file_contains(
+                ("apps", "api", "app", "modules", "tutor", "service.py"),
+                "def qa_phase_seconds",
+            )
+            and file_contains(
+                ("apps", "api", "app", "core", "websocket.py"),
+                "learner_tier",
+                "qa_phase_seconds",
+            )
+        ),
+        # 4-20: FSM enforces the per-tier Q&A deadline. Detected by the quiz deadline
+        # key written on QUIZZING entry + a test exercising expiry.
+        "learner_qa_phase_length": lambda: (
+            any_file_contains(
+                "apps/api/app/**/*.py",
+                "quiz_deadline_at",
+            )
+            and any_file_contains(
+                "apps/api/tests/**/*.py",
+                "quiz_deadline_at",
+            )
+        ),
+        # 4-21: session_start WS payload carries an optional learner_tier override.
+        # Detected by _handle_session_start accepting a payload dict + reading learner_tier.
+        "learner_ws_tier": lambda: file_contains(
+            ("apps", "api", "app", "core", "websocket.py"),
+            "async def _handle_session_start",
+            "payload",
+            "learner_tier",
+        ),
     }
 
 
@@ -413,6 +447,11 @@ SPRINT_TAGS: dict[str, list[str]] = {
         "reconnect_test",
         "intervention_copy_review",
     ],
+    "Learner Mode": [
+        "learner_tier_runtime",
+        "learner_qa_phase_length",
+        "learner_ws_tier",
+    ],
     "Week 10": [
         "ws_launch_stability",
         "interventions_production",
@@ -456,6 +495,9 @@ TASK_LABELS: dict[str, str] = {
     "intervention_copy_review": "Intervention message copy review (tone + warmth)",
     "ws_launch_stability": "WebSocket stability confirmed at launch load",
     "interventions_production": "Tutor interventions verified firing correctly in production",
+    "learner_tier_runtime": "Session runtime reads tier; sets Q&A phase length",
+    "learner_qa_phase_length": "Q&A phase length per tier enforced in state machine",
+    "learner_ws_tier": "Learner tier included in WebSocket session-start message",
 }
 
 
