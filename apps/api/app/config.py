@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -100,6 +100,24 @@ class Settings(BaseSettings):
 
     # ── Sentry ────────────────────────────────────────────────────────────────
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN — leave empty to disable")
+
+    # ── Admin access (Story 2-25) ─────────────────────────────────────────────
+    admin_emails: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Comma-separated allowlist of admin emails (ADMIN_EMAILS env var). "
+            "Checked against the JWT's `email` claim by require_admin(). "
+            "Minimal viable admin gate — no DB migration required; see "
+            "docs/stories/2-25-sprint2-audit-gapfix-dev1-items.md Dev Notes."
+        ),
+    )
+
+    @field_validator("admin_emails", mode="before")
+    @classmethod
+    def _parse_admin_emails(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [email.strip().lower() for email in v.split(",") if email.strip()]
+        return v
 
     # ── Cost limits (PRD §12) ─────────────────────────────────────────────────
     max_lesson_cost_usd: float = Field(

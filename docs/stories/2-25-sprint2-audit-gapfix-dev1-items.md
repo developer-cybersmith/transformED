@@ -4,7 +4,7 @@ baseline_commit: 74efedc
 
 # Story 2.25: Sprint 2 audit gap-fix — Dev1-owned findings (admin auth, media allowlist, stale docstring, contract drift)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -28,15 +28,15 @@ so that these gaps are closed before compiling the wiring requirements Dev 2 nee
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1): `app/config.py` — add `admin_emails: list[str] = Field(default_factory=list)` with a validator/field parser for comma-separated `ADMIN_EMAILS` env var (follow the existing `cors_origins` list-parsing pattern in the same file).
-- [ ] Task 2 (AC: 1): `app/dependencies.py` — add `require_admin` dependency (depends on `get_current_user` + `get_settings`; raises 403 if `current_user.get("email")` not in `settings.admin_emails`); export `AdminUser` annotated shorthand alongside `CurrentUser`.
-- [ ] Task 3 (AC: 1): `apps/api/app/modules/admin/router.py` — implement `list_jobs`, `get_job`, `get_cost_report`, `deep_health` for real; swap `CurrentUser` → `AdminUser` on all 4 routes; drop `by_provider` from `CostReport`.
-- [ ] Task 4 (AC: 1): New tests `apps/api/tests/unit/test_admin_router.py` — admin allowlist gate (403 for non-admin, 200 for admin), each endpoint's real query path (mocked Supabase/Redis), `deep_health` degraded/down branches.
-- [ ] Task 5 (AC: 2): `apps/api/app/modules/media/router.py` — remove `source-pdfs`, `avatar-clips`, `lesson-slides` from `_ALLOWED_BUCKETS`. Update `apps/api/tests/unit/test_media_router.py` if any test references the removed buckets (add a regression test asserting they now 400).
-- [ ] Task 6 (AC: 3): `apps/api/app/modules/content/pipeline/graph.py` — fix the stale docstring lines.
-- [ ] Task 7 (AC: 4): `packages/shared/types/lesson.ts` + `packages/shared/lesson_package.schema.json` — nullability + tier-optional fixes. No Pydantic change needed (already correct — Python was the one layer that was right all along).
-- [ ] Task 8 (AC: 4): Any existing test/fixture asserting `tier` is required at the JSON-Schema/TS level, or asserting `title`/`source_file_path` reject `null`, needs updating to match (grep `test_lesson_schema.py` for schema-validation assertions).
-- [ ] Task 9: Full unit suite green (`uv run pytest`); `ruff check .`, `ruff format --check .`, `mypy app/` all clean. Confirm zero `apps/web/**` touches (this story is backend/contract only — Dev2's wiring work is separate and comes after this).
+- [x] Task 1 (AC: 1): `app/config.py` — add `admin_emails: list[str] = Field(default_factory=list)` with a validator/field parser for comma-separated `ADMIN_EMAILS` env var (follow the existing `cors_origins` list-parsing pattern in the same file).
+- [x] Task 2 (AC: 1): `app/dependencies.py` — add `require_admin` dependency (depends on `get_current_user` + `get_settings`; raises 403 if `current_user.get("email")` not in `settings.admin_emails`); export `AdminUser` annotated shorthand alongside `CurrentUser`.
+- [x] Task 3 (AC: 1): `apps/api/app/modules/admin/router.py` — implement `list_jobs`, `get_job`, `get_cost_report`, `deep_health` for real; swap `CurrentUser` → `AdminUser` on all 4 routes; drop `by_provider` from `CostReport`.
+- [x] Task 4 (AC: 1): New tests `apps/api/tests/unit/test_admin_router.py` — admin allowlist gate (403 for non-admin, 200 for admin), each endpoint's real query path (mocked Supabase/Redis), `deep_health` degraded/down branches.
+- [x] Task 5 (AC: 2): `apps/api/app/modules/media/router.py` — remove `source-pdfs`, `avatar-clips`, `lesson-slides` from `_ALLOWED_BUCKETS`. Update `apps/api/tests/unit/test_media_router.py` if any test references the removed buckets (add a regression test asserting they now 400).
+- [x] Task 6 (AC: 3): `apps/api/app/modules/content/pipeline/graph.py` — fix the stale docstring lines.
+- [x] Task 7 (AC: 4): `packages/shared/types/lesson.ts` + `packages/shared/lesson_package.schema.json` — nullability + tier-optional fixes. No Pydantic change needed (already correct — Python was the one layer that was right all along).
+- [x] Task 8 (AC: 4): Any existing test/fixture asserting `tier` is required at the JSON-Schema/TS level, or asserting `title`/`source_file_path` reject `null`, needs updating to match (grep `test_lesson_schema.py` for schema-validation assertions).
+- [x] Task 9: Full unit suite green (`uv run pytest`); `ruff check .`, `ruff format --check .`, `mypy app/` all clean. Confirm zero `apps/web/**` touches (this story is backend/contract only — Dev2's wiring work is separate and comes after this).
 
 ## Dev Notes
 
@@ -68,3 +68,37 @@ so that these gaps are closed before compiling the wiring requirements Dev 2 nee
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-27 | Story created from Sprint 2 360-degree audit findings (Dev1-owned subset only). | Dev 1 |
+| 2026-07-27 | Implemented all 4 ACs: `require_admin` env-allowlist gate + real `list_jobs`/`get_job`/`get_cost_report`/`deep_health`; media allowlist trimmed to `lesson-audio`/`lesson-images`; stale `graph.py` docstring corrected; `lesson.ts`/`lesson_package.schema.json` nullability + tier-optional fixes. 617/617 unit+integration tests pass (2 pre-existing, unrelated integration failures on `main` confirmed via `git stash` before this story's changes and deselected), ruff/ruff-format/mypy clean on every touched file. Zero `apps/web/**` touches. `image_url`/`audio_url` → `image_path`/`audio_path` rename deliberately deferred (see Dev Notes) — flagged as a proposed follow-up for the Dev2 requirements handoff. | Dev 1 |
+
+## Dev Agent Record
+
+### Debug Log References
+
+- `uv run pytest tests/unit/test_admin_router.py tests/unit/test_media_router.py tests/unit/test_lesson_schema.py -q` — 55 passed.
+- `uv run pytest tests/unit tests/integration -q` — first run surfaced 2 failures in `test_howto_pipeline_e2e.py` (`unmocked response_format _QuizBatchLLM`); confirmed pre-existing via `git stash` (re-ran against baseline `74efedc` — same 2 failures, unrelated to this story's diff, in `quiz_generator_node`/`structure_node`, files this story never touches). Deselected for the story's own gate; full suite otherwise 617 passed, 1 skipped.
+- `uv run ruff check .` / `ruff format --check .` / `uv run mypy app/` (full repo) — pre-existing findings only in files this story didn't touch (`apps/api/app/modules/assessment/service.py` mypy errors, assorted pre-existing E501/format issues in other test files); all touched files clean after fixing 2 self-introduced issues (a `dict` → `dict[str, Any]` mypy annotation in `admin/router.py`, and `E501`/`UP017` lint issues in the new `test_admin_router.py`, both fixed).
+
+### Completion Notes List
+
+- `require_admin` (env-var `ADMIN_EMAILS` allowlist against the JWT `email` claim) is the admin gate — deliberately not a DB `is_admin` column, since no `profiles` table exists yet (that's Epic 5 scope). Non-admin → 403; missing `email` claim → 403 (fails closed).
+- `list_jobs`/`get_job` query `lesson_jobs` joined to `lessons` via Supabase's embedded-resource select (`*, lessons(user_id)`) since `lesson_jobs` itself has no `user_id` column.
+- `get_cost_report` aggregates `lesson_jobs.cost_usd` by period (`today`/`this_week`/`this_month`, computed via `_period_start`), grouped by user in Python. `CostReport.by_provider` was removed (not stubbed) — `cost_tracker.py` never tracks a per-provider breakdown, so an always-empty dict would misrepresent real data as a legitimate zero.
+- `deep_health` runs a real `redis.ping()` and a lightweight Supabase probe; `worker_queue_depth` stays `None` (ARQ exposes no simple queue-depth call) rather than a fabricated number.
+- Media allowlist (`_ALLOWED_BUCKETS`) trimmed from 5 to 2 entries (`lesson-audio`, `lesson-images`) — the 3 removed buckets were each structurally unreachable via `_parse_lesson_id`'s `{lesson_id}/...` assumption or never provisioned, and had zero frontend callers (confirmed via repo-wide grep before removing, per Dev Notes).
+- `graph.py`'s stale Phase-1-checkpoint docstring claim corrected to reflect that Story 2-1b actually landed.
+- `lesson.ts`: `LessonRecord.title`/`source_file_path` now nullable, `LessonMetadata.tier` now optional — both zero-behavior-change TS-only fixes (Pydantic was already correct on both). `lesson_package.schema.json`: `tier` removed from `LessonMetadata.required`. New regression test (`test_lesson_metadata_omitting_tier_validates_against_raw_json_schema`) proves a tier-omitting metadata dict now validates against the raw schema directly (not just via Pydantic's default-filling model_dump, which always masked the drift).
+- **Deliberately deferred, not implemented**: `image_url`/`audio_url` → `image_path`/`audio_path` rename (audit's own LOW-severity item) — blast radius (3 contract files + `graph.py` + `content/router.py` + 6 test files) far exceeds the other 3 fixes combined for a pure naming-clarity change, and CLAUDE.md §16 requires 4-dev sign-off for frozen-contract changes; proceeding solo in a Dev1 gap-fix commit would be the wrong call. Flagged for the Dev2/Dev3/Dev4 requirements handoff instead.
+
+### File List
+
+- `apps/api/app/config.py` (UPDATE) — `admin_emails` setting + `_parse_admin_emails` validator.
+- `apps/api/app/dependencies.py` (UPDATE) — `require_admin` dependency + `AdminUser` annotated shorthand.
+- `apps/api/app/modules/admin/router.py` (UPDATE) — all 4 endpoints implemented for real, gated by `AdminUser`; `CostReport.by_provider` removed.
+- `apps/api/app/modules/media/router.py` (UPDATE) — `_ALLOWED_BUCKETS` trimmed to `lesson-audio`/`lesson-images`.
+- `apps/api/app/modules/content/pipeline/graph.py` (UPDATE) — stale docstring fix only.
+- `packages/shared/types/lesson.ts` (UPDATE) — `LessonRecord` nullability, `LessonMetadata.tier` optional.
+- `packages/shared/lesson_package.schema.json` (UPDATE) — `tier` removed from `LessonMetadata.required`.
+- `apps/api/tests/unit/test_admin_router.py` (NEW) — 12 tests covering the admin gate and all 4 endpoints.
+- `apps/api/tests/unit/test_media_router.py` (UPDATE) — regression test for the 3 removed buckets.
+- `apps/api/tests/unit/test_lesson_schema.py` (UPDATE) — stale docstring fix on the tier round-trip test + new regression test for tier-omitted schema validation.
+- `docs/stories/2-25-sprint2-audit-gapfix-dev1-items.md` (this file).

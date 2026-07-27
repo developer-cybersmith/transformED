@@ -70,6 +70,21 @@ def test_signed_url_400_disallowed_bucket(client_factory: ClientFactory) -> None
     assert resp.status_code == 400
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("bucket", ["source-pdfs", "avatar-clips", "lesson-slides"])
+def test_signed_url_400_removed_buckets(client_factory: ClientFactory, bucket: str) -> None:
+    """Story 2-25: source-pdfs/avatar-clips/lesson-slides were removed from the
+    allowlist — each was structurally broken (never resolvable via
+    _parse_lesson_id's `{lesson_id}/...` assumption, or never provisioned)
+    and had no frontend caller. Now a clean 400, not a silent always-404."""
+    sb = _make_supabase_mock()
+    client = client_factory(sb)
+    with patch("app.modules.media.router.get_supabase", return_value=sb):
+        resp = client.get("/api/media/signed-url", params={"bucket": bucket, "path": FAKE_PATH})
+    assert resp.status_code == 400
+    sb.table.assert_not_called()
+
+
 # ── AC-1: ownership-verified signing ──────────────────────────────────────────
 
 
