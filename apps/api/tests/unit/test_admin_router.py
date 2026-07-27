@@ -118,14 +118,44 @@ def test_list_jobs_applies_status_filter(client_factory: ClientFactory) -> None:
     chain.eq.assert_called_once_with("status", "failed")
 
 
+@pytest.mark.unit
+def test_list_jobs_400_invalid_status_filter(client_factory: ClientFactory) -> None:
+    sb = MagicMock()
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/jobs", params={"status_filter": "not-a-real-status"})
+    assert resp.status_code == 400
+    sb.table.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("limit", [0, -1])
+def test_list_jobs_422_limit_out_of_bounds(client_factory: ClientFactory, limit: int) -> None:
+    sb = MagicMock()
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/jobs", params={"limit": limit})
+    assert resp.status_code == 422
+
+
+@pytest.mark.unit
+def test_list_jobs_422_offset_negative(client_factory: ClientFactory) -> None:
+    sb = MagicMock()
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/jobs", params={"offset": -1})
+    assert resp.status_code == 422
+
+
 # ── GET /jobs/{job_id} ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
 def test_get_job_200_admin(client_factory: ClientFactory) -> None:
+    job_id = "11111111-1111-1111-1111-111111111111"
     sb = MagicMock()
     row = {
-        "job_id": "job-1",
+        "job_id": job_id,
         "lesson_id": "lesson-1",
         "status": "running",
         "created_at": "2026-07-27T00:00:00Z",
@@ -139,9 +169,9 @@ def test_get_job_200_admin(client_factory: ClientFactory) -> None:
     chain.execute.return_value.data = row
     client = client_factory()
     with patch("app.modules.admin.router.get_supabase", return_value=sb):
-        resp = client.get("/api/admin/jobs/job-1")
+        resp = client.get(f"/api/admin/jobs/{job_id}")
     assert resp.status_code == 200
-    assert resp.json()["job_id"] == "job-1"
+    assert resp.json()["job_id"] == job_id
 
 
 @pytest.mark.unit
@@ -151,8 +181,21 @@ def test_get_job_404_not_found(client_factory: ClientFactory) -> None:
     chain.execute.return_value.data = None
     client = client_factory()
     with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/jobs/22222222-2222-2222-2222-222222222222")
+    assert resp.status_code == 404
+
+
+@pytest.mark.unit
+def test_get_job_404_malformed_uuid_never_hits_db(client_factory: ClientFactory) -> None:
+    """Story 2-25 code review: a non-UUID job_id must 404 cleanly, matching
+    the established pattern in content/router.py:get_lesson, instead of
+    risking an unhandled 500 from Postgres's uuid type cast."""
+    sb = MagicMock()
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
         resp = client.get("/api/admin/jobs/does-not-exist")
     assert resp.status_code == 404
+    sb.table.assert_not_called()
 
 
 # ── GET /costs ─────────────────────────────────────────────────────────────────
@@ -160,17 +203,17 @@ def test_get_job_404_not_found(client_factory: ClientFactory) -> None:
 
 @pytest.mark.unit
 def test_get_cost_report_aggregates_by_user(client_factory: ClientFactory) -> None:
-    import datetime as _dt
-
-    now_iso = _dt.datetime.now(_dt.UTC).isoformat()
-    old_iso = "2020-01-01T00:00:00Z"
+    # Story 2-25 code review: filtering is now server-side (an inner join +
+    # .gte on the embedded resource), so every row the mock returns is
+    # already "in period" — there is no client-side date exclusion to test
+    # here anymore (see test_get_cost_report_filters_server_side below for
+    # that behavior).
     sb = MagicMock()
-    sb.table.return_value.select.return_value.execute.return_value.data = [
-        {"cost_usd": 1.0, "lesson_id": "l1", "lessons": {"user_id": "u1", "created_at": now_iso}},
-        {"cost_usd": 2.0, "lesson_id": "l2", "lessons": {"user_id": "u1", "created_at": now_iso}},
-        {"cost_usd": 5.0, "lesson_id": "l3", "lessons": {"user_id": "u2", "created_at": now_iso}},
-        # Outside the "today" window — must be excluded.
-        {"cost_usd": 99.0, "lesson_id": "l4", "lessons": {"user_id": "u1", "created_at": old_iso}},
+    chain = sb.table.return_value.select.return_value.gte.return_value
+    chain.execute.return_value.data = [
+        {"cost_usd": 1.0, "lesson_id": "l1", "lessons": {"user_id": "u1"}},
+        {"cost_usd": 2.0, "lesson_id": "l2", "lessons": {"user_id": "u1"}},
+        {"cost_usd": 5.0, "lesson_id": "l3", "lessons": {"user_id": "u2"}},
     ]
     client = client_factory()
     with patch("app.modules.admin.router.get_supabase", return_value=sb):
@@ -182,6 +225,39 @@ def test_get_cost_report_aggregates_by_user(client_factory: ClientFactory) -> No
     assert "by_provider" not in body
     by_user = {row["user_id"]: row["cost_usd"] for row in body["by_user"]}
     assert by_user == {"u1": pytest.approx(3.0), "u2": pytest.approx(5.0)}
+
+
+@pytest.mark.unit
+def test_get_cost_report_filters_server_side_via_inner_join(client_factory: ClientFactory) -> None:
+    """Story 2-25 code review fix: the period filter must be pushed to
+    PostgREST via `lessons!inner(...)` + `.gte("lessons.created_at", ...)`,
+    not fetched unbounded and filtered in Python."""
+    sb = MagicMock()
+    select_chain = sb.table.return_value.select
+    chain = select_chain.return_value.gte.return_value
+    chain.execute.return_value.data = []
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/costs", params={"period": "this_week"})
+    assert resp.status_code == 200
+    select_chain.assert_called_once_with("cost_usd, lesson_id, lessons!inner(user_id, created_at)")
+    gte_call = select_chain.return_value.gte.call_args
+    assert gte_call.args[0] == "lessons.created_at"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("period", ["this_week", "this_month"])
+def test_get_cost_report_boundary_periods_do_not_error(
+    client_factory: ClientFactory, period: str
+) -> None:
+    """Story 2-25 code review: this_week/this_month had zero test coverage."""
+    sb = MagicMock()
+    sb.table.return_value.select.return_value.gte.return_value.execute.return_value.data = []
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/costs", params={"period": period})
+    assert resp.status_code == 200
+    assert resp.json()["period"] == period
 
 
 @pytest.mark.unit

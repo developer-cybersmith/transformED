@@ -12,11 +12,13 @@ docs/stories/2-25-sprint2-audit-gapfix-dev1-items.md Dev Notes for why.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.core.db import get_supabase, rows, single_row
@@ -28,6 +30,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
 
 __version__ = "0.1.0"
+
+_VALID_JOB_STATUSES = frozenset({"pending", "running", "completed", "failed"})
+_REDIS_PING_TIMEOUT_SECONDS = 3.0
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -108,11 +113,16 @@ def _period_start(period: str) -> datetime:
 )
 async def list_jobs(
     current_user: AdminUser,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     status_filter: str | None = None,
 ) -> list[JobSummary]:
     """Return recent pipeline jobs across all users, newest first."""
+    if status_filter is not None and status_filter not in _VALID_JOB_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"status_filter must be one of: {sorted(_VALID_JOB_STATUSES)}",
+        )
     supabase = get_supabase()
     query = (
         supabase.table("lesson_jobs")
@@ -136,6 +146,11 @@ async def get_job(
     current_user: AdminUser,
 ) -> JobSummary:
     """Return full details for a single pipeline job."""
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+
     supabase = get_supabase()
     resp = (
         supabase.table("lesson_jobs")
@@ -162,29 +177,29 @@ async def get_cost_report(
     """Return aggregated AI costs for the given period, grouped by user.
 
     Aggregates `lesson_jobs.cost_usd` for jobs whose lesson was created within
-    the period window. Grouping is done in Python — Supabase's PostgREST
-    layer has no server-side GROUP BY for this query shape.
+    the period window. The period filter is applied server-side via an
+    embedded-resource filter on the inner-joined `lessons.created_at`
+    (`!inner` hint — without it, PostgREST filters only the embedded rows,
+    not the top-level `lesson_jobs` rows). This avoids an unbounded full-table
+    fetch (Story 2-25 code review) and means every row Python sees already
+    has a non-null `lessons` join, so no per-row date parsing/guard is needed.
+    Grouping by user is done in Python — PostgREST has no server-side GROUP BY.
     """
     start = _period_start(period)
     supabase = get_supabase()
     resp = (
         supabase.table("lesson_jobs")
-        .select("cost_usd, lesson_id, lessons(user_id, created_at)")
+        .select("cost_usd, lesson_id, lessons!inner(user_id, created_at)")
+        .gte("lessons.created_at", start.isoformat())
         .execute()
     )
-    matching = [
-        row
-        for row in rows(resp)
-        if (lesson := (row.get("lessons") or {}))
-        and lesson.get("created_at")
-        and datetime.fromisoformat(lesson["created_at"].replace("Z", "+00:00")) >= start
-    ]
+    matching = rows(resp)
 
     totals_by_user: dict[str, float] = {}
     total_cost = 0.0
     for row in matching:
         cost = float(row.get("cost_usd") or 0.0)
-        user_id = (row.get("lessons") or {}).get("user_id", "unknown")
+        user_id = row["lessons"]["user_id"]
         totals_by_user[user_id] = totals_by_user.get(user_id, 0.0) + cost
         total_cost += cost
 
@@ -214,7 +229,7 @@ async def deep_health(
     redis_ok = True
     try:
         redis = get_redis()
-        await redis.ping()
+        await asyncio.wait_for(redis.ping(), timeout=_REDIS_PING_TIMEOUT_SECONDS)
     except Exception:
         logger.warning("Deep health check: Redis ping failed", exc_info=True)
         redis_ok = False
