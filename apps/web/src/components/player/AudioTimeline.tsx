@@ -67,6 +67,7 @@ export function AudioTimeline() {
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const seekRequestMs = usePlayerStore((s) => s.seekRequestMs);
   const playbackRate = usePlayerStore((s) => s.playbackRate);
+  const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
   // Empty string is a real, reachable value now — a per-asset server-side
@@ -125,6 +126,25 @@ export function AudioTimeline() {
     processTimeUpdate(e.currentTarget.currentTime * 1000);
   }
 
+  function handleWaiting() {
+    usePlayerStore.getState().setBuffering(true);
+  }
+
+  function handlePlaying() {
+    usePlayerStore.getState().setBuffering(false);
+  }
+
+  function handleCanPlay() {
+    usePlayerStore.getState().setBuffering(false);
+  }
+
+  function handleError() {
+    // Only a real mid-load/decode failure on a segment that DID have a src —
+    // the hasAudio === false degrade path never renders a src attribute at
+    // all, so this can't double-fire alongside that fallback.
+    usePlayerStore.getState().setAudioError(true);
+  }
+
   function handleEnded() {
     const {
       lesson: l,
@@ -167,15 +187,21 @@ export function AudioTimeline() {
   if (!segment) return null;
 
   return (
-    // key={segment.segment_id} — forces remount on segment change, resetting src + currentTime
+    // key includes audioRetryCount — forces remount on segment change AND on
+    // retryAudio(), resetting src + currentTime so a failed load is re-attempted
+    // from scratch rather than relying on the browser's own retry behavior.
     <audio
-      key={segment.segment_id}
+      key={`${segment.segment_id}-${audioRetryCount}`}
       ref={audioRef}
       src={hasAudio ? segment.narration.audio_url : undefined}
       preload="metadata"
       onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}
       onEnded={handleEnded}
+      onWaiting={handleWaiting}
+      onPlaying={handlePlaying}
+      onCanPlay={handleCanPlay}
+      onError={handleError}
       aria-label={`Narration: ${segment.title}`}
       className="sr-only"
     />

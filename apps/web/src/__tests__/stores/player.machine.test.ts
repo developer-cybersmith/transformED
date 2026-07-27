@@ -77,6 +77,9 @@ beforeEach(() => {
     tutorState: 'IDLE',
     quizFiredForSegment: new Set(),
     wsSendControl: null,
+    isBuffering: false,
+    audioError: false,
+    audioRetryCount: 0,
   });
   localStorage.clear();
 });
@@ -331,6 +334,54 @@ describe('setTutorState', () => {
   it('mirrors tutor FSM state from WebSocket', () => {
     usePlayerStore.getState().setTutorState('TEACHING');
     expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+});
+
+describe('audio buffering / error / retry (S2-26)', () => {
+  it('defaults to not buffering, no error, zero retries', () => {
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(0);
+  });
+
+  it('setBuffering(true/false) toggles isBuffering', () => {
+    usePlayerStore.getState().setBuffering(true);
+    expect(usePlayerStore.getState().isBuffering).toBe(true);
+    usePlayerStore.getState().setBuffering(false);
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+
+  it('setAudioError(true) sets audioError', () => {
+    usePlayerStore.getState().setAudioError(true);
+    expect(usePlayerStore.getState().audioError).toBe(true);
+  });
+
+  it('retryAudio() clears audioError and increments audioRetryCount', () => {
+    usePlayerStore.getState().setAudioError(true);
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(1);
+
+    usePlayerStore.getState().setAudioError(true);
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().audioRetryCount).toBe(2);
+  });
+
+  it('loadLesson() resets isBuffering/audioError/audioRetryCount', () => {
+    usePlayerStore.setState({ isBuffering: true, audioError: true, audioRetryCount: 3 });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(0);
+  });
+
+  it('advanceSegment() resets isBuffering/audioError/audioRetryCount so a prior segment\'s stall/error does not leak forward', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.setState({ isBuffering: true, audioError: true, audioRetryCount: 2 });
+    usePlayerStore.getState().advanceSegment();
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(0);
   });
 });
 

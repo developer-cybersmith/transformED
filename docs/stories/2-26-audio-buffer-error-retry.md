@@ -33,16 +33,16 @@ so that a slow network or a transient asset failure doesn't leave me staring at 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 6): Add `isBuffering`/`audioError`/`audioRetryCount` state + `setBuffering`/`setAudioError`/`retryAudio` actions to `player.machine.ts`, with resets wired into `loadLesson`/`advanceSegment`.
-  - [ ] 1.1 RED: write failing tests for initial defaults, each action, and the two reset points.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 2, 3, 5, 6): Wire `onWaiting`/`onPlaying`/`onCanPlay`/`onError` on `AudioTimeline.tsx`'s `<audio>` element; extend the element `key` with `audioRetryCount`.
-  - [ ] 2.1 RED: write failing tests asserting the handlers call the right store actions, that `onError` is not wired to fire when `hasAudio` is false, and that the key changes when `audioRetryCount` changes.
-  - [ ] 2.2 GREEN: implement.
-- [ ] Task 3 (AC: 4, 6): Add the buffering spinner overlay and playback-error-with-retry UI to `Player.tsx`.
-  - [ ] 3.1 RED: write failing tests for both states' visibility conditions.
-  - [ ] 3.2 GREEN: implement.
-- [ ] Task 4 (AC: 7): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1, 6): Add `isBuffering`/`audioError`/`audioRetryCount` state + `setBuffering`/`setAudioError`/`retryAudio` actions to `player.machine.ts`, with resets wired into `loadLesson`/`advanceSegment`.
+  - [x] 1.1 RED: write failing tests for initial defaults, each action, and the two reset points.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 2, 3, 5, 6): Wire `onWaiting`/`onPlaying`/`onCanPlay`/`onError` on `AudioTimeline.tsx`'s `<audio>` element; extend the element `key` with `audioRetryCount`.
+  - [x] 2.1 RED: write failing tests asserting the handlers call the right store actions, that `onError` is not wired to fire when `hasAudio` is false, and that the key changes when `audioRetryCount` changes.
+  - [x] 2.2 GREEN: implement.
+- [x] Task 3 (AC: 4, 6): Add the buffering spinner overlay and playback-error-with-retry UI to `Player.tsx`.
+  - [x] 3.1 RED: write failing tests for both states' visibility conditions.
+  - [x] 3.2 GREEN: implement.
+- [x] Task 4 (AC: 7): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -62,8 +62,34 @@ Vitest + Testing Library, matching existing conventions in `apps/web/src/__tests
 - [Source: apps/web/src/components/player/AudioTimeline.tsx] — current `hasAudio` degrade path this story must not regress.
 - [Source: docs/stories/1-7-wire-player-to-real-lesson-content.md] — established the `hasAudio`/empty-`audio_url` degrade-not-drop precedent this story builds alongside, not over.
 
+## Dev Agent Record
+
+### Implementation Plan
+
+- Added `isBuffering`/`audioError`/`audioRetryCount` to `player.machine.ts`, resetting both on `loadLesson()` (new lesson) and `advanceSegment()` (new segment) so a stall/error never leaks across a segment boundary.
+- Wired `onWaiting`/`onPlaying`/`onCanPlay`/`onError` directly on `AudioTimeline.tsx`'s existing `<audio>` element via `usePlayerStore.getState()` calls (same pattern as the existing `handleLoadedMetadata`/`handleEnded`), and folded `audioRetryCount` into the element's `key` so `retryAudio()` forces a real remount + fresh load attempt rather than relying on browser-internal retry behavior.
+- Added a non-blocking buffering pill (bottom-right, only visible mid-`PLAYING`) and a blocking playback-error screen with a Retry button to `Player.tsx`, layered in the same z-index tier as the existing `ENDED`/`CheckingInTransition` overlays.
+- While verifying AC-7 (`tsc --noEmit` clean), found `Player.tsx` already failed to compile on `main` *before* this story's changes (confirmed via `git stash` + re-run) — Story 2-25's frozen-contract change making `LessonMetadata.tier` optional broke S2-10's `TIER_LABELS: Record<tier, string>` lookup. Fixed narrowly (`Exclude<..., undefined>` on the Record type, `?? 'T2'` on the lookup) since it blocked verifying this story's own changes compile cleanly — not part of this story's scope otherwise, and worth a heads-up to Dev1 that the `LessonMetadata.tier` optionality change needs downstream consumers checked.
+
+### Completion Notes
+
+- All 4 tasks complete, all ACs (1–7) satisfied.
+- Full `apps/web` test suite: 53 files, 488 tests, all passing.
+- `tsc --noEmit`: clean. `eslint` on all touched files: clean.
+- No regressions to the `hasAudio === false` degrade path (Story 1-6/1-7) — explicit test confirms `audioError` stays `false` and no `src` is ever attached for that case.
+
+### File List
+
+- `apps/web/src/stores/player.machine.ts` (MODIFIED — added `isBuffering`/`audioError`/`audioRetryCount` state + `setBuffering`/`setAudioError`/`retryAudio` actions)
+- `apps/web/src/components/player/AudioTimeline.tsx` (MODIFIED — wired `onWaiting`/`onPlaying`/`onCanPlay`/`onError`; `audioRetryCount` folded into `<audio>` key)
+- `apps/web/src/components/player/Player.tsx` (MODIFIED — added buffering indicator + playback-error/retry UI; unrelated `tsc` fix for S2-10's `TIER_LABELS` following Story 2-25's `tier` optionality change)
+- `apps/web/src/__tests__/stores/player.machine.test.ts` (MODIFIED — new tests for buffering/error/retry state + resets)
+- `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` (MODIFIED — new tests for the 4 new event handlers + retry-key remount)
+- `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED — new tests for both new UI states)
+
 ## Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-27 | Story created after closing stale PR #71 — re-scoping its still-valuable audio buffering/error-retry feature as fresh work against current `main` instead of a risky manual merge. Branch `sprint2/s2-26-audio-buffer-retry` off `main`. | Dev 2 |
+| 2026-07-27 | Implemented all 4 tasks. Found and fixed an unrelated, pre-existing `tsc` regression on `main` while verifying AC-7 (see Dev Notes) — Story 2-25's frozen-contract change (`LessonMetadata.tier` → optional) broke S2-10's `TIER_LABELS` lookup in `Player.tsx`; fixed with a minimal `Exclude<undefined>` + nullish-coalesced lookup, no behavior change (T99/missing tier still falls back to `T2`/Standard, already covered by an existing test). Full suite 53 files / 488 tests passing, `tsc --noEmit` and `eslint` clean. | Dev 2 |

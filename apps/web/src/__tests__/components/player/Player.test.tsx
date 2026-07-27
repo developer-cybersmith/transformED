@@ -126,6 +126,60 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
   });
 });
 
+describe('Player — audio buffering / error retry UI (S2-26)', () => {
+  it('shows the buffering indicator when isBuffering is true and status is PLAYING', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING', isBuffering: true });
+    });
+
+    expect(screen.getByTestId('audio-buffering')).not.toBeNull();
+  });
+
+  it('does not show the buffering indicator when isBuffering is false', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    expect(screen.queryByTestId('audio-buffering')).toBeNull();
+  });
+
+  it('does not show the buffering indicator while not PLAYING (e.g. PAUSED), even if isBuffering is true', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', isBuffering: true });
+    });
+
+    expect(screen.queryByTestId('audio-buffering')).toBeNull();
+  });
+
+  it('shows the playback-error state with a Retry button when audioError is true', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true });
+    });
+
+    expect(screen.getByTestId('audio-error')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull();
+  });
+
+  it('clicking Retry calls retryAudio(), clearing audioError', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true });
+    });
+
+    act(() => {
+      screen.getByRole('button', { name: /retry/i }).click();
+    });
+
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(screen.queryByTestId('audio-error')).toBeNull();
+  });
+});
+
 describe('Player — lesson WebSocket (S2-06)', () => {
   it('mounts useLessonSocket with the store sessionId, so the socket actually connects during a real session', () => {
     render(<Player lesson={mockLessonPackage} />);
