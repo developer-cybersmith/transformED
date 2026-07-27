@@ -4,16 +4,31 @@ import { ContinueLearningCard } from "@/components/dashboard/sections/ContinueLe
 import { QuickActions } from "@/components/dashboard/sections/QuickActions";
 import { LearningPulse } from "@/components/dashboard/sections/LearningPulse";
 import { RecentLessons } from "@/components/dashboard/sections/RecentLessons";
-import { dashboardService } from "@/services/dashboard.service";
+import { dashboardService, type DashboardData } from "@/services/dashboard.service";
 
 export default async function DashboardPage() {
-    const response = await dashboardService.getDashboard();
-    const dashboardData = response.data;
+    let dashboardData: DashboardData | null = null;
+    let loadFailed = false;
+    try {
+        dashboardData = await dashboardService.getDashboard();
+    } catch (error) {
+        // Real API unavailable -- degrade to empty sections rather than a hard crash,
+        // but still surface a real message instead of silently looking like a new,
+        // lesson-less account.
+        loadFailed = true;
+        console.error("DashboardPage: failed to load dashboard data", error);
+    }
 
     return (
         <div className="w-full max-w-[1400px] mx-auto pt-6 flex flex-col gap-10">
+            {loadFailed && (
+                <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3 text-sm text-red-600">
+                    We couldn&apos;t load some of your dashboard data right now. Please refresh the page.
+                </div>
+            )}
+
             {/* 1. Compact Hero Section */}
-            <HeroSection continueLessonId={dashboardData?.continueLearning?.id} />
+            <HeroSection continueLessonId={dashboardData?.continueLearning?.lesson_id} />
 
             {/* 1b. Re-Assessment Prompt (self-contained, only renders when due) */}
             <ReassessmentPrompt />

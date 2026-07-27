@@ -19,16 +19,15 @@ beforeEach(() => {
 
 describe('LibraryDataFetcher (library server component)', () => {
   it('renders LibraryView with the real data on success', async () => {
-    const data = { inProgress: [], completed: [], processing: [], failed: [] };
-    getLibraryMock.mockResolvedValue({ success: true, data, message: 'ok' });
+    getLibraryMock.mockResolvedValue({ all: [], ready: [], processing: [], failed: [] });
 
     render(await LibraryDataFetcher());
 
     expect(screen.getByText('No lessons found in this category.')).not.toBeNull();
   });
 
-  it('shows a fallback message instead of crashing when the response has no data (success: false)', async () => {
-    getLibraryMock.mockResolvedValue({ success: false, data: null, message: 'Library unavailable' });
+  it('shows a fallback message instead of crashing when the real API call rejects', async () => {
+    getLibraryMock.mockRejectedValue(new Error('Library unavailable'));
 
     render(await LibraryDataFetcher());
 
