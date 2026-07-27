@@ -16,7 +16,7 @@ export interface LessonMetadata {
   total_segments: number;
   estimated_duration_mins: number;
   complexity_level: string;
-  tier: LessonTier;
+  tier?: LessonTier;
 }
 
 export interface SegmentComplexity {
