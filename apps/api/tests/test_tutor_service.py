@@ -319,6 +319,9 @@ async def test_cesresult_fields(mocker) -> None:
     assert result.session_id == "sess-1"
     # Pinned to the real formula (0.5 stub is gone); _EXPECTED_CES ≈ 75.733 for _VALID_PAYLOAD.
     assert result.ces == _EXPECTED_CES
+    # Concrete literal anchor so this is NOT circular: a compute_ces regression would move
+    # _EXPECTED_CES with the code, but not this hard-coded §11 value.
+    assert result.ces == pytest.approx(75.733, abs=0.01)
 
 
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────
