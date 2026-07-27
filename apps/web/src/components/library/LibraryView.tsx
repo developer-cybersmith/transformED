@@ -17,12 +17,10 @@ export function LibraryView({ initialData }: LibraryViewProps) {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<TabKey>('all');
 
-    // Aggregate all lessons
-    const allLessons = [
-        ...initialData.ready,
-        ...initialData.processing,
-        ...initialData.failed,
-    ];
+    // Use the raw, unfiltered list for "All" rather than reconstructing it
+    // from the buckets below -- a lesson whose status doesn't match any
+    // known bucket must still show up here.
+    const allLessons = initialData.all;
 
     // Filter Logic
     const getFilteredLessons = (): LessonStatusResponse[] => {

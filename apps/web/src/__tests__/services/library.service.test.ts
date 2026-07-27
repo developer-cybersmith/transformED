@@ -44,11 +44,38 @@ describe('libraryService.getLibrary', () => {
     expect(data.failed.map((l) => l.lesson_id)).toEqual(['les_failed']);
   });
 
+  it('also returns the raw, unfiltered list — so a future unrecognized status can never silently vanish from "All"', async () => {
+    const lessons = [
+      lesson({ lesson_id: 'les_ready', status: 'ready' }),
+      lesson({ lesson_id: 'les_running', status: 'running' }),
+      lesson({ lesson_id: 'les_queued', status: 'queued' }),
+      lesson({ lesson_id: 'les_failed', status: 'failed' }),
+    ];
+    getMock.mockResolvedValue({ data: lessons });
+
+    const data = await libraryService.getLibrary();
+
+    expect(data.all).toEqual(lessons);
+  });
+
+  it('preserves order and all entries when a bucket has more than one lesson', async () => {
+    const lessons = [
+      lesson({ lesson_id: 'les_running_1', status: 'running' }),
+      lesson({ lesson_id: 'les_queued_1', status: 'queued' }),
+      lesson({ lesson_id: 'les_running_2', status: 'running' }),
+    ];
+    getMock.mockResolvedValue({ data: lessons });
+
+    const data = await libraryService.getLibrary();
+
+    expect(data.processing.map((l) => l.lesson_id)).toEqual(['les_running_1', 'les_queued_1', 'les_running_2']);
+  });
+
   it('returns empty buckets, not an error, when the account has no lessons yet', async () => {
     getMock.mockResolvedValue({ data: [] });
 
     const data = await libraryService.getLibrary();
 
-    expect(data).toEqual({ ready: [], processing: [], failed: [] });
+    expect(data).toEqual({ all: [], ready: [], processing: [], failed: [] });
   });
 });

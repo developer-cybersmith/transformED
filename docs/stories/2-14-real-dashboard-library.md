@@ -81,12 +81,39 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`, matching ever
 - [Source: docs/master-tracker.md] — the separate, still-genuinely-blocked `GET /api/sessions/latest` (Dev 4) gap, explicitly not part of this story's scope
 - [Source: docs/stories/2-11-quiz-feedback-field-fix.md, 2-13-assessment-test-fixes.md] — the "reuse the real type, don't re-declare a drifting copy" precedent this story follows for `LessonStatusResponse`
 
+## Senior Developer Review (AI)
+
+**Date:** 2026-07-24
+**Outcome:** Changes Requested → all actionable findings resolved this session.
+**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs) — per CLAUDE.md's BMAD Code Review Gate.
+
+### Findings
+
+| # | Severity | Source | Finding | Resolution |
+|---|----------|--------|---------|------------|
+| 1 | High | Blind Hunter | `RecentLessons.tsx` cards navigated to `/lesson/{id}` unconditionally, regardless of status — a click on a "Processing"/"Failed" card led into content that doesn't exist yet | Fixed — navigation now guarded to `status === 'ready'` only, mirroring `LibraryCard`'s existing pattern; new regression test |
+| 2 | High | Edge Case Hunter | `continueLearning`'s lookup was scoped to only the newest 6 lessons — if those 6 were all still generating (very plausible; generation takes 5–15 min) while an older lesson was `ready`, the Continue Learning card would wrongly disappear | Fixed — widened the lookup window to `limit: 20`; new regression test with 6 non-ready + 1 ready beyond the old window |
+| 3 | Medium | Blind Hunter | The same lesson could render twice on the dashboard (once as `continueLearning`, again inside `recentLessons`, since both were derived from the same unfiltered array with no exclusion) | Fixed — `recentLessons` now excludes `continueLearning`'s `lesson_id` before slicing; new regression test |
+| 4 | Medium | Blind Hunter + Edge Case Hunter (corroborated) | `Promise.all([realLessonsCall, mockPulseCall])` meant an unrelated mock-analytics failure would reject the whole `getDashboard()` call, blanking real lesson data too (dormant today since the mock can't reject, but a live landmine for whoever wires the real `learningPulse` endpoint later) | Fixed — the mock pulse call now has its own try/catch, isolated from the real lessons fetch; a real lessons-fetch failure still propagates/throws as before (verified via 2 new regression tests, one per failure mode) |
+| 5 | Medium | Blind Hunter + Edge Case Hunter (corroborated) | Dashboard page silently swallowed real fetch failures into an empty-but-normal-looking page with no message and no logging — AC-6 claimed parity with `library/page.tsx`'s explicit failure message, which wasn't actually true, and neither page logged the error for observability | Fixed — added `console.error` logging to both pages' catch blocks; added an explicit inline error banner to `dashboard/page.tsx` on a real fetch failure, distinct from the legitimate "no lessons yet" empty state |
+| 6 | Medium | Edge Case Hunter | `LibraryView`'s "All Lessons" tab was reconstructed by concatenating the `ready`/`processing`/`failed` buckets — a lesson with any future unrecognized status would silently vanish from "All" too, not just mis-file into the wrong tab (safe today only because the backend's `_map_status()` is currently exhaustive over 4 known values) | Fixed — `libraryService.getLibrary()` now also returns the raw, unfiltered `all` array; `LibraryView` renders "All Lessons" directly from it instead of reconstructing |
+| 7 | Low | Edge Case Hunter | `dashboard.service.test.ts`/`library.service.test.ts` never exercised >5 lessons or >1-item-per-bucket, leaving the truncation-at-5 and multi-item-bucket-ordering logic untested | Fixed — added 2 boundary tests |
+| 8 | Low (accepted) | Edge Case Hunter + Blind Hunter | `library.service.ts`'s hardcoded `limit: 100` has no pagination/"load more" and would silently truncate a student with >100 lessons | Accepted, deferred — not an active problem at Sprint 2's actual usage scale; adding pagination would meaningfully expand this story's scope. Worth a tracked follow-up if it ever becomes real. |
+
+### Non-issues independently re-verified
+
+- Backend `list_lessons`'s real `.order("created_at", desc=True)` ordering, and `upload.service.ts`'s pre-existing `LessonStatusResponse` type, both confirmed accurate by all 3 reviewers reading the actual files, not trusting the story's own claims.
+- `HeroSection.tsx`'s `continueLessonId` usage confirmed to have no format assumption beyond a plain string — the `.id` → `.lesson_id` rename is complete and correct everywhere.
+- No other stale consumers of the old `MockLesson`/mock `DashboardData`/`LibraryData` shapes found anywhere in `apps/web/src` outside the explicitly-out-of-scope `InteractivePlayer.tsx` mock stub.
+- All 8 ACs independently re-verified satisfied by the Acceptance Auditor, including an independent `vitest`/`tsc`/`eslint` pass on the checked-out branch.
+
 ## Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-24 | Story created after live testing found generated lessons never appear on dashboard/library. Corrected a stale tracker assumption — the real `GET /lessons` backend endpoint already exists and works; the gap is purely frontend wiring. Scoped what's honestly achievable given several mock-only fields (thumbnail, duration, progress%, chapterTitle) have no real backend analog — decided with the user to wire `ContinueLearningCard` too, using a real "latest ready lesson" shortcut rather than deferring it or faking resume-progress. Branch `sprint2/s2-14-real-dashboard-library` off `sprint2-master`. | Dev 2 |
 | 2026-07-24 | Implemented all 6 tasks (RED→GREEN throughout). Rewrote both services to call the real `GET /lessons` endpoint (reusing `upload.service.ts`'s existing `LessonStatusResponse` type); rewrote `RecentLessons`/`LibraryView`+`LibraryCard`/`ContinueLearningCard` to render real data with graceful degradation (status labels instead of fabricated progress bars, no thumbnail `<img>`, `Ready/Processing/Failed` library tabs instead of the old viewing-progress-based tabs); updated `dashboard/page.tsx` and `library/page.tsx` for the new unwrapped, throwing service contract while preserving the existing graceful failed-load UI (also fixed a pre-existing `LibraryDataFetcher` test that predated this story and still exercised the old `ApiResponse` shape). Full suite 50 files / 448 tests passing, `tsc --noEmit` and `eslint` clean. Status → review. | Dev 2 |
+| 2026-07-24 | 3-agent code review round. 2 High, 4 Medium, 2 Low findings — all fixed except 1 Low (accepted/deferred: `library.service.ts`'s 100-lesson cap has no pagination). Full suite now 50 files / 455 tests, `tsc`/`eslint` clean. | Dev 2 |
 
 ## Dev Agent Record
 

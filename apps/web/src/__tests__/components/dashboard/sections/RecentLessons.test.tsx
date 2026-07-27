@@ -67,4 +67,21 @@ describe('RecentLessons', () => {
 
     expect(screen.getByText('Untitled Lesson')).not.toBeNull();
   });
+
+  it('does NOT navigate when clicking a processing or failed card — the lesson has no content to view yet', async () => {
+    const user = userEvent.setup();
+    render(
+      <RecentLessons
+        lessons={[
+          lesson({ lesson_id: 'les_processing', status: 'running', title: 'Processing Lesson' }),
+          lesson({ lesson_id: 'les_failed', status: 'failed', title: 'Failed Lesson' }),
+        ]}
+      />
+    );
+
+    await user.click(screen.getByText('Processing Lesson'));
+    await user.click(screen.getByText('Failed Lesson'));
+
+    expect(pushMock).not.toHaveBeenCalled();
+  });
 });

@@ -42,11 +42,11 @@ export function RecentLessons({ lessons }: { lessons: LessonStatusResponse[] }) 
                 {lessons.map((lesson, index) => (
                     <motion.div
                         key={lesson.lesson_id}
-                        onClick={() => router.push(`/lesson/${lesson.lesson_id}`)}
+                        onClick={lesson.status === 'ready' ? () => router.push(`/lesson/${lesson.lesson_id}`) : undefined}
                         initial={{ opacity: 0, x: 20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ duration: 0.5, delay: index * 0.1 }}
-                        className="group relative flex-shrink-0 w-[280px] sm:w-[320px] rounded-3xl overflow-hidden bg-white border border-neutral-100 shadow-sm hover:shadow-xl transition-all duration-500 cursor-pointer snap-start"
+                        className={`group relative flex-shrink-0 w-[280px] sm:w-[320px] rounded-3xl overflow-hidden bg-white border border-neutral-100 shadow-sm transition-all duration-500 snap-start ${lesson.status === 'ready' ? 'hover:shadow-xl cursor-pointer' : 'cursor-default opacity-80'}`}
                     >
                         <div className="p-5">
                             <span

@@ -25,8 +25,9 @@ export async function LibraryDataFetcher() {
     let data: LibraryData | null = null;
     try {
         data = await libraryService.getLibrary();
-    } catch {
+    } catch (error) {
         // Real API unavailable -- fall through to the graceful empty-state below.
+        console.error("LibraryDataFetcher: failed to load library data", error);
     }
 
     if (!data) {

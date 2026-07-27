@@ -19,7 +19,7 @@ beforeEach(() => {
 
 describe('LibraryDataFetcher (library server component)', () => {
   it('renders LibraryView with the real data on success', async () => {
-    getLibraryMock.mockResolvedValue({ ready: [], processing: [], failed: [] });
+    getLibraryMock.mockResolvedValue({ all: [], ready: [], processing: [], failed: [] });
 
     render(await LibraryDataFetcher());
 

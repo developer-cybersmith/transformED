@@ -24,10 +24,15 @@ function lesson(overrides: Partial<LessonStatusResponse>): LessonStatusResponse 
   };
 }
 
+const READY = lesson({ lesson_id: 'les_ready' });
+const PROCESSING = lesson({ lesson_id: 'les_processing', status: 'running', title: 'Processing Lesson' });
+const FAILED = lesson({ lesson_id: 'les_failed', status: 'failed', title: 'Failed Lesson' });
+
 const DATA: LibraryData = {
-  ready: [lesson({ lesson_id: 'les_ready' })],
-  processing: [lesson({ lesson_id: 'les_processing', status: 'running', title: 'Processing Lesson' })],
-  failed: [lesson({ lesson_id: 'les_failed', status: 'failed', title: 'Failed Lesson' })],
+  all: [READY, PROCESSING, FAILED],
+  ready: [READY],
+  processing: [PROCESSING],
+  failed: [FAILED],
 };
 
 beforeEach(() => {
@@ -72,7 +77,7 @@ describe('LibraryView', () => {
   });
 
   it('shows the empty state when there are no lessons at all', () => {
-    render(<LibraryView initialData={{ ready: [], processing: [], failed: [] }} />);
+    render(<LibraryView initialData={{ all: [], ready: [], processing: [], failed: [] }} />);
 
     expect(screen.getByText('No lessons found in this category.')).not.toBeNull();
   });
