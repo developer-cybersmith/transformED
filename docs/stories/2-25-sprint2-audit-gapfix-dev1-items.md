@@ -4,7 +4,7 @@ baseline_commit: 74efedc
 
 # Story 2.25: Sprint 2 audit gap-fix — Dev1-owned findings (admin auth, media allowlist, stale docstring, contract drift)
 
-Status: review
+Status: done
 
 ## Story
 
