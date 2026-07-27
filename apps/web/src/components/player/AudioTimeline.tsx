@@ -9,10 +9,6 @@ import { usePlayerStore } from '@/stores/player.machine';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 export { binarySearchTimestamps };
 
-// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
-// package_builder (Story S2-11, not yet built). Do not build a parallel
-// real-content path here -- this will be reconciled when Sprint 2 lands.
-// Ping Dev 1 (developer1-cybersmith) before changing this shape.
 /**
  * Core audio-tick handler. Reads Zustand store via getState() to avoid stale closures
  * in the onTimeUpdate callback (fires at ~30 Hz). Exported for unit testing.
@@ -26,6 +22,8 @@ export function processTimeUpdate(ms: number): void {
     quizFiredForSegment,
     updateAudioPosition,
     setCurrentSlide,
+    setTutorState,
+    wsSendControl,
     enterQuiz,
   } = usePlayerStore.getState();
 
@@ -49,9 +47,14 @@ export function processTimeUpdate(ms: number): void {
     setCurrentSlide(targetSlideId);
   }
 
-  // Segment boundary: fire quiz exactly once per forward traversal
+  // Segment boundary: fire quiz exactly once per forward traversal. Notify the
+  // backend tutor FSM (segment_complete) and optimistically mirror CHECKING_IN
+  // locally in the same tick — see CheckingInTransition / Dev Notes "Timing
+  // constraint" for why this can't wait for the backend's state_change echo.
   const segmentEnd = timestamps.at(-1)!.end_ms;
   if (ms >= segmentEnd && !quizFiredForSegment.has(segment.segment_id)) {
+    setTutorState('CHECKING_IN');
+    wsSendControl?.({ type: 'segment_complete' });
     enterQuiz();
   }
 }
@@ -66,6 +69,10 @@ export function AudioTimeline() {
   const playbackRate = usePlayerStore((s) => s.playbackRate);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
+  // Empty string is a real, reachable value now — a per-asset server-side
+  // signing failure degrades just that one asset (Story 1-6/1-7), it doesn't
+  // fail the whole lesson. There's nothing to play; don't attempt to.
+  const hasAudio = Boolean(segment?.narration.audio_url);
 
   // Status drives audio — audio never drives status (S1-01 invariant).
   // Also re-runs on currentSegmentIndex: replaying a previously-quizzed segment
@@ -75,6 +82,13 @@ export function AudioTimeline() {
   // this dependency the new element would never receive a .play() call and
   // playback would silently freeze despite the UI still showing "playing".
   useEffect(() => {
+    if (!hasAudio) {
+      // Nothing will ever load, so 'ended'/'timeupdate' can never fire for this
+      // segment (review fix) -- drive the same advance/quiz logic handleEnded
+      // uses immediately instead of leaving the lesson stuck here forever.
+      if (status === 'PLAYING') handleEnded();
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
     if (status === 'PLAYING') {
@@ -82,7 +96,7 @@ export function AudioTimeline() {
     } else {
       audio.pause();
     }
-  }, [status, currentSegmentIndex]);
+  }, [status, currentSegmentIndex, hasAudio]);
 
   // Apply pending seek from the store then clear it
   useEffect(() => {
@@ -118,6 +132,8 @@ export function AudioTimeline() {
       quizFiredForSegment,
       endLesson,
       advanceSegment,
+      setTutorState,
+      wsSendControl,
       enterQuiz,
     } = usePlayerStore.getState();
     if (!l) return;
@@ -127,6 +143,8 @@ export function AudioTimeline() {
     if (isLast) {
       // Last segment: end the lesson (quiz boundary detection handles quiz first if not yet fired)
       if (segment && !quizFiredForSegment.has(segment.segment_id)) {
+        setTutorState('CHECKING_IN');
+        wsSendControl?.({ type: 'segment_complete' });
         enterQuiz(); // audio ended before quiz fired (very short audio or tight timing)
       } else {
         endLesson();
@@ -139,6 +157,8 @@ export function AudioTimeline() {
       // If quiz hasn't fired yet, processTimeUpdate's boundary check should have caught it.
       // If the audio ended before hitting the boundary, fire the quiz now.
       else if (segment) {
+        setTutorState('CHECKING_IN');
+        wsSendControl?.({ type: 'segment_complete' });
         enterQuiz();
       }
     }
@@ -151,7 +171,7 @@ export function AudioTimeline() {
     <audio
       key={segment.segment_id}
       ref={audioRef}
-      src={segment.narration.audio_url}
+      src={hasAudio ? segment.narration.audio_url : undefined}
       preload="metadata"
       onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}
