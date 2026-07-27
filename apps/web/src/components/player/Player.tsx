@@ -27,6 +27,11 @@ const TIER_LABELS: Record<Exclude<LessonPackage['metadata']['tier'], undefined>,
   T3: 'Refresher',
 };
 
+// After this many manual retries on the same segment, surface extra guidance
+// instead of silently letting the student hammer an identical failing request
+// forever (review fix — no cap existed before this).
+const REPEATED_FAILURE_RETRY_THRESHOLD = 3;
+
 // Default export required by next/dynamic
 export default function Player({ lesson }: PlayerProps) {
   const loadLesson = usePlayerStore((s) => s.loadLesson);
@@ -36,6 +41,7 @@ export default function Player({ lesson }: PlayerProps) {
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
   const isBuffering = usePlayerStore((s) => s.isBuffering);
   const audioError = usePlayerStore((s) => s.audioError);
+  const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
   const retryAudio = usePlayerStore((s) => s.retryAudio);
 
   // Mounts the lesson WebSocket for the duration of the session — previously
@@ -145,8 +151,12 @@ export default function Player({ lesson }: PlayerProps) {
           </div>
         )}
 
-        {/* Playback error — visible regardless of status, offers a retry */}
-        {audioError && (
+        {/* Playback error — visible during PLAYING/PAUSED/IDLE, offers a retry.
+            Excluded from QUIZ/TEACH_BACK/ENDED (review fix): the narration audio's
+            job for this segment is already done once the student has reached the
+            quiz/teach-back/completion screen, so a stale or late-firing error must
+            not block their progress there with a full-screen overlay. */}
+        {audioError && status !== 'QUIZ' && status !== 'TEACH_BACK' && status !== 'ENDED' && (
           <div
             className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-primary-dark/95 backdrop-blur-sm text-center"
             data-testid="audio-error"
@@ -154,6 +164,11 @@ export default function Player({ lesson }: PlayerProps) {
             <p className="text-neutral-300 text-sm">
               This segment&apos;s audio couldn&apos;t be played. Check your connection and try again.
             </p>
+            {audioRetryCount >= REPEATED_FAILURE_RETRY_THRESHOLD && (
+              <p className="text-neutral-500 text-xs max-w-xs">
+                Still not working after several tries — this may take a moment to resolve, or try refreshing the page.
+              </p>
+            )}
             <button
               onClick={retryAudio}
               className="px-5 py-2.5 rounded-full bg-[var(--accent-primary)] text-white text-sm font-medium hover:scale-105 transition-transform"

@@ -367,6 +367,12 @@ describe('audio buffering / error / retry (S2-26)', () => {
     expect(usePlayerStore.getState().audioRetryCount).toBe(2);
   });
 
+  it('retryAudio() also clears isBuffering (review fix — a stall-then-error sequence must not leave a stale buffering flag on the fresh element)', () => {
+    usePlayerStore.setState({ isBuffering: true, audioError: true });
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+
   it('loadLesson() resets isBuffering/audioError/audioRetryCount', () => {
     usePlayerStore.setState({ isBuffering: true, audioError: true, audioRetryCount: 3 });
     usePlayerStore.getState().loadLesson(makeLesson());

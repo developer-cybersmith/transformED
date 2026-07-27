@@ -178,6 +178,56 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
     expect(usePlayerStore.getState().audioError).toBe(false);
     expect(screen.queryByTestId('audio-error')).toBeNull();
   });
+
+  it('does NOT show the playback-error overlay during QUIZ, even if audioError is true (review fix — a stale error must not block the quiz)', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'QUIZ', audioError: true });
+    });
+
+    expect(screen.queryByTestId('audio-error')).toBeNull();
+  });
+
+  it('does NOT show the playback-error overlay during TEACH_BACK, even if audioError is true (review fix)', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'TEACH_BACK', audioError: true });
+    });
+
+    expect(screen.queryByTestId('audio-error')).toBeNull();
+  });
+
+  it('does NOT show the playback-error overlay when ENDED, even if audioError is true (review fix)', () => {
+    renderEnded('sess_abc123');
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true });
+    });
+
+    expect(screen.queryByTestId('audio-error')).toBeNull();
+  });
+
+  it('shows extra guidance text after 3+ retries on the same segment (review fix — no cap/backoff existed before)', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true, audioRetryCount: 3 });
+    });
+
+    expect(screen.getByText(/still not working after several tries/i)).not.toBeNull();
+  });
+
+  it('does not show the repeated-failure guidance text before the threshold', () => {
+    render(<Player lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true, audioRetryCount: 1 });
+    });
+
+    expect(screen.queryByText(/still not working after several tries/i)).toBeNull();
+  });
 });
 
 describe('Player — lesson WebSocket (S2-06)', () => {

@@ -208,6 +208,19 @@ describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
 
     expect(secondAudio).not.toBe(firstAudio);
   });
+
+  it('calls .play() again on the fresh element after a same-segment retry (review fix — regression: retry cleared the error but never resumed playback)', () => {
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, audioRetryCount: 0, audioError: true });
+    const { rerender } = render(<AudioTimeline />);
+    playMock.mockClear(); // drop the initial-mount play() call
+
+    act(() => {
+      usePlayerStore.getState().retryAudio();
+    });
+    rerender(<AudioTimeline />);
+
+    expect(playMock).toHaveBeenCalled();
+  });
 });
 
 describe('AudioTimeline — handleEnded sends segment_complete (S2-06 AC2/AC6)', () => {

@@ -2,6 +2,11 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story 2-26 (2026-07-27, audio buffering + playback-error retry)
+
+- **`exitTeachBack()` on the last segment doesn't reset `isBuffering`/`audioError`/`audioRetryCount`** — unlike every other segment transition, resuming `PLAYING` on the final segment after teach-back doesn't route through `advanceSegment()` (there's no next segment), so a stale flag from before the quiz could survive momentarily. Self-correcting once the same, already-loaded `<audio>` element's own `onPlaying`/`onCanPlay`/`onWaiting` events fire again; purely cosmetic, single-sourced (Edge Case Hunter only), not actioned. [`apps/web/src/stores/player.machine.ts::exitTeachBack`]
+- **`CheckingInTransition` (`z-30`, `pointer-events-none`, ≤500ms) can briefly sit visually on top of the new audio-error Retry button** if both happen to coincide — the button stays clickable underneath since `CheckingInTransition` is `pointer-events-none`; purely a brief visual overlap, self-resolving. Single-sourced (Edge Case Hunter only), not actioned. [`apps/web/src/components/player/CheckingInTransition.tsx`, `apps/web/src/components/player/Player.tsx`]
+
 ## Deferred from: code review of story 2-10 (2026-07-23, tier context wiring)
 
 - **`Player.tsx`'s `TIER_LABELS` is a hand-duplicated copy of the backend's `_TIER_LABELS` dict, kept in sync only by a code comment** — `SessionReport.tsx` instead trusts a server-supplied `tier_label` string for the identical concept, because `LessonPackage.metadata` only carries the raw `tier` code, never a computed label, unlike `SessionReport`. No shared-constant/codegen mechanism exists to keep the frontend and backend copies in sync. Fixing this properly means either adding a `tier_label` field to the shared, frozen `LessonPackage` type (a cross-team-reviewed contract change) or building a codegen/shared-config bridge across the Python/TypeScript boundary — both real, larger efforts outside this story's scope. [`apps/web/src/components/player/Player.tsx`]

@@ -293,7 +293,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   retryAudio: () => {
-    set((state) => ({ audioError: false, audioRetryCount: state.audioRetryCount + 1 }));
+    // isBuffering reset too — otherwise a stale true from a stall-then-error
+    // sequence on the old element survives into the fresh one's initial render.
+    set((state) => ({ audioError: false, isBuffering: false, audioRetryCount: state.audioRetryCount + 1 }));
   },
 
   updateAudioPosition: (ms) => {

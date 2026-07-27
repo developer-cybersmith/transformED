@@ -82,6 +82,11 @@ export function AudioTimeline() {
   // after. The <audio> element remounts on the new segment_id key, so without
   // this dependency the new element would never receive a .play() call and
   // playback would silently freeze despite the UI still showing "playing".
+  // Also re-runs on audioRetryCount (S2-26 review fix): retryAudio() remounts
+  // the <audio> element via the same key mechanism, but status/currentSegmentIndex
+  // don't change on a same-segment retry -- without this dependency, the fresh
+  // element would sit loaded-and-paused forever with no play() call, which is
+  // worse than the original stall (no error, no progress, no recovery).
   useEffect(() => {
     if (!hasAudio) {
       // Nothing will ever load, so 'ended'/'timeupdate' can never fire for this
@@ -97,7 +102,7 @@ export function AudioTimeline() {
     } else {
       audio.pause();
     }
-  }, [status, currentSegmentIndex, hasAudio]);
+  }, [status, currentSegmentIndex, hasAudio, audioRetryCount]);
 
   // Apply pending seek from the store then clear it
   useEffect(() => {
