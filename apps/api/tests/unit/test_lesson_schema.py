@@ -201,8 +201,8 @@ def test_lesson_metadata_tier_rejects_invalid_value() -> None:
 @pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
 def test_lesson_package_tier_round_trips_through_json_schema(tier: str) -> None:
     """Story 2-2 AC-1/AC-5: every tier value round-trips through Pydantic + the
-    frozen JSON schema (which now requires `tier` — see Dev Notes on
-    additionalProperties: false)."""
+    frozen JSON schema (Story 2-25: `tier` is optional in the schema, matching
+    Pydantic's "T2" default — see additionalProperties: false)."""
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
     package_dict = {
         **MINIMAL_PACKAGE_DICT,
@@ -211,6 +211,23 @@ def test_lesson_package_tier_round_trips_through_json_schema(tier: str) -> None:
     package = LessonPackage.model_validate(package_dict)
     assert package.metadata.tier == tier
     jsonschema.validate(instance=json.loads(package.model_dump_json()), schema=schema)
+
+
+@pytest.mark.unit
+def test_lesson_metadata_omitting_tier_validates_against_raw_json_schema() -> None:
+    """Story 2-25 regression: a metadata dict that omits `tier` entirely must
+    validate against the raw JSON schema (bypassing Pydantic's default-filling
+    by validating the input dict directly, not a Pydantic model_dump). Before
+    this story, `tier` was in LessonMetadata's `required` array — a payload
+    omitting it failed schema validation here while silently defaulting to
+    "T2" in Pydantic (a real 3-way contract drift, not just a hypothetical)."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    package_dict = {
+        **MINIMAL_PACKAGE_DICT,
+        "metadata": {k: v for k, v in MINIMAL_PACKAGE_DICT["metadata"].items() if k != "tier"},
+    }
+    assert "tier" not in package_dict["metadata"]
+    jsonschema.validate(instance=package_dict, schema=schema)
 
 
 # ---------------------------------------------------------------------------

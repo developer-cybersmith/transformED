@@ -32,8 +32,9 @@ Architecture constraints
 - MemorySaver for in-process checkpointing (PostgresSaver is BANNED per PRD §24)
 - All AI calls go through provider abstractions (never direct API calls here)
 - After each Phase A node: update lesson_jobs.progress and write checkpoint to DB.
-  Phase 1 economy nodes do NOT yet have an equivalent per-section checkpoint —
-  see docs/stories/2-1b-phase1-checkpoint-idempotency.md (deferred, tracked).
+  Phase 1 economy nodes also have a per-section checkpoint (read/write/increment
+  via _read_phase1_checkpoint / _write_phase1_checkpoint / _increment_phase1_progress,
+  called in all 6 economy nodes) — see docs/stories/2-1b-phase1-checkpoint-idempotency.md.
 - Cost ceiling checked by providers — RuntimeError raised if exceeded
 """
 

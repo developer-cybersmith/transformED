@@ -16,7 +16,9 @@ export interface LessonMetadata {
   total_segments: number;
   estimated_duration_mins: number;
   complexity_level: string;
-  tier: LessonTier;
+  // Optional — Pydantic defaults to "T2" (schemas/lesson.py), matched here
+  // and in lesson_package.schema.json's `required` array (Story 2-25).
+  tier?: LessonTier;
 }
 
 export interface SegmentComplexity {
@@ -104,10 +106,12 @@ export interface LessonPackage {
 export interface LessonRecord {
   lesson_id: string;
   user_id: string;
-  title: string;
+  // Nullable — None until package_builder names/stores the lesson (Story 2-25;
+  // matches schemas/lesson.py's `str | None` and router.py's actual behavior).
+  title: string | null;
   status: LessonStatus;
   content: LessonPackage | null;
-  source_file_path: string;
+  source_file_path: string | null;
   created_at: string;
   updated_at: string;
 }
