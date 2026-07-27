@@ -4,7 +4,7 @@ baseline_commit: 6fccd6aab98d76a3f4bcd2e554684a96f28a0e69
 
 # Story 2.14: Wire Dashboard & Library to the Real `GET /lessons` Endpoint
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -32,21 +32,21 @@ Per this project's own established convention (degrade gracefully, never fabrica
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 2, 6): Rewrite `dashboard.service.ts` and `library.service.ts` to call the real `GET /lessons` endpoint.
-  - [ ] 1.1 RED: tests asserting each service calls `api.get('content/lessons', ...)` and returns the real, unwrapped shape (no `ApiResponse`/`.success`/`.data` envelope — matching `onboarding.service.ts`/`upload.service.ts`'s existing real-service convention, not the mock's `createSuccessResponse` wrapper).
-  - [ ] 1.2 GREEN.
-- [ ] Task 2 (AC: 3, 7, 8): `RecentLessons.tsx` — drop progress bar/chapterTitle/thumbnail, add status label.
-  - [ ] 2.1 RED: rewrite `RecentLessons.test.tsx` against the real `LessonStatusResponse` shape; remove the now-inapplicable thumbnail-specific tests; add a status-label test.
-  - [ ] 2.2 GREEN.
-- [ ] Task 3 (AC: 4, 7, 8): `LibraryView.tsx`/`LibraryCard` — rename tabs, drop progress bar/thumbnail.
-  - [ ] 3.1 RED: rewrite `LibraryView.test.tsx` against the real shape and the new `Ready/Processing/Failed` tab set.
-  - [ ] 3.2 GREEN.
-- [ ] Task 4 (AC: 5, 7, 8): `ContinueLearningCard.tsx` — real "latest ready lesson" shortcut, no fabricated ring.
-  - [ ] 4.1 RED: rewrite `ContinueLearningCard.test.tsx`; add a null-render test for no-ready-lesson.
-  - [ ] 4.2 GREEN.
-- [ ] Task 5 (AC: 6): `dashboard/page.tsx` and `library/page.tsx` — adjust to the new (unwrapped) service return shape while preserving the existing graceful failed-load messaging.
-  - [ ] 5.1 GREEN (no dedicated new test beyond the service-level failure tests from Task 1 and the existing page structure — these are Server Components not currently unit-tested individually, matching the codebase's existing convention for this file).
-- [ ] Task 6 (AC: 9): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1, 2, 6): Rewrite `dashboard.service.ts` and `library.service.ts` to call the real `GET /lessons` endpoint.
+  - [x] 1.1 RED: tests asserting each service calls `api.get('content/lessons', ...)` and returns the real, unwrapped shape (no `ApiResponse`/`.success`/`.data` envelope — matching `onboarding.service.ts`/`upload.service.ts`'s existing real-service convention, not the mock's `createSuccessResponse` wrapper).
+  - [x] 1.2 GREEN.
+- [x] Task 2 (AC: 3, 7, 8): `RecentLessons.tsx` — drop progress bar/chapterTitle/thumbnail, add status label.
+  - [x] 2.1 RED: rewrite `RecentLessons.test.tsx` against the real `LessonStatusResponse` shape; remove the now-inapplicable thumbnail-specific tests; add a status-label test.
+  - [x] 2.2 GREEN.
+- [x] Task 3 (AC: 4, 7, 8): `LibraryView.tsx`/`LibraryCard` — rename tabs, drop progress bar/thumbnail.
+  - [x] 3.1 RED: rewrite `LibraryView.test.tsx` against the real shape and the new `Ready/Processing/Failed` tab set.
+  - [x] 3.2 GREEN.
+- [x] Task 4 (AC: 5, 7, 8): `ContinueLearningCard.tsx` — real "latest ready lesson" shortcut, no fabricated ring.
+  - [x] 4.1 RED: rewrite `ContinueLearningCard.test.tsx`; add a null-render test for no-ready-lesson.
+  - [x] 4.2 GREEN.
+- [x] Task 5 (AC: 6): `dashboard/page.tsx` and `library/page.tsx` — adjust to the new (unwrapped) service return shape while preserving the existing graceful failed-load messaging.
+  - [x] 5.1 GREEN (no dedicated new test beyond the service-level failure tests from Task 1 and the existing page structure — these are Server Components not currently unit-tested individually, matching the codebase's existing convention for this file).
+- [x] Task 6 (AC: 9): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -86,7 +86,37 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`, matching ever
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-24 | Story created after live testing found generated lessons never appear on dashboard/library. Corrected a stale tracker assumption — the real `GET /lessons` backend endpoint already exists and works; the gap is purely frontend wiring. Scoped what's honestly achievable given several mock-only fields (thumbnail, duration, progress%, chapterTitle) have no real backend analog — decided with the user to wire `ContinueLearningCard` too, using a real "latest ready lesson" shortcut rather than deferring it or faking resume-progress. Branch `sprint2/s2-14-real-dashboard-library` off `sprint2-master`. | Dev 2 |
+| 2026-07-24 | Implemented all 6 tasks (RED→GREEN throughout). Rewrote both services to call the real `GET /lessons` endpoint (reusing `upload.service.ts`'s existing `LessonStatusResponse` type); rewrote `RecentLessons`/`LibraryView`+`LibraryCard`/`ContinueLearningCard` to render real data with graceful degradation (status labels instead of fabricated progress bars, no thumbnail `<img>`, `Ready/Processing/Failed` library tabs instead of the old viewing-progress-based tabs); updated `dashboard/page.tsx` and `library/page.tsx` for the new unwrapped, throwing service contract while preserving the existing graceful failed-load UI (also fixed a pre-existing `LibraryDataFetcher` test that predated this story and still exercised the old `ApiResponse` shape). Full suite 50 files / 448 tests passing, `tsc --noEmit` and `eslint` clean. Status → review. | Dev 2 |
 
 ## Dev Agent Record
 
-_Pending implementation._
+### Implementation Plan
+
+- **Task 1** — both services now `api.get<LessonStatusResponse[]>('content/lessons', { params: {...} })` directly, matching `onboarding.service.ts`/`upload.service.ts`'s real-service convention (no `ApiResponse` envelope). `dashboardService.getDashboard()` composes real lesson data with the still-mocked `learningPulse` (Dev 3's unrelated analytics domain) via `Promise.all`, preserving `DashboardPage`'s existing consumption shape as much as possible.
+- **Tasks 2-4** — each component's mock-only fields (`chapterTitle`, `durationSeconds`, `progressPercent`, `lastAccessed`, `thumbnailUrl`) were removed rather than backfilled with placeholder values, per this project's established degrade-gracefully-never-fabricate convention. `LibraryView`'s tabs renamed `All/In Progress/Completed/Processing` → `All/Ready/Processing/Failed` to honestly reflect the only status vocabulary that exists server-side (generation status, not per-user viewing progress).
+- **Task 5** — `dashboard/page.tsx`/`library/page.tsx` wrap the now-throwing real service calls in try/catch, assigning to a variable before any JSX is constructed (an `eslint` `react-hooks/error-boundaries` rule flagged an initial attempt at constructing JSX directly inside the `try` block in `library/page.tsx` — fixed by capturing the result first, matching `dashboard/page.tsx`'s pattern).
+- Found and fixed a pre-existing test file (`__tests__/app/library/page.test.tsx`) not listed in this story's original file survey — it exercised `LibraryDataFetcher` against the old `{success, data, message}` mock envelope; updated to the new plain-return/throw-on-failure contract.
+
+### Completion Notes
+
+- All 6 tasks complete, all ACs (1–9) satisfied.
+- Full `apps/web` test suite: 50 files, 448 tests, all passing (+12 net new/rewritten tests across this story's 7 touched test files, +2 from the pre-existing `library/page.test.tsx` fix).
+- `tsc --noEmit`: clean. `eslint` on all touched files: clean.
+- No backend changes — `list_lessons` was already correct and sufficient.
+- `mocks/data/lessons.ts`/`MockLesson` and `mocks/api/dashboard.ts`/`library.ts` were NOT deleted (still referenced by `learningPulse`'s mock and potentially other unrelated consumers) — only the 2 real services stopped depending on them for lesson data.
+
+### File List
+
+- `apps/web/src/services/dashboard.service.ts` (MODIFIED)
+- `apps/web/src/services/library.service.ts` (MODIFIED)
+- `apps/web/src/components/dashboard/sections/RecentLessons.tsx` (MODIFIED)
+- `apps/web/src/components/dashboard/sections/ContinueLearningCard.tsx` (MODIFIED)
+- `apps/web/src/components/library/LibraryView.tsx` (MODIFIED)
+- `apps/web/src/app/(dashboard)/dashboard/page.tsx` (MODIFIED)
+- `apps/web/src/app/(dashboard)/library/page.tsx` (MODIFIED)
+- `apps/web/src/__tests__/services/dashboard.service.test.ts` (NEW)
+- `apps/web/src/__tests__/services/library.service.test.ts` (NEW)
+- `apps/web/src/__tests__/components/dashboard/sections/RecentLessons.test.tsx` (MODIFIED — rewritten)
+- `apps/web/src/__tests__/components/dashboard/sections/ContinueLearningCard.test.tsx` (MODIFIED — rewritten)
+- `apps/web/src/__tests__/components/library/LibraryView.test.tsx` (MODIFIED — rewritten)
+- `apps/web/src/__tests__/app/library/page.test.tsx` (MODIFIED — updated to the new service contract; pre-existing, not in the original file survey)

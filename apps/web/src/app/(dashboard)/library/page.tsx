@@ -1,4 +1,4 @@
-import { libraryService } from "@/services/library.service";
+import { libraryService, type LibraryData } from "@/services/library.service";
 import { LibraryView } from "@/components/library/LibraryView";
 import { Suspense } from "react";
 
@@ -22,9 +22,14 @@ export default async function LibraryPage() {
 }
 
 export async function LibraryDataFetcher() {
-    const response = await libraryService.getLibrary();
+    let data: LibraryData | null = null;
+    try {
+        data = await libraryService.getLibrary();
+    } catch {
+        // Real API unavailable -- fall through to the graceful empty-state below.
+    }
 
-    if (!response.success || !response.data) {
+    if (!data) {
         return (
             <div className="flex min-h-[40vh] w-full flex-col items-center justify-center gap-2 text-center text-neutral-400">
                 <p>We couldn&apos;t load your library right now.</p>
@@ -32,5 +37,5 @@ export async function LibraryDataFetcher() {
         );
     }
 
-    return <LibraryView initialData={response.data} />;
+    return <LibraryView initialData={data} />;
 }

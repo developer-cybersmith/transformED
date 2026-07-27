@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ContinueLearningCard } from '@/components/dashboard/sections/ContinueLearningCard';
-import type { MockLesson } from '@/mocks/data/lessons';
+import type { LessonStatusResponse } from '@/services/upload.service';
 
 const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 
@@ -10,17 +10,14 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-const LESSON: MockLesson = {
-  id: 'les_1',
+const LESSON: LessonStatusResponse = {
+  lesson_id: 'les_1',
+  status: 'ready',
   title: 'SQL Injection Vectors',
-  chapterTitle: 'Chapter 3: Database Security',
-  durationSeconds: 1500,
-  status: 'in_progress',
-  progressPercent: 72,
-  lastAccessed: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
-  thumbnailUrl: 'https://images.unsplash.com/photo-real-thumbnail-1',
-  slides: [],
-  timeline: [],
+  error: null,
+  created_at: '2026-07-24T10:00:00Z',
+  completed_at: '2026-07-24T10:05:00Z',
+  content: null,
 };
 
 beforeEach(() => {
@@ -28,6 +25,11 @@ beforeEach(() => {
 });
 
 describe('ContinueLearningCard', () => {
+  it('renders nothing when there is no ready lesson', () => {
+    const { container } = render(<ContinueLearningCard lesson={null} />);
+    expect(container.textContent).toBe('');
+  });
+
   it('"View Path" navigates to /library', async () => {
     const user = userEvent.setup();
     render(<ContinueLearningCard lesson={LESSON} />);
@@ -37,10 +39,11 @@ describe('ContinueLearningCard', () => {
     expect(pushMock).toHaveBeenCalledWith('/library');
   });
 
-  it('shows a real relative time derived from lesson.lastAccessed, not a hardcoded string', () => {
+  it('shows a "Ready to continue" state instead of a fabricated progress percentage', () => {
     render(<ContinueLearningCard lesson={LESSON} />);
 
-    expect(screen.getByText(/Last opened 2 hours ago/)).not.toBeNull();
+    expect(screen.getByText('Ready to continue')).not.toBeNull();
+    expect(screen.queryByText(/%/)).toBeNull();
   });
 
   it('"Resume" navigates to the lesson without double-firing the card-level navigation', async () => {
@@ -51,5 +54,11 @@ describe('ContinueLearningCard', () => {
 
     expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith('/lesson/les_1');
+  });
+
+  it('falls back to "Untitled Lesson" when title is null', () => {
+    render(<ContinueLearningCard lesson={{ ...LESSON, title: null }} />);
+
+    expect(screen.getByText('Untitled Lesson')).not.toBeNull();
   });
 });

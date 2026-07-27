@@ -2,16 +2,16 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MockLesson } from "@/mocks/data/lessons";
-import { LibraryData } from "@/mocks/api/library";
-import { Play, CheckCircle2, Clock, AlertCircle, RefreshCw, LayoutGrid } from "lucide-react";
+import type { LessonStatusResponse } from "@/services/upload.service";
+import type { LibraryData } from "@/services/library.service";
+import { Play, CheckCircle2, AlertCircle, RefreshCw, LayoutGrid } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 interface LibraryViewProps {
     initialData: LibraryData;
 }
 
-type TabKey = 'all' | 'in_progress' | 'completed' | 'processing';
+type TabKey = 'all' | 'ready' | 'processing' | 'failed';
 
 export function LibraryView({ initialData }: LibraryViewProps) {
     const router = useRouter();
@@ -19,18 +19,17 @@ export function LibraryView({ initialData }: LibraryViewProps) {
 
     // Aggregate all lessons
     const allLessons = [
-        ...initialData.inProgress,
-        ...initialData.completed,
+        ...initialData.ready,
         ...initialData.processing,
-        ...initialData.failed
+        ...initialData.failed,
     ];
 
     // Filter Logic
-    const getFilteredLessons = (): MockLesson[] => {
+    const getFilteredLessons = (): LessonStatusResponse[] => {
         if (activeTab === 'all') return allLessons;
-        if (activeTab === 'in_progress') return initialData.inProgress;
-        if (activeTab === 'completed') return initialData.completed;
+        if (activeTab === 'ready') return initialData.ready;
         if (activeTab === 'processing') return initialData.processing;
+        if (activeTab === 'failed') return initialData.failed;
         return [];
     };
 
@@ -38,9 +37,9 @@ export function LibraryView({ initialData }: LibraryViewProps) {
 
     const tabs: { key: TabKey, label: string, count: number }[] = [
         { key: 'all', label: 'All Lessons', count: allLessons.length },
-        { key: 'in_progress', label: 'In Progress', count: initialData.inProgress.length },
-        { key: 'completed', label: 'Completed', count: initialData.completed.length },
-        { key: 'processing', label: 'Processing', count: initialData.processing.length }
+        { key: 'ready', label: 'Ready', count: initialData.ready.length },
+        { key: 'processing', label: 'Processing', count: initialData.processing.length },
+        { key: 'failed', label: 'Failed', count: initialData.failed.length },
     ];
 
     return (
@@ -75,9 +74,9 @@ export function LibraryView({ initialData }: LibraryViewProps) {
                 <AnimatePresence mode="popLayout">
                     {lessons.map((lesson, idx) => (
                         <motion.div
-                            key={lesson.id}
+                            key={lesson.lesson_id}
                             layout
-                            layoutId={lesson.id}
+                            layoutId={lesson.lesson_id}
                             initial={{ opacity: 0, y: 20 }}
                             animate={{
                                 opacity: 1,
@@ -94,7 +93,7 @@ export function LibraryView({ initialData }: LibraryViewProps) {
                         >
                             <LibraryCard
                                 lesson={lesson}
-                                onClick={() => router.push(`/lesson/${lesson.id}`)}
+                                onClick={() => router.push(`/lesson/${lesson.lesson_id}`)}
                             />
                         </motion.div>
                     ))}
@@ -114,30 +113,27 @@ export function LibraryView({ initialData }: LibraryViewProps) {
     );
 }
 
-function LibraryCard({ lesson, onClick }: { lesson: MockLesson, onClick: () => void }) {
-    const isProcessing = lesson.status === 'processing';
+function LibraryCard({ lesson, onClick }: { lesson: LessonStatusResponse, onClick: () => void }) {
+    const isProcessing = lesson.status === 'queued' || lesson.status === 'running';
     const isFailed = lesson.status === 'failed';
-    const isCompleted = lesson.status === 'completed';
+    const isReady = lesson.status === 'ready';
 
     return (
         <div
-            onClick={!isProcessing && !isFailed ? onClick : undefined}
+            onClick={isReady ? onClick : undefined}
             className={`group relative w-full bg-white rounded-3xl border border-neutral-100 shadow-sm transition-[box-shadow,transform] duration-300 flex flex-col overflow-hidden ${isProcessing || isFailed ? 'opacity-80 cursor-default' : 'cursor-pointer hover:shadow-xl hover:-translate-y-1'
                 }`}
         >
-            {/* Thumbnail Header */}
-            <div className="relative w-full h-44 overflow-hidden bg-neutral-100 shrink-0">
-                {!isProcessing && !isFailed && (
-                    <img
-                        src={lesson.thumbnailUrl}
-                        alt={lesson.title}
-                        onError={(e) => { e.currentTarget.style.display = "none"; }}
-                        className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-out"
-                    />
+            {/* Status header — no thumbnail exists in the real pipeline, so this is a
+                decorative status panel instead of a stock/broken image. */}
+            <div className="relative w-full h-32 overflow-hidden bg-neutral-100 shrink-0 flex items-center justify-center">
+                {isProcessing && <RefreshCw className="w-8 h-8 text-neutral-300 animate-spin" />}
+                {isReady && (
+                    <div className="w-14 h-14 rounded-full bg-white/60 backdrop-blur-md flex items-center justify-center text-neutral-400 border border-neutral-200 shadow-sm group-hover:bg-[var(--accent-primary)] group-hover:text-white group-hover:border-transparent transition-colors">
+                        <Play className="w-6 h-6 fill-current ml-1" />
+                    </div>
                 )}
-
-                {/* Status Overlays */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-black/0 pointer-events-none" />
+                {isFailed && <AlertCircle className="w-8 h-8 text-red-300" />}
 
                 <div className="absolute top-4 right-4 flex items-center gap-2">
                     {isProcessing && (
@@ -145,9 +141,9 @@ function LibraryCard({ lesson, onClick }: { lesson: MockLesson, onClick: () => v
                             <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Processing
                         </div>
                     )}
-                    {isCompleted && (
+                    {isReady && (
                         <div className="px-3 py-1.5 rounded-full bg-emerald-500/90 text-white backdrop-blur flex items-center gap-1.5 text-xs font-medium shadow-sm">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Completed
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Ready
                         </div>
                     )}
                     {isFailed && (
@@ -156,54 +152,24 @@ function LibraryCard({ lesson, onClick }: { lesson: MockLesson, onClick: () => v
                         </div>
                     )}
                 </div>
-
-                {!isProcessing && !isFailed && (
-                    <div className="absolute inset-0 z-20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                        <div className="w-14 h-14 rounded-full bg-white/30 backdrop-blur-md flex items-center justify-center text-white border border-white/40 shadow-xl">
-                            <Play className="w-6 h-6 fill-current ml-1" />
-                        </div>
-                    </div>
-                )}
             </div>
 
             {/* Content Body */}
             <div className="p-6 flex flex-col flex-1">
-                <div className="text-xs font-bold text-[var(--accent-primary)] mb-2 uppercase tracking-wide">
-                    {lesson.chapterTitle}
-                </div>
                 <h3 className="font-serif text-lg font-semibold text-neutral-900 leading-snug mb-4 line-clamp-2">
-                    {lesson.title}
+                    {lesson.title ?? "Untitled Lesson"}
                 </h3>
 
                 <div className="mt-auto">
-                    {/* Progress representation */}
-                    {!isProcessing && !isFailed && (
-                        <>
-                            <div className="relative w-full h-1.5 bg-neutral-100 rounded-full overflow-hidden mb-3">
-                                <motion.div
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${lesson.progressPercent}%` }}
-                                    transition={{ duration: 1, ease: "easeOut" }}
-                                    className={`absolute top-0 left-0 h-full rounded-full ${isCompleted ? 'bg-emerald-500' : 'bg-[var(--accent-primary)]'}`}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between text-xs font-medium text-neutral-400">
-                                <span>{lesson.progressPercent}% finished</span>
-                                <span className="flex items-center gap-1.5">
-                                    <Clock className="w-3.5 h-3.5" />
-                                    {Math.ceil(lesson.durationSeconds / 60)}m
-                                </span>
-                            </div>
-                        </>
+                    {isReady && (
+                        <div className="text-sm font-medium text-emerald-600">Ready to watch</div>
                     )}
-
                     {isProcessing && (
                         <div className="flex items-center gap-2 text-sm font-medium text-[var(--accent-primary)]">
                             <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] animate-pulse" />
                             Synthesizing content...
                         </div>
                     )}
-
                     {isFailed && (
                         <div className="text-sm font-medium text-red-500">
                             Generation failed. Try uploading again.

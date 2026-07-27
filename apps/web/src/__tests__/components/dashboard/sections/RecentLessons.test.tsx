@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RecentLessons } from '@/components/dashboard/sections/RecentLessons';
-import type { MockLesson } from '@/mocks/data/lessons';
+import type { LessonStatusResponse } from '@/services/upload.service';
 
 const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 
@@ -10,26 +10,31 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-const LESSONS: MockLesson[] = [
-  {
-    id: 'les_1',
+function lesson(overrides: Partial<LessonStatusResponse>): LessonStatusResponse {
+  return {
+    lesson_id: 'les_1',
+    status: 'ready',
     title: 'SQL Injection Vectors',
-    chapterTitle: 'Chapter 3',
-    durationSeconds: 1500,
-    status: 'in_progress',
-    progressPercent: 72,
-    lastAccessed: new Date().toISOString(),
-    thumbnailUrl: 'https://images.unsplash.com/photo-real-thumbnail-1',
-    slides: [],
-    timeline: [],
-  },
-];
+    error: null,
+    created_at: '2026-07-24T10:00:00Z',
+    completed_at: '2026-07-24T10:05:00Z',
+    content: null,
+    ...overrides,
+  };
+}
+
+const LESSONS: LessonStatusResponse[] = [lesson({})];
 
 beforeEach(() => {
   pushMock.mockReset();
 });
 
 describe('RecentLessons', () => {
+  it('renders nothing when there are no lessons', () => {
+    const { container } = render(<RecentLessons lessons={[]} />);
+    expect(container.textContent).toBe('');
+  });
+
   it('"View All" navigates to /library', async () => {
     const user = userEvent.setup();
     render(<RecentLessons lessons={LESSONS} />);
@@ -39,19 +44,27 @@ describe('RecentLessons', () => {
     expect(pushMock).toHaveBeenCalledWith('/library');
   });
 
-  it('renders lesson.thumbnailUrl from the data layer instead of a locally-computed stock image', () => {
-    const { container } = render(<RecentLessons lessons={LESSONS} />);
+  it('clicking a lesson card navigates to /lesson/{lesson_id}', async () => {
+    const user = userEvent.setup();
+    render(<RecentLessons lessons={LESSONS} />);
 
-    const img = container.querySelector('img');
-    expect(img?.getAttribute('src')).toBe(LESSONS[0].thumbnailUrl);
+    await user.click(screen.getByText('SQL Injection Vectors'));
+
+    expect(pushMock).toHaveBeenCalledWith('/lesson/les_1');
   });
 
-  it('hides the thumbnail image instead of showing a broken-image icon when it fails to load', () => {
-    const { container } = render(<RecentLessons lessons={LESSONS} />);
+  it('shows a real status label derived from lesson.status, not a fabricated progress percentage', () => {
+    render(<RecentLessons lessons={[lesson({ status: 'ready' }), lesson({ lesson_id: 'les_2', status: 'running' }), lesson({ lesson_id: 'les_3', status: 'failed' })]} />);
 
-    const img = container.querySelector('img')!;
-    img.dispatchEvent(new Event('error'));
+    expect(screen.getByText('Ready')).not.toBeNull();
+    expect(screen.getByText('Processing')).not.toBeNull();
+    expect(screen.getByText('Failed')).not.toBeNull();
+    expect(screen.queryByText(/%/)).toBeNull();
+  });
 
-    expect(img.style.display).toBe('none');
+  it('falls back to "Untitled Lesson" when title is null', () => {
+    render(<RecentLessons lessons={[lesson({ title: null })]} />);
+
+    expect(screen.getByText('Untitled Lesson')).not.toBeNull();
   });
 });
