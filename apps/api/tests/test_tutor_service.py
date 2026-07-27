@@ -45,18 +45,40 @@ _HISTORY_KEY = "session:sess-1:ces_history"
 _EXPECTED_CES = compute_ces(_parse_signal(_VALID_PAYLOAD))
 
 
+def _settings_mock(threshold: float = 0.5) -> MagicMock:
+    """MagicMock settings carrying the five §11 CES weights (config.py defaults).
+
+    compute_ces() reads settings.ces_weight_* at call time; without these a bare MagicMock leaks into
+    weight_sum and raises TypeError. Matching the config defaults makes compute_ces() on the mock equal
+    the module-level _EXPECTED_CES computed against real settings.
+    """
+    s = MagicMock()
+    s.ces_threshold = threshold
+    s.ces_weight_quiz = 0.35
+    s.ces_weight_teachback = 0.25
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
+    return s
+
+
 def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float = 0.5):
     """Patch the three lazy-imported dependencies and return (mock_redis, mock_dispatch)."""
     mock_redis = AsyncMock()
     mock_redis.lrange = AsyncMock(return_value=lrange_vals)
     mock_redis.exists = AsyncMock(return_value=exists)
+    # No cached lesson_package by default → intervention selection degrades to {} (cache-miss path).
+    # Without this, the 4-8 package fetch would json.loads() a bare AsyncMock and raise.
+    mock_redis.get = AsyncMock(return_value=None)
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = threshold
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(threshold))
 
-    mock_dispatch = AsyncMock()
+    # dispatch_event returns the FSM result dict. Default to INTERVENING with no message so a fired
+    # trigger doesn't spuriously enter the 4-8 delivery path (result.get("intervention_message") would
+    # otherwise be a truthy MagicMock, driving manager.send against the real manager). Delivery is
+    # covered explicitly by the _intervention_redis tests below.
+    mock_dispatch = AsyncMock(return_value={"current_state": "INTERVENING", "intervention_message": None})
     mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
 
     return mock_redis, mock_dispatch
@@ -286,7 +308,7 @@ async def test_only_two_most_recent_considered(mocker) -> None:
 
 @pytest.mark.unit
 async def test_cesresult_fields(mocker) -> None:
-    """AC11: CesResult carries the correct session_id and ces (stub 0.5)."""
+    """AC11: CesResult carries the correct session_id and the real §11 weighted CES."""
     _setup(mocker, lrange_vals=["0.5"])
 
     from app.modules.tutor.service import process_attention_signal
@@ -295,8 +317,8 @@ async def test_cesresult_fields(mocker) -> None:
 
     assert isinstance(result, CesResult)
     assert result.session_id == "sess-1"
-    assert result.ces == compute_ces(_parse_signal(_VALID_PAYLOAD))
-    assert result.ces == 0.5
+    # Pinned to the real formula (0.5 stub is gone); _EXPECTED_CES ≈ 75.733 for _VALID_PAYLOAD.
+    assert result.ces == _EXPECTED_CES
 
 
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────
@@ -343,9 +365,7 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
         ]
     }
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     mock_dispatch = _patch_dispatch(mocker, "focus up")
 
     mock_manager = MagicMock()
@@ -375,9 +395,7 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
 async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
     """Cache miss → no message → tutor_intervene skipped; no crash; CesResult still returned."""
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(None))  # no cached package
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     _patch_dispatch(mocker, None)  # FSM returns no message when no package supplied
 
     mock_manager = MagicMock()
