@@ -7,12 +7,17 @@ vi.mock('swr', () => ({
   default: useSWRMock,
 }));
 
-const { getLibraryMock } = vi.hoisted(() => ({
+const { getLibraryMock, useAuthMock } = vi.hoisted(() => ({
   getLibraryMock: vi.fn(),
+  useAuthMock: vi.fn(),
 }));
 
 vi.mock('@/services/library.service', () => ({
   libraryService: { getLibrary: getLibraryMock },
+}));
+
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: useAuthMock,
 }));
 
 import { useLibrary } from '@/hooks/useLibrary';
@@ -20,6 +25,8 @@ import { useLibrary } from '@/hooks/useLibrary';
 beforeEach(() => {
   useSWRMock.mockReset();
   getLibraryMock.mockReset();
+  useAuthMock.mockReset();
+  useAuthMock.mockReturnValue({ user: { id: 'user_1', email: 'a@b.com' } });
   useSWRMock.mockReturnValue({ data: undefined, error: undefined, isLoading: true });
 });
 
@@ -32,6 +39,28 @@ describe('useLibrary', () => {
       expect.any(Function),
       expect.objectContaining({ shouldRetryOnError: false })
     );
+  });
+
+  it('scopes the SWR cache key by the current user id — a shared browser tab must not leak one account\'s library into another\'s', () => {
+    renderHook(() => useLibrary());
+
+    expect(useSWRMock).toHaveBeenCalledWith('library:user_1', expect.any(Function), expect.anything());
+  });
+
+  it('uses a different cache key for a different user', () => {
+    useAuthMock.mockReturnValue({ user: { id: 'user_2', email: 'c@d.com' } });
+
+    renderHook(() => useLibrary());
+
+    expect(useSWRMock).toHaveBeenCalledWith('library:user_2', expect.any(Function), expect.anything());
+  });
+
+  it('does not fetch at all when there is no authenticated user yet', () => {
+    useAuthMock.mockReturnValue({ user: null });
+
+    renderHook(() => useLibrary());
+
+    expect(useSWRMock).toHaveBeenCalledWith(null, expect.any(Function), expect.anything());
   });
 
   it('returns the fetched library data and stops loading', async () => {

@@ -81,11 +81,36 @@ Vitest. For the two new hooks, mock `swr`'s default export directly (`vi.mock('s
 - [Source: apps/web/src/hooks/useSessionReport.ts, apps/web/src/hooks/useLesson.ts] — the established client-side-fetch precedent this story now also follows
 - [Source: docs/stories/2-14-real-dashboard-library.md] — the story this fixes a regression in
 
+## Senior Developer Review (AI)
+
+**Date:** 2026-07-27
+**Outcome:** Changes Requested → all actionable findings resolved this session.
+**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs) — per CLAUDE.md's BMAD Code Review Gate. Run *after* this story was already merged, given the user was actively blocked live-testing — a deliberate, explicit sequencing deviation from the usual review-before-merge order, not an omission.
+
+### Findings
+
+| # | Severity | Source | Finding | Resolution |
+|---|----------|--------|---------|------------|
+| 1 | Medium (corroborated 2/3) | Blind Hunter + Edge Case Hunter | `dashboard/page.tsx` destructured only `{data, error}` from `useDashboard()`, never `isLoading` — unlike the pre-story server-rendered version (which never painted until data resolved), the new client-fetched version briefly renders every lesson-dependent section as if the account had no lessons at all, indistinguishable from a genuinely empty state | Fixed — added an explicit "Loading your dashboard..." state gating the lesson-dependent sections, mirroring `library/page.tsx`'s existing `isLoading` handling; new dedicated `dashboard/page.test.tsx` (none existed before) |
+| 2 | Medium (confirmed mechanism by Edge Case Hunter with concrete evidence) | Edge Case Hunter | `useDashboard`/`useLibrary` used bare string SWR keys (`'dashboard'`, `'library'`) with no per-user scoping — no `SWRConfig` provider exists anywhere in the app, so SWR falls back to one shared global in-memory cache per tab. Currently masked only by `AuthContext.tsx`'s `logout()` doing a hard `window.location.href` reload (which incidentally wipes the cache) — not a deliberate safeguard. A future refactor to `router.push`-based logout (plausible, unprotected by any test) would let a second user briefly see the first user's cached dashboard/library data in the same tab | Fixed — both hooks now key on `` `dashboard:${user.id}` ``/`` `library:${user.id}` `` via `useAuth()`, and use a `null` key (SWR's "don't fetch yet" signal) when there's no authenticated user; new regression tests for both the per-user key and the different-user-different-key case |
+| 3 | High (Blind Hunter only, not corroborated) | Blind Hunter | Auth-hydration race — the fetch could fire before the Supabase session is hydrated client-side | Not corroborated by either repo-access reviewer; Edge Case Hunter's own investigation found no evidence of this and confirmed `middleware.ts` already gates these routes on a valid server-verified session before the page ever loads, making the client-side session read effectively always-already-warm. Not actioned. |
+| 4 | Medium (Blind Hunter only, not corroborated) | Blind Hunter | Wrapping 5 already-`"use client"` section components inside a newly-`"use client"` parent flagged as a "risky App Router pattern" | Refuted — Edge Case Hunter directly verified `HeroSection`/`ReassessmentPrompt`/`ContinueLearningCard`/`RecentLessons` were already `'use client'` before this story; nesting client components inside a client parent is normal and has no metadata/SSR loss (confirmed: `metadata` exports live in sibling `layout.tsx` files, untouched). Not actioned. |
+| 5 | Low (Blind Hunter only, not corroborated) | Blind Hunter | "Successful-but-falsy fetch result silently renders nothing" in `library/page.tsx` | Not reachable given `libraryService.getLibrary()`'s actual implementation, which always resolves to a well-formed object on success, never a falsy value. Not actioned. |
+
+### Non-issues independently re-verified
+
+- Root-cause diagnosis (`api.ts`'s `typeof window !== 'undefined'` gate) confirmed accurate by all 3 reviewers reading the real file.
+- `middleware.ts` route protection confirmed independent of Server/Client Component status — both routes remain protected exactly as before.
+- `error.tsx` boundary confirmed to intentionally become unreachable for these two failure paths now (errors surface as banners/messages instead) — the correct, intended outcome, not an orphaned dead code path with side effects.
+- No other file references the removed `LibraryDataFetcher` export; the rewrite is complete, not partial.
+- All 6 ACs independently re-verified satisfied by the Acceptance Auditor, including an independent `vitest`/`tsc`/`eslint` pass.
+
 ## Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
-| 2026-07-27 | Story created immediately after Story 2-14 was found broken in live testing (401 on both pages). Root-caused to Server Components being unable to use `api.ts`'s browser-only auth interceptor. Branch `sprint2/s2-15-fix-dashboard-library-auth` off `sprint2-master`. Implemented same-session given the user was actively blocked: both pages converted to Client Components using two new SWR-based hooks (`useDashboard`, `useLibrary`), matching the established `useSessionReport`/`useLesson` pattern. Full suite 52 files / 462 tests passing, `tsc --noEmit` and `eslint` clean. | Dev 2 |
+| 2026-07-27 | Story created immediately after Story 2-14 was found broken in live testing (401 on both pages). Root-caused to Server Components being unable to use `api.ts`'s browser-only auth interceptor. Branch `sprint2/s2-15-fix-dashboard-library-auth` off `sprint2-master`. Implemented same-session given the user was actively blocked: both pages converted to Client Components using two new SWR-based hooks (`useDashboard`, `useLibrary`), matching the established `useSessionReport`/`useLesson` pattern. Full suite 52 files / 462 tests passing, `tsc --noEmit` and `eslint` clean. Merged immediately (before review) to unblock live testing. | Dev 2 |
+| 2026-07-27 | 3-agent code review round (run post-merge, deliberately). 2 Medium findings corroborated by 2 sources each — both fixed (dashboard loading state; per-user SWR cache key scoping). 3 single-sourced Blind Hunter findings not corroborated by repo-access reviewers — not actioned. Full suite now 53 files / 471 tests, `tsc`/`eslint` clean. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -104,10 +129,11 @@ Vitest. For the two new hooks, mock `swr`'s default export directly (`vi.mock('s
 
 ### File List
 
-- `apps/web/src/hooks/useDashboard.ts` (NEW)
-- `apps/web/src/hooks/useLibrary.ts` (NEW)
-- `apps/web/src/app/(dashboard)/dashboard/page.tsx` (MODIFIED — Server → Client Component)
+- `apps/web/src/hooks/useDashboard.ts` (NEW; review round: user-scoped SWR key)
+- `apps/web/src/hooks/useLibrary.ts` (NEW; review round: user-scoped SWR key)
+- `apps/web/src/app/(dashboard)/dashboard/page.tsx` (MODIFIED — Server → Client Component; review round: added loading state)
 - `apps/web/src/app/(dashboard)/library/page.tsx` (MODIFIED — Server → Client Component, removed `Suspense`/`LibraryDataFetcher`)
-- `apps/web/src/__tests__/hooks/useDashboard.test.ts` (NEW)
-- `apps/web/src/__tests__/hooks/useLibrary.test.ts` (NEW)
+- `apps/web/src/__tests__/hooks/useDashboard.test.ts` (NEW; review round: added user-scoping tests)
+- `apps/web/src/__tests__/hooks/useLibrary.test.ts` (NEW; review round: added user-scoping tests)
 - `apps/web/src/__tests__/app/library/page.test.tsx` (MODIFIED — rewritten against the new hook-based page)
+- `apps/web/src/__tests__/app/dashboard/page.test.tsx` (NEW — review round; no dashboard page test existed before this story)
