@@ -67,6 +67,7 @@ export function AudioTimeline() {
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const seekRequestMs = usePlayerStore((s) => s.seekRequestMs);
   const playbackRate = usePlayerStore((s) => s.playbackRate);
+  const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
   // Empty string is a real, reachable value now — a per-asset server-side
@@ -81,6 +82,11 @@ export function AudioTimeline() {
   // after. The <audio> element remounts on the new segment_id key, so without
   // this dependency the new element would never receive a .play() call and
   // playback would silently freeze despite the UI still showing "playing".
+  // Also re-runs on audioRetryCount (S2-26 review fix): retryAudio() remounts
+  // the <audio> element via the same key mechanism, but status/currentSegmentIndex
+  // don't change on a same-segment retry -- without this dependency, the fresh
+  // element would sit loaded-and-paused forever with no play() call, which is
+  // worse than the original stall (no error, no progress, no recovery).
   useEffect(() => {
     if (!hasAudio) {
       // Nothing will ever load, so 'ended'/'timeupdate' can never fire for this
@@ -96,7 +102,7 @@ export function AudioTimeline() {
     } else {
       audio.pause();
     }
-  }, [status, currentSegmentIndex, hasAudio]);
+  }, [status, currentSegmentIndex, hasAudio, audioRetryCount]);
 
   // Apply pending seek from the store then clear it
   useEffect(() => {
@@ -123,6 +129,25 @@ export function AudioTimeline() {
 
   function handleTimeUpdate(e: React.SyntheticEvent<HTMLAudioElement>) {
     processTimeUpdate(e.currentTarget.currentTime * 1000);
+  }
+
+  function handleWaiting() {
+    usePlayerStore.getState().setBuffering(true);
+  }
+
+  function handlePlaying() {
+    usePlayerStore.getState().setBuffering(false);
+  }
+
+  function handleCanPlay() {
+    usePlayerStore.getState().setBuffering(false);
+  }
+
+  function handleError() {
+    // Only a real mid-load/decode failure on a segment that DID have a src —
+    // the hasAudio === false degrade path never renders a src attribute at
+    // all, so this can't double-fire alongside that fallback.
+    usePlayerStore.getState().setAudioError(true);
   }
 
   function handleEnded() {
@@ -167,15 +192,21 @@ export function AudioTimeline() {
   if (!segment) return null;
 
   return (
-    // key={segment.segment_id} — forces remount on segment change, resetting src + currentTime
+    // key includes audioRetryCount — forces remount on segment change AND on
+    // retryAudio(), resetting src + currentTime so a failed load is re-attempted
+    // from scratch rather than relying on the browser's own retry behavior.
     <audio
-      key={segment.segment_id}
+      key={`${segment.segment_id}-${audioRetryCount}`}
       ref={audioRef}
       src={hasAudio ? segment.narration.audio_url : undefined}
       preload="metadata"
       onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}
       onEnded={handleEnded}
+      onWaiting={handleWaiting}
+      onPlaying={handlePlaying}
+      onCanPlay={handleCanPlay}
+      onError={handleError}
       aria-label={`Narration: ${segment.title}`}
       className="sr-only"
     />

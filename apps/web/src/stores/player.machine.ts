@@ -66,6 +66,12 @@ export interface PlayerStore {
    *  Lets non-component code (AudioTimeline's plain functions) send a
    *  LocalControlOut without holding a direct reference to the socket. */
   wsSendControl: ((msg: LocalControlOut) => void) | null;
+  /** True while the current segment's <audio> element is stalled/buffering. */
+  isBuffering: boolean;
+  /** True after the current segment's <audio> element fires a load/decode error. */
+  audioError: boolean;
+  /** Incremented by retryAudio(); included in AudioTimeline's <audio> key to force a remount. */
+  audioRetryCount: number;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
@@ -93,6 +99,10 @@ export interface PlayerStore {
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
   setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
+  setBuffering: (b: boolean) => void;
+  setAudioError: (b: boolean) => void;
+  /** Clears audioError and increments audioRetryCount to force AudioTimeline's <audio> to remount. */
+  retryAudio: () => void;
   updateAudioPosition: (ms: number) => void;
   /** Write current segment/position/quiz progress to localStorage, keyed by lesson_id. No-op with no lesson loaded. */
   saveProgress: () => void;
@@ -118,6 +128,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   tutorState: 'IDLE',
   quizFiredForSegment: new Set<string>(),
   wsSendControl: null,
+  isBuffering: false,
+  audioError: false,
+  audioRetryCount: 0,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -135,6 +148,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       playbackRate: 1.0,
       tutorState: 'IDLE',
       quizFiredForSegment: new Set<string>(),
+      isBuffering: false,
+      audioError: false,
+      audioRetryCount: 0,
     });
   },
 
@@ -196,6 +212,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       // Keep previous audioDurationMs until loadedmetadata fires on the new element —
       // avoids a flash where the seek bar is disabled between segments.
       seekRequestMs: null,
+      // A stall/error on the previous segment must not leak into the next one.
+      isBuffering: false,
+      audioError: false,
+      audioRetryCount: 0,
     });
     get().saveProgress();
   },
@@ -262,6 +282,20 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   setWsSendControl: (fn) => {
     set({ wsSendControl: fn });
+  },
+
+  setBuffering: (b) => {
+    set({ isBuffering: b });
+  },
+
+  setAudioError: (b) => {
+    set({ audioError: b });
+  },
+
+  retryAudio: () => {
+    // isBuffering reset too — otherwise a stale true from a stall-then-error
+    // sequence on the old element survives into the fresh one's initial render.
+    set((state) => ({ audioError: false, isBuffering: false, audioRetryCount: state.audioRetryCount + 1 }));
   },
 
   updateAudioPosition: (ms) => {
