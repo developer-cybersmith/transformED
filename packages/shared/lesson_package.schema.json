@@ -56,8 +56,7 @@
         "subject",
         "total_segments",
         "estimated_duration_mins",
-        "complexity_level",
-        "tier"
+        "complexity_level"
       ],
       "additionalProperties": false,
       "properties": {

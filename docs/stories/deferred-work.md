@@ -2,6 +2,12 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story-2-25 (2026-07-27, Sprint 2 audit gap-fix)
+
+- **Orphaned `lesson_jobs` row with a null `lessons` join in cost/job aggregation** — flagged by both the Blind Hunter and Edge Case Hunter layers as a theoretical financial-correctness gap (`get_cost_report`/`_job_row_to_summary` silently drop/blank a row whose embedded `lessons` join comes back null). Deferred — `lesson_jobs.lesson_id` is `NOT NULL REFERENCES lessons(lesson_id) ON DELETE CASCADE` (`supabase/migrations/20260611000000_initial_schema.sql:111`) and `get_supabase()` uses the service-role client (bypasses RLS), so a `lesson_jobs` row can never exist without its parent `lessons` row under normal operation — the schema itself makes this unreachable. [`apps/api/app/modules/admin/router.py`]
+- **`_job_row_to_summary`'s bracket-access on `job_id`/`lesson_id`/`status`/`created_at`** — could `KeyError` if a future `select("*")` shape ever omitted a `NOT NULL` column. Deferred — same schema-guarantee reasoning as above; hardening against a schema violation that would itself indicate a bigger bug elsewhere is low value. [`apps/api/app/modules/admin/router.py:71-83`]
+- **`lesson.ts`'s `LessonRecord` nullability fix has no live frontend consumer to test end-to-end against** — flagged by Edge Case Hunter. Deferred — genuinely can't be verified until Dev2 wires the real endpoint; explicitly Dev2's future scope per Story 2-25's own Dev Notes. [`packages/shared/types/lesson.ts`]
+
 ## Deferred from: code review of story-3-28 (2026-07-20, tier-aware quiz count)
 
 - **D1 — Prompt injection via untrusted `body` in user message role** — `_UNTRUSTED_CONTENT_GUARD` is the documented mitigation; full input sanitisation / output moderation is a cross-cutting effort noted in graph.py:1507–1520 as flagged to Dev 4/frontend for output-encoding review. All 6 economy nodes share this pattern. [`apps/api/app/modules/content/pipeline/graph.py:1895`]
