@@ -276,7 +276,7 @@ async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> 
         # Lazy import — tutor module depends on core, not the other way round
         from app.modules.tutor.service import process_attention_signal
 
-        result = await process_attention_signal(session_id=session_id, signal=payload)
+        await process_attention_signal(session_id=session_id, signal=payload)
         await manager.send(
             session_id,
             # PRD §18: never expose raw clinical/CES scores to the student client — ack only.
