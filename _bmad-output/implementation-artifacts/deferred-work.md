@@ -1,8 +1,29 @@
 # Deferred Work
 
-Items deferred from code review — not urgent for current sprint but should be tracked.
+## Deferred from: code review of 4-20-learner-qa-phase-length (2026-07-23)
 
----
+- **IDOR: `session_id` in Redis keys has no ownership check beyond JWT auth** [`apps/api/app/modules/tutor/service.py`] — all new deadline-path Redis calls (`get`, `delete`) use `session_id` as the sole key discriminator. JWT auth at the WebSocket boundary is the intended guard; no change needed in this story. Broader Redis key ownership pattern decision required before adding ownership checks system-wide.
+- **Forced state transition via Redis key injection (`quiz_deadline_at = 0`)** [`apps/api/app/modules/tutor/service.py`] — pre-existing Redis trust model; same exposure exists for all `session:*` keys throughout the system. Bounds check on `qa_phase_seconds` (see Patch P1) partially mitigates the deadline-write vector; the deadline-read vector (injecting a past timestamp) remains a pre-existing Redis-layer trust assumption.
+- **TOCTOU cross-function race between `advance_tutor_state` and `process_attention_signal`** — delete-before-dispatch (`redis.delete` returning 0 skips dispatch) is the intended atomic guard. Two-command sequences (get + delete) cannot be made fully atomic without a Redis WATCH/MULTI/EXEC transaction; the current guard is correct and sufficient for the expected concurrency level.
+- **DoS via attention signal flooding deadline check** — every `process_attention_signal` call (~5 s cadence) now performs additional Redis reads when state is QUIZZING. No new unauthenticated surface vs. pre-existing CES signal pattern. Rate-limiting is a broader infra concern.
+- **Log injection via unescaped `session_id`** [`apps/api/app/modules/tutor/service.py`, `state_machine/graph.py`] — JWT validates session_id at auth boundary; pre-existing log pattern throughout service. A global session_id sanitizer belongs in a hardening sprint.
+- **`quiz_deadline_at` 24h TTL does not couple to actual session lifetime** — stale key surviving after session end could affect a future session reusing the same `session_id`. Session_id reuse/recycling is a broader architecture decision; session IDs are currently JWT sub-derived and not recycled in the current design.
+- **13 pre-existing `test_tutor_service.py` failures** — `_setup` helper uses `MagicMock()` for `ces_weight_*` settings; Python 3.13 raises `TypeError: '<=' not supported between MagicMock and int` inside `compute_ces`. Pre-dates Story 4-20. Requires fixing `_setup` to use numeric ces_weight values (same pattern as Story 4-20's `_attention_deadline_setup`).
+- **`baseline_commit` SHA retroactively set inside implementation commit** [`docs/stories/4-20-learner-qa-phase-length.md`] — process irregularity; the SHA was finalized in the `feat` commit rather than the story-creation commit. Cannot be retroactively fixed; document in PR description.
+- **Timed-out quiz (`quiz_accuracy=None`) indistinguishable from completed quiz in data layer** — `quiz_complete` is dispatched identically on timeout and on genuine completion; no flag differentiates them in session records or analytics. Deliberate MVP trade-off per story Context section. Future Learner DNA or session report story should add a `timed_out: bool` payload field to the `quiz_complete` event.
+
+## Deferred from: code review of 4-21-learner-ws-tier (2026-07-23)
+
+- **Repeated `session_start` re-overrides tier mid-session (no idempotency guard)** [`apps/api/app/core/websocket.py`] — a client that sends `session_start` twice re-writes the tier keys and re-dispatches the FSM event each time. A second `session_start` carrying a different tier mid-session would change `qa_phase_seconds` underneath an in-progress Q&A phase (the FSM itself rejects the IDLE→TEACHING re-transition, but the tier keys are overwritten first). Low severity; a guard needs a product decision on whether mid-session tier changes are ever legitimate.
+- **No observability when a present-but-invalid tier is rejected** [`apps/api/app/core/websocket.py:320`] — the `if isinstance(tier, str) and tier in _VALID_TIERS` guard falls through silently on a near-miss value (`"t1"`, `"T1 "`), so a malformed client tier is indistinguishable from "no tier sent." A targeted `logger.debug` on the reject-with-non-None-value path would aid debugging without adding noise to the common no-tier case. Low priority.
+
+## Deferred from: code review of 4-19-learner-tier-runtime (2026-07-21)
+
+- **No test for `raw_pkg` returned as bytes** [`apps/api/app/core/websocket.py:241`] — `json.loads()` accepts bytes in CPython; no correctness bug. The rest of the codebase (see `_restore_or_init_session`) handles bytes explicitly; consistency gap only. Low priority.
+- **No explicit test for malformed JSON lesson package payload** [`apps/api/app/core/websocket.py:241`] — `json.JSONDecodeError` is correctly caught by `except Exception`; the exception path is already covered generically by `test_g7`. A dedicated corrupt-payload test would confirm the breadth of the catch is intentional, not accidental.
+- **`baseline_commit` in story frontmatter updated inside the impl commit** [`docs/stories/4-19-learner-tier-runtime.md`] — process irregularity; the value was corrected from `a35ede1` to `b390788` in the implementation commit rather than at story-creation time. Cannot be retroactively fixed; document in PR description.
+- **Learner tier + session_id logged at INFO level** [`apps/api/app/core/websocket.py:250`] — potential DPDP Act 2023 concern (tier+session_id linkable to user identity in log aggregation). Pre-existing: session_id is already logged at INFO throughout the same file. Broader PII-in-logs policy decision required before this can be addressed consistently.
+- **`core/websocket.py` imports `modules/tutor/service`** [`apps/api/app/core/websocket.py:238`] — module boundary violation (core → modules). Pre-existing: the same lazy-import bridge is used in three other dispatch helpers in the same file with documented rationale. Address in a future architectural cleanup sprint.
 
 ## Deferred from: code review of 2-7-mode-selection-screen (2026-07-14)
 
