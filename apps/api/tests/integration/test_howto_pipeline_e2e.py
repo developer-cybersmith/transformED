@@ -188,6 +188,7 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
         _LessonPlanLLM,
         _LessonPlanSegmentLLM,
         _NarrationScriptLLM,
+        _QuizBatchLLM,
         _QuizQuestionLLM,
         _SegmentComplexityLLM,
         _SegmentInterventionsLLM,
@@ -215,13 +216,32 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
             return _SegmentSummaryLLM(
                 summary="A concise summary of this how-to step for the learner."
             )
-        if name == "_QuizQuestionLLM":
-            return _QuizQuestionLLM(
-                question="What does this step do?",
-                options=["Opens it", "Closes it", "Nothing", "Restarts"],
-                correct_index=0,
-                explanation="It opens the named item.",
-                difficulty="medium",
+        if name == "_QuizBatchLLM":
+            # Story 3-28 made quiz generation batch-shaped; the node now asks for
+            # _QuizBatchLLM, never _QuizQuestionLLM directly. Returning 3 keeps us
+            # inside the T2 default band (2-3) that this pipeline run uses, so
+            # quiz_generator_node accepts every question and the per-segment count
+            # is deterministic (Story 2-28 AC-7 asserts on it).
+            # Option text and question text are made distinct per index so the
+            # node's own duplicate-option guard cannot reject them, and so a
+            # duplicated question is visible as a repeated question_id rather
+            # than hiding behind identical text.
+            return _QuizBatchLLM(
+                questions=[
+                    _QuizQuestionLLM(
+                        question=f"Question {n}: what does this step do?",
+                        options=[
+                            f"Opens it ({n})",
+                            f"Closes it ({n})",
+                            f"Nothing ({n})",
+                            f"Restarts ({n})",
+                        ],
+                        correct_index=0,
+                        explanation="It opens the named item.",
+                        difficulty="medium",
+                    )
+                    for n in range(3)
+                ]
             )
         if name == "_SegmentComplexityLLM":
             return _SegmentComplexityLLM(
@@ -250,6 +270,11 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
             )
         if name == "_LessonPlanLLM":
             ids = _segment_ids_from_messages(messages)
+            # Story 2-28 AC-7: record what the PLANNER actually saw. This is the
+            # GPT-4o node — duplicated segment_summaries inflate its prompt (and
+            # its bill) while leaving the delivered package identical, so no
+            # package-shape assertion can see it.
+            _LAST_RUN_SPIES.setdefault("planner_segment_ids", []).append(ids)
             return _LessonPlanLLM(
                 title="How-To Lesson",
                 subject="Software",
@@ -284,11 +309,23 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
     return provider
 
 
+# Populated by _run_howto so tests can assert on paid-call counts (Story 2-28).
+_LAST_RUN_SPIES: dict[str, Any] = {}
+
+
 async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1) -> dict[str, Any]:
     """Run the REAL graph on `howto` with only external providers mocked."""
     from app.modules.content.pipeline.graph import run_pipeline
 
     provider = _make_dispatch(slides_per_segment=slides_per_segment)
+    # Story 2-28: exposed so callers can assert on PAID call counts. The
+    # package-shape assertions cannot see duplication in segment_summaries or
+    # narration_scripts (package_builder collapses or drops those channels), so
+    # a node re-emitting them would bill the TTS vendor N times while the
+    # delivered package stays byte-identical. Counting the spend is the only
+    # visibility into that path.
+    synth = AsyncMock(return_value=(b"fake-audio", "sarvam", 0.0))
+    _LAST_RUN_SPIES.clear()
     fake = _StatefulSupabaseFake()
     # Seed the extract checkpoint so extract_node cache-hits and feeds the real
     # how-to text into the REAL structure detection (bypasses the PDF subprocess).
@@ -304,7 +341,7 @@ async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1)
         patch("app.core.cost_tracker.accumulate_cost", new=AsyncMock(return_value=0.0)),
         patch(
             "app.modules.content.pipeline.graph._synthesize_with_fallback",
-            new=AsyncMock(return_value=(b"fake-audio", "sarvam", 0.0)),
+            new=synth,
         ),
         patch(
             "app.modules.content.pipeline.graph._generate_image_with_fallback",
@@ -312,7 +349,9 @@ async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1)
         ),
         patch("app.core.redis.get_redis", return_value=redis),
     ):
-        return await run_pipeline(lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID)
+        package = await run_pipeline(lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID)
+    _LAST_RUN_SPIES["synth"] = synth
+    return package
 
 
 @pytest.mark.integration
@@ -346,6 +385,59 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
         for a, b in zip(ts, ts[1:], strict=False):
             assert a["end_ms"] == b["start_ms"], "timestamps must be contiguous"
         assert len(seg["slides"]) >= 1
+
+    # ── Story 2-28 AC-7: reducer-channel duplication guard ────────────────────
+    # A node returning {**state, ...} re-appends every operator.add channel.
+    # Four such nodes after the Phase-1 fan-in => 2**4 = 16x, in a single clean
+    # run with no retry involved. These assertions are the regression net.
+    for seg in segments:
+        assert 2 <= len(seg["quiz"]) <= 3, (
+            f"segment {seg['segment_id']} has {len(seg['quiz'])} quiz questions; "
+            "T2 band is 2-3 — a multiple of the fixture's 3 means a reducer "
+            "channel was re-appended (see Story 2-28)"
+        )
+    qids = [q["question_id"] for seg in segments for q in seg["quiz"]]
+    assert len(qids) == len(set(qids)), (
+        f"duplicate question_id across the package: {len(qids)} total vs "
+        f"{len(set(qids))} unique — reducer-channel duplication"
+    )
+    assert sum(len(s["quiz"]) for s in segments) == 3 * len(segments), (
+        "total quiz count must be exactly fixture-size x segments"
+    )
+    # glossary comes from the jargon_extractor operator.add channel — the fixture
+    # emits one term per section, so duplication shows up here too.
+    terms = [g["term"] for g in package["glossary"]]
+    assert len(terms) == len(set(terms)), (
+        f"duplicate glossary terms: {terms} — jargon channel re-appended"
+    )
+
+    # Story 2-28: PAID-CALL guard. package_builder collapses complexity_scores /
+    # audio_assets / intervention_prompts to one-per-segment and drops
+    # segment_summaries / narration_scripts entirely, so duplication in those
+    # channels is INVISIBLE in the package while still billing the TTS vendor
+    # once per duplicate. Counting synthesis calls is the only visibility into
+    # that path — and it is the money path.
+    # AC-7: the PLANNER (GPT-4o, the priciest node) must see each segment exactly
+    # once. Duplicated segment_summaries inflate its prompt and its bill while
+    # leaving the delivered package byte-identical — invisible to every
+    # package-shape assertion above.
+    planner_calls = _LAST_RUN_SPIES.get("planner_segment_ids", [])
+    assert planner_calls, "lesson_planner was never invoked — assertion would be vacuous"
+    for ids in planner_calls:
+        assert len(ids) == len(set(ids)), (
+            f"lesson_planner prompt lists duplicate segment_ids: {ids} — "
+            "segment_summaries was re-appended"
+        )
+        assert len(ids) == len(segments), (
+            f"lesson_planner saw {len(ids)} segment_ids for {len(segments)} segments"
+        )
+
+    synth = _LAST_RUN_SPIES["synth"]
+    assert synth.await_count == len(segments), (
+        f"_synthesize_with_fallback awaited {synth.await_count}x for "
+        f"{len(segments)} segments — a duplicated narration_scripts channel "
+        "bills the TTS vendor per duplicate while leaving the package identical"
+    )
 
 
 @pytest.mark.integration

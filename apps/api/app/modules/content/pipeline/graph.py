@@ -48,6 +48,7 @@ import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict, cast
+from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -247,7 +248,6 @@ async def extract_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["extract"]
         logger.info("[%s] extract_node: cache hit — skipping re-extraction", lesson_id)
         return {
-            **state,
             "raw_text": cached["raw_text"],
             "extracted_images": cached.get("extracted_images", []),
             "font_blocks": cached.get("font_blocks", []),
@@ -424,7 +424,6 @@ async def extract_node(state: PipelineState) -> PipelineState:
     await _update_job_progress(lesson_id, 7.0, "extract")
 
     return {
-        **state,
         "raw_text": raw_text,
         "extracted_images": storage_images,
         "font_blocks": font_blocks,
@@ -489,7 +488,7 @@ async def structure_node(state: PipelineState) -> PipelineState:
     if "structure" in node_outputs:
         cached = node_outputs["structure"]
         logger.info("[%s] structure_node: cache hit", lesson_id)
-        return {**state, "sections": cached["sections"], "progress_pct": 14.0}
+        return {"sections": cached["sections"], "progress_pct": 14.0}
 
     # ── Get page count from extract checkpoint ────────────────────────────────
     total_pages: int = (node_outputs.get("extract") or {}).get("page_count", 1) or 1
@@ -592,7 +591,7 @@ async def structure_node(state: PipelineState) -> PipelineState:
         logger.warning("[%s] structure_node: failed to write checkpoint", lesson_id)
 
     await _update_job_progress(lesson_id, 14.0, "structure")
-    return {**state, "sections": sections_list, "progress_pct": 14.0}
+    return {"sections": sections_list, "progress_pct": 14.0}
 
 
 async def chunk_node(state: PipelineState) -> PipelineState:
@@ -634,7 +633,7 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     if "chunk" in node_outputs:
         cached = node_outputs["chunk"]
         logger.info("[%s] chunk_node: cache hit — skipping re-chunking", lesson_id)
-        return {**state, "chunks": cached["chunks"], "progress_pct": 20.0}
+        return {"chunks": cached["chunks"], "progress_pct": 20.0}
 
     # ── Token-bounded chunking ────────────────────────────────────────────────
     chunks = chunk_sections(
@@ -720,7 +719,7 @@ async def chunk_node(state: PipelineState) -> PipelineState:
         logger.warning("[%s] chunk_node: failed to write checkpoint", lesson_id)
 
     await _update_job_progress(lesson_id, 20.0, "chunk")
-    return {**state, "chunks": chunks, "progress_pct": 20.0}
+    return {"chunks": chunks, "progress_pct": 20.0}
 
 
 # OpenAI embeddings API hard limits (text-embedding-3-small):
@@ -776,7 +775,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
             lesson_id,
             cached.get("chunk_count", 0),
         )
-        return {**state, "embeddings_stored": True}
+        return {"embeddings_stored": True}
 
     # ── Get chapter_id from chunk_node checkpoint ─────────────────────────────
     chapter_id: str = (node_outputs.get("chunk") or {}).get("chapter_id", "")
@@ -962,7 +961,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 28.0, "embed")
-    return {**state, "embeddings_stored": True}
+    return {"embeddings_stored": True}
 
 
 class _LessonPlanSegmentLLM(BaseModel):
@@ -1155,6 +1154,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         lesson_id,
         len(segment_summaries),
     )
+    _warn_if_duplicated(lesson_id, "lesson_planner", "segment_summaries", segment_summaries)
 
     # 2026-07-14 review finding (Edge Case Hunter): an empty segment_summaries
     # list previously trivially passed the segment-count guard (0 == 0),
@@ -1191,7 +1191,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-        return {**state, "lesson_plan": cached, "progress_pct": 38.0}
+        return {"lesson_plan": cached, "progress_pct": 38.0}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1391,7 +1391,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    return {**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}
+    return {"lesson_plan": lesson_plan, "progress_pct": 38.0}
 
 
 class _SlideLLM(BaseModel):
@@ -1488,7 +1488,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["slide_generator"]
         logger.info("[%s] slide_generator_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 48.0, "slide_generator")
-        return {**state, "slides": cached, "progress_pct": 48.0}
+        return {"slides": cached, "progress_pct": 48.0}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1682,7 +1682,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
-    return {**state, "slides": slides_out, "progress_pct": 48.0}
+    return {"slides": slides_out, "progress_pct": 48.0}
 
 
 class _SegmentSummaryLLM(BaseModel):
@@ -3034,6 +3034,9 @@ async def tts_node(state: PipelineState) -> PipelineState:
     lesson_id = state["lesson_id"]
     narration_scripts = state.get("narration_scripts", [])
     logger.info("[%s] tts_node: synthesising %d narrations", lesson_id, len(narration_scripts))
+    # Last checkpoint before PAID synthesis — duplicated narration here means
+    # paying the TTS vendor N times for the same text.
+    _warn_if_duplicated(lesson_id, "tts_node", "narration_scripts", narration_scripts)
 
     # 2026-07-20 review finding (Blind Hunter): lesson_id is used to build a
     # Storage path (f"{lesson_id}/{segment_id}.mp3") but was unguarded here,
@@ -3060,7 +3063,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["tts_node"]
         logger.info("[%s] tts_node: cache hit, skipping all synthesis", lesson_id)
         await _update_job_progress(lesson_id, 86.0, "tts_node")
-        return {**state, "audio_assets": cached, "progress_pct": 86.0}
+        return {"audio_assets": cached, "progress_pct": 86.0}
 
     if not narration_scripts:
         logger.warning(
@@ -3184,7 +3187,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
         ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 86.0, "tts_node")
-    return {**state, "audio_assets": audio_assets_out, "progress_pct": 86.0}
+    return {"audio_assets": audio_assets_out, "progress_pct": 86.0}
 
 
 async def _generate_image_with_fallback(
@@ -3313,7 +3316,7 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["image_generator"]
         logger.info("[%s] image_generator_node: cache hit, skipping all generation", lesson_id)
         await _update_job_progress(lesson_id, 93.0, "image_generator")
-        return {**state, "slide_images": cached, "progress_pct": 93.0}
+        return {"slide_images": cached, "progress_pct": 93.0}
 
     slide_images_out: list[dict[str, Any]] = []
     for index, entry in enumerate(slides):
@@ -3418,7 +3421,7 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 93.0, "image_generator")
-    return {**state, "slide_images": slide_images_out, "progress_pct": 93.0}
+    return {"slide_images": slide_images_out, "progress_pct": 93.0}
 
 
 def _estimate_slide_timestamps(
@@ -3572,7 +3575,25 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 
     if "package_builder" in node_outputs:
         logger.info("[%s] package_builder_node: cache hit", lesson_id)
-        return {**state, "lesson_package": node_outputs["package_builder"], "progress_pct": 100.0}
+        return {"lesson_package": node_outputs["package_builder"], "progress_pct": 100.0}
+
+    # Story 2-28 AC-8, third canary. Placed AFTER the cache-hit return so a
+    # replayed package is not re-flagged.
+    #
+    # This is the ONLY runtime detector covering quiz_questions and glossary —
+    # the exact channels Dev 2 observed duplicated. lesson_planner's canary sees
+    # only Phase-1-origin duplication (it runs before the four doubling nodes),
+    # and tts_node's covers narration_scripts alone. AC-7's e2e assertions are
+    # CI-time on a fixture; they cannot see a real student's lesson.
+    #
+    # Keyed on EXACT identity — (segment_id, question_id) / (segment_id, term) —
+    # never a count band: jargon has no per-segment cap, so any band guarantees
+    # false positives, and LoggingIntegration(event_level=ERROR) turns each one
+    # into a Sentry issue.
+    _warn_if_exact_duplicates(
+        lesson_id, "quiz_questions", state.get("quiz_questions") or [], "question_id"
+    )
+    _warn_if_exact_duplicates(lesson_id, "glossary", state.get("glossary") or [], "term")
 
     await _update_job_progress(lesson_id, 95.0, "package_builder")
 
@@ -3891,7 +3912,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         }
     ).eq("lesson_id", lesson_id).execute()
 
-    return {**state, "lesson_package": lesson_package, "progress_pct": 100.0}
+    return {"lesson_package": lesson_package, "progress_pct": 100.0}
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
@@ -3901,7 +3922,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # _section_index below) — NOT the full accumulated state. Review finding:
 # spreading **state would copy raw_text/chunks/embeddings into every one of
 # the 6xN dispatched payloads, which is real memory pressure for a large book.
-_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id")
+# Story 2-28 AC-3: "tier" is load-bearing, not optional. The Send() payload
+# REPLACES state for each dispatched node, so any key absent here resolves to
+# its .get() default inside the node. Without "tier", every Phase-1 node saw
+# _DEFAULT_TIER ("T2") regardless of the lesson's real tier — silently
+# disabling the S2-LM3/LM4/LM5 tier bands (e.g. quiz_generator_node's
+# _TIER_QUIZ_COUNT_BAND) for every T1 and T3 lesson.
+_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier")
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
 # once, before dispatch, while accumulated cost is still whatever it was
@@ -4086,6 +4113,141 @@ def get_pipeline_graph() -> Any:  # noqa: ANN401
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
+def _warn_if_duplicated(
+    lesson_id: str, node_name: str, channel: str, entries: list[dict[str, Any]]
+) -> None:
+    """Story 2-28 AC-8: pre-spend canary for reducer-channel duplication.
+
+    Placed at the top of the two nodes that spend real money on their input
+    (`lesson_planner_node` — GPT-4o; `tts_node` — the TTS vendor), so a
+    duplicated channel is detected BEFORE the spend rather than discovered in
+    the final package.
+
+    Keyed on `segment_id` because every Phase-1 channel entry carries one. Logs
+    at ERROR (Sentry-visible via LoggingIntegration) but never raises: a
+    duplicated channel still produces a usable lesson, and failing the run
+    would be a worse outcome than an over-long one.
+    """
+    # A diagnostic must never break the pipeline. This is the FIRST statement of
+    # two nodes about to spend real money, so an exception here fails the lesson
+    # before any work is attempted. Concretely: a checkpoint row whose JSONB
+    # segment_id deserialised to a list/dict (older writer, hand-patched row,
+    # degraded node) would raise `TypeError: unhashable type` on the set() below.
+    try:
+        if not entries:
+            return
+        # Only entries that actually carry a segment_id are comparable. Degraded
+        # nodes can emit shapes without one; counting those as "all the same id"
+        # would fire the canary on malformed-but-not-duplicated input.
+        # str() coerces unhashable ids instead of dropping them — an unhashable
+        # id is still a real entry and should still be counted.
+        seg_ids = [
+            str(e["segment_id"])
+            for e in entries
+            if isinstance(e, dict) and e.get("segment_id") is not None
+        ]
+        distinct = len(set(seg_ids))
+        if distinct and len(seg_ids) != distinct:
+            logger.error(
+                "[%s] %s: %s has %d entries (%d carrying a segment_id) for only "
+                "%d distinct segment_ids (~%.1fx duplication) — a node is "
+                "re-emitting a reducer channel; see Story 2-28 and "
+                "tests/unit/test_node_return_shape.py",
+                lesson_id,
+                node_name,
+                channel,
+                len(entries),
+                len(seg_ids),
+                distinct,
+                len(seg_ids) / distinct,
+            )
+    except Exception:  # noqa: BLE001 — a canary must never fail the pipeline
+        logger.warning(
+            "[%s] %s: duplication canary failed on %s — check skipped",
+            lesson_id,
+            node_name,
+            channel,
+            exc_info=True,
+        )
+
+
+def _warn_if_exact_duplicates(
+    lesson_id: str, channel: str, entries: list[dict[str, Any]], id_field: str
+) -> None:
+    """Story 2-28 AC-8 (third canary): residual exact-duplicate detector.
+
+    Runs in `package_builder_node`, on the assembled package, for the two
+    channels that are legitimately multi-per-segment — so the distinct-vs-total
+    shape used by `_warn_if_duplicated` cannot apply to them.
+
+    Identity is the exact pair `(segment_id, <id_field>)`. Deliberately **no**
+    count band: jargon has no per-segment cap, so a band would fire on healthy
+    lessons, and every ERROR becomes a Sentry issue.
+
+    Same never-raise contract as `_warn_if_duplicated` — this runs after the
+    whole lesson has been paid for, so crashing here would discard completed
+    work.
+    """
+    try:
+        keys: list[tuple[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            data = entry.get("data")
+            source = data if isinstance(data, dict) else entry
+            seg = entry.get("segment_id")
+            ident = source.get(id_field)
+            if seg is not None and ident is not None:
+                keys.append((str(seg), str(ident)))
+
+        distinct = len(set(keys))
+        if distinct and len(keys) != distinct:
+            logger.error(
+                "[%s] package_builder_node: %s carries %d entries for only %d "
+                "distinct (segment_id, %s) pairs — duplicated content reached the "
+                "delivered package; see Story 2-28",
+                lesson_id,
+                channel,
+                len(keys),
+                distinct,
+                id_field,
+            )
+    except Exception:  # noqa: BLE001 — a canary must never discard a paid-for lesson
+        logger.warning(
+            "[%s] package_builder_node: duplicate canary failed on %s — check skipped",
+            lesson_id,
+            channel,
+            exc_info=True,
+        )
+
+
+def _discard_checkpoint_thread(graph: Any, thread_id: str) -> None:  # noqa: ANN401
+    """Best-effort eviction of one MemorySaver thread (Story 2-28 AC-5).
+
+    MemorySaver keeps every thread for the life of the worker process. Without
+    this, each pipeline run leaks its full channel history — including
+    `raw_text`, chunks and base64 image payloads.
+
+    Never raises: cleanup must not mask the pipeline's own exception, nor
+    convert a CancelledError into something else. `adelete_thread` is defined
+    on BaseCheckpointSaver but may raise NotImplementedError depending on the
+    pinned langgraph version, so both absence and failure are tolerated.
+    """
+    try:
+        checkpointer = getattr(graph, "checkpointer", None)
+        if checkpointer is None:
+            return
+        deleter = getattr(checkpointer, "delete_thread", None)
+        if callable(deleter):
+            deleter(thread_id)
+    except Exception:  # noqa: BLE001 — cleanup must never surface
+        logger.warning(
+            "Could not discard checkpoint thread %s — MemorySaver may retain it",
+            thread_id,
+            exc_info=True,
+        )
+
+
 async def run_pipeline(
     lesson_id: str,
     chapter_content: str = "",
@@ -4093,6 +4255,7 @@ async def run_pipeline(
     source_pdf_path: str = "",
     book_id: str = "",
     tier: str = "T2",
+    attempt: str = "",
 ) -> dict[str, Any]:
     """Execute the full content pipeline for a lesson.
 
@@ -4128,11 +4291,33 @@ async def run_pipeline(
         "error": None,
     }
 
-    config = {"configurable": {"thread_id": lesson_id}}
+    # Story 2-28 AC-5 — memory hygiene, NOT the duplication fix.
+    #
+    # MemorySaver is process-local, lives for the whole worker lifetime, and is
+    # never evicted. `thread_id=lesson_id` meant every re-invocation for a
+    # lesson (ARQ retry, or a manual re-trigger during testing) resumed on top
+    # of the previous run's retained channels. That is a stale-accumulator
+    # vector and an unbounded memory leak — it is NOT what caused the 16x
+    # duplication (that was `{**state, ...}`; see the AST guard in
+    # tests/unit/test_node_return_shape.py). Do not conflate the two.
+    #
+    # The nonce is computed HERE, inside the body — a `uuid4()` default
+    # argument would evaluate once at import and defeat the whole thing.
+    run_token = f"t{attempt or 0}-{uuid4().hex[:8]}"
+    thread_id = f"{lesson_id}::{run_token}"
+    config = {"configurable": {"thread_id": thread_id}}
 
-    logger.info("Pipeline starting for lesson_id=%s", lesson_id)
+    logger.info("Pipeline starting for lesson_id=%s thread_id=%s", lesson_id, thread_id)
 
-    final_state: PipelineState = await graph.ainvoke(initial_state, config=config)
+    try:
+        final_state: PipelineState = await graph.ainvoke(initial_state, config=config)
+    finally:
+        # Drop this run's checkpoint so MemorySaver does not grow without bound.
+        # Resume MUST be rebuilt from the durable Supabase `node_outputs`
+        # checkpoints, never from MemorySaver — so discarding is always safe.
+        # Never let cleanup mask the pipeline's own exception (or a
+        # CancelledError) — swallow and log only.
+        _discard_checkpoint_thread(graph, thread_id)
 
     logger.info("Pipeline complete for lesson_id=%s", lesson_id)
     return final_state.get("lesson_package", {})
