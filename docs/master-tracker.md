@@ -1,11 +1,13 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-13 (Dev 1 Sprint 1 backend content-ingestion pipeline merged to `main`, PR #72 — see status note below. Also, previously, 2026-07-06: Dev 2 Sprint 2 is now fully complete, 5/5 tasks: S2-04 Session Report Page (PR #63) and S2-05 Player State Persistence (PR #66) both merged to `main` via full BMAD story workflows with 5-agent review gates — checklist lines below updated to match. Earlier, 2026-07-04: app-wide `apps/web` audit run, 9 issues patched across 8 rounds incl. an `/auth/callback` regression that broke all OAuth/email sign-in, then a `/bmad-code-review` gate on that fix branch itself — merged to `main` as PR #61 (`a75535d`), 201/201 tests. Separately, Story 2-3 Onboarding Assessment Flow — previously checked off below as done — was discovered to have never actually been merged to `main` (implementation commit sat unpushed on its branch); rebased onto current `main`, merged clean, no conflicts — PR #62 (`5c40db1`), 239/239 tests.)
+**Last updated:** 2026-07-27 (Dev 1's Sprint 2 pipeline section below was stale since 2026-07-13 — all 11 nodes were still shown as not-started despite being genuinely built. Corrected after a full code-level audit; see status note below and the Sprint 2 Dev 1 checklist.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
 ---
 
-**Status note — 2026-07-13:** Backend content-ingestion pipeline (Sprint 1) merged to `main` 2026-07-13 (PR #72). Sprint 2 backend — lesson generation (11 nodes: `lesson_planner`, `slide_generator`, `summarise_segment`, `quiz_generator`, `segment_complexity`, `jargon_extractor`, `intervention_messages`, `narration_generator`, `tts_node`, `image_generator`, `package_builder`) — is Dev 1's next work, starting now. **Frontend/assessment/tutor should continue building against existing mocks/fixtures** (`apps/web/src/mocks/data/lessonPackage.ts`, test fixtures) until `package_builder` (Story S2-11) lands — please do not build a parallel real-content path or workaround; ping Dev 1 first if a mock is blocking real progress.
+**Status note — 2026-07-27:** Full code-level audit of Dev 1's Sprint 2 pipeline (all 11 nodes + cost ceiling + `lesson_ready` push + eval harness), run against actual `main`/`sprint2-master` code rather than this tracker's own (badly stale) checklist. Summary: everything is implemented; most of it is genuinely correct; two real, systemic bugs found and confirmed still open as of this date — see the Sprint 2 Dev 1 section below for the per-node breakdown, and `docs/dev1-sprint2-bug-status-correction.md` for the full write-up handed to Dev 1.
+
+**Status note — 2026-07-13 (superseded by the above):** Backend content-ingestion pipeline (Sprint 1) merged to `main` 2026-07-13 (PR #72). Sprint 2 backend — lesson generation (11 nodes: `lesson_planner`, `slide_generator`, `summarise_segment`, `quiz_generator`, `segment_complexity`, `jargon_extractor`, `intervention_messages`, `narration_generator`, `tts_node`, `image_generator`, `package_builder`) — is Dev 1's next work, starting now. **Frontend/assessment/tutor should continue building against existing mocks/fixtures** (`apps/web/src/mocks/data/lessonPackage.ts`, test fixtures) until `package_builder` (Story S2-11) lands — please do not build a parallel real-content path or workaround; ping Dev 1 first if a mock is blocking real progress.
 
 ---
 
@@ -129,20 +131,25 @@
 ## Sprint 2 — Weeks 4–5 (Full Pipeline + Integration → Investor Demo)
 
 ### Dev 1 — Infrastructure + Content Pipeline
-- [ ] lesson_planner node — GPT-4o
-- [ ] slide_generator node — GPT-4o
-- [ ] summarise_segment node — GPT-4o-mini
-- [ ] segment_complexity node — GPT-4o-mini
-- [ ] quiz_generator node — GPT-4o-mini
-- [ ] jargon_extractor node — GPT-4o-mini
-- [ ] intervention_messages node — GPT-4o-mini (3 variations × 3 types)
-- [ ] narration_generator node — GPT-4o-mini
-- [ ] tts_node — Sarvam Bulbul v2 → Azure TTS → Browser fallback chain
-- [ ] image_generator node — GPT Image 1 Mini → Imagen 4 Fast → text-only
-- [ ] package_builder node → JSONB write to Supabase
-- [ ] WebSocket lesson_ready push working
-- [ ] Cost ceiling implementation (MAX_LESSON_COST_USD env var)
-- [ ] Eval harness running against 5 PDFs
+
+> **Corrected 2026-07-27** — every line below was still shown as `[ ]` not-started since 2026-07-13; all 11 nodes are actually built (stories `2-1`, `2-1b`, `2-6` through `2-25` in `docs/stories/`). Re-verified against real code, not just story status. Two systemic bugs found — see notes.
+
+- [x] lesson_planner node — GPT-4o — ✓ working, no bugs found. Idempotent (whole-node Supabase checkpoint on a plain `lesson_plan` dict field, no accumulation risk). Extensive validation: segment count/id/duplicate/blank checks, batch-and-reassemble for large chapters, cost-ceiling-aware downshift that fails closed on a Redis outage.
+- [x] slide_generator node — GPT-4o — ✓ working, no bugs found. Same idempotent design as `lesson_planner_node` (`slides` is a plain list, not an `operator.add` reducer field).
+- [x] summarise_segment node — GPT-4o-mini — ⚠️ implemented, but shares the systemic Phase 1 duplication bug (see below)
+- [x] segment_complexity node — GPT-4o-mini — ⚠️ implemented, same systemic bug
+- [x] quiz_generator node — GPT-4o-mini — ⚠️ implemented, same systemic bug — this is the one live-tested as "32 quiz questions from 2 unique items, repeated 16x," reported to Dev 1 2026-07-27
+- [x] jargon_extractor node — GPT-4o-mini — ⚠️ implemented, same systemic bug
+- [x] intervention_messages node — GPT-4o-mini (3 variations × 3 types) — ⚠️ implemented, same systemic bug
+- [x] narration_generator node — GPT-4o-mini — ⚠️ implemented, same systemic bug — this is the one behind the TTS-fallback script-loss bug below
+- [x] tts_node — Sarvam Bulbul v2 → Azure TTS → Browser fallback chain — ✓ working, no bug in this node itself, but wastes real cost synthesizing/uploading audio for duplicate `narration_scripts` entries produced by the Phase 1 bug above (downstream symptom, not a separate defect)
+- [x] image_generator node — GPT Image 1 Mini → Imagen 4 Fast → text-only — 🔵 implemented, not fully verified (fallback chain + hardened URI decoding look solid on the portion reviewed; not exhaustively read)
+- [x] package_builder node → JSONB write to Supabase — ⚠️ implemented, **2 real bugs**: (1) `_fallback_narration()` unconditionally blanks the script even when it's recoverable from `state["narration_scripts"]` for the same segment — live-tested as "quiz pops up at 0:00, empty audio." (2) `_group_by_segment_id()` does zero deduplication, so duplicate entries from the Phase 1 bug flow straight into the final `LessonPackage` — this is what actually produces the visible quiz-duplication symptom.
+- [x] WebSocket lesson_ready push working — ✓ confirmed implemented in `apps/api/app/workers/jobs/content_pipeline.py`, matches the frozen `ws.ts` contract.
+- [x] Cost ceiling implementation (MAX_LESSON_COST_USD env var) — ✓ working. `settings.max_lesson_cost_usd` wired via `check_ceiling()`/`accumulate_cost()` across `lesson_planner_node`, `slide_generator_node`, `tts_node`, `image_generator_node`, and the Phase 1 fan-out router; fails safe (downshifts) rather than fails open.
+- [x] Eval harness running against 5 PDFs — 🔵 harness itself implemented and unit-tested (Story 2-14); the actual live 5-PDF run is deliberately gated behind a `@pytest.mark.live_eval` marker and has not been executed yet — an explicit scope decision in the story, not a gap.
+
+**Systemic bug — affects all 6 Phase 1 economy nodes:** their `PipelineState` fields (`segment_summaries`, `quiz_questions`, `complexity_scores`, `glossary`, `intervention_prompts`, `narration_scripts`) use `Annotated[list, operator.add]`, a pure concatenating reducer. Each node's own Supabase checkpoint correctly stops re-billing the LLM on an ARQ retry, but every node still `return`s its cached value on a cache hit — re-appending into the already-accumulated list on every retry. **Cheapest fix**: dedupe by `segment_id` in `package_builder_node`'s grouping helpers (`_group_by_segment_id`/`_index_by_segment_id`) rather than patching all 6 nodes individually — fixes the symptom for every field at once. Full write-up: `docs/dev1-sprint2-bug-status-correction.md`.
 
 ### Dev 2 — Lesson Player + Frontend
 - [x] Quiz popup integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/quiz` in `QuizOverlay.tsx`
