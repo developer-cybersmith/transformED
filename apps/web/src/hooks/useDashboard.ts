@@ -1,8 +1,10 @@
 'use client';
 
+import { useRef } from 'react';
 import useSWR from 'swr';
 import { dashboardService, type DashboardData } from '@/services/dashboard.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { isLessonProcessing, nextPollInterval } from '@/lib/lessonStatusPoll';
 
 interface UseDashboardResult {
   data: DashboardData | null;
@@ -17,6 +19,7 @@ interface UseDashboardResult {
 // for the same reason (useLesson, useSessionReport).
 export function useDashboard(): UseDashboardResult {
   const { user } = useAuth();
+  const pollingStartedAtRef = useRef<number | null>(null);
   // Keyed by user id, not a bare literal -- SWR's cache is a shared global
   // Map for the whole tab. A bare 'dashboard' key would let a second
   // account's data flash from cache on first render after switching users
@@ -24,7 +27,26 @@ export function useDashboard(): UseDashboardResult {
   const { data, error, isLoading } = useSWR<DashboardData>(
     user ? `dashboard:${user.id}` : null,
     () => dashboardService.getDashboard(),
-    { shouldRetryOnError: false },
+    {
+      // S2-27 review fix -- see useLibrary.ts's identical comment for the
+      // full rationale: SWR's polling loop silently stops revalidating once
+      // an error is cached, only recovering on tab refocus/network reconnect
+      // unless shouldRetryOnError lets SWR's own backoff-retry clear it first.
+      shouldRetryOnError: true,
+      // Same rationale as useLibrary.ts -- DashboardData has no pre-computed
+      // "processing" bucket, so check continueLearning and recentLessons
+      // directly. Also stops after MAX_POLL_DURATION_MS regardless (review
+      // fix) -- see useLibrary.ts's identical comment.
+      refreshInterval: (dashboardData) =>
+        nextPollInterval(
+          Boolean(
+            dashboardData &&
+              (isLessonProcessing(dashboardData.continueLearning) ||
+                dashboardData.recentLessons.some(isLessonProcessing)),
+          ),
+          pollingStartedAtRef,
+        ),
+    },
   );
 
   return {

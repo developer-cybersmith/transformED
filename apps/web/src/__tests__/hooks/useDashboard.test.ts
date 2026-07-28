@@ -31,13 +31,13 @@ beforeEach(() => {
 });
 
 describe('useDashboard', () => {
-  it('does not retry indefinitely on error', () => {
+  it('retries on error (S2-27 review fix: required for polling to self-heal past a transient failure -- see refreshInterval tests)', () => {
     renderHook(() => useDashboard());
 
     expect(useSWRMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.any(Function),
-      expect.objectContaining({ shouldRetryOnError: false })
+      expect.objectContaining({ shouldRetryOnError: true })
     );
   });
 
@@ -81,5 +81,62 @@ describe('useDashboard', () => {
 
     expect(result.current.error).toBe(err);
     expect(result.current.data).toBeNull();
+  });
+});
+
+describe('useDashboard — auto-poll while a lesson is still generating (S2-27)', () => {
+  function getRefreshInterval(): (data: unknown) => number {
+    renderHook(() => useDashboard());
+    const options = useSWRMock.mock.calls[0][2];
+    return options.refreshInterval;
+  }
+
+  it('polls when continueLearning is still processing', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = { continueLearning: { lesson_id: 'l1', status: 'queued' }, recentLessons: [], learningPulse: undefined };
+
+    expect(refreshInterval(data)).toBeGreaterThan(0);
+  });
+
+  it('polls when any recentLessons entry is still processing, even if continueLearning is null', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = {
+      continueLearning: null,
+      recentLessons: [{ lesson_id: 'l1', status: 'ready' }, { lesson_id: 'l2', status: 'running' }],
+      learningPulse: undefined,
+    };
+
+    expect(refreshInterval(data)).toBeGreaterThan(0);
+  });
+
+  it('does not poll when everything is in a terminal state', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = {
+      continueLearning: { lesson_id: 'l1', status: 'ready' },
+      recentLessons: [{ lesson_id: 'l2', status: 'failed' }],
+      learningPulse: undefined,
+    };
+
+    expect(refreshInterval(data)).toBe(0);
+  });
+
+  it('does not poll before any data has been fetched yet', () => {
+    const refreshInterval = getRefreshInterval();
+
+    expect(refreshInterval(undefined)).toBe(0);
+  });
+
+  it('stops polling after MAX_POLL_DURATION_MS even if still processing (review fix — a genuinely-stuck backend job must not poll forever)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const refreshInterval = getRefreshInterval();
+    const data = { continueLearning: { lesson_id: 'l1', status: 'queued' }, recentLessons: [], learningPulse: undefined };
+
+    expect(refreshInterval(data)).toBeGreaterThan(0);
+
+    vi.setSystemTime(20 * 60 * 1000 + 1); // just past the 20-minute cap
+    expect(refreshInterval(data)).toBe(0);
+
+    vi.useRealTimers();
   });
 });

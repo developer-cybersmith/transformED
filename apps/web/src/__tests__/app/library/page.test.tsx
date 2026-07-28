@@ -49,4 +49,18 @@ describe('LibraryPage', () => {
 
     expect(screen.getByText("We couldn't load your library right now.")).not.toBeNull();
   });
+
+  it('still renders the last known library data alongside a warning banner when a background poll fails (S2-27 review fix)', () => {
+    useLibraryMock.mockReturnValue({
+      data: { all: [], ready: [], processing: [], failed: [] },
+      error: new Error('transient poll failure'),
+      isLoading: false,
+    });
+
+    render(<LibraryPage />);
+
+    expect(screen.getByText(/couldn't refresh your library/i)).not.toBeNull();
+    expect(screen.getByText('No lessons found in this category.')).not.toBeNull();
+    expect(screen.queryByText("We couldn't load your library right now.")).toBeNull();
+  });
 });
