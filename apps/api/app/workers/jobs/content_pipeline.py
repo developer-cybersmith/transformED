@@ -86,12 +86,21 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # chapter_id/created_at/metadata/segments/glossary. It is republished
         # verbatim below (already validated by package_builder_node itself).
         # ── 3. Run LangGraph pipeline ─────────────────────────────────────────
+        # Story 2-28 AC-5: `attempt` must uniquify the LangGraph thread_id per
+        # ARQ try. TRAP: ctx["job_id"] alone is NOT a uniquifier — router.py
+        # pins _job_id=f"pipeline:{lesson_id}" for enqueue-dedup, so it is
+        # byte-identical on every retry. job_try is what actually varies.
+        # This scopes ONLY the LangGraph thread_id — never the
+        # merge_lesson_job_node_output key space, which must stay
+        # f"{node}:{section_id}" or every section re-bills on retry.
+        attempt = f"{ctx.get('job_id', 'nojob')}:{ctx.get('job_try', 1)}"
         lesson_package = await run_pipeline(
             lesson_id=lesson_id,
             user_id=user_id,
             source_pdf_path=source_pdf_path,
             book_id=book_id,
             tier=tier,
+            attempt=attempt,
         )
 
         # ── 4a. Mark job completed ────────────────────────────────────────────

@@ -48,6 +48,7 @@ import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict, cast
+from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -4090,6 +4091,33 @@ def get_pipeline_graph() -> Any:  # noqa: ANN401
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
+def _discard_checkpoint_thread(graph: Any, thread_id: str) -> None:  # noqa: ANN401
+    """Best-effort eviction of one MemorySaver thread (Story 2-28 AC-5).
+
+    MemorySaver keeps every thread for the life of the worker process. Without
+    this, each pipeline run leaks its full channel history — including
+    `raw_text`, chunks and base64 image payloads.
+
+    Never raises: cleanup must not mask the pipeline's own exception, nor
+    convert a CancelledError into something else. `adelete_thread` is defined
+    on BaseCheckpointSaver but may raise NotImplementedError depending on the
+    pinned langgraph version, so both absence and failure are tolerated.
+    """
+    try:
+        checkpointer = getattr(graph, "checkpointer", None)
+        if checkpointer is None:
+            return
+        deleter = getattr(checkpointer, "delete_thread", None)
+        if callable(deleter):
+            deleter(thread_id)
+    except Exception:  # noqa: BLE001 — cleanup must never surface
+        logger.warning(
+            "Could not discard checkpoint thread %s — MemorySaver may retain it",
+            thread_id,
+            exc_info=True,
+        )
+
+
 async def run_pipeline(
     lesson_id: str,
     chapter_content: str = "",
@@ -4097,6 +4125,7 @@ async def run_pipeline(
     source_pdf_path: str = "",
     book_id: str = "",
     tier: str = "T2",
+    attempt: str = "",
 ) -> dict[str, Any]:
     """Execute the full content pipeline for a lesson.
 
@@ -4132,11 +4161,33 @@ async def run_pipeline(
         "error": None,
     }
 
-    config = {"configurable": {"thread_id": lesson_id}}
+    # Story 2-28 AC-5 — memory hygiene, NOT the duplication fix.
+    #
+    # MemorySaver is process-local, lives for the whole worker lifetime, and is
+    # never evicted. `thread_id=lesson_id` meant every re-invocation for a
+    # lesson (ARQ retry, or a manual re-trigger during testing) resumed on top
+    # of the previous run's retained channels. That is a stale-accumulator
+    # vector and an unbounded memory leak — it is NOT what caused the 16x
+    # duplication (that was `{**state, ...}`; see the AST guard in
+    # tests/unit/test_node_return_shape.py). Do not conflate the two.
+    #
+    # The nonce is computed HERE, inside the body — a `uuid4()` default
+    # argument would evaluate once at import and defeat the whole thing.
+    run_token = f"t{attempt or 0}-{uuid4().hex[:8]}"
+    thread_id = f"{lesson_id}::{run_token}"
+    config = {"configurable": {"thread_id": thread_id}}
 
-    logger.info("Pipeline starting for lesson_id=%s", lesson_id)
+    logger.info("Pipeline starting for lesson_id=%s thread_id=%s", lesson_id, thread_id)
 
-    final_state: PipelineState = await graph.ainvoke(initial_state, config=config)
+    try:
+        final_state: PipelineState = await graph.ainvoke(initial_state, config=config)
+    finally:
+        # Drop this run's checkpoint so MemorySaver does not grow without bound.
+        # Resume MUST be rebuilt from the durable Supabase `node_outputs`
+        # checkpoints, never from MemorySaver — so discarding is always safe.
+        # Never let cleanup mask the pipeline's own exception (or a
+        # CancelledError) — swallow and log only.
+        _discard_checkpoint_thread(graph, thread_id)
 
     logger.info("Pipeline complete for lesson_id=%s", lesson_id)
     return final_state.get("lesson_package", {})
