@@ -2145,11 +2145,110 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     # Story 2-1b / AC-9: idempotency guard — new batch checkpoint shape.
     # Old single-question checkpoints (required_keys includes "data") fail the
     # required_keys check for "questions" and are treated as cache-misses.
-    cached = await _read_phase1_checkpoint(
+    # Story 2-31 AC-3: validate the cached batch against this lesson's TIER, not
+    # just its shape. Story 2-28 made `tier` actually reach this node, which made
+    # a latent hazard reachable: a lesson whose Phase 1 ran before that deploy
+    # holds a checkpoint sized to the wrongly-defaulted T2 band, and an ARQ retry
+    # would return it verbatim — the T1 lesson silently ships T2 content while
+    # the logs show the tier fix working.
+    #
+    # The authoritative check is a VALUE-level tier stamp. `_write_phase1_checkpoint`
+    # below records the `tier` the batch was generated under; on read, a stamp that
+    # disagrees with this lesson's tier is an unambiguous stale-tier cache and is
+    # rejected outright. This is exact — it does not have to infer intent from a
+    # count — and it costs nothing on a matching retry (same tier -> cache hit).
+    #
+    # Deliberately NOT solved by tier-scoping the checkpoint KEY: that would
+    # re-bill every section on every retry against the $3.00/lesson ceiling and
+    # violates Story 2-28 AC-5's invariant that keys stay f"{node}:{section_id}"
+    # (guarded by test_phase1_checkpoint_idempotency.py). Stamping the tier in the
+    # VALUE satisfies both: the key space is untouched, and a same-tier retry is
+    # still a free cache hit.
+    #
+    # LEGACY FALLBACK: checkpoints written before this story carry no "tier" key,
+    # so their provenance is unknowable. For those only, fall back to a count
+    # heuristic — reject `count > n_max`, since the write path truncates to n_max
+    # and a larger batch can therefore only have come from a higher band. Do NOT
+    # extend the heuristic to `count < n_min`: the write path deliberately KEEPS a
+    # short batch when the LLM underproduces (Story 3-28 AC-8 — "Partial batch
+    # accepted... It does NOT discard the passing questions"), so a below-band
+    # count is ambiguous between a stale-tier cache and legitimate
+    # underproduction, and rejecting it would re-bill on every retry.
+    #
+    # RESIDUAL GAP, legacy checkpoints ONLY (stamped ones are exact): a lower-band
+    # cache served to a higher-tier lesson — e.g. T2's 2-3 questions reused for a
+    # T1 lesson, which is precisely the pre-2-28 migration shape — is
+    # indistinguishable from underproduction on count alone and is NOT caught.
+    # This is why the tier stamp exists; the gap closes as legacy checkpoints age
+    # out and every rewrite stamps the tier.
+    def _batch_matches_shape_and_tier(cached_batch: dict[str, Any]) -> bool:
+        if not _quiz_batch_is_valid_shape(cached_batch):
+            return False
+
+        cached_tier = cached_batch.get("tier")
+        if cached_tier is not None:
+            if cached_tier == tier:
+                return True
+            logger.warning(
+                "[%s] quiz_generator_node: %s — cached batch was generated under "
+                "tier %r but this lesson is tier %r — treating as a cache-miss "
+                "and regenerating",
+                lesson_id,
+                section_id,
+                cached_tier,
+                tier,
+            )
+            return False
+
+        # Legacy (pre-Story-2-31) checkpoint: no tier stamp, count heuristic only.
+        count = len(cached_batch["questions"])
+        if count > n_max:
+            logger.warning(
+                "[%s] quiz_generator_node: %s — untiered legacy cached batch has "
+                "%d questions, above tier %s's maximum of %d (cached under a "
+                "higher band, likely before the Story 2-28 tier fix) — treating "
+                "as a cache-miss and regenerating",
+                lesson_id,
+                section_id,
+                count,
+                tier,
+                n_max,
+            )
+            return False
+        if count < n_min:
+            # Not rejected — ambiguous by construction (see above) — but an
+            # operator seeing a T1 lesson ship a T2-sized quiz needs a trace.
+            logger.warning(
+                "[%s] quiz_generator_node: %s — untiered legacy cached batch has "
+                "%d questions, below tier %s's minimum of %d. Ambiguous between a "
+                "stale-tier cache and legitimate underproduction, so it is REUSED "
+                "rather than re-billed; clear this checkpoint to force a rebuild",
+                lesson_id,
+                section_id,
+                count,
+                tier,
+                n_min,
+            )
+        return True
+
+    # Story 2-31 (review): read the checkpoint WITHOUT the tier guard as well, so a
+    # rejected batch can still be salvaged if regeneration fails. Without this, a
+    # rejected cache plus one transient LLM failure ships a segment with ZERO quiz
+    # questions — strictly worse than the wrong-tier content the guard exists to
+    # prevent — AND leaves the stale checkpoint in place (the failure paths below
+    # do not write one), so every subsequent ARQ retry re-rejects and re-bills.
+    salvageable = await _read_phase1_checkpoint(
         lesson_id,
         checkpoint_key,
         required_keys=("segment_id", "questions"),
         extra_validate=_quiz_batch_is_valid_shape,
+    )
+
+    cached = await _read_phase1_checkpoint(
+        lesson_id,
+        checkpoint_key,
+        required_keys=("segment_id", "questions"),
+        extra_validate=_batch_matches_shape_and_tier,
     )
     if cached is not None:
         logger.info(
@@ -2175,6 +2274,38 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         {"role": "user", "content": body},
     ]
 
+    async def _salvage_or_empty(reason: str) -> PipelineState:
+        """Regeneration produced nothing. Prefer a rejected-but-valid cached batch
+        over shipping an empty quiz (Story 2-31 review finding).
+
+        Re-stamps the salvaged batch with THIS lesson's tier so the next retry is
+        a clean cache hit instead of re-rejecting and re-billing indefinitely.
+        The batch is truncated to n_max so a salvaged higher-band batch cannot
+        exceed this tier's ceiling.
+        """
+        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
+        if salvageable is None:
+            return {"quiz_questions": []}
+        rescued = list(salvageable["questions"])[:n_max]
+        if not rescued:
+            return {"quiz_questions": []}
+        logger.warning(
+            "[%s] quiz_generator_node: %s — %s; salvaging %d question(s) from the "
+            "rejected cache rather than shipping an empty quiz, and re-stamping "
+            "them as tier %s to stop the retry loop re-billing",
+            lesson_id,
+            section_id,
+            reason,
+            len(rescued),
+            tier,
+        )
+        await _write_phase1_checkpoint(
+            lesson_id,
+            checkpoint_key,
+            {"segment_id": section_id, "questions": rescued, "tier": tier},
+        )
+        return {"quiz_questions": rescued}
+
     # AC-15: single LLM call per segment using _QuizBatchLLM structured output.
     response = await provider.complete_structured(messages, settings.llm_mini, _QuizBatchLLM)
     if response is None or not response.questions:
@@ -2182,8 +2313,7 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             "[%s] quiz_generator_node: %s — LLM returned no parsed response, skipping",
             lesson_id, section_id,
         )
-        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"quiz_questions": []}
+        return await _salvage_or_empty("LLM returned no parsed response")
 
     # AC-6: validate and collect each question individually.
     # AC-8: partial batches are accepted — skip invalid questions, keep valid ones.
@@ -2266,13 +2396,15 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             "[%s] quiz_generator_node: %s — no valid questions in batch, returning empty",
             lesson_id, section_id,
         )
-        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"quiz_questions": []}
+        return await _salvage_or_empty("every question in the fresh batch failed validation")
 
     # AC-9: write batch-shaped checkpoint.
+    # Story 2-31 AC-3: stamp the generating tier so a later read can reject a
+    # stale-tier cache exactly, instead of inferring it from the question count.
     batch_checkpoint: dict[str, Any] = {
         "segment_id": section_id,
         "questions": valid_results,
+        "tier": tier,
     }
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, batch_checkpoint)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
@@ -3499,11 +3631,22 @@ def _default_complexity() -> dict[str, Any]:
     }
 
 
-def _fallback_narration() -> dict[str, Any]:
-    """Browser-fallback Narration (no server audio) — the same 'no audio' state
-    tts_node itself emits on failure. `timestamps` is filled by the caller's
-    Story 2-19 estimation block from the segment's slides."""
-    return {"script": "", "audio_url": "", "audio_provider": "browser", "timestamps": []}
+def _fallback_narration(script: str = "") -> dict[str, Any]:
+    """Browser-fallback Narration — no server audio, but the script survives.
+
+    Story 2-31 AC-1: this used to hardcode `script=""`, discarding narration
+    text the pipeline had already generated and paid for. Only the *audio* is
+    missing on this path; blanking the script also left a browser-speech
+    fallback with nothing to say.
+
+    (The docstring previously claimed this matched "the same 'no audio' state
+    tts_node itself emits on failure" — imprecise about `script`: tts_node's
+    own per-segment except preserves `entry["script"]`. The two now agree.)
+
+    `timestamps` is filled by the caller's Story 2-19 estimation block from the
+    segment's slides.
+    """
+    return {"script": script, "audio_url": "", "audio_provider": "browser", "timestamps": []}
 
 
 def _default_interventions() -> dict[str, Any]:
@@ -3617,6 +3760,22 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         dispatch was flagged as a real, unlogged risk."""
         result: dict[str, Any] = {}
         for item in items:
+            # Story 2-31 (review): an entry that is not a dict at all (a bare
+            # string/int/None from a schema-drifted or hand-edited checkpoint)
+            # made the very next `.get` raise AttributeError, crashing the node
+            # after all pipeline spend. The `.get(value_key)` fix below only ever
+            # covered the dict-missing-key case, so the docstring's "one bad item
+            # never crashes the whole node" guarantee was still false.
+            if not isinstance(item, dict):
+                logger.warning(
+                    "[%s] package_builder_node: malformed %s entry is %s, not a "
+                    "dict — skipped: %r",
+                    lesson_id,
+                    label,
+                    type(item).__name__,
+                    item,
+                )
+                continue
             segment_id = item.get("segment_id")
             if segment_id is None:
                 logger.warning(
@@ -3635,7 +3794,33 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                     segment_id,
                     label,
                 )
-            result[segment_id] = item[value_key] if value_key else item
+            # Story 2-31 AC-2: `.get()`, not `item[value_key]`. A single entry
+            # missing its value key raised a raw KeyError that crashed the whole
+            # node — contradicting the "one bad item never crashes the whole
+            # node" guarantee this docstring makes. A None lands in the map and
+            # is handled downstream by the same degrade path as a missing entry.
+            #
+            # Story 2-31 (review): a value that is PRESENT but not a dict is
+            # normalised to None too. Callers test `is None` to pick their degrade
+            # path, so a non-dict value slipped past that test and then blew up on
+            # `.get("script")` / `{**value}` — the same post-spend crash the
+            # KeyError fix was meant to eliminate, one branch further down.
+            if value_key:
+                value = item.get(value_key)
+                if value is not None and not isinstance(value, dict):
+                    logger.warning(
+                        "[%s] package_builder_node: %s entry for %r has a "
+                        "non-dict %r value (%s) — degrading that segment",
+                        lesson_id,
+                        label,
+                        segment_id,
+                        value_key,
+                        type(value).__name__,
+                    )
+                    value = None
+                result[segment_id] = value
+            else:
+                result[segment_id] = item
         return result
 
     complexity_by_id = _index_by_segment_id(
@@ -3643,6 +3828,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     )
     audio_by_id = _index_by_segment_id(
         state.get("audio_assets", []), label="audio_assets", value_key="data"
+    )
+    # Story 2-31 AC-1: narration_generator_node emits a FLAT shape
+    # ({"segment_id": ..., "script": ...}) — no "data" wrapper, so no value_key.
+    # Used only to recover the script when a segment has no audio_assets entry.
+    narration_script_by_id = _index_by_segment_id(
+        state.get("narration_scripts", []), label="narration_scripts"
     )
     interventions_by_id = _index_by_segment_id(
         state.get("intervention_prompts", []), label="intervention_prompts", value_key="data"
@@ -3750,9 +3941,50 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         if complexity is None:
             complexity = _default_complexity()
             degraded.append("complexity")
+        # Story 2-31 AC-1: only the AUDIO is missing here — the script is not.
+        # Recover the segment's own narration text from the upstream
+        # narration_generator output so a browser-speech fallback has something
+        # to say.
+        #
+        # Lift ONLY ["script"]. Never spread the flat entry: Narration is
+        # extra="forbid" and the LessonPackage.model_validate below is
+        # deliberately uncaught, so a spread would turn graceful degradation into
+        # a total post-spend failure.
+        def _recoverable_script(seg_id: str = segment_id) -> str:
+            # seg_id is bound as a default so this closure cannot capture the
+            # loop variable late (ruff B023) — it is only ever called within the
+            # same iteration, but the binding makes that safe by construction.
+            entry = narration_script_by_id.get(seg_id)
+            raw = entry.get("script") if isinstance(entry, dict) else None
+            return raw if isinstance(raw, str) and raw.strip() else ""
+
         if narration is None:
-            narration = _fallback_narration()
+            recovered = _recoverable_script()
+            if not recovered:
+                logger.warning(
+                    "[%s] package_builder_node: segment %s has no audio AND no "
+                    "recoverable narration script — narration will be empty",
+                    lesson_id,
+                    segment_id,
+                )
+            narration = _fallback_narration(recovered)
             degraded.append("narration")
+        elif not str(narration.get("script") or "").strip():
+            # Story 2-31 (review): the entry EXISTS but carries no script — e.g. a
+            # tts_node checkpoint persisted under an older shape. The `is None`
+            # branch above never fires, so the recovery was skipped and the
+            # segment shipped blank narration even though the text was sitting in
+            # narration_script_by_id. Same lift-only-["script"] rule applies.
+            recovered = _recoverable_script()
+            if recovered:
+                logger.warning(
+                    "[%s] package_builder_node: segment %s has an audio entry "
+                    "with a blank script — recovering the narration text from "
+                    "narration_scripts",
+                    lesson_id,
+                    segment_id,
+                )
+                narration = {**narration, "script": recovered}
         if interventions is None:
             interventions = _default_interventions()
             degraded.append("interventions")

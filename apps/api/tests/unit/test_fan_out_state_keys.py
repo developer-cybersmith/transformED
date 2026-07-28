@@ -148,3 +148,148 @@ async def test_tier_reaches_quiz_generator_through_the_fan_out(tier: str, lo: in
         f"tier {tier} should request the {lo}-{hi} band; prompt was: {captured_prompt[0][:400]}"
     )
     assert lo <= len(result["quiz_questions"]) <= hi
+
+
+# ── Story 2-31 AC-3: cached Phase-1 work must match the lesson's tier ────────
+
+
+def _cached_quiz_batch(section_id: str, n: int) -> dict[str, Any]:
+    """A checkpoint batch of *n* structurally-valid questions."""
+    return {
+        "segment_id": section_id,
+        "questions": [
+            {
+                "segment_id": section_id,
+                "data": {
+                    "question_id": f"quiz_{section_id}_{i}",
+                    "type": "mcq",
+                    "question": f"Q{i}?",
+                    "options": [f"a{i}", f"b{i}", f"c{i}", f"d{i}"],
+                    "correct_index": 0,
+                    "explanation": "because",
+                    "difficulty": "medium",
+                },
+            }
+            for i in range(n)
+        ],
+    }
+
+
+def _sb_with_checkpoint(key: str, cached: dict[str, Any]) -> MagicMock:
+    sb = MagicMock()
+    chain = sb.table.return_value.select.return_value.eq.return_value
+    payload = {"node_outputs": {key: cached}}
+    chain.maybe_single.return_value.execute.return_value.data = payload
+    chain.single.return_value.execute.return_value.data = payload
+    return sb
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_oversized_cache_from_a_higher_band_is_rejected() -> None:
+    """Story 2-28 made `tier` actually reach this node, making a latent hazard
+    reachable: a lesson whose Phase 1 ran BEFORE that deploy holds a checkpoint
+    sized to a different band, and an ARQ retry would return it verbatim —
+    shipping wrong-tier content while the logs show the tier fix working.
+
+    Guarded on n_max ONLY. `count > n_max` is unambiguous: the write path
+    truncates to n_max, so a bigger batch can only be from a higher band.
+    `count < n_min` is NOT guarded — the write path deliberately keeps a short
+    batch when the LLM underproduces, so rejecting it would re-bill that
+    section on every retry. See the comment at the guard for the residual gap.
+    """
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_phase1_economy_nodes(_state("T3"))  # type: ignore[arg-type]
+    quiz_send = next(s for s in sends if s.node == "quiz_generator")
+    section_id = g._derive_section_id(quiz_send.arg["_section"], quiz_send.arg["_section_index"])
+
+    # 5 questions == a T1-sized batch; T3's band is 1-2, so this is impossible
+    # to have been written for a T3 lesson.
+    sb = _sb_with_checkpoint(f"quiz_generator:{section_id}", _cached_quiz_batch(section_id, 5))
+
+    provider = MagicMock()
+    provider.complete_structured = AsyncMock(
+        return_value=g._QuizBatchLLM(
+            questions=[
+                g._QuizQuestionLLM(
+                    question=f"fresh {n}",
+                    options=[f"a{n}", f"b{n}", f"c{n}", f"d{n}"],
+                    correct_index=0,
+                    explanation="because",
+                    difficulty="medium",
+                )
+                for n in range(2)
+            ]
+        )
+    )
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch.object(g, "_write_phase1_checkpoint", new=AsyncMock(return_value=None)),
+        patch.object(g, "_increment_phase1_progress", new=AsyncMock(return_value=None)),
+    ):
+        result = await g.quiz_generator_node(quiz_send.arg)  # type: ignore[arg-type]
+
+    assert provider.complete_structured.await_count == 1, (
+        "an oversized (higher-band) cache must be a MISS and regenerate"
+    )
+    assert len(result["quiz_questions"]) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_short_cache_is_still_reused_no_respend() -> None:
+    """The n_min side must NOT be guarded: the write path keeps a short batch
+    when the LLM underproduces, so rejecting it would re-bill on every retry."""
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_phase1_economy_nodes(_state("T1"))  # type: ignore[arg-type]
+    quiz_send = next(s for s in sends if s.node == "quiz_generator")
+    section_id = g._derive_section_id(quiz_send.arg["_section"], quiz_send.arg["_section_index"])
+
+    # 2 questions is BELOW T1's floor of 3 — a legitimate underproduction.
+    sb = _sb_with_checkpoint(f"quiz_generator:{section_id}", _cached_quiz_batch(section_id, 2))
+    provider = MagicMock()
+    provider.complete_structured = AsyncMock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch.object(g, "_increment_phase1_progress", new=AsyncMock(return_value=None)),
+    ):
+        result = await g.quiz_generator_node(quiz_send.arg)  # type: ignore[arg-type]
+
+    provider.complete_structured.assert_not_awaited()
+    assert len(result["quiz_questions"]) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_in_band_cache_is_still_reused_no_respend() -> None:
+    """The guard must not defeat the checkpoint's whole purpose: a cache that
+    DOES match the tier band must still be reused, with zero LLM spend."""
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_phase1_economy_nodes(_state("T1"))  # type: ignore[arg-type]
+    quiz_send = next(s for s in sends if s.node == "quiz_generator")
+    section_id = g._derive_section_id(quiz_send.arg["_section"], quiz_send.arg["_section_index"])
+
+    # 4 questions is inside T1's 3-5 band.
+    sb = _sb_with_checkpoint(f"quiz_generator:{section_id}", _cached_quiz_batch(section_id, 4))
+    provider = MagicMock()
+    provider.complete_structured = AsyncMock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch.object(g, "_increment_phase1_progress", new=AsyncMock(return_value=None)),
+    ):
+        result = await g.quiz_generator_node(quiz_send.arg)  # type: ignore[arg-type]
+
+    provider.complete_structured.assert_not_awaited()
+    assert len(result["quiz_questions"]) == 4

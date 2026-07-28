@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import logging
+import math
 import os
 import re
 import uuid
@@ -63,10 +64,56 @@ class LessonStatusResponse(BaseModel):
     error: str | None = None
     created_at: str | None = None
     completed_at: str | None = None
+    # Story 2-31 AC-4: lifted from the content JSONB so dashboard/library cards
+    # can show a real subject + duration without an N+1 round-trip per lesson.
+    # Cheap scalars only — NOT the whole package (see `content` below).
+    subject: str | None = None
+    estimated_duration_mins: float | None = None
     # Story 1-6: populated by get_lesson ONLY (never list_lessons — resolving
     # every asset's signed URL for every row in a paginated list would be an
     # N-lessons x M-assets signing storm).
     content: LessonPackage | None = None
+
+
+# Story 2-31 AC-5: URLs embedded in the lesson response are signed ONCE at fetch
+# time and never refreshed — there is no client-side re-sign path today
+# (AudioTimeline's retryAudio() re-mounts the same src rather than re-fetching).
+# At the 1-hour default, a student who pauses a lesson and returns loses audio
+# and images with no recovery. 8 hours covers a realistic study session with
+# breaks, while staying well short of a durable link.
+#
+# This shortens the exposure window; it does not close it. The real fix is a
+# re-sign path — deliberately deferred, since revision-mode video may supersede
+# the whole question (docs/decisionupdate.md §7b) and the standalone
+# GET /api/media/signed-url endpoint remains dormant pending that decision.
+_EMBEDDED_MEDIA_EXPIRY_S: int = 8 * 60 * 60
+
+
+# Story 2-31 AC-4: an explicit column list for list_lessons, replacing `select("*")`.
+#
+# `subject` and `estimated_duration_mins` are lifted out of the `content` JSONB
+# with PostgREST path selectors (`->metadata->>field`) so the list response can
+# show them WITHOUT pulling the whole package column for every row — the exact
+# N-lessons x M-assets cost Story 1-6 AC-7 exists to prevent. `->>` yields text,
+# so the duration is coerced back to float in `_row_to_status_response`.
+#
+# NOTE: the `content` column is deliberately absent here — list_lessons must
+# never attach full content or resolve signed URLs (Story 1-6 AC-7).
+#
+# `completed_at` is deliberately ABSENT: it is a column on `lesson_jobs`, NOT on
+# `lessons` (see supabase/migrations/20260611000000_initial_schema.sql — lessons
+# has only lesson_id/user_id/title/status/content/source_file_path/created_at/
+# updated_at, plus book_id and tier from later migrations). Under `select("*")`
+# naming it was harmless — `lesson.get("completed_at")` simply returned None —
+# but naming it EXPLICITLY makes PostgREST reject the whole query with
+# `42703 column lessons.completed_at does not exist`, i.e. GET /lessons fails for
+# every user on every request. `_row_to_status_response` still reads it via
+# .get(), so the response field keeps its existing always-null behaviour.
+_LIST_COLUMNS: str = (
+    "lesson_id,status,title,created_at,"
+    "subject:content->metadata->>subject,"
+    "estimated_duration_mins:content->metadata->>estimated_duration_mins"
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -93,7 +140,63 @@ def _row_to_status_response(
         error=error,
         created_at=str(lesson["created_at"]) if lesson.get("created_at") else None,
         completed_at=str(lesson["completed_at"]) if lesson.get("completed_at") else None,
+        subject=_coerce_str(_metadata_field(lesson, "subject")),
+        estimated_duration_mins=_coerce_float(_metadata_field(lesson, "estimated_duration_mins")),
     )
+
+
+def _metadata_field(lesson: dict[str, Any], field: str) -> Any:  # noqa: ANN401
+    """Read a LessonPackage.metadata field from either shape (Story 2-31 AC-4).
+
+    `list_lessons` aliases the value via a PostgREST JSONB path selector, so it
+    arrives as a flat top-level key. `get_lesson` selects `*`, so it arrives
+    nested under `content.metadata`. Supporting both keeps the two endpoints
+    consistent without making the list query pull the whole content column.
+    """
+    if lesson.get(field) is not None:
+        return lesson[field]
+    content = lesson.get("content")
+    if isinstance(content, dict):
+        metadata = content.get("metadata")
+        if isinstance(metadata, dict):
+            return metadata.get(field)
+    return None
+
+
+_MAX_SUBJECT_LEN = 200
+
+
+def _coerce_str(value: Any) -> str | None:  # noqa: ANN401
+    """Coerce an untrusted JSONB value to `str | None` for a typed response field.
+
+    `content.metadata` is LLM-generated JSONB — the least trustworthy source in
+    the system — and `get_lesson` reads it as a raw nested value (`select("*")`),
+    so `subject` can be a dict, list, or number. Pydantic v2 does NOT coerce
+    those into `str`, so handing one to `LessonStatusResponse` raises
+    ValidationError. On the LIST path that 500s the ENTIRE page, not one card.
+    Drop anything that is not already a string, and cap the length so one row
+    cannot balloon a paginated response.
+    """
+    if not isinstance(value, str):
+        return None
+    return value[:_MAX_SUBJECT_LEN]
+
+
+def _coerce_float(value: Any) -> float | None:  # noqa: ANN401
+    """PostgREST `->>` returns text; the nested dict returns a real number.
+
+    Rejects non-finite values: `float("NaN")`, `float("inf")` and `float("1e400")`
+    all SUCCEED in Python, and a bare `NaN`/`Infinity` token in the response is
+    invalid JSON that throws in the browser's `JSON.parse` — breaking the whole
+    lesson list, not one card. `math.isfinite` is the guard `try/except` cannot be.
+    """
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 def _resolve_lesson_content(
@@ -120,11 +223,16 @@ def _resolve_lesson_content(
         narration = segment.get("narration") or {}
         audio_path = narration.get("audio_url")
         if audio_path:
-            narration["audio_url"] = sign_storage_path(supabase, "lesson-audio", audio_path) or ""
+            narration["audio_url"] = (
+                sign_storage_path(supabase, "lesson-audio", audio_path, _EMBEDDED_MEDIA_EXPIRY_S)
+                or ""
+            )
         for slide in segment.get("slides") or []:
             image_path = slide.get("image_url")
             if image_path:
-                slide["image_url"] = sign_storage_path(supabase, "lesson-images", image_path)
+                slide["image_url"] = sign_storage_path(
+                    supabase, "lesson-images", image_path, _EMBEDDED_MEDIA_EXPIRY_S
+                )
     return LessonPackage.model_validate(content)
 
 
@@ -382,7 +490,7 @@ async def list_lessons(
 
     resp = (
         supabase.table("lessons")
-        .select("*")
+        .select(_LIST_COLUMNS)
         .eq("user_id", user_id)
         .order("created_at", desc=True)
         .range(offset, offset + limit - 1)

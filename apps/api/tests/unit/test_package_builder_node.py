@@ -121,6 +121,13 @@ AUDIO_ASSETS: list[dict[str, Any]] = [
     },
 ]
 
+# Story 2-31: the flat shape narration_generator_node emits. Derived from
+# AUDIO_ASSETS so each segment's script is DISTINCT — an identical script for
+# every segment would let an AC-1 assertion pass for the wrong reason.
+NARRATION_SCRIPTS: list[dict[str, Any]] = [
+    {"segment_id": a["segment_id"], "script": a["data"]["script"]} for a in AUDIO_ASSETS
+]
+
 QUIZ_QUESTIONS: list[dict[str, Any]] = [
     {
         "segment_id": "sec_0",
@@ -189,6 +196,7 @@ def _base_state(**overrides: Any) -> dict[str, Any]:
         "slides": SLIDES,
         "slide_images": SLIDE_IMAGES,
         "audio_assets": AUDIO_ASSETS,
+        "narration_scripts": NARRATION_SCRIPTS,
         "quiz_questions": QUIZ_QUESTIONS,
         "glossary": GLOSSARY,
         "intervention_prompts": INTERVENTION_PROMPTS,
@@ -854,3 +862,245 @@ async def test_degraded_segments_recorded_in_node_outputs_for_admin() -> None:
     assert rec is not None, "degradation must be recorded for admin visibility"
     assert rec["segment_ids"] == ["sec_0"]
     assert rec["total_segments"] == 2
+
+
+# ── Story 2-31: narration-script recovery + malformed-entry hardening ─────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_audio_recovers_the_real_script_not_a_blank() -> None:
+    """AC-1: only the AUDIO is missing in this degrade path — the script is not.
+
+    Real production repro: tts_node cache-hits a persisted
+    node_outputs["tts_node"] == [], so package_builder sees no audio_assets
+    entry for a segment while narration_scripts still holds its text.
+    """
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    state = _base_state(audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"])
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    seg = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    assert seg["narration"]["script"] == "Entropy measures disorder.", (
+        "the segment's OWN script must be recovered from narration_scripts, not blanked"
+    )
+    assert seg["narration"]["audio_url"] == "", "audio genuinely is missing — that stays empty"
+    assert seg["narration"]["audio_provider"] == "browser"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_audio_and_missing_script_degrades_to_empty() -> None:
+    """AC-1: narration_generator returns [] on no-summary / LLM-failure /
+    pacing-reject. There is genuinely nothing to recover — accept the gap."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    state = _base_state(
+        audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
+        narration_scripts=[n for n in NARRATION_SCRIPTS if n["segment_id"] != "sec_0"],
+    )
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    seg = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    assert seg["narration"]["script"] == ""
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_whitespace_only_recovered_script_is_treated_as_absent() -> None:
+    """AC-1: a whitespace script is not a script."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    state = _base_state(
+        audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
+        narration_scripts=[{"segment_id": "sec_0", "script": "   \n  "}],
+    )
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    seg = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    assert seg["narration"]["script"] == ""
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_recovered_narration_still_gets_estimated_timestamps() -> None:
+    """AC-1: the fix must COMPOSE with the Story 2-19 timestamp-estimation block
+    that immediately follows, not be overwritten by it."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    state = _base_state(audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"])
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    seg = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    assert seg["narration"]["script"], "script survived the timestamp block"
+    assert seg["narration"]["timestamps"], "timestamps still estimated for a no-audio segment"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_malformed_audio_entry_missing_data_does_not_crash_the_node() -> None:
+    """AC-2: _index_by_segment_id used item[value_key], so ONE malformed entry
+    raised KeyError and took down the whole node — contradicting the "one bad
+    item never crashes the node" guarantee its own docstring makes (AC-5)."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    broken = [{"segment_id": "sec_0"}, *[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"]]
+    state = _base_state(audio_assets=broken)
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    segs = {s["segment_id"]: s for s in result["lesson_package"]["segments"]}
+    assert "sec_1" in segs, "the healthy segment must survive a malformed sibling"
+    assert segs["sec_0"]["narration"]["script"] == "Entropy measures disorder.", (
+        "the malformed segment degrades to no-audio but still recovers its script"
+    )
+
+
+# ── Story 2-31 review round: malformed-entry hardening (AC-2's real guarantee) ─
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_non_dict_entry_in_a_list_does_not_crash_the_node() -> None:
+    """Review finding: AC-2's `.get(value_key)` fix only ever covered the
+    dict-missing-key case. An entry that is not a dict AT ALL — a bare string
+    from a schema-drifted or hand-edited checkpoint — made the very next
+    `item.get("segment_id")` raise AttributeError, killing the node after all
+    pipeline spend. The docstring's "one bad item never crashes the whole node"
+    guarantee was still false."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    state = _base_state(
+        audio_assets=["not-a-dict", None, 42, *AUDIO_ASSETS],
+        narration_scripts=["junk", *NARRATION_SCRIPTS],
+        complexity_scores=[None, *COMPLEXITY_SCORES],
+        intervention_prompts=[["nested", "list"], *INTERVENTION_PROMPTS],
+    )
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    segs = result["lesson_package"]["segments"]
+    assert len(segs) == 2, "healthy segments must still be built"
+    seg = next(s for s in segs if s["segment_id"] == "sec_0")
+    assert seg["narration"]["script"] == "Entropy measures disorder."
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_present_but_non_dict_value_degrades_that_segment_only() -> None:
+    """Review finding: a `data` key that is PRESENT but not a dict slipped past
+    every caller's `is None` degrade test, then blew up on `.get("script")` /
+    `{**value}` — the same post-spend crash the KeyError fix was meant to
+    eliminate, one branch further down."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    broken = [
+        {"segment_id": "sec_0", "data": "a bare string, not a dict"},
+        *[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
+    ]
+    state = _base_state(audio_assets=broken)
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    segs = result["lesson_package"]["segments"]
+    bad = next(s for s in segs if s["segment_id"] == "sec_0")
+    good = next(s for s in segs if s["segment_id"] == "sec_1")
+    # Degraded to the no-audio path — and AC-1 recovery still supplies the script.
+    assert bad["narration"]["audio_url"] == ""
+    assert bad["narration"]["script"] == "Entropy measures disorder."
+    assert good["narration"]["audio_url"].endswith("sec_1.mp3"), "sibling unaffected"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_non_string_recovered_script_is_treated_as_absent() -> None:
+    """Mutation survivor: the `isinstance(raw_script, str)` half of the AC-1
+    guard had no test — every fixture supplied a str. Dropping it turns graceful
+    degradation into an AttributeError inside package_builder_node."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    for bad_script in (None, 123, {"text": "nope"}, ["a", "b"]):
+        state = _base_state(
+            audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
+            narration_scripts=[
+                {"segment_id": "sec_0", "script": bad_script},
+                *[n for n in NARRATION_SCRIPTS if n["segment_id"] != "sec_0"],
+            ],
+        )
+        sb, _, _ = _mock_supabase()
+        with patch("app.core.db.get_supabase", return_value=sb):
+            result = await package_builder_node(state)  # type: ignore[arg-type]
+
+        seg = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+        assert seg["narration"]["script"] == "", f"{bad_script!r} must degrade, not propagate"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_duplicate_segment_id_in_narration_scripts_keeps_last() -> None:
+    """AC-1 names this case explicitly ("duplicate segment_id — last wins") but
+    it shipped with zero coverage. narration_scripts is the ONLY caller passing
+    no value_key, so the pre-existing duplicate test on complexity_scores does
+    not exercise this branch."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    state = _base_state(
+        audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
+        narration_scripts=[
+            {"segment_id": "sec_0", "script": "FIRST — should be overwritten"},
+            {"segment_id": "sec_0", "script": "LAST — this one wins"},
+            *[n for n in NARRATION_SCRIPTS if n["segment_id"] != "sec_0"],
+        ],
+    )
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    seg = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    assert seg["narration"]["script"] == "LAST — this one wins"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_audio_entry_present_but_script_blank_still_recovers() -> None:
+    """Review finding: recovery fired only under `if narration is None`. A
+    tts_node checkpoint persisted under an older shape can carry an audio entry
+    whose script is blank — the `is None` branch never fires, so the segment
+    shipped empty narration even though the text was sitting in
+    narration_script_by_id."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    scriptless = [
+        {
+            "segment_id": "sec_0",
+            "data": {
+                "script": "",
+                "audio_url": f"{FAKE_LESSON_ID}/sec_0.mp3",
+                "audio_provider": "sarvam",
+                "timestamps": [],
+            },
+        },
+        *[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
+    ]
+    state = _base_state(audio_assets=scriptless)
+    sb, _, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(state)  # type: ignore[arg-type]
+
+    seg = next(s for s in result["lesson_package"]["segments"] if s["segment_id"] == "sec_0")
+    assert seg["narration"]["script"] == "Entropy measures disorder.", (
+        "the script must be recovered even though the audio entry itself exists"
+    )
+    assert seg["narration"]["audio_url"].endswith("sec_0.mp3"), "real audio must be preserved"
