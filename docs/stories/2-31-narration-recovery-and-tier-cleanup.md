@@ -4,7 +4,7 @@ baseline_commit: 22df9b6
 
 # Story 2.31: Narration-script recovery + tier checkpoint validation + list-endpoint fields
 
-Status: blocked-on-verification
+Status: ready-for-review
 
 ## Story
 
@@ -191,14 +191,32 @@ sweep the unrelated hunks into this diff.
 **Not repaired by this change:** lessons already built with a blank script — `package_builder_node`
 cache-hits and returns the stored dict verbatim. Those need their `package_builder` checkpoint cleared.
 
-**Open before merge (AC-4), owner: Dev 1.** The `select` string must still be exercised
-against the live project with one real request. The `completed_at` bug above was found by
-reading the migrations, but PostgREST *path-alias syntax*
-(`subject:content->metadata->>subject`) genuinely cannot be certified from source, and no
-mock can catch it — `_make_list_supabase_mock` returns whatever rows the test hands it
-regardless of the select string. If the alias syntax is wrong, `list_lessons` fails for
-every user, which is strictly worse than the `select("*")` it replaces. **This is why the
-status is `blocked-on-verification` rather than `ready-for-review`.**
+**AC-4 live verification — DONE 2026-07-28, against the real project.** Three read-only
+stages, all passed:
+
+1. **Syntax.** The full `_LIST_COLUMNS` select was executed with an impossible `user_id`
+   filter, so PostgREST had to parse and validate the string while returning zero rows.
+   Parsed cleanly — the path-alias syntax `subject:content->metadata->>subject` is correct.
+2. **Aliasing.** A one-row probe returned exactly the six expected flat keys
+   (`lesson_id`, `status`, `title`, `created_at`, `subject`, `estimated_duration_mins`)
+   and **no `content` column** — Story 1-6 AC-7 holds against the real database, not just
+   against a mock.
+3. **Extraction.** On a `status='ready'` lesson with populated content, the aliased values
+   were compared against the nested `content.metadata` ground truth the detail endpoint
+   reads. They agree after coercion.
+
+Stage 3 also **confirmed the asymmetry `_coerce_float` exists for**, which until now was
+inferred from the PostgREST docs rather than observed: `estimated_duration_mins` comes back
+as **`str`** on the list path (`->>` yields TEXT) and as **`float`** on the detail path.
+Without `_coerce_float` the two endpoints would report different types for the same field.
+
+Separately, the `completed_at` finding was confirmed empirically rather than only from the
+migrations: selecting it from `lessons` returns
+`{'code': '42703', 'message': 'column lessons.completed_at does not exist'}`, while
+`lesson_jobs.completed_at` selects fine. The bug was real and would have taken
+`GET /lessons` down for every user.
+
+**Nothing is now open before merge.**
 
 ### File List
 
@@ -217,4 +235,5 @@ status is `blocked-on-verification` rather than `ready-for-review`.**
 |------|--------|--------|
 | 2026-07-28 | Story created. Folds in the tier-blind checkpoint finding from Story 2-28's Edge Case Hunter review (AC-3) and the signed-URL expiry gap (AC-5) alongside Dev 2's two remaining reported items. | Dev 1 |
 | 2026-07-28 | All 6 tasks implemented. AC-3 narrowed to an `n_max`-only guard during implementation — the `n_min` half conflicts with Story 2-28 AC-8's keep-short-batches rule; residual gap documented. Status → ready-for-review. | Dev 1 |
+| 2026-07-28 | **AC-4 live verification passed** against the real project (syntax / aliasing / value-extraction, all read-only). Confirmed the `->>`-yields-TEXT asymmetry that `_coerce_float` exists for, and confirmed the `completed_at` bug empirically (`42703`). Nothing open before merge; status → ready-for-review. | Dev 1 |
 | 2026-07-28 | **6-layer adversarial review round.** Fixed one production-breaking bug (`completed_at` named in `_LIST_COLUMNS` is a `lesson_jobs` column, not a `lessons` one — `GET /lessons` would have 42703'd for every user). **AC-3 redesigned**: the shipped `n_max` heuristic could not catch the hazard AC-3 names, because stale caches are T2-sized and T1's `n_max` is 5 — replaced with a tier stamp in the checkpoint *value*, keys untouched. Added a salvage path so a rejected cache plus a failed regeneration cannot ship an empty quiz or loop-bill. Hardened `_index_by_segment_id` against non-dict entries and non-dict values, recovered scripts against non-`str` values, and added the blank-script recovery branch. Hardened `_metadata_field`/`_coerce_float` against untrusted JSONB (non-`str` subject, `NaN`/`Infinity`). Fixed three tests that passed for the wrong reason. AC-3's text amended in place; the mis-cited "2-28 AC-8" corrected to 3-28 AC-8. Task 5's `media/router.py` dormancy note finally written. Status → blocked-on-verification pending the live `select` check. | Dev 1 |
