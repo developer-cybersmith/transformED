@@ -887,10 +887,16 @@ _LIST_ROW: dict[str, Any] = {
     "status": "ready",
     "title": "Thermo",
     "created_at": "2026-07-28T00:00:00Z",
-    "completed_at": "2026-07-28T00:05:00Z",
+    # NOTE: no "completed_at" — it is a lesson_jobs column, not a lessons one.
     # PostgREST `->>` yields TEXT, so the duration arrives as a string.
     "subject": "Physics",
     "estimated_duration_mins": "12.5",
+    # Review finding: this fixture originally had NO `content` key, which made
+    # test_list_lessons_still_never_attaches_content_or_signs_urls pass for the
+    # wrong reason — a mutation that attached and signed content per row never
+    # fired, because there was no content to attach. A realistic content dict is
+    # what gives that regression guard its teeth.
+    "content": _READY_CONTENT_DICT,
 }
 
 
@@ -968,6 +974,10 @@ def test_list_lessons_tolerates_missing_metadata_fields() -> None:
     row["status"] = "generating"
     row["subject"] = None
     row["estimated_duration_mins"] = None
+    # A still-generating lesson has no content at all — so this exercises the
+    # both-shapes-absent path rather than silently falling through to the nested
+    # content.metadata branch that _LIST_ROW now carries.
+    row.pop("content", None)
     sb = _make_list_supabase_mock([row])
 
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
@@ -1041,3 +1051,143 @@ def test_get_lesson_also_populates_subject_and_duration() -> None:
     meta = _READY_CONTENT_DICT["metadata"]
     assert body["subject"] == meta["subject"]
     assert body["estimated_duration_mins"] == meta["estimated_duration_mins"]
+
+
+# ── Story 2-31 review round: untrusted JSONB + schema-truth guards ────────────
+
+
+@pytest.mark.unit
+def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
+    """Review blocker: `completed_at` lives on `lesson_jobs`, NOT on `lessons`.
+
+    Under `select("*")` naming it was harmless. Naming it EXPLICITLY makes
+    PostgREST reject the whole query (42703) — GET /lessons then fails for every
+    user, every request. No mock can catch that, so assert the column list
+    against the migrations that define the table.
+    """
+    from app.modules.content.router import _LIST_COLUMNS
+
+    # Real columns per 20260611000000_initial_schema.sql + later ALTERs.
+    real_columns = {
+        "lesson_id",
+        "user_id",
+        "title",
+        "status",
+        "content",
+        "source_file_path",
+        "created_at",
+        "updated_at",
+        "book_id",
+        "tier",
+    }
+    for spec in _LIST_COLUMNS.split(","):
+        # `alias:path->>field` — the real column is the head of the path.
+        source = spec.split(":", 1)[1] if ":" in spec else spec
+        column = source.split("->", 1)[0].strip()
+        assert column in real_columns, (
+            f"_LIST_COLUMNS references {column!r}, which is not a column on "
+            f"public.lessons — PostgREST will 42703 the entire list endpoint"
+        )
+
+
+@pytest.mark.unit
+def test_list_lessons_survives_an_unparseable_duration() -> None:
+    """Mutation survivor: `_coerce_float`'s except branch had zero coverage.
+
+    `->>` returns TEXT, so a hand-edited or drifted metadata value can be any
+    string. Raising out of `_row_to_status_response` would 500 the whole page.
+    """
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    row = copy.deepcopy(_LIST_ROW)
+    row["estimated_duration_mins"] = "about twelve"
+    sb = _make_list_supabase_mock([row])
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get("/api/content/lessons")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200, "one malformed row must not 500 the whole list"
+    assert resp.json()[0]["estimated_duration_mins"] is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_non_finite_duration_is_dropped_not_serialised(bad: str) -> None:
+    """`float()` ACCEPTS all of these. A bare NaN/Infinity token is invalid JSON
+    and throws in the browser's JSON.parse — breaking the entire list response,
+    not one card. try/except cannot catch this; math.isfinite must."""
+    from app.modules.content.router import _coerce_float
+
+    assert _coerce_float(bad) is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", [{"name": "Physics"}, ["Physics"], 42, 3.5, True])
+def test_non_string_subject_is_dropped_not_500(bad: Any) -> None:
+    """`content.metadata` is LLM-generated JSONB. Pydantic v2 does NOT coerce a
+    dict/list/number into `str`, so handing one to LessonStatusResponse raises
+    ValidationError — on the list path that 500s the ENTIRE page."""
+    from app.modules.content.router import _coerce_str
+
+    assert _coerce_str(bad) is None
+
+
+@pytest.mark.unit
+def test_row_to_status_response_survives_poisoned_nested_metadata() -> None:
+    """The status-response mapper must never raise on corrupt metadata.
+
+    Scoped to `_row_to_status_response` deliberately. Going through GET
+    /lessons/{id} would NOT prove this: `_resolve_lesson_content` validates the
+    package first and is intentionally uncaught, so a poisoned package 500s there
+    by design (see test_get_lesson_corrupted_content_is_not_silently_swallowed).
+    The reachable exposure is the mapper itself, which runs on the LIST path
+    where content is never validated — so if `content` is ever re-added to
+    `_LIST_COLUMNS`, a dict-valued subject must degrade rather than 500 the page.
+    """
+    from app.modules.content.router import _row_to_status_response
+
+    poisoned = copy.deepcopy(_READY_CONTENT_DICT)
+    poisoned["metadata"]["subject"] = {"unexpected": "object"}
+    poisoned["metadata"]["estimated_duration_mins"] = float("nan")
+
+    resp = _row_to_status_response(
+        {
+            "lesson_id": FAKE_LESSON_ID,
+            "status": "ready",
+            "title": "Test Lesson",
+            "created_at": "2026-06-28T00:00:00Z",
+            "content": poisoned,
+        }
+    )
+
+    assert resp.subject is None
+    assert resp.estimated_duration_mins is None
+
+
+@pytest.mark.unit
+def test_subject_is_length_capped() -> None:
+    """A paginated endpoint must not let one row balloon the response."""
+    from app.modules.content.router import _MAX_SUBJECT_LEN, _coerce_str
+
+    out = _coerce_str("x" * 10_000)
+    assert out is not None
+    assert len(out) == _MAX_SUBJECT_LEN
+
+
+@pytest.mark.unit
+def test_embedded_media_expiry_covers_a_realistic_study_session() -> None:
+    """Mutation survivor: the URL-equality assertions interpolate the SAME
+    constant the source uses, so they are tautological — setting the expiry to
+    3601 defeated AC-5's rationale while every test stayed green. Bound it on
+    both sides: a floor that means something, and a ceiling so the exposure
+    window of a bearer capability cannot silently grow to a year."""
+    from app.modules.content.router import _EMBEDDED_MEDIA_EXPIRY_S as _EXP
+
+    assert _EXP >= 4 * 3600, "must outlast a realistic study session with breaks"
+    assert _EXP <= 24 * 3600, "signed URLs are bearer capabilities — cap the window"

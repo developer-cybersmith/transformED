@@ -75,6 +75,23 @@ async def get_signed_url(
     ownership-check pattern in `content/router.py:get_lesson` — a
     nonexistent lesson and an unowned lesson return the identical 404,
     never distinguishing which (would leak existence to a non-owner).
+
+    DORMANT (Story 2-31 AC-5). This endpoint currently has **zero callers** —
+    neither `apps/web` nor any backend module invokes it. Lesson media is signed
+    server-side inside `content/router.py:_resolve_lesson_content`, which embeds
+    the URLs directly in the lesson package using `_EMBEDDED_MEDIA_EXPIRY_S`
+    rather than routing clients here.
+
+    It is kept rather than deleted because the obvious fix for the expiry problem
+    (a client that re-signs a single asset when playback 403s, instead of
+    re-fetching the whole lesson) is exactly what this endpoint is shaped for.
+    But it may never be needed: revision-mode video could supersede per-asset
+    signing altogether — see `docs/decisionupdate.md` §7b. Decide before building
+    a client against it.
+
+    Note the deliberate asymmetry: `expires_in` here is caller-supplied and
+    capped at 86400, whereas embedded lesson media uses the fixed
+    `_EMBEDDED_MEDIA_EXPIRY_S`. Changing one does not change the other.
     """
     if bucket not in _ALLOWED_BUCKETS:
         raise HTTPException(

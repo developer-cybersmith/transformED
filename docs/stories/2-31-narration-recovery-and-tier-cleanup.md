@@ -4,7 +4,7 @@ baseline_commit: 22df9b6
 
 # Story 2.31: Narration-script recovery + tier checkpoint validation + list-endpoint fields
 
-Status: ready-for-review
+Status: blocked-on-verification
 
 ## Story
 
@@ -24,8 +24,12 @@ so that Dev 2's remaining two reported items are closed and the tier fix from St
    - Must compose with the Story 2-19 timestamp-estimation block that immediately follows, not be overwritten by it.
 2. **AC-2 — `_index_by_segment_id` stops raising on a malformed entry.** It uses `item[value_key]`; a single entry missing that key raises `KeyError` and takes down the node, contradicting the AC-5 "one bad item never crashes the node" guarantee its own docstring makes. Use `.get(value_key)`.
 3. **AC-3 — Cached Phase-1 work is rejected when it no longer matches the lesson's tier.** `_quiz_batch_is_valid_shape` validates shape only, never count-against-band. Because Story 2-28 made `tier` actually reach the Phase-1 nodes, a lesson whose Phase-1 ran *before* that deploy holds a checkpoint sized to the wrongly-defaulted `T2` band; an ARQ retry now returns it verbatim and the T1 lesson silently ships T2 content while the logs show the tier fix working.
-   - Validate the cached question count against `_TIER_QUIZ_COUNT_BAND[tier]` on **read**; treat a mismatch as a cache miss so the section regenerates.
-   - **Do NOT tier-scope the checkpoint keys.** That would re-bill every section on every ARQ retry against the $3.00/lesson ceiling and violates Story 2-28 AC-5's stated invariant (keys must stay `f"{node}:{section_id}"`, guarded by `test_phase1_checkpoint_idempotency.py`).
+   - **Stamp the generating `tier` into the checkpoint VALUE on write; on read, reject when the stamp disagrees with this lesson's tier** so the section regenerates.
+   - **Do NOT tier-scope the checkpoint keys.** That would re-bill every section on every ARQ retry against the $3.00/lesson ceiling and violates Story 2-28 AC-5's stated invariant (keys must stay `f"{node}:{section_id}"`, guarded by `test_phase1_checkpoint_idempotency.py`). A stamp in the *value* satisfies both constraints: the key space is untouched, and a same-tier retry is still a free cache hit.
+   - **Legacy checkpoints** (written before this story) carry no stamp, so their provenance is unknowable. For those only, fall back to a count heuristic: reject `count > n_max`, since the write path truncates to `n_max` and a larger batch can only have come from a higher band. Do **not** extend it to `count < n_min` — the write path deliberately keeps short batches (Story **3-28** AC-8: *"Partial batch accepted… It does NOT discard the passing questions"*), so a below-band count is ambiguous between a stale-tier cache and legitimate underproduction. Log it; do not re-bill it.
+   - **A rejected cache must never become an empty quiz.** If regeneration then fails (no parsed response, or every question fails validation), salvage the rejected-but-structurally-valid cached batch, truncate to `n_max`, and **re-stamp it with this lesson's tier**. Without this, a rejected cache plus one transient LLM failure ships a segment with zero questions — worse than the wrong-tier content the guard exists to prevent — and leaves the stale checkpoint in place, so every retry re-rejects and re-bills. `quiz_generator_node` has no `check_ceiling()` gate, so nothing else bounds that loop.
+
+   > **Amended 2026-07-28 after review.** As first written this AC said "validate the cached question **count** against `_TIER_QUIZ_COUNT_BAND[tier]`". Implemented that way it could not catch its own named hazard: stale caches are all T2-sized (2–3 questions) and T1's `n_max` is 5, so every stale T2 cache passed for exactly the T1 lessons this AC describes. The count guard fired only for T3 lessons holding a 3-question cache — one tier of three, one of two possible stale counts. The wording above now describes the tier-stamp design that actually closes it. The original justification for narrowing also mis-cited Story 2-28 AC-8 (which is *Three canaries*); the keep-short-batches rule is Story **3-28** AC-8.
 4. **AC-4 — `GET /lessons` carries `subject` and `estimated_duration_mins`.** Dev 2 asked for these so dashboard/library cards can show real durations without an N+1 round-trip per lesson.
    - Narrow the `select` and lift the two values from the `content` JSONB via a PostgREST path selector rather than pulling the whole column.
    - **Must not regress Story 1-6 AC-7:** `list_lessons` must never resolve signed URLs or attach full `content`. Assert `sign_storage_path` / `_resolve_lesson_content` are called **zero** times and `"content" not in` the items.
@@ -87,14 +91,36 @@ right reason.
 **AC-2 — `_index_by_segment_id`.** `item[value_key]` → `item.get(value_key)`. A malformed
 entry now yields `None` for that one segment instead of `KeyError`-ing the node.
 
-**AC-3 — tier-band validation, narrowed from the AC as written.** The guard rejects a
-cached batch only when `count > _TIER_QUIZ_COUNT_BAND[tier][1]`, **not** on `count < n_min`.
-Reason found during implementation: the *write* path deliberately keeps short batches
-(Story 2-28 AC-8 — "do NOT discard valid questions"), so a below-band count is ambiguous
-between a stale-tier cache and a legitimately short generation. Guarding `n_min` broke two
-existing tests that encode that intent. **Residual gap, accepted and documented in code:**
-a T3 lesson (band 1–2) holding a stale T2 cache of 2 questions is within T3's band and is
-not rejected. Over-provisioned caches — the expensive and the common direction — are caught.
+**AC-3 — tier STAMP (first implementation was wrong; corrected in the review round).**
+
+*What shipped first, and why it was wrong.* The initial guard rejected a cached batch only
+when `count > _TIER_QUIZ_COUNT_BAND[tier][1]`, and the record defended that narrowing as
+forced by the keep-short-batches rule. The Acceptance Auditor showed it **could not catch
+the hazard AC-3 names**: pre-2-28 checkpoints are all T2-sized (2–3 questions) and T1's
+`n_max` is 5, so every stale T2 cache passed cleanly for exactly the T1 lessons the AC
+describes. The guard fired only for T3 lessons holding a 3-question cache. Worse, the test
+that "proved" it used a 5-question cache against T3 — a count the write path can never
+produce for T2 — so it validated a shape the migration hazard cannot generate.
+
+Two further errors in that first record, both confirmed: the justification cited **Story
+2-28 AC-8**, which is *Three canaries*; the keep-short-batches rule is **Story 3-28 AC-8**.
+And the narrowing was presented as forced when it was not — stamping the tier in the
+checkpoint **value** was never considered.
+
+*What ships now.* `_write_phase1_checkpoint` records `{"segment_id", "questions", "tier"}`.
+On read, a stamp disagreeing with the lesson's tier is an exact reject. This satisfies both
+prior invariants — the key stays `f"{node}:{section_id}"` (2-28 AC-5), and a same-tier retry
+is still a free cache hit — so the cost objection that motivated the narrowing does not
+apply. Legacy unstamped checkpoints keep the `n_max` heuristic as a fallback, with
+`count < n_min` logged but **not** rejected (still genuinely ambiguous, per 3-28 AC-8).
+The residual gap now applies only to legacy checkpoints and closes as they age out.
+
+*Salvage path (new, from Process Integrity + Edge Case Hunter, found independently).* A
+rejected cache followed by a failed regeneration previously returned `{"quiz_questions": []}`
+via two early returns that write **no** checkpoint — so the segment shipped zero questions
+*and* the stale checkpoint survived, making every ARQ retry re-reject and re-bill.
+`quiz_generator_node` has no `check_ceiling()` call, so nothing bounded it. Regeneration
+failure now salvages the rejected batch, truncates to `n_max`, and re-stamps it.
 
 **AC-4 — list endpoint.** `_LIST_COLUMNS` replaces `select("*")` with an explicit column
 list plus two PostgREST path selectors
@@ -104,25 +130,58 @@ list plus two PostgREST path selectors
 `_coerce_float()` handles `->>` returning TEXT. `LessonStatusResponse` gained both fields
 as `| None`.
 
-**AC-5 — expiry.** `_EMBEDDED_MEDIA_EXPIRY_S = 8 * 60 * 60`, threaded through
-`_resolve_lesson_content`. Tests assert against the constant, not a literal, plus
-`_EXP > 3600`. `GET /api/media/signed-url` left dormant and documented.
+**AC-4 — production-breaking bug caught in review.** The first `_LIST_COLUMNS` named
+`completed_at`. That column exists on **`lesson_jobs`**, not on `lessons`
+(`20260611000000_initial_schema.sql`). Under `select("*")` naming it was harmless —
+`lesson.get("completed_at")` simply returned `None` — but naming it explicitly makes
+PostgREST reject the entire query with `42703`, so **`GET /lessons` would have failed for
+every user on every request**. Every AC-4 test mocks Supabase and asserts the select
+*string*, so none could catch it. Removed, and now guarded by
+`test_list_columns_names_no_column_absent_from_the_lessons_table`, which parses
+`_LIST_COLUMNS` and checks each referenced column against the set defined by the migrations.
 
-**Test verification.** All new AC-4 tests were mutation-checked: `select(_LIST_COLUMNS)` →
-`select("*")` kills one; `subject=_metadata_field(...)` → `subject=None` kills two. The
-`_coerce_float` mutation alone does **not** kill a test — pydantic coerces the string at the
-response boundary regardless — so the float coercion is defence-in-depth, not the load-bearing
-path. `_make_list_supabase_mock` deliberately does **not** reuse `_make_supabase_mock`, whose
+**AC-4 — untrusted-JSONB hardening (review).** `content.metadata` is LLM-generated, and
+`_metadata_field` returned it raw into typed Pydantic fields. A dict- or number-valued
+`subject` raises `ValidationError`, which on the list path 500s the **entire page**, not one
+card. Added `_coerce_str` (drops non-`str`, caps length) and made `_coerce_float` reject
+non-finite values — `float("NaN")` and `float("1e400")` both *succeed*, and a bare
+`NaN`/`Infinity` token is invalid JSON that throws in the browser's `JSON.parse`.
+
+**AC-5 — expiry.** `_EMBEDDED_MEDIA_EXPIRY_S = 8 * 60 * 60`, threaded through
+`_resolve_lesson_content`. `GET /api/media/signed-url` left dormant, and now genuinely
+documented **in `media/router.py`** — the first pass put the note in `content/router.py`,
+a different module from the endpoint it describes, while Task 5 was marked complete.
+
+**Test verification.** Every guard in this story is mutation-proven, and the review round
+found three that were not. Killed on re-check: tier stamp ignored on read; tier not stamped
+on write; salvage disabled; salvage without re-stamping; non-dict item guard; non-dict value
+guard; `isinstance(str)` on the recovered script; blank-script recovery; `completed_at`
+re-added to the select; `list_lessons` attaching and signing content per row.
+
+Three first-round tests were **not** doing their job:
+- `test_list_lessons_still_never_attaches_content_or_signs_urls` (the Story 1-6 AC-7 guard)
+  **survived** a mutation that made `list_lessons` attach and sign content for every row —
+  its fixture had no `content` key, so the mutated branch never fired. `_LIST_ROW` now
+  carries a realistic content dict, and the mutation is killed.
+- The expiry assertions were **tautological** — they interpolate the same constant the
+  source uses, so only `_EXP > 3600` had force, and `3601` satisfied it while defeating
+  AC-5's rationale. Replaced with an explicit floor (`>= 4h`) and a ceiling (`<= 24h`),
+  since an over-long window on a bearer capability is its own problem.
+- `_coerce_float`'s except branch had **zero** coverage; a non-numeric metadata value would
+  have raised out of `_row_to_status_response`.
+
+`_make_list_supabase_mock` deliberately does **not** reuse `_make_supabase_mock`, whose
 `table()` `side_effect` dispatch would make the select-string assertion unfalsifiable.
 
-**AC-6 — regression.** Full suite: **32 failed, 1354 passed, 3 skipped** vs baseline
-`754786a` **32 failed, 1341 passed, 3 skipped**. Failure sets are byte-identical (`diff`
-clean) — all 32 are pre-existing in `tests/test_dna_fusion.py`, `test_dna_growth.py`,
-`test_onboarding_content.py`, `test_tutor_service.py` (Dev 3 / Dev 4 files, untouched here).
-`mypy`: clean on both touched source files. `ruff check`: the one E501 in `graph.py:2285` is
-pre-existing at baseline (same line, shifted). `ruff format`: applied to `router.py` and
-`test_content_router.py` (my lines only); `graph.py`'s pre-existing format drift was left
-untouched rather than sweeping unrelated lines into this diff.
+**AC-6 — regression.** Full suite after the review round: **32 failed, 1380 passed,
+3 skipped** vs baseline `754786a` **32 failed, 1341 passed, 3 skipped** — **+39 passing,
+zero new failures**, failure sets byte-identical under `diff`. All 32 are pre-existing in
+`tests/test_dna_fusion.py`, `test_dna_growth.py`, `test_onboarding_content.py`,
+`test_tutor_service.py` (Dev 3 / Dev 4 files, untouched here). `mypy`: **clean** on all three
+touched source files. `ruff check`: the single E501 in `graph.py` is pre-existing at baseline
+(same line, shifted). `ruff format`: `graph.py` carries 7 hunks of pre-existing drift at
+baseline (leading BOM + older compact log-call style); my own lines conform, and I did not
+sweep the unrelated hunks into this diff.
 
 **Scope note, restated so it is not lost:** this does **not** fix Dev 2's visible
 0:00-quiz-fires-instantly symptom. That needs the virtual playback clock in
@@ -132,8 +191,14 @@ untouched rather than sweeping unrelated lines into this diff.
 **Not repaired by this change:** lessons already built with a blank script — `package_builder_node`
 cache-hits and returns the stored dict verbatim. Those need their `package_builder` checkpoint cleared.
 
-**Open before merge (AC-4):** the exact `select` string must be verified against the live
-project with one real request — PostgREST path-alias syntax cannot be certified from source.
+**Open before merge (AC-4), owner: Dev 1.** The `select` string must still be exercised
+against the live project with one real request. The `completed_at` bug above was found by
+reading the migrations, but PostgREST *path-alias syntax*
+(`subject:content->metadata->>subject`) genuinely cannot be certified from source, and no
+mock can catch it — `_make_list_supabase_mock` returns whatever rows the test hands it
+regardless of the select string. If the alias syntax is wrong, `list_lessons` fails for
+every user, which is strictly worse than the `select("*")` it replaces. **This is why the
+status is `blocked-on-verification` rather than `ready-for-review`.**
 
 ### File List
 
@@ -142,6 +207,9 @@ project with one real request — PostgREST path-alias syntax cannot be certifie
 - `apps/api/tests/unit/test_content_router.py`
 - `apps/api/tests/unit/test_package_builder_node.py`
 - `apps/api/tests/unit/test_fan_out_state_keys.py`
+- `apps/api/tests/unit/test_quiz_checkpoint_tier_stamp.py` — NEW (review round, AC-3)
+- `apps/api/app/modules/media/router.py` — docstring only (AC-5 dormancy note)
+- `docs/dev1-tracker.md`
 
 ## Change Log
 
@@ -149,3 +217,4 @@ project with one real request — PostgREST path-alias syntax cannot be certifie
 |------|--------|--------|
 | 2026-07-28 | Story created. Folds in the tier-blind checkpoint finding from Story 2-28's Edge Case Hunter review (AC-3) and the signed-URL expiry gap (AC-5) alongside Dev 2's two remaining reported items. | Dev 1 |
 | 2026-07-28 | All 6 tasks implemented. AC-3 narrowed to an `n_max`-only guard during implementation — the `n_min` half conflicts with Story 2-28 AC-8's keep-short-batches rule; residual gap documented. Status → ready-for-review. | Dev 1 |
+| 2026-07-28 | **6-layer adversarial review round.** Fixed one production-breaking bug (`completed_at` named in `_LIST_COLUMNS` is a `lesson_jobs` column, not a `lessons` one — `GET /lessons` would have 42703'd for every user). **AC-3 redesigned**: the shipped `n_max` heuristic could not catch the hazard AC-3 names, because stale caches are T2-sized and T1's `n_max` is 5 — replaced with a tier stamp in the checkpoint *value*, keys untouched. Added a salvage path so a rejected cache plus a failed regeneration cannot ship an empty quiz or loop-bill. Hardened `_index_by_segment_id` against non-dict entries and non-dict values, recovered scripts against non-`str` values, and added the blank-script recovery branch. Hardened `_metadata_field`/`_coerce_float` against untrusted JSONB (non-`str` subject, `NaN`/`Infinity`). Fixed three tests that passed for the wrong reason. AC-3's text amended in place; the mis-cited "2-28 AC-8" corrected to 3-28 AC-8. Task 5's `media/router.py` dormancy note finally written. Status → blocked-on-verification pending the live `select` check. | Dev 1 |
