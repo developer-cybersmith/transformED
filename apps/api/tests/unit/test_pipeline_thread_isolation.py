@@ -9,10 +9,14 @@ a stale accumulator behind on every retry and grew without bound.
 
 from __future__ import annotations
 
+import re
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# Matches the run-token shape run_pipeline builds: "t<attempt>-<8 hex>".
+_RUN_TOKEN_RE = re.compile(r"t.*-[0-9a-f]{8}")
 
 
 @pytest.mark.unit
@@ -152,16 +156,58 @@ def test_discard_never_raises_and_never_masks() -> None:
 
 
 @pytest.mark.unit
-def test_worker_passes_job_try_not_just_job_id() -> None:
-    """TRAP guard: router.py pins _job_id=f"pipeline:{lesson_id}", so job_id is
-    byte-identical across retries. If the worker ever passes job_id alone, the
-    thread_id stops being per-attempt and the leak returns silently."""
-    from pathlib import Path
+@pytest.mark.asyncio
+async def test_worker_passes_a_distinct_attempt_per_arq_try() -> None:
+    """TRAP guard, BEHAVIORAL: router.py pins _job_id=f"pipeline:{lesson_id}",
+    so job_id is byte-identical across retries — only job_try varies.
 
-    src = Path(__file__).resolve().parents[2] / "app" / "workers" / "jobs" / "content_pipeline.py"
-    text = src.read_text(encoding="utf-8-sig")
-    assert "job_try" in text, "content_pipeline_job must include job_try in the attempt token"
-    assert "attempt=attempt" in text, "attempt must be forwarded to run_pipeline"
+    The previous version of this test grepped the source for the string
+    "job_try", which the comment block above the code also contains, so it
+    passed even with the implementation reverted (proven by mutation during
+    the Story 2-28 review). Assert on the forwarded value instead.
+    """
+    from app.workers.jobs import content_pipeline as cp
+
+    captured: list[str] = []
+
+    async def _spy(**kwargs: Any) -> dict[str, Any]:
+        captured.append(kwargs.get("attempt", "<missing>"))
+        return {}
+
+    # Same pinned job_id both times — exactly what ARQ does on a retry.
+    ctx_try1 = {"job_id": "pipeline:lesson-1", "job_try": 1}
+    ctx_try2 = {"job_id": "pipeline:lesson-1", "job_try": 2}
+
+    # content_pipeline_job imports its dependencies lazily inside the function
+    # body, so they are not module attributes — patch them at their source.
+    sb = MagicMock()
+    row = {
+        "lesson_id": "lesson-1",
+        "source_pdf_path": "p.pdf",
+        "lessons": {"user_id": "u1", "book_id": "b1", "tier": "T2"},
+    }
+    _chain = sb.table.return_value.select.return_value.eq.return_value
+    _chain.maybe_single.return_value.execute.return_value.data = row
+    _chain.single.return_value.execute.return_value.data = row
+
+    with (
+        patch("app.modules.content.pipeline.graph.run_pipeline", new=_spy),
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock(return_value=None)),
+        patch("app.core.redis.get_redis", return_value=AsyncMock()),
+    ):
+        for ctx in (ctx_try1, ctx_try2):
+            try:
+                await cp.content_pipeline_job(ctx, "lesson-1")
+            except Exception:  # noqa: BLE001, S110 — only the attempt kwarg matters here
+                pass
+
+    assert len(captured) == 2, f"run_pipeline not reached on both tries: {captured}"
+    assert captured[0] != captured[1], (
+        f"attempt must differ across ARQ tries, got {captured} — job_id alone is "
+        "pinned by router.py and cannot uniquify"
+    )
+    assert all("<missing>" != c for c in captured), "attempt kwarg was not forwarded at all"
 
 
 @pytest.mark.unit
@@ -171,19 +217,48 @@ async def test_attempt_does_not_leak_into_checkpoint_keys() -> None:
 
     The Supabase checkpoint keys must stay `f"{node}:{section_id}"`. If
     attempt-scoping leaked into them, every section would re-bill on an ARQ
-    retry against the $3.00/lesson ceiling.
+    retry against the $3.00/lesson ceiling — the trap AC-5 calls out.
+
+    The previous version of this test patched `_write_phase1_checkpoint` and
+    then CALLED THE MOCK, asserting the mock recorded what it was handed. No
+    production code ran (proven circular during the Story 2-28 review). This
+    version drives a REAL Phase-1 node and asserts on the key it actually
+    constructs.
     """
     from app.modules.content.pipeline import graph as g
 
-    written: list[str] = []
-    with patch.object(
-        g,
-        "_write_phase1_checkpoint",
-        new=AsyncMock(side_effect=lambda _lid, key, _v: written.append(key)),
-    ):
-        await g._write_phase1_checkpoint("lesson-1", "quiz_generator:section_0_intro", {"x": 1})
+    observed: list[str] = []
 
-    assert written == ["quiz_generator:section_0_intro"]
-    assert not any("::" in k or "t0-" in k for k in written), (
-        "attempt/run-token must never appear in a Supabase checkpoint key"
+    sb = MagicMock()
+    chain = sb.table.return_value.select.return_value.eq.return_value
+    chain.single.return_value.execute.return_value.data = {"node_outputs": {}}
+
+    provider = MagicMock()
+    provider.complete_structured = AsyncMock(
+        return_value=g._SegmentSummaryLLM(summary="a summary of this section")
     )
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch.object(
+            g,
+            "_write_phase1_checkpoint",
+            new=AsyncMock(side_effect=lambda _lid, key, _v: observed.append(key)),
+        ),
+        patch.object(g, "_increment_phase1_progress", new=AsyncMock(return_value=None)),
+    ):
+        await g.summarise_segment_node(  # type: ignore[arg-type]
+            {
+                "lesson_id": "lesson-1",
+                "_section": {"title": "Intro", "body": "Some body text for the section."},
+                "_section_index": 0,
+                "tier": "T1",
+            }
+        )
+
+    assert observed, "the real node never wrote a checkpoint — test would be vacuous"
+    for key in observed:
+        assert key.startswith("summarise_segment:"), f"unexpected checkpoint key shape: {key}"
+        assert "::" not in key, f"thread-id separator leaked into checkpoint key: {key}"
+        assert not _RUN_TOKEN_RE.search(key), f"run token leaked into checkpoint key: {key}"

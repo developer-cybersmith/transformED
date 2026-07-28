@@ -4110,26 +4110,46 @@ def _warn_if_duplicated(
     duplicated channel still produces a usable lesson, and failing the run
     would be a worse outcome than an over-long one.
     """
-    if not entries:
-        return
-    # Only entries that actually carry a segment_id are comparable. Degraded
-    # nodes can emit shapes without one; counting those as "all the same id"
-    # would fire the canary on malformed-but-not-duplicated input.
-    seg_ids = [
-        e["segment_id"] for e in entries if isinstance(e, dict) and e.get("segment_id") is not None
-    ]
-    distinct = len(set(seg_ids))
-    if distinct and len(seg_ids) != distinct:
-        logger.error(
-            "[%s] %s: %s has %d entries for only %d distinct segment_ids "
-            "(~%.1fx duplication) — a node is re-emitting a reducer channel; "
-            "see Story 2-28 and tests/unit/test_node_return_shape.py",
+    # A diagnostic must never break the pipeline. This is the FIRST statement of
+    # two nodes about to spend real money, so an exception here fails the lesson
+    # before any work is attempted. Concretely: a checkpoint row whose JSONB
+    # segment_id deserialised to a list/dict (older writer, hand-patched row,
+    # degraded node) would raise `TypeError: unhashable type` on the set() below.
+    try:
+        if not entries:
+            return
+        # Only entries that actually carry a segment_id are comparable. Degraded
+        # nodes can emit shapes without one; counting those as "all the same id"
+        # would fire the canary on malformed-but-not-duplicated input.
+        # str() coerces unhashable ids instead of dropping them — an unhashable
+        # id is still a real entry and should still be counted.
+        seg_ids = [
+            str(e["segment_id"])
+            for e in entries
+            if isinstance(e, dict) and e.get("segment_id") is not None
+        ]
+        distinct = len(set(seg_ids))
+        if distinct and len(seg_ids) != distinct:
+            logger.error(
+                "[%s] %s: %s has %d entries (%d carrying a segment_id) for only "
+                "%d distinct segment_ids (~%.1fx duplication) — a node is "
+                "re-emitting a reducer channel; see Story 2-28 and "
+                "tests/unit/test_node_return_shape.py",
+                lesson_id,
+                node_name,
+                channel,
+                len(entries),
+                len(seg_ids),
+                distinct,
+                len(seg_ids) / distinct,
+            )
+    except Exception:  # noqa: BLE001 — a canary must never fail the pipeline
+        logger.warning(
+            "[%s] %s: duplication canary failed on %s — check skipped",
             lesson_id,
             node_name,
             channel,
-            len(seg_ids),
-            distinct,
-            len(seg_ids) / distinct,
+            exc_info=True,
         )
 
 

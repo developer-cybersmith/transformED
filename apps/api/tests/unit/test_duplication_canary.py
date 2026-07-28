@@ -57,6 +57,30 @@ def test_canary_tolerates_empty_and_malformed_entries(caplog: pytest.LogCaptureF
 
 
 @pytest.mark.unit
+def test_canary_never_raises_on_unhashable_segment_id(caplog: pytest.LogCaptureFixture) -> None:
+    """Regression: an unhashable segment_id must not crash the pipeline.
+
+    The canary is the FIRST statement of lesson_planner_node and tts_node, so
+    an exception here fails the lesson before any work is attempted. A
+    checkpoint row whose JSONB segment_id deserialised to a list/dict would
+    raise `TypeError: unhashable type: 'list'` on the internal set().
+    Found by the Story 2-28 review; the docstring promised "never raises"
+    while the code could.
+    """
+    from app.modules.content.pipeline.graph import _warn_if_duplicated
+
+    entries = [{"segment_id": ["a"]}, {"segment_id": ["a"]}]
+
+    with caplog.at_level(logging.ERROR):
+        _warn_if_duplicated("lesson-1", "tts_node", "narration_scripts", entries)  # must not raise
+
+    # Coerced via str(), so the duplication is still DETECTED, not just survived.
+    assert any("duplication" in r.getMessage() for r in caplog.records), (
+        "unhashable ids should still be counted, not silently skipped"
+    )
+
+
+@pytest.mark.unit
 def test_both_paid_nodes_call_the_canary() -> None:
     """Source guard: the canary is only useful where the money is spent."""
     from pathlib import Path

@@ -33,24 +33,99 @@ _PIPELINE_DIR = Path(__file__).resolve().parents[2] / "app" / "modules" / "conte
 
 
 def _returns_spreading_state(tree: ast.AST) -> list[tuple[str, int]]:
-    """Return [(function_name, lineno)] for every `return {**state, ...}`.
+    """Return [(function_name, lineno)] for every return that re-emits state.
 
     A dict literal with a `None` key is Python's AST representation of `**x`
     unpacking, so `{**state, "a": 1}` has keys `[None, Constant('a')]`.
+
+    Deliberately broader than the literal `{**state, ...}` spelling, because the
+    Story 2-28 review demonstrated five equivalent evasions of the narrow form:
+
+      state["slides"] = []; return state     # reproduces 16x exactly
+      return dict(state, slides=[])
+      s = state; return {**s, ...}           # a node moved to pipeline/nodes/
+                                             # may well rename its parameter
+      out = {**state}; out["x"] = 1; return out
+      return {**state.copy(), ...}
+
+    Strategy: track names bound to the state parameter (direct aliases and
+    dict-spread copies), then flag any return of `**<tracked name>`, a bare
+    `return <tracked name>`, or `dict(<tracked name>, ...)`.
     """
     offenders: list[tuple[str, int]] = []
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
+
+        params = {a.arg for a in node.args.args} | {a.arg for a in node.args.kwonlyargs}
+        if "state" not in params:
+            continue
+
+        # Names that alias, copy, or spread the state parameter.
+        tainted: set[str] = {"state"}
         for sub in ast.walk(node):
-            if not isinstance(sub, ast.Return) or not isinstance(sub.value, ast.Dict):
+            if not isinstance(sub, ast.Assign) or len(sub.targets) != 1:
                 continue
-            for key, value in zip(sub.value.keys, sub.value.values, strict=True):
-                # key is None => `**something` unpacking
-                if key is None and isinstance(value, ast.Name) and value.id == "state":
-                    offenders.append((node.name, sub.lineno))
+            target = sub.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            val = sub.value
+            # s = state   /   out = state.copy()   /   out = dict(state)
+            if isinstance(val, ast.Name) and val.id in tainted:
+                tainted.add(target.id)
+            elif (
+                isinstance(val, ast.Call)
+                and isinstance(val.func, ast.Attribute)
+                and val.func.attr == "copy"
+                and isinstance(val.func.value, ast.Name)
+                and val.func.value.id in tainted
+            ):
+                tainted.add(target.id)
+            elif isinstance(val, ast.Dict) and _spreads_any(val, tainted):
+                tainted.add(target.id)
+            elif (
+                isinstance(val, ast.Call)
+                and isinstance(val.func, ast.Name)
+                and val.func.id == "dict"
+                and any(isinstance(a, ast.Name) and a.id in tainted for a in val.args)
+            ):
+                tainted.add(target.id)
+
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Return) or sub.value is None:
+                continue
+            val = sub.value
+            if isinstance(val, ast.Dict) and _spreads_any(val, tainted):
+                offenders.append((node.name, sub.lineno))
+            elif isinstance(val, ast.Name) and val.id in tainted:
+                offenders.append((node.name, sub.lineno))
+            elif (
+                isinstance(val, ast.Call)
+                and isinstance(val.func, ast.Name)
+                and val.func.id == "dict"
+                and any(isinstance(a, ast.Name) and a.id in tainted for a in val.args)
+            ):
+                offenders.append((node.name, sub.lineno))
     return offenders
+
+
+def _spreads_any(node: ast.Dict, names: set[str]) -> bool:
+    """True if the dict literal `**`-unpacks any of *names* (or `x.copy()`)."""
+    for key, value in zip(node.keys, node.values, strict=True):
+        if key is not None:  # not a `**` unpacking
+            continue
+        if isinstance(value, ast.Name) and value.id in names:
+            return True
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "copy"
+            and isinstance(value.func.value, ast.Name)
+            and value.func.value.id in names
+        ):
+            return True
+    return False
 
 
 @pytest.mark.unit
@@ -91,6 +166,45 @@ def test_guard_detects_a_planted_violation() -> None:
     )
     offenders = _returns_spreading_state(planted)
     assert [name for name, _ in offenders] == ["bad_node"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("label", "body"),
+    [
+        ("mutate_then_return_state", "    state['quiz_questions'] = []\n    return state\n"),
+        ("dict_constructor", "    return dict(state, quiz_questions=[])\n"),
+        ("aliased_param", "    s = state\n    return {**s, 'quiz_questions': []}\n"),
+        ("assign_then_return", "    out = {**state}\n    out['q'] = 1\n    return out\n"),
+        ("copy_spread", "    return {**state.copy(), 'quiz_questions': []}\n"),
+    ],
+)
+def test_guard_catches_equivalent_evasions(label: str, body: str) -> None:
+    """Story 2-28 review: the original matcher only caught the literal
+    `{**state, ...}` spelling. Each of these reproduces the same 16x
+    duplication while evading that narrow form — a node moved into
+    `pipeline/nodes/` is exactly the case most likely to rename its parameter.
+    """
+    planted = ast.parse(f"async def bad_node(state):\n{body}")
+    offenders = _returns_spreading_state(planted)
+    assert offenders, f"guard failed to catch evasion: {label}"
+
+
+@pytest.mark.unit
+def test_guard_does_not_flag_legitimate_returns() -> None:
+    """False positives would make the guard get disabled — verify it stays quiet
+    on the shapes the codebase legitimately uses."""
+    ok = ast.parse(
+        "async def good(state):\n"
+        "    cached = state.get('x')\n"
+        "    return {'quiz_questions': cached, 'progress_pct': 1.0}\n"
+        "async def also_good(state):\n"
+        "    out = {'a': 1}\n"
+        "    return out\n"
+        "def helper(entries):\n"
+        "    return {**entries}\n"  # not a node: no `state` param
+    )
+    assert _returns_spreading_state(ok) == []
 
 
 # ── AC-4: per-node return-key assertions ──────────────────────────────────────

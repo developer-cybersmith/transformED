@@ -304,11 +304,22 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
     return provider
 
 
+# Populated by _run_howto so tests can assert on paid-call counts (Story 2-28).
+_LAST_RUN_SPIES: dict[str, Any] = {}
+
+
 async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1) -> dict[str, Any]:
     """Run the REAL graph on `howto` with only external providers mocked."""
     from app.modules.content.pipeline.graph import run_pipeline
 
     provider = _make_dispatch(slides_per_segment=slides_per_segment)
+    # Story 2-28: exposed so callers can assert on PAID call counts. The
+    # package-shape assertions cannot see duplication in segment_summaries or
+    # narration_scripts (package_builder collapses or drops those channels), so
+    # a node re-emitting them would bill the TTS vendor N times while the
+    # delivered package stays byte-identical. Counting the spend is the only
+    # visibility into that path.
+    synth = AsyncMock(return_value=(b"fake-audio", "sarvam", 0.0))
     fake = _StatefulSupabaseFake()
     # Seed the extract checkpoint so extract_node cache-hits and feeds the real
     # how-to text into the REAL structure detection (bypasses the PDF subprocess).
@@ -324,7 +335,7 @@ async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1)
         patch("app.core.cost_tracker.accumulate_cost", new=AsyncMock(return_value=0.0)),
         patch(
             "app.modules.content.pipeline.graph._synthesize_with_fallback",
-            new=AsyncMock(return_value=(b"fake-audio", "sarvam", 0.0)),
+            new=synth,
         ),
         patch(
             "app.modules.content.pipeline.graph._generate_image_with_fallback",
@@ -332,7 +343,9 @@ async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1)
         ),
         patch("app.core.redis.get_redis", return_value=redis),
     ):
-        return await run_pipeline(lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID)
+        package = await run_pipeline(lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID)
+    _LAST_RUN_SPIES["synth"] = synth
+    return package
 
 
 @pytest.mark.integration
@@ -390,6 +403,19 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
     terms = [g["term"] for g in package["glossary"]]
     assert len(terms) == len(set(terms)), (
         f"duplicate glossary terms: {terms} — jargon channel re-appended"
+    )
+
+    # Story 2-28: PAID-CALL guard. package_builder collapses complexity_scores /
+    # audio_assets / intervention_prompts to one-per-segment and drops
+    # segment_summaries / narration_scripts entirely, so duplication in those
+    # channels is INVISIBLE in the package while still billing the TTS vendor
+    # once per duplicate. Counting synthesis calls is the only visibility into
+    # that path — and it is the money path.
+    synth = _LAST_RUN_SPIES["synth"]
+    assert synth.await_count == len(segments), (
+        f"_synthesize_with_fallback awaited {synth.await_count}x for "
+        f"{len(segments)} segments — a duplicated narration_scripts channel "
+        "bills the TTS vendor per duplicate while leaving the package identical"
     )
 
 
