@@ -2145,11 +2145,55 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     # Story 2-1b / AC-9: idempotency guard — new batch checkpoint shape.
     # Old single-question checkpoints (required_keys includes "data") fail the
     # required_keys check for "questions" and are treated as cache-misses.
+    # Story 2-31 AC-3: validate the cached COUNT against this lesson's tier band,
+    # not just its shape. Story 2-28 made `tier` actually reach this node, which
+    # made a latent hazard reachable: a lesson whose Phase 1 ran before that
+    # deploy holds a checkpoint sized to the wrongly-defaulted T2 band, and an
+    # ARQ retry would return it verbatim — the T1 lesson silently ships T2
+    # content while the logs show the tier fix working.
+    #
+    # Deliberately NOT solved by tier-scoping the checkpoint key: that would
+    # re-bill every section on every retry against the $3.00/lesson ceiling and
+    # violates Story 2-28 AC-5's invariant that keys stay f"{node}:{section_id}"
+    # (guarded by test_phase1_checkpoint_idempotency.py).
+    # Guard on n_max ONLY, never n_min. The write path deliberately KEEPS a
+    # short batch when the LLM underproduces (AC-8: "warn if below expected
+    # minimum — do NOT discard valid questions"), so `count < n_min` is
+    # ambiguous: it means either a wrong-tier cache OR a legitimate
+    # underproduction. Rejecting it would re-bill that section on every ARQ
+    # retry against the $3.00/lesson ceiling, and the retry could underproduce
+    # again — a permanent cost regression to fix a one-time migration window.
+    # `count > n_max` is unambiguous: the write path truncates to n_max, so a
+    # larger batch can only have come from a higher band.
+    #
+    # RESIDUAL GAP (documented, not fixed): a LOWER-band cache served to a
+    # higher-tier lesson (T2's 2-3 reused for a T1 lesson) is indistinguishable
+    # from underproduction and is NOT caught. It affects only lessons cached
+    # before the Story 2-28 tier fix, and self-heals once those regenerate.
+    def _batch_matches_shape_and_tier(cached_batch: dict[str, Any]) -> bool:
+        if not _quiz_batch_is_valid_shape(cached_batch):
+            return False
+        count = len(cached_batch["questions"])
+        if count > n_max:
+            logger.warning(
+                "[%s] quiz_generator_node: %s — cached batch has %d questions, "
+                "above tier %s's maximum of %d (cached under a higher band, "
+                "likely before the Story 2-28 tier fix) — treating as a "
+                "cache-miss and regenerating",
+                lesson_id,
+                section_id,
+                count,
+                tier,
+                n_max,
+            )
+            return False
+        return True
+
     cached = await _read_phase1_checkpoint(
         lesson_id,
         checkpoint_key,
         required_keys=("segment_id", "questions"),
-        extra_validate=_quiz_batch_is_valid_shape,
+        extra_validate=_batch_matches_shape_and_tier,
     )
     if cached is not None:
         logger.info(
@@ -3499,11 +3543,22 @@ def _default_complexity() -> dict[str, Any]:
     }
 
 
-def _fallback_narration() -> dict[str, Any]:
-    """Browser-fallback Narration (no server audio) — the same 'no audio' state
-    tts_node itself emits on failure. `timestamps` is filled by the caller's
-    Story 2-19 estimation block from the segment's slides."""
-    return {"script": "", "audio_url": "", "audio_provider": "browser", "timestamps": []}
+def _fallback_narration(script: str = "") -> dict[str, Any]:
+    """Browser-fallback Narration — no server audio, but the script survives.
+
+    Story 2-31 AC-1: this used to hardcode `script=""`, discarding narration
+    text the pipeline had already generated and paid for. Only the *audio* is
+    missing on this path; blanking the script also left a browser-speech
+    fallback with nothing to say.
+
+    (The docstring previously claimed this matched "the same 'no audio' state
+    tts_node itself emits on failure" — imprecise about `script`: tts_node's
+    own per-segment except preserves `entry["script"]`. The two now agree.)
+
+    `timestamps` is filled by the caller's Story 2-19 estimation block from the
+    segment's slides.
+    """
+    return {"script": script, "audio_url": "", "audio_provider": "browser", "timestamps": []}
 
 
 def _default_interventions() -> dict[str, Any]:
@@ -3635,7 +3690,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                     segment_id,
                     label,
                 )
-            result[segment_id] = item[value_key] if value_key else item
+            # Story 2-31 AC-2: `.get()`, not `item[value_key]`. A single entry
+            # missing its value key raised a raw KeyError that crashed the whole
+            # node — contradicting the "one bad item never crashes the whole
+            # node" guarantee this docstring makes. A None lands in the map and
+            # is handled downstream by the same degrade path as a missing entry.
+            result[segment_id] = item.get(value_key) if value_key else item
         return result
 
     complexity_by_id = _index_by_segment_id(
@@ -3643,6 +3703,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     )
     audio_by_id = _index_by_segment_id(
         state.get("audio_assets", []), label="audio_assets", value_key="data"
+    )
+    # Story 2-31 AC-1: narration_generator_node emits a FLAT shape
+    # ({"segment_id": ..., "script": ...}) — no "data" wrapper, so no value_key.
+    # Used only to recover the script when a segment has no audio_assets entry.
+    narration_script_by_id = _index_by_segment_id(
+        state.get("narration_scripts", []), label="narration_scripts"
     )
     interventions_by_id = _index_by_segment_id(
         state.get("intervention_prompts", []), label="intervention_prompts", value_key="data"
@@ -3751,7 +3817,25 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             complexity = _default_complexity()
             degraded.append("complexity")
         if narration is None:
-            narration = _fallback_narration()
+            # Story 2-31 AC-1: only the AUDIO is missing here — the script is
+            # not. Recover the segment's own narration text from the upstream
+            # narration_generator output so a browser-speech fallback has
+            # something to say.
+            #
+            # Lift ONLY ["script"]. Never spread the flat entry: Narration is
+            # extra="forbid" and the LessonPackage.model_validate below is
+            # deliberately uncaught, so a spread would turn graceful
+            # degradation into a total post-spend failure.
+            raw_script = (narration_script_by_id.get(segment_id) or {}).get("script")
+            recovered = raw_script if isinstance(raw_script, str) and raw_script.strip() else ""
+            if not recovered:
+                logger.warning(
+                    "[%s] package_builder_node: segment %s has no audio AND no "
+                    "recoverable narration script — narration will be empty",
+                    lesson_id,
+                    segment_id,
+                )
+            narration = _fallback_narration(recovered)
             degraded.append("narration")
         if interventions is None:
             interventions = _default_interventions()

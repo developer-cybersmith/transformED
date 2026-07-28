@@ -398,15 +398,25 @@ def test_get_lesson_ready_resolves_signed_urls() -> None:
     assert resp.status_code == 200
     body = resp.json()
     segment = body["content"]["segments"][0]
-    assert segment["narration"]["audio_url"] == f"https://signed.example.com/{_AUDIO_PATH}?exp=3600"
-    assert segment["slides"][0]["image_url"] == f"https://signed.example.com/{_IMAGE_PATH}?exp=3600"
+    # Story 2-31 AC-5: asserted against the constant, not a literal — the whole
+    # point of the change is that this window is tunable, and a hardcoded 3600
+    # here would have to be edited every time it moves.
+    from app.modules.content.router import _EMBEDDED_MEDIA_EXPIRY_S as _EXP
+
+    assert (
+        segment["narration"]["audio_url"] == f"https://signed.example.com/{_AUDIO_PATH}?exp={_EXP}"
+    )
+    assert (
+        segment["slides"][0]["image_url"] == f"https://signed.example.com/{_IMAGE_PATH}?exp={_EXP}"
+    )
+    assert _EXP > 3600, "embedded lesson media must outlive the 1-hour default (AC-5)"
     assert segment["slides"][0]["fallback_image_url"] is None
 
     calls = sb.storage.from_.call_args_list
     assert any(c.args == ("lesson-audio",) for c in calls)
     assert any(c.args == ("lesson-images",) for c in calls)
-    sb.storage.from_.return_value.create_signed_url.assert_any_call(_AUDIO_PATH, 3600)
-    sb.storage.from_.return_value.create_signed_url.assert_any_call(_IMAGE_PATH, 3600)
+    sb.storage.from_.return_value.create_signed_url.assert_any_call(_AUDIO_PATH, _EXP)
+    sb.storage.from_.return_value.create_signed_url.assert_any_call(_IMAGE_PATH, _EXP)
 
 
 @pytest.mark.unit
@@ -867,3 +877,167 @@ def test_upload_lesson_invalid_tier_returns_422_before_any_row_created(client: T
 
     assert resp.status_code == 422
     sb.table.assert_not_called()
+
+
+# ── Story 2-31 AC-4: list endpoint carries subject + estimated_duration_mins ──
+
+
+_LIST_ROW: dict[str, Any] = {
+    "lesson_id": FAKE_LESSON_ID,
+    "status": "ready",
+    "title": "Thermo",
+    "created_at": "2026-07-28T00:00:00Z",
+    "completed_at": "2026-07-28T00:05:00Z",
+    # PostgREST `->>` yields TEXT, so the duration arrives as a string.
+    "subject": "Physics",
+    "estimated_duration_mins": "12.5",
+}
+
+
+def _make_list_supabase_mock(rows_data: list[dict[str, Any]]) -> MagicMock:
+    """Plain (non-dispatching) Supabase mock for list_lessons assertions.
+
+    Deliberately NOT _make_supabase_mock: that one dispatches table() via
+    side_effect, so `sb.table.return_value.select` never sees the real call and
+    the select-string assertion below could not fail.
+    """
+    sb = MagicMock()
+    chain = sb.table.return_value.select.return_value.eq.return_value.order.return_value.range
+    chain.return_value.execute.return_value.data = rows_data
+    return sb
+
+
+@pytest.mark.unit
+def test_list_lessons_selects_narrow_columns_not_star() -> None:
+    """AC-4: the list query must lift the two scalars via JSONB path selectors
+    rather than pulling the whole `content` column for every row."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+    from app.modules.content.router import _LIST_COLUMNS
+
+    sb = _make_list_supabase_mock([])
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get("/api/content/lessons")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    sb.table.return_value.select.assert_called_once_with(_LIST_COLUMNS)
+    assert _LIST_COLUMNS != "*"
+    assert "subject:content->metadata->>subject" in _LIST_COLUMNS
+    assert "estimated_duration_mins:content->metadata->>estimated_duration_mins" in _LIST_COLUMNS
+    # AC-7: `content` must never be part of the list select.
+    assert "content," not in _LIST_COLUMNS.replace("content->", "")
+
+
+@pytest.mark.unit
+def test_list_lessons_returns_subject_and_duration() -> None:
+    """AC-4: the aliased JSONB values reach the response, and the text duration
+    is coerced back to a number."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = _make_list_supabase_mock([copy.deepcopy(_LIST_ROW)])
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get("/api/content/lessons")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body[0]["subject"] == "Physics"
+    assert body[0]["estimated_duration_mins"] == 12.5, "text must be coerced to float"
+
+
+@pytest.mark.unit
+def test_list_lessons_tolerates_missing_metadata_fields() -> None:
+    """AC-4 edge: a lesson whose content has no metadata (still generating)
+    yields nulls, not a 500."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    row = copy.deepcopy(_LIST_ROW)
+    row["status"] = "generating"
+    row["subject"] = None
+    row["estimated_duration_mins"] = None
+    sb = _make_list_supabase_mock([row])
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get("/api/content/lessons")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body[0]["subject"] is None
+    assert body[0]["estimated_duration_mins"] is None
+
+
+@pytest.mark.unit
+def test_list_lessons_still_never_attaches_content_or_signs_urls() -> None:
+    """Story 1-6 AC-7 regression guard — the constraint AC-4 must not break.
+
+    Resolving signed URLs for every asset of every row would be an
+    N-lessons x M-assets signing storm.
+    """
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = _make_list_supabase_mock([copy.deepcopy(_LIST_ROW)])
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with (
+        patch("app.modules.content.router.get_supabase", return_value=sb),
+        patch("app.modules.content.router.sign_storage_path") as mock_sign,
+        patch("app.modules.content.router._resolve_lesson_content") as mock_resolve,
+    ):
+        resp = TestClient(app).get("/api/content/lessons")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    mock_sign.assert_not_called()
+    mock_resolve.assert_not_called()
+    sb.storage.from_.assert_not_called()
+    assert all(item.get("content") is None for item in resp.json())
+
+
+@pytest.mark.unit
+def test_get_lesson_also_populates_subject_and_duration() -> None:
+    """AC-4: the DETAIL endpoint must not return null for data it is already
+    holding while the list shows a value. get_lesson selects `*`, so the values
+    arrive nested under content.metadata rather than as flat aliases."""
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    def _sign(path: str, _expires_in: int) -> dict[str, str]:
+        return {"signedURL": f"https://signed.example.com/{path}"}
+
+    sb = _make_ready_supabase_mock(_sign)
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb):
+        resp = TestClient(app).get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    meta = _READY_CONTENT_DICT["metadata"]
+    assert body["subject"] == meta["subject"]
+    assert body["estimated_duration_mins"] == meta["estimated_duration_mins"]
