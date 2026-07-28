@@ -188,6 +188,7 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
         _LessonPlanLLM,
         _LessonPlanSegmentLLM,
         _NarrationScriptLLM,
+        _QuizBatchLLM,
         _QuizQuestionLLM,
         _SegmentComplexityLLM,
         _SegmentInterventionsLLM,
@@ -215,13 +216,32 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
             return _SegmentSummaryLLM(
                 summary="A concise summary of this how-to step for the learner."
             )
-        if name == "_QuizQuestionLLM":
-            return _QuizQuestionLLM(
-                question="What does this step do?",
-                options=["Opens it", "Closes it", "Nothing", "Restarts"],
-                correct_index=0,
-                explanation="It opens the named item.",
-                difficulty="medium",
+        if name == "_QuizBatchLLM":
+            # Story 3-28 made quiz generation batch-shaped; the node now asks for
+            # _QuizBatchLLM, never _QuizQuestionLLM directly. Returning 3 keeps us
+            # inside the T2 default band (2-3) that this pipeline run uses, so
+            # quiz_generator_node accepts every question and the per-segment count
+            # is deterministic (Story 2-28 AC-7 asserts on it).
+            # Option text and question text are made distinct per index so the
+            # node's own duplicate-option guard cannot reject them, and so a
+            # duplicated question is visible as a repeated question_id rather
+            # than hiding behind identical text.
+            return _QuizBatchLLM(
+                questions=[
+                    _QuizQuestionLLM(
+                        question=f"Question {n}: what does this step do?",
+                        options=[
+                            f"Opens it ({n})",
+                            f"Closes it ({n})",
+                            f"Nothing ({n})",
+                            f"Restarts ({n})",
+                        ],
+                        correct_index=0,
+                        explanation="It opens the named item.",
+                        difficulty="medium",
+                    )
+                    for n in range(3)
+                ]
             )
         if name == "_SegmentComplexityLLM":
             return _SegmentComplexityLLM(
@@ -346,6 +366,31 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
         for a, b in zip(ts, ts[1:], strict=False):
             assert a["end_ms"] == b["start_ms"], "timestamps must be contiguous"
         assert len(seg["slides"]) >= 1
+
+    # ── Story 2-28 AC-7: reducer-channel duplication guard ────────────────────
+    # A node returning {**state, ...} re-appends every operator.add channel.
+    # Four such nodes after the Phase-1 fan-in => 2**4 = 16x, in a single clean
+    # run with no retry involved. These assertions are the regression net.
+    for seg in segments:
+        assert 2 <= len(seg["quiz"]) <= 3, (
+            f"segment {seg['segment_id']} has {len(seg['quiz'])} quiz questions; "
+            "T2 band is 2-3 — a multiple of the fixture's 3 means a reducer "
+            "channel was re-appended (see Story 2-28)"
+        )
+    qids = [q["question_id"] for seg in segments for q in seg["quiz"]]
+    assert len(qids) == len(set(qids)), (
+        f"duplicate question_id across the package: {len(qids)} total vs "
+        f"{len(set(qids))} unique — reducer-channel duplication"
+    )
+    assert sum(len(s["quiz"]) for s in segments) == 3 * len(segments), (
+        "total quiz count must be exactly fixture-size x segments"
+    )
+    # glossary comes from the jargon_extractor operator.add channel — the fixture
+    # emits one term per section, so duplication shows up here too.
+    terms = [g["term"] for g in package["glossary"]]
+    assert len(terms) == len(set(terms)), (
+        f"duplicate glossary terms: {terms} — jargon channel re-appended"
+    )
 
 
 @pytest.mark.integration

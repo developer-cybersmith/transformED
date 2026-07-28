@@ -247,7 +247,6 @@ async def extract_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["extract"]
         logger.info("[%s] extract_node: cache hit — skipping re-extraction", lesson_id)
         return {
-            **state,
             "raw_text": cached["raw_text"],
             "extracted_images": cached.get("extracted_images", []),
             "font_blocks": cached.get("font_blocks", []),
@@ -424,7 +423,6 @@ async def extract_node(state: PipelineState) -> PipelineState:
     await _update_job_progress(lesson_id, 7.0, "extract")
 
     return {
-        **state,
         "raw_text": raw_text,
         "extracted_images": storage_images,
         "font_blocks": font_blocks,
@@ -489,7 +487,7 @@ async def structure_node(state: PipelineState) -> PipelineState:
     if "structure" in node_outputs:
         cached = node_outputs["structure"]
         logger.info("[%s] structure_node: cache hit", lesson_id)
-        return {**state, "sections": cached["sections"], "progress_pct": 14.0}
+        return {"sections": cached["sections"], "progress_pct": 14.0}
 
     # ── Get page count from extract checkpoint ────────────────────────────────
     total_pages: int = (node_outputs.get("extract") or {}).get("page_count", 1) or 1
@@ -592,7 +590,7 @@ async def structure_node(state: PipelineState) -> PipelineState:
         logger.warning("[%s] structure_node: failed to write checkpoint", lesson_id)
 
     await _update_job_progress(lesson_id, 14.0, "structure")
-    return {**state, "sections": sections_list, "progress_pct": 14.0}
+    return {"sections": sections_list, "progress_pct": 14.0}
 
 
 async def chunk_node(state: PipelineState) -> PipelineState:
@@ -634,7 +632,7 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     if "chunk" in node_outputs:
         cached = node_outputs["chunk"]
         logger.info("[%s] chunk_node: cache hit — skipping re-chunking", lesson_id)
-        return {**state, "chunks": cached["chunks"], "progress_pct": 20.0}
+        return {"chunks": cached["chunks"], "progress_pct": 20.0}
 
     # ── Token-bounded chunking ────────────────────────────────────────────────
     chunks = chunk_sections(
@@ -720,7 +718,7 @@ async def chunk_node(state: PipelineState) -> PipelineState:
         logger.warning("[%s] chunk_node: failed to write checkpoint", lesson_id)
 
     await _update_job_progress(lesson_id, 20.0, "chunk")
-    return {**state, "chunks": chunks, "progress_pct": 20.0}
+    return {"chunks": chunks, "progress_pct": 20.0}
 
 
 # OpenAI embeddings API hard limits (text-embedding-3-small):
@@ -776,7 +774,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
             lesson_id,
             cached.get("chunk_count", 0),
         )
-        return {**state, "embeddings_stored": True}
+        return {"embeddings_stored": True}
 
     # ── Get chapter_id from chunk_node checkpoint ─────────────────────────────
     chapter_id: str = (node_outputs.get("chunk") or {}).get("chapter_id", "")
@@ -962,7 +960,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 28.0, "embed")
-    return {**state, "embeddings_stored": True}
+    return {"embeddings_stored": True}
 
 
 class _LessonPlanSegmentLLM(BaseModel):
@@ -1191,7 +1189,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-        return {**state, "lesson_plan": cached, "progress_pct": 38.0}
+        return {"lesson_plan": cached, "progress_pct": 38.0}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1391,7 +1389,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    return {**state, "lesson_plan": lesson_plan, "progress_pct": 38.0}
+    return {"lesson_plan": lesson_plan, "progress_pct": 38.0}
 
 
 class _SlideLLM(BaseModel):
@@ -1488,7 +1486,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["slide_generator"]
         logger.info("[%s] slide_generator_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 48.0, "slide_generator")
-        return {**state, "slides": cached, "progress_pct": 48.0}
+        return {"slides": cached, "progress_pct": 48.0}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1682,7 +1680,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
-    return {**state, "slides": slides_out, "progress_pct": 48.0}
+    return {"slides": slides_out, "progress_pct": 48.0}
 
 
 class _SegmentSummaryLLM(BaseModel):
@@ -3060,7 +3058,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["tts_node"]
         logger.info("[%s] tts_node: cache hit, skipping all synthesis", lesson_id)
         await _update_job_progress(lesson_id, 86.0, "tts_node")
-        return {**state, "audio_assets": cached, "progress_pct": 86.0}
+        return {"audio_assets": cached, "progress_pct": 86.0}
 
     if not narration_scripts:
         logger.warning(
@@ -3184,7 +3182,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
         ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 86.0, "tts_node")
-    return {**state, "audio_assets": audio_assets_out, "progress_pct": 86.0}
+    return {"audio_assets": audio_assets_out, "progress_pct": 86.0}
 
 
 async def _generate_image_with_fallback(
@@ -3313,7 +3311,7 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["image_generator"]
         logger.info("[%s] image_generator_node: cache hit, skipping all generation", lesson_id)
         await _update_job_progress(lesson_id, 93.0, "image_generator")
-        return {**state, "slide_images": cached, "progress_pct": 93.0}
+        return {"slide_images": cached, "progress_pct": 93.0}
 
     slide_images_out: list[dict[str, Any]] = []
     for index, entry in enumerate(slides):
@@ -3418,7 +3416,7 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 93.0, "image_generator")
-    return {**state, "slide_images": slide_images_out, "progress_pct": 93.0}
+    return {"slide_images": slide_images_out, "progress_pct": 93.0}
 
 
 def _estimate_slide_timestamps(
@@ -3572,7 +3570,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 
     if "package_builder" in node_outputs:
         logger.info("[%s] package_builder_node: cache hit", lesson_id)
-        return {**state, "lesson_package": node_outputs["package_builder"], "progress_pct": 100.0}
+        return {"lesson_package": node_outputs["package_builder"], "progress_pct": 100.0}
 
     await _update_job_progress(lesson_id, 95.0, "package_builder")
 
@@ -3891,7 +3889,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         }
     ).eq("lesson_id", lesson_id).execute()
 
-    return {**state, "lesson_package": lesson_package, "progress_pct": 100.0}
+    return {"lesson_package": lesson_package, "progress_pct": 100.0}
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
@@ -3901,7 +3899,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # _section_index below) — NOT the full accumulated state. Review finding:
 # spreading **state would copy raw_text/chunks/embeddings into every one of
 # the 6xN dispatched payloads, which is real memory pressure for a large book.
-_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id")
+# Story 2-28 AC-3: "tier" is load-bearing, not optional. The Send() payload
+# REPLACES state for each dispatched node, so any key absent here resolves to
+# its .get() default inside the node. Without "tier", every Phase-1 node saw
+# _DEFAULT_TIER ("T2") regardless of the lesson's real tier — silently
+# disabling the S2-LM3/LM4/LM5 tier bands (e.g. quiz_generator_node's
+# _TIER_QUIZ_COUNT_BAND) for every T1 and T3 lesson.
+_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier")
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
 # once, before dispatch, while accumulated cost is still whatever it was
