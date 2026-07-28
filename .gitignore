@@ -153,3 +153,6 @@ tmp/
 
 # ---- Local-only developer docs (not for the repo) ----
 docs/LOCAL_DEV_SETUP.md
+
+# Broken WSL virtualenv — local artifact, never commit
+apps/api/.venv-broken-wsl/
