@@ -12,6 +12,8 @@ attempt) would have passed every test. This file closes that gap.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -319,39 +321,83 @@ async def test_openai_apierror_without_status_is_not_retried() -> None:
     assert counter.calls == 1
 
 
-async def test_retry_module_imports_and_still_classifies_httpx_without_openai(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """AC-1: the openai import must be GUARDED. core/retry.py is core
-    infrastructure; it must not hard-depend on a provider SDK. Simulate the SDK
-    being absent, reimport, and prove httpx classification still works."""
-    import builtins
-    import importlib
+async def test_retry_module_imports_and_still_classifies_httpx_without_openai() -> None:
+    """AC-1: the openai import must be GUARDED. `core/` is infrastructure and
+    must not hard-depend on a provider SDK.
+
+    Run in a SUBPROCESS, deliberately. The obvious version — monkeypatch
+    `builtins.__import__` and `importlib.reload(app.core.retry)` — mutates the
+    live module, which rebinds `SanitizedHTTPError` to a NEW class object.
+    `app.providers.image.imagen` imported the OLD one at import time, so the
+    reloaded `with_retry`'s `except SanitizedHTTPError` stops matching what
+    imagen raises, and AC-5's retry silently dies for the rest of the session.
+    Verified repro before this was changed:
+
+        pytest tests/unit/test_image_providers.py
+               tests/unit/test_retry.py::test_retry_module_imports..._without_openai
+               tests/unit/test_breaker_accounting.py
+        -> FAILED test_imagen_retryable_error_is_retried_and_never_leaks_the_key
+
+    `monkeypatch.undo()` restores `sys.modules` and `__import__` but cannot
+    restore class identity already captured by other modules. A subprocess has no
+    such shared state.
+
+    Declared `async` only to satisfy this module's `pytestmark` asyncio mark; the
+    body is synchronous by design.
+    """
+    import subprocess
     import sys
+    import textwrap
 
-    real_import = builtins.__import__
+    program = textwrap.dedent(
+        """
+        import builtins, sys
+        real_import = builtins.__import__
 
-    def _no_openai(name: str, *args: object, **kwargs: object) -> object:
-        if name == "openai" or name.startswith("openai."):
-            raise ModuleNotFoundError("No module named 'openai'")
-        return real_import(name, *args, **kwargs)
+        def _no_openai(name, *a, **k):
+            if name == "openai" or name.startswith("openai."):
+                raise ModuleNotFoundError("No module named 'openai'")
+            return real_import(name, *a, **k)
 
-    monkeypatch.delitem(sys.modules, "openai", raising=False)
-    monkeypatch.setattr(builtins, "__import__", _no_openai)
+        sys.modules.pop("openai", None)
+        builtins.__import__ = _no_openai
 
-    import app.core.retry as retry_mod
+        import asyncio
+        import httpx
+        from app.core.retry import with_retry, _OPENAI_API_ERRORS
 
-    reloaded = importlib.reload(retry_mod)
-    try:
-        counter = _Counter(_status_error(503), fail_times=1)
-        wrapped = reloaded.with_retry(max_attempts=3)(counter)
+        assert _OPENAI_API_ERRORS == (), _OPENAI_API_ERRORS
 
-        assert await wrapped() == "ok"
-        assert counter.calls == 2, "httpx classification must survive a missing openai SDK"
-    finally:
-        # Restore the real module for every subsequent test in the session.
-        monkeypatch.undo()
-        importlib.reload(retry_mod)
+        calls = {"n": 0}
+
+        async def flaky():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                request = httpx.Request("GET", "https://p.example/x")
+                raise httpx.HTTPStatusError(
+                    "503", request=request, response=httpx.Response(503, request=request)
+                )
+            return "ok"
+
+        async def main():
+            wrapped = with_retry(max_attempts=3)(flaky)
+            assert await wrapped() == "ok"
+            assert calls["n"] == 2, calls
+
+        asyncio.run(main())
+        print("SUBPROCESS_OK")
+        """
+    )
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parents[2]),
+        timeout=120,
+    )
+    assert "SUBPROCESS_OK" in proc.stdout, (
+        "absent-SDK run failed\nstdout:\n" + proc.stdout + "\nstderr:\n" + proc.stderr
+    )
 
 
 async def test_guarded_import_ignores_a_non_class_openai_stub() -> None:

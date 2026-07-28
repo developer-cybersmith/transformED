@@ -224,7 +224,17 @@ async def test_imagen_http_error_does_not_leak_api_key_in_exception() -> None:
 
     assert "SUPER-SECRET-KEY-VALUE" not in str(exc_info.value)
     assert "SUPER-SECRET-KEY-VALUE" not in repr(exc_info.value)
-    # __cause__ must not be the raw httpx exception with the key embedded —
-    # `from None` suppresses it from any exc_info=True traceback formatting.
+    # Neither chaining slot may hold the raw httpx exception, whose str()/repr()
+    # embed the key-bearing request URL.
     assert exc_info.value.__cause__ is None
-    assert exc_info.value.__suppress_context__ is True
+    # 2026-07-29 review: this previously asserted `__suppress_context__ is True`,
+    # which pinned the MECHANISM (`raise ... from None`) rather than the
+    # property. That mechanism was never sufficient — `from None` leaves
+    # `__context__` populated, so anything walking the chain directly (structlog,
+    # custom formatters, ad-hoc repr debugging) still saw the key. The provider
+    # now raises outside the `except` block so `__context__` is genuinely None,
+    # which is strictly stronger and makes the suppress flag irrelevant.
+    assert exc_info.value.__context__ is None, (
+        "the original httpx exception must not be reachable via __context__ — "
+        "its str()/repr() embed the API key"
+    )

@@ -15,6 +15,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 from langfuse import Langfuse
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
@@ -53,7 +54,20 @@ class OpenAILLMProvider(LLMProvider):
 
     def __init__(self, lesson_id: str | None = None) -> None:
         settings = get_settings()
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # Story 2-32: max_retries=0 — the SDK defaults to 2, so layering
+        # with_retry(max_attempts=N) on top of it means N x 3 HTTP requests per
+        # logical call with two independent backoff schedules. `core/retry.py` is
+        # the only layer that knows the PRD §14 rules and the circuit-breaker
+        # state, so it owns retry entirely.
+        #
+        # Timeout is an explicit httpx.Timeout, NEVER a bare float: a bare float
+        # sets connect= to the same value, replacing the SDK's 5s connect guard
+        # with (here) 120s and making a connect hang strictly worse.
+        self._client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            max_retries=0,
+            timeout=httpx.Timeout(settings.openai_request_timeout_s, connect=5.0),
+        )
         # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to
         # no-tracing, never crash the provider mid-job.
         self._langfuse: Langfuse | None
@@ -258,6 +272,8 @@ class OpenAILLMProvider(LLMProvider):
 
         total = await accumulate_cost(self._lesson_id, cost)
         if await check_ceiling(self._lesson_id):
-            raise RuntimeError(
+            from app.core.cost_tracker import CostCeilingError
+
+            raise CostCeilingError(
                 f"Lesson {self._lesson_id} exceeded cost ceiling at ${total:.4f} — pipeline aborted"
             )

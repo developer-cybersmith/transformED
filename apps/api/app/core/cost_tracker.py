@@ -24,6 +24,21 @@ def _key(lesson_id: str) -> str:
     return f"cost:{lesson_id}"
 
 
+class CostCeilingError(RuntimeError):
+    """The lesson hit its own $3.00 spend ceiling — OUR budget, not a provider fault.
+
+    Story 2-32 review: this used to be a plain `RuntimeError`, so `guard_breaker`
+    counted it via `except Exception: record_failure(provider)`. Five ceiling
+    breaches across concurrent lessons would then open the SHARED "openai"
+    circuit for ten minutes, for every lesson — a self-inflicted outage caused by
+    the cost control working correctly. A distinct type lets the breaker exclude
+    it without string-matching a message.
+
+    Kept a `RuntimeError` subclass: `workers/jobs/content_pipeline.py` branches on
+    `"cost ceiling" in str(exc)` and must keep working unchanged.
+    """
+
+
 async def accumulate_cost(lesson_id: str, cost_usd: float) -> float:
     """Add *cost_usd* to the running total for *lesson_id*.
 

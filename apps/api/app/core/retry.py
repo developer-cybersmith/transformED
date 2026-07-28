@@ -20,6 +20,8 @@ from typing import Any, TypeVar
 
 import httpx
 
+from app.core.circuit_breaker import CircuitOpenError
+
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Coroutine[Any, Any, Any]])
@@ -59,11 +61,34 @@ class SanitizedHTTPError(RuntimeError):
 
     A `RuntimeError` subclass so existing `except RuntimeError` handlers behave
     unchanged. NEVER put the original message, URL, or `__cause__` on it.
+
+    **`raise ... from None` is NOT sufficient, and raisers must not rely on it.**
+    `from None` sets `__cause__ = None` and `__suppress_context__ = True`, but the
+    `raise` statement still binds `__context__` to the exception being handled —
+    and for a real `response.raise_for_status()` that object's `str()`/`repr()`
+    embed the full request URL, key included. Assigning `__context__ = None`
+    before the raise does not help either; the raise re-binds it. The only
+    reliable pattern is to BUILD the sanitized error inside the `except` block
+    and RAISE IT AFTER the block has exited, when no exception is active. See
+    `providers/image/imagen.py` for the reference implementation, and
+    `test_sanitized_error_does_not_retain_the_original_via_context`.
+
+    `network_error=True` marks a transport-level failure (timeout, connection
+    reset) that carries no status code but is still retryable — without it, the
+    most common transient failure mode of an outbound HTTP call would be
+    classified as permanently fatal.
     """
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        network_error: bool = False,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.network_error = network_error
 
 
 def _exception_classes(*candidates: Any) -> tuple[type[BaseException], ...]:  # noqa: ANN401
@@ -91,9 +116,21 @@ try:
     # and dispatch on what the instance actually carries.
     _OPENAI_API_ERRORS = _exception_classes(_openai.APIError)
     _OPENAI_NETWORK_ERRORS = _exception_classes(_openai.APIConnectionError)  # APITimeoutError too
-except ImportError:  # pragma: no cover — exercised via the monkeypatched import test
+except (ImportError, AttributeError):
+    # AttributeError as well as ImportError: a circular import can hand back a
+    # partially-initialised `openai` module whose `.APIError` does not exist yet.
+    # Degrading is correct; failing to import `app.core.retry` entirely is not.
     _OPENAI_API_ERRORS = ()
     _OPENAI_NETWORK_ERRORS = ()
+
+if not _OPENAI_API_ERRORS:
+    # Story 2-32 review: without this, a production image built without the SDK
+    # importable (or with it stubbed) silently reverts to the pre-story behaviour
+    # where every OpenAI 429 is fatal, and NOTHING anywhere says so.
+    logger.warning(
+        "OpenAI exception classification is DISABLED — the SDK was not importable "
+        "as real exception classes. OpenAI 429/5xx responses will NOT be retried."
+    )
 
 
 def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
@@ -146,31 +183,53 @@ def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
                 except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                     last_exc = exc
 
+                except CircuitOpenError:
+                    # Story 2-32 review: a breaker rejection is a DELIBERATE,
+                    # expected fail-fast — not an unknown bug. Without this branch
+                    # it fell to the catch-all below and was logged via
+                    # logger.exception() at ERROR with a full traceback, which
+                    # Sentry's default LoggingIntegration (event_level=ERROR)
+                    # turns into an issue for EVERY rejected call. During a real
+                    # outage that is hundreds of tracebacks over the 600s recovery
+                    # window — exactly when the log needs to stay readable.
+                    # Still not retried: hammering an open breaker is pure latency.
+                    logger.warning(
+                        "Circuit open — %s rejected without calling the provider",
+                        func.__qualname__,
+                    )
+                    raise
+
                 except SanitizedHTTPError as exc:
                     # Story 2-32 AC-5: a redacted HTTP failure, classified by the
                     # status the provider preserved. Same PRD §14 rules as the
                     # httpx branch — the message is redacted, the semantics are not.
-                    if exc.status_code is None:
+                    if exc.network_error:
+                        # Transport-level failure: no status to classify on, but
+                        # retryable by nature — same treatment as the httpx
+                        # TimeoutException/NetworkError branch above.
+                        last_exc = exc
+                    elif exc.status_code is None:
                         logger.warning(
                             "Sanitized error with no status from %s — not retrying",
                             func.__qualname__,
                         )
                         raise
-                    if exc.status_code in _NON_RETRYABLE_STATUS_CODES:
+                    elif exc.status_code in _NON_RETRYABLE_STATUS_CODES:
                         logger.warning(
                             "Non-retryable sanitized HTTP %s from %s — aborting immediately",
                             exc.status_code,
                             func.__qualname__,
                         )
                         raise
-                    if exc.status_code not in _RETRYABLE_STATUS_CODES:
+                    elif exc.status_code not in _RETRYABLE_STATUS_CODES:
                         logger.warning(
                             "Unclassified sanitized HTTP %s from %s — not retrying",
                             exc.status_code,
                             func.__qualname__,
                         )
                         raise
-                    last_exc = exc
+                    else:
+                        last_exc = exc
 
                 except _OPENAI_API_ERRORS as exc:
                     # Story 2-32. Mirrors the httpx branches above, but the SDK

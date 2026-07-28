@@ -55,9 +55,13 @@ class CircuitOpenError(RuntimeError):
     - `with_retry` must not retry it. Retrying against a breaker already known
       to be open is pure latency and spend.
 
-    Deliberately a `RuntimeError` subclass: several providers already have
-    `except RuntimeError: raise` guards (e.g. `tts/sarvam.py`), and this story
-    must not silently change their behaviour.
+    Deliberately a `RuntimeError` subclass so that broad `except RuntimeError`
+    handlers elsewhere keep working. Note that `SanitizedHTTPError` and Sarvam's
+    quota error are also `RuntimeError`s, so a handler that only catches
+    `RuntimeError` cannot tell "breaker rejected the call" from "provider
+    returned a redacted HTTP error" from "quota exhausted" — three cases with
+    completely different remediation. Catch this class specifically when the
+    distinction matters.
     """
 
 
@@ -183,13 +187,71 @@ async def guard_breaker[T](
     per-attempt `is_circuit_open` check.
 
     `CircuitOpenError` is re-raised WITHOUT being counted — see its docstring.
+
+    Neither is a **client-side** error. The breaker exists to detect that a
+    PROVIDER is unhealthy; a 400 content-policy rejection or a 422 validation
+    error says the request was bad, not the provider. Counting those let five
+    reliably-rejected uploads inside the 120s window open the shared breaker for
+    every tenant — an attacker-triggerable outage. `_NON_RETRYABLE_STATUS_CODES`
+    already encodes exactly this distinction; `_is_client_error` reuses it.
+
+    Bookkeeping is best-effort. A Redis outage must never convert an already-paid-for
+    provider result into an exception, nor mask the provider error that
+    `with_retry` needs in order to classify the failure.
     """
+    from app.core.cost_tracker import CostCeilingError
+
     try:
         result = await call()
     except CircuitOpenError:
         raise
-    except Exception:
-        await record_failure(provider)
+    except CostCeilingError:
+        # OUR budget, not the provider's health. Counting it would let the cost
+        # control open the shared circuit for every lesson.
         raise
-    await record_success(provider)
+    except Exception as exc:
+        if not _is_client_error(exc):
+            await _safe_record(record_failure, provider, "failure")
+        raise
+    await _safe_record(record_success, provider, "success")
     return result
+
+
+def _is_client_error(exc: BaseException) -> bool:
+    """True when *exc* blames the request, not the provider.
+
+    Kept deliberately narrow: only an explicit non-retryable HTTP status counts.
+    An unknown exception is still treated as a provider failure, because failing
+    to open a breaker on a real outage is worse than opening one spuriously.
+    """
+    from app.core.retry import _NON_RETRYABLE_STATUS_CODES
+
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    return status in _NON_RETRYABLE_STATUS_CODES
+
+
+async def _safe_record(
+    fn: Callable[[str], Awaitable[None]],
+    provider: str,
+    label: str,
+) -> None:
+    """Record a breaker outcome without ever displacing the real result.
+
+    `record_success` runs on the happy path, after the provider call has already
+    been made and billed; letting a Redis error escape here would throw away a
+    paid-for completion and make ARQ re-run (and re-pay for) the node. On the
+    failure path an escaping Redis error would REPLACE the provider exception,
+    so callers would see a Redis error instead of the 429 they must classify.
+    """
+    try:
+        await fn(provider)
+    except Exception:  # noqa: BLE001 — bookkeeping must never displace the result
+        logger.warning(
+            "Circuit breaker: failed to record %s for provider '%s' — breaker state may be stale",
+            label,
+            provider,
+            exc_info=True,
+        )

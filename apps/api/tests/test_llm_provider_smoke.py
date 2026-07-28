@@ -59,8 +59,8 @@ def provider(settings_mock: MagicMock):  # type: ignore[return]
         patch("app.providers.llm.openai.get_settings", return_value=settings_mock),
         patch("app.providers.llm.openai.Langfuse", return_value=MagicMock()),
         patch("app.providers.llm.openai.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.llm.openai.record_success", new=AsyncMock()),
-        patch("app.providers.llm.openai.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("app.core.cost_tracker.accumulate_cost", new=AsyncMock(return_value=0.0001)),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
     ):
