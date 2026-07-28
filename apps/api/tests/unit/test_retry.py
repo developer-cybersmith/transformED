@@ -12,6 +12,8 @@ attempt) would have passed every test. This file closes that gap.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -193,3 +195,239 @@ async def test_success_first_try_never_sleeps(_no_real_sleep: list[float]) -> No
     assert await wrapped() == "ok"
     assert fn.calls == 1
     assert _no_real_sleep == []
+
+
+# ── Story 2-32 AC-1/AC-2: OpenAI SDK exception classification ────────────────
+#
+# The OpenAI SDK does NOT raise httpx exceptions. Verified against the installed
+# SDK: openai.APIError -> OpenAIError -> Exception, with ZERO httpx.HTTPError in
+# any MRO. So before this story every OpenAI failure — including a plain 429
+# rate-limit, the most common transient failure in this system — fell into
+# with_retry's unknown-exception branch and was never retried, contradicting
+# PRD §14 ("Retry on: 429, 500, 502, 503, 504").
+
+
+def _openai_status_error(code: int, cls: type | None = None) -> Exception:
+    """Build a real openai.APIStatusError (or subclass) carrying a status code."""
+    import openai
+
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx.Response(code, request=request)
+    return (cls or openai.APIStatusError)(f"OpenAI {code}", response=response, body=None)
+
+
+async def test_openai_exceptions_are_not_httpx_derived() -> None:
+    """Pins the premise of this whole AC. If a future SDK release makes these
+    httpx-derived, the classification below becomes redundant rather than
+    wrong — but we want to KNOW, not silently keep dead code."""
+    import openai
+
+    for name in ("APIError", "APIStatusError", "APIConnectionError", "RateLimitError"):
+        cls = getattr(openai, name)
+        assert not issubclass(cls, httpx.HTTPError), (
+            f"openai.{name} is now httpx-derived — revisit with_retry's classification"
+        )
+
+
+@pytest.mark.parametrize("code", [429, 500, 502, 503, 504])
+async def test_openai_retryable_status_is_retried_then_succeeds(code: int) -> None:
+    """PRD §14 retryable set, raised as the SDK really raises it."""
+    counter = _Counter(_openai_status_error(code), fail_times=1)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    assert await wrapped() == "ok"
+    assert counter.calls == 2, f"OpenAI {code} must be retried"
+
+
+async def test_openai_rate_limit_error_subclass_is_retried() -> None:
+    """RateLimitError is the concrete class the SDK raises for 429 — assert on
+    the subclass, not just the base, so a classification keyed on exact type
+    cannot pass this by accident."""
+    import openai
+
+    counter = _Counter(_openai_status_error(429, openai.RateLimitError), fail_times=2)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    assert await wrapped() == "ok"
+    assert counter.calls == 3
+
+
+async def test_openai_internal_server_error_subclass_is_retried() -> None:
+    import openai
+
+    counter = _Counter(_openai_status_error(500, openai.InternalServerError), fail_times=1)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    assert await wrapped() == "ok"
+    assert counter.calls == 2
+
+
+async def test_openai_network_class_errors_are_retried() -> None:
+    """APITimeoutError subclasses APIConnectionError; both are network-class and
+    carry no status code, so they must be classified by type, not by status."""
+    import openai
+
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    for exc in (
+        openai.APITimeoutError(request=request),
+        openai.APIConnectionError(request=request),
+    ):
+        counter = _Counter(exc, fail_times=1)
+        wrapped = with_retry(max_attempts=3)(counter)
+
+        assert await wrapped() == "ok"
+        assert counter.calls == 2, f"{type(exc).__name__} must be retried"
+
+
+@pytest.mark.parametrize("code", [400, 401, 403, 404, 422])
+async def test_openai_non_retryable_status_is_not_retried(code: int) -> None:
+    """AC-2: PRD §14 'Never retry: 400, 401'. The non-retryable set must still
+    win after the classification widens."""
+    import openai
+
+    counter = _Counter(_openai_status_error(code), fail_times=99)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    with pytest.raises(openai.APIStatusError):
+        await wrapped()
+    assert counter.calls == 1, f"OpenAI {code} must NOT be retried"
+
+
+@pytest.mark.parametrize("code", [418, 451])
+async def test_openai_unclassified_status_is_not_retried(code: int) -> None:
+    """An unknown status is not assumed safe to replay."""
+    import openai
+
+    counter = _Counter(_openai_status_error(code), fail_times=99)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    with pytest.raises(openai.APIStatusError):
+        await wrapped()
+    assert counter.calls == 1
+
+
+async def test_openai_apierror_without_status_is_not_retried() -> None:
+    """A bare APIError carries no status_code. Without one there is nothing to
+    classify, so it must fall through to the conservative no-retry branch
+    rather than being retried on the strength of its module alone."""
+    import openai
+
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    counter = _Counter(openai.APIError("boom", request=request, body=None), fail_times=99)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    with pytest.raises(openai.APIError):
+        await wrapped()
+    assert counter.calls == 1
+
+
+async def test_retry_module_imports_and_still_classifies_httpx_without_openai() -> None:
+    """AC-1: the openai import must be GUARDED. `core/` is infrastructure and
+    must not hard-depend on a provider SDK.
+
+    Run in a SUBPROCESS, deliberately. The obvious version — monkeypatch
+    `builtins.__import__` and `importlib.reload(app.core.retry)` — mutates the
+    live module, which rebinds `SanitizedHTTPError` to a NEW class object.
+    `app.providers.image.imagen` imported the OLD one at import time, so the
+    reloaded `with_retry`'s `except SanitizedHTTPError` stops matching what
+    imagen raises, and AC-5's retry silently dies for the rest of the session.
+    Verified repro before this was changed:
+
+        pytest tests/unit/test_image_providers.py
+               tests/unit/test_retry.py::test_retry_module_imports..._without_openai
+               tests/unit/test_breaker_accounting.py
+        -> FAILED test_imagen_retryable_error_is_retried_and_never_leaks_the_key
+
+    `monkeypatch.undo()` restores `sys.modules` and `__import__` but cannot
+    restore class identity already captured by other modules. A subprocess has no
+    such shared state.
+
+    Declared `async` only to satisfy this module's `pytestmark` asyncio mark; the
+    body is synchronous by design.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    program = textwrap.dedent(
+        """
+        import builtins, sys
+        real_import = builtins.__import__
+
+        def _no_openai(name, *a, **k):
+            if name == "openai" or name.startswith("openai."):
+                raise ModuleNotFoundError("No module named 'openai'")
+            return real_import(name, *a, **k)
+
+        sys.modules.pop("openai", None)
+        builtins.__import__ = _no_openai
+
+        import asyncio
+        import httpx
+        from app.core.retry import with_retry, _OPENAI_API_ERRORS
+
+        assert _OPENAI_API_ERRORS == (), _OPENAI_API_ERRORS
+
+        calls = {"n": 0}
+
+        async def flaky():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                request = httpx.Request("GET", "https://p.example/x")
+                raise httpx.HTTPStatusError(
+                    "503", request=request, response=httpx.Response(503, request=request)
+                )
+            return "ok"
+
+        async def main():
+            wrapped = with_retry(max_attempts=3)(flaky)
+            assert await wrapped() == "ok"
+            assert calls["n"] == 2, calls
+
+        asyncio.run(main())
+        print("SUBPROCESS_OK")
+        """
+    )
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parents[2]),
+        timeout=120,
+    )
+    assert "SUBPROCESS_OK" in proc.stdout, (
+        "absent-SDK run failed\nstdout:\n" + proc.stdout + "\nstderr:\n" + proc.stderr
+    )
+
+
+async def test_guarded_import_ignores_a_non_class_openai_stub() -> None:
+    """Regression: an ImportError guard alone is NOT enough.
+
+    Parts of the suite install `sys.modules["openai"] = MagicMock()`. If the
+    guarded import binds those Mock attributes into the `except (...)` tuple,
+    every provider call raises `TypeError: catching classes that do not inherit
+    from BaseException` — converting a transient 429 into a hard TypeError at
+    the worst possible moment. `_exception_classes` filters non-classes so a
+    stubbed SDK degrades to httpx-only classification instead.
+    """
+    from unittest.mock import MagicMock
+
+    from app.core.retry import _exception_classes
+
+    stub = MagicMock()
+    assert _exception_classes(stub.APIError) == ()
+    assert _exception_classes(stub.APIError, ValueError) == (ValueError,)
+    assert _exception_classes(object) == (), "a plain class is not an exception class"
+
+    # Every element of the real tuples must be usable in an `except` clause.
+    from app.core.retry import _OPENAI_API_ERRORS, _OPENAI_NETWORK_ERRORS
+
+    for tup in (_OPENAI_API_ERRORS, _OPENAI_NETWORK_ERRORS):
+        for cls in tup:
+            assert isinstance(cls, type) and issubclass(cls, BaseException)
+        try:
+            raise ValueError("probe")
+        except tup:  # must not raise TypeError
+            pytest.fail("ValueError should not match the OpenAI tuples")
+        except ValueError:
+            pass

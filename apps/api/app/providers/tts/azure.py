@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.retry import with_retry
 from app.providers.base import TTSProvider
 
@@ -38,13 +38,27 @@ class AzureTTSProvider(TTSProvider):
         self._api_key = settings.azure_tts_key
         self._region = settings.azure_tts_region
 
-    @with_retry(max_attempts=3)
     async def synthesize(
         self,
         text: str,
         voice_id: str,
     ) -> tuple[bytes, list[dict[str, Any]]]:
-        """Synthesise *text* with Azure Cognitive Services Speech.
+        """Synthesise *text* with Azure Speech, recording exactly one breaker
+        outcome per logical call (Story 2-32 AC-3).
+
+        Like Sarvam, this provider's httpx errors were always classified, so it
+        always retried and always recorded `max_attempts` failures for one
+        logical call — a pre-existing defect the accounting fix also closes.
+        """
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._synthesize_inner(text, voice_id))
+
+    @with_retry(max_attempts=3)
+    async def _synthesize_inner(
+        self,
+        text: str,
+        voice_id: str,
+    ) -> tuple[bytes, list[dict[str, Any]]]:
+        """Retried body of `synthesize`. Records NO breaker outcome.
 
         Args:
             text:     Narration text (one segment's script).
@@ -54,8 +68,9 @@ class AzureTTSProvider(TTSProvider):
             ``(audio_bytes, [])`` — see module docstring for why timestamps
             are always empty.
         """
+        # Checked on EVERY attempt (Story 2-32 AC-4).
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
@@ -76,26 +91,20 @@ class AzureTTSProvider(TTSProvider):
         # so this is types-only — the same header value is sent at runtime.
         api_key = self._api_key or ""
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"https://{self._region}.tts.speech.microsoft.com/cognitiveservices/v1",
-                    headers={
-                        "Ocp-Apim-Subscription-Key": api_key,
-                        "Content-Type": "application/ssml+xml",
-                        "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
-                    },
-                    content=ssml.encode("utf-8"),
-                )
-                response.raise_for_status()
-                audio_bytes = response.content
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"https://{self._region}.tts.speech.microsoft.com/cognitiveservices/v1",
+                headers={
+                    "Ocp-Apim-Subscription-Key": api_key,
+                    "Content-Type": "application/ssml+xml",
+                    "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+                },
+                content=ssml.encode("utf-8"),
+            )
+            response.raise_for_status()
+            audio_bytes = response.content
 
-            await record_success(_PROVIDER_KEY)
-            return audio_bytes, []
-
-        except Exception:
-            await record_failure(_PROVIDER_KEY)
-            raise
+        return audio_bytes, []
 
 
 def _escape_ssml(text: str) -> str:

@@ -15,12 +15,13 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 from langfuse import Langfuse
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from app.config import get_settings
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.langfuse import get_langfuse
 from app.core.retry import with_retry
 from app.providers.base import LLMProvider
@@ -53,7 +54,20 @@ class OpenAILLMProvider(LLMProvider):
 
     def __init__(self, lesson_id: str | None = None) -> None:
         settings = get_settings()
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # Story 2-32: max_retries=0 — the SDK defaults to 2, so layering
+        # with_retry(max_attempts=N) on top of it means N x 3 HTTP requests per
+        # logical call with two independent backoff schedules. `core/retry.py` is
+        # the only layer that knows the PRD §14 rules and the circuit-breaker
+        # state, so it owns retry entirely.
+        #
+        # Timeout is an explicit httpx.Timeout, NEVER a bare float: a bare float
+        # sets connect= to the same value, replacing the SDK's 5s connect guard
+        # with (here) 120s and making a connect hang strictly worse.
+        self._client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            max_retries=0,
+            timeout=httpx.Timeout(settings.openai_request_timeout_s, connect=5.0),
+        )
         # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to
         # no-tracing, never crash the provider mid-job.
         self._langfuse: Langfuse | None
@@ -67,16 +81,35 @@ class OpenAILLMProvider(LLMProvider):
             self._langfuse = None
         self._lesson_id = lesson_id
 
-    @with_retry(max_attempts=3)
     async def complete(
         self,
         messages: list[dict[str, str]],
         model: str,
         **kwargs: Any,  # noqa: ANN401
     ) -> str:
-        """Return a plain-text chat completion from OpenAI."""
+        """Return a plain-text chat completion from OpenAI.
+
+        Story 2-32 AC-3: breaker accounting lives HERE, outside the retry
+        decorator, so one logical call records at most one outcome no matter how
+        many times `_complete_inner` retries. See `guard_breaker`.
+        """
+        return await guard_breaker(
+            _PROVIDER_KEY, lambda: self._complete_inner(messages, model, **kwargs)
+        )
+
+    @with_retry(max_attempts=3)
+    async def _complete_inner(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> str:
+        """Retried body of `complete`. Records NO breaker outcome — see AC-3."""
+        # Checked on EVERY attempt (AC-4 documented semantics): if concurrent
+        # traffic trips the breaker while we are backing off, stop rather than
+        # finish the remaining attempts against a provider known to be down.
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
@@ -121,21 +154,18 @@ class OpenAILLMProvider(LLMProvider):
                     )
                 await self._maybe_accumulate_cost(model, prompt_tokens, completion_tokens)
 
-            await record_success(_PROVIDER_KEY)
             return content
 
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
                 _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
-            await record_failure(_PROVIDER_KEY)
             raise
 
         finally:
             if generation is not None:
                 _safe_trace(generation.end)
 
-    @with_retry(max_attempts=3)
     async def complete_structured(
         self,
         messages: list[dict[str, str]],
@@ -143,9 +173,27 @@ class OpenAILLMProvider(LLMProvider):
         response_format: type,
         **kwargs: Any,  # noqa: ANN401
     ) -> Any:  # noqa: ANN401
-        """Return a structured completion parsed into *response_format* (a Pydantic model)."""
+        """Return a structured completion parsed into *response_format* (a Pydantic model).
+
+        Story 2-32 AC-3: breaker accounting is outside the retry decorator — a
+        second `@with_retry` call site that needs the same fix as `complete`.
+        """
+        return await guard_breaker(
+            _PROVIDER_KEY,
+            lambda: self._complete_structured_inner(messages, model, response_format, **kwargs),
+        )
+
+    @with_retry(max_attempts=3)
+    async def _complete_structured_inner(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        response_format: type,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
+        """Retried body of `complete_structured`. Records NO breaker outcome."""
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
@@ -194,14 +242,12 @@ class OpenAILLMProvider(LLMProvider):
                     )
                 await self._maybe_accumulate_cost(model, prompt_tokens, completion_tokens)
 
-            await record_success(_PROVIDER_KEY)
             return parsed
 
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
                 _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
-            await record_failure(_PROVIDER_KEY)
             raise
 
         finally:
@@ -226,6 +272,8 @@ class OpenAILLMProvider(LLMProvider):
 
         total = await accumulate_cost(self._lesson_id, cost)
         if await check_ceiling(self._lesson_id):
-            raise RuntimeError(
+            from app.core.cost_tracker import CostCeilingError
+
+            raise CostCeilingError(
                 f"Lesson {self._lesson_id} exceeded cost ceiling at ${total:.4f} — pipeline aborted"
             )

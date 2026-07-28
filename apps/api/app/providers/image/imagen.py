@@ -29,8 +29,8 @@ from typing import Any
 
 import httpx
 
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
-from app.core.retry import with_retry
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
+from app.core.retry import SanitizedHTTPError, with_retry
 from app.providers.base import ImageProvider
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,17 @@ class ImagenProvider(ImageProvider):
         self._api_key = settings.google_api_key
         self._lesson_id = lesson_id
 
-    @with_retry(max_attempts=2)
     async def generate(
+        self,
+        prompt: str,
+        size: str = "1024x1024",
+    ) -> str:
+        """Generate an image, recording exactly one breaker outcome (Story 2-32
+        AC-3). See `_generate_inner` for the full contract."""
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._generate_inner(prompt, size))
+
+    @with_retry(max_attempts=2)
+    async def _generate_inner(
         self,
         prompt: str,
         size: str = "1024x1024",
@@ -75,40 +84,67 @@ class ImagenProvider(ImageProvider):
         Raises:
             RuntimeError: with the API key redacted — see module docstring.
         """
+        # Checked on EVERY attempt (Story 2-32 AC-4).
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                try:
-                    response = await client.post(
-                        f"{_IMAGEN_URL}?key={self._api_key}",
-                        json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
-                    )
-                    response.raise_for_status()
-                except httpx.HTTPError as exc:
-                    # Redact the key before this exception (or anything that
-                    # wraps it) can be logged with exc_info=True anywhere
-                    # upstream — httpx's own exception message/repr embeds
-                    # the full request URL, key included.
-                    raise RuntimeError(
-                        f"Imagen 4 Fast request failed: {type(exc).__name__} "
-                        f"(status={getattr(getattr(exc, 'response', None), 'status_code', 'n/a')})"
-                    ) from None
+        # Built inside the `except` below, raised AFTER it — see the long note
+        # there. `sanitized` is the whole reason this control flow looks odd.
+        sanitized: SanitizedHTTPError | None = None
 
-                body: dict[str, Any] = response.json()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    f"{_IMAGEN_URL}?key={self._api_key}",
+                    json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                # Redact the key before this exception (or anything that wraps
+                # it) can be logged with exc_info=True anywhere upstream —
+                # httpx's own exception message/repr embeds the full request
+                # URL, key included.
+                #
+                # Story 2-32 AC-5: SanitizedHTTPError, not a bare RuntimeError.
+                # Carrying the status code lets with_retry apply the PRD §14
+                # rules to a REDACTED error — previously every failure here,
+                # including a retryable 429/503, was unclassifiable and
+                # therefore fatal, which made this provider's @with_retry
+                # decorative. The status code is metadata, not the URL.
+                #
+                # httpx.HTTPError also covers TimeoutException/NetworkError,
+                # which have no `.response` and therefore no status. Those are
+                # transport failures — the MOST common transient failure of an
+                # outbound call — so they are flagged retryable explicitly
+                # rather than falling into the status-less "cannot classify,
+                # do not retry" branch (2026-07-29 review finding).
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                sanitized = SanitizedHTTPError(
+                    f"Imagen 4 Fast request failed: {type(exc).__name__} "
+                    f"(status={status_code if status_code is not None else 'n/a'})",
+                    status_code=status_code,
+                    network_error=isinstance(exc, httpx.TimeoutException | httpx.NetworkError),
+                )
 
-            predictions = body.get("predictions") or []
-            if not predictions or not predictions[0].get("bytesBase64Encoded"):
-                raise ValueError("Imagen 4 Fast returned an empty response (no predictions)")
+            # RAISED OUTSIDE THE `except` BLOCK, DELIBERATELY. `raise ... from
+            # None` inside it would set __cause__ = None and
+            # __suppress_context__ = True, but the raise statement STILL binds
+            # __context__ to the httpx exception — whose str()/repr() embed the
+            # key-bearing URL. Assigning __context__ = None before the raise
+            # does not help; the raise re-binds it. Only raising when no
+            # exception is active leaves __context__ genuinely None.
+            # Guarded by test_sanitized_error_does_not_retain_the_original_via_context.
+            if sanitized is not None:
+                raise sanitized
 
-            b64_data = predictions[0]["bytesBase64Encoded"]
+            body: dict[str, Any] = response.json()
 
-            await record_success(_PROVIDER_KEY)
-            return f"data:image/png;base64,{b64_data}"
+        predictions = body.get("predictions") or []
+        if not predictions or not predictions[0].get("bytesBase64Encoded"):
+            raise ValueError("Imagen 4 Fast returned an empty response (no predictions)")
 
-        except Exception:
-            await record_failure(_PROVIDER_KEY)
-            raise
+        b64_data = predictions[0]["bytesBase64Encoded"]
+
+        return f"data:image/png;base64,{b64_data}"

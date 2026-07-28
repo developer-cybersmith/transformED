@@ -59,7 +59,7 @@ async def test_sarvam_synthesize_success_returns_audio_and_empty_timestamps() ->
     with (
         patch("app.config.get_settings") as mock_settings,
         patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.tts.sarvam.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.sarvam_api_key = "test-key"
@@ -106,7 +106,7 @@ async def test_sarvam_403_is_not_retried() -> None:
     with (
         patch("app.config.get_settings") as mock_settings,
         patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.tts.sarvam.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.sarvam_api_key = "test-key"
@@ -134,7 +134,7 @@ async def test_sarvam_429_rate_limit_exceeded_is_retried() -> None:
     with (
         patch("app.config.get_settings") as mock_settings,
         patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.tts.sarvam.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -165,7 +165,7 @@ async def test_sarvam_429_insufficient_quota_is_not_retried() -> None:
     with (
         patch("app.config.get_settings") as mock_settings,
         patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.tts.sarvam.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
         patch("asyncio.sleep", new=AsyncMock()),
     ):
@@ -195,7 +195,7 @@ async def test_azure_synthesize_success_returns_audio_and_empty_timestamps() -> 
     with (
         patch("app.config.get_settings") as mock_settings,
         patch("app.providers.tts.azure.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.tts.azure.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.azure_tts_key = "test-key"

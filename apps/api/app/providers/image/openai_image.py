@@ -25,9 +25,10 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
+import httpx
 from openai import AsyncOpenAI
 
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.retry import with_retry
 from app.providers.base import ImageProvider
 
@@ -54,11 +55,33 @@ class OpenAIImageProvider(ImageProvider):
         from app.config import get_settings
 
         settings = get_settings()
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # Story 2-32: max_retries=0 — the SDK defaults to 2, so layering
+        # with_retry(max_attempts=N) on top of it means N x 3 HTTP requests per
+        # logical call with two independent backoff schedules. `core/retry.py` is
+        # the only layer that knows the PRD §14 rules and the circuit-breaker
+        # state, so it owns retry entirely.
+        #
+        # Timeout is an explicit httpx.Timeout, NEVER a bare float: a bare float
+        # sets connect= to the same value, replacing the SDK's 5s connect guard
+        # with (here) 120s and making a connect hang strictly worse.
+        self._client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            max_retries=0,
+            timeout=httpx.Timeout(settings.openai_image_request_timeout_s, connect=5.0),
+        )
         self._lesson_id = lesson_id
 
-    @with_retry(max_attempts=2)
     async def generate(
+        self,
+        prompt: str,
+        size: str = "1024x1024",
+    ) -> str:
+        """Generate an image, recording exactly one breaker outcome (Story 2-32
+        AC-3). See `_generate_inner` for the full contract."""
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._generate_inner(prompt, size))
+
+    @with_retry(max_attempts=2)
+    async def _generate_inner(
         self,
         prompt: str,
         size: str = "1024x1024",
@@ -83,8 +106,9 @@ class OpenAIImageProvider(ImageProvider):
                 only; removed the untested alternate path rather than leave
                 a latent bug for a hypothetical case.
         """
+        # Checked on EVERY attempt (AC-4).
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
@@ -106,9 +130,7 @@ class OpenAIImageProvider(ImageProvider):
             if not b64_json:
                 raise ValueError("GPT Image 1 Mini returned an empty response (no b64_json)")
 
-            await record_success(_PROVIDER_KEY)
             return f"data:image/png;base64,{b64_json}"
 
         except Exception:
-            await record_failure(_PROVIDER_KEY)
             raise

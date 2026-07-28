@@ -21,7 +21,23 @@ def _stub_openai_package() -> None:
     Stubs all submodules referenced at import time in app/providers/llm/openai.py
     and app/providers/embeddings/openai.py so the unit test suite runs without
     a live OpenAI SDK (or if setdefault replaces the real package on a fresh run).
+
+    Story 2-32: this now DEFERS to the real SDK when it is importable. `openai`
+    is a declared hard dependency (`pyproject.toml`: `openai>=1.40.0`), so in
+    every supported environment the real package is present and stubbing it made
+    the suite weaker for no benefit — provider tests were asserting against a
+    MagicMock rather than the real exception hierarchy. Story 2-32 needs real
+    `openai.APIStatusError` instances to prove `with_retry`'s classification, and
+    those cannot be constructed from a MagicMock. The stub is kept only as a
+    fallback for a stripped environment where the SDK genuinely is not installed.
     """
+    try:
+        import openai  # noqa: F401
+
+        return  # Real SDK present — do not shadow it.
+    except ImportError:
+        pass
+
     stub = MagicMock()
     sys.modules.setdefault("openai", stub)
     sys.modules.setdefault("openai.types", stub.types)

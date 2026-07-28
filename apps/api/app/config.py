@@ -360,6 +360,26 @@ class Settings(BaseSettings):
         "Batches are packed by chunk token_count up to this budget (Story 2-0 AC-6).",
     )
 
+    # ── OpenAI client transport (Story 2-32) ──────────────────────────────────
+    # The SDK defaults to max_retries=2 and a 600s read timeout. Layering
+    # with_retry(max_attempts=3) on top of that is 3 x 3 = 9 HTTP requests per
+    # logical call, and a worst case of tens of minutes against arq_job_timeout_s.
+    # We set max_retries=0 and own retry/backoff in `core/retry.py`, which is the
+    # only layer that knows the PRD §14 rules and the circuit-breaker state.
+    openai_request_timeout_s: float = Field(
+        default=120.0,
+        description="Read/write/pool timeout for OpenAI chat + embeddings calls (seconds). "
+        "Connect stays at 5s — see the note on openai_image_request_timeout_s.",
+    )
+    openai_image_request_timeout_s: float = Field(
+        default=180.0,
+        description="Read/write/pool timeout for OpenAI image generation (seconds) — "
+        "image calls are legitimately slower than chat, so they get their own budget. "
+        "NOTE: always build httpx.Timeout(..., connect=5.0) explicitly; passing a bare "
+        "float to the SDK sets connect to that value too, destroying the 5s connect "
+        "guard and making hangs WORSE than the default.",
+    )
+
     # ── ARQ / pipeline timeouts (Story 2-0 AC-5) ──────────────────────────────
     # Invariant (contract-tested): arq_job_timeout_s >= extract_timeout_cap_s + 300
     # so the extract subprocess timeout ALWAYS fires before ARQ cancels the job,
@@ -396,6 +416,7 @@ class Settings(BaseSettings):
                 "Check ARQ_JOB_TIMEOUT_S / EXTRACT_TIMEOUT_CAP_S env vars."
             )
         return self
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

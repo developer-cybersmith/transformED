@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 
 import sentry_sdk
@@ -40,6 +41,28 @@ class CircuitState(StrEnum):
     CLOSED = "CLOSED"
     OPEN = "OPEN"
     HALF_OPEN = "HALF_OPEN"
+
+
+class CircuitOpenError(RuntimeError):
+    """Raised when a call is rejected because the provider's circuit is OPEN.
+
+    Story 2-32. This is a *rejection*, not a provider failure, and the two must
+    be distinguishable:
+
+    - `guard_breaker` must NOT count it via `record_failure`. Counting a
+      rejection would let the breaker feed itself — every rejected call would
+      extend the very failure window keeping it open, so it could never close.
+    - `with_retry` must not retry it. Retrying against a breaker already known
+      to be open is pure latency and spend.
+
+    Deliberately a `RuntimeError` subclass so that broad `except RuntimeError`
+    handlers elsewhere keep working. Note that `SanitizedHTTPError` and Sarvam's
+    quota error are also `RuntimeError`s, so a handler that only catches
+    `RuntimeError` cannot tell "breaker rejected the call" from "provider
+    returned a redacted HTTP error" from "quota exhausted" — three cases with
+    completely different remediation. Catch this class specifically when the
+    distinction matters.
+    """
 
 
 def _keys(provider: str) -> tuple[str, str, str]:
@@ -138,3 +161,97 @@ async def record_success(provider: str) -> None:
 
     # Reset everything
     await redis.delete(state_key, failures_key, opened_at_key)
+
+
+async def guard_breaker[T](
+    provider: str,
+    call: Callable[[], Awaitable[T]],
+) -> T:
+    """Run *call* under circuit-breaker accounting — exactly ONE outcome per
+    logical call, however many times *call* retries internally (Story 2-32 AC-3).
+
+    `record_failure` used to live inside the function wrapped by `@with_retry`.
+    That was invisible while OpenAI SDK exceptions were never classified as
+    retryable (Story 2-32 AC-1): a 429 produced one attempt and therefore one
+    recorded failure. The moment AC-1 makes those retryable, the same logical
+    call records `max_attempts` failures:
+
+        FAILURE_THRESHOLD = 5 over a 120 s window
+        1 failure/call  -> breaker opens after 5 logical calls
+        3 failures/call -> breaker opens after 2 logical calls
+
+    i.e. fixing the retry classification alone would trip the breaker ~2.5x
+    faster and turn a brief rate-limit into a 10-minute half-open outage. The
+    threshold is not what was wrong; the accounting was. Hence this wrapper sits
+    OUTSIDE the retry decorator, and the retried function keeps only the
+    per-attempt `is_circuit_open` check.
+
+    `CircuitOpenError` is re-raised WITHOUT being counted — see its docstring.
+
+    Neither is a **client-side** error. The breaker exists to detect that a
+    PROVIDER is unhealthy; a 400 content-policy rejection or a 422 validation
+    error says the request was bad, not the provider. Counting those let five
+    reliably-rejected uploads inside the 120s window open the shared breaker for
+    every tenant — an attacker-triggerable outage. `_NON_RETRYABLE_STATUS_CODES`
+    already encodes exactly this distinction; `_is_client_error` reuses it.
+
+    Bookkeeping is best-effort. A Redis outage must never convert an already-paid-for
+    provider result into an exception, nor mask the provider error that
+    `with_retry` needs in order to classify the failure.
+    """
+    from app.core.cost_tracker import CostCeilingError
+
+    try:
+        result = await call()
+    except CircuitOpenError:
+        raise
+    except CostCeilingError:
+        # OUR budget, not the provider's health. Counting it would let the cost
+        # control open the shared circuit for every lesson.
+        raise
+    except Exception as exc:
+        if not _is_client_error(exc):
+            await _safe_record(record_failure, provider, "failure")
+        raise
+    await _safe_record(record_success, provider, "success")
+    return result
+
+
+def _is_client_error(exc: BaseException) -> bool:
+    """True when *exc* blames the request, not the provider.
+
+    Kept deliberately narrow: only an explicit non-retryable HTTP status counts.
+    An unknown exception is still treated as a provider failure, because failing
+    to open a breaker on a real outage is worse than opening one spuriously.
+    """
+    from app.core.retry import _NON_RETRYABLE_STATUS_CODES
+
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    return status in _NON_RETRYABLE_STATUS_CODES
+
+
+async def _safe_record(
+    fn: Callable[[str], Awaitable[None]],
+    provider: str,
+    label: str,
+) -> None:
+    """Record a breaker outcome without ever displacing the real result.
+
+    `record_success` runs on the happy path, after the provider call has already
+    been made and billed; letting a Redis error escape here would throw away a
+    paid-for completion and make ARQ re-run (and re-pay for) the node. On the
+    failure path an escaping Redis error would REPLACE the provider exception,
+    so callers would see a Redis error instead of the 429 they must classify.
+    """
+    try:
+        await fn(provider)
+    except Exception:  # noqa: BLE001 — bookkeeping must never displace the result
+        logger.warning(
+            "Circuit breaker: failed to record %s for provider '%s' — breaker state may be stale",
+            label,
+            provider,
+            exc_info=True,
+        )

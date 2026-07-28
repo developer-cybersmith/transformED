@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.retry import with_retry
 from app.providers.base import TTSProvider
 
@@ -42,13 +42,30 @@ class SarvamTTSProvider(TTSProvider):
         settings = get_settings()
         self._api_key = settings.sarvam_api_key
 
-    @with_retry(max_attempts=3)
     async def synthesize(
         self,
         text: str,
         voice_id: str,
     ) -> tuple[bytes, list[dict[str, Any]]]:
-        """Synthesise *text* with Sarvam Bulbul v2.
+        """Synthesise *text* with Sarvam Bulbul v2, recording exactly one breaker
+        outcome per logical call (Story 2-32 AC-3).
+
+        This provider's httpx errors were ALWAYS classified correctly, so unlike
+        the OpenAI providers it always retried — and therefore always recorded
+        `max_attempts` failures for a single logical call, tripping the breaker
+        ~3x too fast. That is a pre-existing defect, not one introduced by
+        Story 2-32; the accounting fix applies here for the same reason.
+        The quota/rate-limit distinction below is unchanged.
+        """
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._synthesize_inner(text, voice_id))
+
+    @with_retry(max_attempts=3)
+    async def _synthesize_inner(
+        self,
+        text: str,
+        voice_id: str,
+    ) -> tuple[bytes, list[dict[str, Any]]]:
+        """Retried body of `synthesize`. Records NO breaker outcome.
 
         Args:
             text:     Narration text (one segment's script).
@@ -58,39 +75,35 @@ class SarvamTTSProvider(TTSProvider):
             ``(audio_bytes, [])`` — Sarvam alignment data is not parsed into
             word timestamps in this story (see module docstring).
         """
+        # Checked on EVERY attempt (Story 2-32 AC-4).
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    _SARVAM_TTS_URL,
-                    headers={"API-Subscription-Key": self._api_key},
-                    json={"inputs": [text], "speaker": voice_id, "target_language_code": "en-IN"},
-                )
-                if response.status_code == 429:
-                    body: dict[str, Any] = {}
-                    with contextlib.suppress(Exception):
-                        body = response.json()
-                    error_code = (body.get("error") or {}).get("code", "")
-                    if error_code == "insufficient_quota_error":
-                        await record_failure(_PROVIDER_KEY)
-                        raise RuntimeError(
-                            f"Sarvam TTS insufficient_quota_error — not retryable: {body}"
-                        )
-                    # Any other 429 (e.g. rate_limit_exceeded_error) — let
-                    # raise_for_status() raise the normal HTTPStatusError so
-                    # with_retry's default 429-is-retryable path applies.
-                response.raise_for_status()
-                audio_bytes = response.content
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                _SARVAM_TTS_URL,
+                headers={"API-Subscription-Key": self._api_key},
+                json={"inputs": [text], "speaker": voice_id, "target_language_code": "en-IN"},
+            )
+            if response.status_code == 429:
+                body: dict[str, Any] = {}
+                with contextlib.suppress(Exception):
+                    body = response.json()
+                error_code = (body.get("error") or {}).get("code", "")
+                if error_code == "insufficient_quota_error":
+                    # Story 2-32: record_failure removed — guard_breaker
+                    # records exactly one outcome for this logical call.
+                    # The RuntimeError (and its non-retryability) is
+                    # deliberate and UNCHANGED.
+                    raise RuntimeError(
+                        f"Sarvam TTS insufficient_quota_error — not retryable: {body}"
+                    )
+                # Any other 429 (e.g. rate_limit_exceeded_error) — let
+                # raise_for_status() raise the normal HTTPStatusError so
+                # with_retry's default 429-is-retryable path applies.
+            response.raise_for_status()
+            audio_bytes = response.content
 
-            await record_success(_PROVIDER_KEY)
-            return audio_bytes, []
-
-        except RuntimeError:
-            raise
-        except Exception:
-            await record_failure(_PROVIDER_KEY)
-            raise
+        return audio_bytes, []
