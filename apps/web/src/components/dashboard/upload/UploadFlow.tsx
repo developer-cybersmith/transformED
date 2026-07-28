@@ -4,20 +4,35 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { UploadCloud, CheckCircle, AlertCircle, Loader2, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { uploadGenerationService } from "@/services/uploadGeneration.service";
+import { uploadService, extractErrorMessage, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
 import { Button } from "@/components/ui/button";
+import { ModeSelection } from "@/components/dashboard/upload/ModeSelection";
+import { LEARNER_TIER_OPTIONS, LEARNER_TIER_TO_BACKEND, type LearnerTier } from "@/types/learnerMode";
+
+const POLL_INTERVAL_MS = 5000;
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+// ~20 minutes at one poll per POLL_INTERVAL_MS — chapter generation can take up to
+// ~15 minutes (CLAUDE.md §9), so this is a backstop against a stuck/dead worker,
+// not a realistic ceiling for a healthy pipeline run.
+const MAX_POLL_ATTEMPTS = 240;
 
 export function UploadFlow() {
     const [file, setFile] = useState<File | null>(null);
     const [dragActive, setDragActive] = useState(false);
-    const [uploadState, setUploadState] = useState<'idle' | 'processing' | 'completed' | 'error'>('idle');
+    const [uploadState, setUploadState] = useState<'idle' | 'selecting-mode' | 'processing' | 'completed' | 'error'>('idle');
     const [statusMessage, setStatusMessage] = useState<string>('');
-    const [progress, setProgress] = useState<number>(0);
     const [errorMessage, setErrorMessage] = useState<string>('');
     const [lessonId, setLessonId] = useState<string>('');
+    const [selectedTier, setSelectedTier] = useState<LearnerTier | null>(null);
 
     const router = useRouter();
     const inputRef = useRef<HTMLInputElement>(null);
+    // Captures the tier at the moment processing starts, without making it a
+    // reactive dependency of the upload effect below — a later selectedTier
+    // change (e.g. a mis-click followed by a different card, landing during
+    // the exit-animation window) must not re-trigger a second, separately
+    // billed upload call (review fix).
+    const selectedTierAtUploadRef = useRef<LearnerTier | null>(null);
 
     const handleDrag = (e: React.DragEvent) => {
         e.preventDefault();
@@ -46,51 +61,123 @@ export function UploadFlow() {
     };
 
     const handleFile = (selectedFile: File) => {
+        if (selectedFile.size > MAX_UPLOAD_SIZE_BYTES) {
+            setFile(null);
+            setErrorMessage('File exceeds the 50MB limit — please upload a smaller PDF.');
+            setUploadState('error');
+            return;
+        }
         setFile(selectedFile);
+        setUploadState('selecting-mode');
+    };
+
+    const handleTierSelect = (tier: LearnerTier) => {
+        selectedTierAtUploadRef.current = tier;
+        setSelectedTier(tier);
         setUploadState('processing');
-        setStatusMessage('Initializing synthesis matrix...');
-        setProgress(0);
+        setStatusMessage('Uploading...');
+    };
+
+    const handleCancelModeSelection = () => {
+        setFile(null);
+        setSelectedTier(null);
+        // Allows re-selecting the exact same file through the native file
+        // dialog afterwards — browsers don't fire a `change` event if the
+        // input's FileList is unchanged from last time.
+        if (inputRef.current) inputRef.current.value = '';
+        setUploadState('idle');
     };
 
     useEffect(() => {
-        if (uploadState === 'processing' && file) {
-            // Initiate backend socket link
-            uploadGenerationService.connect();
+        if (uploadState !== 'processing' || !file) return;
 
-            const unsubscribe = uploadGenerationService.subscribe((event) => {
-                if (event.type === 'generation_progress') {
-                    setStatusMessage(event.payload.message);
-                    setProgress(event.payload.progress);
-                } else if (event.type === 'lesson_ready') {
+        let cancelled = false;
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        let consecutiveFailures = 0;
+        let attempts = 0;
+
+        // Self-rescheduling (setTimeout after each poll settles) rather than
+        // setInterval — guarantees polls never overlap, so a slow response can
+        // never race a faster later one and clobber an already-reached terminal
+        // state.
+        const scheduleNextPoll = (id: string) => {
+            timeoutHandle = setTimeout(() => pollStatus(id), POLL_INTERVAL_MS);
+        };
+
+        const pollStatus = async (id: string) => {
+            if (cancelled) return;
+            attempts += 1;
+
+            try {
+                const status = await uploadService.getLessonStatus(id);
+                if (cancelled) return;
+                consecutiveFailures = 0;
+
+                if (status.status === 'ready') {
                     setUploadState('completed');
-                    setLessonId(event.payload.lesson_id);
-                } else if (event.type === 'error') {
-                    setUploadState('error');
-                    setErrorMessage(event.payload.message);
+                    setLessonId(status.lesson_id);
+                    return;
                 }
+                if (status.status === 'failed') {
+                    setUploadState('error');
+                    setErrorMessage(status.error ?? 'Lesson generation failed — please try again.');
+                    return;
+                }
+                if (status.status !== 'queued' && status.status !== 'running') {
+                    console.warn(`Unexpected lesson status: ${status.status}`);
+                }
+                if (attempts >= MAX_POLL_ATTEMPTS) {
+                    setUploadState('error');
+                    setErrorMessage('Lesson generation is taking longer than expected — please try again later.');
+                    return;
+                }
+                setStatusMessage('Processing...');
+                scheduleNextPoll(id);
+            } catch (err) {
+                if (cancelled) return;
+                const httpStatus = (err as { response?: { status?: number } })?.response?.status;
+                const isClientError = typeof httpStatus === 'number' && httpStatus >= 400 && httpStatus < 500;
+                consecutiveFailures += 1;
+
+                if (isClientError || consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES || attempts >= MAX_POLL_ATTEMPTS) {
+                    setUploadState('error');
+                    setErrorMessage(
+                        isClientError
+                            ? 'Lesson not found — please try uploading again.'
+                            : 'Lost connection while checking lesson status — please try again.'
+                    );
+                    return;
+                }
+                scheduleNextPoll(id);
+            }
+        };
+
+        const tierAtEntry = selectedTierAtUploadRef.current;
+        uploadService
+            .uploadLesson(file, tierAtEntry ? LEARNER_TIER_TO_BACKEND[tierAtEntry] : undefined)
+            .then((res) => {
+                if (cancelled) return;
+                setStatusMessage('Processing...');
+                pollStatus(res.lesson_id);
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                setUploadState('error');
+                setErrorMessage(extractErrorMessage(err, 'Upload failed — please try again.'));
             });
 
-            // Start Mock Engine - we catch any immediate synchronous throws but 
-            // the pipeline will mostly emit errors over the socket event bus.
-            uploadGenerationService.startGeneration(file).catch(err => {
-                setUploadState(prev => {
-                    if (prev !== 'error' && prev !== 'completed') {
-                        setErrorMessage(err.message);
-                        return 'error';
-                    }
-                    return prev;
-                });
-            });
-
-            // Tear down the connection too, not just this subscription — the
-            // singleton's generation loop otherwise keeps running in the
-            // background after navigating away mid-generation.
-            return () => {
-                unsubscribe();
-                uploadGenerationService.disconnect();
-            };
-        }
+        return () => {
+            cancelled = true;
+            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        };
+        // selectedTier is deliberately NOT a dependency — see selectedTierAtUploadRef above.
     }, [uploadState, file]);
+
+    // Gated on a successful lookup, not just selectedTier being truthy — avoids
+    // ever rendering an empty visible pill if the two ever desync (review fix).
+    const selectedTierOption = selectedTier
+        ? LEARNER_TIER_OPTIONS.find((option) => option.id === selectedTier)
+        : undefined;
 
     return (
         <AnimatePresence mode="wait">
@@ -133,6 +220,32 @@ export function UploadFlow() {
                 </motion.div>
             )}
 
+            {uploadState === 'selecting-mode' && (
+                <motion.div
+                    key="selecting-mode"
+                    initial={{ opacity: 0, y: 20, filter: "blur(10px)" }}
+                    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                    transition={{ duration: 0.6 }}
+                    className="w-full relative z-10 flex flex-col items-center"
+                >
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-2 text-center">
+                        How do you want to learn this?
+                    </h3>
+                    <p className="text-neutral-500 max-w-md text-center mb-8">
+                        Choose a pace before HIE builds your lesson.
+                    </p>
+                    <ModeSelection onSelect={handleTierSelect} />
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCancelModeSelection}
+                        className="mt-8 text-neutral-400 hover:text-neutral-600 hover:bg-transparent"
+                    >
+                        Choose a different file
+                    </Button>
+                </motion.div>
+            )}
+
             {uploadState === 'processing' && (
                 <motion.div
                     key="processing"
@@ -140,22 +253,15 @@ export function UploadFlow() {
                     animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.6 }}
+                    // data-selected-tier is not rendered as visible text — it's a forward-compatible
+                    // hook for the S2-10 tier-badge story, which decides where/how to surface it.
+                    data-selected-tier={selectedTier ?? undefined}
                     className="w-full relative z-10 bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-16 shadow-2xl border border-neutral-100 flex flex-col items-center justify-center min-h-[400px] text-center"
                 >
-                    {/* Pulsing Outer Glow */}
+                    {/* Pulsing Outer Glow + indeterminate spinner — the backend reports no percentage/stage data */}
                     <div className="relative w-40 h-40 mb-10 flex items-center justify-center">
                         <div className="absolute inset-0 bg-[var(--accent-primary)]/20 rounded-full blur-2xl animate-pulse" />
-                        <svg className="w-full h-full -rotate-90 relative z-10" viewBox="0 0 100 100">
-                            <circle className="text-neutral-100" strokeWidth="4" stroke="currentColor" fill="transparent" r="46" cx="50" cy="50" />
-                            <circle
-                                className="text-[var(--accent-primary)] transition-all duration-700 ease-out"
-                                strokeWidth="4" strokeDasharray={289} strokeDashoffset={289 - (progress / 100) * 289}
-                                strokeLinecap="round" stroke="currentColor" fill="transparent" r="46" cx="50" cy="50"
-                            />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
-                            <span className="text-3xl font-bold text-neutral-900">{progress}%</span>
-                        </div>
+                        <Loader2 className="w-16 h-16 text-[var(--accent-primary)] animate-spin relative z-10" />
                     </div>
 
                     <div className="inline-flex items-center gap-3 px-4 py-2 bg-neutral-50 rounded-full border border-neutral-100 mb-5 shadow-inner">
@@ -167,6 +273,14 @@ export function UploadFlow() {
                     <p className="text-neutral-500 max-w-sm leading-relaxed">
                         Establishing intelligence matrix, compiling timeline sequences, and synthesizing audio overlays.
                     </p>
+                    {selectedTierOption && (
+                        <span
+                            data-testid="selected-tier-label"
+                            className="mt-5 inline-flex items-center px-3 py-1 rounded-full bg-[var(--accent-secondary)] text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wide"
+                        >
+                            {selectedTierOption.label}
+                        </span>
+                    )}
                 </motion.div>
             )}
 

@@ -2,11 +2,12 @@
 
 Covers ``apps/api/app/modules/tutor/service.py``:
 - ``_parse_signal``           — boundary mapping (envelope/flat, required vs optional fields)
-- ``process_attention_signal`` — Redis ``ces_window`` write + ``ces_history`` LPUSH/LTRIM/EXPIRE/LRANGE
-  and the ``distraction_detected`` trigger guards (2-below-threshold + cooldown).
+- ``process_attention_signal`` — Redis ``ces_window`` write + ``ces_history``
+  LPUSH/LTRIM/EXPIRE/LRANGE and the ``distraction_detected`` trigger guards
+  (2-below-threshold + cooldown).
 
-``process_attention_signal`` lazy-imports ``get_redis``, ``get_settings`` and ``dispatch_event`` inside
-the function body, so the effective patch targets are the SOURCE modules
+``process_attention_signal`` lazy-imports ``get_redis``, ``get_settings`` and
+``dispatch_event`` inside the function body, so the effective patch targets are the SOURCE modules
 (``app.core.redis.get_redis`` etc.) — the namespaces the lazy ``from ... import`` resolve against.
 
 All tests are ``@pytest.mark.unit`` — no real Redis / state machine. ``asyncio_mode = "auto"``
@@ -45,18 +46,42 @@ _HISTORY_KEY = "session:sess-1:ces_history"
 _EXPECTED_CES = compute_ces(_parse_signal(_VALID_PAYLOAD))
 
 
+def _settings_mock(threshold: float = 0.5) -> MagicMock:
+    """MagicMock settings carrying the five §11 CES weights (config.py defaults).
+
+    compute_ces() reads settings.ces_weight_* at call time; without these a bare
+    MagicMock leaks into weight_sum and raises TypeError. Matching config defaults
+    makes compute_ces() on the mock equal the module-level _EXPECTED_CES.
+    """
+    s = MagicMock()
+    s.ces_threshold = threshold
+    s.ces_weight_quiz = 0.35
+    s.ces_weight_teachback = 0.25
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
+    return s
+
+
 def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float = 0.5):
     """Patch the three lazy-imported dependencies and return (mock_redis, mock_dispatch)."""
     mock_redis = AsyncMock()
     mock_redis.lrange = AsyncMock(return_value=lrange_vals)
     mock_redis.exists = AsyncMock(return_value=exists)
+    # No cached lesson_package by default → intervention selection degrades to {} (cache-miss path).
+    # Without this, the 4-8 package fetch would json.loads() a bare AsyncMock and raise.
+    mock_redis.get = AsyncMock(return_value=None)
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = threshold
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(threshold))
 
-    mock_dispatch = AsyncMock()
+    # dispatch_event returns the FSM result dict. Default to INTERVENING with no message so a fired
+    # trigger doesn't spuriously enter the 4-8 delivery path — result.get("intervention_message")
+    # would otherwise be a truthy MagicMock driving manager.send against the real manager. Delivery
+    # is covered explicitly by the _intervention_redis tests below.
+    mock_dispatch = AsyncMock(
+        return_value={"current_state": "INTERVENING", "intervention_message": None}
+    )
     mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
 
     return mock_redis, mock_dispatch
@@ -286,7 +311,7 @@ async def test_only_two_most_recent_considered(mocker) -> None:
 
 @pytest.mark.unit
 async def test_cesresult_fields(mocker) -> None:
-    """AC11: CesResult carries the correct session_id and ces (stub 0.5)."""
+    """AC11: CesResult carries the correct session_id and the real §11 weighted CES."""
     _setup(mocker, lrange_vals=["0.5"])
 
     from app.modules.tutor.service import process_attention_signal
@@ -295,8 +320,11 @@ async def test_cesresult_fields(mocker) -> None:
 
     assert isinstance(result, CesResult)
     assert result.session_id == "sess-1"
-    assert result.ces == compute_ces(_parse_signal(_VALID_PAYLOAD))
-    assert result.ces == 0.5
+    # Pinned to the real formula (0.5 stub is gone); _EXPECTED_CES ≈ 75.733 for _VALID_PAYLOAD.
+    assert result.ces == _EXPECTED_CES
+    # Concrete literal anchor so this is NOT circular: a compute_ces regression would move
+    # _EXPECTED_CES with the code, but not this hard-coded §11 value.
+    assert result.ces == pytest.approx(75.733, abs=0.01)
 
 
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────
@@ -321,7 +349,8 @@ def _intervention_redis(package_json: str | None) -> AsyncMock:
 
 
 def _patch_dispatch(mocker, intervention_message):
-    """Mock dispatch_event to return an INTERVENING result (real selection covered in test_tutor_graph)."""
+    """Mock dispatch_event to return an INTERVENING result
+    (real selection covered in test_tutor_graph)."""
     mock_dispatch = AsyncMock(
         return_value={
             "current_state": "INTERVENING",
@@ -335,17 +364,22 @@ def _patch_dispatch(mocker, intervention_message):
 
 @pytest.mark.unit
 async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
-    """Triggered intervention passes the segment's messages to the FSM and delivers tutor_intervene."""
+    """Triggered intervention passes the segment's messages to the FSM
+    and delivers tutor_intervene."""
     # Segment field is `interventions` per the frozen LessonPackage schema (SegmentInterventions).
     pkg = {
         "segments": [
-            {"interventions": {"distraction": ["focus up", "x", "y"], "confusion": ["c"], "fatigue": ["f"]}}
+            {
+                "interventions": {
+                    "distraction": ["focus up", "x", "y"],
+                    "confusion": ["c"],
+                    "fatigue": ["f"],
+                }
+            }
         ]
     }
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     mock_dispatch = _patch_dispatch(mocker, "focus up")
 
     mock_manager = MagicMock()
@@ -374,10 +408,10 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
 @pytest.mark.unit
 async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
     """Cache miss → no message → tutor_intervene skipped; no crash; CesResult still returned."""
-    mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(None))  # no cached package
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch(
+        "app.core.redis.get_redis", return_value=_intervention_redis(None)
+    )  # no cached package
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     _patch_dispatch(mocker, None)  # FSM returns no message when no package supplied
 
     mock_manager = MagicMock()
@@ -427,10 +461,12 @@ async def test_segment_messages_returns_interventions_for_segment(mocker) -> Non
     """Reads the frozen `interventions` field for the current segment."""
     from app.modules.tutor.service import _segment_intervention_messages
 
-    pkg = {"segments": [
-        {"interventions": {"distraction": ["d0"], "confusion": ["c0"], "fatigue": ["f0"]}},
-        {"interventions": {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}},
-    ]}
+    pkg = {
+        "segments": [
+            {"interventions": {"distraction": ["d0"], "confusion": ["c0"], "fatigue": ["f0"]}},
+            {"interventions": {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}},
+        ]
+    }
     redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "1"})
 
     out = await _segment_intervention_messages("s", redis)
@@ -467,7 +503,11 @@ async def test_segment_messages_index_clamped_to_range(mocker) -> None:
     """An out-of-range segment_index (e.g. stale) clamps to the last segment instead of raising."""
     from app.modules.tutor.service import _segment_intervention_messages
 
-    pkg = {"segments": [{"interventions": {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}}]}
+    pkg = {
+        "segments": [
+            {"interventions": {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}}
+        ]
+    }
     redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "9"})
 
     out = await _segment_intervention_messages("s", redis)

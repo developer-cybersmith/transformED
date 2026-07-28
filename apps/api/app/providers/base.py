@@ -27,7 +27,7 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
         model: str,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401
     ) -> str:
         """Return a plain-text completion.
 
@@ -48,8 +48,8 @@ class LLMProvider(ABC):
         messages: list[dict[str, str]],
         model: str,
         response_format: type,
-        **kwargs: Any,
-    ) -> Any:
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
         """Return a completion parsed into a Pydantic model.
 
         Args:
@@ -108,6 +108,32 @@ class ImageProvider(ABC):
         Returns:
             A URL pointing to the generated image.  May be a temporary CDN URL
             that should be downloaded and re-uploaded to Supabase Storage.
+        """
+        ...
+
+
+class EmbeddingsProvider(ABC):
+    """Abstract interface for text embedding generation.
+
+    Embeddings are computed ONCE at ingestion and never regenerated for stored
+    content (CLAUDE.md rule).  Phase 2 RAG tutor query-embedding is permitted
+    (embed the student's question at query time — not stored content).
+    """
+
+    @abstractmethod
+    async def embed_texts(
+        self,
+        texts: list[str],
+    ) -> tuple[list[list[float]], int]:
+        """Embed a batch of texts and return their vector representations.
+
+        Args:
+            texts: List of text strings to embed (max 2048 per call for OpenAI).
+
+        Returns:
+            A 2-tuple of:
+            - ``list[list[float]]``: One embedding vector per input text.
+            - ``int``: Total tokens consumed (for cost tracking).
         """
         ...
 

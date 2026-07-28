@@ -1,5 +1,37 @@
 import { describe, it, expect } from 'vitest';
-import { formatTimeAgo, formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
+import { formatTimeAgo, formatCesLabel, formatTeachbackLabel, getInitials, getFirstName } from '@/lib/utils';
+
+describe('getInitials', () => {
+  it('returns first+last initials, uppercased, for a multi-word name', () => {
+    expect(getInitials('J. Robert Oppenheimer')).toBe('JO');
+    expect(getInitials('robert smith')).toBe('RS');
+  });
+
+  it('returns a single initial for a one-word name', () => {
+    expect(getInitials('Robert')).toBe('R');
+  });
+
+  it('does not blow up on a leading/whitespace-only name (review fix)', () => {
+    expect(getInitials(' Robert')).toBe('R');
+    expect(getInitials('   ')).toBe('?');
+    expect(getInitials('')).toBe('?');
+  });
+});
+
+describe('getFirstName', () => {
+  it('returns the first word of a multi-word name', () => {
+    expect(getFirstName('J. Robert Oppenheimer')).toBe('J.');
+  });
+
+  it('returns the whole string for a one-word name', () => {
+    expect(getFirstName('Robert')).toBe('Robert');
+  });
+
+  it('does not return a blank string for a leading-space name (review fix)', () => {
+    expect(getFirstName(' Robert')).toBe('Robert');
+    expect(getFirstName('   ')).toBe('');
+  });
+});
 
 describe('formatTimeAgo', () => {
   it('returns "Just now" for timestamps under a minute old', () => {

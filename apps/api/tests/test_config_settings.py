@@ -138,3 +138,28 @@ def test_intervention_cooldown_default_is_two_minutes(monkeypatch) -> None:
     """Intervention cooldown must default to 120s (2 min) per PRD §10."""
     s = _make_settings(monkeypatch)
     assert s.intervention_cooldown_seconds == 120
+
+
+# ── admin_emails / _parse_admin_emails (Story 2-25) ─────────────────────────────
+
+
+@pytest.mark.unit
+def test_admin_emails_default_is_empty(monkeypatch) -> None:
+    s = _make_settings(monkeypatch)
+    assert s.admin_emails == []
+
+
+@pytest.mark.unit
+def test_admin_emails_parses_comma_separated_string_and_lowercases(monkeypatch) -> None:
+    s = _make_settings(monkeypatch, admin_emails="Admin@Foo.com, Other@Bar.com ,")
+    assert s.admin_emails == ["admin@foo.com", "other@bar.com"]
+
+
+@pytest.mark.unit
+def test_admin_emails_accepts_json_array_and_lowercases(monkeypatch) -> None:
+    """Code review regression: pydantic-settings parses a JSON-array env value
+    (e.g. ADMIN_EMAILS=["Admin@Foo.com"]) as an already-built list, bypassing
+    the string-split branch — that branch used to skip lowercasing entirely,
+    silently locking out any admin whose JWT email casing differed."""
+    s = _make_settings(monkeypatch, admin_emails='["Admin@Foo.com", "Other@Bar.com"]')
+    assert s.admin_emails == ["admin@foo.com", "other@bar.com"]

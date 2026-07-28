@@ -184,12 +184,12 @@ export default function ProductPreview() {
                     transition={{ duration: 0.4 }}
                     className="text-center max-w-2xl mx-auto mb-16"
                 >
-                    <h2 className="text-3xl sm:text-[2.25rem] font-serif font-semibold text-foreground tracking-tight leading-tight mb-3">
-                        What a lesson actually looks like
+                    <h2 className="font-serif tracking-tight leading-[1.08] mb-3">
+                        <span className="block font-semibold text-3xl sm:text-[2.5rem]">What a lesson actually looks like</span>
+                        <span className="block italic font-normal text-[2rem] sm:text-[2.25rem] text-text-secondary mt-1">
+                            This is the real experience.
+                        </span>
                     </h2>
-                    <p className="text-text-secondary text-[1.05rem]">
-                        Not mockups. This is the real experience.
-                    </p>
                 </motion.div>
 
                 <div className="space-y-6">

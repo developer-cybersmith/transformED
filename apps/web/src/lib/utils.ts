@@ -5,6 +5,27 @@ export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
 
+// Review fix: avatar seeds must not leak a user's real name/email to
+// third-party avatar CDNs (ui-avatars.com, dicebear) as a plaintext query
+// param. Initials are a minimal, non-identifying substitute for services that
+// render literal text (ui-avatars); trims/filters so a leading-space or
+// whitespace-only name never produces a blank/garbled result.
+export function getInitials(name: string): string {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "?";
+    const first = parts[0][0];
+    const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+    return (first + last).toUpperCase();
+}
+
+// Same trim/filter discipline as getInitials — a leading-space full_name
+// (e.g. " Robert") previously produced a blank first name via a bare
+// `.split(" ")[0]` (review fix).
+export function getFirstName(name: string): string {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    return parts[0] ?? "";
+}
+
 export function formatTimeAgo(iso: string): string {
     const timestamp = new Date(iso).getTime();
     if (Number.isNaN(timestamp)) return "Unknown";

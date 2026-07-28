@@ -1,7 +1,11 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-06 (Dev 2 Sprint 2 is now fully complete, 5/5 tasks: S2-04 Session Report Page (PR #63) and S2-05 Player State Persistence (PR #66) both merged to `main` via full BMAD story workflows with 5-agent review gates — checklist lines below updated to match. Earlier, 2026-07-04: app-wide `apps/web` audit run, 9 issues patched across 8 rounds incl. an `/auth/callback` regression that broke all OAuth/email sign-in, then a `/bmad-code-review` gate on that fix branch itself — merged to `main` as PR #61 (`a75535d`), 201/201 tests. Separately, Story 2-3 Onboarding Assessment Flow — previously checked off below as done — was discovered to have never actually been merged to `main` (implementation commit sat unpushed on its branch); rebased onto current `main`, merged clean, no conflicts — PR #62 (`5c40db1`), 239/239 tests.)
+**Last updated:** 2026-07-13 (Dev 1 Sprint 1 backend content-ingestion pipeline merged to `main`, PR #72 — see status note below. Also, previously, 2026-07-06: Dev 2 Sprint 2 is now fully complete, 5/5 tasks: S2-04 Session Report Page (PR #63) and S2-05 Player State Persistence (PR #66) both merged to `main` via full BMAD story workflows with 5-agent review gates — checklist lines below updated to match. Earlier, 2026-07-04: app-wide `apps/web` audit run, 9 issues patched across 8 rounds incl. an `/auth/callback` regression that broke all OAuth/email sign-in, then a `/bmad-code-review` gate on that fix branch itself — merged to `main` as PR #61 (`a75535d`), 201/201 tests. Separately, Story 2-3 Onboarding Assessment Flow — previously checked off below as done — was discovered to have never actually been merged to `main` (implementation commit sat unpushed on its branch); rebased onto current `main`, merged clean, no conflicts — PR #62 (`5c40db1`), 239/239 tests.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
+
+---
+
+**Status note — 2026-07-13:** Backend content-ingestion pipeline (Sprint 1) merged to `main` 2026-07-13 (PR #72). Sprint 2 backend — lesson generation (11 nodes: `lesson_planner`, `slide_generator`, `summarise_segment`, `quiz_generator`, `segment_complexity`, `jargon_extractor`, `intervention_messages`, `narration_generator`, `tts_node`, `image_generator`, `package_builder`) — is Dev 1's next work, starting now. **Frontend/assessment/tutor should continue building against existing mocks/fixtures** (`apps/web/src/mocks/data/lessonPackage.ts`, test fixtures) until `package_builder` (Story S2-11) lands — please do not build a parallel real-content path or workaround; ping Dev 1 first if a mock is blocking real progress.
 
 ---
 
@@ -64,13 +68,13 @@
 ## Sprint 1 — Weeks 2–3 (Core Pipeline + Player Skeleton)
 
 ### Dev 1 — Infrastructure + Content Pipeline
-- [ ] PyMuPDF text + image + layout extraction node — 🔵 IN PROGRESS (code ready; PDF segmentation testing in progress; image extraction testing pending)
-- [ ] pdfplumber table extraction node
-- [ ] Tesseract OCR fallback node
-- [ ] Structure detection: rule-based (font/TOC/numbering)
-- [ ] Structure detection: GPT-4o-mini LLM validation
-- [ ] Semantic chunking (chapter → section → topic)
-- [ ] text-embedding-3-small + pgvector storage
+- [x] PyMuPDF text + image + layout extraction node — ✓ 2026-07-13, merged to `main` (PR #72). Note: implemented per CLAUDE.md as pypdfium2 + pdftext (PyMuPDF/fitz is AGPL-3.0 banned) — task title predates that decision, kept for tracker continuity.
+- [x] pdfplumber table extraction node — ✓ 2026-07-13, merged to `main` (PR #72); pdfplumber triggers docling for table-markdown extraction
+- [x] Tesseract OCR fallback node — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] Structure detection: rule-based (font/TOC/numbering) — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] Structure detection: GPT-4o-mini LLM validation — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] Semantic chunking (chapter → section → topic) — ✓ 2026-07-13, merged to `main` (PR #72)
+- [x] text-embedding-3-small + pgvector storage — ✓ 2026-07-13, merged to `main` (PR #72)
 - [x] lesson_jobs table + ARQ job enqueue — ✓ confirmed live (pipeline submit working)
 - [ ] with_retry() decorator (exponential backoff + jitter)
 - [x] POST /api/content/lessons — route registered, auth wired, 14/14 tests pass. Body: returns `{lesson_id, status:"queued"}`. Supabase storage + ARQ enqueue are TODO stubs (HTTP 501 until implemented). Dev 2 must keep using mock until Supabase integration lands.
@@ -83,7 +87,7 @@
 - [x] Audio playback + timestamp-driven slide advance — ✓ done
 - [ ] Avatar intro/outro video component (HeyGen cached) — ⛔ BLOCKED: avatar_intro/outro/static_url not in frozen schema; needs all-4-dev sign-off + Sprint 2 avatar node. Deferred to Sprint 2.
 - [x] Jargon hover tooltip component — ✓ done
-- [ ] Lesson load from real API — ⛔ BLOCKED: GET /api/content/lessons/{id} returns status only (no JSONB). Full package endpoint not built yet. Continue using mock.
+- [x] Lesson load from real API — ✓ 2026-07-23. Unblocked by Dev 1's Story 1-6 (`GET /api/content/lessons/{id}` now returns real `content` with signed media URLs). Wired frontend-side as Story 1-7: `lesson.service.ts`/`useLesson.ts` swapped off mocks onto the real endpoint, `PlayerLoader.tsx` now distinguishes running/queued/failed/ready instead of collapsing to a permanent error, `AudioTimeline.tsx` degrades gracefully on an empty `audio_url`.
 - [x] PDF upload UI + generation progress indicator — ✓ done
 - [x] Frontend security/bug audit (S1-13) — ✓ 2026-07-02, scoped to apps/web only. Fixed a real auth-guard gap in `middleware.ts` (`/library`, `/upload`, `/onboarding`, `/lesson/[id]` were all completely unauthenticated — allow-list only matched `/dashboard`/`/settings`; now a deny-list, fails safe for future routes) and a resource-leak in `UploadFlow.tsx` (generation socket singleton never disconnected on unmount/completion). See `docs/dev2-sprint-tracker.md` S1-13 for full findings including deferred items (Next.js 16/React 19 vs. locked Next 14 — governance decision, not fixed here).
 - [x] Fix 5 pre-existing stale test failures (S1-14) — ✓ 2026-07-02, all confirmed stale (implementation was already correct, tests never updated after commit 5c2b5c5). Suite now 132/132 passing. Merged to `main` alongside S1-07/S1-13 (`a4ca1d3`).
@@ -150,7 +154,11 @@
 - [x] Session report page v1 (quiz + teach-back scores) — ✓ merged to `main` 2026-07-04 (PR #63). Implemented as Story 2-4 via BMAD workflow, 5-agent review passed. `src/app/reports/[sessionId]/page.tsx` — quiz accuracy %, CES and teach-back shown as qualitative labels only (never raw scores, per CLAUDE.md), "Study Again" link. Found and fixed a real pre-existing bug along the way: `types/assessment.ts`'s `ces_breakdown` used wrong key names that never matched the real backend contract. See Dev 2 tracker §11 S2-04.
 - [x] Onboarding assessment UI (20 questions flow) — ✓ merged to `main` 2026-07-04 (PR #62, `5c40db1`). Implemented as Story 2-3 via BMAD workflow, 5-agent review passed (14 patches), `OnboardingFlow.tsx`/`QuestionCard.tsx`/`questions.ts`. **Process gap caught and fixed same day:** this was implemented and reviewed on 2026-07-04 but the commit sat unpushed on `sprint2/s2-3-onboarding-flow` and was never merged — `main` genuinely had none of this code even though this line had already been checked off prematurely. Caught during a status audit, branch was rebased onto current `main` (auto-merged cleanly against the intervening audit-fixes and Dev 3 CES/DNA-fusion work) and merged for real. Lesson: don't mark a task done in this tracker until `git merge-base --is-ancestor <branch> main` confirms it, not just "story + review complete."
 - [x] Learner DNA profile display component — ✓ shipped as part of the same S2-03 merge above — `DNAResultCard.tsx` renders `badge_labels` + `profile_text` (no raw scores). Was listed as a separate not-started line item here but is functionally the same deliverable as the onboarding UI's result screen; folding it in rather than double-tracking.
-- [x] Player state persistence / session restore — ✓ merged to `main` 2026-07-06 (PR #66). Implemented as Story 2-5 via BMAD workflow, 5-agent review passed (7 patches applied). `player.machine.ts` `saveProgress`/`restoreProgress`, keyed by `hie:session:{lesson_id}` in localStorage; resumes segment/audio-position/quiz-fired state within ±3s on refresh. This line item wasn't in the master tracker's original Sprint 2 sketch — added here since it's the 5th and last Dev 2 Sprint 2 task per the Dev 2 tracker's own §11 breakdown. **Dev 2 Sprint 2 is now 5/5 complete.**
+- [x] Player state persistence / session restore — ✓ merged to `main` 2026-07-06 (PR #66). Implemented as Story 2-5 via BMAD workflow, 5-agent review passed (7 patches applied). `player.machine.ts` `saveProgress`/`restoreProgress`, keyed by `hie:session:{lesson_id}` in localStorage; resumes segment/audio-position/quiz-fired state within ±3s on refresh. This line item wasn't in the master tracker's original Sprint 2 sketch — added here since it's the 5th and last Dev 2 Sprint 2 task per the Dev 2 tracker's own §11 breakdown. **4 new Learner Mode tasks added below 2026-07-14 — see Dev 2 tracker §11 S2-07–S2-10 for full detail.**
+- [x] **Learner Mode — mode selection screen** (added 2026-07-14) — ✓ 2026-07-14, 3 cards after upload: T1 Deep / T2 Balanced / T3 Refresher. See Dev 2 tracker §11 S2-07.
+- [x] **Learner Mode — tier disclaimers** (added 2026-07-14) — ✓ 2026-07-14, inline warnings: T2 time-deficit, T3 refresher-only, T1 none. See Dev 2 tracker §11 S2-08.
+- [x] **Learner Mode — wire selected tier into lesson creation** (added 2026-07-14) — ✓ 2026-07-21, chosen tier passed into the lesson-creation request and shown on the generating screen; code review complete on `feature-learner-mode`. See Dev 2 tracker §11 S2-09.
+- [ ] **Learner Mode — tier badge on player + session report** (added 2026-07-14) — e.g. `Deep · 45 min`, shown in the player chrome and on the session report. Re-scoped 2026-07-21: splits into an unblocked player half + a Dev-3-blocked session-report half (needs a new `tier` field on `SessionReport`) — decision pending. See Dev 2 tracker §11 S2-10.
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
 - [ ] Onboarding assessment scoring logic complete

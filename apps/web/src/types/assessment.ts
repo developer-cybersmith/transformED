@@ -1,6 +1,8 @@
 // Assessment API contract types — matches Dev 3 OpenAPI spec (docs/openapi-assessment.json)
 // Do not modify field names without a 4-developer PR review (frozen interface contract).
 
+import type { QuizFeedbackItem, RubricScores } from '@/lib/assessment';
+
 // ── Shared building blocks ────────────────────────────────────────────────
 
 export interface QuizAnswer {
@@ -31,7 +33,9 @@ export interface QuizResult {
   correct_count: number;
   total_count: number;
   ces_contribution: number;
-  feedback: Array<{ [key: string]: unknown }>;
+  // Reuses lib/assessment.ts's QuizFeedbackItem rather than re-declaring a
+  // third, drifting copy of the same real backend shape (S2-11 review fix).
+  feedback: QuizFeedbackItem[];
 }
 
 // ── POST /api/assessment/teachback ────────────────────────────────────────
@@ -45,19 +49,42 @@ export interface TeachbackSubmission {
 
 export interface TeachbackResult {
   session_id: string;
-  rubric_scores: {
-    accuracy?: number;
-    depth?: number;
-    clarity?: number;
-    relevance?: number;
-    [key: string]: number | undefined;
-  };
+  // Reuses lib/assessment.ts's RubricScores rather than re-declaring a third,
+  // drifting copy of the same real backend shape (S2-13 review fix, same
+  // precedent as QuizResult.feedback above).
+  rubric_scores: RubricScores;
   overall_score: number;
   ces_contribution: number;
   feedback: string;
 }
 
 // ── GET /api/assessment/session/{session_id}/report ───────────────────────
+
+// Story 3-30 (learner_dna_snapshot). Label values verified against the actual
+// shipped backend (apps/api/app/modules/assessment/service.py's
+// _score_to_label()/_delta_to_growth_label(), not just the story doc) -- NOT
+// Dev 3's HTML integration guide, whose DimensionLabel/GrowthLabel
+// definitions are stale/incomplete (no 'Advanced' dimension label exists;
+// the growth label is 'Needs Attention', not 'Declining'; and the guide
+// omits the real 'Exceptional' band entirely -- review-round fix).
+export type DnaDimension =
+  | 'pattern_recognition'
+  | 'logical_deduction'
+  | 'processing_speed'
+  | 'frustration_tolerance'
+  | 'persistence'
+  | 'help_seeking'
+  | 'goal_orientation'
+  | 'curiosity_index'
+  | 'study_independence';
+
+export type DnaDimensionLabel = 'Beginning' | 'Emerging' | 'Developing' | 'Proficient' | 'Exceptional';
+export type DnaGrowthLabel = 'Improving' | 'Stable' | 'Needs Attention';
+
+export interface LearnerDnaSnapshot {
+  dimension_labels: Record<DnaDimension, DnaDimensionLabel>;
+  growth_labels: Record<DnaDimension, DnaGrowthLabel | null>;
+}
 
 export interface SessionReport {
   session_id: string;
@@ -79,6 +106,15 @@ export interface SessionReport {
   teachback_score: number | null;
   duration_minutes: number;
   completed_at: string | null;
+  // Story 3-29 additions — tier is defaulted to 'T2'/'Standard' server-side
+  // when the lessons row is missing/unrecognized; never absent or null.
+  tier: 'T1' | 'T2' | 'T3';
+  tier_label: string;
+  quiz_total_questions: number;
+  quiz_correct_count: number;
+  quiz_accuracy_label: 'Strong' | 'Developing' | 'Needs Review' | null;
+  // Story 3-30 addition — null when the user has no learner_dna row yet.
+  learner_dna_snapshot: LearnerDnaSnapshot | null;
 }
 
 // ── GET /api/assessment/user/dna ──────────────────────────────────────────

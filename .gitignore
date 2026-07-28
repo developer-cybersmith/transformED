@@ -147,3 +147,9 @@ tmp/
 
 # ---- Claude Code local settings ----
 .claude/settings.local.json
+
+# ---- Playwright MCP (local browser automation artifacts) ----
+.playwright-mcp/
+
+# ---- Local-only developer docs (not for the repo) ----
+docs/LOCAL_DEV_SETUP.md

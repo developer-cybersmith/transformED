@@ -21,12 +21,13 @@ Coverage:
   AC 15 — no openai import in dna_growth.py (AST scan)
   AC 16 — no hardcoded model strings in dna_growth.py
 """
+
 from __future__ import annotations
 
 import ast
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -44,10 +45,7 @@ NINE_DIMS = (
     "study_independence",
 )
 
-_GROWTH_FILE = (
-    Path(__file__).parent.parent
-    / "app" / "modules" / "assessment" / "dna_growth.py"
-)
+_GROWTH_FILE = Path(__file__).parent.parent / "app" / "modules" / "assessment" / "dna_growth.py"
 
 _SESSION_ID = "sess-test-01"
 _USER_ID = "user-test-01"
@@ -59,12 +57,13 @@ _SESSION_ROW = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _all_new_dims(value: float = 70.0) -> dict[str, float]:
-    return {dim: value for dim in NINE_DIMS}
+    return dict.fromkeys(NINE_DIMS, value)
 
 
 def _all_old_dims(value: float | None = 65.0) -> dict[str, float | None]:
-    return {dim: value for dim in NINE_DIMS}
+    return dict.fromkeys(NINE_DIMS, value)
 
 
 def _supabase_mock_growth(
@@ -96,6 +95,7 @@ def _supabase_mock_growth(
 def _settings_fusion():
     """Minimal Settings for fuse_learner_dna integration tests."""
     from app.config import Settings
+
     return Settings(
         supabase_url="http://x",
         supabase_anon_key="x",
@@ -130,9 +130,8 @@ def _supabase_mock_fusion(
     def _table(name):
         tbl = MagicMock()
         if name == "sessions":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
-                _resp(session_row)
-            )
+            chain = tbl.select.return_value.eq.return_value.maybe_single.return_value
+            chain.execute.return_value = _resp(session_row)
         elif name == "quiz_attempts":
             tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
         elif name == "teachback_attempts":
@@ -140,9 +139,8 @@ def _supabase_mock_fusion(
         elif name == "session_events":
             tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
         elif name == "learner_dna":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
-                _resp(dna_row)
-            )
+            chain = tbl.select.return_value.eq.return_value.maybe_single.return_value
+            chain.execute.return_value = _resp(dna_row)
             if upsert_raises:
                 tbl.upsert.return_value.execute.side_effect = Exception("upsert failed")
             else:
@@ -155,17 +153,21 @@ def _supabase_mock_fusion(
 
 # ── AC 1: __all__ ─────────────────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_dunder_all_exports_only_record_dna_growth():
     from app.modules.assessment import dna_growth
+
     assert dna_growth.__all__ == ["record_dna_growth"]
 
 
 # ── AC 2: keyword-only signature ──────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_positional_args_raise_type_error():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     with pytest.raises(TypeError):
         asyncio.get_event_loop().run_until_complete(
             record_dna_growth(
@@ -179,9 +181,11 @@ def test_positional_args_raise_type_error():
 
 # ── AC 4 + AC 8: single bulk insert, success path ────────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_inserts_9_rows_for_all_dims():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth(inserted_count=9)
     result = asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -202,6 +206,7 @@ def test_record_dna_growth_inserts_9_rows_for_all_dims():
 @pytest.mark.unit
 def test_record_dna_growth_uses_single_bulk_insert():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth()
     asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -218,9 +223,11 @@ def test_record_dna_growth_uses_single_bulk_insert():
 
 # ── AC 3: payload structure ───────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_payload_structure():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth()
     asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -246,6 +253,7 @@ def test_record_dna_growth_payload_structure():
 @pytest.mark.unit
 def test_record_dna_growth_event_type_is_dna_update():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth()
     asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -262,6 +270,7 @@ def test_record_dna_growth_event_type_is_dna_update():
 @pytest.mark.unit
 def test_record_dna_growth_session_id_in_all_rows():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth()
     asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -277,9 +286,11 @@ def test_record_dna_growth_session_id_in_all_rows():
 
 # ── AC 5: delta computation ───────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_delta_computed_correctly():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     # Use a specific dimension with known values for easy assertion
     new_dims = {"pattern_recognition": 70.0}
     old_dims = {"pattern_recognition": 65.0}
@@ -301,6 +312,7 @@ def test_record_dna_growth_delta_computed_correctly():
 @pytest.mark.unit
 def test_record_dna_growth_delta_precision_4_decimal_places():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     # round(38.7654 - 33.3333, 4) = round(5.4321, 4) = 5.4321
     new_dims = {"pattern_recognition": 38.7654}
     old_dims = {"pattern_recognition": 33.3333}
@@ -322,9 +334,11 @@ def test_record_dna_growth_delta_precision_4_decimal_places():
 
 # ── AC 5 edge case: first session (old_value=None) ───────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_old_value_none_first_session():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     # All old_dims are None — first session, no prior row
     supabase = _supabase_mock_growth()
     asyncio.get_event_loop().run_until_complete(
@@ -346,6 +360,7 @@ def test_record_dna_growth_old_value_none_first_session():
 @pytest.mark.unit
 def test_record_dna_growth_mixed_old_some_none():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     # Only some dimensions have old values
     new_dims = {"pattern_recognition": 70.0, "logical_deduction": 60.0}
     old_dims = {"pattern_recognition": 65.0, "logical_deduction": None}
@@ -370,9 +385,11 @@ def test_record_dna_growth_mixed_old_some_none():
 
 # ── AC 9: empty new_dims ──────────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_empty_new_dims_returns_zero_no_db_call():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth()
     result = asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -388,9 +405,11 @@ def test_record_dna_growth_empty_new_dims_returns_zero_no_db_call():
 
 # ── AC 6: DB exception → non-fatal, return 0 ─────────────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_db_exception_returns_zero():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth(insert_raises=True)
     result = asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -406,9 +425,11 @@ def test_record_dna_growth_db_exception_returns_zero():
 
 # ── AC 7: insert_error truthy → non-fatal, return 0 ──────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_insert_error_field_returns_zero():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth(insert_error=True)
     result = asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -423,9 +444,11 @@ def test_record_dna_growth_insert_error_field_returns_zero():
 
 # ── AC 8: success returns inserted count ─────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_returns_inserted_count():
     from app.modules.assessment.dna_growth import record_dna_growth
+
     supabase = _supabase_mock_growth(inserted_count=9)
     result = asyncio.get_event_loop().run_until_complete(
         record_dna_growth(
@@ -439,6 +462,7 @@ def test_record_dna_growth_returns_inserted_count():
 
 
 # ── AC 11: fuse_learner_dna calls record_dna_growth after upsert ──────────────
+
 
 @pytest.mark.unit
 def test_fuse_learner_dna_calls_record_dna_growth_after_upsert():
@@ -471,6 +495,7 @@ def test_fuse_learner_dna_calls_record_dna_growth_after_upsert():
 
 # ── AC 14: record_dna_growth failure does not prevent fuse_learner_dna return ─
 
+
 @pytest.mark.unit
 def test_fuse_learner_dna_growth_failure_does_not_prevent_return():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
@@ -496,6 +521,7 @@ def test_fuse_learner_dna_growth_failure_does_not_prevent_return():
 
 
 # ── AC 13: old_dims_for_growth all-None on first session ─────────────────────
+
 
 @pytest.mark.unit
 def test_fuse_learner_dna_old_dims_for_growth_none_on_first_session():
@@ -525,11 +551,13 @@ def test_fuse_learner_dna_old_dims_for_growth_none_on_first_session():
 
 # ── AC 10: log injection prevention (_safe_sid) ──────────────────────────────
 
+
 @pytest.mark.unit
 def test_record_dna_growth_session_id_sanitized_in_logs(caplog):
     """AC 10 — _safe_sid strips \\n and \\r before all logger calls."""
-    from app.modules.assessment.dna_growth import record_dna_growth
     import logging
+
+    from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth(inserted_count=9)
     with caplog.at_level(logging.INFO, logger="app.modules.assessment.dna_growth"):
@@ -551,6 +579,7 @@ def test_record_dna_growth_session_id_sanitized_in_logs(caplog):
 
 # ── AC 15: no openai import (AST scan) ───────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_no_openai_import_in_dna_growth():
     source = _GROWTH_FILE.read_text(encoding="utf-8")
@@ -569,6 +598,7 @@ def test_no_openai_import_in_dna_growth():
 
 
 # ── AC 16: no hardcoded model strings ────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_no_hardcoded_model_string_in_dna_growth():

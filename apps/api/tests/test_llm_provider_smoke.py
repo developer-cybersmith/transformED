@@ -21,7 +21,6 @@ from pydantic import BaseModel
 
 from app.config import Settings as _Settings
 
-
 # Skip entire module when OPENAI_API_KEY is absent — keeps CI green
 if not os.getenv("OPENAI_API_KEY"):
     pytest.skip("OPENAI_API_KEY not set", allow_module_level=True)
@@ -55,6 +54,7 @@ def settings_mock() -> MagicMock:
 def provider(settings_mock: MagicMock):  # type: ignore[return]
     """OpenAILLMProvider with Redis/Langfuse mocked — only OpenAI is real."""
     import app.providers.llm.openai  # noqa: F401 — must be in sys.modules before patch() resolves target
+
     with (
         patch("app.providers.llm.openai.get_settings", return_value=settings_mock),
         patch("app.providers.llm.openai.Langfuse", return_value=MagicMock()),

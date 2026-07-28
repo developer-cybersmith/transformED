@@ -1,16 +1,19 @@
 """
 Assessment service layer — quiz grading, teach-back scoring, and session report business logic.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, status
+from supabase import Client
 
 from app.config import get_settings
+from app.core.db import rows, single_row
 from app.core.posthog_client import capture_event
 from app.modules.assessment.onboarding_questions import (
     ALL_NINE_DIMENSIONS,
@@ -28,10 +31,13 @@ from app.modules.assessment.schemas import (
 )
 from app.providers.llm.openai import OpenAILLMProvider
 
+if TYPE_CHECKING:
+    from app.modules.assessment.router import SessionReport
+
 logger = logging.getLogger(__name__)
 
 
-async def get_analytics_consent(user_id: str, supabase: Any) -> bool:
+async def get_analytics_consent(user_id: str, supabase: Client) -> bool:
     """Return True if the user has granted analytics consent (DPDP Act 2023).
 
     Checks the users.analytics_consent column added by migration
@@ -44,15 +50,18 @@ async def get_analytics_consent(user_id: str, supabase: Any) -> bool:
     """
     try:
         resp = await asyncio.to_thread(
-            lambda: supabase.table("users")
-            .select("analytics_consent")
-            .eq("id", user_id)
-            .maybe_single()
-            .execute()
+            lambda: (
+                supabase.table("users")
+                .select("analytics_consent")
+                .eq("id", user_id)
+                .maybe_single()
+                .execute()
+            )
         )
-        if resp.data is None:
+        row = single_row(resp)
+        if row is None:
             return False
-        return bool(resp.data.get("analytics_consent", False))
+        return bool(row.get("analytics_consent", False))
     except Exception as exc:
         logger.warning("PostHog consent check failed user=%s: %s", user_id, exc)
         return False  # fail-safe: suppress events when consent check fails
@@ -75,6 +84,46 @@ def _score_to_label(score: float) -> str:
     return "Beginning"
 
 
+# Story 3-29 — tier-context constants and helpers
+
+_TIER_LABELS: dict[str, str] = {
+    "T1": "Full-Depth",
+    "T2": "Standard",
+    "T3": "Refresher",
+}
+
+
+def _quiz_accuracy_label(accuracy: float, total: int) -> str | None:
+    """Map quiz accuracy to a descriptive label (no raw floats to students).
+
+    Returns None when total == 0 — cannot evaluate accuracy with zero questions.
+    Thresholds: Strong ≥80%, Developing ≥60%, Needs Review <60%.
+    """
+    if total == 0:
+        return None
+    if accuracy >= 0.8:
+        return "Strong"
+    if accuracy >= 0.6:
+        return "Developing"
+    return "Needs Review"
+
+
+# Story 3-30 — Learner DNA growth-label constants and helper
+
+_DNA_GROWTH_IMPROVING_THRESHOLD: float = 2.0
+_DNA_GROWTH_DECLINING_THRESHOLD: float = -2.0
+
+
+def _delta_to_growth_label(delta: float | None) -> str | None:
+    if delta is None:
+        return None
+    if delta > _DNA_GROWTH_IMPROVING_THRESHOLD:
+        return "Improving"
+    if delta < _DNA_GROWTH_DECLINING_THRESHOLD:
+        return "Needs Attention"
+    return "Stable"
+
+
 async def grade_quiz(
     *,
     session_id: str,
@@ -82,7 +131,7 @@ async def grade_quiz(
     segment_id: str,
     answers: list[QuizAnswer],
     user_id: str,
-    supabase: Any,
+    supabase: Client,
 ) -> QuizResult:
     """Grade a quiz submission and persist each answer to quiz_attempts.
 
@@ -107,25 +156,29 @@ async def grade_quiz(
 
     Raises:
         HTTPException 404: Session not found, lesson not found, or segment not found.
-        HTTPException 403: Session belongs to a different user, or session.lesson_id != lesson_id (IDOR guard).
+        HTTPException 403: Session belongs to a different user, or session.lesson_id
+            != lesson_id (IDOR guard).
         HTTPException 409: Duplicate quiz attempt detected (unique constraint).
         HTTPException 422: answers is empty, or a submitted question_id is not in the segment quiz.
         HTTPException 500: quiz_attempts insert fails for a non-duplicate reason.
     """
     # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
-        lambda: supabase.table("sessions")
-        .select("session_id, user_id, lesson_id")
-        .eq("session_id", session_id)
-        .maybe_single()
-        .execute()
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
     )
-    if session_resp.data is None:
+    session_row = single_row(session_resp)
+    if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id!r} not found.",
         )
-    if str(session_resp.data["user_id"]) != str(user_id):
+    if str(session_row["user_id"]) != str(user_id):
         # SEC-006: Return 404 to prevent session enumeration oracle.
         # Attacker must not distinguish "belongs to someone else" from "doesn't exist".
         raise HTTPException(
@@ -133,7 +186,7 @@ async def grade_quiz(
             detail="Session not found or access denied.",
         )
     # IDOR guard — session must belong to the requested lesson
-    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
+    if str(session_row.get("lesson_id", "")) != str(lesson_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this lesson.",
@@ -141,19 +194,22 @@ async def grade_quiz(
 
     # Step 2 — Load lesson JSONB
     lesson_resp = await asyncio.to_thread(
-        lambda: supabase.table("lessons")
-        .select("content")
-        .eq("lesson_id", lesson_id)
-        .maybe_single()
-        .execute()
+        lambda: (
+            supabase.table("lessons")
+            .select("content")
+            .eq("lesson_id", lesson_id)
+            .maybe_single()
+            .execute()
+        )
     )
-    if lesson_resp.data is None or lesson_resp.data.get("content") is None:
+    lesson_row = single_row(lesson_resp)
+    if lesson_row is None or lesson_row.get("content") is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Lesson {lesson_id!r} not found or has no generated content.",
         )
 
-    content: dict[str, Any] = lesson_resp.data["content"]
+    content: dict[str, Any] = lesson_row["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
     # Step 3 — Find the segment
@@ -190,11 +246,13 @@ async def grade_quiz(
 
     # Step 6 — Query existing attempt count to compute attempt_number
     count_resp = await asyncio.to_thread(
-        lambda: supabase.table("quiz_attempts")
-        .select("id", count="exact")
-        .eq("session_id", session_id)
-        .eq("segment_id", segment_id)
-        .execute()
+        lambda: (
+            supabase.table("quiz_attempts")
+            .select("id", count=cast("Any", "exact"))
+            .eq("session_id", session_id)
+            .eq("segment_id", segment_id)
+            .execute()
+        )
     )
     attempt_number: int = (count_resp.count or 0) + 1
 
@@ -205,17 +263,17 @@ async def grade_quiz(
         if question is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"question_id {ans.question_id!r} not found in segment "
-                    f"{segment_id!r}."
-                ),
+                detail=(f"question_id {ans.question_id!r} not found in segment {segment_id!r}."),
             )
         # SEC-008: Validate response_index is within valid option range
         options = question.get("options", [])
         if not (0 <= ans.response_index < len(options)):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"response_index {ans.response_index} is out of range for question {ans.question_id!r}.",
+                detail=(
+                    f"response_index {ans.response_index} is out of range "
+                    f"for question {ans.question_id!r}."
+                ),
             )
         graded.append(
             {
@@ -250,7 +308,7 @@ async def grade_quiz(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Duplicate quiz attempt detected.",
             )
-        safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')
+        safe_err = str(insert_error).replace("\n", " ").replace("\r", " ")
         logger.error(
             "quiz_attempts insert failed: session=%s error=%s",
             session_id,
@@ -333,7 +391,7 @@ async def grade_teachback(
     segment_id: str,
     response_text: str,
     user_id: str,
-    supabase: Any,
+    supabase: Client,
 ) -> TeachbackResult:
     """Score a student's typed teach-back response and persist to teachback_attempts.
 
@@ -361,25 +419,28 @@ async def grade_teachback(
     """
     # Step 1 — Validate session ownership
     session_resp = await asyncio.to_thread(
-        lambda: supabase.table("sessions")
-        .select("session_id, user_id, lesson_id")
-        .eq("session_id", session_id)
-        .maybe_single()
-        .execute()
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
     )
-    if session_resp.data is None:
+    session_row = single_row(session_resp)
+    if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id!r} not found.",
         )
-    if str(session_resp.data["user_id"]) != str(user_id):
+    if str(session_row["user_id"]) != str(user_id):
         # SEC-006: Return 404 to prevent session enumeration oracle.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or access denied.",
         )
     # IDOR guard — session must belong to the requested lesson
-    if str(session_resp.data.get("lesson_id", "")) != str(lesson_id):
+    if str(session_row.get("lesson_id", "")) != str(lesson_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Session does not belong to this lesson.",
@@ -387,19 +448,22 @@ async def grade_teachback(
 
     # Step 2 — Load lesson JSONB
     lesson_resp = await asyncio.to_thread(
-        lambda: supabase.table("lessons")
-        .select("content")
-        .eq("lesson_id", lesson_id)
-        .maybe_single()
-        .execute()
+        lambda: (
+            supabase.table("lessons")
+            .select("content")
+            .eq("lesson_id", lesson_id)
+            .maybe_single()
+            .execute()
+        )
     )
-    if lesson_resp.data is None or lesson_resp.data.get("content") is None:
+    lesson_row = single_row(lesson_resp)
+    if lesson_row is None or lesson_row.get("content") is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Lesson {lesson_id!r} not found or has no generated content.",
         )
 
-    content: dict[str, Any] = lesson_resp.data["content"]
+    content: dict[str, Any] = lesson_row["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
     # Step 3 — Find the segment
@@ -418,11 +482,13 @@ async def grade_teachback(
 
     # Step 5 — Query existing attempt count to compute attempt_number
     count_resp = await asyncio.to_thread(
-        lambda: supabase.table("teachback_attempts")
-        .select("id", count="exact")
-        .eq("session_id", session_id)
-        .eq("segment_id", segment_id)
-        .execute()
+        lambda: (
+            supabase.table("teachback_attempts")
+            .select("id", count=cast("Any", "exact"))
+            .eq("session_id", session_id)
+            .eq("segment_id", segment_id)
+            .execute()
+        )
     )
     attempt_number: int = (count_resp.count or 0) + 1
 
@@ -442,7 +508,7 @@ async def grade_teachback(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Scoring service unavailable.",
-        )
+        ) from exc
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -460,9 +526,7 @@ async def grade_teachback(
 
     # Step 8 — Build feedback string (praise only for score >= 90, praise + correction otherwise)
     feedback: str = (
-        result.praise
-        if not result.correction
-        else f"{result.praise}\n\n{result.correction}"
+        result.praise if not result.correction else f"{result.praise}\n\n{result.correction}"
     )
 
     # Step 9 — Persist to teachback_attempts
@@ -488,7 +552,7 @@ async def grade_teachback(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Duplicate teach-back attempt detected.",
             )
-        safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')
+        safe_err = str(insert_error).replace("\n", " ").replace("\r", " ")
         logger.error(
             "teachback_attempts insert failed: session=%s error=%s",
             session_id,
@@ -536,12 +600,12 @@ async def get_session_report(
     *,
     session_id: str,
     user_id: str,
-    supabase: Any,
-) -> Any:
+    supabase: Client,
+) -> SessionReport:
     """Aggregate a completed session's assessment data into a SessionReport.
 
-    Reads from sessions, quiz_attempts, teachback_attempts, and session_events.
-    No LLM calls — pure DB aggregation and arithmetic.
+    Reads from sessions, lessons (tier), quiz_attempts, teachback_attempts,
+    and session_events. No LLM calls — pure DB aggregation and arithmetic.
 
     Args:
         session_id: UUID of the session to report on.
@@ -550,28 +614,32 @@ async def get_session_report(
 
     Returns:
         SessionReport with ces_score, ces_breakdown, quiz_score, teachback_score,
-        interventions_count, duration_minutes, completed_at.
+        interventions_count, duration_minutes, completed_at, tier context fields.
 
     Raises:
         HTTPException 404: Session not found.
-        HTTPException 404: Session belongs to a different user (SEC-006 — no 403 to prevent enumeration).
+        HTTPException 404: Session belongs to a different user (SEC-006 — no 403
+            to prevent enumeration).
     """
     from app.modules.assessment.router import SessionReport  # lazy — avoids circular import
 
     # Step 1 — Validate session ownership and fetch all needed columns in one query
     session_resp = await asyncio.to_thread(
-        lambda: supabase.table("sessions")
-        .select("session_id, user_id, lesson_id, ces_final, started_at, ended_at")
-        .eq("session_id", session_id)
-        .maybe_single()
-        .execute()
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id, ces_final, started_at, ended_at")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
     )
-    if session_resp.data is None:
+    session_row = single_row(session_resp)
+    if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found.",
         )
-    db_user_id = session_resp.data.get("user_id")
+    db_user_id = session_row.get("user_id")
     if str(db_user_id) != str(user_id):
         # SEC-006: Return 404 (not 403) — identical message prevents enumeration oracle.
         raise HTTPException(
@@ -579,29 +647,52 @@ async def get_session_report(
             detail="Session not found.",
         )
 
-    row = session_resp.data
+    row = session_row
+    
+    # Step 1b — Fetch lesson tier for contextualised report (Story 3-29)
+    _lesson_id = str(row.get("lesson_id") or "")
+    tier = "T2"  # safe default — matches lessons.tier DEFAULT 'T2'
+    if _lesson_id:
+        _tier_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("lessons")
+                .select("tier")
+                .eq("lesson_id", _lesson_id)
+                .maybe_single()
+                .execute()
+            )
+        )
+        if _tier_resp.data and _tier_resp.data.get("tier") in _TIER_LABELS:
+            tier = _tier_resp.data["tier"]
+    tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
     quiz_resp = await asyncio.to_thread(
-        lambda: supabase.table("quiz_attempts")
-        .select("is_correct")
-        .eq("session_id", session_id)
-        .execute()
+        lambda: (
+            supabase.table("quiz_attempts")
+            .select("is_correct")
+            .eq("session_id", session_id)
+            .execute()
+        )
     )
-    quiz_rows: list[dict[str, Any]] = quiz_resp.data or []
+    quiz_rows: list[dict[str, Any]] = rows(quiz_resp)
     total_quiz = len(quiz_rows)
     correct_count = sum(1 for r in quiz_rows if r.get("is_correct") is True)
-    quiz_score: float | None = round((correct_count / total_quiz) * 100, 2) if total_quiz > 0 else None
+    quiz_score: float | None = (
+        round((correct_count / total_quiz) * 100, 2) if total_quiz > 0 else None
+    )
     quiz_accuracy: float = (correct_count / total_quiz) if total_quiz > 0 else 0.0
 
     # Step 3 — Teachback stats from teachback_attempts
     tb_resp = await asyncio.to_thread(
-        lambda: supabase.table("teachback_attempts")
-        .select("score")
-        .eq("session_id", session_id)
-        .execute()
+        lambda: (
+            supabase.table("teachback_attempts")
+            .select("score")
+            .eq("session_id", session_id)
+            .execute()
+        )
     )
-    tb_rows: list[dict[str, Any]] = tb_resp.data or []
+    tb_rows: list[dict[str, Any]] = rows(tb_resp)
     teachback_count = len(tb_rows)
     if teachback_count > 0:
         sum_scores = sum(r.get("score", 0) or 0 for r in tb_rows)
@@ -613,11 +704,13 @@ async def get_session_report(
 
     # Step 4 — Interventions count from session_events
     events_resp = await asyncio.to_thread(
-        lambda: supabase.table("session_events")
-        .select("id", count="exact")
-        .eq("session_id", session_id)
-        .eq("event_type", "intervention_triggered")
-        .execute()
+        lambda: (
+            supabase.table("session_events")
+            .select("id", count=cast("Any", "exact"))
+            .eq("session_id", session_id)
+            .eq("event_type", "intervention_triggered")
+            .execute()
+        )
     )
     interventions_count: int = events_resp.count or 0
 
@@ -662,6 +755,49 @@ async def get_session_report(
     ces_final = row.get("ces_final")
     ces_score: float = float(ces_final) if ces_final is not None else 0.0
 
+    # Step 8 — Learner DNA snapshot (descriptive labels + session growth labels)
+    _dna_snapshot: dict[str, Any] | None = None
+    _dna_select = ", ".join(ALL_NINE_DIMENSIONS)
+    _dna_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("learner_dna")
+            .select(_dna_select)
+            .eq("user_id", str(row["user_id"]))
+            .maybe_single()
+            .execute()
+        )
+    )
+    if _dna_resp is not None and _dna_resp.data:
+        _dim_labels: dict[str, str] = {
+            dim: _score_to_label(float(_dna_resp.data.get(dim) or 0.0))
+            for dim in ALL_NINE_DIMENSIONS
+        }
+
+        # Step 9 — session growth events (dna_update) for delta-based growth labels
+        _events_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("session_events")
+                .select("payload")
+                .eq("session_id", session_id)
+                .eq("event_type", "dna_update")
+                .execute()
+            )
+        )
+        _delta_map: dict[str, float | None] = {}
+        for evt in (_events_resp.data or []):
+            payload = evt.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            dim = payload.get("dimension")
+            if dim in ALL_NINE_DIMENSIONS:
+                _delta_map[dim] = payload.get("delta")
+
+        _growth_labels: dict[str, str | None] = {
+            dim: _delta_to_growth_label(_delta_map.get(dim))
+            for dim in ALL_NINE_DIMENSIONS
+        }
+        _dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}
+
     logger.info(
         "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
         session_id,
@@ -681,6 +817,14 @@ async def get_session_report(
         teachback_score=teachback_score,
         duration_minutes=duration_minutes,
         completed_at=completed_at,
+        # Story 3-29 tier-context fields
+        tier=tier,
+        tier_label=tier_label,
+        quiz_total_questions=total_quiz,
+        quiz_correct_count=correct_count,
+        quiz_accuracy_label=_quiz_accuracy_label(quiz_accuracy, total_quiz),
+        # Story 3-30 Learner DNA snapshot
+        learner_dna_snapshot=_dna_snapshot,
     )
 
 
@@ -702,10 +846,7 @@ def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, fl
             continue
         normalized = (ans.selected_index / 3) * 100
         bucket[subdim].append(normalized)
-    return {
-        dim: round(sum(vals) / len(vals), 2) if vals else 0.0
-        for dim, vals in bucket.items()
-    }
+    return {dim: round(sum(vals) / len(vals), 2) if vals else 0.0 for dim, vals in bucket.items()}
 
 
 def _compute_badge_labels(scores: dict[str, float]) -> list[str]:
@@ -724,7 +865,7 @@ async def process_onboarding(
     *,
     responses: list[OnboardingAnswer],
     user_id: str,
-    supabase: Any,
+    supabase: Client,
 ) -> OnboardingResult:
     """Process 20 onboarding answers: score, upsert learner_dna, generate profile.
 
@@ -744,7 +885,8 @@ async def process_onboarding(
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
 
     Raises:
-        HTTPException 409: onboarding_responses insert hits unique constraint (duplicate submission).
+        HTTPException 409: onboarding_responses insert hits unique constraint
+            (duplicate submission).
         HTTPException 500: Non-duplicate DB insert failure.
     """
     # Step 1 — Compute dimension scores
@@ -775,7 +917,7 @@ async def process_onboarding(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Onboarding already submitted — duplicate responses detected.",
             )
-        safe_err = str(insert_error).replace('\n', ' ').replace('\r', ' ')
+        safe_err = str(insert_error).replace("\n", " ").replace("\r", " ")
         logger.error(
             "onboarding_responses insert failed: user=%s error=%s",
             user_id,
@@ -802,13 +944,11 @@ async def process_onboarding(
         **scores,
     }
     upsert_resp = await asyncio.to_thread(
-        lambda: supabase.table("learner_dna")
-        .upsert(dna_row, on_conflict="user_id")
-        .execute()
+        lambda: supabase.table("learner_dna").upsert(dna_row, on_conflict="user_id").execute()
     )
     upsert_error = getattr(upsert_resp, "error", None)
     if upsert_error:
-        safe_upsert_err = str(upsert_error).replace('\n', ' ').replace('\r', ' ')
+        safe_upsert_err = str(upsert_error).replace("\n", " ").replace("\r", " ")
         logger.error(
             "learner_dna upsert failed: user=%s error=%s",
             user_id,
@@ -823,7 +963,9 @@ async def process_onboarding(
     capture_event(
         distinct_id=user_id,
         event="assessment_onboarding_completed",
-        properties={"session_count": dna_row["session_count"]},  # IMP-004: reads value written to DB
+        properties={
+            "session_count": dna_row["session_count"]
+        },  # IMP-004: reads value written to DB
         analytics_consent=consent,
     )
 
@@ -837,7 +979,8 @@ async def process_onboarding(
 async def get_learner_dna_data(
     *,
     user_id: str,
-    supabase: Any,
+    supabase: Client,
+    redis: Any = None,
 ) -> dict[str, Any]:
     """Fetch the learner_dna row for a user and return it as a plain dict.
 
@@ -845,30 +988,54 @@ async def get_learner_dna_data(
     Returns a zero-state dict if no learner_dna row exists yet (user not onboarded).
 
     Args:
-        user_id: User UUID from the decoded JWT.
+        user_id:  User UUID from the decoded JWT.
         supabase: Synchronous Supabase client.
+        redis:    Optional async Redis client. When provided, checks
+                  user:{user_id}:reassessment_due for the re-assessment flag.
+                  Non-fatal: Redis failures return False for reassessment_due.
 
     Raises:
         HTTPException 404: No learner_dna row found for this user.
     """
     resp = await asyncio.to_thread(
-        lambda: supabase.table("learner_dna")
-        .select("user_id, badge_labels, profile_text, session_count, last_updated")
-        .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
+        lambda: (
+            supabase.table("learner_dna")
+            .select("user_id, badge_labels, profile_text, session_count, last_updated")
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
     )
-    if resp.data is None:
+    # CROSS-TEAM NOTE (2026-07-13, flagged to Dev 3 — this module's owner): the
+    # Supabase client's .maybe_single().execute() returns None directly (not a
+    # response object with .data = None) when zero rows match — the original
+    # `resp.data is None` check crashed with AttributeError for exactly the
+    # expected "not onboarded yet" case, 500ing instead of the intended 404.
+    row = single_row(resp)
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
         )
-    row = resp.data
+        
+    # ── Re-assessment flag (non-fatal Redis read) ─────────────────────────────
+    reassessment_due: bool = False
+    if redis is not None:
+        _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+        try:
+            val = await redis.get(f"user:{user_id}:reassessment_due")
+            reassessment_due = val == "1"
+        except Exception as exc:
+            logger.warning(
+                "get_learner_dna_data: redis check failed user=%s: %s", _safe_uid, exc
+            )
+            reassessment_due = False
+
     return {
         "user_id": str(row["user_id"]),
         "badge_labels": row.get("badge_labels") or [],
         "profile_text": row.get("profile_text"),
         "session_count": int(row.get("session_count") or 0),
-        "reassessment_due": False,
+        "reassessment_due": reassessment_due,
         "last_updated": row.get("last_updated"),
     }

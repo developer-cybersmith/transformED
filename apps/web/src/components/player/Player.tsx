@@ -4,15 +4,33 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
+import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { AudioTimeline } from './AudioTimeline';
 import { SlideRenderer } from './SlideRenderer';
 import { PlayerControls } from './PlayerControls';
 import { QuizOverlay } from './QuizOverlay';
 import { TeachBackModal } from './TeachBackModal';
+import { CheckingInTransition } from './CheckingInTransition';
 
 interface PlayerProps {
   lesson: LessonPackage;
 }
+
+// Matches the backend's own _TIER_LABELS dict exactly (apps/api/app/modules/
+// assessment/service.py) -- do not invent different copy (S2-10).
+// Exclude<..., undefined> — Story 2-25 (main) made LessonMetadata.tier optional
+// in the frozen shared contract; a missing tier falls back to T2 below, same
+// as an unrecognized one.
+const TIER_LABELS: Record<Exclude<LessonPackage['metadata']['tier'], undefined>, string> = {
+  T1: 'Full-Depth',
+  T2: 'Standard',
+  T3: 'Refresher',
+};
+
+// After this many manual retries on the same segment, surface extra guidance
+// instead of silently letting the student hammer an identical failing request
+// forever (review fix — no cap existed before this).
+const REPEATED_FAILURE_RETRY_THRESHOLD = 3;
 
 // Default export required by next/dynamic
 export default function Player({ lesson }: PlayerProps) {
@@ -21,6 +39,14 @@ export default function Player({ lesson }: PlayerProps) {
   const sessionId = usePlayerStore((s) => s.sessionId);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
+  const isBuffering = usePlayerStore((s) => s.isBuffering);
+  const audioError = usePlayerStore((s) => s.audioError);
+  const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
+  const retryAudio = usePlayerStore((s) => s.retryAudio);
+
+  // Mounts the lesson WebSocket for the duration of the session — previously
+  // never called anywhere, so the socket never connected during a real lesson.
+  useLessonSocket(sessionId || null);
 
   useEffect(() => {
     loadLesson(lesson);
@@ -39,6 +65,16 @@ export default function Player({ lesson }: PlayerProps) {
 
       {/* Slide area — all slides rendered simultaneously; only active is visible */}
       <div className="relative flex-1">
+        {/* Tier badge — persistent, visible regardless of playback state (S2-10).
+            Not placed in the "before any slide is active" block below since
+            currentSlideId is set almost immediately after mount in real use,
+            leaving that block rarely visible. */}
+        <div className="absolute top-3 left-3 z-10">
+          <span className="px-3 py-1 rounded-full bg-black/40 backdrop-blur-sm text-neutral-200 text-xs font-medium uppercase tracking-wide">
+            {TIER_LABELS[lesson.metadata.tier ?? 'T2'] ?? TIER_LABELS.T2}
+          </span>
+        </div>
+
         {segment?.slides.map((slide) => (
           <SlideRenderer
             key={slide.slide_id}
@@ -103,6 +139,47 @@ export default function Player({ lesson }: PlayerProps) {
             </div>
           </div>
         )}
+
+        {/* Buffering indicator — non-blocking, only while actively playing and stalled */}
+        {isBuffering && status === 'PLAYING' && (
+          <div
+            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-black/60 backdrop-blur-sm text-neutral-200 text-xs"
+            data-testid="audio-buffering"
+          >
+            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Buffering...
+          </div>
+        )}
+
+        {/* Playback error — visible during PLAYING/PAUSED/IDLE, offers a retry.
+            Excluded from QUIZ/TEACH_BACK/ENDED (review fix): the narration audio's
+            job for this segment is already done once the student has reached the
+            quiz/teach-back/completion screen, so a stale or late-firing error must
+            not block their progress there with a full-screen overlay. */}
+        {audioError && status !== 'QUIZ' && status !== 'TEACH_BACK' && status !== 'ENDED' && (
+          <div
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-primary-dark/95 backdrop-blur-sm text-center"
+            data-testid="audio-error"
+          >
+            <p className="text-neutral-300 text-sm">
+              This segment&apos;s audio couldn&apos;t be played. Check your connection and try again.
+            </p>
+            {audioRetryCount >= REPEATED_FAILURE_RETRY_THRESHOLD && (
+              <p className="text-neutral-500 text-xs max-w-xs">
+                Still not working after several tries — this may take a moment to resolve, or try refreshing the page.
+              </p>
+            )}
+            <button
+              onClick={retryAudio}
+              className="px-5 py-2.5 rounded-full bg-[var(--accent-primary)] text-white text-sm font-medium hover:scale-105 transition-transform"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Brief CHECKING_IN transition — layers on top of quiz/teach-back when it shows */}
+        <CheckingInTransition />
       </div>
 
       <PlayerControls />

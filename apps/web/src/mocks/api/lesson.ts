@@ -4,6 +4,10 @@ import { mockLessons, MockLesson } from '../data/lessons';
 import { mockLessonPackage } from '../data/lessonPackage';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 
+// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
+// package_builder (Story S2-11, not yet built). Do not build a parallel
+// real-content path here -- this will be reconciled when Sprint 2 lands.
+// Ping Dev 1 (developer1-cybersmith) before changing this shape.
 export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockLesson>> => {
     // Simulate 800ms - 1500ms latency for fetching large lesson package
     await randomDelay(800, 1500);
@@ -60,6 +64,10 @@ export const getLessonById = async (lessonId: string): Promise<ApiResponse<MockL
     return createSuccessResponse(lesson, "Lesson retrieved successfully");
 };
 
+// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
+// package_builder (Story S2-11, not yet built). Do not build a parallel
+// real-content path here -- this will be reconciled when Sprint 2 lands.
+// Ping Dev 1 (developer1-cybersmith) before changing this shape.
 export const getLessonPackageById = async (lessonId: string): Promise<ApiResponse<LessonPackage>> => {
     await randomDelay(800, 1500);
     const known = mockLessons.find(l => l.id === lessonId);

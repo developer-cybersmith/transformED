@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Shared config
@@ -35,6 +35,11 @@ ComplexityLevel = Literal["low", "medium", "high"]
 AudioProvider = Literal["sarvam", "azure", "browser"]  # frozen — see lesson_package.schema.json
 QuizType = Literal["mcq", "concept_check"]
 QuizDifficulty = Literal["easy", "medium", "hard"]
+LessonTier = Literal["T1", "T2", "T3"]  # Story 2-2 — Learner Mode content-depth tier
+VALID_TIERS: frozenset[str] = frozenset(("T1", "T2", "T3"))
+DEFAULT_TIER = "T2"  # Story S2-LM3/LM4/LM5 (2026-07-17) — single source of truth for the
+# tier default, previously duplicated independently in graph.py and router.py
+# (code review finding, Blind Hunter) — both now import from here.
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +55,7 @@ class LessonMetadata(BaseModel):
     total_segments: Annotated[int, Field(ge=1)]
     estimated_duration_mins: Annotated[float, Field(ge=0)]
     complexity_level: str  # free string per schema; ComplexityLevel if constraining later
+    tier: LessonTier = "T2"  # Story 2-2 — defaults T2 so existing callers/fixtures are unaffected
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +86,15 @@ class Slide(BaseModel):
     slide_id: str
     title: str
     bullets: list[str]
-    image_url: AnyHttpUrl | None
-    fallback_image_url: AnyHttpUrl | None
+    # str, not AnyHttpUrl (Story 2-11 review): both are private-bucket storage
+    # paths (e.g. "{lesson_id}/{slide_id}.png"), not URLs — a signed URL baked
+    # into stored lessons.content JSONB would expire (Supabase max ~7 days)
+    # long before a generated lesson is necessarily viewed. Resolving a path
+    # to a fresh signed URL at lesson-view time is a separate, future
+    # component's responsibility, not package_builder's. Matches
+    # Narration.audio_url's existing plain-str type below.
+    image_url: str | None
+    fallback_image_url: str | None
 
 
 # ---------------------------------------------------------------------------

@@ -43,4 +43,4 @@ def get_langfuse() -> Langfuse:
                     "Failed to initialise Langfuse — check LANGFUSE_PUBLIC_KEY, "
                     f"LANGFUSE_SECRET_KEY, and LANGFUSE_HOST. Error: {exc}"
                 ) from exc
-        return _langfuse  # type: ignore[return-value]
+        return _langfuse

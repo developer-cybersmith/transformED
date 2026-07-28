@@ -11,6 +11,7 @@ Separation of concerns:
 No openai imports allowed here. All LLM calls go through OpenAILLMProvider.
 No hardcoded model strings — always settings.llm_mini.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -32,8 +33,8 @@ async def refresh_dna_profile(
     user_id: str,
     dims: dict[str, float],
     session_count: int,
-    supabase: Any,
-    settings: "Settings",
+    supabase: Any,  # noqa: ANN401
+    settings: Settings,
 ) -> str | None:
     """Generate a new profile_text and upsert it to learner_dna.
 
@@ -58,6 +59,7 @@ async def refresh_dna_profile(
         HTTPException 503: DB upsert failure.
     """
     from fastapi import HTTPException, status
+
     from app.modules.assessment.prompts import generate_dna_profile_text
 
     # Sanitize user_id for log calls — prevents log-injection via newlines (SEC-005)
@@ -67,11 +69,13 @@ async def refresh_dna_profile(
     badge_labels: list[str] = []
     try:
         dna_resp = await asyncio.to_thread(
-            lambda: supabase.table("learner_dna")
-            .select("badge_labels")
-            .eq("user_id", user_id)
-            .maybe_single()
-            .execute()
+            lambda: (
+                supabase.table("learner_dna")
+                .select("badge_labels")
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
         )
         if dna_resp.data is not None:
             badge_labels = dna_resp.data.get("badge_labels") or []
@@ -105,9 +109,11 @@ async def refresh_dna_profile(
     # ── Step 3: Upsert profile_text to learner_dna (profile_text column ONLY) ───
     try:
         upsert_resp = await asyncio.to_thread(
-            lambda: supabase.table("learner_dna")
-            .upsert({"user_id": user_id, "profile_text": profile_text}, on_conflict="user_id")
-            .execute()
+            lambda: (
+                supabase.table("learner_dna")
+                .upsert({"user_id": user_id, "profile_text": profile_text}, on_conflict="user_id")
+                .execute()
+            )
         )
         upsert_error = getattr(upsert_resp, "error", None)
         if upsert_error:
@@ -133,7 +139,7 @@ async def refresh_dna_profile(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not update learner profile text.",
-        )
+        ) from exc
 
     logger.info(
         "DNA profile: updated user=%s session_count=%d",

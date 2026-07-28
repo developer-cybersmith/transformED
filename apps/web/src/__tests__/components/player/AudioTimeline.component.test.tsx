@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import { AudioTimeline } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
@@ -16,6 +16,7 @@ beforeEach(() => {
   window.HTMLMediaElement.prototype.pause = pauseMock;
 
   usePlayerStore.getState().loadLesson(mockLessonPackage);
+  usePlayerStore.setState({ wsSendControl: null });
 });
 
 afterEach(() => {
@@ -39,6 +40,46 @@ describe('AudioTimeline — play/pause follows status', () => {
 
     expect(pauseMock).toHaveBeenCalled();
     expect(playMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('AudioTimeline — audio_url can be "" (per-asset signing failure degrade, S1-7)', () => {
+  it('does not set a src, and does not attempt to play, when the segment has no audio_url', () => {
+    const lessonWithMissingAudio = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithMissingAudio);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio');
+
+    expect(audio).not.toBeNull();
+    expect(audio?.getAttribute('src')).toBeNull();
+    expect(playMock).not.toHaveBeenCalled();
+  });
+
+  it('does not permanently freeze on a segment with no audio -- advances/quizzes immediately since ended/timeupdate can never fire (review fix)', () => {
+    const lessonWithMissingAudio = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithMissingAudio);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    // No audio ever loads for this segment, so nothing will ever fire 'ended' --
+    // the component must drive the quiz/advance logic itself rather than wait
+    // for an event that can never come.
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
   });
 });
 
@@ -96,5 +137,140 @@ describe('AudioTimeline — segment replay does not freeze playback', () => {
 
     expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
     expect(usePlayerStore.getState().status).toBe('QUIZ');
+  });
+});
+
+describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
+  it('sets isBuffering(true) on the "waiting" event', () => {
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    const { container } = render(<AudioTimeline />);
+
+    fireEvent.waiting(container.querySelector('audio')!);
+
+    expect(usePlayerStore.getState().isBuffering).toBe(true);
+  });
+
+  it('clears isBuffering on the "playing" event', () => {
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, isBuffering: true });
+    const { container } = render(<AudioTimeline />);
+
+    fireEvent.playing(container.querySelector('audio')!);
+
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+
+  it('clears isBuffering on the "canplay" event', () => {
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, isBuffering: true });
+    const { container } = render(<AudioTimeline />);
+
+    fireEvent.canPlay(container.querySelector('audio')!);
+
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+
+  it('sets audioError(true) on the "error" event', () => {
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    const { container } = render(<AudioTimeline />);
+
+    fireEvent.error(container.querySelector('audio')!);
+
+    expect(usePlayerStore.getState().audioError).toBe(true);
+  });
+
+  it('does not attach an error-triggering src at all for a hasAudio === false segment (degrade path unaffected)', () => {
+    const lessonWithMissingAudio = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithMissingAudio);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio');
+
+    expect(audio?.getAttribute('src')).toBeNull();
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
+  it('remounts the <audio> element (new element identity) when audioRetryCount changes', () => {
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, audioRetryCount: 0 });
+    const { container, rerender } = render(<AudioTimeline />);
+    const firstAudio = container.querySelector('audio');
+
+    act(() => {
+      usePlayerStore.setState({ audioRetryCount: 1 });
+    });
+    rerender(<AudioTimeline />);
+    const secondAudio = container.querySelector('audio');
+
+    expect(secondAudio).not.toBe(firstAudio);
+  });
+
+  it('calls .play() again on the fresh element after a same-segment retry (review fix — regression: retry cleared the error but never resumed playback)', () => {
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, audioRetryCount: 0, audioError: true });
+    const { rerender } = render(<AudioTimeline />);
+    playMock.mockClear(); // drop the initial-mount play() call
+
+    act(() => {
+      usePlayerStore.getState().retryAudio();
+    });
+    rerender(<AudioTimeline />);
+
+    expect(playMock).toHaveBeenCalled();
+  });
+});
+
+describe('AudioTimeline — handleEnded sends segment_complete (S2-06 AC2/AC6)', () => {
+  it('non-last segment, quiz not yet fired: sends segment_complete and sets tutorState CHECKING_IN', () => {
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(sendControl).toHaveBeenCalledTimes(1);
+    expect(sendControl).toHaveBeenCalledWith({ type: 'segment_complete' });
+    expect(usePlayerStore.getState().tutorState).toBe('CHECKING_IN');
+  });
+
+  it('last segment, quiz not yet fired: sends segment_complete and sets tutorState CHECKING_IN', () => {
+    const sendControl = vi.fn();
+    const lastIndex = mockLessonPackage.segments.length - 1;
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: lastIndex,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(sendControl).toHaveBeenCalledTimes(1);
+    expect(sendControl).toHaveBeenCalledWith({ type: 'segment_complete' });
+    expect(usePlayerStore.getState().tutorState).toBe('CHECKING_IN');
+  });
+
+  it('does NOT send segment_complete again when replaying an already-quizzed segment (advanceSegment branch)', () => {
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(['seg_0']),
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(sendControl).not.toHaveBeenCalled();
   });
 });

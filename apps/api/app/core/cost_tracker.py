@@ -47,15 +47,19 @@ async def accumulate_cost(lesson_id: str, cost_usd: float) -> float:
     # Refresh TTL on every write so long-running lessons don't expire mid-flight
     await redis.expire(key, _COST_KEY_TTL_SECONDS)
 
-    logger.debug("Lesson %s — accumulated cost +$%.6f → total $%.6f", lesson_id, cost_usd, new_total)
+    logger.debug(
+        "Lesson %s — accumulated cost +$%.6f → total $%.6f", lesson_id, cost_usd, new_total
+    )
     return new_total
 
 
 async def check_ceiling(lesson_id: str) -> bool:
     """Return True if the lesson has hit or exceeded the cost ceiling.
 
-    Callers should abort the pipeline and mark the lesson as ``cost_limit_exceeded``
-    when this returns True.
+    Callers should mark ``lesson_jobs.status='failed'`` with an
+    ``error`` prefixed ``cost_ceiling_exceeded:`` when this returns True —
+    ``cost_limit_exceeded`` is NOT a legal status (schema CHECK allows only
+    pending/running/completed/failed). Downshift-and-complete is S2-13.
     """
     settings = get_settings()
     current = await get_cost(lesson_id)

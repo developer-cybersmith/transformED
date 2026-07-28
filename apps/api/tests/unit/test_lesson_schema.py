@@ -124,8 +124,11 @@ def test_lesson_package_round_trip() -> None:
 def test_lesson_metadata_total_segments_min() -> None:
     with pytest.raises(ValidationError):
         LessonMetadata(
-            title="T", subject="S", total_segments=0,
-            estimated_duration_mins=1.0, complexity_level="low",
+            title="T",
+            subject="S",
+            total_segments=0,
+            estimated_duration_mins=1.0,
+            complexity_level="low",
         )
 
 
@@ -133,8 +136,11 @@ def test_lesson_metadata_total_segments_min() -> None:
 def test_lesson_metadata_duration_min() -> None:
     with pytest.raises(ValidationError):
         LessonMetadata(
-            title="T", subject="S", total_segments=1,
-            estimated_duration_mins=-1.0, complexity_level="low",
+            title="T",
+            subject="S",
+            total_segments=1,
+            estimated_duration_mins=-1.0,
+            complexity_level="low",
         )
 
 
@@ -142,10 +148,86 @@ def test_lesson_metadata_duration_min() -> None:
 def test_lesson_metadata_extra_fields_forbidden() -> None:
     with pytest.raises(ValidationError):
         LessonMetadata(
-            title="T", subject="S", total_segments=1,
-            estimated_duration_mins=1.0, complexity_level="low",
+            title="T",
+            subject="S",
+            total_segments=1,
+            estimated_duration_mins=1.0,
+            complexity_level="low",
             unexpected_field="x",
         )
+
+
+@pytest.mark.unit
+def test_lesson_metadata_tier_defaults_to_t2() -> None:
+    """Story 2-2 AC-1: tier defaults to T2 so existing callers/fixtures are unaffected."""
+    metadata = LessonMetadata(
+        title="T",
+        subject="S",
+        total_segments=1,
+        estimated_duration_mins=1.0,
+        complexity_level="low",
+    )
+    assert metadata.tier == "T2"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+def test_lesson_metadata_tier_accepts_valid_values(tier: str) -> None:
+    metadata = LessonMetadata(
+        title="T",
+        subject="S",
+        total_segments=1,
+        estimated_duration_mins=1.0,
+        complexity_level="low",
+        tier=tier,
+    )
+    assert metadata.tier == tier
+
+
+@pytest.mark.unit
+def test_lesson_metadata_tier_rejects_invalid_value() -> None:
+    with pytest.raises(ValidationError):
+        LessonMetadata(
+            title="T",
+            subject="S",
+            total_segments=1,
+            estimated_duration_mins=1.0,
+            complexity_level="low",
+            tier="T4",
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+def test_lesson_package_tier_round_trips_through_json_schema(tier: str) -> None:
+    """Story 2-2 AC-1/AC-5: every tier value round-trips through Pydantic + the
+    frozen JSON schema (Story 2-25: `tier` is optional in the schema, matching
+    Pydantic's "T2" default — see additionalProperties: false)."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    package_dict = {
+        **MINIMAL_PACKAGE_DICT,
+        "metadata": {**MINIMAL_PACKAGE_DICT["metadata"], "tier": tier},
+    }
+    package = LessonPackage.model_validate(package_dict)
+    assert package.metadata.tier == tier
+    jsonschema.validate(instance=json.loads(package.model_dump_json()), schema=schema)
+
+
+@pytest.mark.unit
+def test_lesson_metadata_omitting_tier_validates_against_raw_json_schema() -> None:
+    """Story 2-25 regression: a metadata dict that omits `tier` entirely must
+    validate against the raw JSON schema (bypassing Pydantic's default-filling
+    by validating the input dict directly, not a Pydantic model_dump). Before
+    this story, `tier` was in LessonMetadata's `required` array — a payload
+    omitting it failed schema validation here while silently defaulting to
+    "T2" in Pydantic (a real 3-way contract drift, not just a hypothetical)."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    package_dict = {
+        **MINIMAL_PACKAGE_DICT,
+        "metadata": {k: v for k, v in MINIMAL_PACKAGE_DICT["metadata"].items() if k != "tier"},
+    }
+    assert "tier" not in package_dict["metadata"]
+    jsonschema.validate(instance=package_dict, schema=schema)
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +256,12 @@ def test_segment_complexity_level_enum() -> None:
     with pytest.raises(ValidationError):
         SegmentComplexity(
             level="extreme",
-            cognitive_load="x", abstraction_level="x",
-            prerequisite_concepts=[], narration_style="x",
-            quiz_difficulty="x", intervention_sensitivity=0.5,
+            cognitive_load="x",
+            abstraction_level="x",
+            prerequisite_concepts=[],
+            narration_style="x",
+            quiz_difficulty="x",
+            intervention_sensitivity=0.5,
         )
 
 
@@ -189,18 +274,26 @@ def test_segment_complexity_level_enum() -> None:
 def test_quiz_question_requires_four_options() -> None:
     with pytest.raises(ValidationError):
         QuizQuestion(
-            question_id="q1", type="mcq", question="Q?",
+            question_id="q1",
+            type="mcq",
+            question="Q?",
             options=["A", "B", "C"],  # only 3
-            correct_index=0, explanation="E", difficulty="easy",
+            correct_index=0,
+            explanation="E",
+            difficulty="easy",
         )
 
 
 @pytest.mark.unit
 def test_quiz_question_valid() -> None:
     q = QuizQuestion(
-        question_id="q1", type="mcq", question="Q?",
+        question_id="q1",
+        type="mcq",
+        question="Q?",
         options=["A", "B", "C", "D"],
-        correct_index=0, explanation="E", difficulty="easy",
+        correct_index=0,
+        explanation="E",
+        difficulty="easy",
     )
     assert q.type == "mcq"
 
@@ -241,8 +334,11 @@ def test_slide_null_image_urls_allowed() -> None:
 def test_slide_extra_fields_forbidden() -> None:
     with pytest.raises(ValidationError):
         Slide(
-            slide_id="s1", title="T", bullets=[],
-            image_url=None, fallback_image_url=None,
+            slide_id="s1",
+            title="T",
+            bullets=[],
+            image_url=None,
+            fallback_image_url=None,
             unknown="x",
         )
 
@@ -280,7 +376,8 @@ def test_narration_timestamp_negative_ms_rejected() -> None:
 def test_narration_audio_provider_enum() -> None:
     with pytest.raises(ValidationError):
         Narration(
-            script="x", audio_url="https://x.com/a.mp3",
+            script="x",
+            audio_url="https://x.com/a.mp3",
             audio_provider="elevenlabs",  # removed — replaced by sarvam (CLAUDE.md 2026-06-25)
             timestamps=[],
         )
@@ -312,7 +409,9 @@ def test_lesson_status_values() -> None:
         r = LessonRecord(
             lesson_id=UUID("00000000-0000-0000-0000-000000000001"),
             user_id=UUID("00000000-0000-0000-0000-000000000002"),
-            title=None, status=valid, content=None,
+            title=None,
+            status=valid,
+            content=None,
             source_file_path=None,
             created_at="2026-06-25T00:00:00Z",
             updated_at="2026-06-25T00:00:00Z",
@@ -326,7 +425,9 @@ def test_lesson_status_invalid_rejected() -> None:
         LessonRecord(
             lesson_id=UUID("00000000-0000-0000-0000-000000000001"),
             user_id=UUID("00000000-0000-0000-0000-000000000002"),
-            title=None, status="published", content=None,
+            title=None,
+            status="published",
+            content=None,
             source_file_path=None,
             created_at="2026-06-25T00:00:00Z",
             updated_at="2026-06-25T00:00:00Z",

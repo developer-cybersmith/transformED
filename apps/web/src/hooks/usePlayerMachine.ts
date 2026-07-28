@@ -4,6 +4,10 @@ import type { LessonPackage, Segment } from '@hie/shared/types/lesson';
 /** Returns the current PlayerStatus. */
 export const usePlayerStatus = () => usePlayerStore((s) => s.status);
 
+// [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
+// package_builder (Story S2-11, not yet built). Do not build a parallel
+// real-content path here -- this will be reconciled when Sprint 2 lands.
+// Ping Dev 1 (developer1-cybersmith) before changing this shape.
 /** Returns the loaded LessonPackage, or null if not yet loaded. */
 export const useLesson = (): LessonPackage | null =>
   usePlayerStore((s) => s.lesson);

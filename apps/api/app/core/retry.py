@@ -50,7 +50,7 @@ def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             last_exc: BaseException | None = None
 
             for attempt in range(max_attempts):
@@ -81,14 +81,20 @@ def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
                 except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                     last_exc = exc
 
-                except Exception as exc:  # noqa: BLE001
-                    # Unknown exception — do not retry
+                except Exception:
+                    # Unknown exception — do not retry. Bare `raise` preserves
+                    # whatever __cause__/__suppress_context__ the original
+                    # exception already carries (e.g. a provider's deliberate
+                    # `raise ... from None` to redact a secret) — `raise exc
+                    # from exc` previously clobbered it by making the
+                    # exception its own __cause__, defeating that redaction
+                    # (2026-07-15 review finding, image_generator_node).
                     logger.exception("Unexpected error in %s — not retrying", func.__qualname__)
-                    raise exc from exc
+                    raise
 
                 # Compute backoff and log before sleeping
                 if attempt < max_attempts - 1:
-                    wait = (2**attempt) + random.random()
+                    wait = (2**attempt) + random.random()  # noqa: S311
                     logger.warning(
                         "Retry %d/%d for %s after %.2fs (error: %s)",
                         attempt + 1,

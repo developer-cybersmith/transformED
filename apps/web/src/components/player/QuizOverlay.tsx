@@ -160,8 +160,8 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
               </span>
             </p>
             {result.feedback.map((f) => (
-              <p key={f.question_id} className={f.correct ? 'text-emerald-400' : 'text-red-400'}>
-                {f.message}
+              <p key={f.question_id} className={f.is_correct ? 'text-emerald-400' : 'text-red-400'}>
+                {f.explanation}
               </p>
             ))}
           </div>

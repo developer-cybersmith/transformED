@@ -149,9 +149,7 @@ async def running_listener(manager: MagicMock):
             payload = data.decode() if isinstance(data, bytes) else data
             await publisher.publish(channel, payload)
 
-        with settings_patch, mock.patch(
-            "app.core.pubsub.Redis.from_url", side_effect=_from_url
-        ):
+        with settings_patch, mock.patch("app.core.pubsub.Redis.from_url", side_effect=_from_url):
             task = await start_lesson_ready_listener(manager)
             # Give psubscribe time to register before any publish (real pub/sub
             # drops messages with no live subscriber).
@@ -179,9 +177,7 @@ async def running_listener(manager: MagicMock):
         def _from_url(*_args, **_kwargs):
             return _QueueConn(queue)
 
-        with settings_patch, mock.patch(
-            "app.core.pubsub.Redis.from_url", side_effect=_from_url
-        ):
+        with settings_patch, mock.patch("app.core.pubsub.Redis.from_url", side_effect=_from_url):
             task = await start_lesson_ready_listener(manager)
             try:
                 yield _publish
@@ -282,7 +278,9 @@ async def test_non_pmessage_events_ignored() -> None:
 
     async with running_listener(manager) as publish:
         # Simulate the confirmation event Redis emits on (p)subscribe.
-        await publish("lesson_ready:whatever", json.dumps({"type": "lesson_ready"}), kind="subscribe")
+        await publish(
+            "lesson_ready:whatever", json.dumps({"type": "lesson_ready"}), kind="subscribe"
+        )
         # Give the loop ample time to (not) act on it.
         await asyncio.sleep(0.1)
 

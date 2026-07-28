@@ -4,18 +4,22 @@ Assessment module Pydantic schemas.
 Shared between router.py (request/response binding) and service.py (business logic).
 Neither imports the other — both import from here to avoid circular imports.
 """
+
 from __future__ import annotations
 
-from typing import Any
-
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 __all__ = [
-    "QuizAnswer", "QuizSubmission", "QuizResult",
-    "TeachbackSubmission", "TeachbackResult",
-    "OnboardingAnswer", "OnboardingDiagnosticSubmission", "OnboardingResult",
+    "QuizAnswer",
+    "QuizSubmission",
+    "QuizResult",
+    "TeachbackSubmission",
+    "TeachbackResult",
+    "OnboardingAnswer",
+    "OnboardingDiagnosticSubmission",
+    "OnboardingResult",
 ]
 
 
@@ -45,11 +49,14 @@ class QuizResult(BaseModel):
 # Frozen contract (Sprint 1) — shape changes require 4-dev PR review.
 # NO transcript field (STT banned). NO duration_seconds field (implies timer).
 
+
 class TeachbackSubmission(BaseModel):
     session_id: str
     lesson_id: str
     segment_id: str
-    response_text: str = Field(min_length=1, max_length=4000, description="Student's typed teach-back response")
+    response_text: str = Field(
+        min_length=1, max_length=4000, description="Student's typed teach-back response"
+    )
 
 
 class TeachbackResult(BaseModel):
@@ -66,6 +73,7 @@ class TeachbackResult(BaseModel):
 # ── Onboarding schemas ─────────────────────────────────────────────────────────
 # Frozen contract (Sprint 2, Story 3-18) — shape changes require 4-dev PR review.
 # No raw numeric dimension scores in OnboardingResult (CLAUDE.md Learner DNA rules).
+
 
 class OnboardingAnswer(BaseModel):
     question_id: str
