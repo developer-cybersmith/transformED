@@ -117,9 +117,8 @@ def _no_checkpoint_infra():
     any checkpoint data, so every test starts with a cache-miss unless it
     overrides the mock explicitly."""
     mock_jobs_table = MagicMock()
-    mock_jobs_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
-        "node_outputs": {}
-    }
+    _jobs_single = mock_jobs_table.select.return_value.eq.return_value.maybe_single
+    _jobs_single.return_value.execute.return_value.data = {"node_outputs": {}}
     mock_supabase = MagicMock()
     mock_supabase.table.return_value = mock_jobs_table
     mock_supabase.rpc.return_value.execute.return_value = MagicMock()
@@ -142,7 +141,9 @@ def _no_checkpoint_infra():
 @pytest.mark.unit
 def test_tier_quiz_count_band_constant_has_correct_values() -> None:
     """AC 4: T1→(3,5), T2→(2,3), T3→(1,2)."""
-    from app.modules.content.pipeline.graph import _TIER_QUIZ_COUNT_BAND  # type: ignore[attr-defined]
+    from app.modules.content.pipeline.graph import (
+        _TIER_QUIZ_COUNT_BAND,  # type: ignore[attr-defined]
+    )
 
     assert _TIER_QUIZ_COUNT_BAND["T1"] == (3, 5)
     assert _TIER_QUIZ_COUNT_BAND["T2"] == (2, 3)
@@ -364,8 +365,8 @@ async def test_all_invalid_batch_returns_empty_list() -> None:
     from app.modules.content.pipeline.graph import quiz_generator_node
 
     batch = _make_batch(
-        _make_q(question="   ", explanation="Explanation."),   # blank question
-        _make_q(question="Q?", options=["X", "Y"]),            # < 4 options
+        _make_q(question="   ", explanation="Explanation."),  # blank question
+        _make_q(question="Q?", options=["X", "Y"]),  # < 4 options
     )
     mock_provider = AsyncMock()
     mock_provider.complete_structured.return_value = batch
@@ -440,7 +441,9 @@ async def test_partial_batch_below_n_min_keeps_valid_questions() -> None:
 @pytest.mark.unit
 def test_quiz_batch_is_valid_shape_rejects_old_single_question_shape() -> None:
     """AC 9: the old {"segment_id": ..., "data": {...}} shape fails the new validator."""
-    from app.modules.content.pipeline.graph import _quiz_batch_is_valid_shape  # type: ignore[attr-defined]
+    from app.modules.content.pipeline.graph import (
+        _quiz_batch_is_valid_shape,  # type: ignore[attr-defined]
+    )
 
     old_shape = {
         "segment_id": "sec_1",
@@ -460,7 +463,9 @@ def test_quiz_batch_is_valid_shape_rejects_old_single_question_shape() -> None:
 @pytest.mark.unit
 def test_quiz_batch_is_valid_shape_rejects_missing_questions_key() -> None:
     """AC 9 / Task 6.12: validator rejects dict without 'questions' key."""
-    from app.modules.content.pipeline.graph import _quiz_batch_is_valid_shape  # type: ignore[attr-defined]
+    from app.modules.content.pipeline.graph import (
+        _quiz_batch_is_valid_shape,  # type: ignore[attr-defined]
+    )
 
     assert not _quiz_batch_is_valid_shape({"segment_id": "sec_1"})
     assert not _quiz_batch_is_valid_shape({})
@@ -469,7 +474,9 @@ def test_quiz_batch_is_valid_shape_rejects_missing_questions_key() -> None:
 @pytest.mark.unit
 def test_quiz_batch_is_valid_shape_rejects_empty_questions_list() -> None:
     """AC 9 / Task 6.13: validator rejects {"questions": []} (empty batch)."""
-    from app.modules.content.pipeline.graph import _quiz_batch_is_valid_shape  # type: ignore[attr-defined]
+    from app.modules.content.pipeline.graph import (
+        _quiz_batch_is_valid_shape,  # type: ignore[attr-defined]
+    )
 
     assert not _quiz_batch_is_valid_shape({"segment_id": "sec_1", "questions": []})
 
@@ -477,7 +484,9 @@ def test_quiz_batch_is_valid_shape_rejects_empty_questions_list() -> None:
 @pytest.mark.unit
 def test_quiz_batch_is_valid_shape_accepts_valid_batch() -> None:
     """AC 9: validator accepts a properly-shaped batch checkpoint."""
-    from app.modules.content.pipeline.graph import _quiz_batch_is_valid_shape  # type: ignore[attr-defined]
+    from app.modules.content.pipeline.graph import (
+        _quiz_batch_is_valid_shape,  # type: ignore[attr-defined]
+    )
 
     valid_batch = {
         "segment_id": "sec_1",
@@ -516,7 +525,8 @@ async def test_batch_checkpoint_cache_hit_skips_llm_call() -> None:
     }
 
     mock_jobs_table = MagicMock()
-    mock_jobs_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+    _jobs_single = mock_jobs_table.select.return_value.eq.return_value.maybe_single
+    _jobs_single.return_value.execute.return_value.data = {
         "node_outputs": {
             f"quiz_generator:{section_id}": cached_batch,
         }
@@ -732,7 +742,8 @@ async def test_t1_nmax_truncation_discards_extra_questions() -> None:
         result = await quiz_generator_node(_state(tier="T1"))
 
     assert len(result["quiz_questions"]) == 5, (
-        f"T1 n_max=5; 6 input questions should be truncated to 5, got {len(result['quiz_questions'])}"
+        f"T1 n_max=5; 6 input questions should be truncated to 5, "
+        f"got {len(result['quiz_questions'])}"
     )
 
 
@@ -750,7 +761,8 @@ async def test_t2_nmax_truncation_discards_extra_questions() -> None:
         result = await quiz_generator_node(_state(tier="T2"))
 
     assert len(result["quiz_questions"]) == 3, (
-        f"T2 n_max=3; 4 input questions should be truncated to 3, got {len(result['quiz_questions'])}"
+        f"T2 n_max=3; 4 input questions should be truncated to 3, "
+        f"got {len(result['quiz_questions'])}"
     )
 
 
@@ -768,7 +780,8 @@ async def test_t3_nmax_truncation_discards_extra_questions() -> None:
         result = await quiz_generator_node(_state(tier="T3"))
 
     assert len(result["quiz_questions"]) == 2, (
-        f"T3 n_max=2; 3 input questions should be truncated to 2, got {len(result['quiz_questions'])}"
+        f"T3 n_max=2; 3 input questions should be truncated to 2, "
+        f"got {len(result['quiz_questions'])}"
     )
 
 
