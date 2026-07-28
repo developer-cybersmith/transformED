@@ -1,4 +1,4 @@
-﻿"""
+"""
 Content pipeline LangGraph graph.
 
 Node order (15 nodes) — corrected 2026-07-13, Story 2-1 AC-0
@@ -2137,7 +2137,9 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     if tier not in _TIER_QUIZ_COUNT_BAND:
         logger.warning(
             "[%s] quiz_generator_node: %s — unknown tier %r, falling back to T2 band",
-            lesson_id, section_id, tier,
+            lesson_id,
+            section_id,
+            tier,
         )
         tier = _DEFAULT_TIER
     n_min, n_max = _TIER_QUIZ_COUNT_BAND[tier]
@@ -2267,8 +2269,7 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
                 f"Write {n_min} to {n_max} multiple-choice questions testing understanding of "
                 "this section. For each question, provide exactly 4 distinct answer options, the "
                 "0-based index of the correct option, a brief explanation, and "
-                "a difficulty (easy/medium/hard)."
-                + _UNTRUSTED_CONTENT_GUARD
+                "a difficulty (easy/medium/hard)." + _UNTRUSTED_CONTENT_GUARD
             ),
         },
         {"role": "user", "content": body},
@@ -2311,7 +2312,8 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     if response is None or not response.questions:
         logger.warning(
             "[%s] quiz_generator_node: %s — LLM returned no parsed response, skipping",
-            lesson_id, section_id,
+            lesson_id,
+            section_id,
         )
         return await _salvage_or_empty("LLM returned no parsed response")
 
@@ -2326,14 +2328,20 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         if len(options) > 4:
             logger.warning(
                 "[%s] quiz_generator_node: %s[%d] — LLM returned %d options, truncating to 4",
-                lesson_id, section_id, i, len(options),
+                lesson_id,
+                section_id,
+                i,
+                len(options),
             )
             options = options[:4]
 
         if len(options) < 4:
             logger.warning(
                 "[%s] quiz_generator_node: %s[%d] — only %d options (<4), skipping question",
-                lesson_id, section_id, i, len(options),
+                lesson_id,
+                section_id,
+                i,
+                len(options),
             )
             continue
 
@@ -2341,7 +2349,10 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         if not (0 <= correct_index < len(options)):
             logger.warning(
                 "[%s] quiz_generator_node: %s[%d] — correct_index %d out of range, skipping",
-                lesson_id, section_id, i, correct_index,
+                lesson_id,
+                section_id,
+                i,
+                correct_index,
             )
             continue
 
@@ -2350,51 +2361,67 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         if not question_text or not explanation_text:
             logger.warning(
                 "[%s] quiz_generator_node: %s[%d] — blank question/explanation, skipping",
-                lesson_id, section_id, i,
+                lesson_id,
+                section_id,
+                i,
             )
             continue
 
         if not all(o.strip() for o in options):
             logger.warning(
                 "[%s] quiz_generator_node: %s[%d] — blank option text, skipping",
-                lesson_id, section_id, i,
+                lesson_id,
+                section_id,
+                i,
             )
             continue
 
         if len({_normalize_option(o) for o in options}) < len(options):
             logger.warning(
                 "[%s] quiz_generator_node: %s[%d] — duplicate option text, skipping",
-                lesson_id, section_id, i,
+                lesson_id,
+                section_id,
+                i,
             )
             continue
 
-        difficulty = raw_q.difficulty if raw_q.difficulty in ("easy", "medium", "hard") else "medium"
+        difficulty = (
+            raw_q.difficulty if raw_q.difficulty in ("easy", "medium", "hard") else "medium"
+        )
 
-        valid_results.append({
-            "segment_id": section_id,
-            "data": {
-                "question_id": f"quiz_{section_id}_{len(valid_results)}",
-                "type": "mcq",
-                "question": question_text,
-                "options": options,
-                "correct_index": correct_index,
-                "explanation": explanation_text,
-                "difficulty": difficulty,
-            },
-        })
+        valid_results.append(
+            {
+                "segment_id": section_id,
+                "data": {
+                    "question_id": f"quiz_{section_id}_{len(valid_results)}",
+                    "type": "mcq",
+                    "question": question_text,
+                    "options": options,
+                    "correct_index": correct_index,
+                    "explanation": explanation_text,
+                    "difficulty": difficulty,
+                },
+            }
+        )
 
     # AC-8: warn if below expected minimum (do NOT discard valid questions).
     if 0 < len(valid_results) < n_min:
         logger.warning(
             "[%s] quiz_generator_node: %s — only %d valid question(s) (expected %d–%d for tier %s)",
-            lesson_id, section_id, len(valid_results), n_min, n_max, tier,
+            lesson_id,
+            section_id,
+            len(valid_results),
+            n_min,
+            n_max,
+            tier,
         )
 
     # AC-7: degrade gracefully if every question failed validation.
     if not valid_results:
         logger.warning(
             "[%s] quiz_generator_node: %s — no valid questions in batch, returning empty",
-            lesson_id, section_id,
+            lesson_id,
+            section_id,
         )
         return await _salvage_or_empty("every question in the fresh batch failed validation")
 
@@ -3768,8 +3795,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             # never crashes the whole node" guarantee was still false.
             if not isinstance(item, dict):
                 logger.warning(
-                    "[%s] package_builder_node: malformed %s entry is %s, not a "
-                    "dict — skipped: %r",
+                    "[%s] package_builder_node: malformed %s entry is %s, not a dict — skipped: %r",
                     lesson_id,
                     label,
                     type(item).__name__,
@@ -3941,6 +3967,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         if complexity is None:
             complexity = _default_complexity()
             degraded.append("complexity")
+
         # Story 2-31 AC-1: only the AUDIO is missing here — the script is not.
         # Recover the segment's own narration text from the upstream
         # narration_generator output so a browser-speech fallback has something
