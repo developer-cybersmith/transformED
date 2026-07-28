@@ -124,6 +124,12 @@ describe('assessment types', () => {
       teachback_score: null,
       duration_minutes: 18,
       completed_at: '2026-06-26T10:00:00Z',
+      tier: 'T2',
+      tier_label: 'Standard',
+      quiz_total_questions: 4,
+      quiz_correct_count: 3,
+      quiz_accuracy_label: 'Strong',
+      learner_dna_snapshot: null,
     };
     expect(report.duration_minutes).toBe(18);
     expect(Object.keys(report)).not.toContain('duration_seconds');
@@ -141,22 +147,29 @@ describe('assessment types', () => {
       teachback_score: null,
       duration_minutes: 5,
       completed_at: null,
+      tier: 'T2',
+      tier_label: 'Standard',
+      quiz_total_questions: 0,
+      quiz_correct_count: 0,
+      quiz_accuracy_label: null,
+      learner_dna_snapshot: null,
     };
     expect(Object.keys(report.ces_breakdown).sort()).toEqual(
       ['behavioral', 'blink', 'head_pose', 'quiz', 'teachback']
     );
   });
 
-  it('TeachbackResult has overall_score and rubric_scores', () => {
+  it('TeachbackResult.rubric_scores is descriptive string labels (accuracy/completeness/clarity) — not raw numeric sub-scores', () => {
     const result: TeachbackResult = {
       session_id: 'sess_001',
-      rubric_scores: { accuracy: 0.9, depth: 0.7, clarity: 0.8, relevance: 0.85 },
+      rubric_scores: { accuracy: 'Strong', completeness: 'Developing', clarity: 'Strong' },
       overall_score: 0.81,
       ces_contribution: 0.81,
       feedback: 'Strong answer.',
     };
     expect(result.overall_score).toBe(0.81);
-    expect(result.rubric_scores.accuracy).toBe(0.9);
+    expect(typeof result.rubric_scores.accuracy).toBe('string');
+    expect(Object.keys(result.rubric_scores).sort()).toEqual(['accuracy', 'clarity', 'completeness']);
   });
 
   it('QuizResult has ces_contribution field', () => {
@@ -166,7 +179,11 @@ describe('assessment types', () => {
       correct_count: 3,
       total_count: 4,
       ces_contribution: 0.75,
-      feedback: [{ question_id: 'q_001', correct: true, explanation: 'Great.' }],
+      feedback: [{
+        question_id: 'q_001', question: 'Q?', is_correct: true,
+        correct_index: 0, correct_option: 'A', selected_option: 'A',
+        explanation: 'Great.',
+      }],
     };
     expect(result.ces_contribution).toBe(0.75);
   });

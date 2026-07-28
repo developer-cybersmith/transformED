@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LibraryView } from '@/components/library/LibraryView';
-import type { MockLesson } from '@/mocks/data/lessons';
-import type { LibraryData } from '@/mocks/api/library';
+import type { LessonStatusResponse } from '@/services/upload.service';
+import type { LibraryData } from '@/services/library.service';
 
 const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 
@@ -11,27 +11,28 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-function makeLesson(overrides: Partial<MockLesson>): MockLesson {
+function lesson(overrides: Partial<LessonStatusResponse>): LessonStatusResponse {
   return {
-    id: 'les_1',
+    lesson_id: 'les_1',
+    status: 'ready',
     title: 'SQL Injection Vectors',
-    chapterTitle: 'Chapter 3',
-    durationSeconds: 1500,
-    status: 'in_progress',
-    progressPercent: 72,
-    lastAccessed: new Date().toISOString(),
-    thumbnailUrl: 'https://images.unsplash.com/photo-real-thumbnail-1',
-    slides: [],
-    timeline: [],
+    error: null,
+    created_at: '2026-07-24T10:00:00Z',
+    completed_at: '2026-07-24T10:05:00Z',
+    content: null,
     ...overrides,
   };
 }
 
+const READY = lesson({ lesson_id: 'les_ready' });
+const PROCESSING = lesson({ lesson_id: 'les_processing', status: 'running', title: 'Processing Lesson' });
+const FAILED = lesson({ lesson_id: 'les_failed', status: 'failed', title: 'Failed Lesson' });
+
 const DATA: LibraryData = {
-  inProgress: [makeLesson({ id: 'les_1' })],
-  completed: [],
-  processing: [],
-  failed: [],
+  all: [READY, PROCESSING, FAILED],
+  ready: [READY],
+  processing: [PROCESSING],
+  failed: [FAILED],
 };
 
 beforeEach(() => {
@@ -39,28 +40,45 @@ beforeEach(() => {
 });
 
 describe('LibraryView', () => {
-  it('renders lesson.thumbnailUrl from the data layer instead of a locally-computed stock image', () => {
-    const { container } = render(<LibraryView initialData={DATA} />);
+  it('renders Ready/Processing/Failed tabs reflecting real generation status, not viewing progress', () => {
+    render(<LibraryView initialData={DATA} />);
 
-    const img = container.querySelector('img');
-    expect(img?.getAttribute('src')).toBe(DATA.inProgress[0].thumbnailUrl);
+    expect(screen.getByRole('button', { name: /^Ready/ })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Processing/ })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Failed/ })).not.toBeNull();
+    expect(screen.queryByText('In Progress')).toBeNull();
+    expect(screen.queryByText('Completed')).toBeNull();
   });
 
-  it('navigates to the lesson on card click', async () => {
+  it('navigates to the lesson on a ready card click', async () => {
     const user = userEvent.setup();
     render(<LibraryView initialData={DATA} />);
 
     await user.click(screen.getByText('SQL Injection Vectors'));
 
-    expect(pushMock).toHaveBeenCalledWith('/lesson/les_1');
+    expect(pushMock).toHaveBeenCalledWith('/lesson/les_ready');
   });
 
-  it('hides the thumbnail image instead of showing a broken-image icon when it fails to load', () => {
+  it('does not navigate on a processing or failed card click', async () => {
+    const user = userEvent.setup();
+    render(<LibraryView initialData={DATA} />);
+
+    await user.click(screen.getByText('Processing Lesson'));
+    await user.click(screen.getByText('Failed Lesson'));
+
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it('renders no fabricated progress percentage or thumbnail image anywhere', () => {
     const { container } = render(<LibraryView initialData={DATA} />);
 
-    const img = container.querySelector('img')!;
-    img.dispatchEvent(new Event('error'));
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.queryByText(/%/)).toBeNull();
+  });
 
-    expect(img.style.display).toBe('none');
+  it('shows the empty state when there are no lessons at all', () => {
+    render(<LibraryView initialData={{ all: [], ready: [], processing: [], failed: [] }} />);
+
+    expect(screen.getByText('No lessons found in this category.')).not.toBeNull();
   });
 });

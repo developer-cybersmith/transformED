@@ -3,9 +3,62 @@
 import Link from 'next/link';
 import { useSessionReport } from '@/hooks/useSessionReport';
 import { formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
+import type { DnaDimension, LearnerDnaSnapshot } from '@/types/assessment';
 
 interface SessionReportProps {
   sessionId: string;
+}
+
+// Human-readable dimension names — never render the raw snake_case key (S2-10).
+const DIMENSION_DISPLAY_NAMES: Record<DnaDimension, string> = {
+  pattern_recognition: 'Pattern Recognition',
+  logical_deduction: 'Logical Deduction',
+  processing_speed: 'Processing Speed',
+  frustration_tolerance: 'Frustration Tolerance',
+  persistence: 'Persistence',
+  help_seeking: 'Help-Seeking',
+  goal_orientation: 'Goal Orientation',
+  curiosity_index: 'Curiosity',
+  study_independence: 'Study Independence',
+};
+
+const DIMENSION_ORDER = Object.keys(DIMENSION_DISPLAY_NAMES) as DnaDimension[];
+
+const GROWTH_INDICATORS: Record<'Improving' | 'Stable' | 'Needs Attention', string> = {
+  Improving: '↑',
+  Stable: '→',
+  'Needs Attention': '↓',
+};
+
+function DnaSnapshotSection({ snapshot }: { snapshot: LearnerDnaSnapshot }) {
+  return (
+    <div
+      data-testid="dna-snapshot-section"
+      className="flex flex-col gap-3 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm"
+    >
+      <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+        Learner DNA Snapshot
+      </span>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+        {DIMENSION_ORDER.map((dim) => {
+          const growth = snapshot.growth_labels[dim];
+          return (
+            <div key={dim} className="flex items-center justify-between gap-2">
+              <span className="text-neutral-700 text-sm">{DIMENSION_DISPLAY_NAMES[dim]}</span>
+              <span className="text-neutral-900 text-sm font-medium flex items-center gap-1.5">
+                {snapshot.dimension_labels[dim]}
+                {growth !== null && (
+                  <span data-testid={`dna-growth-${dim}`} aria-label={growth} title={growth}>
+                    {GROWTH_INDICATORS[growth] ?? '•'}
+                  </span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function LoadingState() {
@@ -74,6 +127,9 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight">
           Session Report
         </h2>
+        <p className="text-neutral-500 mt-1">
+          {report.tier_label} Session
+        </p>
         {report.completed_at && formatCompletedAt(report.completed_at) && (
           <p className="text-neutral-500 mt-1">
             {formatCompletedAt(report.completed_at)}
@@ -87,10 +143,13 @@ export function SessionReport({ sessionId }: SessionReportProps) {
             Quiz Accuracy
           </span>
           <span className="text-neutral-900 font-medium text-lg">
-            {report.quiz_score === null
+            {report.quiz_accuracy_label === null
               ? 'No quiz questions this session'
-              : `${Math.round(report.quiz_score * 10) / 10}% correct`}
+              : `${report.quiz_correct_count} / ${report.quiz_total_questions} correct`}
           </span>
+          {report.quiz_accuracy_label !== null && (
+            <span className="text-neutral-500 text-sm">{report.quiz_accuracy_label}</span>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm">
@@ -123,6 +182,10 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           </span>
         </div>
       </div>
+
+      {report.learner_dna_snapshot && (
+        <DnaSnapshotSection snapshot={report.learner_dna_snapshot} />
+      )}
 
       <Link
         href={`/lesson/${report.lesson_id}`}

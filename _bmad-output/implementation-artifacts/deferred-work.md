@@ -4,6 +4,11 @@ Items deferred from code review — not urgent for current sprint but should be 
 
 ---
 
+## Deferred from: code review of 2-7-mode-selection-screen (2026-07-14)
+
+- **No drag-and-drop guard on the `'selecting-mode'` screen** [`apps/web/src/components/dashboard/upload/UploadFlow.tsx`] — only the `'idle'` block has `onDragEnter`/`onDragOver`/`onDrop`; dropping a second file while the mode-selection cards are showing falls through to the browser's native handling (typically navigating the tab), discarding all in-app state including the already-selected file. Pre-existing gap across all post-idle screens (processing/completed/error already lack this too); this story just extends the same exposure to a new, likely longer-dwelling screen. Needs a broader "harden all non-idle screens against drop" pass, not a one-off fix.
+- **Tier selection has no functional effect on generation yet (by design)** [`apps/web/src/components/dashboard/upload/UploadFlow.tsx`] — `selectedTier` is captured in component state but never sent to the backend; correctly scoped away per Story 2-7's own "What NOT to do" (S2-09 wires it into `POST /api/content/lessons`). Worth a look before the full Learner Mode feature (S2-07–S2-10) is considered ready to ship: the screen's copy ("Choose a pace before HIE builds your lesson") already implies the choice matters, which is misleading in the interim until S2-09 lands.
+
 ## Deferred from: code review of 1-8-upload-real-api (2026-07-13)
 
 - **No `AbortController`-based request cancellation on unmount** [`apps/web/src/services/upload.service.ts`, `apps/web/src/components/dashboard/upload/UploadFlow.tsx`] — no other service in the codebase cancels in-flight requests either; this is the first long-lived polling loop, so an orphaned `getLessonStatus`/`uploadLesson` call keeps running server-side after the user navigates away. Client-side effects are already suppressed via a `cancelled` flag, so the harm is a wasted network call, not a leak or correctness bug. Better addressed as a standalone cross-service story than bolted onto this one.

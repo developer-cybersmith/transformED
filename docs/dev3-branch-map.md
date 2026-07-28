@@ -1,7 +1,7 @@
 # Dev 3 — Branch Map & Integration Tracker
 
 **Owner:** Dev 3 (tannmayygupta)
-**Last updated:** 2026-07-20
+**Last updated:** 2026-07-27
 
 ---
 
@@ -98,15 +98,18 @@ All Sprint 0 branches are merged to `main`. No separate integration branch neede
 
 ---
 
-## Learner Mode Sprint — PLANNED
+## Learner Mode Sprint — COMPLETE
 
-**Integration target:** `master-learner-mode-dev3` (to be created)
+**Integration target:** `master-learner-mode-sprint-dev3`
 **Base:** `main`
-**Status:** NOT STARTED — branch and stories not yet created
+**Status:** COMPLETE — all 4 task branches merged to integration branch; PR #87 merged to main 2026-07-23
+**Merged to main via PR #87:** `bb7ad17`
 
-| # | Branch | Story | Purpose |
-|---|--------|-------|---------|
-| 1 | `learner-mode-sprint-task1-dev3` | TBD | Tier-aware quiz/checkpoint count (T1: 3–5, T2: 2–3, T3: 1–2) |
-| 2 | `learner-mode-sprint-task2-dev3` | TBD | Session report contextualised by tier |
-| 3 | `learner-mode-sprint-task3-dev3` | TBD | Include tier + params in session report generation API |
-| 4 | `learner-mode-sprint-task4-dev3` | TBD | Pricing-tier gate for T1 (DEFERRED — pending founder sign-off) |
+| # | Branch | Story | Purpose | Status |
+|---|--------|-------|---------|--------|
+| 1 | `learner-mode-sprint-dev3-task1` | 3-28 | Tier-aware quiz question count (T1: 3–5, T2: 2–3, T3: 1–2) in `quiz_generator_node`; 9 tests | MERGED → master-learner-mode-sprint-dev3 (PR #78) |
+| 2 | `learner-mode-sprint-dev3-task2` | 3-29 | Session report contextualised by tier — `tier`, `tier_label`, `quiz_total_questions`, `quiz_correct_count`, `quiz_accuracy_label` fields | MERGED → master-learner-mode-sprint-dev3 (PR #77) |
+| 3 | `learner-mode-sprint-dev3-task3` | 3-30 | Session report Learner DNA snapshot — `learner_dna_snapshot` field with descriptive labels + growth deltas | MERGED → master-learner-mode-sprint-dev3 |
+| 4 | `learner-mode-sprint-dev3-task4` | 3-31 | Re-assessment prompt after 10 sessions — Redis `reassessment_due` flag, bypass guard in onboarding submit | MERGED → master-learner-mode-sprint-dev3 |
+
+> **LM Sprint audit evidence:** `docs/reports/` contains `sprint2-dev3-audit-2026-07-27.md` — 114/114 tests GREEN, 48/48 ACs satisfied across all 4 stories. Full 5-agent adversarial BMAD review passed on each story before merge.

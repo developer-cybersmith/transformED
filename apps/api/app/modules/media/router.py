@@ -19,13 +19,19 @@ from app.dependencies import CurrentUser
 router = APIRouter(tags=["media"])
 
 # Allowed buckets (allowlist — never let callers specify arbitrary bucket names)
+#
+# Story 2-25: removed "source-pdfs" (real path shape is
+# `{user_id}/{book_id}/{filename}`, not `{lesson_id}/...` — _parse_lesson_id
+# always 404s it, even for the legitimate owner), "avatar-clips" (static clip
+# paths like `clips/intro_default.mp4` have no UUID prefix at all — always
+# 404s), and "lesson-slides" (bucket is never provisioned — absent from
+# storage.py's REQUIRED_BUCKETS and every migration). None had a frontend
+# caller (confirmed via repo-wide grep) — each was a structurally-broken,
+# unreachable path, not a working feature.
 _ALLOWED_BUCKETS: frozenset[str] = frozenset(
     {
-        "source-pdfs",
-        "lesson-slides",
         "lesson-audio",
         "lesson-images",
-        "avatar-clips",
     }
 )
 

@@ -6,10 +6,12 @@ Call get_settings() everywhere — never instantiate Settings() directly.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -100,6 +102,45 @@ class Settings(BaseSettings):
 
     # ── Sentry ────────────────────────────────────────────────────────────────
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN — leave empty to disable")
+
+    # ── Admin access (Story 2-25) ─────────────────────────────────────────────
+    # `NoDecode` disables pydantic-settings' default behavior of trying to
+    # JSON-decode any list-typed env value before validation runs — without
+    # it, a non-JSON comma-separated string (the documented format below)
+    # raises a SettingsError before _parse_admin_emails ever sees it. With
+    # NoDecode, the raw env string always reaches the validator untouched,
+    # which then handles both a JSON array and a comma-separated string itself.
+    admin_emails: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "Comma-separated allowlist of admin emails (ADMIN_EMAILS env var). "
+            "Also accepts a JSON array string. "
+            "Checked against the JWT's `email` claim by require_admin(). "
+            "Minimal viable admin gate — no DB migration required; see "
+            "docs/stories/2-25-sprint2-audit-gapfix-dev1-items.md Dev Notes."
+        ),
+    )
+
+    @field_validator("admin_emails", mode="before")
+    @classmethod
+    def _parse_admin_emails(cls, v: object) -> object:
+        # v is either a raw env string (comma-separated or a JSON array
+        # literal, thanks to NoDecode above) or an already-built list (when
+        # Settings() is constructed directly, e.g. in tests). Story 2-25 code
+        # review: an earlier version of this validator skipped lowercasing
+        # entirely for list input, silently locking out any admin whose JWT
+        # email casing differed — normalize case on every path here.
+        if isinstance(v, str):
+            stripped = v.strip()
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                return [email.strip().lower() for email in parsed if str(email).strip()]
+            return [email.strip().lower() for email in v.split(",") if email.strip()]
+        if isinstance(v, list):
+            return [
+                email.strip().lower() for email in v if isinstance(email, str) and email.strip()
+            ]
+        return v
 
     # ── Cost limits (PRD §12) ─────────────────────────────────────────────────
     max_lesson_cost_usd: float = Field(
