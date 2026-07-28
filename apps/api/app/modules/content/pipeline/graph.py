@@ -3577,6 +3577,24 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         logger.info("[%s] package_builder_node: cache hit", lesson_id)
         return {"lesson_package": node_outputs["package_builder"], "progress_pct": 100.0}
 
+    # Story 2-28 AC-8, third canary. Placed AFTER the cache-hit return so a
+    # replayed package is not re-flagged.
+    #
+    # This is the ONLY runtime detector covering quiz_questions and glossary —
+    # the exact channels Dev 2 observed duplicated. lesson_planner's canary sees
+    # only Phase-1-origin duplication (it runs before the four doubling nodes),
+    # and tts_node's covers narration_scripts alone. AC-7's e2e assertions are
+    # CI-time on a fixture; they cannot see a real student's lesson.
+    #
+    # Keyed on EXACT identity — (segment_id, question_id) / (segment_id, term) —
+    # never a count band: jargon has no per-segment cap, so any band guarantees
+    # false positives, and LoggingIntegration(event_level=ERROR) turns each one
+    # into a Sentry issue.
+    _warn_if_exact_duplicates(
+        lesson_id, "quiz_questions", state.get("quiz_questions") or [], "question_id"
+    )
+    _warn_if_exact_duplicates(lesson_id, "glossary", state.get("glossary") or [], "term")
+
     await _update_job_progress(lesson_id, 95.0, "package_builder")
 
     # chapter_id was never a PipelineState field — chunk_node wrote it into
@@ -4148,6 +4166,56 @@ def _warn_if_duplicated(
             "[%s] %s: duplication canary failed on %s — check skipped",
             lesson_id,
             node_name,
+            channel,
+            exc_info=True,
+        )
+
+
+def _warn_if_exact_duplicates(
+    lesson_id: str, channel: str, entries: list[dict[str, Any]], id_field: str
+) -> None:
+    """Story 2-28 AC-8 (third canary): residual exact-duplicate detector.
+
+    Runs in `package_builder_node`, on the assembled package, for the two
+    channels that are legitimately multi-per-segment — so the distinct-vs-total
+    shape used by `_warn_if_duplicated` cannot apply to them.
+
+    Identity is the exact pair `(segment_id, <id_field>)`. Deliberately **no**
+    count band: jargon has no per-segment cap, so a band would fire on healthy
+    lessons, and every ERROR becomes a Sentry issue.
+
+    Same never-raise contract as `_warn_if_duplicated` — this runs after the
+    whole lesson has been paid for, so crashing here would discard completed
+    work.
+    """
+    try:
+        keys: list[tuple[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            data = entry.get("data")
+            source = data if isinstance(data, dict) else entry
+            seg = entry.get("segment_id")
+            ident = source.get(id_field)
+            if seg is not None and ident is not None:
+                keys.append((str(seg), str(ident)))
+
+        distinct = len(set(keys))
+        if distinct and len(keys) != distinct:
+            logger.error(
+                "[%s] package_builder_node: %s carries %d entries for only %d "
+                "distinct (segment_id, %s) pairs — duplicated content reached the "
+                "delivered package; see Story 2-28",
+                lesson_id,
+                channel,
+                len(keys),
+                distinct,
+                id_field,
+            )
+    except Exception:  # noqa: BLE001 — a canary must never discard a paid-for lesson
+        logger.warning(
+            "[%s] package_builder_node: duplicate canary failed on %s — check skipped",
+            lesson_id,
             channel,
             exc_info=True,
         )

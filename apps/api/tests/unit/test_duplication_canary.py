@@ -81,6 +81,59 @@ def test_canary_never_raises_on_unhashable_segment_id(caplog: pytest.LogCaptureF
 
 
 @pytest.mark.unit
+def test_residual_canary_fires_on_exact_duplicate_pairs(caplog: pytest.LogCaptureFixture) -> None:
+    """AC-8 third canary: the ONLY runtime detector for quiz_questions/glossary.
+
+    lesson_planner's canary runs before the four doubling nodes and so can only
+    see Phase-1-origin duplication; tts_node's covers narration_scripts alone.
+    AC-7's e2e assertions are CI-time on a fixture — they cannot observe a real
+    student's lesson. This is what covers the channels Dev 2 actually saw
+    duplicated.
+    """
+    from app.modules.content.pipeline.graph import _warn_if_exact_duplicates
+
+    entries = [
+        {"segment_id": "s1", "data": {"question_id": "q1"}},
+        {"segment_id": "s1", "data": {"question_id": "q1"}},  # exact duplicate
+        {"segment_id": "s1", "data": {"question_id": "q2"}},
+    ]
+    with caplog.at_level(logging.ERROR):
+        _warn_if_exact_duplicates("lesson-1", "quiz_questions", entries, "question_id")
+
+    assert any("3 entries for only 2 distinct" in r.getMessage() for r in caplog.records), (
+        f"expected an exact-duplicate ERROR, got: {[r.getMessage() for r in caplog.records]}"
+    )
+
+
+@pytest.mark.unit
+def test_residual_canary_silent_on_legitimate_multi_per_segment(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No count bands: several DISTINCT questions per segment is normal, and
+    jargon has no per-segment cap at all. A band would fire on healthy lessons
+    and every ERROR becomes a Sentry issue."""
+    from app.modules.content.pipeline.graph import _warn_if_exact_duplicates
+
+    many = [{"segment_id": "s1", "data": {"question_id": f"q{n}"}} for n in range(12)]
+    terms = [{"segment_id": "s1", "term": f"t{n}"} for n in range(20)]
+
+    with caplog.at_level(logging.ERROR):
+        _warn_if_exact_duplicates("lesson-1", "quiz_questions", many, "question_id")
+        _warn_if_exact_duplicates("lesson-1", "glossary", terms, "term")
+
+    assert not caplog.records, f"must stay silent on healthy lessons: {caplog.records}"
+
+
+@pytest.mark.unit
+def test_residual_canary_never_raises() -> None:
+    """Runs AFTER the whole lesson is paid for — crashing would discard it."""
+    from app.modules.content.pipeline.graph import _warn_if_exact_duplicates
+
+    for bad in ([{"segment_id": ["x"], "data": {"question_id": ["y"]}}] * 2, ["nope"], [{}], []):
+        _warn_if_exact_duplicates("lesson-1", "quiz_questions", bad, "question_id")  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
 def test_both_paid_nodes_call_the_canary() -> None:
     """Source guard: the canary is only useful where the money is spent."""
     from pathlib import Path

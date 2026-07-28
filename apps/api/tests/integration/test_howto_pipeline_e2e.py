@@ -270,6 +270,11 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
             )
         if name == "_LessonPlanLLM":
             ids = _segment_ids_from_messages(messages)
+            # Story 2-28 AC-7: record what the PLANNER actually saw. This is the
+            # GPT-4o node — duplicated segment_summaries inflate its prompt (and
+            # its bill) while leaving the delivered package identical, so no
+            # package-shape assertion can see it.
+            _LAST_RUN_SPIES.setdefault("planner_segment_ids", []).append(ids)
             return _LessonPlanLLM(
                 title="How-To Lesson",
                 subject="Software",
@@ -320,6 +325,7 @@ async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1)
     # delivered package stays byte-identical. Counting the spend is the only
     # visibility into that path.
     synth = AsyncMock(return_value=(b"fake-audio", "sarvam", 0.0))
+    _LAST_RUN_SPIES.clear()
     fake = _StatefulSupabaseFake()
     # Seed the extract checkpoint so extract_node cache-hits and feeds the real
     # how-to text into the REAL structure detection (bypasses the PDF subprocess).
@@ -411,6 +417,21 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
     # channels is INVISIBLE in the package while still billing the TTS vendor
     # once per duplicate. Counting synthesis calls is the only visibility into
     # that path — and it is the money path.
+    # AC-7: the PLANNER (GPT-4o, the priciest node) must see each segment exactly
+    # once. Duplicated segment_summaries inflate its prompt and its bill while
+    # leaving the delivered package byte-identical — invisible to every
+    # package-shape assertion above.
+    planner_calls = _LAST_RUN_SPIES.get("planner_segment_ids", [])
+    assert planner_calls, "lesson_planner was never invoked — assertion would be vacuous"
+    for ids in planner_calls:
+        assert len(ids) == len(set(ids)), (
+            f"lesson_planner prompt lists duplicate segment_ids: {ids} — "
+            "segment_summaries was re-appended"
+        )
+        assert len(ids) == len(segments), (
+            f"lesson_planner saw {len(ids)} segment_ids for {len(segments)} segments"
+        )
+
     synth = _LAST_RUN_SPIES["synth"]
     assert synth.await_count == len(segments), (
         f"_synthesize_with_fallback awaited {synth.await_count}x for "
