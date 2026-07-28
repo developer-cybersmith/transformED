@@ -39,7 +39,7 @@ async def test_openai_image_success_returns_data_uri() -> None:
         patch(
             "app.providers.image.openai_image.is_circuit_open", new=AsyncMock(return_value=False)
         ),
-        patch("app.providers.image.openai_image.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
         patch("app.providers.image.openai_image.AsyncOpenAI", return_value=mock_client),
     ):
         mock_settings.return_value.openai_api_key = "test-key"
@@ -88,7 +88,7 @@ async def test_openai_image_missing_b64_json_raises_value_error() -> None:
         patch(
             "app.providers.image.openai_image.is_circuit_open", new=AsyncMock(return_value=False)
         ),
-        patch("app.providers.image.openai_image.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("app.providers.image.openai_image.AsyncOpenAI", return_value=mock_client),
     ):
         mock_settings.return_value.openai_api_key = "test-key"
@@ -121,7 +121,7 @@ async def test_openai_image_retryable_error_retries_exactly_twice_then_raises() 
             "app.providers.image.openai_image.is_circuit_open",
             new=AsyncMock(return_value=False),
         ),
-        patch("app.providers.image.openai_image.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("app.providers.image.openai_image.AsyncOpenAI", return_value=mock_client),
         patch("app.core.retry.asyncio.sleep", new=AsyncMock()),  # no real backoff wait
     ):
@@ -153,7 +153,7 @@ async def test_imagen_success_returns_data_uri() -> None:
     with (
         patch("app.config.get_settings") as mock_settings,
         patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.imagen.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
@@ -213,7 +213,7 @@ async def test_imagen_http_error_does_not_leak_api_key_in_exception() -> None:
     with (
         patch("app.config.get_settings") as mock_settings,
         patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.providers.image.imagen.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "SUPER-SECRET-KEY-VALUE"

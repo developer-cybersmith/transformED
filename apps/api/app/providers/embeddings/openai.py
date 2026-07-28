@@ -16,7 +16,7 @@ from langfuse import Langfuse
 from openai import AsyncOpenAI
 
 from app.config import get_settings
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.langfuse import get_langfuse
 from app.core.retry import with_retry
 from app.providers.base import EmbeddingsProvider
@@ -60,8 +60,19 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
             self._langfuse = None
         self._lesson_id = lesson_id
 
-    @with_retry(max_attempts=3)
     async def embed_texts(
+        self,
+        texts: list[str],
+    ) -> tuple[list[list[float]], int]:
+        """Embed *texts*, recording exactly one breaker outcome (Story 2-32 AC-3).
+
+        Accounting lives here, OUTSIDE the retry decorator, so internal retries
+        cannot multiply the failure count. See `guard_breaker`.
+        """
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._embed_texts_inner(texts))
+
+    @with_retry(max_attempts=3)
+    async def _embed_texts_inner(
         self,
         texts: list[str],
     ) -> tuple[list[list[float]], int]:
@@ -76,8 +87,10 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         Raises:
             RuntimeError: If the circuit breaker is open for the OpenAI provider.
         """
+        # Checked on EVERY attempt (AC-4): stop rather than finish the remaining
+        # attempts against a provider concurrent traffic already tripped.
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — embeddings call rejected"
             )
 
@@ -122,14 +135,12 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
 
             # Cost accumulation reads response.usage directly — never depends on tracing.
             await self._maybe_accumulate_cost(total_tokens)
-            await record_success(_PROVIDER_KEY)
             return embeddings, total_tokens
 
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
                 _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
-            await record_failure(_PROVIDER_KEY)
             raise
 
         finally:

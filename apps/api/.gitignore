@@ -8,6 +8,8 @@ __pycache__/
 # ---- Virtual environments ----
 .venv/
 venv/
+# Abandoned WSL venv kept on disk for reference — never commit it.
+.venv-broken-wsl/
 env/
 .uv/
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 
 import sentry_sdk
@@ -40,6 +41,24 @@ class CircuitState(StrEnum):
     CLOSED = "CLOSED"
     OPEN = "OPEN"
     HALF_OPEN = "HALF_OPEN"
+
+
+class CircuitOpenError(RuntimeError):
+    """Raised when a call is rejected because the provider's circuit is OPEN.
+
+    Story 2-32. This is a *rejection*, not a provider failure, and the two must
+    be distinguishable:
+
+    - `guard_breaker` must NOT count it via `record_failure`. Counting a
+      rejection would let the breaker feed itself — every rejected call would
+      extend the very failure window keeping it open, so it could never close.
+    - `with_retry` must not retry it. Retrying against a breaker already known
+      to be open is pure latency and spend.
+
+    Deliberately a `RuntimeError` subclass: several providers already have
+    `except RuntimeError: raise` guards (e.g. `tts/sarvam.py`), and this story
+    must not silently change their behaviour.
+    """
 
 
 def _keys(provider: str) -> tuple[str, str, str]:
@@ -138,3 +157,39 @@ async def record_success(provider: str) -> None:
 
     # Reset everything
     await redis.delete(state_key, failures_key, opened_at_key)
+
+
+async def guard_breaker[T](
+    provider: str,
+    call: Callable[[], Awaitable[T]],
+) -> T:
+    """Run *call* under circuit-breaker accounting — exactly ONE outcome per
+    logical call, however many times *call* retries internally (Story 2-32 AC-3).
+
+    `record_failure` used to live inside the function wrapped by `@with_retry`.
+    That was invisible while OpenAI SDK exceptions were never classified as
+    retryable (Story 2-32 AC-1): a 429 produced one attempt and therefore one
+    recorded failure. The moment AC-1 makes those retryable, the same logical
+    call records `max_attempts` failures:
+
+        FAILURE_THRESHOLD = 5 over a 120 s window
+        1 failure/call  -> breaker opens after 5 logical calls
+        3 failures/call -> breaker opens after 2 logical calls
+
+    i.e. fixing the retry classification alone would trip the breaker ~2.5x
+    faster and turn a brief rate-limit into a 10-minute half-open outage. The
+    threshold is not what was wrong; the accounting was. Hence this wrapper sits
+    OUTSIDE the retry decorator, and the retried function keeps only the
+    per-attempt `is_circuit_open` check.
+
+    `CircuitOpenError` is re-raised WITHOUT being counted — see its docstring.
+    """
+    try:
+        result = await call()
+    except CircuitOpenError:
+        raise
+    except Exception:
+        await record_failure(provider)
+        raise
+    await record_success(provider)
+    return result

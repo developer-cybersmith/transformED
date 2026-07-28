@@ -29,8 +29,8 @@ from typing import Any
 
 import httpx
 
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
-from app.core.retry import with_retry
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
+from app.core.retry import SanitizedHTTPError, with_retry
 from app.providers.base import ImageProvider
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,17 @@ class ImagenProvider(ImageProvider):
         self._api_key = settings.google_api_key
         self._lesson_id = lesson_id
 
-    @with_retry(max_attempts=2)
     async def generate(
+        self,
+        prompt: str,
+        size: str = "1024x1024",
+    ) -> str:
+        """Generate an image, recording exactly one breaker outcome (Story 2-32
+        AC-3). See `_generate_inner` for the full contract."""
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._generate_inner(prompt, size))
+
+    @with_retry(max_attempts=2)
+    async def _generate_inner(
         self,
         prompt: str,
         size: str = "1024x1024",
@@ -75,8 +84,9 @@ class ImagenProvider(ImageProvider):
         Raises:
             RuntimeError: with the API key redacted — see module docstring.
         """
+        # Checked on EVERY attempt (Story 2-32 AC-4).
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
@@ -93,9 +103,19 @@ class ImagenProvider(ImageProvider):
                     # wraps it) can be logged with exc_info=True anywhere
                     # upstream — httpx's own exception message/repr embeds
                     # the full request URL, key included.
-                    raise RuntimeError(
+                    #
+                    # Story 2-32 AC-5: raise SanitizedHTTPError, not a bare
+                    # RuntimeError. Carrying the status code lets with_retry
+                    # apply the PRD §14 rules to a REDACTED error — previously
+                    # every failure here, including a retryable 429/503, was
+                    # unclassifiable and therefore fatal, which made this
+                    # provider's @with_retry decorative. The status code is
+                    # metadata, not the URL, so it leaks nothing.
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    raise SanitizedHTTPError(
                         f"Imagen 4 Fast request failed: {type(exc).__name__} "
-                        f"(status={getattr(getattr(exc, 'response', None), 'status_code', 'n/a')})"
+                        f"(status={status_code if status_code is not None else 'n/a'})",
+                        status_code=status_code,
                     ) from None
 
                 body: dict[str, Any] = response.json()
@@ -106,9 +126,7 @@ class ImagenProvider(ImageProvider):
 
             b64_data = predictions[0]["bytesBase64Encoded"]
 
-            await record_success(_PROVIDER_KEY)
             return f"data:image/png;base64,{b64_data}"
 
         except Exception:
-            await record_failure(_PROVIDER_KEY)
             raise

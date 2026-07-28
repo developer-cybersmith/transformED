@@ -20,12 +20,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# tests/conftest.py stubs sys.modules['openai'] only; the LLM provider also does
-# `from openai.types.chat import ChatCompletion` — stub the submodules too so
-# app.providers.llm.openai imports without a real openai install.
-_openai_stub = sys.modules.setdefault("openai", MagicMock())
-_openai_types_stub = sys.modules.setdefault("openai.types", MagicMock())
-sys.modules.setdefault("openai.types.chat", _openai_types_stub.chat)
+# Story 2-32: this used to unconditionally `sys.modules.setdefault("openai",
+# MagicMock())` at MODULE level, i.e. at collection time — before
+# `app.core.retry` had imported. Whichever ran first won, so `with_retry`'s
+# OpenAI classification could silently bind to Mock attributes instead of real
+# exception classes. `openai` is a declared hard dependency
+# (pyproject.toml: `openai>=1.40.0`), so prefer the real SDK and fall back to a
+# stub only if it genuinely is not installed.
+try:  # pragma: no cover — the real SDK is present in every supported env
+    import openai  # noqa: F401
+except ImportError:  # pragma: no cover
+    _openai_stub = sys.modules.setdefault("openai", MagicMock())
+    _openai_types_stub = sys.modules.setdefault("openai.types", MagicMock())
+    sys.modules.setdefault("openai.types.chat", _openai_types_stub.chat)
 
 FAKE_LESSON_ID = "55555555-5555-5555-5555-555555555555"
 _FAKE_EMBEDDING = [0.1] * 1536
@@ -102,8 +109,8 @@ def _embed_patches(
         patch(f"{mod}.AsyncOpenAI", return_value=client),
         patch(f"{mod}.get_langfuse", get_langfuse),
         patch(f"{mod}.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch(f"{mod}.record_success", new=AsyncMock()),
-        patch(f"{mod}.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
     )
 
 
@@ -127,12 +134,16 @@ def _llm_patches(
         get_langfuse = MagicMock(return_value=langfuse)
 
     mod = "app.providers.llm.openai"
+    # Story 2-32: breaker accounting moved OUT of the provider module into
+    # `guard_breaker` (app.core.circuit_breaker), so one logical call records at
+    # most one outcome regardless of internal retries. Patch it where it now
+    # lives. `is_circuit_open` is still called per-attempt inside the provider.
     return (
         patch(f"{mod}.AsyncOpenAI", return_value=client),
         patch(f"{mod}.get_langfuse", get_langfuse),
         patch(f"{mod}.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch(f"{mod}.record_success", new=AsyncMock()),
-        patch(f"{mod}.record_failure", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
     )
 
 

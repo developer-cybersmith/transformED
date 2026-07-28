@@ -27,7 +27,7 @@ from typing import Literal
 
 from openai import AsyncOpenAI
 
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.retry import with_retry
 from app.providers.base import ImageProvider
 
@@ -57,8 +57,17 @@ class OpenAIImageProvider(ImageProvider):
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
         self._lesson_id = lesson_id
 
-    @with_retry(max_attempts=2)
     async def generate(
+        self,
+        prompt: str,
+        size: str = "1024x1024",
+    ) -> str:
+        """Generate an image, recording exactly one breaker outcome (Story 2-32
+        AC-3). See `_generate_inner` for the full contract."""
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._generate_inner(prompt, size))
+
+    @with_retry(max_attempts=2)
+    async def _generate_inner(
         self,
         prompt: str,
         size: str = "1024x1024",
@@ -83,8 +92,9 @@ class OpenAIImageProvider(ImageProvider):
                 only; removed the untested alternate path rather than leave
                 a latent bug for a hypothetical case.
         """
+        # Checked on EVERY attempt (AC-4).
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
@@ -106,9 +116,7 @@ class OpenAIImageProvider(ImageProvider):
             if not b64_json:
                 raise ValueError("GPT Image 1 Mini returned an empty response (no b64_json)")
 
-            await record_success(_PROVIDER_KEY)
             return f"data:image/png;base64,{b64_json}"
 
         except Exception:
-            await record_failure(_PROVIDER_KEY)
             raise
