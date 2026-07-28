@@ -32,13 +32,13 @@ so that a lesson doesn't look permanently stuck at "processing" just because I n
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 3, 4, 6): Add `refreshInterval` to `useLibrary()`, keyed on `LibraryData.processing.length > 0`.
-  - [ ] 1.1 RED: write failing tests for the polling-on/off cases and the `undefined`-data case.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 2, 3, 4, 6): Add `refreshInterval` to `useDashboard()`, keyed on `continueLearning`/`recentLessons` non-terminal status.
-  - [ ] 2.1 RED: write failing tests, same shape as Task 1.
-  - [ ] 2.2 GREEN: implement.
-- [ ] Task 3 (AC: 7): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1, 3, 4, 6): Add `refreshInterval` to `useLibrary()`, keyed on `LibraryData.processing.length > 0`.
+  - [x] 1.1 RED: write failing tests for the polling-on/off cases and the `undefined`-data case.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 2, 3, 4, 6): Add `refreshInterval` to `useDashboard()`, keyed on `continueLearning`/`recentLessons` non-terminal status.
+  - [x] 2.1 RED: write failing tests, same shape as Task 1.
+  - [x] 2.2 GREEN: implement.
+- [x] Task 3 (AC: 7): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -72,3 +72,27 @@ Vitest, mocking `swr`'s default export directly (`vi.mock('swr', () => ({ defaul
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-27 | Story created after investigating a user-reported "generation stops on navigation" symptom — traced to the real gap (no auto-refresh on Library/Dashboard), not the suspected one (navigation stopping the backend job, which is not possible). Branch `sprint2/s2-27-library-auto-poll` off `main`. | Dev 2 |
+| 2026-07-27 | Implemented both tasks. Added shared `apps/web/src/lib/lessonStatusPoll.ts` (`LESSON_STATUS_POLL_INTERVAL_MS`, `isLessonProcessing()`) used by both hooks. Full suite 53 files / 502 tests passing, `tsc --noEmit` and `eslint` clean. | Dev 2 |
+
+## Dev Agent Record
+
+### Implementation Plan
+
+- Used SWR's `refreshInterval` as a function of the latest data (SWR v2.3.3 supports this) rather than a fixed interval, so polling automatically stops once nothing is left in flight — avoids needless backend load once a lesson set has fully settled.
+- `LibraryData` already had a pre-computed `processing` bucket (`library.service.ts`), so `useLibrary()`'s condition is a direct length check. `DashboardData` has no equivalent bucket, so a small shared `isLessonProcessing()` helper checks `.status` on `continueLearning`/`recentLessons` directly — put in a new `lib/lessonStatusPoll.ts` rather than duplicated inline in both hooks, since both the constant and the check needed to be identical between them (AC-3).
+- Deliberately did not touch the service layer — `refreshInterval` is purely a data-fetching-cadence concern, which SWR already owns in this codebase's existing hook/service split.
+
+### Completion Notes
+
+- Both tasks complete, all ACs (1–7) satisfied.
+- Full `apps/web` test suite: 53 files, 502 tests, all passing.
+- `tsc --noEmit`: clean. `eslint` on all touched files: clean.
+- SWR's `refreshInterval` already respects the Page Visibility API by default (pauses while the tab is hidden, catches up on refocus) — no extra work needed to avoid polling a backgrounded tab.
+
+### File List
+
+- `apps/web/src/lib/lessonStatusPoll.ts` (NEW — shared `LESSON_STATUS_POLL_INTERVAL_MS` constant + `isLessonProcessing()` helper)
+- `apps/web/src/hooks/useLibrary.ts` (MODIFIED — added `refreshInterval`)
+- `apps/web/src/hooks/useDashboard.ts` (MODIFIED — added `refreshInterval`)
+- `apps/web/src/__tests__/hooks/useLibrary.test.ts` (MODIFIED — new polling-condition tests)
+- `apps/web/src/__tests__/hooks/useDashboard.test.ts` (MODIFIED — new polling-condition tests)

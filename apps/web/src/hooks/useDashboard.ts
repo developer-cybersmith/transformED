@@ -3,6 +3,7 @@
 import useSWR from 'swr';
 import { dashboardService, type DashboardData } from '@/services/dashboard.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { LESSON_STATUS_POLL_INTERVAL_MS, isLessonProcessing } from '@/lib/lessonStatusPoll';
 
 interface UseDashboardResult {
   data: DashboardData | null;
@@ -24,7 +25,18 @@ export function useDashboard(): UseDashboardResult {
   const { data, error, isLoading } = useSWR<DashboardData>(
     user ? `dashboard:${user.id}` : null,
     () => dashboardService.getDashboard(),
-    { shouldRetryOnError: false },
+    {
+      shouldRetryOnError: false,
+      // S2-27: same rationale as useLibrary.ts -- DashboardData has no
+      // pre-computed "processing" bucket, so check continueLearning and
+      // recentLessons directly.
+      refreshInterval: (dashboardData) =>
+        dashboardData &&
+        (isLessonProcessing(dashboardData.continueLearning) ||
+          dashboardData.recentLessons.some(isLessonProcessing))
+          ? LESSON_STATUS_POLL_INTERVAL_MS
+          : 0,
+    },
   );
 
   return {

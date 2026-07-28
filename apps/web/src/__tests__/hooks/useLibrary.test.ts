@@ -83,3 +83,31 @@ describe('useLibrary', () => {
     expect(result.current.data).toBeNull();
   });
 });
+
+describe('useLibrary — auto-poll while a lesson is still generating (S2-27)', () => {
+  function getRefreshInterval(): (data: unknown) => number {
+    renderHook(() => useLibrary());
+    const options = useSWRMock.mock.calls[0][2];
+    return options.refreshInterval;
+  }
+
+  it('polls when there is at least one processing lesson', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = { all: [], ready: [], processing: [{ lesson_id: 'l1', status: 'running' }], failed: [] };
+
+    expect(refreshInterval(data)).toBeGreaterThan(0);
+  });
+
+  it('does not poll when nothing is processing', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = { all: [], ready: [], processing: [], failed: [] };
+
+    expect(refreshInterval(data)).toBe(0);
+  });
+
+  it('does not poll before any data has been fetched yet', () => {
+    const refreshInterval = getRefreshInterval();
+
+    expect(refreshInterval(undefined)).toBe(0);
+  });
+});

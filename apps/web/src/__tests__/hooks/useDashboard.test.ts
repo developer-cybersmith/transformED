@@ -83,3 +83,46 @@ describe('useDashboard', () => {
     expect(result.current.data).toBeNull();
   });
 });
+
+describe('useDashboard — auto-poll while a lesson is still generating (S2-27)', () => {
+  function getRefreshInterval(): (data: unknown) => number {
+    renderHook(() => useDashboard());
+    const options = useSWRMock.mock.calls[0][2];
+    return options.refreshInterval;
+  }
+
+  it('polls when continueLearning is still processing', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = { continueLearning: { lesson_id: 'l1', status: 'queued' }, recentLessons: [], learningPulse: undefined };
+
+    expect(refreshInterval(data)).toBeGreaterThan(0);
+  });
+
+  it('polls when any recentLessons entry is still processing, even if continueLearning is null', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = {
+      continueLearning: null,
+      recentLessons: [{ lesson_id: 'l1', status: 'ready' }, { lesson_id: 'l2', status: 'running' }],
+      learningPulse: undefined,
+    };
+
+    expect(refreshInterval(data)).toBeGreaterThan(0);
+  });
+
+  it('does not poll when everything is in a terminal state', () => {
+    const refreshInterval = getRefreshInterval();
+    const data = {
+      continueLearning: { lesson_id: 'l1', status: 'ready' },
+      recentLessons: [{ lesson_id: 'l2', status: 'failed' }],
+      learningPulse: undefined,
+    };
+
+    expect(refreshInterval(data)).toBe(0);
+  });
+
+  it('does not poll before any data has been fetched yet', () => {
+    const refreshInterval = getRefreshInterval();
+
+    expect(refreshInterval(undefined)).toBe(0);
+  });
+});

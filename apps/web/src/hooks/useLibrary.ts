@@ -3,6 +3,7 @@
 import useSWR from 'swr';
 import { libraryService, type LibraryData } from '@/services/library.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { LESSON_STATUS_POLL_INTERVAL_MS } from '@/lib/lessonStatusPoll';
 
 interface UseLibraryResult {
   data: LibraryData | null;
@@ -19,7 +20,16 @@ export function useLibrary(): UseLibraryResult {
   const { data, error, isLoading } = useSWR<LibraryData>(
     user ? `library:${user.id}` : null,
     () => libraryService.getLibrary(),
-    { shouldRetryOnError: false },
+    {
+      shouldRetryOnError: false,
+      // S2-27: keep polling while at least one lesson is still queued/running
+      // -- otherwise a lesson that finishes generating while this page is
+      // just sitting open never updates without a manual refresh/navigation
+      // (SWR only refetches on remount/tab-refocus by default). Stops polling
+      // once nothing is in flight, to avoid needless backend load.
+      refreshInterval: (libraryData) =>
+        libraryData && libraryData.processing.length > 0 ? LESSON_STATUS_POLL_INTERVAL_MS : 0,
+    },
   );
 
   return {
