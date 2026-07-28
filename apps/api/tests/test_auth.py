@@ -37,7 +37,7 @@ from app.dependencies import CurrentUser
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-_SECRET = "test-jwt-secret"
+_SECRET = "test-jwt-secret-padded-to-32-bytes!!"  # PyJWT ≥2.10 enforces a 32-byte minimum for HS256
 _PAST_EPOCH = 1_700_000_000  # 2023-11-14 — provably in the past
 _FUTURE_EPOCH = 4_102_444_800  # 2100-01-01 — provably in the future
 _DROP = object()  # sentinel: omit a claim from the minted token
@@ -83,7 +83,8 @@ def _token(secret: str = _SECRET, **overrides) -> str:
     Pass a claim set to the ``_DROP`` sentinel to omit it entirely (tests the
     ``options={"require": [...]}`` enforcement path).
     """
-    claims = {"sub": "user-001", "iat": _PAST_EPOCH, "exp": _FUTURE_EPOCH}
+    # get_current_user requires audience="authenticated" (Supabase convention, 4-17 ES256 work).
+    claims = {"sub": "user-001", "iat": _PAST_EPOCH, "exp": _FUTURE_EPOCH, "aud": "authenticated"}
     claims.update(overrides)
     claims = {k: v for k, v in claims.items() if v is not _DROP}
     return jwt.encode(claims, secret, algorithm="HS256")
@@ -128,7 +129,9 @@ def test_expired_token_returns_401() -> None:
 @pytest.mark.unit
 def test_wrong_secret_returns_401() -> None:
     """AC 4: token signed with a different secret → InvalidSignatureError → 401."""
-    resp = _client.get("/protected", headers=_auth(_token(secret="a-completely-different-secret")))
+    resp = _client.get(
+        "/protected", headers=_auth(_token(secret="a-completely-different-secret!!!"))
+    )
     assert resp.status_code == 401
 
 

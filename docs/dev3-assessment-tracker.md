@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-22 (Learner Mode Sprint Task 4 DONE — Story 3-31: Re-assessment Prompt After 10 Sessions; Redis-backed reassessment_due flag; 23 unit tests GREEN; 5-agent adversarial review: all 4 BLOCKERs + 5 IMPROVEMENTs resolved; all 4 Learner Mode Sprint tasks merged to master-learner-mode-sprint-dev3)
+**Last updated:** 2026-07-27 (Sprint 2 brutal end-to-end audit COMPLETE — 214/214 tests PASS, 5/5 stories DONE, CONDITIONAL GO; cross-team handoff doc created; Primary Files table updated with all created files; branch map corrected for LM Sprint completion)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -33,8 +33,16 @@ Update this table each time a task is checked off below.
 |------|---------|
 | `apps/api/app/modules/assessment/router.py` | All 5 assessment endpoints |
 | `apps/api/app/modules/analytics/router.py` | Event ingestion + session summary |
-| `apps/api/app/modules/assessment/service.py` | *(to create)* Business logic layer |
-| `apps/api/app/modules/analytics/service.py` | *(to create)* Analytics aggregation |
+| `apps/api/app/modules/assessment/service.py` | Business logic — quiz grading, teach-back scoring, session report, onboarding, Learner DNA |
+| `apps/api/app/modules/analytics/service.py` | Analytics aggregation — event ingestion, session summary |
+| `apps/api/app/modules/assessment/ces.py` | CES formula (5 weights as env vars, None redistribution) |
+| `apps/api/app/modules/assessment/dna_fusion.py` | Learner DNA EMA fusion (9 dimensions, 0.7 retain × 0.3 new) |
+| `apps/api/app/modules/assessment/dna_growth.py` | Growth delta per dimension per session (session_events write) |
+| `apps/api/app/modules/assessment/dna_profile.py` | GPT-4o-mini profile text generation (DPDP disclaimer suffix) |
+| `apps/api/app/modules/assessment/prompts.py` | Teach-back scoring prompt + onboarding profile prompt |
+| `apps/api/app/modules/assessment/schemas.py` | Pydantic request/response models for all assessment endpoints |
+| `apps/api/app/modules/assessment/onboarding_questions.py` | 20-question onboarding content + dimension mappings |
+| `apps/api/app/core/posthog_client.py` | Fire-and-forget PostHog event wrapper (consent-gated) |
 
 **Read-only dependencies (do not modify):**
 

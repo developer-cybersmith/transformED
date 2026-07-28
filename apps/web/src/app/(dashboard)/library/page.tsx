@@ -21,13 +21,24 @@ export default function LibraryPage() {
                 </div>
             )}
 
+            {/* S2-27 review fix: a poll failure must not hide a library the
+                student can already see -- SWR keeps the last good `data`
+                alongside a transient `error`, so gate the empty-state message
+                on "no data at all", not merely "an error exists". Matches
+                dashboard/page.tsx's existing banner-plus-stale-data pattern. */}
             {!isLoading && error != null && (
+                <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3 text-sm text-red-600 mb-6">
+                    We couldn&apos;t refresh your library just now. Showing your last known results.
+                </div>
+            )}
+
+            {!isLoading && data && <LibraryView initialData={data} />}
+
+            {!isLoading && error != null && !data && (
                 <div className="flex min-h-[40vh] w-full flex-col items-center justify-center gap-2 text-center text-neutral-400">
                     <p>We couldn&apos;t load your library right now.</p>
                 </div>
             )}
-
-            {!isLoading && error == null && data && <LibraryView initialData={data} />}
         </div>
     );
 }

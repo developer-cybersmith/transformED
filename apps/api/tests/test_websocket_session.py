@@ -19,6 +19,7 @@ on the websocket module).
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -193,6 +194,11 @@ async def test_e1_flow_event_dispatches_to_fsm(mocker):
     """A client-drivable lifecycle event is dispatched into the tutor FSM."""
     mock_dispatch = AsyncMock()
     mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+    # advance_tutor_state now reads tutor_state from Redis for the deadline guard;
+    # patch get_redis so the test doesn't need a running Redis pool.
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)  # not QUIZZING → deadline check skipped
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     from app.core.websocket import _handle_tutor_event
 
@@ -350,9 +356,16 @@ async def test_f3_reconnect_read_failure_degrades_to_init(mocker):
 )
 async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
     """AC: a reconnect restores the live tutor state from Redis for ALL 7 FSM states — pushes a
-    state_change sync (from == to) and does not reset."""
+    state_change sync (from == to) and does not reset.
+
+    The reconnect path now also calls _seed_learner_tier (Story 4-19 race-condition fix), which
+    reads lesson_package:{sid}.  We return None for that key so no tier seeding occurs — this
+    test is verifying reconnect/state-restore behaviour only, not tier seeding.
+    """
     mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(return_value=state)
+    mock_redis.get = AsyncMock(
+        side_effect=lambda key: state if "tutor_state" in key else None
+    )
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     from app.core.websocket import ConnectionManager
@@ -361,8 +374,8 @@ async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
     sid = f"sess-{state}"
     await ConnectionManager().connect(ws, sid)
 
-    # Restored FROM Redis (the tutor_state key was read).
-    mock_redis.get.assert_awaited_once_with(f"tutor_state:{sid}")
+    # tutor_state key was read (restored from Redis).
+    mock_redis.get.assert_any_await(f"tutor_state:{sid}")
     # Synced to the client via the frozen state_change (from == to), and NOT reset.
     ws.send_json.assert_called_once_with(
         {
@@ -370,4 +383,448 @@ async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
             "payload": {"session_id": sid, "from_state": state, "to_state": state},
         }
     )
+    # No core session keys reset (tier keys not written — lesson package absent).
     mock_redis.set.assert_not_called()
+
+
+# ── Group G — Story 4-19: Learner tier seeding (post-review patches) ──────────
+#
+# _seed_learner_tier (extracted from _init_session_state) reads
+# lesson_package:{session_id} from Redis.  Security patches applied:
+#   - session_id validated as UUID at route boundary (_SESSION_ID_RE)
+#   - tier validated against allowlist {T1,T2,T3} before any Redis write
+#   - metadata type-checked (isinstance dict) before .get("learner_tier")
+#   - two tier keys written atomically via Redis pipeline
+#   - _qa(tier) called once (assigned to qa_secs) to avoid double lookup
+#   - _seed_learner_tier called on reconnect path too (race-condition fix)
+
+
+def _make_pkg(tier: str | None) -> str:
+    """Return a minimal lesson_package JSON with the given tier."""
+    pkg: dict = {"metadata": {"title": "Test"}, "segments": []}
+    if tier is not None:
+        pkg["metadata"]["tier"] = tier
+    return json.dumps(pkg)
+
+
+def _mock_settings(mocker, t1=600, t2=300, t3=150, default=300):
+    s = MagicMock()
+    s.learner_tier_t1_qa_seconds = t1
+    s.learner_tier_t2_qa_seconds = t2
+    s.learner_tier_t3_qa_seconds = t3
+    s.learner_tier_default_qa_seconds = default
+    mocker.patch("app.config.get_settings", return_value=s)
+    return s
+
+
+def _make_redis_with_pipeline(pkg_json=None):
+    """Return (mock_redis, mock_pipe) with pipeline wired for tier seeding tests.
+
+    Tier keys are written via pipe.set() (MagicMock — synchronous, records calls).
+    pipe.execute() is an AsyncMock.  Core session keys still go through
+    mock_redis.set (AsyncMock) in _init_session_state's own try block.
+    """
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=pkg_json)
+    mock_pipe = MagicMock()
+    mock_pipe.execute = AsyncMock(return_value=[True, True])
+    mock_redis.pipeline = MagicMock(return_value=mock_pipe)
+    return mock_redis, mock_pipe
+
+
+@pytest.mark.unit
+async def test_g1_tier_t1_writes_600s(mocker):
+    """AC2+AC3: T1 → learner_tier='T1' and qa_phase_seconds='600' via pipeline."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(_make_pkg("T1"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g1")
+
+    mock_pipe.set.assert_any_call("session:sess-g1:learner_tier", "T1", ex=86400)
+    mock_pipe.set.assert_any_call("session:sess-g1:qa_phase_seconds", "600", ex=86400)
+    mock_pipe.execute.assert_awaited_once()
+
+
+@pytest.mark.unit
+async def test_g2_tier_t2_writes_300s(mocker):
+    """AC3: T2 → qa_phase_seconds='300'."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(_make_pkg("T2"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g2")
+
+    mock_pipe.set.assert_any_call("session:sess-g2:learner_tier", "T2", ex=86400)
+    mock_pipe.set.assert_any_call("session:sess-g2:qa_phase_seconds", "300", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g3_tier_t3_writes_150s(mocker):
+    """AC3: T3 → qa_phase_seconds='150'."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(_make_pkg("T3"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g3")
+
+    mock_pipe.set.assert_any_call("session:sess-g3:learner_tier", "T3", ex=86400)
+    mock_pipe.set.assert_any_call("session:sess-g3:qa_phase_seconds", "150", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g4_unknown_tier_writes_no_keys(mocker):
+    """P1 (security): tier not in allowlist {T1,T2,T3} → pipeline never created, no keys written."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(_make_pkg("TX"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g4")
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_g5_missing_cache_writes_no_tier_keys(mocker):
+    """AC4: lesson_package cache absent → pipeline never created, no tier keys written."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(None)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g5")
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_g6_missing_tier_field_writes_no_tier_keys(mocker):
+    """AC4: package present, no tier field → pipeline never created, no tier keys written."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(_make_pkg(None))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g6")
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_g7_redis_failure_in_seed_tier_does_not_raise(mocker):
+    """AC6: Redis failure during _seed_learner_tier must never crash the WS handshake."""
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(side_effect=ConnectionError("Redis down"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g7")  # must not raise
+
+
+@pytest.mark.unit
+def test_g8_qa_phase_seconds_helper_maps_all_tiers(mocker):
+    """AC5+AC3: qa_phase_seconds() pure helper returns correct seconds for each tier."""
+    _mock_settings(mocker)
+
+    from app.modules.tutor.service import qa_phase_seconds
+
+    assert qa_phase_seconds("T1") == 600
+    assert qa_phase_seconds("T2") == 300
+    assert qa_phase_seconds("T3") == 150
+    assert qa_phase_seconds("TX") == 300   # unknown → default (helper still returns 300)
+    assert qa_phase_seconds(None) == 300   # None → default
+
+
+@pytest.mark.unit
+def test_g9_settings_have_learner_tier_fields():
+    """AC5: all four learner_tier_* fields exist on Settings with correct defaults."""
+    from app.config import Settings
+
+    fields = Settings.model_fields
+    assert "learner_tier_t1_qa_seconds" in fields
+    assert "learner_tier_t2_qa_seconds" in fields
+    assert "learner_tier_t3_qa_seconds" in fields
+    assert "learner_tier_default_qa_seconds" in fields
+
+    assert fields["learner_tier_t1_qa_seconds"].default == 600
+    assert fields["learner_tier_t2_qa_seconds"].default == 300
+    assert fields["learner_tier_t3_qa_seconds"].default == 150
+    assert fields["learner_tier_default_qa_seconds"].default == 300
+
+
+@pytest.mark.unit
+def test_g10_session_id_regex_accepts_valid_uuid():
+    """P0: _SESSION_ID_RE accepts valid lowercase UUID format."""
+    from app.core.websocket import _SESSION_ID_RE
+
+    assert _SESSION_ID_RE.match("550e8400-e29b-41d4-a716-446655440000")
+    assert _SESSION_ID_RE.match("00000000-0000-0000-0000-000000000000")
+    assert _SESSION_ID_RE.match("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+
+@pytest.mark.unit
+def test_g10b_session_id_regex_rejects_invalid_formats():
+    """P0: _SESSION_ID_RE rejects non-UUID strings (prevents Redis key-namespace traversal)."""
+    from app.core.websocket import _SESSION_ID_RE
+
+    assert not _SESSION_ID_RE.match("../../etc/passwd")
+    assert not _SESSION_ID_RE.match("session:other:key")
+    assert not _SESSION_ID_RE.match("UPPERCASE-0000-0000-0000-000000000000")
+    assert not _SESSION_ID_RE.match("")
+    assert not _SESSION_ID_RE.match("not-a-uuid")
+    assert not _SESSION_ID_RE.match("550e8400e29b41d4a716446655440000")  # no hyphens
+
+
+@pytest.mark.unit
+async def test_g11_reconnect_path_seeds_learner_tier(mocker):
+    """P2 (race-condition fix): reconnect path calls _seed_learner_tier so tier is populated
+    after lesson generation even when the session was first connected before the lesson was ready.
+    """
+    sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(
+        side_effect=lambda key: (
+            b"TEACHING" if "tutor_state" in key else _make_pkg("T2")
+        )
+    )
+    mock_pipe = MagicMock()
+    mock_pipe.execute = AsyncMock(return_value=[True, True])
+    mock_redis.pipeline = MagicMock(return_value=mock_pipe)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _restore_or_init_session
+
+    result = await _restore_or_init_session(sid)
+
+    assert result == "TEACHING"
+    mock_pipe.set.assert_any_call(f"session:{sid}:learner_tier", "T2", ex=86400)
+    mock_pipe.set.assert_any_call(f"session:{sid}:qa_phase_seconds", "300", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g12_non_dict_metadata_writes_no_tier_keys(mocker):
+    """P4: non-dict truthy metadata (e.g. a list) is rejected; no keys written."""
+    bad_pkg = json.dumps({"metadata": ["T1"], "segments": []})  # list, not dict
+    mock_redis, mock_pipe = _make_redis_with_pipeline(bad_pkg)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g12")
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+
+
+# ── Group H — Story 4-21: learner tier override via session_start WS payload ──
+#
+# _handle_session_start now accepts the full payload dict and, when the client
+# supplies a valid learner_tier, OVERWRITES the 4-19 value in Redis before
+# dispatching the IDLE→TEACHING event.  Precedence: 4-21 always runs after 4-19
+# (session_start arrives after connect), so the WS-payload tier wins — the client
+# is authoritative for the student's tier.
+#
+# ACs covered:
+#   AC1 — signature accepts full payload; extracts payload.get("learner_tier")
+#   AC2 — valid T1/T2/T3 → writes both tier keys (learner_tier + qa_phase_seconds)
+#   AC3 — absent / None / unrecognised → NO tier write (4-19 value preserved)
+#   AC5 — valid → write; absent → no write; invalid → no write; Redis failure → no crash
+#   AC6 — session_start dispatch still fires on every path (backward compatible)
+
+
+def _patch_dispatch(mocker):
+    """Patch the FSM dispatch so start_session is a no-op that we can assert on."""
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+    return mock_dispatch
+
+
+def _redis_with_pipe():
+    """(mock_redis, mock_pipe) wired for the tier-override pipeline write.
+
+    Tier keys go through pipe.set() (MagicMock — synchronous, records calls);
+    pipe.execute() is an AsyncMock. Mirrors Group G's _make_redis_with_pipeline
+    (the override path writes both keys atomically via a pipeline, per the
+    code-review fix aligning 4-21 with Story 4-19's atomicity invariant).
+    """
+    mock_redis = AsyncMock()
+    mock_pipe = MagicMock()
+    mock_pipe.execute = AsyncMock(return_value=[True, True])
+    mock_redis.pipeline = MagicMock(return_value=mock_pipe)
+    return mock_redis, mock_pipe
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tier,secs", [("T1", "600"), ("T2", "300"), ("T3", "150")])
+async def test_h1_valid_tier_overwrites_redis(mocker, tier, secs):
+    """AC1+AC2+AC5: a valid tier in the session_start payload writes both tier keys atomically."""
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h1", payload={"type": "session_start", "learner_tier": tier})
+
+    mock_pipe.set.assert_any_call("session:sess-h1:learner_tier", tier, ex=86400)
+    mock_pipe.set.assert_any_call("session:sess-h1:qa_phase_seconds", secs, ex=86400)
+    mock_pipe.execute.assert_awaited_once()  # both keys committed in a single round-trip
+
+
+@pytest.mark.unit
+async def test_h2_valid_tier_still_dispatches_session_start(mocker):
+    """AC6: seeding the tier must NOT skip the IDLE→TEACHING dispatch."""
+    mock_redis, _ = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    mock_dispatch = _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h2", payload={"learner_tier": "T1"})
+
+    mock_dispatch.assert_called_once_with("sess-h2", "session_start")
+
+
+@pytest.mark.unit
+async def test_h3_absent_tier_writes_no_tier_keys(mocker):
+    """AC3: payload without learner_tier → no tier write (4-19 value preserved)."""
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    mock_dispatch = _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h3", payload={"type": "session_start"})
+
+    mock_redis.pipeline.assert_not_called()  # nothing written for the tier
+    mock_pipe.set.assert_not_called()
+    mock_dispatch.assert_called_once_with("sess-h3", "session_start")  # dispatch still fires
+
+
+@pytest.mark.unit
+async def test_h4_none_payload_writes_no_tier_keys(mocker):
+    """AC3+AC6: payload=None (backward-compatible call) → no tier write, dispatch still fires."""
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    mock_dispatch = _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h4", payload=None)
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+    mock_dispatch.assert_called_once_with("sess-h4", "session_start")
+
+
+@pytest.mark.unit
+async def test_h4b_missing_payload_arg_is_backward_compatible(mocker):
+    """AC6: the original single-arg call site (Story 4-4/4-18) keeps working — no tier write."""
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    mock_dispatch = _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h4b")  # no payload kwarg at all
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+    mock_dispatch.assert_called_once_with("sess-h4b", "session_start")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", ["T9", "t1", "T0", "", "ADMIN", "T1 ", "1"])
+async def test_h5_invalid_tier_writes_no_tier_keys(mocker, bad):
+    """AC3+AC5: an unrecognised tier string is rejected by the allowlist — no tier write."""
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    mock_dispatch = _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h5", payload={"learner_tier": bad})
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+    mock_dispatch.assert_called_once_with("sess-h5", "session_start")
+
+
+@pytest.mark.unit
+async def test_h6_non_string_tier_writes_no_tier_keys(mocker):
+    """AC3+AC5: a non-string tier (int/list) is rejected by the isinstance guard — no tier write."""
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h6", payload={"learner_tier": ["T1"]})
+
+    mock_redis.pipeline.assert_not_called()
+    mock_pipe.set.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_h7_redis_failure_does_not_crash(mocker):
+    """AC5: a Redis write failure during tier seeding must not crash — dispatch still fires.
+
+    The failure is injected on pipe.execute() — the atomic commit point after the code-review
+    fix — so a broken commit is exercised, and the IDLE→TEACHING dispatch must still run.
+    """
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mock_pipe.execute = AsyncMock(side_effect=ConnectionError("Redis down"))
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    mock_dispatch = _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h7", payload={"learner_tier": "T1"})  # must not raise
+
+    mock_dispatch.assert_called_once_with("sess-h7", "session_start")  # dispatch survives the tier failure
+
+
+@pytest.mark.unit
+async def test_h8_torn_write_cannot_occur_uses_single_atomic_commit(mocker):
+    """Code-review fix: both tier keys are written through ONE pipeline commit, so a partial
+    (fresh tier + stale qa_phase_seconds) pair is impossible — regression guard against the
+    two-independent-set() torn-write defect."""
+    mock_redis, mock_pipe = _redis_with_pipe()
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    _patch_dispatch(mocker)
+
+    from app.core.websocket import _handle_session_start
+
+    await _handle_session_start("sess-h8", payload={"learner_tier": "T2"})
+
+    mock_redis.set.assert_not_called()          # no non-atomic direct sets for the tier keys
+    mock_redis.pipeline.assert_called_once()    # exactly one pipeline
+    assert mock_pipe.set.call_count == 2        # both keys queued
+    mock_pipe.execute.assert_awaited_once()     # committed together

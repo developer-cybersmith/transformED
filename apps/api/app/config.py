@@ -247,6 +247,24 @@ class Settings(BaseSettings):
         description="Maximum number of distraction interventions per session before escalating",
     )
 
+    # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
+    learner_tier_t1_qa_seconds: int = Field(
+        default=600,
+        description="Q&A phase duration in seconds for T1 (beginner) tier",
+    )
+    learner_tier_t2_qa_seconds: int = Field(
+        default=300,
+        description="Q&A phase duration in seconds for T2 (intermediate) tier",
+    )
+    learner_tier_t3_qa_seconds: int = Field(
+        default=150,
+        description="Q&A phase duration in seconds for T3 (advanced) tier",
+    )
+    learner_tier_default_qa_seconds: int = Field(
+        default=300,
+        description="Q&A phase duration in seconds when tier is unknown or absent (T2 equivalent)",
+    )
+
     # ── PDF extraction ────────────────────────────────────────────────────────
     ocr_text_yield_threshold: int = Field(
         default=50,
@@ -378,7 +396,6 @@ class Settings(BaseSettings):
                 "Check ARQ_JOB_TIMEOUT_S / EXTRACT_TIMEOUT_CAP_S env vars."
             )
         return self
-
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
