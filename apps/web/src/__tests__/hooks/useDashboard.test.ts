@@ -31,13 +31,13 @@ beforeEach(() => {
 });
 
 describe('useDashboard', () => {
-  it('does not retry indefinitely on error', () => {
+  it('retries on error (S2-27 review fix: required for polling to self-heal past a transient failure -- see refreshInterval tests)', () => {
     renderHook(() => useDashboard());
 
     expect(useSWRMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.any(Function),
-      expect.objectContaining({ shouldRetryOnError: false })
+      expect.objectContaining({ shouldRetryOnError: true })
     );
   });
 
@@ -124,5 +124,19 @@ describe('useDashboard — auto-poll while a lesson is still generating (S2-27)'
     const refreshInterval = getRefreshInterval();
 
     expect(refreshInterval(undefined)).toBe(0);
+  });
+
+  it('stops polling after MAX_POLL_DURATION_MS even if still processing (review fix — a genuinely-stuck backend job must not poll forever)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const refreshInterval = getRefreshInterval();
+    const data = { continueLearning: { lesson_id: 'l1', status: 'queued' }, recentLessons: [], learningPulse: undefined };
+
+    expect(refreshInterval(data)).toBeGreaterThan(0);
+
+    vi.setSystemTime(20 * 60 * 1000 + 1); // just past the 20-minute cap
+    expect(refreshInterval(data)).toBe(0);
+
+    vi.useRealTimers();
   });
 });

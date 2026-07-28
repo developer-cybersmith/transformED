@@ -26,7 +26,7 @@ so that a lesson doesn't look permanently stuck at "processing" just because I n
 2. **AC-2** — `useDashboard()` polls while `DashboardData.continueLearning` or any entry in `DashboardData.recentLessons` has status `queued`/`running`, and stops otherwise.
 3. **AC-3** — Poll interval is a named constant (`LESSON_STATUS_POLL_INTERVAL_MS`), not a magic number, shared between both hooks.
 4. **AC-4** — No behavior change while there is no in-flight lesson: `refreshInterval` must evaluate to `0` (no polling) for an all-terminal result set, matching current behavior exactly (fetch once per mount/refocus, no interval).
-5. **AC-5** — No regression to either hook's existing behavior: per-user SWR cache key scoping, `shouldRetryOnError: false`, `null` key when unauthenticated — all untouched.
+5. **AC-5** — No regression to either hook's existing behavior: per-user SWR cache key scoping and `null` key when unauthenticated stay untouched. *(Amended during review — see Senior Developer Review finding #1: `shouldRetryOnError` was restored to SWR's default `true`, a deliberate, necessary change, not a regression — keeping it `false` alongside indefinite polling caused auto-refresh to silently freeze after any transient error.)*
 6. **AC-6** — Tests: both hooks have tests asserting the `refreshInterval` option is a function that returns the poll interval when at least one lesson is non-terminal, and `0` otherwise (including the `undefined`/pre-fetch data case, which must also resolve to `0`, not poll before any data exists).
 7. **AC-7** — No regressions: full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean on every touched file.
 
@@ -91,8 +91,42 @@ Vitest, mocking `swr`'s default export directly (`vi.mock('swr', () => ({ defaul
 
 ### File List
 
-- `apps/web/src/lib/lessonStatusPoll.ts` (NEW — shared `LESSON_STATUS_POLL_INTERVAL_MS` constant + `isLessonProcessing()` helper)
-- `apps/web/src/hooks/useLibrary.ts` (MODIFIED — added `refreshInterval`)
-- `apps/web/src/hooks/useDashboard.ts` (MODIFIED — added `refreshInterval`)
-- `apps/web/src/__tests__/hooks/useLibrary.test.ts` (MODIFIED — new polling-condition tests)
-- `apps/web/src/__tests__/hooks/useDashboard.test.ts` (MODIFIED — new polling-condition tests)
+- `apps/web/src/lib/lessonStatusPoll.ts` (MODIFIED — added `MAX_POLL_DURATION_MS` + `nextPollInterval()` ref-based cap helper, review round)
+- `apps/web/src/hooks/useLibrary.ts` (MODIFIED — added `refreshInterval`; review round: `shouldRetryOnError: true`, wired through `nextPollInterval`)
+- `apps/web/src/hooks/useDashboard.ts` (MODIFIED — added `refreshInterval`; review round: `shouldRetryOnError: true`, wired through `nextPollInterval`)
+- `apps/web/src/app/(dashboard)/library/page.tsx` (MODIFIED, review round — renders stale-but-good data alongside an error banner instead of hiding the whole library on any error)
+- `apps/web/src/__tests__/hooks/useLibrary.test.ts` (MODIFIED — new polling-condition tests; review round: `shouldRetryOnError: true` assertion, poll-duration-cap tests)
+- `apps/web/src/__tests__/hooks/useDashboard.test.ts` (MODIFIED — new polling-condition tests; review round: `shouldRetryOnError: true` assertion, poll-duration-cap test)
+- `apps/web/src/__tests__/app/library/page.test.tsx` (MODIFIED, review round — stale-data-plus-error-banner test)
+
+## Senior Developer Review (AI)
+
+**Date:** 2026-07-27
+**Outcome:** Changes Requested → all actionable findings resolved this session.
+**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec) — per CLAUDE.md's BMAD Code Review Gate.
+
+### Findings
+
+| # | Severity | Source | Finding | Resolution |
+|---|----------|--------|---------|------------|
+| 1 | High (independently re-verified against installed `swr@2.4.2` source) | Edge Case Hunter | SWR's polling loop (`execute()` in `swr/dist/index/index.js`) skips calling `revalidate()` on any tick where the cache already holds an error — it just reschedules the next check without ever re-fetching. The *only* way the cached error clears is `revalidateOnFocus`/`revalidateOnReconnect` firing, or a manual `mutate()`. Combined with `shouldRetryOnError: false` (both hooks' pre-existing setting, unrelated to this story), a single transient poll failure would silently and *permanently* pause auto-refresh until the user blurs/refocuses the tab or the network drops and reconnects — defeating this story's entire purpose. Verified directly against the installed SWR source (not just asserted) given how load-bearing this claim was. | Fixed — restored `shouldRetryOnError` to SWR's own default (`true`) on both hooks. Confirmed via source (`config-context-*.mjs`) that SWR's built-in `onErrorRetry` uses capped exponential backoff (`~random(0.5-1.5) × 2^min(retryCount,8) × errorRetryInterval`), not an unbounded hammering loop — this is exactly the self-healing behavior long-lived polling needs. This required amending this story's own original AC-5 (which had locked `shouldRetryOnError: false` as untouched) — a deliberate, review-driven correction, not an oversight. |
+| 2 | High (independently verified by reading the actual page code) | Edge Case Hunter | `library/page.tsx` withheld `<LibraryView>` entirely whenever `error != null`, even though SWR still holds the last-known-good `data` in that case. So the moment finding #1's freeze bug fired, the user didn't just stop seeing updates — they lost the whole library view and saw a blanket failure screen instead. `dashboard/page.tsx` already degraded gracefully (banner + still-rendered stale data); `library/page.tsx` did not, inconsistently. | Fixed — `library/page.tsx` now renders `<LibraryView>` whenever `data` exists regardless of `error`, with a small warning banner ("couldn't refresh... showing your last known results") layered on top when there's also an error, matching `dashboard/page.tsx`'s existing pattern. The "couldn't load your library right now" empty state is now reserved for the genuine no-data-at-all case. |
+| 3 | Medium (corroborated 2/3 — Blind Hunter, Edge Case Hunter) | Blind Hunter, Edge Case Hunter | No cap on total polling duration — unlike `UploadFlow.tsx`'s own `MAX_POLL_ATTEMPTS` backstop for the identical underlying risk (a genuinely-stuck backend job, already separately flagged to Dev 1), this story's polling had no ceiling and would run every `LESSON_STATUS_POLL_INTERVAL_MS` indefinitely for as long as the tab stayed open. | Added `MAX_POLL_DURATION_MS` (20 minutes, matching `UploadFlow.tsx`'s own window) and a shared `nextPollInterval()` helper that tracks a per-hook-instance start timestamp via a `useRef`, stopping polling once the ceiling is reached; the window resets once nothing is processing, so a later, separate lesson gets its own fresh window rather than inheriting an already-expired one. |
+| 4 | Low (Blind Hunter only, not corroborated, refuted) | Blind Hunter | Claimed the test helper's `useSWRMock.mock.calls[0][2]` reads the *first* recorded mock call rather than the latest, risking stale/wrong config from an earlier, unrelated test. | Refuted — Blind Hunter is diff-only and couldn't see the test file's `beforeEach` block (outside the diff hunk), which calls `useSWRMock.mockReset()` before every single test, clearing call history each time. Within each isolated test, `calls[0]` is correct since exactly one `renderHook()` call happens per test. Confirmed empirically too: all tests pass, including this exact assertion pattern. Not actioned. |
+| 5 | Low (Blind Hunter only, not corroborated, refuted) | Blind Hunter | Questioned whether the installed SWR version supports function-form `refreshInterval`, warning of a "silent runaway-polling" failure mode if unsupported. | Refuted — Edge Case Hunter confirmed the installed version is `swr@2.4.2`, whose type definitions explicitly support `refreshInterval?: number \| ((latestData) => number)`, and traced the exact runtime call site (`next()` calls `refreshInterval(getCache().data)`) confirming it behaves exactly as both hooks assume, including receiving `undefined` before the first successful fetch. Not actioned. |
+| 6 | Low (Blind Hunter only, not corroborated, refuted) | Blind Hunter | Suggested `useDashboard`'s independent re-derivation of "processing" status (vs. `useLibrary`'s pre-bucketed field) could diverge if the backend's status vocabulary ever changed. | Refuted — Edge Case Hunter verified both hooks' checks are against the exact same closed `LessonStatus` union (`'queued'\|'running'\|'ready'\|'failed'`) already shared via `upload.service.ts`, with no divergence in the current code; this coupling pre-dates this story (both services already imported `LessonStatusResponse` from `upload.service.ts`), not something newly introduced. Not actioned. |
+| 7 | Low (Blind Hunter only, not corroborated) | Blind Hunter | `LESSON_STATUS_POLL_INTERVAL_MS` is a hardcoded constant with no per-environment configurability. | Not actioned — matches this codebase's existing convention (`UploadFlow.tsx`'s own `POLL_INTERVAL_MS`/`MAX_POLL_ATTEMPTS` are likewise hardcoded, not env-configurable). |
+
+### Non-issues independently re-verified
+
+- `refreshInterval`'s function-form contract (receives `undefined` pre-fetch, called with `getCache().data` each tick) confirmed correct against actual SWR source by Edge Case Hunter.
+- No cache-key collision or interaction with `UploadFlow.tsx`'s own independent polling loop — confirmed it uses a raw service call inside its own component-local effect, never touching SWR's cache at all.
+- No stale-closure risk that could freeze polling off permanently — both hooks pass a fresh inline arrow function as `refreshInterval` every render, and SWR's polling effect's dependency array includes `refreshInterval` itself, so it always re-evaluates against current state.
+- `isLessonProcessing`'s field/type assumptions confirmed to match the real `LessonStatusResponse`/`LibraryData`/`DashboardData` shapes exactly, field-for-field, by Edge Case Hunter.
+- All 7 ACs and all 3 Dev Notes constraints independently re-verified satisfied by the Acceptance Auditor, including an independent `vitest`/`tsc`/`eslint` pass and direct source verification of the Page Visibility API claim.
+
+## Change Log (continued)
+
+| Date | Change | Author |
+|------|--------|--------|
+| 2026-07-27 | 3-agent code review round. 2 High findings (both from Edge Case Hunter, independently verified against actual SWR source and page code) fixed: `shouldRetryOnError` restored to SWR's default `true` to prevent polling from silently freezing after any transient error (amends this story's original AC-5); `library/page.tsx` now shows stale data + a warning banner instead of hiding the whole page on any error. 1 Medium finding (corroborated 2/3) fixed: added a 20-minute polling-duration cap matching `UploadFlow.tsx`'s own precedent. 3 Low, single-sourced Blind Hunter findings refuted with concrete evidence (test isolation via `beforeEach.mockReset()`, confirmed SWR version/behavior, confirmed no real type divergence) — not actioned. Full suite now 53 files / 506 tests, `tsc`/`eslint` clean. | Dev 2 |
