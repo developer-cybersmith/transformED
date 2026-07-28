@@ -27,7 +27,23 @@ so that Dev 2's remaining two reported items are closed and the tier fix from St
    - **Stamp the generating `tier` into the checkpoint VALUE on write; on read, reject when the stamp disagrees with this lesson's tier** so the section regenerates.
    - **Do NOT tier-scope the checkpoint keys.** That would re-bill every section on every ARQ retry against the $3.00/lesson ceiling and violates Story 2-28 AC-5's stated invariant (keys must stay `f"{node}:{section_id}"`, guarded by `test_phase1_checkpoint_idempotency.py`). A stamp in the *value* satisfies both constraints: the key space is untouched, and a same-tier retry is still a free cache hit.
    - **Legacy checkpoints** (written before this story) carry no stamp, so their provenance is unknowable. For those only, fall back to a count heuristic: reject `count > n_max`, since the write path truncates to `n_max` and a larger batch can only have come from a higher band. Do **not** extend it to `count < n_min` — the write path deliberately keeps short batches (Story **3-28** AC-8: *"Partial batch accepted… It does NOT discard the passing questions"*), so a below-band count is ambiguous between a stale-tier cache and legitimate underproduction. Log it; do not re-bill it.
-   - **A rejected cache must never become an empty quiz.** If regeneration then fails (no parsed response, or every question fails validation), salvage the rejected-but-structurally-valid cached batch, truncate to `n_max`, and **re-stamp it with this lesson's tier**. Without this, a rejected cache plus one transient LLM failure ships a segment with zero questions — worse than the wrong-tier content the guard exists to prevent — and leaves the stale checkpoint in place, so every retry re-rejects and re-bills. `quiz_generator_node` has no `check_ceiling()` gate, so nothing else bounds that loop.
+   - **A rejected cache must never become an empty quiz.** If regeneration then fails (no parsed response, or every question fails validation), salvage the rejected-but-structurally-valid cached batch, truncate to `n_max`, and **re-stamp it with this lesson's tier**. Without this, a rejected cache plus one transient LLM failure ships a segment with zero questions — worse than the wrong-tier content the guard exists to prevent — and leaves the stale checkpoint in place, so every retry re-rejects and re-bills.
+
+   > **Corrected 2026-07-29.** This bullet originally ended "`quiz_generator_node` has no
+   > `check_ceiling()` gate, so nothing else bounds that loop." The first clause is true —
+   > the node itself never calls it — but the conclusion is false, and the false half is the
+   > part a reader would act on. Two things do bound it: `_fan_out_phase1_economy_nodes`
+   > gates on `check_ceiling()` **before** dispatching Phase 1, so an ARQ retry cannot even
+   > re-dispatch once the lesson is over budget; and `_maybe_accumulate_cost` raises as soon
+   > as the running total crosses `max_lesson_cost_usd`. That second one matters here
+   > specifically: `complete_structured` calls it whenever `response.usage` is present, which
+   > includes the exact failure mode this AC describes — a call that succeeded and was billed
+   > but whose *content* did not parse. So the re-bill loop terminates at the $3.00 ceiling.
+   >
+   > The AC still stands on its own merits, for reasons that were always the stronger ones:
+   > shipping a segment with **zero** quiz questions is a correctness defect regardless of
+   > cost, and burning budget re-generating a section we already hold valid questions for is
+   > waste even under the ceiling. Only the "nothing bounds it" urgency was overstated.
 
    > **Amended 2026-07-28 after review.** As first written this AC said "validate the cached question **count** against `_TIER_QUIZ_COUNT_BAND[tier]`". Implemented that way it could not catch its own named hazard: stale caches are all T2-sized (2–3 questions) and T1's `n_max` is 5, so every stale T2 cache passed for exactly the T1 lessons this AC describes. The count guard fired only for T3 lessons holding a 3-question cache — one tier of three, one of two possible stale counts. The wording above now describes the tier-stamp design that actually closes it. The original justification for narrowing also mis-cited Story 2-28 AC-8 (which is *Three canaries*); the keep-short-batches rule is Story **3-28** AC-8.
 4. **AC-4 — `GET /lessons` carries `subject` and `estimated_duration_mins`.** Dev 2 asked for these so dashboard/library cards can show real durations without an N+1 round-trip per lesson.
@@ -119,8 +135,16 @@ The residual gap now applies only to legacy checkpoints and closes as they age o
 rejected cache followed by a failed regeneration previously returned `{"quiz_questions": []}`
 via two early returns that write **no** checkpoint — so the segment shipped zero questions
 *and* the stale checkpoint survived, making every ARQ retry re-reject and re-bill.
-`quiz_generator_node` has no `check_ceiling()` call, so nothing bounded it. Regeneration
-failure now salvages the rejected batch, truncates to `n_max`, and re-stamps it.
+Regeneration failure now salvages the rejected batch, truncates to `n_max`, and re-stamps it.
+
+*Correction, 2026-07-29 (found by the Story 2-32 review, verified here).* This paragraph
+originally added "`quiz_generator_node` has no `check_ceiling()` call, so nothing bounded
+it." The node genuinely does not call it, but the loop was never unbounded: Phase 1 is gated
+on `check_ceiling()` before dispatch, and `_maybe_accumulate_cost` raises once the lesson
+crosses `max_lesson_cost_usd` — including on a billed call whose content failed to parse,
+which is this AC's own failure mode. I repeated the wrong claim in four places (this record,
+AC-3's text, `docs/dev1-tracker.md`, and PR #101's body) and used it to argue urgency the
+fix did not need. The fix is unchanged and still correct; the justification was not.
 
 **AC-4 — list endpoint.** `_LIST_COLUMNS` replaces `select("*")` with an explicit column
 list plus two PostgREST path selectors
@@ -235,5 +259,6 @@ migrations: selecting it from `lessons` returns
 |------|--------|--------|
 | 2026-07-28 | Story created. Folds in the tier-blind checkpoint finding from Story 2-28's Edge Case Hunter review (AC-3) and the signed-URL expiry gap (AC-5) alongside Dev 2's two remaining reported items. | Dev 1 |
 | 2026-07-28 | All 6 tasks implemented. AC-3 narrowed to an `n_max`-only guard during implementation — the `n_min` half conflicts with Story 2-28 AC-8's keep-short-batches rule; residual gap documented. Status → ready-for-review. | Dev 1 |
+| 2026-07-29 | Corrected a false claim repeated in four places: "Phase-1 / `quiz_generator_node` has no `check_ceiling()` gate, so nothing bounds the re-bill loop". The Phase-1 fan-out gates before dispatch and `_maybe_accumulate_cost` raises at the ceiling, so the loop always terminated at $3.00. No code change — AC-3's salvage path stands on the zero-questions correctness defect, which was always the stronger argument. | Dev 1 |
 | 2026-07-28 | **AC-4 live verification passed** against the real project (syntax / aliasing / value-extraction, all read-only). Confirmed the `->>`-yields-TEXT asymmetry that `_coerce_float` exists for, and confirmed the `completed_at` bug empirically (`42703`). Nothing open before merge; status → ready-for-review. | Dev 1 |
 | 2026-07-28 | **6-layer adversarial review round.** Fixed one production-breaking bug (`completed_at` named in `_LIST_COLUMNS` is a `lesson_jobs` column, not a `lessons` one — `GET /lessons` would have 42703'd for every user). **AC-3 redesigned**: the shipped `n_max` heuristic could not catch the hazard AC-3 names, because stale caches are T2-sized and T1's `n_max` is 5 — replaced with a tier stamp in the checkpoint *value*, keys untouched. Added a salvage path so a rejected cache plus a failed regeneration cannot ship an empty quiz or loop-bill. Hardened `_index_by_segment_id` against non-dict entries and non-dict values, recovered scripts against non-`str` values, and added the blank-script recovery branch. Hardened `_metadata_field`/`_coerce_float` against untrusted JSONB (non-`str` subject, `NaN`/`Infinity`). Fixed three tests that passed for the wrong reason. AC-3's text amended in place; the mis-cited "2-28 AC-8" corrected to 3-28 AC-8. Task 5's `media/router.py` dormancy note finally written. Status → blocked-on-verification pending the live `select` check. | Dev 1 |
