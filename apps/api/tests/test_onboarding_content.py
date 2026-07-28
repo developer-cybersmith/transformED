@@ -1,7 +1,7 @@
 """
 Content validation tests for the onboarding diagnostic questions.
 
-These tests read the TypeScript frontend file and validate that the 20-question
+These tests read the TypeScript frontend files and validate that the 20-question
 onboarding diagnostic complies with:
   - PRD quantity requirements (8 cognitive + 5 emotional + 7 self-direction = 20)
   - CLAUDE.md language rules (no IQ/EQ/SQ terms)
@@ -9,7 +9,7 @@ onboarding diagnostic complies with:
   - Dimension values matching the DB schema CHECK constraint
 
 These are pure @pytest.mark.unit tests — no imports from app code, no DB, no network.
-The TypeScript file is read as plain text; no TypeScript compilation required.
+The TypeScript files are read as plain text; no TypeScript compilation required.
 """
 
 from __future__ import annotations
@@ -20,14 +20,18 @@ import re
 import pytest
 
 # ---------------------------------------------------------------------------
-# File under test
+# Files under test
 # ---------------------------------------------------------------------------
 
-# Path is relative to apps/api/ (where pytest is run from).
-# When running from the repo root: adjust accordingly.
-ONBOARDING_FILE = (
-    pathlib.Path(__file__).parent.parent.parent / "web" / "src" / "app" / "onboarding" / "page.tsx"
-)
+# Paths are relative to apps/api/ (where pytest is run from).
+# Story 2-3 moved the onboarding page from a single page.tsx into two files:
+# the 20 question objects live in questions.ts, page.tsx is now just a thin
+# wrapper rendering <OnboardingFlow />, and the branding text + submission
+# payload shape live in OnboardingFlow.tsx itself. Scanning only one of these
+# leaves most of this file's assertions silently unreachable.
+_ONBOARDING_DIR = pathlib.Path(__file__).parent.parent.parent / "web" / "src" / "components" / "onboarding"
+ONBOARDING_FLOW_FILE = _ONBOARDING_DIR / "OnboardingFlow.tsx"
+ONBOARDING_QUESTIONS_FILE = _ONBOARDING_DIR / "questions.ts"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,8 +39,8 @@ ONBOARDING_FILE = (
 
 
 def _content() -> str:
-    """Return the full text of the onboarding page (cached per test session)."""
-    return ONBOARDING_FILE.read_text(encoding="utf-8")
+    """Return the combined text of both onboarding content files (cached per test session)."""
+    return ONBOARDING_FLOW_FILE.read_text(encoding="utf-8") + ONBOARDING_QUESTIONS_FILE.read_text(encoding="utf-8")
 
 
 def _content_lower() -> str:
@@ -51,10 +55,14 @@ def _content_lower() -> str:
 
 @pytest.mark.unit
 def test_onboarding_file_exists() -> None:
-    """The onboarding page.tsx must exist at the expected path."""
-    assert ONBOARDING_FILE.exists(), (
-        f"Onboarding page.tsx not found at {ONBOARDING_FILE}. "
-        "File was moved from (app)/onboarding/ to onboarding/ in Sprint 0 — check the path."
+    """Both onboarding content files must exist at their expected paths."""
+    assert ONBOARDING_FLOW_FILE.exists(), (
+        f"OnboardingFlow.tsx not found at {ONBOARDING_FLOW_FILE}. "
+        "Branding text and submission payload shape live here (Story 2-3) — check the path."
+    )
+    assert ONBOARDING_QUESTIONS_FILE.exists(), (
+        f"questions.ts not found at {ONBOARDING_QUESTIONS_FILE}. "
+        "The 20 question objects live here (Story 2-3) — check the path."
     )
 
 
@@ -204,7 +212,11 @@ def test_no_clinical_claims() -> None:
     DPDP Act 2023 restricts processing of medical/health data. Questions must
     describe learning preferences, not probe for clinical conditions.
     """
-    content_lower = _content_lower()
+    # Strip the required DPDP disclaimer itself before scanning — "This is not
+    # a clinical assessment" is the compliance-positive opposite of a clinical
+    # claim, not a violation of this rule (review fix: this false positive was
+    # previously masked by the scan path bug reading an empty page.tsx).
+    content_lower = _content_lower().replace("not a clinical assessment", "")
     clinical_terms = [
         "adhd",
         "autism",
