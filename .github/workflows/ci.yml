@@ -36,7 +36,13 @@ jobs:
         run: mypy app
 
       - name: Unit tests
-        run: pytest tests/unit tests/integration -x -q
+        # D/P1: this was `pytest tests/unit tests/integration -x -q`, which skipped
+        # the root tests/ directory entirely — 22 real failures lived there unseen —
+        # and `-x` stopped at the first one, so CI never enumerated its own damage.
+        # Honest caveat: restoring this would NOT have caught any of the 17 defects
+        # found on 2026-07-29. Those tests are mock-shaped too. This restores
+        # observability, nothing more. See docs/DEFECT-REGISTER.md BD-3.
+        run: pytest tests -q
         env:
           SUPABASE_URL: http://localhost:54321
           SUPABASE_ANON_KEY: test
@@ -77,6 +83,11 @@ jobs:
       - name: Type check
         run: pnpm type-check
 
+      - name: Test
+        # D/P2: the web job ran install/lint/type-check/build and NEVER ran tests.
+        # 41 story lines claimed "full apps/web suite green (488 tests)"; no machine
+        # had ever verified any of them.
+        run: pnpm test
       - name: Build
         run: pnpm build
         env:

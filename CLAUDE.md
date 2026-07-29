@@ -197,6 +197,43 @@ Applied and frozen migrations (do not alter):
 - Chunk embeddings at ingestion only — never regenerate stored chunk embeddings. Phase 2 RAG tutor query-embedding IS allowed (embed the student question at query time).
 - API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1)
 
+## Defect Register — READ BEFORE FIXING ANYTHING
+
+**`docs/DEFECT-REGISTER.md` is authoritative for known defects and the decisions about them.**
+Consult it before opening a story; add to it before deferring anything.
+
+Established by evidence on 2026-07-29, not by opinion:
+
+- **9 of 11 pre-existing defects never worked for one minute.** Only 1 of 17 was a true
+  regression. This codebase is not unstable — its verification never confirmed anything
+  worked, so the same never-tested assumption resurfaces in a new subsystem and feels like
+  recurrence.
+- **24% of test assertions (567 of 2,328) describe a conversation with a mock**, not an
+  outcome. A mock written by the consumer cannot disconfirm the consumer's belief.
+- **Prose guidance does not hold.** Dev 1 wrote `DEV1-FIX-PLAN.md` and then deviated from it
+  four times in a single day. Every deviation was caught by review, none by a machine.
+
+### Binding rules
+
+1. **Verification scope = CI scope.** Never scope an AC gate to "touched files" — CI checks
+   repo-wide. That exact wording let 78 repo-wide ruff errors accumulate unseen.
+2. **No test may assert only on a mock it constructed.** Assert an observable outcome, or
+   mark it `# MOCK-CONTRACT:` and name the real-dependency test covering that path.
+3. **Any `except SomeLib.Error` needs an executable premise assertion** proving the type
+   hierarchy is what you think. Four separate defects were "we assumed a base class".
+   Pattern to copy: `test_openai_exceptions_are_not_httpx_derived`.
+4. **Any code naming a DB table/column must be validated against `supabase/migrations/`.**
+   A Supabase mock has no Postgres catalog and cannot 42703.
+5. **A documented limitation is NOT an accepted one.** Every `KNOWN LIMITATION` / `TODO` /
+   `FIXME` must carry a `D-nn` register ID. A comment without an ID is a defect wearing a
+   decision's clothes — that is exactly how the inert `structure_node` LLM call survived
+   multiple sprints of review.
+6. **"Matches existing accepted pattern" is not a justification.** It is the ratchet that
+   took `return {**state, ...}` from one site to eighteen. Wrong at site 19 means wrong at
+   site 1 — open a register entry instead.
+7. **A fix without a guard is `FIXED-UNGUARDED`, not fixed.** Closure requires something in
+   CI that fails if the defect returns.
+
 ## BMAD Pre-Implementation Checklist (Story-First Gate)
 
 Before writing ANY code for a new story, complete ALL of the following in order — no exceptions:
