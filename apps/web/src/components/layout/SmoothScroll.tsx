@@ -32,7 +32,29 @@ export default function SmoothScroll({
 
         requestAnimationFrame(raf);
 
+        // Lenis only measures scrollable height at init (and when we call
+        // resize() below on route change) -- it does NOT observe DOM
+        // mutations on its own. Any page whose content grows after mount
+        // (SWR-fetched dashboard sections, images, async lists, etc.) leaves
+        // Lenis's cached scroll bounds stale: the mouse wheel gets "stuck" at
+        // the old (shorter) height while a native scrollbar drag -- which
+        // reads the real DOM directly, bypassing Lenis -- still works fine.
+        // This is exactly that symptom, recurring on whichever page loads
+        // content asynchronously. Observing document.body's size and calling
+        // resize() on every change fixes it generally, not just for one page.
+        let rafId: number | null = null;
+        const resizeObserver = new ResizeObserver(() => {
+            if (rafId !== null) return; // coalesce bursts of mutations into one resize
+            rafId = requestAnimationFrame(() => {
+                lenis.resize();
+                rafId = null;
+            });
+        });
+        resizeObserver.observe(document.body);
+
         return () => {
+            resizeObserver.disconnect();
+            if (rafId !== null) cancelAnimationFrame(rafId);
             lenis.destroy();
         };
     }, []);
