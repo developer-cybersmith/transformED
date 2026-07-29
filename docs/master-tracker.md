@@ -1,11 +1,13 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-27 (Dev 1's Sprint 2 pipeline section below was stale since 2026-07-13 — all 11 nodes were still shown as not-started despite being genuinely built. Corrected after a full code-level audit; see status note below and the Sprint 2 Dev 1 checklist.)
+**Last updated:** 2026-07-29 (Both systemic Dev 1 pipeline bugs reported 2026-07-27 are now fixed and verified end-to-end — backend fixes PR #100/#101, frontend fix (Story 2-33) closing the visible TTS-fallback symptom. Dev 2's Sprint 2 checklist below also brought current — S2-11 through S2-15, S2-26, S2-33 all shipped. See status notes below.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
 ---
 
-**Status note — 2026-07-27:** Full code-level audit of Dev 1's Sprint 2 pipeline (all 11 nodes + cost ceiling + `lesson_ready` push + eval harness), run against actual `main`/`sprint2-master` code rather than this tracker's own (badly stale) checklist. Summary: everything is implemented; most of it is genuinely correct; two real, systemic bugs found and confirmed still open as of this date — see the Sprint 2 Dev 1 section below for the per-node breakdown, and `docs/dev1-sprint2-bug-status-correction.md` for the full write-up handed to Dev 1.
+**Status note — 2026-07-29:** Both bugs from the 2026-07-27 audit are now resolved. Bug 1 (Phase 1 quiz/segment-data duplication): fixed at the root (PR #100, Story 2-28) by removing the `**state` spread that was re-accumulating `operator.add` reducer fields on every node return — root cause was graph shape (`2⁴ = 16×` in one clean run), not ARQ retries as first suspected. Bug 2 (TTS-fallback losing the narration script): backend half fixed (PR #101, Story 2-31 — `_fallback_narration()` now recovers the real script), frontend half fixed (Story 2-33 — a virtual playback clock actually closes the "quiz fires at 0:00" symptom, since the backend fix alone didn't change what a student saw). See the Sprint 2 Dev 1 section below for the full per-node status and Dev 2 tracker §11 S2-33 for the frontend fix's own review findings.
+
+**Status note — 2026-07-27 (superseded by the above for bug status, per-node checklist below still current):** Full code-level audit of Dev 1's Sprint 2 pipeline (all 11 nodes + cost ceiling + `lesson_ready` push + eval harness), run against actual `main`/`sprint2-master` code rather than this tracker's own (badly stale) checklist. Summary: everything is implemented; most of it is genuinely correct; two real, systemic bugs found — see `docs/dev1-sprint2-bug-status-correction.md` for the full write-up handed to Dev 1 (now fixed, per the note above).
 
 **Status note — 2026-07-13 (superseded by the above):** Backend content-ingestion pipeline (Sprint 1) merged to `main` 2026-07-13 (PR #72). Sprint 2 backend — lesson generation (11 nodes: `lesson_planner`, `slide_generator`, `summarise_segment`, `quiz_generator`, `segment_complexity`, `jargon_extractor`, `intervention_messages`, `narration_generator`, `tts_node`, `image_generator`, `package_builder`) — is Dev 1's next work, starting now. **Frontend/assessment/tutor should continue building against existing mocks/fixtures** (`apps/web/src/mocks/data/lessonPackage.ts`, test fixtures) until `package_builder` (Story S2-11) lands — please do not build a parallel real-content path or workaround; ping Dev 1 first if a mock is blocking real progress.
 
@@ -132,24 +134,26 @@
 
 ### Dev 1 — Infrastructure + Content Pipeline
 
-> **Corrected 2026-07-27** — every line below was still shown as `[ ]` not-started since 2026-07-13; all 11 nodes are actually built (stories `2-1`, `2-1b`, `2-6` through `2-25` in `docs/stories/`). Re-verified against real code, not just story status. Two systemic bugs found — see notes.
+> **Corrected 2026-07-27, bugs fixed 2026-07-28/29** — every line below was still shown as `[ ]` not-started since 2026-07-13; all 11 nodes are actually built (stories `2-1`, `2-1b`, `2-6` through `2-25` in `docs/stories/`). Re-verified against real code, not just story status. Two systemic bugs found 2026-07-27, reported to Dev 1 (`docs/dev1-sprint2-bug-status-correction.md`), and **both are now fixed and verified in the merged code** — see below.
 
 - [x] lesson_planner node — GPT-4o — ✓ working, no bugs found. Idempotent (whole-node Supabase checkpoint on a plain `lesson_plan` dict field, no accumulation risk). Extensive validation: segment count/id/duplicate/blank checks, batch-and-reassemble for large chapters, cost-ceiling-aware downshift that fails closed on a Redis outage.
 - [x] slide_generator node — GPT-4o — ✓ working, no bugs found. Same idempotent design as `lesson_planner_node` (`slides` is a plain list, not an `operator.add` reducer field).
-- [x] summarise_segment node — GPT-4o-mini — ⚠️ implemented, but shares the systemic Phase 1 duplication bug (see below)
-- [x] segment_complexity node — GPT-4o-mini — ⚠️ implemented, same systemic bug
-- [x] quiz_generator node — GPT-4o-mini — ⚠️ implemented, same systemic bug — this is the one live-tested as "32 quiz questions from 2 unique items, repeated 16x," reported to Dev 1 2026-07-27
-- [x] jargon_extractor node — GPT-4o-mini — ⚠️ implemented, same systemic bug
-- [x] intervention_messages node — GPT-4o-mini (3 variations × 3 types) — ⚠️ implemented, same systemic bug
-- [x] narration_generator node — GPT-4o-mini — ⚠️ implemented, same systemic bug — this is the one behind the TTS-fallback script-loss bug below
-- [x] tts_node — Sarvam Bulbul v2 → Azure TTS → Browser fallback chain — ✓ working, no bug in this node itself, but wastes real cost synthesizing/uploading audio for duplicate `narration_scripts` entries produced by the Phase 1 bug above (downstream symptom, not a separate defect)
+- [x] summarise_segment node — GPT-4o-mini — ✓ working. Shared the systemic Phase 1 duplication bug — **fixed** (see below).
+- [x] segment_complexity node — GPT-4o-mini — ✓ working. Same systemic bug, **fixed**.
+- [x] quiz_generator node — GPT-4o-mini — ✓ working. Same systemic bug — this is the one live-tested as "32 quiz questions from 2 unique items, repeated 16x." **Fixed**, PR #100 (Story 2-28), verified live.
+- [x] jargon_extractor node — GPT-4o-mini — ✓ working. Same systemic bug, **fixed**.
+- [x] intervention_messages node — GPT-4o-mini (3 variations × 3 types) — ✓ working. Same systemic bug, **fixed**.
+- [x] narration_generator node — GPT-4o-mini — ✓ working. Same systemic bug, **fixed** — this was behind the TTS-fallback script-loss bug below, also fixed.
+- [x] tts_node — Sarvam Bulbul v2 → Azure TTS → Browser fallback chain — ✓ working. No bug in this node itself; the "wasted cost on duplicate scripts" downstream symptom is resolved now that the Phase 1 duplication bug is fixed.
 - [x] image_generator node — GPT Image 1 Mini → Imagen 4 Fast → text-only — 🔵 implemented, not fully verified (fallback chain + hardened URI decoding look solid on the portion reviewed; not exhaustively read)
-- [x] package_builder node → JSONB write to Supabase — ⚠️ implemented, **2 real bugs**: (1) `_fallback_narration()` unconditionally blanks the script even when it's recoverable from `state["narration_scripts"]` for the same segment — live-tested as "quiz pops up at 0:00, empty audio." (2) `_group_by_segment_id()` does zero deduplication, so duplicate entries from the Phase 1 bug flow straight into the final `LessonPackage` — this is what actually produces the visible quiz-duplication symptom.
+- [x] package_builder node → JSONB write to Supabase — ✓ working. Both real bugs found 2026-07-27 are fixed: (1) `_fallback_narration()` now recovers the real script from `state["narration_scripts"]` instead of blanking it (PR #101, Story 2-31). (2) The Phase 1 duplication root cause (below) is fixed at the source, so `_group_by_segment_id()` no longer receives duplicate entries to begin with.
 - [x] WebSocket lesson_ready push working — ✓ confirmed implemented in `apps/api/app/workers/jobs/content_pipeline.py`, matches the frozen `ws.ts` contract.
 - [x] Cost ceiling implementation (MAX_LESSON_COST_USD env var) — ✓ working. `settings.max_lesson_cost_usd` wired via `check_ceiling()`/`accumulate_cost()` across `lesson_planner_node`, `slide_generator_node`, `tts_node`, `image_generator_node`, and the Phase 1 fan-out router; fails safe (downshifts) rather than fails open.
 - [x] Eval harness running against 5 PDFs — 🔵 harness itself implemented and unit-tested (Story 2-14); the actual live 5-PDF run is deliberately gated behind a `@pytest.mark.live_eval` marker and has not been executed yet — an explicit scope decision in the story, not a gap.
 
-**Systemic bug — affects all 6 Phase 1 economy nodes:** their `PipelineState` fields (`segment_summaries`, `quiz_questions`, `complexity_scores`, `glossary`, `intervention_prompts`, `narration_scripts`) use `Annotated[list, operator.add]`, a pure concatenating reducer. Each node's own Supabase checkpoint correctly stops re-billing the LLM on an ARQ retry, but every node still `return`s its cached value on a cache hit — re-appending into the already-accumulated list on every retry. **Cheapest fix**: dedupe by `segment_id` in `package_builder_node`'s grouping helpers (`_group_by_segment_id`/`_index_by_segment_id`) rather than patching all 6 nodes individually — fixes the symptom for every field at once. Full write-up: `docs/dev1-sprint2-bug-status-correction.md`.
+**Systemic bug (Phase 1 economy nodes) — FIXED, PR #100 (Story 2-28), 2026-07-28.** Root cause was not what either dev first suspected — ARQ's `max_tries=3` means 16 retries was never possible. The real cause: every downstream node's `return {**state, ...}` re-spread already-accumulated `operator.add` reducer fields back into the return value, and LangGraph's merge-as-append semantics for reducer channels turned that into `2⁴ = 16×` duplication in a single clean run, no retry involved. Fixed by dropping the `**state` spread from every node's return — verified directly in the merged diff. Also added: per-attempt `thread_id` nonces + `MemorySaver` eviction (a separate memory-hygiene fix, not the duplication fix itself) and duplication canary logging/tests.
+
+**TTS-fallback script loss — backend half FIXED, PR #101 (Story 2-31), 2026-07-28; frontend half FIXED, Story 2-33, 2026-07-29.** `_fallback_narration()` now recovers the real script before falling back to blank (backend). But the backend fix alone didn't change what a student saw — `AudioTimeline.tsx`'s `!hasAudio` branch still called `handleEnded()` immediately regardless of script presence, so "quiz fires at 0:00" persisted until Dev 2 built a virtual playback clock (`processTimeUpdate`-driven synthetic timer) to actually close the visible symptom. See Dev 2 tracker §11 S2-33 for full detail, including 2 High-severity bugs the 3-agent review caught before that merged.
 
 ### Dev 2 — Lesson Player + Frontend
 - [x] Quiz popup integration (Dev 3 API) — ✓ 2026-07-01, wired to `POST /api/assessment/quiz` in `QuizOverlay.tsx`
@@ -166,6 +170,13 @@
 - [x] **Learner Mode — tier disclaimers** (added 2026-07-14) — ✓ 2026-07-14, inline warnings: T2 time-deficit, T3 refresher-only, T1 none. See Dev 2 tracker §11 S2-08.
 - [x] **Learner Mode — wire selected tier into lesson creation** (added 2026-07-14) — ✓ 2026-07-21, chosen tier passed into the lesson-creation request and shown on the generating screen; code review complete on `feature-learner-mode`. See Dev 2 tracker §11 S2-09.
 - [ ] **Learner Mode — tier badge on player + session report** (added 2026-07-14) — e.g. `Deep · 45 min`, shown in the player chrome and on the session report. Re-scoped 2026-07-21: splits into an unblocked player half + a Dev-3-blocked session-report half (needs a new `tier` field on `SessionReport`) — decision pending. See Dev 2 tracker §11 S2-10.
+- [x] **Quiz feedback field-name fix** (S2-11, added 2026-07-23) — ✓ `correct`/`message` → `is_correct`/`explanation`, matching the real backend contract. See Dev 2 tracker §11 S2-11.
+- [x] **Re-assessment prompt after 10 sessions** (S2-12, added 2026-07-23) — ✓ frontend counterpart to Dev 3's Story 3-31. See Dev 2 tracker §11 S2-12.
+- [x] **Assessment library test gaps + RubricScores type drift** (S2-13, added 2026-07-27) — ✓ found during first live end-to-end test session. See Dev 2 tracker §11 S2-13.
+- [x] **Wire dashboard/library to real GET /lessons** (S2-14, added 2026-07-27) — ✓ both were still calling mocks despite the real endpoint being ready. See Dev 2 tracker §11 S2-14.
+- [x] **Fix dashboard/library 401** (S2-15, added 2026-07-27) — ✓ Server Components can't use the browser-only auth interceptor; converted to Client Components. See Dev 2 tracker §11 S2-15.
+- [x] **Audio buffering + playback-error retry states** (S2-26, added 2026-07-29) — ✓ merged to `main` via PR #95. See Dev 2 tracker §11 S2-26.
+- [x] **Virtual playback clock + retry re-fetch on media error** (S2-33, added 2026-07-29) — ✓ merged to `main` via PR #106 — this is the frontend half that closes the TTS-fallback bug above. See Dev 2 tracker §11 S2-33.
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
 - [ ] Onboarding assessment scoring logic complete

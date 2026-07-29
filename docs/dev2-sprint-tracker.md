@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-23 (`feature-learner-mode` merged into `sprint2-master` — reconciles S2-07/S2-08/S2-09 (Learner Mode mode-selection, tier disclaimers, wire-tier-into-lesson-creation, all 5-agent reviewed) alongside S2-10 (tier badge, done directly on `sprint2-master`). S2-06 was also corrected to DONE today — it was already fully implemented, 5-agent reviewed, and merged into `sprint2-master` on 2026-07-21, but this file was never updated after that; caught when the user flagged the discrepancy. **Sprint 2 is now fully complete: 10/10 (S2-01–S2-10), plus S2-11 and S2-12 shipped on top.** ) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 done) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 COMPLETE (10/10) |
+| **Last Updated** | 2026-07-29 (Stories 2-13 through 2-15, 2-26, and 2-33 all shipped and merged to `main`; both pipeline bugs Dev 2 reported to Dev 1 (quiz duplication, TTS-fallback narration loss) are now fully resolved end-to-end, backend + frontend; a recurring dashboard mouse-wheel-scroll-stuck bug also fixed. See cross-team notes below for each. **Sprint 2 is now well beyond its original 10/10 — S2-11 through S2-15, plus S2-26 and S2-33, all shipped on top.**) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 original tasks done, +7 additional stories shipped) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 COMPLETE (10/10 + 7 additional stories) |
 
 ---
 
@@ -23,6 +23,18 @@
 > **Cross-team note (2026-07-23):** investigated Dev 3's **Story 3-28** (tier-aware quiz question count, 1–5 questions/segment instead of always 1, merged to `main`) to scope the frontend counterpart. Found `QuizOverlay.tsx` already correctly handles a variable question count end-to-end (no code change needed there) — but the investigation surfaced a real, pre-existing, currently-shipping bug unrelated to Story 3-28: the quiz score-summary feedback list used field names (`correct`/`message`) that don't match the real backend contract (`is_correct`/`explanation`, verified directly against `apps/api/app/modules/assessment/service.py::grade_quiz`), so every quiz result's feedback line has been rendering blank/`undefined`. Fixed as **Story 2-11** (`docs/stories/2-11-quiz-feedback-field-fix.md`, branch `sprint2/s2-11-variable-quiz-count`): `lib/assessment.ts`'s `QuizFeedbackItem` and `QuizOverlay.tsx`'s render corrected to the real shape; `types/assessment.ts`'s parallel, unused-at-runtime `QuizResult` type (which had the same wrong shape, backed by its own passing-but-wrong test) now reuses `lib/assessment.ts`'s type instead of re-declaring a third drifting copy.
 
 > **Cross-team note (2026-07-23):** scoped and completed the frontend counterpart to Dev 3's **Story 3-31** (re-assessment prompt after every 10 sessions, adds `reassessment_due` to `GET /api/assessment/user/dna`, merged to `main`). Confirmed feasible end-to-end by reading the real backend directly: `types/assessment.ts`'s `LearnerDNA` already had `reassessment_due: boolean` matching the backend model field-for-field, and the onboarding submit endpoint's re-assessment bypass (clearing the idempotency lock before `SET NX`) needs no special-casing from the frontend at all. But found a real, blocking gap beyond "just add a banner": `OnboardingFlow.tsx`'s mount check unconditionally redirected any already-onboarded user (any 200 response) straight to `/dashboard`, never inspecting `reassessment_due` — meaning a "Take Assessment" CTA would have been a dead end. Fixed as **Story 2-12** (`docs/stories/2-12-reassessment-prompt.md`, branch `sprint2/s2-12-reassessment-prompt`): `OnboardingFlow.tsx`'s mount effect now proceeds into the disclaimer/questions flow when due instead of redirecting; new `ReassessmentPrompt.tsx` is a self-contained dismissible dashboard banner (own `getLearnerDna()` fetch, dismissal persisted to `localStorage` keyed on the specific `session_count` so a session-10 dismissal doesn't suppress the session-20 prompt) mounted on the dashboard page after `HeroSection`.
+
+> **Cross-team note (2026-07-27):** live end-to-end testing (real backend + real Supabase, first time past `package_builder` landing for real) surfaced a batch of real gaps in one session: `apps/web/src/__tests__` had drifted against `OnboardingFlow.tsx`/`questions.ts` after a stale-path scan (fixed as a test-only correction, no product code change); assessment library test gaps and a `RubricScores` type drift were fixed as **Story 2-13** (`docs/stories/2-13-assessment-test-fixes.md`); dashboard/library were confirmed still mock-backed despite `GET /api/content/lessons` being real and ready, wired for real as **Story 2-14** (`docs/stories/2-14-real-dashboard-library.md`, dedup + wider lookup window + mock-pulse isolation added in review); the very first live test of that wiring then hit a 401 (Server Components can't use `api.ts`'s browser-only auth interceptor), fixed same-day as **Story 2-15** (`docs/stories/2-15-fix-dashboard-library-auth.md`) by converting both pages to Client Components with new `useDashboard`/`useLibrary` SWR hooks, matching the established `useLesson`/`useSessionReport` pattern.
+
+> **Cross-team note (2026-07-27):** live-tested lesson generation end-to-end and found two real, live-reproducible pipeline bugs, reported to Dev 1: (1) quiz questions duplicating exactly 16× regardless of question count (2 unique → 32, 3 unique → 48); (2) a segment whose TTS synthesis failed showed "0:00 total time" and the quiz fired instantly. Root-caused both by reading `apps/api/app/modules/content/pipeline/graph.py` directly (not guessing from symptoms): (1) `PipelineState`'s `operator.add`-annotated reducer fields re-accumulate on any re-invocation; (2) `_fallback_narration()` hardcoded a blank script even though the real text was sitting in `state["narration_scripts"]`. Communicated to Dev 1 directly (not as a formal doc this time — see chat history if needed).
+
+> **Cross-team note (2026-07-28/29):** Dev 1 fixed both bugs for real — verified directly in the merged diffs, not just taken on faith. **Bug 1** — PR #100 (Story 2-28): root cause was not what either of us first thought (ARQ only retries 3×, so 16 retries was never possible) — every downstream node was spreading `**state` into its return, which re-appends an already-accumulated `operator.add` list; `2⁴ = 16×` in a single clean run, no retry involved. Fixed by dropping the `**state` spread from every node's return. **Bug 2** — PR #101 (Story 2-31): `_fallback_narration()` now recovers the real script from `state["narration_scripts"]` before falling back to blank. Dev 1's own handoff (`docs/dev2-narration-playback-handoff.md`) correctly flagged that **the backend fix alone doesn't change what the student sees** — `AudioTimeline.tsx`'s `!hasAudio` branch still called `handleEnded()` immediately regardless of script presence, so the frontend half was still needed. Also separately requested a genuine gap in our own recent work: `retryAudio()` (Story 2-26) remounted the same expired signed URL rather than re-fetching a fresh one.
+
+> **Cross-team note (2026-07-29):** implemented the frontend half of Bug 2, plus the retry re-fetch gap, as **Story 2-33** (`docs/stories/2-33-virtual-playback-clock.md`, merged to `main` via PR #106). `AudioTimeline.tsx` now branches three ways (`hasAudio` / `!hasAudio && hasScript` / neither) — the new `hasScript` case runs a `setInterval`-driven virtual playback clock that drives the exact same `processTimeUpdate` boundary logic a real `<audio>` element would, closing the "quiz fires at 0:00" symptom for real. `Player.tsx`'s Retry button now re-fetches the lesson (fresh signed media URL) before retrying. The 3-agent code review caught two real **High** severity bugs before merge, both fixed with regression tests: (1) a pre-existing `Player.tsx` mount effect keyed on the `lesson` **prop's object identity** rather than `lesson_id` silently reset all playback progress on every retry-triggered refetch — confirmed by all 3 reviewers, one of whom reproduced it directly; fixed with a `lesson_id`-keyed ref guard; (2) the virtual clock had no path to ever reach `ENDED` for a script-only last segment resumed after teach-back — fixed with a narrowly-scoped post-quiz `handleEnded()` call, safe against re-firing the quiz. Both bugs Dev 2 originally reported are now fully closed, frontend + backend.
+
+> **Cross-team note (2026-07-29):** independently audited all of Dev 1's Sprint 2 pipeline deliverables (11 nodes + cost ceiling + WebSocket `lesson_ready` push + eval harness) against the actual current code, since `docs/master-tracker.md`'s Dev 1 Sprint 2 section is dated 2026-07-13 and still shows everything as not-started — badly stale. Confirmed genuinely done and correct: `lesson_planner`, `slide_generator`, `tts_node`, cost ceiling enforcement, the WebSocket push, and the eval harness (its live 5-PDF run is intentionally gated behind a test marker, not a gap). The two bugs above were the only real defects found.
+
+> **Product bug (2026-07-29):** user reported the dashboard's mouse wheel scroll getting stuck (native scrollbar drag still worked) — a recurring issue, seen before on a different page. Root cause: `SmoothScroll.tsx` (Lenis) wraps the whole app and only calls `lenis.resize()` on route change; Lenis never observes DOM mutations on its own, so any page whose content grows after mount (SWR-fetched sections, images, async lists) leaves its cached scroll bounds stale — the wheel gets stuck at the old height while a scrollbar drag (reading the real DOM directly) still works. Fixed generally with a `ResizeObserver` on `document.body` inside `SmoothScroll.tsx`, calling `lenis.resize()` (rAF-debounced) on any body size change — fixes this class of bug for every page, not just the dashboard. Small, ad-hoc fix (no story per user's direction), committed directly to `sprint2-master`; not yet PR'd to `main` (user's call — batching with other small work later).
 
 ---
 
@@ -1379,6 +1391,62 @@ Small badge showing the lesson's tier and duration, e.g. `Deep · 45 min`.
 - [ ] Badge visible in the lesson player (header/chrome area)
 - [ ] Same badge shown on the session report (S2-04)
 - [ ] Badge format: `{Tier label} · {duration} min`
+
+---
+
+### S2-11 — Fix Quiz Feedback Field-Name Mismatch — ✅ 2026-07-23
+**Status:** ✅ DONE — `docs/stories/2-11-quiz-feedback-field-fix.md`, branch `sprint2/s2-11-variable-quiz-count`, merged to `sprint2-master`
+**Files:** `apps/web/src/lib/assessment.ts`, `apps/web/src/components/player/QuizOverlay.tsx`, `apps/web/src/types/assessment.ts`
+
+Every quiz result's feedback line had been rendering blank/`undefined` in every environment — `QuizFeedbackItem`/`QuizOverlay.tsx` read `correct`/`message`, but the real backend (`apps/api/app/modules/assessment/service.py::grade_quiz`) sends `is_correct`/`explanation`. Found while scoping Dev 3's Story 3-28 (tier-aware quiz count), unrelated to it. Fixed the real shape at both the live call site and the parallel, unused-at-runtime `QuizResult` type in `types/assessment.ts` (which had the same wrong shape, backed by its own passing-but-wrong test) — now reuses `lib/assessment.ts`'s type instead of a third drifting copy. 5-agent review, 1 patch applied.
+
+---
+
+### S2-12 — Re-Assessment Prompt After 10 Sessions — ✅ 2026-07-23
+**Status:** ✅ DONE — `docs/stories/2-12-reassessment-prompt.md`, branch `sprint2/s2-12-reassessment-prompt`, merged to `sprint2-master`
+**Files:** `apps/web/src/components/onboarding/OnboardingFlow.tsx`, `apps/web/src/components/dashboard/sections/ReassessmentPrompt.tsx` (new)
+
+Frontend counterpart to Dev 3's Story 3-31 (`reassessment_due` on `GET /api/assessment/user/dna`). `OnboardingFlow.tsx`'s mount check previously redirected any already-onboarded user straight to `/dashboard`, unconditionally, never checking `reassessment_due` — a "Take Assessment" CTA would have been a dead end. Fixed: mount effect now proceeds into the flow when due. New `ReassessmentPrompt.tsx` is a self-contained dismissible dashboard banner, dismissal persisted to `localStorage` keyed on `session_count` (so dismissing at session 10 doesn't suppress the session-20 prompt). 3-agent review.
+
+---
+
+### S2-13 — Assessment Library Test Gaps + RubricScores Type Drift — ✅ 2026-07-27
+**Status:** ✅ DONE — `docs/stories/2-13-assessment-test-fixes.md`, merged to `sprint2-master`
+**Files:** `apps/web/src/lib/assessment.ts`, its test file, plus a stale-path correction across `OnboardingFlow.tsx`/`questions.ts` tests
+
+Surfaced during the first live end-to-end test session against the real backend + real Supabase. Fixed a real `RubricScores` type drift and closed test coverage gaps in the assessment library that had gone unnoticed under mocks. 3-agent review.
+
+---
+
+### S2-14 — Wire Dashboard and Library to Real GET /lessons Endpoint — ✅ 2026-07-27
+**Status:** ✅ DONE — `docs/stories/2-14-real-dashboard-library.md`, merged to `sprint2-master`
+**Files:** `apps/web/src/services/dashboard.service.ts`, `apps/web/src/services/library.service.ts`, `apps/web/src/components/dashboard/sections/*`, `apps/web/src/components/library/LibraryView.tsx`
+
+Confirmed via `docs/master-tracker.md` that `GET /api/content/lessons` was real, tested, and ready on Dev 1's side — but dashboard/library were still calling mocks. Wired both services to the real, paginated endpoint. Review round added: wider lookup window (`limit: 20`), dedup between `continueLearning` and `recentLessons`, isolated the mock learning-pulse call behind its own try/catch so its failure can't take down the rest of the dashboard, and an `all` field on `LibraryData` for robust "All" tab rendering. Dropped fabricated fields (`chapterTitle`, `durationSeconds`, etc.) per this project's never-fabricate-data convention. 3-agent review.
+
+---
+
+### S2-15 — Fix Dashboard/Library 401 by Moving Real Data Fetching Client-Side — ✅ 2026-07-27
+**Status:** ✅ DONE — `docs/stories/2-15-fix-dashboard-library-auth.md`, merged to `sprint2-master`
+**Files:** `apps/web/src/hooks/useDashboard.ts` (new), `apps/web/src/hooks/useLibrary.ts` (new), `apps/web/src/app/(dashboard)/dashboard/page.tsx`, `apps/web/src/app/(dashboard)/library/page.tsx`
+
+The very first live test of S2-14's wiring hit a 401: both pages were Server Components, but `api.ts`'s auth interceptor only attaches a Bearer token client-side (`typeof window !== 'undefined'`) — a Server Component running in Node.js has no `window`, so every real API call went out with no auth header at all. Fixed by converting both pages to Client Components using two new SWR-based hooks, matching the already-established `useLesson`/`useSessionReport` pattern (real, authenticated data fetching in this codebase is always client-side). Review round added a loading state (was flashing empty-lesson sections) and per-user SWR cache key scoping (`` `dashboard:${user.id}` ``) to prevent cross-user data leakage in a shared browser tab. Merged before review (user was actively blocked live-testing), reviewed immediately after — 2 findings fixed.
+
+---
+
+### S2-26 — Audio Buffering + Playback-Error Retry States — ✅ 2026-07-29
+**Status:** ✅ DONE — `docs/stories/2-26-audio-buffer-error-retry.md`, merged to `main` via PR #95
+**Files:** `apps/web/src/stores/player.machine.ts`, `apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/components/player/Player.tsx`
+
+Re-implemented, against current `main`, the still-valuable half of a 3-week-stale PR (#71) that had diverged too far to merge cleanly (its `PlayerLoader.tsx` approach predated the real backend integration and would have regressed the current, better `status`-based loading/error handling). Adds `isBuffering`/`audioError`/`audioRetryCount` state, `onWaiting`/`onPlaying`/`onCanPlay`/`onError` wiring on the `<audio>` element, a non-blocking buffering indicator, and a playback-error screen with a Retry button. 3-agent review caught and fixed: `retryAudio()` not actually resuming playback (missing effect dependency — clearing the error but never calling `.play()` again on the remounted element), and the error overlay blocking `QUIZ`/`TEACH_BACK`/`ENDED` when a stale error survived into those states. Also fixed in the same PR: an unrelated pre-existing `tsc` break on `main` (Story 2-25's `LessonMetadata.tier` optionality change had broken S2-10's `TIER_LABELS` lookup).
+
+---
+
+### S2-33 — Virtual Playback Clock + Retry Re-Fetch on Media Error — ✅ 2026-07-29
+**Status:** ✅ DONE — `docs/stories/2-33-virtual-playback-clock.md`, merged to `main` via PR #106
+**Files:** `apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/components/player/Player.tsx`, `apps/web/src/components/player/PlayerLoader.tsx`, `apps/web/src/hooks/useLesson.ts`, `apps/web/src/stores/player.machine.ts`
+
+The frontend half needed to actually close the TTS-fallback bug Dev 2 reported to Dev 1 — see the cross-team notes above for the full bug-report/fix history with Dev 1. `AudioTimeline.tsx` now branches three ways (real audio / recovered-script-but-no-audio / neither); the new middle case runs a wall-clock-accurate, `playbackRate`-aware virtual clock driving the same `processTimeUpdate` boundary logic real audio would, closing the "quiz fires at 0:00" symptom for good. `Player.tsx`'s Retry button now re-fetches the lesson (fresh signed media URL) via a new `useLesson` `refetch` + `refreshLessonMedia` store action, instead of remounting the same expired URL. 3-agent review caught 2 real **High** severity bugs pre-merge (see cross-team note above for detail) plus 4 Medium/Low fixes (seek-vs-tick race, in-flight retry-button guard, drift correction, defensive duration reset) — all with regression tests. Full suite 53 files / 521 tests passing throughout.
 
 ---
 
