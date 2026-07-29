@@ -85,19 +85,23 @@ system.
 | D10 | Unpriced model skipped `accumulate_cost` entirely → $3.00 ceiling could never fire | BW | Fail **closed**: charge the most expensive *known* rate, derived from the table; log ERROR; never abort. | `test_cost_ceiling_failopen.py` (PR #105) |
 | D11 | `structure_node`'s LLM validation: 6,000-char prompt window vs ≥90%-coverage guard → always discarded above ~6,667 chars | BW | Delete it. Detection is font+regex only, and that is a **limitation, not a feature**. | `test_structure_no_llm.py` (PR #107) — **incomplete, see D12** |
 
-### OPEN — self-inflicted, caught by review 2026-07-29
+### Review round 2 (2026-07-29) — ALL RESOLVED
+
+Five fixed, one **rejected as a wrong finding**. Kept as its own section because the
+shared shape — a guard that watches a *proxy* rather than the property it claims to
+prove — is the failure most likely to recur.
 
 These are mine, from today, and they are listed at the same weight as everything else on
 purpose.
 
 | ID | Defect | Decision | Enforcement |
 |----|--------|----------|-------------|
-| D12 | "No LLM call" tests spy only on `complete_structured`; `provider.complete()` survives all six | Assert on the **factory**, not one method: `factory.assert_not_called()` | *(to add)* |
-| D13 | Golden baseline froze an **inverted hierarchy** — chapters at `level: "topic"`, below their own subsections. The `chapter` branch is unreachable with the fixture's font sizes, so it is unpinned. Blocks anyone who fixes it. | Add a ≥20.2pt font block; re-capture from a named commit | *(to add)* |
-| D14 | Golden test is environment-dependent — `STRUCTURE_MAX_SECTIONS=3` turns it red, with a message that misdiagnoses it as "detection moved" | Pin `structure_min_section_chars` / `structure_max_sections` as every neighbouring test does | *(to add)* |
-| D15 | `test_fallback_is_at_least_every_known_model_rate` is a mathematical tautology — `max` over a set is ≥ every element of that set | Delete or reframe against a model *outside* the table | *(to add)* |
-| D16 | Story 2-33 AC-5 claims twice that "AC-1 alone would not have caught the original". False — AC-1 asserts `assert_awaited_once()`, which fails against the original bug. AC-5's test also stubs `check_ceiling → True` unconditionally, so it never exercises the ceiling. | Correct the claim; make AC-5 use the real `check_ceiling` arithmetic | *(to add)* |
-| D17 | `None` token counts now crash. The pre-fix early return was an accidental shield that the fix removed. | `(input_tokens or 0)`; clamp `cost = max(0.0, cost)` | *(to add)* |
+| ~~D12~~ | **CLOSED 2026-07-29 (PR #107).** Six "no LLM call" assertions spied on `complete_structured` alone; a regression via `provider.complete()` passed all of them. | SELF | Assert on the **factory** — if `get_llm_provider` is never called, no provider method can run. | `factory.assert_not_called()` — **mutation-verified**: "provider obtained but never used" passed the old suite entirely, fails 3 tests now |
+| ~~D13~~ | **CLOSED 2026-07-29 (PR #107).** The `chapter` branch was unreachable with the fixture (median 14.0 -> threshold 17.5 -> chapter band starts at 20.125; largest block 18.0pt), so two of three level branches were unpinned dead code. | SELF | Derived font set (24.0/17.0/15.2 against median 12.0) landing one heading in each band. Asserted on `detect_headings` directly, since `coalesce_sections` would make a failure ambiguous. | `test_all_three_heading_levels_are_reachable_from_font_metadata` — catches "chapter branch deleted" and "bands swapped" |
+| ~~D14~~ | **CLOSED 2026-07-29 (PR #107).** Golden test was environment-dependent: `STRUCTURE_MAX_SECTIONS=3` turned it red with "detection itself moved" — a misdiagnosis; nothing moved, the cap merged sections. | SELF | Pin `structure_max_sections` and `structure_min_section_chars`, as every neighbouring structure test already did. | The pinned settings in `test_sections_are_identical_to_the_pre_deletion_baseline` |
+| ~~D15~~ | **REJECTED 2026-07-29 — the review claim was wrong.** It called `test_fallback_is_at_least_every_known_model_rate` a mathematical tautology ("max over a set is >= every element"). True of the *arithmetic*, but it ignores that the test discriminates *implementations*. **Mutation-tested rather than taken at face value: it catches max->min, output-uses-input-max, AND a hardcoded literal.** Redundant with its neighbour, not tautological. | — | **Keep it.** Deleting a working test on a false premise is worse than keeping a redundant one. Recorded so the claim is not re-raised. | n/a — this entry exists to prevent a wrong "fix" |
+| ~~D16~~ | **CLOSED 2026-07-29 (PR #105).** Two defects in one. (a) The story claimed "AC-1 alone would not have caught the original" — **false**: AC-1 asserts `assert_awaited_once()` and the original bug was an early `return` *before* `accumulate_cost`. (b) AC-5's test stubbed `check_ceiling -> True` unconditionally, so it tested the `if` statement, blind to the arithmetic — it could not tell a charge that trips the ceiling from one that does not. | SELF | Correct the claim; run the REAL `accumulate_cost`/`check_ceiling` against fakeredis seeded just under $3.00, with nothing telling `check_ceiling` what to return. | `test_unpriced_charge_really_trips_the_ceiling_via_real_arithmetic` + `test_a_charge_below_the_ceiling_does_not_trip_it` — the two scenarios the stubbed version could not distinguish |
+| ~~D17~~ | **CLOSED 2026-07-29 (PR #105).** `None` token counts raised `TypeError: unsupported operand type(s) for /` — an *unknown* exception, so `with_retry` would not retry and the node died. Verified reachable by execution. The call had already succeeded and been billed, so throwing made ARQ re-run and re-pay. Negatives were worse: `accumulate_cost` raises `ValueError` on a negative cost, equally unclassifiable. | SELF | `max(0, x or 0)` at the source, with ERROR/WARNING logs stating the total is now an under-estimate. | `test_missing_token_counts_do_not_crash_the_node` (3 cases) + `test_negative_token_counts_are_clamped_not_propagated` |
 
 ### OPEN — live in production
 
@@ -115,6 +119,7 @@ Not "documented limitations". Each carries an explicit condition that reopens it
 | ID | Defect | Sev | Decision | Enforcement |
 |----|--------|-----|----------|-------------|
 | D21 | Embed truncation assumes ~4 chars/token. Measured `cl100k_base`: English 6.0, **Hindi 1.06, Tamil 0.71** | Deferred | **DECISION 2026-07-29: English-only for now.** Fix is one line and already specified (plan 6.3): `enc.decode(enc.encode(text)[:cap])`. **Trigger: the first Indic-language lesson.** | DISCIPLINE — comment at `graph.py` truncation site |
+| D28 | **`detect_headings` ranks a chapter BELOW its own subsections.** `candidates` is keyed by text and every writer is guarded by `if text not in candidates`, so the **font strategy always beats the regex strategies that run after it** — an explicit `Chapter N:` prefix loses to a relative font-size band. Visible in the golden baseline: `Chapter 1` at `level: "topic"`, its own `1.1`/`1.2` at `"section"`, while `_LEVEL_RANK = {chapter: 0, section: 1, topic: 2}`. | Med | **DECISION 2026-07-29: pinned, NOT fixed.** Changing precedence is a detection *behaviour* change, and Story 2-34's entire premise is that removing an inert LLM call is behaviour-**preserving**. **Trigger: the Sprint 3 docling migration**, per the decision to park structure detection. | `test_font_strategy_wins_over_the_chapter_regex_inverting_the_hierarchy` pins the WRONG behaviour with re-capture instructions — the fix cannot land silently |
 | D24 | **CI's new test steps land ADVISORY (`continue-on-error: true`), not gating.** `pytest tests` surfaces 22 pre-existing failures (Dev 3: 19, Dev 4: 3). Gating it on day one turns `main` red for all four developers over failures this PR did not introduce. **Applies to the api job only** — `pnpm test` was measured green (D25) and gates from day one. | Med | **DECISION 2026-07-29: land advisory, ratchet later.** `tests/unit` + `tests/integration` **do** gate (and `-x` is gone, so CI now enumerates rather than stops at one). **Trigger to drop `continue-on-error`:** the 22 reach zero. Until then the number is *visible*, which it has never been. | DISCIPLINE — the trigger is in a comment at both step definitions in `.github/workflows/ci.yml` |
 | D26 | **CI has failed on 60 of its last 60 runs — zero successes — and merges proceeded anyway.** The API job dies at `ruff check .` (31 errors: Dev 3 22, Dev 4 9), which is *before* any test step, so "CI skipped the root `tests/` directory" understates it: **CI never reached a test step at all.** The web job died even earlier (D25). | SELF/BW | A red gate that everyone routes around is worse than no gate — it trains the team to ignore it. Gating scope must be a set that is green *today* (`tests/unit` + `tests/integration`: 743 pass) and grows by ratchet. | Fixing D25 makes a green run possible for the first time; the lint debt is Dev 3's and Dev 4's and is now the top ask in both handoffs |
 
@@ -186,11 +191,11 @@ is what happens without it: three developers, three green suites, one broken pro
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | 11 (+2 in PR) |
-| Fixed, awaiting merge | 4 (D10, D11, D19, D20) |
-| **Open** | **12** |
+| Defects closed (fixed **and** guarded) | 11 |
+| Fixed, awaiting merge | **9** — D10, D11 (#105/#107 orig), D12, D13, D14, D16, D17 (round 2), D19, D20 (#112) |
+| **Open** | **7** |
 | Of which **live in production** | **3** (D18, D23, D27) |
-| Of which **self-inflicted 2026-07-29** | 6 |
+| Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
 
 That last row is the honest health metric. Five of eight rules currently depend on someone
