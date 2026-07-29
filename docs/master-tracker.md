@@ -89,7 +89,7 @@
 - [x] Custom React audio-timeline state machine — ✓ done
 - [x] Slide renderer from lesson package JSONB — ✓ done
 - [x] Audio playback + timestamp-driven slide advance — ✓ done
-- [ ] Avatar intro/outro video component (HeyGen cached) — ⛔ BLOCKED: avatar_intro/outro/static_url not in frozen schema; needs all-4-dev sign-off + Sprint 2 avatar node. Deferred to Sprint 2.
+- [x] Avatar intro/outro video component (HeyGen cached) — ✓ 2026-07-29, unblocked and shipped as Story 1-5 (PR #109). Cross-team sign-off confirmed on `docs/proposals/avatar-fields-schema-change.md`; added 3 optional `avatar_intro_url`/`avatar_static_url`/`avatar_outro_url` fields to the frozen `LessonPackage` contract (NOT required, to avoid repeating the `tier`/Story 2-25 regression) plus `AvatarOverlay.tsx`. Not yet visibly active for real students — `package_builder_node` doesn't populate these fields yet (Dev 1 follow-up). See Dev 2 tracker §10 S1-05.
 - [x] Jargon hover tooltip component — ✓ done
 - [x] Lesson load from real API — ✓ 2026-07-23. Unblocked by Dev 1's Story 1-6 (`GET /api/content/lessons/{id}` now returns real `content` with signed media URLs). Wired frontend-side as Story 1-7: `lesson.service.ts`/`useLesson.ts` swapped off mocks onto the real endpoint, `PlayerLoader.tsx` now distinguishes running/queued/failed/ready instead of collapsing to a permanent error, `AudioTimeline.tsx` degrades gracefully on an empty `audio_url`.
 - [x] PDF upload UI + generation progress indicator — ✓ done

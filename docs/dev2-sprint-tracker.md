@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-29 (Stories 2-13 through 2-15, 2-26, and 2-33 all shipped and merged to `main`; both pipeline bugs Dev 2 reported to Dev 1 (quiz duplication, TTS-fallback narration loss) are now fully resolved end-to-end, backend + frontend; a recurring dashboard mouse-wheel-scroll-stuck bug also fixed. See cross-team notes below for each. **Sprint 2 is now well beyond its original 10/10 — S2-11 through S2-15, plus S2-26 and S2-33, all shipped on top.**) |
+| **Last Updated** | 2026-07-29 (**Sprint 1 is now fully complete, 14/14** — S1-05 AvatarOverlay shipped, the last open item, via a cross-team schema change to the frozen `LessonPackage` contract. Also: Stories 2-13 through 2-15, 2-26, and 2-33 all shipped and merged to `main`; both pipeline bugs Dev 2 reported to Dev 1 (quiz duplication, TTS-fallback narration loss) are now fully resolved end-to-end, backend + frontend; a recurring dashboard mouse-wheel-scroll-stuck bug also fixed. See cross-team notes below for each.) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 original tasks done, +7 additional stories shipped) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 COMPLETE (10/10 + 7 additional stories) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 COMPLETE (10/10 + 7 additional stories) |
 
 ---
 
@@ -36,7 +36,9 @@
 
 > **Product bug (2026-07-29):** user reported the dashboard's mouse wheel scroll getting stuck (native scrollbar drag still worked) — a recurring issue, seen before on a different page. Root cause: `SmoothScroll.tsx` (Lenis) wraps the whole app and only calls `lenis.resize()` on route change; Lenis never observes DOM mutations on its own, so any page whose content grows after mount (SWR-fetched sections, images, async lists) leaves its cached scroll bounds stale — the wheel gets stuck at the old height while a scrollbar drag (reading the real DOM directly) still works. Fixed generally with a `ResizeObserver` on `document.body` inside `SmoothScroll.tsx`, calling `lenis.resize()` (rAF-debounced) on any body size change — fixes this class of bug for every page, not just the dashboard. Small, ad-hoc fix (no story per user's direction), merged to `main` via PR #108.
 
-> **Tracker correction (2026-07-29):** Sprint 1's **S1-09** (Library Real Data Integration) and **S1-10** (Dashboard Real Data Integration) were still shown `NOT STARTED` in §10 below, but both were actually completed under Sprint 2 story numbers (**2-14**, **2-15**) — same underlying task, tracked twice across two sprint sections. Corrected in §10; Sprint 1 dashboard count below updated accordingly (13/14 done, only **S1-05 AvatarOverlay** genuinely still open, blocked on a cross-team schema decision).
+> **Tracker correction (2026-07-29):** Sprint 1's **S1-09** (Library Real Data Integration) and **S1-10** (Dashboard Real Data Integration) were still shown `NOT STARTED` in §10 below, but both were actually completed under Sprint 2 story numbers (**2-14**, **2-15**) — same underlying task, tracked twice across two sprint sections. Corrected in §10.
+
+> **Cross-team note (2026-07-29):** **S1-05 (AvatarOverlay) shipped** — `docs/stories/1-5-avatar-overlay.md`, merged to `main` via PR #109. Confirmed cross-team sign-off (user, on behalf of all 4 devs) on `docs/proposals/avatar-fields-schema-change.md`, then independently re-verified the change was genuinely safe before touching the frozen contract: no direct `LessonPackage(...)` Pydantic constructor calls exist anywhere outside `apps/api/app/schemas/lesson.py` itself, and the only 2 full `LessonPackage`-literal sites on the frontend are unaffected by an added optional field. One corrected design decision vs. the proposal's own draft: the 3 new avatar fields are NOT marked `required` in the JSON schema — the draft's version would have repeated the exact `tier`/Story 2-25 regression (a retroactively-added required field breaks raw-schema validation of any pre-existing lesson/fixture that predates it). New `AvatarOverlay.tsx` is fully self-contained (zero changes to `Player.tsx`'s existing status conditionals) and gracefully skips every piece when its URL is absent — currently the only reachable case, since `package_builder_node` doesn't populate these fields yet (Dev 1's separate follow-up). 3-agent review caught and fixed 6 real issues (video watchdog timeout for a hung load, an intro-vs-audio-error z-index conflict, honest test wording after discovering this environment has no `uri` format checker installed, static-thumbnail error handling, and two stale-doc corrections — `GET /media/signed-url` is no longer a 501 stub, and `avatar-clips` was actually *removed* from its bucket allowlist by Story 2-25, both corrected in the proposal doc for whoever picks up the remaining backend wiring).
 
 ---
 
@@ -45,7 +47,7 @@
 | Sprint | Period | Total Tasks | Done | Partial | Not Started |
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 14 | **13** | 0 | **1** |
+| Sprint 1 | Weeks 2–3 | 14 | **14** | 0 | **0** |
 | Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
@@ -801,10 +803,10 @@ Renders: `slide.title`, `slide.bullets[]`, `slide.image_url` (with `slide.fallba
 
 ---
 
-### S1-05 — AvatarOverlay Component
+### S1-05 — AvatarOverlay Component — ✅ 2026-07-29
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/components/player/AvatarOverlay.tsx`
+**Status:** ✅ DONE — `docs/stories/1-5-avatar-overlay.md`, merged to `main` via PR #109. Unblocked after cross-team sign-off on `docs/proposals/avatar-fields-schema-change.md` (3 new optional `LessonPackage` avatar fields, corrected from the proposal's original "required" draft to avoid repeating the `tier`/Story 2-25 regression). 3-agent review, 6 findings fixed (watchdog timeout, audioError-yield guard, static-image error handling, honest format-checker fix, stale doc corrections, wording precision).
+**Files:** `src/components/player/AvatarOverlay.tsx` (new), `src/components/player/Player.tsx`, `packages/shared/types/lesson.ts`, `packages/shared/lesson_package.schema.json`, `apps/api/app/schemas/lesson.py`
 
 ```
 lesson start → play HeyGen intro video (lesson_package.avatar_intro_url)
@@ -815,11 +817,13 @@ lesson end   → play HeyGen outro video (lesson_package.avatar_outro_url)
 The HeyGen video URL is **pre-generated at build time** — never call HeyGen API at player load. Player must not block on avatar — if video URL is null, skip intro/outro gracefully.
 
 **Acceptance criteria:**
-- [ ] Intro video plays automatically before first audio segment
-- [ ] Static image shown during lesson body with mouth animation cue (CSS pulse on blink interval)
-- [ ] Outro plays after `store.endLesson()` fires
-- [ ] If `avatar_intro_url` is null: skip silently, start lesson audio immediately
-- [ ] Video does not cause hydration error (`ssr: false` in PlayerLoader covers this)
+- [x] Intro video plays automatically before first audio segment
+- [x] Static image shown during lesson body (mouth-animation "blink" cue implemented as a CSS pulse on the thumbnail)
+- [x] Outro plays after `store.endLesson()` fires
+- [x] If `avatar_intro_url` is null: skip silently, start lesson audio immediately
+- [x] Video does not cause hydration error (`AvatarOverlay` is a normal import inside `Player.tsx`, covered by `PlayerLoader.tsx`'s existing single `dynamic(..., {ssr:false})` wrapper for the whole tree — no second dynamic import needed)
+
+**Important caveat — not yet visible to real students:** `package_builder_node` doesn't populate the 3 new avatar fields yet (Dev 1's separate follow-up, explicitly out of scope for this story). Every real lesson today still has all 3 fields absent, so `AvatarOverlay` correctly renders nothing — this story's code is real, tested, and working, but the feature has no visible effect until that backend wiring lands. Also flagged during review: `GET /media/signed-url`'s `avatar-clips` bucket entry was removed by Story 2-25 (structurally broken path shape) — whoever picks up the backend follow-up needs to re-enable a corrected bucket entry (or make it public) as a prerequisite, not just resolve the original signed-URL-expiry question.
 
 ---
 
