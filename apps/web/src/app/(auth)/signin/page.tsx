@@ -1,6 +1,8 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { SignInForm } from "@/components/auth/SignInForm";
+import { SignInFormSkeleton } from "@/components/auth/SignInFormSkeleton";
 import { BarChart3, Brain, Target, Sparkles } from "lucide-react";
 
 export default function SignInPage() {
@@ -101,7 +103,9 @@ export default function SignInPage() {
                         </Link>
                     </div>
 
-                    <SignInForm />
+                    <Suspense fallback={<SignInFormSkeleton />}>
+                        <SignInForm />
+                    </Suspense>
 
                 </div>
             </div>
