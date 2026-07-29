@@ -181,7 +181,7 @@ def _segment_ids_from_messages(messages: list[dict[str, str]]) -> list[str]:
     ]
 
 
-def _make_dispatch(slides_per_segment: int = 1) -> Any:
+def _make_dispatch(slides_per_segment: int = 1, quiz_batch_size: int = 3) -> Any:
     from app.modules.content.pipeline.graph import (
         _JargonEntryLLM,
         _JargonListLLM,
@@ -218,10 +218,17 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
             )
         if name == "_QuizBatchLLM":
             # Story 3-28 made quiz generation batch-shaped; the node now asks for
-            # _QuizBatchLLM, never _QuizQuestionLLM directly. Returning 3 keeps us
-            # inside the T2 default band (2-3) that this pipeline run uses, so
+            # _QuizBatchLLM, never _QuizQuestionLLM directly. The default of 3 keeps
+            # us inside the T2 default band (2-3) that this pipeline run uses, so
             # quiz_generator_node accepts every question and the per-segment count
             # is deterministic (Story 2-28 AC-7 asserts on it).
+            #
+            # quiz_batch_size is parameterised for the Learner-Mode comparison
+            # (test_tier_differentiation_and_cost.py): with a fixed 3, T1 (band
+            # 3-5, n_max=5) and T2 (band 2-3, n_max=3) BOTH keep all 3 and look
+            # identical, so the comparison could not tell them apart. Returning 5
+            # makes each tier truncate to its own n_max — 5 / 3 / 2 — which is
+            # what proves each node received its own tier value.
             # Option text and question text are made distinct per index so the
             # node's own duplicate-option guard cannot reject them, and so a
             # duplicated question is visible as a repeated question_id rather
@@ -240,7 +247,7 @@ def _make_dispatch(slides_per_segment: int = 1) -> Any:
                         explanation="It opens the named item.",
                         difficulty="medium",
                     )
-                    for n in range(3)
+                    for n in range(quiz_batch_size)
                 ]
             )
         if name == "_SegmentComplexityLLM":
@@ -352,6 +359,54 @@ async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1)
         package = await run_pipeline(lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID)
     _LAST_RUN_SPIES["synth"] = synth
     return package
+
+
+async def _run_howto_tier(
+    howto: str,
+    lesson_id: str,
+    *,
+    tier: str,
+    slides_per_segment: int = 1,
+    quiz_batch_size: int = 5,
+    want_spies: bool = False,
+) -> Any:
+    """`_run_howto` with an explicit tier, for the Learner-Mode comparison.
+
+    Kept as a thin wrapper rather than adding a `tier` kwarg to `_run_howto`:
+    every existing caller relies on the default-tier behaviour, and the Story
+    2-28 bug was caused by exactly this kind of implicit state threading.
+    Returns the package, or `(package, spies)` when `want_spies`.
+    """
+    from app.modules.content.pipeline.graph import run_pipeline
+
+    provider = _make_dispatch(
+        slides_per_segment=slides_per_segment, quiz_batch_size=quiz_batch_size
+    )
+    synth = AsyncMock(return_value=(b"fake-audio", "sarvam", 0.0))
+    _LAST_RUN_SPIES.clear()
+    fake = _StatefulSupabaseFake()
+    fake.node_outputs = {
+        "extract": {"raw_text": howto, "extracted_images": [], "font_blocks": [], "page_count": 3}
+    }
+    redis = _AsyncRedis()
+    with (
+        patch("app.core.db.get_supabase", return_value=fake),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=provider),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+        patch("app.core.cost_tracker.accumulate_cost", new=AsyncMock(return_value=0.0)),
+        patch("app.modules.content.pipeline.graph._synthesize_with_fallback", new=synth),
+        patch(
+            "app.modules.content.pipeline.graph._generate_image_with_fallback",
+            new=AsyncMock(return_value=("data:image/png;base64,AAAA", "imagen")),
+        ),
+        patch("app.core.redis.get_redis", return_value=redis),
+    ):
+        package = await run_pipeline(
+            lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID, tier=tier
+        )
+    _LAST_RUN_SPIES["synth"] = synth
+    return (package, dict(_LAST_RUN_SPIES)) if want_spies else package
 
 
 @pytest.mark.integration
