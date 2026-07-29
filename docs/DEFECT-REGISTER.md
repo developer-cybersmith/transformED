@@ -103,9 +103,17 @@ purpose.
 | **D18** | **`sessions` has zero writers anywhere in `apps/api`** — all 7 references are `.select(...)`. The frontend invents `crypto.randomUUID()`; `assessment/service.py:175` raises **404** if the row is absent. **Quiz and teach-back cannot complete for any student.** Both suites green — Dev 3 seeds the row in tests, Dev 2 mocks the POST. | **Blocker** | Backend must mint the session. Joint Dev 2 + Dev 3 + Dev 4 decision — see Part 4. | *(none — needs a real-DB test)* |
 | D19 | `redis.TimeoutError is not builtin TimeoutError` (verified). `is_circuit_open()` is called *inside* every `@with_retry` body, so a Redis blip hits `except Exception` → fatal, no retry. `guard_breaker`'s docstring promises the opposite. | High | Classify redis exceptions in `core/retry.py`; breaker-check failure must fail **open** | *(to add)* |
 | D20 | `httpx.RemoteProtocolError` is neither `NetworkError` nor `TimeoutException` → not retried. A server closing a connection mid-response is routine and transient. | High | Add to the retryable network class | *(to add)* |
-| D21 | Embed truncation assumes ~4 chars/token. Measured `cl100k_base`: English 6.0, **Hindi 1.06, Tamil 0.71** | Deferred | **DECISION 2026-07-29: English-only for now.** Fix is one line and already specified (plan 6.3): `enc.decode(enc.encode(text)[:cap])`. **Trigger: the first Indic-language lesson.** | DISCIPLINE — comment at `graph.py` truncation site |
-| ~~D22~~ | **CLOSED 2026-07-29.** D9's class was live at 43 sites; replanting it on `sessions` left the suite green. | High | Guard generalised to every table + column, resolving module-level constants. | `test_schema_column_guard.py` — **mutation-verified**: catches the replant both via a literal AND via `_LIST_COLUMNS` |
 | **D23** | **`lesson_ready` never reaches any client.** `workers/jobs/content_pipeline.py:81` does `lesson_row.get("session_id") or lesson_id` — but **`lessons` has no `session_id` column**, so the fallback *always* fires and the pipeline publishes to `lesson_ready:{lesson_id}`. `core/websocket.py:67-74` registers connections under the **client-supplied** `session_id` (`crypto.randomUUID()`, `player.machine.ts:142`). The two keys can never match. The code comment ("falls back to lesson_id until…") describes a temporary state that became permanent. | High | **Undecided — needs Dev 4.** Three options in `docs/handoffs/dev4-handoff-2026-07-29.md` §2: (A) key by `lesson_id` + WS subscribe-by-lesson, (B) key by `session_id` + `lesson_jobs.session_id` schema change (§16 gate), (C) publish to both. **Dev 1 leans A** — generation completion is lesson-scoped, not viewer-scoped. Related to Story 2-35 but **not fixed by it**. | *(none — RC-1 again: publish side asserts it published, WS side asserts it routes; nothing reconciles the key)* |
+| ~~D22~~ | **CLOSED 2026-07-29.** D9's class was live at 43 sites; replanting it on `sessions` left the suite green. | High | Guard generalised to every table + column, resolving module-level constants. | `test_schema_column_guard.py` — **mutation-verified**: catches the replant both via a literal AND via `_LIST_COLUMNS` |
+
+### OPEN — accepted, with a named trigger
+
+Not "documented limitations". Each carries an explicit condition that reopens it.
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| D21 | Embed truncation assumes ~4 chars/token. Measured `cl100k_base`: English 6.0, **Hindi 1.06, Tamil 0.71** | Deferred | **DECISION 2026-07-29: English-only for now.** Fix is one line and already specified (plan 6.3): `enc.decode(enc.encode(text)[:cap])`. **Trigger: the first Indic-language lesson.** | DISCIPLINE — comment at `graph.py` truncation site |
+| D24 | **CI's new test steps land ADVISORY (`continue-on-error: true`), not gating.** `pytest tests` surfaces 22 pre-existing failures (Dev 3: 19, Dev 4: 3) and `pnpm test` has never been run by anyone. Gating them on day one turns `main` red for all four developers over failures this PR did not introduce. | Med | **DECISION 2026-07-29: land advisory, ratchet later.** `tests/unit` + `tests/integration` **do** gate (and `-x` is gone, so CI now enumerates rather than stops at one). **Triggers to drop `continue-on-error`:** api — the 22 reach zero; web — Dev 2 confirms green. Until then the number is *visible*, which it has never been. | DISCIPLINE — the trigger is in a comment at both step definitions in `.github/workflows/ci.yml` |
 
 ---
 
@@ -177,7 +185,7 @@ is what happens without it: three developers, three green suites, one broken pro
 |---|---|
 | Defects closed (fixed **and** guarded) | 10 |
 | Fixed, awaiting merge | 2 |
-| **Open** | **11** |
+| **Open** | **12** |
 | Of which **live in production** | **4** (D18, D19, D20, D23) |
 | Of which **self-inflicted 2026-07-29** | 6 |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
