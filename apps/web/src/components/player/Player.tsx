@@ -7,6 +7,7 @@ import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
 import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
+import { AvatarOverlay } from './AvatarOverlay';
 import { SlideRenderer } from './SlideRenderer';
 import { PlayerControls } from './PlayerControls';
 import { QuizOverlay } from './QuizOverlay';
@@ -227,6 +228,12 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
 
         {/* Brief CHECKING_IN transition — layers on top of quiz/teach-back when it shows */}
         <CheckingInTransition />
+
+        {/* Avatar intro/static/outro (S1-05) — self-contained, reads lesson +
+            store state directly; renders nothing when no avatar fields are
+            configured (every real lesson today, until Dev 1's pipeline
+            wiring lands). */}
+        <AvatarOverlay lesson={lesson} />
       </div>
 
       <PlayerControls />
