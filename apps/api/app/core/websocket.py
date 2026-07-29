@@ -34,9 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Session IDs must be standard UUIDs (lowercase hex + hyphens). Validated at the route
 # boundary to prevent Redis key-namespace traversal via crafted session_id values.
-_SESSION_ID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-)
+_SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 # Client-drivable tutor lifecycle events accepted as inbound WS control messages (same category as
 # "ping" / "session_start" — flat control messages, not the ws.ts payload union). Server/engine-only

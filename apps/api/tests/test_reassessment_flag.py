@@ -389,9 +389,7 @@ def test_get_learner_dna_data_flag_false_when_redis_none():
     supabase = _build_dna_service_supabase(_DEFAULT_DNA_ROW)
     mock_redis = AsyncMock()
 
-    body = asyncio.run(
-        get_learner_dna_data(user_id="user-123", supabase=supabase, redis=None)
-    )
+    body = asyncio.run(get_learner_dna_data(user_id="user-123", supabase=supabase, redis=None))
 
     assert body["reassessment_due"] is False
     mock_redis.get.assert_not_called()
@@ -449,9 +447,7 @@ def test_submit_onboarding_clears_reassessment_flag():
             return_value=dummy_result,
         ),
     ):
-        asyncio.run(
-            submit_onboarding_diagnostic(body=body, current_user=current_user)
-        )
+        asyncio.run(submit_onboarding_diagnostic(body=body, current_user=current_user))
 
     # delete called for onboarding_done AND reassessment_due
     delete_keys = [c.args[0] for c in mock_redis.delete.call_args_list]
@@ -496,9 +492,7 @@ def test_submit_onboarding_flag_clear_failure_is_non_fatal():
             return_value=dummy_result,
         ),
     ):
-        result = asyncio.run(
-            submit_onboarding_diagnostic(body=body, current_user=current_user)
-        )
+        result = asyncio.run(submit_onboarding_diagnostic(body=body, current_user=current_user))
 
     assert result is dummy_result
 
@@ -736,9 +730,7 @@ def test_submit_onboarding_re_assessment_bypasses_idempotency_guard():
             return_value=dummy_result,
         ),
     ):
-        result = asyncio.run(
-            submit_onboarding_diagnostic(body=body, current_user=current_user)
-        )
+        result = asyncio.run(submit_onboarding_diagnostic(body=body, current_user=current_user))
 
     # onboarding_done must have been deleted (bypass) before the SET NX
     delete_keys = [c.args[0] for c in mock_redis.delete.call_args_list]

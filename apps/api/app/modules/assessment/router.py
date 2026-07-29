@@ -237,8 +237,6 @@ async def submit_onboarding_diagnostic(
     try:
         await redis.delete(reassessment_key)
     except Exception as exc:
-        logger.warning(
-            "onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc
-        )
+        logger.warning("onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc)
 
     return result
