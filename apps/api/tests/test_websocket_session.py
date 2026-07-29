@@ -363,9 +363,7 @@ async def test_f7_reconnect_restores_each_of_7_states(mocker, state):
     test is verifying reconnect/state-restore behaviour only, not tier seeding.
     """
     mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(
-        side_effect=lambda key: state if "tutor_state" in key else None
-    )
+    mock_redis.get = AsyncMock(side_effect=lambda key: state if "tutor_state" in key else None)
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     from app.core.websocket import ConnectionManager
@@ -546,8 +544,8 @@ def test_g8_qa_phase_seconds_helper_maps_all_tiers(mocker):
     assert qa_phase_seconds("T1") == 600
     assert qa_phase_seconds("T2") == 300
     assert qa_phase_seconds("T3") == 150
-    assert qa_phase_seconds("TX") == 300   # unknown → default (helper still returns 300)
-    assert qa_phase_seconds(None) == 300   # None → default
+    assert qa_phase_seconds("TX") == 300  # unknown → default (helper still returns 300)
+    assert qa_phase_seconds(None) == 300  # None → default
 
 
 @pytest.mark.unit
@@ -599,9 +597,7 @@ async def test_g11_reconnect_path_seeds_learner_tier(mocker):
 
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(
-        side_effect=lambda key: (
-            b"TEACHING" if "tutor_state" in key else _make_pkg("T2")
-        )
+        side_effect=lambda key: b"TEACHING" if "tutor_state" in key else _make_pkg("T2")
     )
     mock_pipe = MagicMock()
     mock_pipe.execute = AsyncMock(return_value=[True, True])
@@ -807,7 +803,9 @@ async def test_h7_redis_failure_does_not_crash(mocker):
 
     await _handle_session_start("sess-h7", payload={"learner_tier": "T1"})  # must not raise
 
-    mock_dispatch.assert_called_once_with("sess-h7", "session_start")  # dispatch survives the tier failure
+    mock_dispatch.assert_called_once_with(
+        "sess-h7", "session_start"
+    )  # dispatch survives the tier failure
 
 
 @pytest.mark.unit
@@ -824,7 +822,7 @@ async def test_h8_torn_write_cannot_occur_uses_single_atomic_commit(mocker):
 
     await _handle_session_start("sess-h8", payload={"learner_tier": "T2"})
 
-    mock_redis.set.assert_not_called()          # no non-atomic direct sets for the tier keys
-    mock_redis.pipeline.assert_called_once()    # exactly one pipeline
-    assert mock_pipe.set.call_count == 2        # both keys queued
-    mock_pipe.execute.assert_awaited_once()     # committed together
+    mock_redis.set.assert_not_called()  # no non-atomic direct sets for the tier keys
+    mock_redis.pipeline.assert_called_once()  # exactly one pipeline
+    assert mock_pipe.set.call_count == 2  # both keys queued
+    mock_pipe.execute.assert_awaited_once()  # committed together

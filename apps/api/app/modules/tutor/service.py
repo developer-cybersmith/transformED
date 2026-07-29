@@ -162,7 +162,7 @@ def qa_phase_seconds(tier: str | None) -> int:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-async def _quiz_deadline_expired(session_id: str, redis: Any) -> bool:
+async def _quiz_deadline_expired(session_id: str, redis: Redis) -> bool:
     """Return True if the QUIZZING time limit has elapsed for this session.
 
     Returns False on any error — degrading safely so the session never auto-advances
@@ -325,7 +325,11 @@ async def process_attention_signal(
         in_cooldown = await redis.exists(cooldown_key)
 
         # Enforce CLAUDE.md §10: CES interventions only fire in TEACHING state.
-        if state_raw == "TEACHING" and all(v < settings.ces_threshold for v in recent) and not in_cooldown:
+        if (
+            state_raw == "TEACHING"
+            and all(v < settings.ces_threshold for v in recent)
+            and not in_cooldown
+        ):
             logger.info(
                 "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching distraction_detected",
                 session_id,

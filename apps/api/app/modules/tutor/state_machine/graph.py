@@ -226,12 +226,16 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
         redis = get_redis()
         qa_raw = await redis.get(f"session:{session_id}:qa_phase_seconds")
         qa_secs = int(qa_raw) if qa_raw else 300  # T2 default
-        qa_secs = max(30, min(3600, qa_secs))  # clamp: prevent deadline backdating via Redis injection
+        qa_secs = max(
+            30, min(3600, qa_secs)
+        )  # clamp: prevent deadline backdating via Redis injection
         deadline = int(_time.time()) + qa_secs
         await redis.set(f"session:{session_id}:quiz_deadline_at", str(deadline), ex=86400)
         logger.info("[tutor:%s] QUIZZING deadline set: +%ds", session_id, qa_secs)
     except Exception:  # noqa: BLE001
-        logger.warning("[tutor:%s] quiz_deadline_at write failed — proceeding without deadline", session_id)
+        logger.warning(
+            "[tutor:%s] quiz_deadline_at write failed — proceeding without deadline", session_id
+        )
 
     return {**state, "current_state": TutorState.QUIZZING}
 
@@ -493,14 +497,18 @@ async def dispatch_event(
     to_state = result["current_state"]
     if current_state_val != to_state:
         from app.core.websocket import manager  # lazy — avoids circular import
-        await manager.send(session_id, {
-            "type": "state_change",
-            "payload": {
-                "session_id": session_id,
-                "from_state": str(current_state_val),
-                "to_state": str(to_state),
+
+        await manager.send(
+            session_id,
+            {
+                "type": "state_change",
+                "payload": {
+                    "session_id": session_id,
+                    "from_state": str(current_state_val),
+                    "to_state": str(to_state),
+                },
             },
-        })
+        )
 
     return result
 
