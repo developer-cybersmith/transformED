@@ -221,6 +221,39 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
     expect(usePlayerStore.getState().audioError).toBe(false);
   });
 
+  it('disables the Retry button and ignores a second click while a refetch is still in flight (review fix -- prevents a rapid double-click from double-applying the retry)', async () => {
+    let resolveRefetch!: (value: null) => void;
+    mockOnRefetchLesson.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRefetch = resolve; })
+    );
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true });
+    });
+
+    act(() => {
+      screen.getByRole('button', { name: /retry/i }).click();
+    });
+
+    const button = screen.getByRole('button', { name: /retrying/i });
+    expect(button.hasAttribute('disabled')).toBe(true);
+
+    // Second click while in flight must not fire another refetch.
+    act(() => {
+      button.click();
+    });
+    expect(mockOnRefetchLesson).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRefetch(null);
+      await Promise.resolve();
+    });
+
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
   it('still calls retryAudio() even when onRefetchLesson rejects, so Retry never becomes permanently non-functional (S2-33)', async () => {
     mockOnRefetchLesson.mockRejectedValueOnce(new Error('network error'));
 
@@ -235,6 +268,32 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
     });
 
     expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
+  it('does NOT reset playback progress when re-rendered with a NEW lesson object for the SAME lesson_id (review fix -- this is exactly what a real retry-refetch produces via SWR mutate(), and previously silently reset the whole player via the loadLesson-on-prop-change mount effect)', () => {
+    const { rerender } = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({
+        status: 'PLAYING',
+        currentSegmentIndex: 1,
+        audioPositionMs: 5000,
+        quizFiredForSegment: new Set(['seg_0']),
+      });
+    });
+    const sessionIdBefore = usePlayerStore.getState().sessionId;
+
+    // A deep-cloned lesson object, same lesson_id -- exactly what a fresh SWR
+    // fetch of the same lesson produces (new object identity, same content).
+    const refetchedLesson = JSON.parse(JSON.stringify(mockLessonPackage));
+    rerender(<Player onRefetchLesson={mockOnRefetchLesson} lesson={refetchedLesson} />);
+
+    const state = usePlayerStore.getState();
+    expect(state.status).toBe('PLAYING');
+    expect(state.currentSegmentIndex).toBe(1);
+    expect(state.audioPositionMs).toBe(5000);
+    expect(state.quizFiredForSegment.has('seg_0')).toBe(true);
+    expect(state.sessionId).toBe(sessionIdBefore);
   });
 
   it('does NOT show the playback-error overlay during QUIZ, even if audioError is true (review fix — a stale error must not block the quiz)', () => {

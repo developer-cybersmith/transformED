@@ -235,6 +235,89 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
       vi.useRealTimers();
     }
   });
+
+  it('advances faster than wall-clock time when playbackRate > 1 (review fix)', () => {
+    vi.useFakeTimers();
+    try {
+      const lessonWithScriptOnly = {
+        ...mockLessonPackage,
+        segments: [
+          { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+          ...mockLessonPackage.segments.slice(1),
+        ],
+      };
+      usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
+      usePlayerStore.setState({
+        status: 'PLAYING',
+        currentSegmentIndex: 0,
+        quizFiredForSegment: new Set(),
+        playbackRate: 2.0,
+      });
+
+      render(<AudioTimeline />);
+
+      act(() => {
+        vi.advanceTimersByTime(1000); // 1s of wall-clock time
+      });
+
+      // At 2x, ~1000ms of wall-clock elapsed should advance position by ~2000ms.
+      expect(usePlayerStore.getState().audioPositionMs).toBeGreaterThanOrEqual(1900);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('transitions to ENDED when PLAYING resumes on an already-quizzed last segment (review fix -- exitTeachBack() resuming a script-only last segment previously had no way to ever reach ENDED)', () => {
+    vi.useFakeTimers();
+    try {
+      const singleSegmentLesson = {
+        ...mockLessonPackage,
+        segments: [
+          { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ],
+      };
+      usePlayerStore.getState().loadLesson(singleSegmentLesson);
+      const segEnd = singleSegmentLesson.segments[0].narration.timestamps.at(-1)!.end_ms;
+      // Simulates exitTeachBack()'s resumption: quiz already fired for this
+      // (last) segment, status set back to PLAYING, position already at the
+      // segment's end (where the quiz originally fired).
+      usePlayerStore.setState({
+        status: 'PLAYING',
+        currentSegmentIndex: 0,
+        quizFiredForSegment: new Set(['seg_0']),
+        audioPositionMs: segEnd,
+      });
+
+      render(<AudioTimeline />);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(usePlayerStore.getState().status).toBe('ENDED');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets audioDuration to 0 for a script-only segment with no timestamps (defensive, review fix)', () => {
+    const lessonWithNoTimestamps = {
+      ...mockLessonPackage,
+      segments: [
+        {
+          ...mockLessonPackage.segments[0],
+          narration: { ...mockLessonPackage.segments[0].narration, audio_url: '', timestamps: [] },
+        },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithNoTimestamps);
+    usePlayerStore.setState({ status: 'PAUSED', currentSegmentIndex: 0, audioDurationMs: 99999 });
+
+    render(<AudioTimeline />);
+
+    expect(usePlayerStore.getState().audioDurationMs).toBe(0);
+  });
 });
 
 describe('AudioTimeline — segment replay does not freeze playback', () => {

@@ -122,16 +122,66 @@ export function AudioTimeline() {
   // looks instantly "ended" -- this is exactly the "quiz fires at 0:00" symptom
   // Dev 1's handoff (docs/dev2-narration-playback-handoff.md) traced here.
   // Ticks only while PLAYING; the effect's own cleanup (on segment/status change)
-  // is what stops it -- never calls handleEnded(), only processTimeUpdate(),
-  // whose own boundary check already fires the quiz (AC-3: a second, independent
-  // call to handleEnded() here would double-fire past an open quiz).
+  // is what stops it. Uses a wall-clock delta (review fix) rather than a fixed
+  // +100ms per tick -- setInterval is throttled in backgrounded tabs (browsers
+  // commonly clamp to >=1000ms), and a fixed-per-tick advance would silently
+  // run the virtual clock far slower than real elapsed time; multiplying by
+  // playbackRate (review fix) keeps 1.5x/2x speed consistent with the real
+  // <audio> path, which already applies it via audio.playbackRate.
   useEffect(() => {
     if (hasAudio || !hasScript) return;
     if (status !== 'PLAYING') return;
 
+    let lastTick = Date.now();
     const interval = setInterval(() => {
-      const current = usePlayerStore.getState().audioPositionMs;
-      processTimeUpdate(current + 100);
+      const state = usePlayerStore.getState();
+      const now = Date.now();
+      const elapsedMs = now - lastTick;
+      lastTick = now;
+
+      // React only clears this interval on its NEXT render after status
+      // leaves PLAYING -- a leftover tick can still fire before that cleanup
+      // runs (observable under vi.advanceTimersByTime's synchronous batch,
+      // and possible in a real browser too). Bail immediately so a stale tick
+      // can't run the post-quiz handleEnded() check below against a segment
+      // that's no longer actually playing (review fix -- this exact gap
+      // caused a phantom post-quiz tick to fire handleEnded() an extra time
+      // and reset position/prematurely end the lesson).
+      if (state.status !== 'PLAYING') return;
+
+      // A pending seek is about to be applied authoritatively by the seek
+      // effect below -- skip this tick so it can't race ahead of (or
+      // duplicate) that application (review fix).
+      if (state.seekRequestMs !== null) return;
+
+      const seg = state.lesson?.segments[state.currentSegmentIndex];
+      // Captured BEFORE processTimeUpdate() below, which may itself add this
+      // segment_id to quizFiredForSegment on the very first boundary crossing --
+      // distinguishes "already quizzed before this tick" (a replay, or resuming
+      // PLAYING post-teach-back with nothing left to do) from "just got quizzed
+      // by this tick" (the normal, first-time boundary case, already fully
+      // handled by processTimeUpdate's own logic below).
+      const alreadyQuizzed = seg ? state.quizFiredForSegment.has(seg.segment_id) : false;
+
+      const nextMs = state.audioPositionMs + elapsedMs * state.playbackRate;
+      processTimeUpdate(nextMs);
+
+      // Review fix: without this, a segment that's already been quizzed (e.g.
+      // exitTeachBack() resumes PLAYING on an already-quizzed last segment,
+      // per its own "audio resumes... handleEnded fires endLesson when it
+      // finishes" comment) never reaches ENDED -- there's no real 'ended'
+      // event here to drive it, and processTimeUpdate's boundary check is a
+      // no-op once quizFiredForSegment already has this segment. Safe to call
+      // handleEnded() in this specific case regardless of last/non-last
+      // segment: it only ever reaches advanceSegment()/endLesson() when the
+      // quiz has already fired (AC-3's actual concern -- re-firing an
+      // unquizzed segment's quiz -- cannot happen here).
+      if (alreadyQuizzed && seg) {
+        const segEnd = seg.narration.timestamps.at(-1)?.end_ms;
+        if (segEnd !== undefined && nextMs >= segEnd) {
+          handleEnded();
+        }
+      }
     }, 100);
 
     return () => clearInterval(interval);
@@ -140,12 +190,15 @@ export function AudioTimeline() {
   // Sets a real total duration for the scrubber even without audio metadata to
   // load from -- timestamps always exist here (Story 2-19's estimation),
   // independent of play/pause state, so this doesn't need to be gated on status.
+  // Explicitly resets to 0 rather than leaving a stale prior segment's duration
+  // in place on the (defensive, shouldn't happen in practice) empty-timestamps
+  // case (review fix).
   useEffect(() => {
     if (hasAudio || !hasScript || !segment) return;
     const { timestamps } = segment.narration;
-    if (timestamps.length > 0) {
-      usePlayerStore.getState().setAudioDuration(timestamps.at(-1)!.end_ms);
-    }
+    usePlayerStore.getState().setAudioDuration(
+      timestamps.length > 0 ? timestamps.at(-1)!.end_ms : 0
+    );
   }, [hasAudio, hasScript, segment]);
 
   // Apply pending seek from the store then clear it. In virtual-clock mode
