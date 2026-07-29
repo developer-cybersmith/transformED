@@ -51,6 +51,44 @@ class EvalResult:
     quiz_relevance_issues: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     error: str | None = None
+    # Story 2-38: real USD spent on this lesson, read from the cost tracker.
+    # `None` means the meter could not be read — deliberately NOT 0.0, which
+    # would be indistinguishable from a genuinely free run.
+    cost_usd: float | None = None
+
+
+async def _read_lesson_cost(lesson_id: str) -> float | None:
+    """Read the real USD spent on *lesson_id*, best-effort (Story 2-38 AC-2).
+
+    The pipeline has already run and already been billed by the time this is
+    called. Letting a Redis error escape would turn a successful, paid-for run
+    into a failed eval — observability displacing the result it observes, which
+    is the same mistake `_safe_trace` and `_safe_record` exist to avoid.
+    """
+    try:
+        from app.core.cost_tracker import get_cost
+
+        return float(await get_cost(lesson_id))
+    except Exception:  # noqa: BLE001 — the meter must never break the measurement
+        logger.warning(
+            "eval: could not read cost for lesson %s — reporting unknown", lesson_id, exc_info=True
+        )
+        return None
+
+
+async def _clear_lesson_cost_key(lesson_id: str) -> None:
+    """Drop the Redis cost key (Story 2-38 AC-4).
+
+    `run_eval` calls `run_pipeline` directly rather than going through the ARQ
+    job, so the worker's own `clear_lesson_cost` never runs and every eval would
+    otherwise leak a key.
+    """
+    try:
+        from app.core.cost_tracker import clear_lesson_cost
+
+        await clear_lesson_cost(lesson_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("eval: could not clear cost key for lesson %s", lesson_id, exc_info=True)
 
 
 def _cleanup_eval_rows(
@@ -204,6 +242,7 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
             quiz_relevance=quiz_score.value,
             quiz_relevance_issues=quiz_score.issues,
             elapsed_seconds=time.monotonic() - started,
+            cost_usd=await _read_lesson_cost(lesson_id),
         )
 
     except Exception as exc:  # noqa: BLE001
@@ -216,6 +255,9 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
             quiz_relevance=None,
             elapsed_seconds=time.monotonic() - started,
             error=str(exc),
+            # AC-3: a run that died partway has still spent money, and that is
+            # the most useful number when diagnosing a ceiling breach.
+            cost_usd=await _read_lesson_cost(lesson_id),
         )
     finally:
         if span is not None:
@@ -225,6 +267,7 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
                 logger.warning("eval:%s — failed to close Langfuse span", pdf_key, exc_info=True)
         if supabase is not None:
             _cleanup_eval_rows(supabase, pdf_key, lesson_id, book_id, storage_path)
+        await _clear_lesson_cost_key(lesson_id)
 
 
 def _mean(values: list[float]) -> float | None:
@@ -273,6 +316,22 @@ async def run_all_evals(
         results.append(result)
 
     valid_count = sum(1 for r in results if r.package_valid)
+
+    # ── Cost (Story 2-38) ────────────────────────────────────────────────────
+    # These are the numbers the $3.00/lesson ceiling was always supposed to be
+    # calibrated against, and that no harness has ever reported. Every existing
+    # cost figure in the docs predates the 16x duplication fix (D1) and is an
+    # estimate; the first live run of this harness produces the real baseline.
+    #
+    # `None` (an unreadable meter) is EXCLUDED from the mean rather than counted
+    # as 0.0 — averaging in a zero would quietly understate the baseline, which
+    # is the exact direction of error a cost ceiling must not have.
+    costs = [r.cost_usd for r in results if r.cost_usd is not None]
+    from app.config import get_settings
+
+    ceiling = get_settings().max_lesson_cost_usd
+    breaches = [r.pdf_key for r in results if r.cost_usd is not None and r.cost_usd > ceiling]
+
     summary: dict[str, Any] = {
         "pdfs_run": len(results),
         "pdfs_valid": valid_count,
@@ -283,7 +342,23 @@ async def run_all_evals(
         "mean_quiz_relevance": _mean(
             [r.quiz_relevance for r in results if r.quiz_relevance is not None]
         ),
+        "total_cost_usd": sum(costs) if costs else None,
+        "mean_cost_usd": _mean(costs),
+        "cost_ceiling_usd": ceiling,
+        # AC-6: a number in a JSON file that nobody compares against the limit
+        # is not a guard. Name the lessons that went over.
+        "cost_ceiling_breaches": breaches,
+        "cost_unreadable_for": [r.pdf_key for r in results if r.cost_usd is None],
     }
+
+    if breaches:
+        logger.error(
+            "Eval: %d of %d lessons exceeded the $%.2f ceiling: %s",
+            len(breaches),
+            len(results),
+            ceiling,
+            ", ".join(breaches),
+        )
 
     # 2026-07-17 review finding (Edge Case Hunter): a plain second-resolution
     # timestamp silently overwrites a same-second prior run's results with
