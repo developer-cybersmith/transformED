@@ -255,18 +255,88 @@ class OpenAILLMProvider(LLMProvider):
                 _safe_trace(generation.end)
 
     async def _maybe_accumulate_cost(
-        self, model: str, input_tokens: int, output_tokens: int
+        self, model: str, input_tokens: int | None, output_tokens: int | None
     ) -> None:
-        """Accumulate cost for the current lesson if a lesson_id is set."""
+        """Accumulate cost for the current lesson if a lesson_id is set.
+
+        Story 2-33: an unpriced model is charged at the most expensive KNOWN
+        rate, never skipped. This method previously returned early when the
+        model was absent from `_COST_PER_1K`, so `accumulate_cost` was never
+        called, the lesson total stayed at $0.00, and the $3.00 ceiling could
+        not fire — an unpriced model spent without limit.
+
+        That mattered because CLAUDE.md mandates "swapping models is an env var
+        change only", and its own evaluation-candidate list (Claude 3.5 Sonnet,
+        o1-mini, Gemini 2.0 Flash) is mostly absent from the table. Running the
+        model evaluation the PRD asks for was exactly what disabled the ceiling.
+
+        The ONLY legitimate early return is `self._lesson_id is None` — a
+        provider built outside a pipeline run has no lesson to bill. That case
+        is guarded by test_no_early_return_before_accumulate_except_the_lesson_id_guard,
+        which fails if any other early exit is reintroduced here.
+        """
         if self._lesson_id is None:
             return
 
         pricing = _COST_PER_1K.get(model)
         if pricing is None:
-            logger.warning("No pricing data for model '%s' — cost not tracked", model)
-            return
+            # Fail CLOSED. Over-charging an unpriced model is the safe
+            # direction: it makes the ceiling fire earlier, never later.
+            #
+            # Derived from the table rather than hardcoded — a literal would
+            # silently stop being conservative the day a pricier model is added.
+            #
+            # ERROR, not WARNING: main.py wires Sentry's default
+            # LoggingIntegration(event_level=ERROR), and an unpriced model in
+            # production is an operational defect that must surface. The old
+            # WARNING is precisely why this went unnoticed.
+            pricing = {
+                "input": max(p["input"] for p in _COST_PER_1K.values()),
+                "output": max(p["output"] for p in _COST_PER_1K.values()),
+            }
+            logger.error(
+                "No pricing data for model %r — charging at the most expensive known rate "
+                "($%.6f/1k in, $%.6f/1k out) so the $3.00 lesson ceiling still applies. "
+                "Add this model to _COST_PER_1K.",
+                model,
+                pricing["input"],
+                pricing["output"],
+            )
 
-        cost = (input_tokens / 1000 * pricing["input"]) + (output_tokens / 1000 * pricing["output"])
+        # Review round 2, D17: token counts must never be trusted to be usable
+        # ints. `usage.prompt_tokens` is typed `int` by the OpenAI SDK, but
+        # CLAUDE.md mandates that swapping models is an env var change only, and
+        # OpenAI-COMPATIBLE endpoints do return `null` usage fields. `None` here
+        # raised `TypeError: unsupported operand type(s) for /: 'NoneType' and
+        # 'int'` — an unknown exception, so `with_retry` would not retry it and
+        # the node died. Verified reachable before this fix.
+        #
+        # The completion has already been made and BILLED by the provider.
+        # Throwing over missing billing metadata would make ARQ re-run and
+        # re-pay for the node — turning a reporting gap into real money.
+        safe_input = max(0, input_tokens or 0)
+        safe_output = max(0, output_tokens or 0)
+        if (input_tokens or 0) < 0 or (output_tokens or 0) < 0:
+            # Clamped at the SOURCE deliberately: `accumulate_cost` raises
+            # ValueError on a negative cost, which `with_retry` cannot classify,
+            # so a nonsensical count would kill the node two layers down.
+            logger.error(
+                "Negative token counts from model %r (in=%s, out=%s) — clamped to 0. "
+                "The lesson total is now an UNDER-estimate, so the ceiling may fire late.",
+                model,
+                input_tokens,
+                output_tokens,
+            )
+        elif input_tokens is None or output_tokens is None:
+            logger.warning(
+                "Missing token counts from model %r (in=%s, out=%s) — charging the known half "
+                "only. The lesson total is an under-estimate.",
+                model,
+                input_tokens,
+                output_tokens,
+            )
+
+        cost = (safe_input / 1000 * pricing["input"]) + (safe_output / 1000 * pricing["output"])
 
         from app.core.cost_tracker import accumulate_cost, check_ceiling  # lazy to avoid circular
 
