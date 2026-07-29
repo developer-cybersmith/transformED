@@ -1,6 +1,6 @@
 # Story 2.33: Close the cost-ceiling fail-open on unpriced models
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -83,10 +83,74 @@ precedent this story follows:
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC-1, AC-2, AC-3, AC-4): conservative derived fallback + ERROR log; tests for each.
-- [ ] Task 2 (AC-5): end-to-end ceiling test with an unpriced model.
-- [ ] Task 3 (AC-6): standing guard test against a re-introduced early return.
-- [ ] Task 4 (AC-7): full suite, lint (repo-wide), types.
+- [x] Task 1 (AC-1, AC-2, AC-3, AC-4): conservative derived fallback + ERROR log; tests for each.
+- [x] Task 2 (AC-5): end-to-end ceiling test with an unpriced model.
+- [x] Task 3 (AC-6): standing guard test against a re-introduced early return.
+- [x] Task 4 (AC-7): full suite, lint (repo-wide), types.
+
+## Dev Agent Record
+
+### Completion Notes
+
+**The fix.** `_maybe_accumulate_cost` no longer returns on an unpriced model. It substitutes
+a pricing dict derived from the table — `max(p["input"] ...)` / `max(p["output"] ...)` — logs
+at ERROR naming the model and the applied rate, and falls through to the normal
+`accumulate_cost` → `check_ceiling` path. The `self._lesson_id is None` guard is the sole
+remaining early return, exactly as AC-6 requires.
+
+**Why conservative-and-derived, not a literal.** Over-charging makes the ceiling fire earlier,
+never later, so an unpriced model can only ever be *safer* than reality. Deriving it from the
+table means the fallback stays the most expensive rate automatically when a pricier model is
+priced later; `test_fallback_is_at_least_every_known_model_rate` asserts that as a property
+over the whole table rather than against a fixed number.
+
+**Why ERROR and not abort.** `main.py` wires Sentry's default
+`LoggingIntegration(event_level=ERROR)`, so ERROR surfaces as an issue while WARNING did not —
+which is why the original went unnoticed. Aborting was rejected: PRD §14 is "downshift …
+complete lesson, flag in admin", and hard-failing would make the model-evaluation workflow
+CLAUDE.md mandates impossible to run at all.
+
+**AC-5 is the assertion that would have caught the original.** AC-1 (accumulate is called)
+is necessary but not sufficient — the useful property is that the ceiling can still *fire*.
+`test_ceiling_fires_on_an_unpriced_model` drives a lesson already over budget through an
+unpriced model and asserts `CostCeilingError`.
+
+**AC-6 guard is structural, not behavioural.** A behavioural test only catches the cases it
+thinks to enumerate; the original defect was a `return` statement. The guard AST-parses
+`_maybe_accumulate_cost`, asserts exactly **one** `Return` node, asserts its enclosing `if`
+tests `_lesson_id`, and asserts `accumulate_cost` is still referenced. Reinstating the
+original bypass fails it immediately.
+
+**Mutation-proven.** Three mutations, all killed: restoring the original `return` (6 tests
+red), using `min` instead of `max` for the fallback rate (2 red), and downgrading the log to
+WARNING (1 red).
+
+**Embed truncation — dropped, with the measurement recorded in code.** Per the 2026-07-29
+English-only decision. `graph.py` now carries the measured `cl100k_base` ratios (English 6.0,
+Hindi 1.06, Tamil 0.71 chars/token) and states plainly that the current cut yields ~5,300
+tokens for English but ~30,100 for Hindi and ~45,200 for Tamil against an 8,000 cap. It also
+records why the branch is near-unreachable today — chunks target 512 tokens and `token_count`
+is always a real tokenizer count — so a future reader does not re-litigate it, and knows
+exactly what to fix when an Indic language lands.
+
+**AC-7 — regression, measured repo-wide.** Deliberately not "touched files only": that
+wording is how 78 repo-wide ruff errors went unnoticed until 2026-07-29.
+
+| Gate | `main` (`3900ae6`) | This branch |
+|---|---|---|
+| `ruff check .` | 31 | **31** |
+| `ruff format --check .` | 10 files | **10 files** |
+| `mypy app` | 24 | **24** |
+| `pytest tests/unit tests/integration` (CI's set) | 741 passed | **750 passed** |
+| full suite | 22 F / 1433 P | **22 F / 1442 P** |
+
+Failure set byte-identical to `main` under `diff`. +9 tests, zero regressions.
+
+### File List
+
+- `apps/api/app/providers/llm/openai.py`
+- `apps/api/app/modules/content/pipeline/graph.py` — comment only (embed-truncation note)
+- `apps/api/tests/unit/test_cost_ceiling_failopen.py` — NEW
 
 ## Dev Notes
 
@@ -141,4 +205,5 @@ Touches `apps/api/app/providers/llm/openai.py` and unit tests, plus a comment-on
 
 | Date | Change | Author |
 |------|--------|--------|
+| 2026-07-29 | Implemented. Unpriced models now charged at the most expensive derived rate, logged at ERROR, lesson still completes. Structural AST guard added so a re-introduced early return fails immediately. 3 mutations killed. Repo-wide gates identical to main. Status → review. | Dev 1 |
 | 2026-07-29 | Story created. Closes the last live fail-open from the fix plan's item 10; its sibling (embed truncation) explicitly dropped for English-only, with the measurement recorded. | Dev 1 |

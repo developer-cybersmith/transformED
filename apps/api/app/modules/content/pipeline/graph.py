@@ -857,7 +857,20 @@ async def embed_node(state: PipelineState) -> PipelineState:
                     est,
                     _MAX_EMBED_INPUT_TOKENS,
                 )
-                text = text[: _MAX_EMBED_INPUT_TOKENS * 4]  # ~4 chars/token
+                # ~4 chars/token is an ENGLISH-ONLY heuristic. Measured against
+                # cl100k_base on 2026-07-29: English 6.0 chars/token, Hindi 1.06,
+                # Tamil 0.71. So this cut yields ~5,300 tokens for English (safe,
+                # under the 8,000 cap) but ~30,100 for Hindi and ~45,200 for Tamil
+                # — 4-6x OVER the cap, and the API would reject the request.
+                #
+                # Left as-is by decision 2026-07-29: English-only for now, and the
+                # branch is near-unreachable regardless — chunks target 512 tokens
+                # (settings.chunk_target_tokens) against this 8,000 cap, and
+                # token_count above is always a real cl100k_base count, so the
+                # len(text)//4 fallback does not run either. WHOEVER ADDS AN INDIC
+                # LANGUAGE MUST FIX THIS: count tokens with the real tokenizer and
+                # truncate on token boundaries, not characters. See Story 2-33.
+                text = text[: _MAX_EMBED_INPUT_TOKENS * 4]
                 est = _MAX_EMBED_INPUT_TOKENS
             if current and (
                 current_tokens + est > budget or len(current) >= _MAX_EMBED_BATCH_ITEMS

@@ -257,14 +257,51 @@ class OpenAILLMProvider(LLMProvider):
     async def _maybe_accumulate_cost(
         self, model: str, input_tokens: int, output_tokens: int
     ) -> None:
-        """Accumulate cost for the current lesson if a lesson_id is set."""
+        """Accumulate cost for the current lesson if a lesson_id is set.
+
+        Story 2-33: an unpriced model is charged at the most expensive KNOWN
+        rate, never skipped. This method previously returned early when the
+        model was absent from `_COST_PER_1K`, so `accumulate_cost` was never
+        called, the lesson total stayed at $0.00, and the $3.00 ceiling could
+        not fire — an unpriced model spent without limit.
+
+        That mattered because CLAUDE.md mandates "swapping models is an env var
+        change only", and its own evaluation-candidate list (Claude 3.5 Sonnet,
+        o1-mini, Gemini 2.0 Flash) is mostly absent from the table. Running the
+        model evaluation the PRD asks for was exactly what disabled the ceiling.
+
+        The ONLY legitimate early return is `self._lesson_id is None` — a
+        provider built outside a pipeline run has no lesson to bill. That case
+        is guarded by test_no_early_return_before_accumulate_except_the_lesson_id_guard,
+        which fails if any other early exit is reintroduced here.
+        """
         if self._lesson_id is None:
             return
 
         pricing = _COST_PER_1K.get(model)
         if pricing is None:
-            logger.warning("No pricing data for model '%s' — cost not tracked", model)
-            return
+            # Fail CLOSED. Over-charging an unpriced model is the safe
+            # direction: it makes the ceiling fire earlier, never later.
+            #
+            # Derived from the table rather than hardcoded — a literal would
+            # silently stop being conservative the day a pricier model is added.
+            #
+            # ERROR, not WARNING: main.py wires Sentry's default
+            # LoggingIntegration(event_level=ERROR), and an unpriced model in
+            # production is an operational defect that must surface. The old
+            # WARNING is precisely why this went unnoticed.
+            pricing = {
+                "input": max(p["input"] for p in _COST_PER_1K.values()),
+                "output": max(p["output"] for p in _COST_PER_1K.values()),
+            }
+            logger.error(
+                "No pricing data for model %r — charging at the most expensive known rate "
+                "($%.6f/1k in, $%.6f/1k out) so the $3.00 lesson ceiling still applies. "
+                "Add this model to _COST_PER_1K.",
+                model,
+                pricing["input"],
+                pricing["output"],
+            )
 
         cost = (input_tokens / 1000 * pricing["input"]) + (output_tokens / 1000 * pricing["output"])
 
