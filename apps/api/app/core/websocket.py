@@ -334,7 +334,9 @@ async def _handle_session_start(session_id: str, payload: dict[str, Any] | None 
     if isinstance(tier, str) and tier in _VALID_TIERS:
         try:
             from app.core.redis import get_redis  # type: ignore[import]  # noqa: PLC0415
-            from app.modules.tutor.service import qa_phase_seconds as _qa  # type: ignore[import]  # noqa: PLC0415
+            from app.modules.tutor.service import (
+                qa_phase_seconds as _qa,  # type: ignore[import]  # noqa: PLC0415
+            )
 
             redis = get_redis()
             qa_secs = _qa(tier)

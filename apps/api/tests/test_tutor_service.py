@@ -704,7 +704,7 @@ def _attention_deadline_setup(mocker, *, expired: bool, has_deadline: bool = Tru
 
 @pytest.mark.unit
 async def test_process_attention_quizzing_expired_deadline_dispatches_quiz_complete(mocker) -> None:
-    """AC3: QUIZZING state + expired deadline → process_attention_signal auto-dispatches quiz_complete."""
+    """AC3: QUIZZING + expired deadline → process_attention_signal auto-dispatches quiz_complete."""
     mock_redis, mock_dispatch = _attention_deadline_setup(mocker, expired=True)
 
     from app.modules.tutor.service import process_attention_signal
@@ -758,7 +758,9 @@ async def test_process_attention_deadline_double_fire_guard(mocker) -> None:
 
 
 @pytest.mark.unit
-async def test_advance_tutor_state_non_quiz_complete_event_substituted_on_expired_deadline(mocker) -> None:
+async def test_advance_tutor_state_non_quiz_complete_event_substituted_on_expired_deadline(
+    mocker,
+) -> None:
     """AC2 substitution: non-quiz_complete event (segment_complete) while QUIZZING+expired
     → quiz_complete dispatched instead, original event dropped."""
     import time as _time
@@ -801,7 +803,9 @@ async def test_quiz_deadline_expired_false_on_corrupt_redis_value() -> None:
 
 
 @pytest.mark.unit
-async def test_process_attention_quizzing_expired_with_low_ces_only_quiz_complete_dispatched(mocker) -> None:
+async def test_process_attention_quizzing_expired_with_low_ces_only_quiz_complete_dispatched(
+    mocker,
+) -> None:
     """P7: QUIZZING + expired deadline + two below-threshold CES values →
     ONLY quiz_complete dispatched (no distraction_detected) — CLAUDE.md §10:
     CES interventions only active in TEACHING state."""
