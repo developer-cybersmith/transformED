@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-29 (**Sprint 1 is now fully complete, 14/14** — S1-05 AvatarOverlay shipped, the last open item, via a cross-team schema change to the frozen `LessonPackage` contract. Also: Stories 2-13 through 2-15, 2-26, and 2-33 all shipped and merged to `main`; both pipeline bugs Dev 2 reported to Dev 1 (quiz duplication, TTS-fallback narration loss) are now fully resolved end-to-end, backend + frontend; a recurring dashboard mouse-wheel-scroll-stuck bug also fixed. See cross-team notes below for each.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 original tasks done, +7 additional stories shipped) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 COMPLETE (10/10 + 7 additional stories) |
+| **Last Updated** | 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge.) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 original tasks done, +8 additional stories shipped) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 COMPLETE (10/10 + 8 additional stories) |
 
 ---
 
@@ -25,6 +25,8 @@
 > **Cross-team note (2026-07-23):** scoped and completed the frontend counterpart to Dev 3's **Story 3-31** (re-assessment prompt after every 10 sessions, adds `reassessment_due` to `GET /api/assessment/user/dna`, merged to `main`). Confirmed feasible end-to-end by reading the real backend directly: `types/assessment.ts`'s `LearnerDNA` already had `reassessment_due: boolean` matching the backend model field-for-field, and the onboarding submit endpoint's re-assessment bypass (clearing the idempotency lock before `SET NX`) needs no special-casing from the frontend at all. But found a real, blocking gap beyond "just add a banner": `OnboardingFlow.tsx`'s mount check unconditionally redirected any already-onboarded user (any 200 response) straight to `/dashboard`, never inspecting `reassessment_due` — meaning a "Take Assessment" CTA would have been a dead end. Fixed as **Story 2-12** (`docs/stories/2-12-reassessment-prompt.md`, branch `sprint2/s2-12-reassessment-prompt`): `OnboardingFlow.tsx`'s mount effect now proceeds into the disclaimer/questions flow when due instead of redirecting; new `ReassessmentPrompt.tsx` is a self-contained dismissible dashboard banner (own `getLearnerDna()` fetch, dismissal persisted to `localStorage` keyed on the specific `session_count` so a session-10 dismissal doesn't suppress the session-20 prompt) mounted on the dashboard page after `HeroSection`.
 
 > **Cross-team note (2026-07-27):** live end-to-end testing (real backend + real Supabase, first time past `package_builder` landing for real) surfaced a batch of real gaps in one session: `apps/web/src/__tests__` had drifted against `OnboardingFlow.tsx`/`questions.ts` after a stale-path scan (fixed as a test-only correction, no product code change); assessment library test gaps and a `RubricScores` type drift were fixed as **Story 2-13** (`docs/stories/2-13-assessment-test-fixes.md`); dashboard/library were confirmed still mock-backed despite `GET /api/content/lessons` being real and ready, wired for real as **Story 2-14** (`docs/stories/2-14-real-dashboard-library.md`, dedup + wider lookup window + mock-pulse isolation added in review); the very first live test of that wiring then hit a 401 (Server Components can't use `api.ts`'s browser-only auth interceptor), fixed same-day as **Story 2-15** (`docs/stories/2-15-fix-dashboard-library-auth.md`) by converting both pages to Client Components with new `useDashboard`/`useLibrary` SWR hooks, matching the established `useLesson`/`useSessionReport` pattern.
+
+> **Cross-team note (2026-07-29):** Dev 1's handoff (`docs/handoffs/dev2-handoff-2026-07-29.md`) flagged that `apps/web` had never produced a successful production build — `useSearchParams()` in `SignInForm.tsx` needs a Suspense boundary Next.js couldn't statically prerender around. Fixed same day (D27): `src/app/(auth)/signin/page.tsx` wraps `<SignInForm />` in `<Suspense>` with a new skeleton fallback (`SignInFormSkeleton.tsx`) matching the form layout. Verified locally with CI's exact env vars — `next build` now completes clean, `/signin` prerenders static. The same handoff's items 4a/4b (virtual playback clock, signed-URL retry re-fetch) turned out to already be shipped via S2-33 before the handoff was written. Item 4c (browser SpeechSynthesis, explicitly non-blocking) was implemented anyway per user request as **S2-34**. All of this, plus Stories 2-11 through 2-15 that had been sitting on `sprint2-master` unmerged, went to `main` together via **PR #114**.
 
 > **Cross-team note (2026-07-27):** live-tested lesson generation end-to-end and found two real, live-reproducible pipeline bugs, reported to Dev 1: (1) quiz questions duplicating exactly 16× regardless of question count (2 unique → 32, 3 unique → 48); (2) a segment whose TTS synthesis failed showed "0:00 total time" and the quiz fired instantly. Root-caused both by reading `apps/api/app/modules/content/pipeline/graph.py` directly (not guessing from symptoms): (1) `PipelineState`'s `operator.add`-annotated reducer fields re-accumulate on any re-invocation; (2) `_fallback_narration()` hardcoded a blank script even though the real text was sitting in `state["narration_scripts"]`. Communicated to Dev 1 directly (not as a formal doc this time — see chat history if needed).
 
@@ -1401,7 +1403,7 @@ Small badge showing the lesson's tier and duration, e.g. `Deep · 45 min`.
 ---
 
 ### S2-11 — Fix Quiz Feedback Field-Name Mismatch — ✅ 2026-07-23
-**Status:** ✅ DONE — `docs/stories/2-11-quiz-feedback-field-fix.md`, branch `sprint2/s2-11-variable-quiz-count`, merged to `sprint2-master`
+**Status:** ✅ DONE — `docs/stories/2-11-quiz-feedback-field-fix.md`, branch `sprint2/s2-11-variable-quiz-count`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
 **Files:** `apps/web/src/lib/assessment.ts`, `apps/web/src/components/player/QuizOverlay.tsx`, `apps/web/src/types/assessment.ts`
 
 Every quiz result's feedback line had been rendering blank/`undefined` in every environment — `QuizFeedbackItem`/`QuizOverlay.tsx` read `correct`/`message`, but the real backend (`apps/api/app/modules/assessment/service.py::grade_quiz`) sends `is_correct`/`explanation`. Found while scoping Dev 3's Story 3-28 (tier-aware quiz count), unrelated to it. Fixed the real shape at both the live call site and the parallel, unused-at-runtime `QuizResult` type in `types/assessment.ts` (which had the same wrong shape, backed by its own passing-but-wrong test) — now reuses `lib/assessment.ts`'s type instead of a third drifting copy. 5-agent review, 1 patch applied.
@@ -1409,7 +1411,7 @@ Every quiz result's feedback line had been rendering blank/`undefined` in every 
 ---
 
 ### S2-12 — Re-Assessment Prompt After 10 Sessions — ✅ 2026-07-23
-**Status:** ✅ DONE — `docs/stories/2-12-reassessment-prompt.md`, branch `sprint2/s2-12-reassessment-prompt`, merged to `sprint2-master`
+**Status:** ✅ DONE — `docs/stories/2-12-reassessment-prompt.md`, branch `sprint2/s2-12-reassessment-prompt`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
 **Files:** `apps/web/src/components/onboarding/OnboardingFlow.tsx`, `apps/web/src/components/dashboard/sections/ReassessmentPrompt.tsx` (new)
 
 Frontend counterpart to Dev 3's Story 3-31 (`reassessment_due` on `GET /api/assessment/user/dna`). `OnboardingFlow.tsx`'s mount check previously redirected any already-onboarded user straight to `/dashboard`, unconditionally, never checking `reassessment_due` — a "Take Assessment" CTA would have been a dead end. Fixed: mount effect now proceeds into the flow when due. New `ReassessmentPrompt.tsx` is a self-contained dismissible dashboard banner, dismissal persisted to `localStorage` keyed on `session_count` (so dismissing at session 10 doesn't suppress the session-20 prompt). 3-agent review.
@@ -1417,7 +1419,7 @@ Frontend counterpart to Dev 3's Story 3-31 (`reassessment_due` on `GET /api/asse
 ---
 
 ### S2-13 — Assessment Library Test Gaps + RubricScores Type Drift — ✅ 2026-07-27
-**Status:** ✅ DONE — `docs/stories/2-13-assessment-test-fixes.md`, merged to `sprint2-master`
+**Status:** ✅ DONE — `docs/stories/2-13-assessment-test-fixes.md`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
 **Files:** `apps/web/src/lib/assessment.ts`, its test file, plus a stale-path correction across `OnboardingFlow.tsx`/`questions.ts` tests
 
 Surfaced during the first live end-to-end test session against the real backend + real Supabase. Fixed a real `RubricScores` type drift and closed test coverage gaps in the assessment library that had gone unnoticed under mocks. 3-agent review.
@@ -1425,7 +1427,7 @@ Surfaced during the first live end-to-end test session against the real backend 
 ---
 
 ### S2-14 — Wire Dashboard and Library to Real GET /lessons Endpoint — ✅ 2026-07-27
-**Status:** ✅ DONE — `docs/stories/2-14-real-dashboard-library.md`, merged to `sprint2-master`
+**Status:** ✅ DONE — `docs/stories/2-14-real-dashboard-library.md`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
 **Files:** `apps/web/src/services/dashboard.service.ts`, `apps/web/src/services/library.service.ts`, `apps/web/src/components/dashboard/sections/*`, `apps/web/src/components/library/LibraryView.tsx`
 
 Confirmed via `docs/master-tracker.md` that `GET /api/content/lessons` was real, tested, and ready on Dev 1's side — but dashboard/library were still calling mocks. Wired both services to the real, paginated endpoint. Review round added: wider lookup window (`limit: 20`), dedup between `continueLearning` and `recentLessons`, isolated the mock learning-pulse call behind its own try/catch so its failure can't take down the rest of the dashboard, and an `all` field on `LibraryData` for robust "All" tab rendering. Dropped fabricated fields (`chapterTitle`, `durationSeconds`, etc.) per this project's never-fabricate-data convention. 3-agent review.
@@ -1433,7 +1435,7 @@ Confirmed via `docs/master-tracker.md` that `GET /api/content/lessons` was real,
 ---
 
 ### S2-15 — Fix Dashboard/Library 401 by Moving Real Data Fetching Client-Side — ✅ 2026-07-27
-**Status:** ✅ DONE — `docs/stories/2-15-fix-dashboard-library-auth.md`, merged to `sprint2-master`
+**Status:** ✅ DONE — `docs/stories/2-15-fix-dashboard-library-auth.md`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
 **Files:** `apps/web/src/hooks/useDashboard.ts` (new), `apps/web/src/hooks/useLibrary.ts` (new), `apps/web/src/app/(dashboard)/dashboard/page.tsx`, `apps/web/src/app/(dashboard)/library/page.tsx`
 
 The very first live test of S2-14's wiring hit a 401: both pages were Server Components, but `api.ts`'s auth interceptor only attaches a Bearer token client-side (`typeof window !== 'undefined'`) — a Server Component running in Node.js has no `window`, so every real API call went out with no auth header at all. Fixed by converting both pages to Client Components using two new SWR-based hooks, matching the already-established `useLesson`/`useSessionReport` pattern (real, authenticated data fetching in this codebase is always client-side). Review round added a loading state (was flashing empty-lesson sections) and per-user SWR cache key scoping (`` `dashboard:${user.id}` ``) to prevent cross-user data leakage in a shared browser tab. Merged before review (user was actively blocked live-testing), reviewed immediately after — 2 findings fixed.
@@ -1457,7 +1459,7 @@ The frontend half needed to actually close the TTS-fallback bug Dev 2 reported t
 ---
 
 ### S2-34 — Browser SpeechSynthesis Fallback for Virtual Playback Clock — ✅ 2026-07-29
-**Status:** ✅ DONE — `docs/stories/2-34-speech-synthesis-fallback.md`, merged to `sprint2-master` (branch `sprint2/s2-34-speech-synthesis-fallback`)
+**Status:** ✅ DONE — `docs/stories/2-34-speech-synthesis-fallback.md`, branch `sprint2/s2-34-speech-synthesis-fallback`, merged to `sprint2-master` then to `main` via PR #114 (2026-07-29)
 **Files:** `apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx`
 
 Implements the last tier of CLAUDE.md's TTS fallback chain (Sarvam Bulbul v2 → Azure TTS → **Browser Speech**), requested directly by the user from Dev 1's 2026-07-29 handoff (item 4c) despite its explicit non-blocking label there. Layers the native `SpeechSynthesis` API onto S2-33's virtual clock's `!hasAudio && hasScript` branch — the clock remains the sole timing authority; speech is purely supplementary audio and never drives `processTimeUpdate`/segment advancement. Mirrors `<audio>` play/pause semantics: `pause()`/`resume()` on status transitions, `cancel()` on segment change or leaving virtual-clock mode. 3-agent review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) surfaced 10 findings; user resolved 3 decision-needed items (2 accepted as documented limitations — seek doesn't resync narration, long scripts risk browser TTS truncation — logged in `docs/stories/deferred-work.md`; 1 applied — `ENDED` hard-cancels instead of pausing) and all 7 patch findings were applied: deferred `speak()` behind a `setTimeout(0)` after `cancel()` (same-tick Chrome race), added a swallowing `onerror` handler, guarded on `SpeechSynthesisUtterance` existence, made segment-change `cancel()` unconditional on status (real AC-6 gap), switched the effect's deps to `segment?.segment_id` per the spec's literal wording, and reset the spoken-segment ref in the unmount-cleanup effect (fixes a React StrictMode dev double-mount edge case). Full suite 54 files / 560 tests passing, `tsc --noEmit` clean, `eslint` clean.
