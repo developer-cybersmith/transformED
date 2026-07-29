@@ -100,6 +100,15 @@ export interface LessonPackage {
   metadata: LessonMetadata;
   segments: Segment[];
   glossary: GlossaryEntry[];
+  // Optional — Pydantic defaults to None (schemas/lesson.py), not in
+  // lesson_package.schema.json's `required` array (Story 1-5). Retroactively
+  // added field, matching `tier?`'s pattern above rather than a bare required
+  // field — see Story 1-5 Dev Notes for why (mirrors the tier/Story 2-25
+  // regression: a required field on a retroactively-added key breaks raw JSON
+  // schema validation of any lesson/fixture that predates the field).
+  avatar_intro_url?: string | null;
+  avatar_static_url?: string | null;
+  avatar_outro_url?: string | null;
 }
 
 /** DB row in the `lessons` table. `content` is a JSONB column. */

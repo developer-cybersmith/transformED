@@ -46,6 +46,18 @@
       "items": {
         "$ref": "#/definitions/GlossaryEntry"
       }
+    },
+    "avatar_intro_url": {
+      "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }],
+      "default": null
+    },
+    "avatar_static_url": {
+      "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }],
+      "default": null
+    },
+    "avatar_outro_url": {
+      "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }],
+      "default": null
     }
   },
   "definitions": {

@@ -464,3 +464,58 @@ def test_lesson_package_extra_fields_forbidden() -> None:
     d = {**MINIMAL_PACKAGE_DICT, "unexpected": "value"}
     with pytest.raises(ValidationError):
         LessonPackage.model_validate(d)
+
+
+# ---------------------------------------------------------------------------
+# Avatar fields (Story 1-5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_lesson_package_avatar_fields_default_to_none() -> None:
+    package = LessonPackage.model_validate(MINIMAL_PACKAGE_DICT)
+    assert package.avatar_intro_url is None
+    assert package.avatar_static_url is None
+    assert package.avatar_outro_url is None
+
+
+@pytest.mark.unit
+def test_lesson_package_avatar_fields_accept_real_urls() -> None:
+    d = {
+        **MINIMAL_PACKAGE_DICT,
+        "avatar_intro_url": "https://example.com/intro.mp4",
+        "avatar_static_url": "https://example.com/static.png",
+        "avatar_outro_url": "https://example.com/outro.mp4",
+    }
+    package = LessonPackage.model_validate(d)
+    assert package.avatar_intro_url == "https://example.com/intro.mp4"
+    assert package.avatar_static_url == "https://example.com/static.png"
+    assert package.avatar_outro_url == "https://example.com/outro.mp4"
+
+
+@pytest.mark.unit
+def test_lesson_package_omitting_avatar_fields_validates_against_raw_json_schema() -> None:
+    """Story 1-5 regression guard, mirrors the Story 2-25 tier fix: a
+    LessonPackage dict that omits avatar_intro_url/avatar_static_url/
+    avatar_outro_url entirely -- exactly what every pre-Story-1-5 lesson and
+    every existing test fixture looks like -- must still validate against the
+    raw JSON schema. These fields must never be added to the schema's
+    `required` array for this reason."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    assert "avatar_intro_url" not in MINIMAL_PACKAGE_DICT
+    assert "avatar_static_url" not in MINIMAL_PACKAGE_DICT
+    assert "avatar_outro_url" not in MINIMAL_PACKAGE_DICT
+    jsonschema.validate(instance=MINIMAL_PACKAGE_DICT, schema=schema)
+
+
+@pytest.mark.unit
+def test_lesson_package_avatar_fields_round_trip_through_json_schema() -> None:
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    d = {
+        **MINIMAL_PACKAGE_DICT,
+        "avatar_intro_url": "https://example.com/intro.mp4",
+        "avatar_static_url": None,
+        "avatar_outro_url": "https://example.com/outro.mp4",
+    }
+    package = LessonPackage.model_validate(d)
+    jsonschema.validate(instance=json.loads(package.model_dump_json()), schema=schema)
