@@ -1,6 +1,9 @@
 # Defect Register & Binding Decisions
 
-**Owner:** Dev 1 · **Created:** 2026-07-29 · **Status:** ACTIVE
+**Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-07-30 · **Status:** ACTIVE
+
+> **Dev 1 handover complete — see `docs/handoffs/DEV1-FINAL-HANDOVER.md`.** All 5 remaining open
+> entries have a named owner and a trigger; none is waiting on Dev 1.
 
 This file exists because `docs/deferred-work.md` did not. That file was created to hold
 deferred findings; it contains **zero items** across a period in which the story files
@@ -197,6 +200,7 @@ is what happens without it: three developers, three green suites, one broken pro
 | Of which **live in production** | **1** (D18) — awaiting Dev 3's A/B/C on Story 2-35 |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
+| Open entries with a named owner **and** a trigger | **5 of 5** |
 
 That last row is the honest health metric. Five of eight rules currently depend on someone
 remembering. **BD-3 is the one that converts the most of them into machine checks, which is
