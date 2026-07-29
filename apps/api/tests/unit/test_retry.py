@@ -431,3 +431,99 @@ async def test_guarded_import_ignores_a_non_class_openai_stub() -> None:
             pytest.fail("ValueError should not match the OpenAI tuples")
         except ValueError:
             pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Story 2-36 — D19 (redis) and D20 (RemoteProtocolError)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Same root cause as the OpenAI block above: the `except` clause encoded a
+# belief about a third-party type hierarchy that nobody had ever executed.
+# `redis.exceptions` defines its OWN TimeoutError and ConnectionError which
+# SHADOW the builtins by name and do not inherit from them, so
+# `except (..., TimeoutError)` never matched a single redis error.
+
+
+async def test_redis_exceptions_are_not_the_builtins() -> None:
+    """AC-3: pins the premise of the redis branch.
+
+    This is the whole defect in three assertions. `redis.exceptions.TimeoutError`
+    reads exactly like the builtin at a call site and is a completely different
+    class. If a future redis release makes these aliases of the builtins, this
+    test fails and tells us the branch became redundant — rather than letting it
+    rot into dead code that everyone assumes is load-bearing.
+    """
+    import redis.exceptions as rex
+
+    assert rex.TimeoutError is not TimeoutError
+    assert not issubclass(rex.TimeoutError, TimeoutError)
+    assert not issubclass(rex.ConnectionError, ConnectionError)
+    # BusyLoadingError is why AC-2 names ConnectionError rather than listing
+    # leaf classes: Redis raises it while loading a dataset from disk, which is
+    # the definition of "retry in a moment".
+    assert issubclass(rex.BusyLoadingError, rex.ConnectionError)
+
+
+@pytest.mark.parametrize(
+    "exc_name",
+    ["TimeoutError", "ConnectionError", "BusyLoadingError"],
+)
+async def test_redis_errors_are_retried_then_succeed(exc_name: str) -> None:
+    """AC-2. Asserts the call is RE-ATTEMPTED and then succeeds — not merely
+    that nothing escaped, which would also pass if the branch never ran.
+    """
+    import redis.exceptions as rex
+
+    exc_cls = getattr(rex, exc_name)
+    fn = _Counter(exc_cls("redis unavailable"), fail_times=1)
+    wrapped = with_retry(max_attempts=3)(fn)
+    assert await wrapped() == "ok"
+    assert fn.calls == 2, f"redis.{exc_name} was not retried"
+
+
+async def test_remote_protocol_error_is_retried_then_succeeds() -> None:
+    """AC-4: the server closed the connection mid-response. Routine from a
+    loaded provider, and neither NetworkError nor TimeoutException — so it fell
+    through to `except Exception` and was permanently fatal.
+    """
+    fn = _Counter(httpx.RemoteProtocolError("server disconnected"), fail_times=1)
+    wrapped = with_retry(max_attempts=3)(fn)
+    assert await wrapped() == "ok"
+    assert fn.calls == 2
+
+
+async def test_httpx_protocol_error_hierarchy_pins_the_boundary() -> None:
+    """AC-5 premise. RemoteProtocolError and LocalProtocolError share a parent,
+    so `except httpx.ProtocolError` would retry both. That is the trap this
+    story exists to avoid, and it is only visible if the hierarchy is asserted.
+    """
+    assert issubclass(httpx.RemoteProtocolError, httpx.ProtocolError)
+    assert issubclass(httpx.LocalProtocolError, httpx.ProtocolError)
+    # Neither is reachable via the two classes the decorator already caught —
+    # which is exactly why D20 was invisible.
+    for cls in (httpx.RemoteProtocolError, httpx.LocalProtocolError):
+        assert not issubclass(cls, httpx.NetworkError)
+        assert not issubclass(cls, httpx.TimeoutException)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.LocalProtocolError("we built a malformed request"),
+        httpx.UnsupportedProtocol("gopher://not-a-thing"),
+    ],
+)
+async def test_client_side_protocol_errors_are_not_retried(exc: BaseException) -> None:
+    """AC-5, the load-bearing half.
+
+    These mean THIS PROCESS is wrong — a malformed request, a bad URL scheme in
+    config. Attempt two cannot succeed, so retrying only turns one clear error
+    into three plus ~7s of backoff. A fix for D20 that widened to
+    `httpx.ProtocolError` or `httpx.TransportError` would pass every other test
+    in this file and fail only this one.
+    """
+    fn = _Counter(exc, fail_times=10)
+    wrapped = with_retry(max_attempts=3)(fn)
+    with pytest.raises(type(exc)):
+        await wrapped()
+    assert fn.calls == 1, f"{type(exc).__name__} is a client-side defect and must not be retried"
