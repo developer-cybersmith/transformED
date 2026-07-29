@@ -95,7 +95,12 @@ jobs:
         with:
           node-version: "20"
           cache: "pnpm"
-          cache-dependency-path: apps/web/pnpm-lock.yaml
+          # D25: was `apps/web/pnpm-lock.yaml`. This is a pnpm WORKSPACE
+          # (pnpm-workspace.yaml lists apps/web) so there is exactly one lockfile
+          # and it lives at the repo root. The path never resolved, setup-node
+          # failed hard, and the entire web job — lint, type-check, build — has
+          # never executed on any commit.
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install
@@ -106,14 +111,11 @@ jobs:
       - name: Type check
         run: pnpm type-check
 
-      # ADVISORY — see docs/DEFECT-REGISTER.md D24.
-      # D/P2: the web job ran install/lint/type-check/build and NEVER ran tests.
-      # 41 story lines claimed "full apps/web suite green (488 tests)"; no machine
-      # had ever verified any of them. Non-gating on first landing because Dev 1
-      # has not run this suite and will not hand Dev 2 a red main sight-unseen.
-      # Trigger to drop `continue-on-error`: Dev 2 confirms the suite is green.
-      - name: Test (advisory, not gating)
-        continue-on-error: true
+      # GATING. D/P2: the web job ran install/lint/type-check/build and NEVER ran
+      # tests. 41 story lines claimed "full apps/web suite green (488 tests)" and
+      # no machine had ever verified any of them. Dev 1 ran it on 2026-07-29:
+      # 53 files, 506 passed, 0 failed. It is green, so it gates from day one.
+      - name: Test
         run: pnpm test
 
       - name: Build

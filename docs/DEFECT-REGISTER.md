@@ -73,6 +73,7 @@ system.
 | D6 | `raise ... from None` does **not** clear `__context__`; the httpx exception it holds embeds the key-bearing URL | EXT | Build the sanitized error inside `except`, raise it **after** the block exits. Assigning `__context__ = None` does not work. | `test_sanitized_error_does_not_retain_the_original_via_context` |
 | D7 | `_fallback_narration` discarded narration text that was present in state | BW | Recover by `segment_id`; lift `["script"]` only — `Narration` is `extra="forbid"` | `test_package_builder_node.py` AC-1 suite |
 | D8 | Imagen's key-redaction converted retryable errors into un-retryable `RuntimeError` | BW | `SanitizedHTTPError` carries `status_code` + `network_error` | `test_imagen_network_error_is_retried` |
+| D25 | **The entire `web` CI job has never executed on any commit.** `cache-dependency-path: apps/web/pnpm-lock.yaml` — but this is a pnpm *workspace*, so the single lockfile is at the repo root. `actions/setup-node` failed with "Some specified paths were not resolved", killing the job before install. Lint, type-check and build have therefore never run. Compounding it, `pnpm type-check` did not exist as a script in `apps/web/package.json` at all, so the step would have failed even once setup-node was fixed. | SELF (infra) | Point at the root lockfile; add `"type-check": "tsc --noEmit"`. Verified 2026-07-29: lint 0 errors, `tsc --noEmit` clean, **506 tests pass**. All three web steps now gate. | The job itself — it now runs, and a green run is the proof it never had |
 | D9 | `completed_at` named in a narrowed select — a `lesson_jobs` column, not `lessons`. Would 42703 `GET /lessons` for every user. | SELF | Column lists must be validated against the migrations. | `test_list_columns_names_no_column_absent_from_the_lessons_table` — **but see D22: this guards one table only** |
 
 ### Fixed, in open PR
@@ -113,7 +114,8 @@ Not "documented limitations". Each carries an explicit condition that reopens it
 | ID | Defect | Sev | Decision | Enforcement |
 |----|--------|-----|----------|-------------|
 | D21 | Embed truncation assumes ~4 chars/token. Measured `cl100k_base`: English 6.0, **Hindi 1.06, Tamil 0.71** | Deferred | **DECISION 2026-07-29: English-only for now.** Fix is one line and already specified (plan 6.3): `enc.decode(enc.encode(text)[:cap])`. **Trigger: the first Indic-language lesson.** | DISCIPLINE — comment at `graph.py` truncation site |
-| D24 | **CI's new test steps land ADVISORY (`continue-on-error: true`), not gating.** `pytest tests` surfaces 22 pre-existing failures (Dev 3: 19, Dev 4: 3) and `pnpm test` has never been run by anyone. Gating them on day one turns `main` red for all four developers over failures this PR did not introduce. | Med | **DECISION 2026-07-29: land advisory, ratchet later.** `tests/unit` + `tests/integration` **do** gate (and `-x` is gone, so CI now enumerates rather than stops at one). **Triggers to drop `continue-on-error`:** api — the 22 reach zero; web — Dev 2 confirms green. Until then the number is *visible*, which it has never been. | DISCIPLINE — the trigger is in a comment at both step definitions in `.github/workflows/ci.yml` |
+| D24 | **CI's new test steps land ADVISORY (`continue-on-error: true`), not gating.** `pytest tests` surfaces 22 pre-existing failures (Dev 3: 19, Dev 4: 3). Gating it on day one turns `main` red for all four developers over failures this PR did not introduce. **Applies to the api job only** — `pnpm test` was measured green (D25) and gates from day one. | Med | **DECISION 2026-07-29: land advisory, ratchet later.** `tests/unit` + `tests/integration` **do** gate (and `-x` is gone, so CI now enumerates rather than stops at one). **Trigger to drop `continue-on-error`:** the 22 reach zero. Until then the number is *visible*, which it has never been. | DISCIPLINE — the trigger is in a comment at both step definitions in `.github/workflows/ci.yml` |
+| D26 | **CI has failed on 60 of its last 60 runs — zero successes — and merges proceeded anyway.** The API job dies at `ruff check .` (31 errors: Dev 3 22, Dev 4 9), which is *before* any test step, so "CI skipped the root `tests/` directory" understates it: **CI never reached a test step at all.** The web job died even earlier (D25). | SELF/BW | A red gate that everyone routes around is worse than no gate — it trains the team to ignore it. Gating scope must be a set that is green *today* (`tests/unit` + `tests/integration`: 743 pass) and grows by ratchet. | Fixing D25 makes a green run possible for the first time; the lint debt is Dev 3's and Dev 4's and is now the top ask in both handoffs |
 
 ---
 
@@ -183,9 +185,9 @@ is what happens without it: three developers, three green suites, one broken pro
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | 10 |
+| Defects closed (fixed **and** guarded) | 11 |
 | Fixed, awaiting merge | 2 |
-| **Open** | **12** |
+| **Open** | **13** |
 | Of which **live in production** | **4** (D18, D19, D20, D23) |
 | Of which **self-inflicted 2026-07-29** | 6 |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
