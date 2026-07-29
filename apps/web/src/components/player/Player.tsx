@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
+import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { SlideRenderer } from './SlideRenderer';
 import { PlayerControls } from './PlayerControls';
@@ -14,6 +15,10 @@ import { CheckingInTransition } from './CheckingInTransition';
 
 interface PlayerProps {
   lesson: LessonPackage;
+  /** Re-fetches the lesson from the backend (fresh signed media URLs) --
+   *  called before retryAudio() so a Retry on an expired signed URL has a
+   *  real chance of working instead of remounting the same dead URL (S2-33). */
+  onRefetchLesson: () => Promise<LessonStatusResponse | null | undefined>;
 }
 
 // Matches the backend's own _TIER_LABELS dict exactly (apps/api/app/modules/
@@ -33,7 +38,7 @@ const TIER_LABELS: Record<Exclude<LessonPackage['metadata']['tier'], undefined>,
 const REPEATED_FAILURE_RETRY_THRESHOLD = 3;
 
 // Default export required by next/dynamic
-export default function Player({ lesson }: PlayerProps) {
+export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   const loadLesson = usePlayerStore((s) => s.loadLesson);
   const status = usePlayerStore((s) => s.status);
   const sessionId = usePlayerStore((s) => s.sessionId);
@@ -43,12 +48,53 @@ export default function Player({ lesson }: PlayerProps) {
   const audioError = usePlayerStore((s) => s.audioError);
   const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
   const retryAudio = usePlayerStore((s) => s.retryAudio);
+  // Guards against a rapid double-click firing two overlapping refetch+retry
+  // cycles (review fix) -- audioError only clears once retryAudio() actually
+  // runs at the end of the (possibly slow) refetch, so the button stays
+  // visible/clickable for the whole in-flight window without this.
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  // Re-fetches fresh signed media URLs before actually retrying (S2-33) --
+  // retryAudio() alone just remounts the <audio> element with whatever src
+  // is already in the store, which is the same expired URL if that's why it
+  // failed. Refetch failures are swallowed here: worst case, retryAudio()
+  // still remounts with the (possibly-still-stale) existing URL, matching
+  // pre-S2-33 behavior rather than leaving Retry non-functional.
+  async function handleRetryAudio() {
+    if (isRetrying) return;
+    setIsRetrying(true);
+    try {
+      const fresh = await onRefetchLesson();
+      if (fresh?.content) {
+        usePlayerStore.getState().refreshLessonMedia(fresh.content);
+      }
+    } catch {
+      // Refetch failed -- fall through to retryAudio() with the existing lesson.
+    } finally {
+      setIsRetrying(false);
+    }
+    retryAudio();
+  }
 
   // Mounts the lesson WebSocket for the duration of the session — previously
   // never called anywhere, so the socket never connected during a real lesson.
   useLessonSocket(sessionId || null);
 
+  // Keyed on lesson_id, NOT the lesson object reference (review fix, S2-33):
+  // a retry-triggered refetch (handleRetryAudio -> onRefetchLesson -> SWR
+  // mutate()) produces a NEW lesson object for the SAME lesson_id -- without
+  // this guard, that new reference alone would re-fire this effect and call
+  // loadLesson() again, silently resetting currentSegmentIndex/audioPositionMs/
+  // quizFiredForSegment/status/sessionId right after (or racing with) the
+  // deliberately-progress-preserving refreshLessonMedia() call in
+  // handleRetryAudio -- defeating the entire point of the retry-refetch flow.
+  // PlayerLoader's key={lesson.lesson_id} already forces a real remount (fresh
+  // ref, starts at null) whenever the lesson_id genuinely changes, so this
+  // ref only needs to guard against the same-lesson_id-new-reference case.
+  const loadedLessonIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (loadedLessonIdRef.current === lesson.lesson_id) return;
+    loadedLessonIdRef.current = lesson.lesson_id;
     loadLesson(lesson);
     // Must run after loadLesson's synchronous set() so state.lesson is
     // populated before restoreProgress validates the saved segmentIndex
@@ -170,10 +216,11 @@ export default function Player({ lesson }: PlayerProps) {
               </p>
             )}
             <button
-              onClick={retryAudio}
-              className="px-5 py-2.5 rounded-full bg-[var(--accent-primary)] text-white text-sm font-medium hover:scale-105 transition-transform"
+              onClick={handleRetryAudio}
+              disabled={isRetrying}
+              className="px-5 py-2.5 rounded-full bg-[var(--accent-primary)] text-white text-sm font-medium hover:scale-105 transition-transform disabled:opacity-60 disabled:hover:scale-100"
             >
-              Retry
+              {isRetrying ? 'Retrying…' : 'Retry'}
             </button>
           </div>
         )}

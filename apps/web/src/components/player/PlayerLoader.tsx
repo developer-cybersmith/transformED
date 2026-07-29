@@ -62,7 +62,7 @@ interface PlayerLoaderProps {
 }
 
 export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
-  const { lesson, isLoading, error, status, serverError } = useLesson(lessonId);
+  const { lesson, isLoading, error, status, serverError, refetch } = useLesson(lessonId);
 
   // Status-derived states take priority over the generic SWR `error` (review
   // fix): SWR retains the last good data/status across a failed background
@@ -79,7 +79,9 @@ export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
   // (S1-08 useLesson refetch) fully remounts Player rather than reusing the same
   // instance — avoids useLessonSocket/loadLesson racing against a stale sessionId
   // left over from the previous lesson (S2-06 review finding).
-  if (status === 'ready' && lesson) return <Player key={lesson.lesson_id} lesson={lesson} />;
+  if (status === 'ready' && lesson) {
+    return <Player key={lesson.lesson_id} lesson={lesson} onRefetchLesson={refetch} />;
+  }
   if (error) return <LessonErrorState />;
   if (isLoading) return <PlayerSkeleton />;
   return <LessonErrorState />;
