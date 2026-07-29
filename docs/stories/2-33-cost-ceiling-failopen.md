@@ -71,8 +71,14 @@ precedent this story follows:
    succeeds and returns its content with an unpriced model.
 5. **AC-5 — The ceiling actually fires on an unpriced model.** The end-to-end property, not
    just the accumulate call: with a lesson already near `max_lesson_cost_usd`, an unpriced
-   model must push it over and raise `CostCeilingError`. This is the assertion that would
-   have caught the original bug; AC-1 alone would not.
+   model must push it over and raise `CostCeilingError`, with `accumulate_cost` and
+   `check_ceiling` **unstubbed** so the charge itself has to carry the total over.
+
+   **Correction (review round 2, D16):** an earlier draft claimed this was "the assertion that
+   would have caught the original bug; AC-1 alone would not." That was false. AC-1 asserts
+   `accumulate.assert_awaited_once()`, and the original defect was an early `return` *before*
+   `accumulate_cost` — so AC-1 alone fails against it. Both ACs are worth having; the claimed
+   ranking between them was wrong.
 6. **AC-6 — Standing guard tests** (`DEV1-FIX-PLAN` item 10). A test that fails if any
    future edit reintroduces an early `return` before `accumulate_cost` on any branch of
    `_maybe_accumulate_cost` other than the deliberate `lesson_id is None` case.
@@ -110,10 +116,20 @@ which is why the original went unnoticed. Aborting was rejected: PRD §14 is "do
 complete lesson, flag in admin", and hard-failing would make the model-evaluation workflow
 CLAUDE.md mandates impossible to run at all.
 
-**AC-5 is the assertion that would have caught the original.** AC-1 (accumulate is called)
-is necessary but not sufficient — the useful property is that the ceiling can still *fire*.
-`test_ceiling_fires_on_an_unpriced_model` drives a lesson already over budget through an
-unpriced model and asserts `CostCeilingError`.
+**AC-5 covers a property AC-1 does not — but AC-1 would also have caught the original.**
+Corrected in review round 2 (D16). AC-1's `assert_awaited_once()` fails against an early
+`return` before `accumulate_cost`, which is exactly what the original defect was. AC-5's
+distinct value is that charging is only useful if the charge can still *trip* the ceiling.
+
+The original `test_ceiling_fires_on_an_unpriced_model` did not prove that either: it stubbed
+`check_ceiling -> True` unconditionally, so it asserted "when check_ceiling returns True,
+CostCeilingError is raised" — a test of the `if` statement, blind to the arithmetic. It could
+not distinguish a charge that trips the ceiling from one that does not.
+`test_unpriced_charge_really_trips_the_ceiling_via_real_arithmetic` runs the real
+`accumulate_cost`/`check_ceiling` against fakeredis, seeded just under $3.00, with nothing
+telling `check_ceiling` what to return. Its companion
+`test_a_charge_below_the_ceiling_does_not_trip_it` pins the other side — under the stubbed
+version those two scenarios were indistinguishable.
 
 **AC-6 guard is structural, not behavioural.** A behavioural test only catches the cases it
 thinks to enumerate; the original defect was a `return` statement. The guard AST-parses

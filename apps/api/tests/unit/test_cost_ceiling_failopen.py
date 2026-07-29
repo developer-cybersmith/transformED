@@ -37,7 +37,11 @@ FAKE_LESSON_ID = "77777777-7777-7777-7777-777777777777"
 UNPRICED_MODEL = "claude-3-5-sonnet"  # a real CLAUDE.md evaluation candidate, absent from the table
 
 
-def _chat_response(content: str = "hello", prompt: int = 1000, completion: int = 500) -> MagicMock:
+def _chat_response(
+    content: str = "hello",
+    prompt: int | None = 1000,
+    completion: int | None = 500,
+) -> MagicMock:
     resp = MagicMock()
     choice = MagicMock()
     choice.message.content = content
@@ -67,11 +71,74 @@ def _provider_patches(
     )
 
 
-async def _run(model: str, *, accumulate: AsyncMock, ceiling: AsyncMock) -> Any:  # noqa: ANN401
+async def _run(
+    model: str,
+    *,
+    accumulate: AsyncMock,
+    ceiling: AsyncMock,
+    response: MagicMock | None = None,
+) -> Any:  # noqa: ANN401
     from app.providers.llm.openai import OpenAILLMProvider
 
-    p = _provider_patches(accumulate=accumulate, ceiling=ceiling)
+    p = _provider_patches(accumulate=accumulate, ceiling=ceiling, response=response)
     with p[0], p[1], p[2], p[3], p[4], p[5], p[6]:
+        provider = OpenAILLMProvider(lesson_id=FAKE_LESSON_ID)
+        return await provider.complete([{"role": "user", "content": "hi"}], model)
+
+
+# ── Real cost-tracking helpers (review round 2, D16) ────────────────────────
+#
+# Everything above stubs `accumulate_cost`/`check_ceiling`, which is right for
+# asserting WHAT was charged. It is wrong for asserting that a charge TRIPS the
+# ceiling: with `check_ceiling` hardcoded, that assertion is about the `if`, not
+# about the arithmetic. These helpers run the real functions against fakeredis.
+
+try:  # fakeredis[aioredis] is a dev dependency; skip rather than fail without it.
+    from fakeredis import FakeServer
+    from fakeredis.aioredis import FakeRedis
+
+    _HAS_FAKEREDIS = True
+except ImportError:  # pragma: no cover - depends on environment
+    _HAS_FAKEREDIS = False
+
+
+def _fake_redis() -> Any:  # noqa: ANN401
+    return FakeRedis(server=FakeServer(), decode_responses=True)
+
+
+def _cost_key(lesson_id: str) -> str:
+    from app.core.cost_tracker import _key
+
+    return _key(lesson_id)
+
+
+async def _seed_cost(redis: Any, lesson_id: str, amount: float) -> None:  # noqa: ANN401
+    await redis.set(_cost_key(lesson_id), str(amount))
+
+
+async def _read_cost(redis: Any, lesson_id: str) -> float:  # noqa: ANN401
+    raw = await redis.get(_cost_key(lesson_id))
+    return float(raw) if raw is not None else 0.0
+
+
+async def _run_with_real_cost_tracking(model: str) -> Any:  # noqa: ANN401
+    """Same call as `_run`, but with accumulate_cost/check_ceiling UNSTUBBED.
+
+    The caller patches `app.core.cost_tracker.get_redis`, so the real functions
+    run their real arithmetic against a fake store.
+    """
+    from app.providers.llm.openai import OpenAILLMProvider
+
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=_chat_response())
+    mod = "app.providers.llm.openai"
+    with (
+        patch(f"{mod}.AsyncOpenAI", return_value=client),
+        patch(f"{mod}.get_langfuse", MagicMock(return_value=None)),
+        patch(f"{mod}.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
+    ):
         provider = OpenAILLMProvider(lesson_id=FAKE_LESSON_ID)
         return await provider.complete([{"role": "user", "content": "hi"}], model)
 
@@ -246,3 +313,115 @@ async def test_no_early_return_before_accumulate_except_the_lesson_id_guard() ->
     assert any(isinstance(n, ast.Name) and n.id == "accumulate_cost" for n in ast.walk(tree)), (
         "accumulate_cost must still be called"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Review round 2 (2026-07-29) — D16 and D17
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# D16: `test_ceiling_fires_on_an_unpriced_model` above stubs
+# `check_ceiling -> True` UNCONDITIONALLY. It therefore asserts "when
+# check_ceiling returns True, CostCeilingError is raised" — i.e. it tests the
+# `if` statement, not the ceiling. It cannot distinguish a charge that trips
+# the ceiling from one that doesn't, which is the property AC-5 claims to prove.
+# The test below runs the REAL accumulate_cost/check_ceiling arithmetic against
+# fakeredis so the charge itself has to do the work.
+
+
+@pytest.mark.skipif(not _HAS_FAKEREDIS, reason="fakeredis[aioredis] not installed")
+async def test_unpriced_charge_really_trips_the_ceiling_via_real_arithmetic() -> None:
+    """AC-5, with nothing stubbed between the charge and the verdict.
+
+    Seed the lesson just under the $3.00 ceiling, then make one unpriced-model
+    call. Nothing tells `check_ceiling` what to return — the fallback rate has
+    to actually push the running total over on its own.
+    """
+    from app.core.cost_tracker import CostCeilingError
+
+    redis = _fake_redis()
+    seeded = 2.999
+
+    with patch("app.core.cost_tracker.get_redis", return_value=redis):
+        await _seed_cost(redis, FAKE_LESSON_ID, seeded)
+        with pytest.raises(CostCeilingError):
+            await _run_with_real_cost_tracking(UNPRICED_MODEL)
+
+        total = await _read_cost(redis, FAKE_LESSON_ID)
+
+    assert total > seeded, "the unpriced call must have added a real charge"
+    assert total >= 3.00, f"charge did not carry the total over the ceiling: ${total}"
+
+
+@pytest.mark.skipif(not _HAS_FAKEREDIS, reason="fakeredis[aioredis] not installed")
+async def test_a_charge_below_the_ceiling_does_not_trip_it() -> None:
+    """The other half, and the reason the stubbed version proved nothing: with
+    `check_ceiling` hardcoded to True, this scenario is indistinguishable from
+    the one above. Here the same code path must NOT raise.
+    """
+    redis = _fake_redis()
+
+    with patch("app.core.cost_tracker.get_redis", return_value=redis):
+        await _run_with_real_cost_tracking(UNPRICED_MODEL)  # must not raise
+        total = await _read_cost(redis, FAKE_LESSON_ID)
+
+    assert 0 < total < 3.00, f"expected a small real charge well under the ceiling, got ${total}"
+
+
+# ── D17: missing or nonsensical token counts must not kill the node ──────────
+#
+# `usage.prompt_tokens` is typed `int` by the OpenAI SDK, but this codebase is
+# explicitly built to swap models by env var (CLAUDE.md), and OpenAI-compatible
+# endpoints do return `null` usage fields. Before this round that raised
+# `TypeError: unsupported operand type(s) for /: 'NoneType' and 'int'` — an
+# unknown exception, so `with_retry` would not retry it and the node died.
+#
+# Verified reachable: calling `_maybe_accumulate_cost(model, None, 500)` raised.
+
+
+@pytest.mark.parametrize(
+    ("prompt", "completion"),
+    [(None, 500), (1000, None), (None, None)],
+)
+async def test_missing_token_counts_do_not_crash_the_node(
+    prompt: int | None, completion: int | None
+) -> None:
+    """A billing-metadata gap must never destroy an already-paid-for completion.
+
+    The provider call succeeded and the money is spent; throwing here would make
+    ARQ re-run and re-pay for the node. Treat the missing half as zero, charge
+    what we can, and keep going.
+    """
+    accumulate = AsyncMock(return_value=0.5)
+    response = _chat_response(prompt=prompt, completion=completion)
+
+    result = await _run(
+        UNPRICED_MODEL,
+        accumulate=accumulate,
+        ceiling=AsyncMock(return_value=False),
+        response=response,
+    )
+
+    assert result == "hello", "the completion must still be returned"
+    accumulate.assert_awaited_once()
+    charged = accumulate.await_args.args[1]
+    assert charged >= 0, f"charge must never be negative, got {charged}"
+
+
+async def test_negative_token_counts_are_clamped_not_propagated() -> None:
+    """`accumulate_cost` raises ValueError on a negative cost — an unknown
+    exception that `with_retry` will not retry, so it kills the node. A
+    nonsensical count from a provider must be clamped here, at the source,
+    rather than becoming a fatal error two layers down.
+    """
+    accumulate = AsyncMock(return_value=0.5)
+
+    await _run(
+        UNPRICED_MODEL,
+        accumulate=accumulate,
+        ceiling=AsyncMock(return_value=False),
+        response=_chat_response(prompt=-1000, completion=-500),
+    )
+
+    accumulate.assert_awaited_once()
+    charged = accumulate.await_args.args[1]
+    assert charged >= 0, f"negative token counts must not produce a negative charge: {charged}"
