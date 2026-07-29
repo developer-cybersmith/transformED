@@ -16,8 +16,6 @@ from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel 
 from app.core.posthog_client import capture_event
 from app.dependencies import CurrentUser
 
-logger = logging.getLogger(__name__)
-
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
 from app.modules.assessment.schemas import (
@@ -29,6 +27,8 @@ from app.modules.assessment.schemas import (
     TeachbackResult,
     TeachbackSubmission,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["assessment"])
 
@@ -165,8 +165,8 @@ async def get_learner_dna(
     redis_client = None
     try:
         redis_client = get_redis()
-    except Exception:
-        pass  # non-fatal: reassessment_due defaults to False if Redis unavailable
+    except Exception as exc:
+        logger.debug("Redis unavailable for reassessment_due check: %s", exc)
     body = await get_learner_dna_data(user_id=user_id, supabase=supabase, redis=redis_client)
     consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
     capture_event(
@@ -211,8 +211,8 @@ async def submit_onboarding_diagnostic(
     try:
         if await redis.get(reassessment_key) is not None:
             await redis.delete(onboarding_key)
-    except Exception:
-        pass  # non-fatal: idempotency guard still runs normally if this check fails
+    except Exception as exc:
+        logger.debug("Re-assessment bypass check failed (non-fatal): %s", exc)
 
     was_set = await redis.set(onboarding_key, "1", nx=True)
     if not was_set:

@@ -29,7 +29,9 @@ import pytest
 # wrapper rendering <OnboardingFlow />, and the branding text + submission
 # payload shape live in OnboardingFlow.tsx itself. Scanning only one of these
 # leaves most of this file's assertions silently unreachable.
-_ONBOARDING_DIR = pathlib.Path(__file__).parent.parent.parent / "web" / "src" / "components" / "onboarding"
+_ONBOARDING_DIR = (
+    pathlib.Path(__file__).parent.parent.parent / "web" / "src" / "components" / "onboarding"
+)
 ONBOARDING_FLOW_FILE = _ONBOARDING_DIR / "OnboardingFlow.tsx"
 ONBOARDING_QUESTIONS_FILE = _ONBOARDING_DIR / "questions.ts"
 
@@ -40,7 +42,10 @@ ONBOARDING_QUESTIONS_FILE = _ONBOARDING_DIR / "questions.ts"
 
 def _content() -> str:
     """Return the combined text of both onboarding content files (cached per test session)."""
-    return ONBOARDING_FLOW_FILE.read_text(encoding="utf-8") + ONBOARDING_QUESTIONS_FILE.read_text(encoding="utf-8")
+    return (
+        ONBOARDING_FLOW_FILE.read_text(encoding="utf-8")
+        + ONBOARDING_QUESTIONS_FILE.read_text(encoding="utf-8")
+    )
 
 
 def _content_lower() -> str:
