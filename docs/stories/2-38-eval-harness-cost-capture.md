@@ -1,6 +1,6 @@
 # Story 2.38: The eval harness must report per-lesson cost
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -60,10 +60,10 @@ asks.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC-1, AC-2, AC-3, AC-4): capture cost in `run_eval`, both paths; clear the key.
-- [ ] Task 2 (AC-5, AC-6): aggregate + ceiling-breach reporting in `run_all_evals`.
-- [ ] Task 3 (AC-7): tests with `run_pipeline` and `get_cost` stubbed.
-- [ ] Task 4 (AC-8): full suite, lint, types.
+- [x] Task 1 (AC-1, AC-2, AC-3, AC-4): capture cost in `run_eval`, both paths; clear the key.
+- [x] Task 2 (AC-5, AC-6): aggregate + ceiling-breach reporting in `run_all_evals`.
+- [x] Task 3 (AC-7): tests with `run_pipeline` and `get_cost` stubbed.
+- [x] Task 4 (AC-8): full suite, lint, types.
 
 ## Dev Notes
 
@@ -105,3 +105,38 @@ Touches `apps/api/tests/evals/runner.py` and tests. **No** `app/` changes, **no*
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-30 | Story created. Closes the last open Dev 1 action by building the missing instrument rather than estimating a number. | Dev 1 |
+
+## Dev Agent Record
+
+### Completion Notes
+
+Builds the instrument; does **not** produce the baseline. The numbers land when someone runs
+`pytest tests/evals/test_live_run.py -v --run-live-eval` with live credentials — a deliberate,
+separately-funded action.
+
+**A test of mine passed for the wrong reason and I caught it by reading the assertion.** The
+helper originally passed `Path("nonexistent.pdf")`; `run_eval` does `pdf_path.read_bytes()`
+during setup, so *every* call took the failure path — and because AC-3 captures cost there too,
+the AC-1 success-path test was green without ever exercising the success path. Fixed by writing
+a real temp file, and the test now asserts `package_valid is True` **before** checking the cost,
+so it cannot regress to that state silently.
+
+**`None` is not `0.0`.** An unreadable meter records `None` and is excluded from the mean.
+Averaging in a zero would understate the baseline — the one direction of error a cost ceiling
+must not have.
+
+### Mutation testing — 8 mutants, 8 caught, 0 survivors
+
+Including "unreadable cost becomes 0.0", "None counted as 0.0 in the mean", and both
+directions of the ceiling-breach check (never reports / always reports).
+
+### Verification (repo-wide, CLAUDE.md binding rule 1)
+
+- `pytest tests/unit tests/integration` — **793 passed**, 1 skipped
+- `pytest tests` — 22 failed, **1485 passed**; failure set unchanged (Dev 3 19, Dev 4 3)
+- `ruff check .` / `ruff format --check .` — clean · `mypy app` — 24 in 3 files, unchanged
+
+### File List
+
+- `apps/api/tests/evals/runner.py` (modified)
+- `apps/api/tests/unit/test_eval_cost_capture.py` (new)
