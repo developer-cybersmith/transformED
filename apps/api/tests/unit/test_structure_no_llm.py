@@ -19,6 +19,7 @@ the node and in the tracker, with the Sprint 3 docling direction.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,33 @@ FONT_BLOCKS = [
 ]
 
 
+# ── D14: the golden test must not depend on the environment ──────────────────
+#
+# `structure_max_sections` (default 15) and `structure_min_section_chars`
+# (default 200) both reshape the output. With STRUCTURE_MAX_SECTIONS=3 in the
+# environment, the baseline comparison goes red with the message "detection
+# itself moved" — which is a MISDIAGNOSIS: nothing moved, the cap merged
+# sections. The neighbouring structure tests already pin these; this one didn't.
+
+_PINNED_STRUCTURE_SETTINGS = {
+    "structure_max_sections": 15,
+    "structure_min_section_chars": 200,
+}
+
+
+@contextlib.contextmanager
+def _temporarily_set(obj: Any, values: dict[str, Any]) -> Any:  # noqa: ANN401
+    """Set attributes on the cached settings object and restore them after."""
+    previous = {k: getattr(obj, k) for k in values}
+    for k, v in values.items():
+        object.__setattr__(obj, k, v)
+    try:
+        yield obj
+    finally:
+        for k, v in previous.items():
+            object.__setattr__(obj, k, v)
+
+
 def _supabase() -> MagicMock:
     sb = MagicMock()
     chain = sb.table.return_value.select.return_value.eq.return_value
@@ -64,8 +92,24 @@ def _supabase() -> MagicMock:
     return sb
 
 
-async def _run(raw_text: str, font_blocks: list[dict[str, Any]]) -> tuple[Any, MagicMock]:
-    """Run structure_node with a provider spy. Returns (result, provider_spy)."""
+async def _run(
+    raw_text: str,
+    font_blocks: list[dict[str, Any]],
+    *,
+    settings_overrides: dict[str, Any] | None = None,
+) -> tuple[Any, MagicMock, MagicMock]:
+    """Run structure_node with a spy. Returns (result, provider_spy, factory_spy).
+
+    **Review round 2, D12.** This used to return only the provider spy, and every
+    "no LLM call" assertion was `provider.complete_structured.assert_not_awaited()`.
+    That watches ONE method. A regression that called `provider.complete()` — or
+    any other method on the same provider — passed all six tests.
+
+    The factory spy is strictly stronger: if `get_llm_provider` is never called,
+    no method on any provider can be. Every node in `graph.py` imports the
+    factory lazily *inside* the function (`from app.providers.llm.factory import
+    get_llm_provider`), so patching the factory module does intercept it.
+    """
     from app.modules.content.pipeline.graph import structure_node
 
     provider = MagicMock()
@@ -87,9 +131,16 @@ async def _run(raw_text: str, font_blocks: list[dict[str, Any]]) -> tuple[Any, M
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await structure_node(state)  # type: ignore[arg-type]
+        if settings_overrides:
+            from app.config import get_settings
 
-    return result, provider
+            settings = get_settings()
+            with _temporarily_set(settings, settings_overrides):
+                result = await structure_node(state)  # type: ignore[arg-type]
+        else:
+            result = await structure_node(state)  # type: ignore[arg-type]
+
+    return result, provider, factory
 
 
 # ── AC-1: no LLM call, on BOTH sides of the old ~6,667-char threshold ─────────
@@ -97,10 +148,11 @@ async def _run(raw_text: str, font_blocks: list[dict[str, Any]]) -> tuple[Any, M
 
 async def test_structure_node_makes_no_llm_call_on_a_long_document() -> None:
     """The real-document case: the old code called the LLM and always discarded it."""
-    result, provider = await _run(RAW, FONT_BLOCKS)
+    result, provider, factory = await _run(RAW, FONT_BLOCKS)
 
     assert len(RAW) > 6667, "fixture must exceed the old acceptance threshold to be meaningful"
     provider.complete_structured.assert_not_awaited()
+    factory.assert_not_called()  # D12: no provider is even OBTAINED
     assert result.get("sections"), "rule-based detection must still produce sections"
 
 
@@ -115,11 +167,12 @@ async def test_structure_node_makes_no_llm_call_on_a_short_document() -> None:
     short = "Chapter 1: Cells\n\nThe cell is the basic unit of life. " * 8
     assert len(short) < 6667, "fixture must sit BELOW the old threshold"
 
-    _, provider = await _run(
+    _, provider, factory = await _run(
         short, [{"text": "Chapter 1: Cells", "font": {"size": 18.0, "bold": True}}]
     )
 
     provider.complete_structured.assert_not_awaited()
+    factory.assert_not_called()  # D12: no provider is even OBTAINED
 
 
 # ── AC-2: rule-based output is byte-identical to the pre-deletion baseline ────
@@ -140,7 +193,9 @@ async def test_sections_are_identical_to_the_pre_deletion_baseline() -> None:
     )
     expected = json.loads(_BASELINE.read_text(encoding="utf-8"))
 
-    result, _ = await _run(RAW, FONT_BLOCKS)
+    result, _provider, _factory = await _run(
+        RAW, FONT_BLOCKS, settings_overrides=_PINNED_STRUCTURE_SETTINGS
+    )
     actual = result.get("sections", [])
 
     assert actual == expected, (
@@ -157,9 +212,10 @@ async def test_empty_raw_text_does_not_crash() -> None:
     vacuously false for an empty string, so hallucinated LLM sections would have
     been adopted. With no LLM there is nothing to hallucinate — but the node must
     still degrade rather than raise."""
-    result, provider = await _run("", [])
+    result, provider, factory = await _run("", [])
 
     provider.complete_structured.assert_not_awaited()
+    factory.assert_not_called()  # D12: no provider is even OBTAINED
     assert isinstance(result.get("sections", []), list)
 
 
@@ -186,3 +242,91 @@ async def test_document_structure_schema_is_deliberately_retained() -> None:
 
     assert hasattr(schemas, "DocumentStructure")
     assert "DocumentStructure" in schemas.__all__
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Review round 2 (2026-07-29) — D13: the `chapter` branch was never exercised
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# With FONT_BLOCKS above, `detect_headings` computes median=14.0, threshold=17.5,
+# and the chapter band starts at threshold*1.15 = 20.125. The largest block is
+# 18.0pt. **No input in this file ever reached the `chapter` branch**, so the
+# golden baseline pinned a hierarchy in which every level came from somewhere
+# else — and the branch itself was free to be deleted or inverted without a
+# single test noticing.
+#
+# These sizes were derived, not guessed: median=12.0 -> threshold=15.00,
+# chapter >= 17.25, section >= 15.75. 24.0/17.0/15.2 lands one heading cleanly
+# in each of the three bands.
+
+_THREE_LEVEL_FONT_BLOCKS = [
+    {"text": "Chapter 1: Cell Structure", "font": {"size": 24.0, "bold": True}},
+    {"text": "1.1 The Cell Membrane", "font": {"size": 17.0, "bold": True}},
+    {"text": "1.2 The Nucleus", "font": {"size": 15.2, "bold": True}},
+    {"text": "The cell is the basic unit", "font": {"size": 12.0, "bold": False}},
+    {"text": "The membrane regulates", "font": {"size": 12.0, "bold": False}},
+    {"text": "The nucleus contains", "font": {"size": 12.0, "bold": False}},
+    {"text": "Cells divide to produce", "font": {"size": 12.0, "bold": False}},
+    {"text": "Mitosis produces two", "font": {"size": 12.0, "bold": False}},
+]
+
+
+async def test_all_three_heading_levels_are_reachable_from_font_metadata() -> None:
+    """D13. `detect_headings` has three level branches; the fixtures above reach
+    exactly one of them, so two were unpinned dead code as far as the suite knew.
+
+    Asserted on `detect_headings` directly rather than through `structure_node`,
+    because `coalesce_sections` and `structure_max_sections` can merge sections
+    away and would make a failure here ambiguous.
+    """
+    from app.modules.content.pipeline.nodes.structure_detection import detect_headings
+
+    raw = "\n\n".join(b["text"] for b in _THREE_LEVEL_FONT_BLOCKS)
+    candidates = detect_headings(raw, _THREE_LEVEL_FONT_BLOCKS)
+    by_text = {c["text"]: c["level"] for c in candidates}
+
+    assert by_text.get("Chapter 1: Cell Structure") == "chapter", (
+        f"the chapter branch is still unreachable — got {by_text}"
+    )
+    assert by_text.get("1.1 The Cell Membrane") == "section"
+    assert by_text.get("1.2 The Nucleus") == "topic"
+
+    assert {"chapter", "section", "topic"} <= set(by_text.values()), (
+        "all three level branches must be exercised by at least one fixture"
+    )
+
+
+async def test_font_strategy_wins_over_the_chapter_regex_inverting_the_hierarchy() -> None:
+    """D28 — a REAL defect, pinned here as current behaviour, NOT fixed.
+
+    `detect_headings` populates `candidates` keyed by text and every writer is
+    guarded by `if text not in candidates`, so **the font strategy always wins**
+    over the regex strategies that run after it. An explicit "Chapter N:" prefix
+    is a far stronger signal than a relative font-size band, and it loses.
+
+    The consequence is visible in `structure_rule_based_baseline.json`:
+
+        topic    Chapter 1: Cell Structure     <- the chapter
+        section  1.1 The Cell Membrane         <- ranked ABOVE its own chapter
+        section  1.2 The Nucleus
+
+    `_LEVEL_RANK = {"chapter": 0, "section": 1, "topic": 2}`, so a chapter sits
+    BELOW its own subsections.
+
+    **Deliberately not fixed in Story 2-34.** That story's premise is that
+    removing an inert LLM call must be behaviour-PRESERVING, and its golden
+    baseline asserts exactly that. Changing precedence here is a detection
+    behaviour change and belongs with the Sprint 3 docling migration, per the
+    2026-07-29 decision to park structure detection. Registered as D28 with that
+    trigger; this test pins the wrong behaviour so the fix cannot land silently.
+    """
+    from app.modules.content.pipeline.nodes.structure_detection import detect_headings
+
+    candidates = detect_headings(RAW, FONT_BLOCKS)
+    by_text = {c["text"]: c["level"] for c in candidates}
+
+    assert by_text.get("Chapter 1: Cell Structure") == "topic", (
+        "If this now reads 'chapter', D28 has been fixed — good. Update this test, "
+        "re-capture structure_rule_based_baseline.json, and close D28 in the register."
+    )
+    assert by_text.get("1.1 The Cell Membrane") == "section"
