@@ -1456,6 +1456,14 @@ The frontend half needed to actually close the TTS-fallback bug Dev 2 reported t
 
 ---
 
+### S2-34 — Browser SpeechSynthesis Fallback for Virtual Playback Clock — ✅ 2026-07-29
+**Status:** ✅ DONE — `docs/stories/2-34-speech-synthesis-fallback.md`, merged to `sprint2-master` (branch `sprint2/s2-34-speech-synthesis-fallback`)
+**Files:** `apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx`
+
+Implements the last tier of CLAUDE.md's TTS fallback chain (Sarvam Bulbul v2 → Azure TTS → **Browser Speech**), requested directly by the user from Dev 1's 2026-07-29 handoff (item 4c) despite its explicit non-blocking label there. Layers the native `SpeechSynthesis` API onto S2-33's virtual clock's `!hasAudio && hasScript` branch — the clock remains the sole timing authority; speech is purely supplementary audio and never drives `processTimeUpdate`/segment advancement. Mirrors `<audio>` play/pause semantics: `pause()`/`resume()` on status transitions, `cancel()` on segment change or leaving virtual-clock mode. 3-agent review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) surfaced 10 findings; user resolved 3 decision-needed items (2 accepted as documented limitations — seek doesn't resync narration, long scripts risk browser TTS truncation — logged in `docs/stories/deferred-work.md`; 1 applied — `ENDED` hard-cancels instead of pausing) and all 7 patch findings were applied: deferred `speak()` behind a `setTimeout(0)` after `cancel()` (same-tick Chrome race), added a swallowing `onerror` handler, guarded on `SpeechSynthesisUtterance` existence, made segment-change `cancel()` unconditional on status (real AC-6 gap), switched the effect's deps to `segment?.segment_id` per the spec's literal wording, and reset the spoken-segment ref in the unmount-cleanup effect (fixes a React StrictMode dev double-mount edge case). Full suite 54 files / 560 tests passing, `tsc --noEmit` clean, `eslint` clean.
+
+---
+
 ## 12. Sprint 3 — MediaPipe + CES + Tutor UI
 **Period:** Weeks 6–7 | **Status:** 🔲 NOT STARTED  
 **Dependency:** Dev 4 WebSocket server delivering `tutor_intervene` and `ces_update` messages
