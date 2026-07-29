@@ -4,7 +4,7 @@ baseline_commit: 5a28343db7be2634cb1a65a2baf8860dc9d2f997
 
 # Story 2.34: Browser SpeechSynthesis Fallback for Virtual Playback Clock
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -31,18 +31,18 @@ Story 2-33 (`docs/stories/2-33-virtual-playback-clock.md`, merged to `main`) bui
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 2, 3): Add the speech-synthesis effect to `AudioTimeline.tsx`'s virtual-clock branch — support detection, `.speak()` on entering `PLAYING` for a segment, utterance built from `segment.narration.script`.
-  - [ ] 1.1 RED: failing tests for speak-on-entry and the unsupported-browser no-op.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 4, 5): Wire `pause()`/`resume()` to `status` leaving/re-entering `'PLAYING'` for the same segment.
-  - [ ] 2.1 RED, 2.2 GREEN.
-- [ ] Task 3 (AC: 6, 7): Wire `cancel()` to segment change, to leaving the `!hasAudio && hasScript` case, and to unmount.
-  - [ ] 3.1 RED, 3.2 GREEN.
-- [ ] Task 4 (AC: 8): Add the last-spoken-segment ref guard; verify no double-speak on an unrelated re-render or strict-mode remount.
-  - [ ] 4.1 RED, 4.2 GREEN.
-- [ ] Task 5 (AC: 9): Set `utterance.rate` from `playbackRate` at speak-time.
-  - [ ] 5.1 RED, 5.2 GREEN.
-- [ ] Task 6 (AC: 10): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1, 2, 3): Add the speech-synthesis effect to `AudioTimeline.tsx`'s virtual-clock branch — support detection, `.speak()` on entering `PLAYING` for a segment, utterance built from `segment.narration.script`.
+  - [x] 1.1 RED: failing tests for speak-on-entry and the unsupported-browser no-op.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 4, 5): Wire `pause()`/`resume()` to `status` leaving/re-entering `'PLAYING'` for the same segment.
+  - [x] 2.1 RED, 2.2 GREEN.
+- [x] Task 3 (AC: 6, 7): Wire `cancel()` to segment change, to leaving the `!hasAudio && hasScript` case, and to unmount.
+  - [x] 3.1 RED, 3.2 GREEN.
+- [x] Task 4 (AC: 8): Add the last-spoken-segment ref guard; verify no double-speak on an unrelated re-render or strict-mode remount.
+  - [x] 4.1 RED, 4.2 GREEN.
+- [x] Task 5 (AC: 9): Set `utterance.rate` from `playbackRate` at speak-time.
+  - [x] 5.1 RED, 5.2 GREEN.
+- [x] Task 6 (AC: 10): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -71,3 +71,27 @@ jsdom (this project's `vitest.config.ts` test environment) has no native `Speech
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-29 | Story created from Dev 1's handoff item 4c, explicitly requested despite its non-blocking label. Branch `sprint2/s2-34-speech-synthesis-fallback` off `main`. | Dev 2 |
+| 2026-07-29 | Implemented all 6 tasks in a single cohesive effect (plus a dedicated unmount-cancel effect). Full suite 54 files / 555 tests passing, `tsc --noEmit` clean, `eslint` clean. | Dev 2 |
+
+## Dev Agent Record
+
+### Implementation Plan
+
+- Read the current `AudioTimeline.tsx` (post-S2-33) in full before writing anything, confirming the exact three-way branch, the virtual clock effect, and the duration-setting effect this story's new effect sits alongside — per its own comments, none of that logic needed to change.
+- Implemented one cohesive `useEffect` (deps: `[hasAudio, hasScript, segment, status]`) owning the entire SpeechSynthesis lifecycle: early-return when unsupported/not-applicable (AC-2, and the `hasAudio || !hasScript || !segment` case which also `cancel()`s and clears the ref — AC-6's "leaving virtual-clock mode" half); `pause()` when `status !== 'PLAYING'` (AC-4); `resume()` when re-entering `PLAYING` for the *same* segment (tracked via `spokenSegmentIdRef`, AC-5); otherwise `cancel()` (harmless pre-emptive stop, also covers AC-6's "segment change" half) then `speak()` a fresh `SpeechSynthesisUtterance` with `rate` set once from `playbackRate` (AC-9), and updates the ref (AC-1, AC-8's speak-once guard).
+- Added a second, `[]`-deps effect solely for AC-7 (cancel on unmount) — kept separate because the main effect's cleanup would otherwise fire on every dependency change (including a `status`-only pause), which must call `pause()`, not `cancel()`.
+- Deliberately did NOT touch the S2-33 virtual clock, `processTimeUpdate`, or `handleEnded` — verified AC-3 by asserting `audioPositionMs` stays `0` immediately after mount with no fake timers advanced (the speech effect itself never touches store position/timing actions).
+- Followed the same jsdom-mock pattern already established in this file for `window.HTMLMediaElement.prototype.play`/`pause` (S2-26/S2-33): mocked `window.speechSynthesis` and `window.SpeechSynthesisUtterance` per-test via `Object.defineProperty`/direct assignment, restored in `afterEach`.
+- One test bug caught and fixed during GREEN, not a production issue: the AC-4 (pause) test initially asserted `cancelMock` was never called across the whole test, but the very first mount legitimately calls a pre-emptive `cancel()` before its first `speak()` (harmless, and also covers AC-6). Fixed by clearing `cancelMock` after the initial render, same as the already-cleared `speakMock`.
+
+### Completion Notes
+
+- All 6 tasks complete, all ACs (1–10) satisfied.
+- Full `apps/web` test suite: 54 files, 555 tests (544 baseline + 11 new), all passing.
+- `tsc --noEmit`: clean. `eslint`: clean on both touched files.
+- Known, documented limitation (AC-9): `utterance.rate` is fixed at speak-time and does not live-update if the student changes `playbackRate` mid-segment — matches the story's explicit scope decision, not a defect.
+
+### File List
+
+- `apps/web/src/components/player/AudioTimeline.tsx` (MODIFIED — added `spokenSegmentIdRef`, the SpeechSynthesis lifecycle effect, and the unmount-only cancel effect)
+- `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` (MODIFIED — new `AudioTimeline — SpeechSynthesis fallback (S2-34)` describe block, 11 tests)

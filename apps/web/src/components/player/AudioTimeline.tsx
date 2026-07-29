@@ -61,6 +61,10 @@ export function processTimeUpdate(ms: number): void {
 
 export function AudioTimeline() {
   const audioRef = useRef<HTMLAudioElement>(null);
+  // Tracks which segment_id the current/last SpeechSynthesis utterance was
+  // started for, so a status-only re-render (PAUSED -> PLAYING) resumes
+  // instead of restarting narration from the beginning (S2-34 AC-5, AC-8).
+  const spokenSegmentIdRef = useRef<string | null>(null);
 
   const status = usePlayerStore((s) => s.status);
   const lesson = usePlayerStore((s) => s.lesson);
@@ -200,6 +204,56 @@ export function AudioTimeline() {
       timestamps.length > 0 ? timestamps.at(-1)!.end_ms : 0
     );
   }, [hasAudio, hasScript, segment]);
+
+  // Browser SpeechSynthesis fallback (S2-34): the last tier of the TTS
+  // fallback chain (CLAUDE.md: Sarvam Bulbul v2 -> Azure TTS -> Browser
+  // Speech). Speaks the segment's script as supplementary audio for the
+  // virtual-clock case (no audio, but a recovered script) -- this NEVER
+  // drives processTimeUpdate or segment advancement; the S2-33 setInterval
+  // clock above remains the sole timing authority. Mirrors <audio>
+  // play/pause semantics: pause()/resume() on status transitions (not
+  // cancel()+respeak, which would restart narration from the beginning),
+  // cancel() on segment change or on leaving virtual-clock mode entirely.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    const synth = window.speechSynthesis;
+
+    if (hasAudio || !hasScript || !segment) {
+      synth.cancel();
+      spokenSegmentIdRef.current = null;
+      return;
+    }
+
+    if (status !== 'PLAYING') {
+      synth.pause();
+      return;
+    }
+
+    if (spokenSegmentIdRef.current === segment.segment_id) {
+      synth.resume();
+      return;
+    }
+
+    // New segment (or first entry into virtual-clock mode for it) -- stop
+    // whatever was playing before starting the new utterance.
+    synth.cancel();
+    const utterance = new SpeechSynthesisUtterance(segment.narration.script);
+    // Set once at speak-time, not kept live -- browser TTS engines don't
+    // support changing an in-flight utterance's rate the way <audio>.playbackRate
+    // does (S2-34 AC-9, known limitation).
+    utterance.rate = usePlayerStore.getState().playbackRate;
+    synth.speak(utterance);
+    spokenSegmentIdRef.current = segment.segment_id;
+  }, [hasAudio, hasScript, segment, status]);
+
+  // Stop any in-progress/paused utterance on unmount (S2-34 AC-7).
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   // Apply pending seek from the store then clear it. In virtual-clock mode
   // there's no real <audio> element to set .currentTime on -- absorb the seek

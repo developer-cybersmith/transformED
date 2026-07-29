@@ -511,3 +511,218 @@ describe('AudioTimeline — handleEnded sends segment_complete (S2-06 AC2/AC6)',
     expect(sendControl).not.toHaveBeenCalled();
   });
 });
+
+describe('AudioTimeline — SpeechSynthesis fallback (S2-34)', () => {
+  const originalSpeechSynthesis = window.speechSynthesis;
+  const originalUtterance = (window as unknown as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance;
+
+  let speakMock: ReturnType<typeof vi.fn>;
+  let cancelMock: ReturnType<typeof vi.fn>;
+  let pauseSpeechMock: ReturnType<typeof vi.fn>;
+  let resumeMock: ReturnType<typeof vi.fn>;
+  let utteranceCtor: ReturnType<typeof vi.fn>;
+
+  function installSpeechSynthesis() {
+    speakMock = vi.fn();
+    cancelMock = vi.fn();
+    pauseSpeechMock = vi.fn();
+    resumeMock = vi.fn();
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: speakMock, cancel: cancelMock, pause: pauseSpeechMock, resume: resumeMock },
+    });
+    utteranceCtor = vi.fn(function (this: { text: string; rate: number }, text: string) {
+      this.text = text;
+      this.rate = 1;
+    });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = utteranceCtor;
+  }
+
+  afterEach(() => {
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: originalSpeechSynthesis });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = originalUtterance;
+  });
+
+  function scriptOnlyLesson() {
+    return {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        { ...mockLessonPackage.segments[1], narration: { ...mockLessonPackage.segments[1].narration, audio_url: '' } },
+      ],
+    };
+  }
+
+  it('does not throw and never speaks when window.speechSynthesis is unsupported (AC-2)', () => {
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: undefined });
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    expect(() => render(<AudioTimeline />)).not.toThrow();
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+  });
+
+  it('speaks the segment script via SpeechSynthesisUtterance on entering the virtual-clock branch while PLAYING (AC-1)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    expect(utteranceCtor).toHaveBeenCalledWith(lesson.segments[0].narration.script);
+    expect(speakMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not speak at all for a hasAudio segment (real audio present)', () => {
+    installSpeechSynthesis();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+    render(<AudioTimeline />);
+
+    expect(speakMock).not.toHaveBeenCalled();
+  });
+
+  it('sets utterance.rate from the store playbackRate at speak time, not updated live afterward (AC-9)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(),
+      playbackRate: 1.5,
+    });
+
+    render(<AudioTimeline />);
+
+    const instance = utteranceCtor.mock.instances[0] as { rate: number };
+    expect(instance.rate).toBe(1.5);
+  });
+
+  it('calls speechSynthesis.pause() (not cancel()) when status leaves PLAYING (AC-4)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { rerender } = render(<AudioTimeline />);
+    // Clear the mount's own pre-speak cancel() (a harmless, unconditional
+    // safety call before the very first utterance) so this only asserts on
+    // calls made by the status transition itself.
+    speakMock.mockClear();
+    cancelMock.mockClear();
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED' });
+    });
+    rerender(<AudioTimeline />);
+
+    expect(pauseSpeechMock).toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
+    expect(speakMock).not.toHaveBeenCalled();
+  });
+
+  it('calls speechSynthesis.resume() (not a fresh speak()) when PLAYING resumes for the same segment (AC-5)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { rerender } = render(<AudioTimeline />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED' });
+    });
+    rerender(<AudioTimeline />);
+
+    speakMock.mockClear();
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    rerender(<AudioTimeline />);
+
+    expect(resumeMock).toHaveBeenCalled();
+    expect(speakMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels the current utterance and speaks the new one when the segment changes (AC-6)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { rerender } = render(<AudioTimeline />);
+    cancelMock.mockClear();
+
+    act(() => {
+      usePlayerStore.setState({ currentSegmentIndex: 1 });
+    });
+    rerender(<AudioTimeline />);
+
+    expect(cancelMock).toHaveBeenCalled();
+    expect(utteranceCtor).toHaveBeenCalledWith(lesson.segments[1].narration.script);
+  });
+
+  it('cancels the current utterance when leaving virtual-clock mode entirely (hasAudio becomes true)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { rerender } = render(<AudioTimeline />);
+    cancelMock.mockClear();
+
+    act(() => {
+      usePlayerStore.getState().loadLesson(mockLessonPackage);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    });
+    rerender(<AudioTimeline />);
+
+    expect(cancelMock).toHaveBeenCalled();
+  });
+
+  it('cancels any in-progress utterance on unmount (AC-7)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { unmount } = render(<AudioTimeline />);
+    cancelMock.mockClear();
+
+    unmount();
+
+    expect(cancelMock).toHaveBeenCalled();
+  });
+
+  it('does not double-speak on an unrelated re-render (AC-8)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { rerender } = render(<AudioTimeline />);
+    expect(speakMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      usePlayerStore.setState({ isBuffering: true });
+    });
+    rerender(<AudioTimeline />);
+
+    expect(speakMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never advances audioPositionMs itself -- only the S2-33 virtual clock is the timing authority (AC-3)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+  });
+});
