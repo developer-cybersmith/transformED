@@ -1,6 +1,6 @@
 # Story 2.34: Remove the inert LLM structure validation (S1-6)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -81,10 +81,88 @@ impression of safety.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC-1, AC-2, AC-4): remove the LLM block; tests for zero provider calls, identical sections, empty input.
-- [ ] Task 2 (AC-3): remove or explicitly justify the orphaned prompt/model scaffolding.
-- [ ] Task 3 (AC-5): record the limitation in code and in the tracker.
-- [ ] Task 4 (AC-6): full suite, lint (repo-wide), types.
+- [x] Task 1 (AC-1, AC-2, AC-4): remove the LLM block; tests for zero provider calls, identical sections, empty input.
+- [x] Task 2 (AC-3): remove or explicitly justify the orphaned prompt/model scaffolding.
+- [x] Task 3 (AC-5): record the limitation in code and in the tracker.
+- [x] Task 4 (AC-6): full suite, lint (repo-wide), types.
+
+## Dev Agent Record
+
+### Completion Notes
+
+**Baseline captured BEFORE the deletion**, per the Dev Notes — otherwise AC-2 is
+unfalsifiable. `tests/fixtures/structure_rule_based_baseline.json` holds the 5 sections the
+pre-deletion code produced on a 9,274-char fixture with the LLM mocked to return output the
+90% guard rejects, i.e. exactly the real-document case. The capture run also demonstrated the
+defect live: `LLM sections cover 0/9274 chars (< 90%) — rejecting LLM output` with
+`provider called: 1x`. Post-deletion sections compare **byte-identical** to that file.
+
+**Credit where due: this was already known.** `graph.py` carried a
+`KNOWN LIMITATION (Story 2-16 RC-2, deferred to Story 2-17)` comment stating the 6,000-char
+window vs 90%-coverage mismatch precisely. Story 2-34 is the decision to act on it, not the
+discovery of it — the story and the new test file both say so.
+
+**AC-1's short-document case is the one that matters.** Under the old code, a document below
+~6,667 chars was the *only* input whose LLM output could be adopted, so it is exactly where a
+partial deletion would hide: strip the call from the long path only and every real-document
+test still passes. Both sides of the threshold are asserted.
+
+**AC-3 — what went and what stayed.** `_STRUCTURE_SYSTEM_PROMPT` and `_build_structure_prompt`
+were graph.py-private and orphaned: **removed**. So were the two imports that existed only for
+that block (`get_llm_provider`, `DocumentStructure`) — an unused provider import inside a node
+is an invitation to wire it back up. `DocumentStructure` itself **stays**: it lives in
+`app.schemas`, is exported in `__all__`, and is referenced by three test modules, so it is not
+structure_node's to delete. That reason is made executable by
+`test_document_structure_schema_is_deliberately_retained`, so a future cleanup does not remove
+it on the assumption it was ours.
+
+**Five existing tests converted, not deleted.** They asserted behaviour that can no longer
+occur. Per the Dev Notes they now assert its absence, and each records what it used to pin:
+- `test_structure_guard_adopts_faithful_llm_output`, `..._at_exact_90_percent_boundary` and
+  `..._duplicated_bodies_pass_length_proxy` → consolidated into
+  `test_structure_never_adopts_llm_output`. Its docstring preserves the Tier-3 #18 finding —
+  the guard was a pure *length* proxy, so bodies duplicating the first half twice totalled
+  100% of `len(raw_text)` while covering 50% of the content. **That hole is still unsolved**;
+  it simply no longer has a guard to be a hole in. Anyone reinstating an LLM pass needs to
+  know that.
+- `test_structure_node_happy_path` → same field contract with `chunk_node`, now asserting zero
+  LLM calls.
+- `test_structure_node_coalesces_adopted_llm_output` → the adopted-output scenario is
+  unreachable; coalescing on the surviving path is already covered by
+  `test_structure_node_coalesces_oversegmented_rule_based` and `test_coalesce_sections.py`.
+  Replaced with a source-level assertion that the scenario is genuinely gone rather than
+  quietly untested.
+
+**What this does NOT do, recorded in the node itself.** Detection is still font-size +
+boldness thresholds plus a regex. The new comment block in `structure_node` lists the concrete
+failure modes rather than hand-waving: a non-bold heading is invisible; one shared font size
+gives false positives; multi-column layouts scramble reading order; and on **scanned pages
+there is no font metadata at all** — `font_blocks` comes from `pdftext` — so the font strategy
+collapses entirely and only the regex survives. It also carries the Sprint 3 docling direction
+with both blockers (the 206–216s/41-page measurement vs `extract_timeout_cap_s = 1500`, and
+the §16 four-dev review for a locked-stack change).
+
+**AC-6 — regression, measured repo-wide.**
+
+| Gate | `main` (`3900ae6`) | This branch |
+|---|---|---|
+| `ruff check .` | 31 | **31** |
+| `ruff format --check .` | 10 files | **10 files** |
+| `mypy app` | 24 | **24** |
+| `pytest tests/unit tests/integration` | 741 passed | **745 passed** |
+| full suite | 22 F / 1433 P | **22 F / 1437 P** |
+
+Failure set byte-identical to `main` under `diff`. Interim note: removing the block orphaned
+two imports and pushed `ruff check` to 33; caught and fixed before commit.
+
+### File List
+
+- `apps/api/app/modules/content/pipeline/graph.py`
+- `apps/api/tests/unit/test_structure_no_llm.py` — NEW
+- `apps/api/tests/fixtures/structure_rule_based_baseline.json` — NEW (pre-deletion baseline)
+- `apps/api/tests/unit/test_structure_node.py`
+- `apps/api/tests/unit/test_pipeline_tier1.py`
+- `docs/dev1-tracker.md`
 
 ## Dev Notes
 
@@ -143,4 +221,5 @@ not triggered. Zero `apps/web/**`.
 
 | Date | Change | Author |
 |------|--------|--------|
+| 2026-07-29 | Implemented. LLM block and its orphaned scaffolding removed; rule-based output pinned byte-identical to a baseline captured before the deletion. Five existing tests converted to assert the absence, preserving the Tier-3 #18 length-proxy finding. Gates identical to main. Status → review. | Dev 1 |
 | 2026-07-29 | Story created. Removes an LLM call that is arithmetically always discarded for real documents (6,000-char prompt window vs a 90%-of-whole-document acceptance guard). Explicitly does not improve detection; records the docling direction for Sprint 3 with its blocking time-cost question and §16 review requirement. | Dev 1 |

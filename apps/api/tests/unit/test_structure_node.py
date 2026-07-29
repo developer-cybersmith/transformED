@@ -111,46 +111,45 @@ def _base_state() -> dict[str, Any]:
 
 @pytest.mark.unit
 async def test_structure_node_happy_path() -> None:
-    """LLM returns valid DocumentStructure → sections list populated correctly."""
+    """Rule-based detection populates sections correctly, with NO LLM call.
+
+    Story 2-34: this previously asserted "LLM returns valid DocumentStructure ->
+    sections list populated correctly". That path was removed because the LLM
+    output could never be adopted for a real document. The node's contract with
+    chunk_node is unchanged, so the field assertions below are the part worth
+    keeping.
+    """
     from app.modules.content.pipeline.graph import structure_node
 
     state = _base_state()
     sb = _make_supabase_mock(node_outputs={})
-    # Faithful bodies (full raw_text) so the AC-4 data-loss guard adopts the LLM output.
-    mock_doc_structure = _make_document_structure(2, body=RAW_TEXT_WITH_HEADINGS)
-    mock_class, mock_instance, modules_patch = _make_provider_mock(
-        complete_result=mock_doc_structure
-    )
+    provider = MagicMock()
+    provider.complete_structured = AsyncMock(return_value=MagicMock(sections=[]))
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.config.get_settings") as mock_settings,
-        patch.dict("sys.modules", modules_patch),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
         patch(
             "app.modules.content.pipeline.graph._update_job_progress",
             new_callable=AsyncMock,
         ),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
-        # Story 2-16 (RC-1): structure_node now coalesces sections. These
-        # adoption tests use a no-op floor (bodies are small synthetic docs);
-        # coalesce behaviour is covered directly in test_coalesce_sections.py and
-        # the node-level wiring is covered by test_structure_node_coalesces_*.
         mock_settings.return_value.structure_min_section_chars = 10
         mock_settings.return_value.structure_max_sections = 60
         result = await structure_node(state)
 
+    provider.complete_structured.assert_not_awaited()
+
     sections = result.get("sections", [])
-    assert len(sections) == 2
+    assert sections, "rule-based detection must produce sections"
     assert result["progress_pct"] == 14.0
     # Each section must have the fields chunk_node depends on
     for s in sections:
         assert "id" in s
         assert "title" in s
         assert "level" in s
-        assert "body" in s
-        assert "page_start" in s
-        assert "page_end" in s
 
 
 @pytest.mark.unit
@@ -504,32 +503,27 @@ async def test_structure_node_coalesces_oversegmented_rule_based() -> None:
 
 
 @pytest.mark.unit
-async def test_structure_node_coalesces_adopted_llm_output() -> None:
-    """Story 2-16 (RC-1) AC-1: coalescing bounds the ADOPTED-LLM path too, not
-    just rule-based — 20 faithful LLM sections are capped to max_sections."""
-    from app.modules.content.pipeline.graph import structure_node
+@pytest.mark.asyncio
+async def test_structure_node_coalescing_applies_to_the_only_surviving_path() -> None:
+    """Story 2-34: replaces test_structure_node_coalesces_adopted_llm_output.
 
-    state = _base_state()
-    sb = _make_supabase_mock(node_outputs={})
-    # 20 sections, each body = full raw_text -> clears the 90% guard -> adopted.
-    mock_doc = _make_document_structure(20, body=RAW_TEXT_WITH_HEADINGS)
-    _mock_class, _mock_instance, modules_patch = _make_provider_mock(complete_result=mock_doc)
+    That test checked that ADOPTED LLM sections were also capped by
+    coalesce_sections. LLM output can no longer be adopted, so the scenario is
+    unreachable. Coalescing itself still matters and is covered on the surviving
+    path by test_structure_node_coalesces_oversegmented_rule_based above, and
+    directly in test_coalesce_sections.py — this test exists to assert the
+    scenario is genuinely gone rather than quietly untested.
+    """
+    import inspect
 
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.config.get_settings") as mock_settings,
-        patch.dict("sys.modules", modules_patch),
-        patch(
-            "app.modules.content.pipeline.graph._update_job_progress",
-            new_callable=AsyncMock,
-        ),
-    ):
-        mock_settings.return_value.llm_mini = "gpt-4o-mini"
-        mock_settings.return_value.structure_min_section_chars = 10
-        mock_settings.return_value.structure_max_sections = 8
-        result = await structure_node(state)
+    from app.modules.content.pipeline import graph
 
-    assert len(result["sections"]) == 8, "adopted LLM sections must also be capped"
+    src = inspect.getsource(graph.structure_node)
+    assert "complete_structured" not in src, (
+        "structure_node calls an LLM again — the adopted-output path is back and "
+        "its coalescing is no longer covered"
+    )
+    assert "coalesce_sections" in src, "coalescing must still run on the rule-based path"
 
 
 @pytest.mark.unit
