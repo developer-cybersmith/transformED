@@ -74,6 +74,12 @@ export function AudioTimeline() {
   // signing failure degrades just that one asset (Story 1-6/1-7), it doesn't
   // fail the whole lesson. There's nothing to play; don't attempt to.
   const hasAudio = Boolean(segment?.narration.audio_url);
+  // Story 2-31 (backend) recovers the real script into a segment that still
+  // has no playable audio -- narration.script alone changes nothing on screen
+  // unless something drives processTimeUpdate for it (S2-33's virtual clock,
+  // below). Distinct from hasAudio === false && !hasScript, which still has
+  // nothing to advance the segment at all and keeps the immediate-advance path.
+  const hasScript = Boolean(segment?.narration.script?.trim());
 
   // Status drives audio — audio never drives status (S1-01 invariant).
   // Also re-runs on currentSegmentIndex: replaying a previously-quizzed segment
@@ -88,31 +94,75 @@ export function AudioTimeline() {
   // element would sit loaded-and-paused forever with no play() call, which is
   // worse than the original stall (no error, no progress, no recovery).
   useEffect(() => {
-    if (!hasAudio) {
-      // Nothing will ever load, so 'ended'/'timeupdate' can never fire for this
-      // segment (review fix) -- drive the same advance/quiz logic handleEnded
-      // uses immediately instead of leaving the lesson stuck here forever.
-      if (status === 'PLAYING') handleEnded();
+    if (hasAudio) {
+      const audio = audioRef.current;
+      if (!audio) return;
+      if (status === 'PLAYING') {
+        audio.play().catch(() => {});
+      } else {
+        audio.pause();
+      }
       return;
     }
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (status === 'PLAYING') {
-      audio.play().catch(() => {});
-    } else {
-      audio.pause();
+    if (hasScript) {
+      // Virtual clock (S2-33, separate effect below) owns ticking/advancing
+      // this segment -- nothing to do here.
+      return;
     }
-  }, [status, currentSegmentIndex, hasAudio, audioRetryCount]);
+    // Nothing will ever load and there's no script either, so 'ended'/'timeupdate'
+    // can never fire for this segment (review fix) -- drive the same
+    // advance/quiz logic handleEnded uses immediately instead of leaving the
+    // lesson stuck here forever.
+    if (status === 'PLAYING') handleEnded();
+  }, [status, currentSegmentIndex, hasAudio, hasScript, audioRetryCount]);
 
-  // Apply pending seek from the store then clear it
+  // Virtual playback clock (S2-33): a segment with a recovered narration script
+  // but no playable audio (Story 2-31's degrade path) still needs *something*
+  // to drive processTimeUpdate's slide-sync/quiz-boundary logic, or the segment
+  // looks instantly "ended" -- this is exactly the "quiz fires at 0:00" symptom
+  // Dev 1's handoff (docs/dev2-narration-playback-handoff.md) traced here.
+  // Ticks only while PLAYING; the effect's own cleanup (on segment/status change)
+  // is what stops it -- never calls handleEnded(), only processTimeUpdate(),
+  // whose own boundary check already fires the quiz (AC-3: a second, independent
+  // call to handleEnded() here would double-fire past an open quiz).
+  useEffect(() => {
+    if (hasAudio || !hasScript) return;
+    if (status !== 'PLAYING') return;
+
+    const interval = setInterval(() => {
+      const current = usePlayerStore.getState().audioPositionMs;
+      processTimeUpdate(current + 100);
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [hasAudio, hasScript, status, currentSegmentIndex]);
+
+  // Sets a real total duration for the scrubber even without audio metadata to
+  // load from -- timestamps always exist here (Story 2-19's estimation),
+  // independent of play/pause state, so this doesn't need to be gated on status.
+  useEffect(() => {
+    if (hasAudio || !hasScript || !segment) return;
+    const { timestamps } = segment.narration;
+    if (timestamps.length > 0) {
+      usePlayerStore.getState().setAudioDuration(timestamps.at(-1)!.end_ms);
+    }
+  }, [hasAudio, hasScript, segment]);
+
+  // Apply pending seek from the store then clear it. In virtual-clock mode
+  // there's no real <audio> element to set .currentTime on -- absorb the seek
+  // by applying it directly via processTimeUpdate instead (S2-33 AC-5).
   useEffect(() => {
     if (seekRequestMs === null) return;
-    const audio = audioRef.current;
-    if (audio) {
-      audio.currentTime = seekRequestMs / 1000;
+    if (hasAudio) {
+      const audio = audioRef.current;
+      if (audio) {
+        audio.currentTime = seekRequestMs / 1000;
+      }
+    } else if (hasScript) {
+      processTimeUpdate(seekRequestMs);
     }
     usePlayerStore.getState().clearSeekRequest();
-  }, [seekRequestMs]);
+  }, [seekRequestMs, hasAudio, hasScript]);
 
   // Keep audio playback rate in sync
   useEffect(() => {

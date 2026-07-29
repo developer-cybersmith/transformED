@@ -76,6 +76,10 @@ export interface PlayerStore {
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
   loadLesson: (pkg: LessonPackage) => void;
+  /** Replace the loaded lesson's content (e.g. freshly re-signed media URLs
+   *  after a retry-triggered refetch) WITHOUT resetting playback progress --
+   *  unlike loadLesson(), which is only for starting a lesson from scratch. */
+  refreshLessonMedia: (pkg: LessonPackage) => void;
   /** Override the session ID once the WebSocket handshake provides a real one (Sprint 2). */
   setSessionId: (id: string) => void;
   play: () => void;
@@ -152,6 +156,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       audioError: false,
       audioRetryCount: 0,
     });
+  },
+
+  refreshLessonMedia: (pkg) => {
+    set({ lesson: pkg });
   },
 
   play: () => {

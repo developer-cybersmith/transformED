@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
+import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { SlideRenderer } from './SlideRenderer';
 import { PlayerControls } from './PlayerControls';
@@ -14,6 +15,10 @@ import { CheckingInTransition } from './CheckingInTransition';
 
 interface PlayerProps {
   lesson: LessonPackage;
+  /** Re-fetches the lesson from the backend (fresh signed media URLs) --
+   *  called before retryAudio() so a Retry on an expired signed URL has a
+   *  real chance of working instead of remounting the same dead URL (S2-33). */
+  onRefetchLesson: () => Promise<LessonStatusResponse | null | undefined>;
 }
 
 // Matches the backend's own _TIER_LABELS dict exactly (apps/api/app/modules/
@@ -33,7 +38,7 @@ const TIER_LABELS: Record<Exclude<LessonPackage['metadata']['tier'], undefined>,
 const REPEATED_FAILURE_RETRY_THRESHOLD = 3;
 
 // Default export required by next/dynamic
-export default function Player({ lesson }: PlayerProps) {
+export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   const loadLesson = usePlayerStore((s) => s.loadLesson);
   const status = usePlayerStore((s) => s.status);
   const sessionId = usePlayerStore((s) => s.sessionId);
@@ -43,6 +48,24 @@ export default function Player({ lesson }: PlayerProps) {
   const audioError = usePlayerStore((s) => s.audioError);
   const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
   const retryAudio = usePlayerStore((s) => s.retryAudio);
+
+  // Re-fetches fresh signed media URLs before actually retrying (S2-33) --
+  // retryAudio() alone just remounts the <audio> element with whatever src
+  // is already in the store, which is the same expired URL if that's why it
+  // failed. Refetch failures are swallowed here: worst case, retryAudio()
+  // still remounts with the (possibly-still-stale) existing URL, matching
+  // pre-S2-33 behavior rather than leaving Retry non-functional.
+  async function handleRetryAudio() {
+    try {
+      const fresh = await onRefetchLesson();
+      if (fresh?.content) {
+        usePlayerStore.getState().refreshLessonMedia(fresh.content);
+      }
+    } catch {
+      // Refetch failed -- fall through to retryAudio() with the existing lesson.
+    }
+    retryAudio();
+  }
 
   // Mounts the lesson WebSocket for the duration of the session — previously
   // never called anywhere, so the socket never connected during a real lesson.
@@ -170,7 +193,7 @@ export default function Player({ lesson }: PlayerProps) {
               </p>
             )}
             <button
-              onClick={retryAudio}
+              onClick={handleRetryAudio}
               className="px-5 py-2.5 rounded-full bg-[var(--accent-primary)] text-white text-sm font-medium hover:scale-105 transition-transform"
             >
               Retry

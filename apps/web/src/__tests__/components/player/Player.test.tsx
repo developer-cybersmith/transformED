@@ -15,11 +15,17 @@ vi.mock('@/hooks/useLessonSocket', () => ({
 const originalPlay = window.HTMLMediaElement.prototype.play;
 const originalPause = window.HTMLMediaElement.prototype.pause;
 
+// Default no-op refetch for tests that don't care about the retry-refetch
+// flow (S2-33) -- resolves to null, i.e. "refetch didn't return fresh content".
+const mockOnRefetchLesson = vi.fn().mockResolvedValue(null);
+
 beforeEach(() => {
   window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
   window.HTMLMediaElement.prototype.pause = vi.fn();
   localStorage.clear();
   useLessonSocketMock.mockClear();
+  mockOnRefetchLesson.mockClear();
+  mockOnRefetchLesson.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -31,7 +37,7 @@ afterEach(() => {
 // IDLE — so status must be set to ENDED *after* render, not before, or the
 // mount effect silently overwrites it.
 function renderEnded(sessionId: string) {
-  const utils = render(<Player lesson={mockLessonPackage} />);
+  const utils = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
   act(() => {
     usePlayerStore.setState({ status: 'ENDED', sessionId });
   });
@@ -64,7 +70,7 @@ describe('Player — lesson complete (ENDED) screen', () => {
 
 describe('Player — tier badge (S2-10)', () => {
   it('shows the mapped tier label for the lesson\'s tier (T2 -> Standard)', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     expect(screen.getByText('Standard')).not.toBeNull();
   });
@@ -72,7 +78,7 @@ describe('Player — tier badge (S2-10)', () => {
   it('shows a different label for a different tier (T1 -> Full-Depth)', () => {
     const t1Lesson = { ...mockLessonPackage, metadata: { ...mockLessonPackage.metadata, tier: 'T1' as const } };
 
-    render(<Player lesson={t1Lesson} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={t1Lesson} />);
 
     expect(screen.getByText('Full-Depth')).not.toBeNull();
     expect(screen.queryByText('Standard')).toBeNull();
@@ -81,7 +87,7 @@ describe('Player — tier badge (S2-10)', () => {
   it('shows the T3 label (Refresher)', () => {
     const t3Lesson = { ...mockLessonPackage, metadata: { ...mockLessonPackage.metadata, tier: 'T3' as const } };
 
-    render(<Player lesson={t3Lesson} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={t3Lesson} />);
 
     expect(screen.getByText('Refresher')).not.toBeNull();
   });
@@ -92,7 +98,7 @@ describe('Player — tier badge (S2-10)', () => {
       metadata: { ...mockLessonPackage.metadata, tier: 'T99' as unknown as 'T1' },
     };
 
-    render(<Player lesson={badLesson} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={badLesson} />);
 
     expect(screen.queryByText('undefined')).toBeNull();
     expect(screen.getByText('Standard')).not.toBeNull();
@@ -111,7 +117,7 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
       })
     );
 
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     const state = usePlayerStore.getState();
     expect(state.currentSegmentIndex).toBe(1);
@@ -120,7 +126,7 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
   });
 
   it('starts fresh at segment 0 when no saved snapshot exists', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
   });
@@ -128,7 +134,7 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
 
 describe('Player — audio buffering / error retry UI (S2-26)', () => {
   it('shows the buffering indicator when isBuffering is true and status is PLAYING', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'PLAYING', isBuffering: true });
@@ -138,13 +144,13 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
   });
 
   it('does not show the buffering indicator when isBuffering is false', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     expect(screen.queryByTestId('audio-buffering')).toBeNull();
   });
 
   it('does not show the buffering indicator while not PLAYING (e.g. PAUSED), even if isBuffering is true', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'PAUSED', isBuffering: true });
@@ -154,7 +160,7 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
   });
 
   it('shows the playback-error state with a Retry button when audioError is true', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ audioError: true });
@@ -164,14 +170,14 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
     expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull();
   });
 
-  it('clicking Retry calls retryAudio(), clearing audioError', () => {
-    render(<Player lesson={mockLessonPackage} />);
+  it('clicking Retry calls retryAudio(), clearing audioError', async () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ audioError: true });
     });
 
-    act(() => {
+    await act(async () => {
       screen.getByRole('button', { name: /retry/i }).click();
     });
 
@@ -179,8 +185,60 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
     expect(screen.queryByTestId('audio-error')).toBeNull();
   });
 
+  it('clicking Retry calls onRefetchLesson (S2-33) before retrying, so an expired signed URL has a chance to be refreshed', async () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true });
+    });
+
+    await act(async () => {
+      screen.getByRole('button', { name: /retry/i }).click();
+    });
+
+    expect(mockOnRefetchLesson).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies fresh lesson content from a successful refetch via refreshLessonMedia before retrying (S2-33)', async () => {
+    const refreshedLesson = { ...mockLessonPackage, metadata: { ...mockLessonPackage.metadata, title: 'Refreshed Title' } };
+    mockOnRefetchLesson.mockResolvedValueOnce({
+      status: 'ready' as const,
+      error: null,
+      content: refreshedLesson,
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true });
+    });
+
+    await act(async () => {
+      screen.getByRole('button', { name: /retry/i }).click();
+    });
+
+    expect(usePlayerStore.getState().lesson).toBe(refreshedLesson);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
+  it('still calls retryAudio() even when onRefetchLesson rejects, so Retry never becomes permanently non-functional (S2-33)', async () => {
+    mockOnRefetchLesson.mockRejectedValueOnce(new Error('network error'));
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ audioError: true });
+    });
+
+    await act(async () => {
+      screen.getByRole('button', { name: /retry/i }).click();
+    });
+
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
   it('does NOT show the playback-error overlay during QUIZ, even if audioError is true (review fix — a stale error must not block the quiz)', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'QUIZ', audioError: true });
@@ -190,7 +248,7 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
   });
 
   it('does NOT show the playback-error overlay during TEACH_BACK, even if audioError is true (review fix)', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'TEACH_BACK', audioError: true });
@@ -210,7 +268,7 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
   });
 
   it('shows extra guidance text after 3+ retries on the same segment (review fix — no cap/backoff existed before)', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ audioError: true, audioRetryCount: 3 });
@@ -220,7 +278,7 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
   });
 
   it('does not show the repeated-failure guidance text before the threshold', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ audioError: true, audioRetryCount: 1 });
@@ -232,13 +290,13 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
 
 describe('Player — lesson WebSocket (S2-06)', () => {
   it('mounts useLessonSocket with the store sessionId, so the socket actually connects during a real session', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     expect(useLessonSocketMock).toHaveBeenCalledWith(usePlayerStore.getState().sessionId);
   });
 
   it('mounts CheckingInTransition — it becomes visible when tutorState is CHECKING_IN', () => {
-    render(<Player lesson={mockLessonPackage} />);
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ tutorState: 'CHECKING_IN' });

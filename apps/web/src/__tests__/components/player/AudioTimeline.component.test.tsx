@@ -63,23 +63,177 @@ describe('AudioTimeline — audio_url can be "" (per-asset signing failure degra
     expect(playMock).not.toHaveBeenCalled();
   });
 
-  it('does not permanently freeze on a segment with no audio -- advances/quizzes immediately since ended/timeupdate can never fire (review fix)', () => {
-    const lessonWithMissingAudio = {
+  it('does not permanently freeze on a segment with no audio AND no script -- advances/quizzes immediately since ended/timeupdate can never fire (review fix; re-pointed for S2-33 -- see below for the has-script case)', () => {
+    const lessonWithNothing = {
+      ...mockLessonPackage,
+      segments: [
+        {
+          ...mockLessonPackage.segments[0],
+          narration: { ...mockLessonPackage.segments[0].narration, audio_url: '', script: '' },
+        },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithNothing);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    // No audio ever loads for this segment and there's no script either, so
+    // nothing will ever fire 'ended' -- the component must drive the
+    // quiz/advance logic itself rather than wait for an event that can never come.
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+  });
+});
+
+describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a recovered script', () => {
+  it('does NOT synchronously reach QUIZ on mount -- the clock advances over time, not immediately (this is the exact regression the backend fix alone did not close)', () => {
+    const lessonWithScriptOnly = {
       ...mockLessonPackage,
       segments: [
         { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
         ...mockLessonPackage.segments.slice(1),
       ],
     };
-    usePlayerStore.getState().loadLesson(lessonWithMissingAudio);
+    usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
     usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
 
     render(<AudioTimeline />);
 
-    // No audio ever loads for this segment, so nothing will ever fire 'ended' --
-    // the component must drive the quiz/advance logic itself rather than wait
-    // for an event that can never come.
-    expect(usePlayerStore.getState().status).toBe('QUIZ');
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+  });
+
+  it('ticks processTimeUpdate every 100ms while PLAYING, eventually firing the quiz at the real segment boundary', () => {
+    vi.useFakeTimers();
+    try {
+      const lessonWithScriptOnly = {
+        ...mockLessonPackage,
+        segments: [
+          { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+          ...mockLessonPackage.segments.slice(1),
+        ],
+      };
+      usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+      render(<AudioTimeline />);
+
+      // seg_0 (mockLessonPackage) ends at 92000ms -- advance the fake clock past it.
+      act(() => {
+        vi.advanceTimersByTime(93000);
+      });
+
+      expect(usePlayerStore.getState().status).toBe('QUIZ');
+      expect(usePlayerStore.getState().audioPositionMs).toBeGreaterThanOrEqual(92000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops ticking (does not keep advancing audioPositionMs) once status leaves PLAYING', () => {
+    vi.useFakeTimers();
+    try {
+      const lessonWithScriptOnly = {
+        ...mockLessonPackage,
+        segments: [
+          { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+          ...mockLessonPackage.segments.slice(1),
+        ],
+      };
+      usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+      const { rerender } = render(<AudioTimeline />);
+
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      const positionWhilePlaying = usePlayerStore.getState().audioPositionMs;
+      expect(positionWhilePlaying).toBeGreaterThan(0);
+
+      act(() => {
+        usePlayerStore.setState({ status: 'PAUSED' });
+      });
+      rerender(<AudioTimeline />);
+
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(usePlayerStore.getState().audioPositionMs).toBe(positionWhilePlaying);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sets audioDuration from the segment\'s last timestamp, independent of PLAYING status', () => {
+    const lessonWithScriptOnly = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
+    usePlayerStore.setState({ status: 'PAUSED', currentSegmentIndex: 0 });
+
+    render(<AudioTimeline />);
+
+    const expectedEndMs = lessonWithScriptOnly.segments[0].narration.timestamps.at(-1)!.end_ms;
+    expect(usePlayerStore.getState().audioDurationMs).toBe(expectedEndMs);
+  });
+
+  it('absorbs a pending seek via processTimeUpdate instead of setting .currentTime on a nonexistent real element', () => {
+    // status must be PLAYING for the seek to actually move currentSlideId --
+    // processTimeUpdate itself no-ops otherwise (same guard the real-audio
+    // path is already subject to: a seek while paused updates audioPositionMs
+    // immediately via requestSeek(), but slide sync only catches up once
+    // playback resumes).
+    const lessonWithScriptOnly = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(40000); // into seg_0's sl_0_1 range (35000-92000)
+    });
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().seekRequestMs).toBeNull();
+  });
+
+  it('never calls handleEnded-driven advanceSegment/endLesson from the clock itself -- only the boundary check in processTimeUpdate fires the quiz', () => {
+    vi.useFakeTimers();
+    try {
+      // Single-segment lesson: if the clock incorrectly called handleEnded()
+      // in addition to processTimeUpdate's own boundary firing, this would
+      // double-advance past the quiz straight to ENDED.
+      const singleSegmentLesson = {
+        ...mockLessonPackage,
+        segments: [
+          { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ],
+      };
+      usePlayerStore.getState().loadLesson(singleSegmentLesson);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+      render(<AudioTimeline />);
+
+      act(() => {
+        vi.advanceTimersByTime(93000 + 500); // well past the segment boundary
+      });
+
+      expect(usePlayerStore.getState().status).toBe('QUIZ');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

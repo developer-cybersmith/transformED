@@ -52,7 +52,7 @@ describe('PlayerLoader', () => {
   });
 
   it('renders PlayerSkeleton while lesson is loading', () => {
-    mockUseLesson.mockReturnValue({ lesson: null, isLoading: true, error: null, status: undefined, serverError: null });
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(), lesson: null, isLoading: true, error: null, status: undefined, serverError: null });
 
     render(<PlayerLoader lessonId="lesson_1" />);
 
@@ -65,7 +65,7 @@ describe('PlayerLoader', () => {
     // A completed fetch (isLoading: false) with no lesson, no error, and no
     // status is treated as an error state, not a skeleton — genuinely unexpected
     // shape, distinct from the real running/failed states covered below.
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null, isLoading: false, error: null, status: undefined, serverError: null,
     });
 
@@ -76,7 +76,7 @@ describe('PlayerLoader', () => {
   });
 
   it('renders a distinct "still generating" state (not the error page) when status is running (S1-7)', () => {
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null, isLoading: false, error: null, status: 'running', serverError: null,
     });
 
@@ -88,7 +88,7 @@ describe('PlayerLoader', () => {
   });
 
   it('renders a distinct "still generating" state when status is queued (S1-7)', () => {
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null, isLoading: false, error: null, status: 'queued', serverError: null,
     });
 
@@ -99,7 +99,7 @@ describe('PlayerLoader', () => {
   });
 
   it('surfaces the real backend error message when status is failed, instead of the generic message (S1-7)', () => {
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null, isLoading: false, error: null, status: 'failed', serverError: 'Cost ceiling exceeded',
     });
 
@@ -114,7 +114,7 @@ describe('PlayerLoader', () => {
     // SWR retains the last good data/status across a failed background
     // revalidation -- a flaky network blip mid-poll must not override a
     // still-genuinely-running lesson with the permanent error page.
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null, isLoading: false, error: new Error('transient poll failure'), status: 'running', serverError: null,
     });
 
@@ -125,7 +125,7 @@ describe('PlayerLoader', () => {
   });
 
   it('shows the generic error, not a crash, when status is ready but content is unexpectedly null (backend contract violation, review fix)', () => {
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null, isLoading: false, error: null, status: 'ready', serverError: null,
     });
 
@@ -136,7 +136,7 @@ describe('PlayerLoader', () => {
   });
 
   it('renders LessonErrorState when hook returns an error', () => {
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null,
       isLoading: false,
       error: new Error('Lesson not found'),
@@ -151,7 +151,7 @@ describe('PlayerLoader', () => {
   });
 
   it('renders Player when lesson is loaded successfully', () => {
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: mockLessonPackage,
       isLoading: false,
       error: null,
@@ -168,7 +168,7 @@ describe('PlayerLoader', () => {
   });
 
   it('passes the lessonId to useLesson', () => {
-    mockUseLesson.mockReturnValue({ lesson: null, isLoading: true, error: null, status: undefined, serverError: null });
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(), lesson: null, isLoading: true, error: null, status: undefined, serverError: null });
 
     render(<PlayerLoader lessonId="lesson_xyz" />);
 
@@ -179,11 +179,11 @@ describe('PlayerLoader', () => {
     const lessonA = { ...mockLessonPackage, lesson_id: 'lesson_A' };
     const lessonB = { ...mockLessonPackage, lesson_id: 'lesson_B' };
 
-    mockUseLesson.mockReturnValue({ lesson: lessonA, isLoading: false, error: null, status: 'ready', serverError: null });
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(), lesson: lessonA, isLoading: false, error: null, status: 'ready', serverError: null });
     const { rerender } = render(<PlayerLoader lessonId="lesson_A" />);
     expect(getMountCount()).toBe(1);
 
-    mockUseLesson.mockReturnValue({ lesson: lessonB, isLoading: false, error: null, status: 'ready', serverError: null });
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(), lesson: lessonB, isLoading: false, error: null, status: 'ready', serverError: null });
     rerender(<PlayerLoader lessonId="lesson_B" />);
 
     // A same-key prop update would leave the mount effect from firing only once total;
@@ -192,7 +192,7 @@ describe('PlayerLoader', () => {
   });
 
   it('does NOT remount Player when re-rendering with the same lesson_id', () => {
-    mockUseLesson.mockReturnValue({ lesson: mockLessonPackage, isLoading: false, error: null, status: 'ready', serverError: null });
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(), lesson: mockLessonPackage, isLoading: false, error: null, status: 'ready', serverError: null });
     const { rerender } = render(<PlayerLoader lessonId="lesson_mock_1" />);
     expect(getMountCount()).toBe(1);
 
@@ -202,7 +202,7 @@ describe('PlayerLoader', () => {
   });
 
   it('error state takes priority over loading state', () => {
-    mockUseLesson.mockReturnValue({
+    mockUseLesson.mockReturnValue({ refetch: vi.fn(),
       lesson: null,
       isLoading: true,
       error: new Error('Network error'),

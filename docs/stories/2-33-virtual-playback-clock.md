@@ -39,15 +39,15 @@ Browser `SpeechSynthesis` (Dev 1's "Story 2b") is explicitly labeled an enhancem
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 2, 3, 4, 7): Add the virtual playback clock to `AudioTimeline.tsx` — three-way branch, ticking effect, duration-setting effect.
-  - [ ] 1.1 RED: failing tests for the new branch's ticking behavior, boundary-firing via `processTimeUpdate` (not `handleEnded`), and duration-setting.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 5): Extend the seek-absorption effect to handle the no-real-audio-element case.
-  - [ ] 2.1 RED, 2.2 GREEN.
-- [ ] Task 3 (AC: 8): Re-point the existing S2-26 "no audio, advances immediately" test to an empty-script fixture; add a new test confirming the *original* fixture (real script, no audio) now goes through the virtual clock instead.
-- [ ] Task 4 (AC: 6): Add `refreshLessonMedia` to `player.machine.ts`; expose SWR `mutate` from `useLesson.ts` as `refetch`; thread it through `PlayerLoader.tsx` → `Player.tsx`; wire the Retry button to refetch-then-retry.
-  - [ ] 4.1 RED, 4.2 GREEN.
-- [ ] Task 5 (AC: 9): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1, 2, 3, 4, 7): Add the virtual playback clock to `AudioTimeline.tsx` — three-way branch, ticking effect, duration-setting effect.
+  - [x] 1.1 RED: failing tests for the new branch's ticking behavior, boundary-firing via `processTimeUpdate` (not `handleEnded`), and duration-setting.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 5): Extend the seek-absorption effect to handle the no-real-audio-element case.
+  - [x] 2.1 RED, 2.2 GREEN.
+- [x] Task 3 (AC: 8): Re-point the existing S2-26 "no audio, advances immediately" test to an empty-script fixture; add a new test confirming the *original* fixture (real script, no audio) now goes through the virtual clock instead.
+- [x] Task 4 (AC: 6): Add `refreshLessonMedia` to `player.machine.ts`; expose SWR `mutate` from `useLesson.ts` as `refetch`; thread it through `PlayerLoader.tsx` → `Player.tsx`; wire the Retry button to refetch-then-retry.
+  - [x] 4.1 RED, 4.2 GREEN.
+- [x] Task 5 (AC: 9): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -68,3 +68,39 @@ Vitest + fake timers (`vi.useFakeTimers()`/`vi.advanceTimersByTime()`) for the v
 - [Source: docs/stories/2-28-pipeline-state-duplication-fix.md, docs/stories/2-31-narration-recovery-and-tier-cleanup.md] — the two backend fixes this story's frontend half completes.
 - [Source: apps/api/app/modules/content/router.py::_resolve_lesson_content] — confirms re-fetching the lesson genuinely produces a fresh signed URL, verified directly before writing AC-6.
 - [Source: apps/web/src/components/player/AudioTimeline.tsx, apps/web/src/stores/player.machine.ts] — current two-way branch and retry mechanism this story extends.
+
+## Change Log
+
+| Date | Change | Author |
+|------|--------|--------|
+| 2026-07-29 | Story created from Dev 1's handoff after both reported pipeline bugs were fixed on `main` (PR #100, #101) — scopes the frontend-only work needed to actually close Bug 2's visible symptom, plus the `retryAudio()` re-fetch gap Dev 1 found in Story 2-26. Branch `sprint2/s2-33-virtual-playback-clock` off `main`. | Dev 2 |
+| 2026-07-29 | Implemented all 5 tasks. Full suite 53 files / 516 tests passing, `tsc --noEmit` clean, `eslint` clean (2 pre-existing unrelated warnings in `PlayerLoader.test.tsx`, untouched by this diff). | Dev 2 |
+
+## Dev Agent Record
+
+### Implementation Plan
+
+- Verified Dev 1's two backend fixes directly in the merged `main` diff before starting: `operator.add` re-accumulation fixed by removing `**state` spreads from every node's return (PR #100); `_fallback_narration()` script recovery (PR #101). Both confirmed real and correct — no re-litigating them here.
+- Verified `_resolve_lesson_content` in `apps/api/app/modules/content/router.py` re-signs every `audio_url`/`image_url` fresh on every `GET /api/content/lessons/{id}` call, confirming a refetch-based fix for AC-6 (not just a remount) is the correct approach.
+- Split `AudioTimeline.tsx`'s single `!hasAudio` effect into a 3-way branch (`hasAudio` / `!hasAudio && hasScript` / `!hasAudio && !hasScript`), added a separate ticking effect (gated on `status === 'PLAYING'`, reads `audioPositionMs` fresh from the store each tick rather than a closure variable — this also makes seek-absorption trivial, since a seek just needs to update `audioPositionMs` via `processTimeUpdate` and the next tick picks up from there), and a separate duration-setting effect (independent of `status`, matching how `handleLoadedMetadata` behaves for real audio).
+- For AC-6, added `refreshLessonMedia` (replaces `lesson` without resetting progress — distinct from `loadLesson()`), exposed SWR's `mutate` as `refetch` from `useLesson.ts`, and threaded it `PlayerLoader.tsx` → `Player.tsx` as `onRefetchLesson`. The Retry button now calls a `handleRetryAudio` wrapper that awaits the refetch, applies fresh content on success, and always calls `retryAudio()` afterward (including on a refetch failure) so Retry is never left non-functional.
+- Hit and fixed a PowerShell encoding issue while batch-editing two test files (`Get-Content -Raw` / `Set-Content -Encoding utf8` mangled existing em-dash characters into mojibake) — reverted both files via `git checkout` before anything was committed and redid the edits with the `Edit` tool instead, which doesn't have this failure mode.
+
+### Completion Notes
+
+- All 5 tasks complete, all ACs (1–9) satisfied.
+- Full `apps/web` test suite: 53 files, 516 tests, all passing.
+- `tsc --noEmit`: clean. `eslint`: 0 errors on all touched files (2 pre-existing, unrelated warnings in `PlayerLoader.test.tsx`'s mock factory, confirmed via `git diff` to predate this story).
+- AC-8's re-pointed test and its new has-script counterpart both verified passing, confirming the exact regression Dev 1 flagged was caught and handled correctly.
+
+### File List
+
+- `apps/web/src/components/player/AudioTimeline.tsx` (MODIFIED — 3-way branch, virtual clock ticking effect, duration-setting effect, seek-absorption extended)
+- `apps/web/src/stores/player.machine.ts` (MODIFIED — added `refreshLessonMedia` action)
+- `apps/web/src/hooks/useLesson.ts` (MODIFIED — exposes SWR `mutate` as `refetch`)
+- `apps/web/src/components/player/PlayerLoader.tsx` (MODIFIED — passes `refetch` down as `onRefetchLesson`)
+- `apps/web/src/components/player/Player.tsx` (MODIFIED — new required `onRefetchLesson` prop, `handleRetryAudio` wrapper wired to the Retry button)
+- `apps/web/src/__tests__/stores/player.machine.test.ts` (MODIFIED — `refreshLessonMedia` test)
+- `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` (MODIFIED — re-pointed S2-26 test + new virtual-clock test suite: ticking, boundary-firing, teardown, duration, seek-absorption, no-double-advance)
+- `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED — `mockOnRefetchLesson` added to all render calls; new retry-refetch flow tests)
+- `apps/web/src/__tests__/components/player/PlayerLoader.test.tsx` (MODIFIED — `refetch: vi.fn()` added to all `mockUseLesson.mockReturnValue` calls)

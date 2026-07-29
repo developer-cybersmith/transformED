@@ -13,6 +13,9 @@ interface UseLessonResult {
   error: unknown;
   status: LessonStatus | undefined;
   serverError: string | null;
+  /** Force a revalidation (e.g. to get freshly re-signed media URLs after a
+   *  retry-triggered refetch, S2-33) and return the resolved response. */
+  refetch: () => Promise<LessonStatusResponse | null | undefined>;
 }
 
 // A "still in progress" wire status polls until it reaches a terminal one
@@ -30,7 +33,7 @@ function refreshIntervalFor(data: LessonStatusResponse | null | undefined): numb
 }
 
 export function useLesson(lessonId: string): UseLessonResult {
-  const { data, error, isLoading } = useSWR<LessonStatusResponse | null>(
+  const { data, error, isLoading, mutate } = useSWR<LessonStatusResponse | null>(
     lessonId ? `lesson:${lessonId}` : null,
     async () => {
       const response = await lessonService.getLessonPackage(lessonId);
@@ -51,5 +54,6 @@ export function useLesson(lessonId: string): UseLessonResult {
     error,
     status: data?.status,
     serverError: data?.error ?? null,
+    refetch: () => mutate(),
   };
 }

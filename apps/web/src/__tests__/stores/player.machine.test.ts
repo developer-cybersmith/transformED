@@ -125,6 +125,26 @@ describe('loadLesson', () => {
   });
 });
 
+describe('refreshLessonMedia (S2-33)', () => {
+  it('replaces the lesson content without resetting playback progress', () => {
+    const lesson = makeLesson(3);
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.getState().advanceSegment(); // currentSegmentIndex -> 1
+    usePlayerStore.setState({
+      audioPositionMs: 5000,
+      quizFiredForSegment: new Set(['seg_0']),
+    });
+
+    const refreshed = { ...lesson, segments: lesson.segments.map((s) => ({ ...s })) };
+    usePlayerStore.getState().refreshLessonMedia(refreshed);
+
+    expect(usePlayerStore.getState().lesson).toBe(refreshed);
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+    expect(usePlayerStore.getState().audioPositionMs).toBe(5000);
+    expect(usePlayerStore.getState().quizFiredForSegment.has('seg_0')).toBe(true);
+  });
+});
+
 describe('play / pause', () => {
   it('IDLE → PLAYING on play()', () => {
     usePlayerStore.getState().loadLesson(makeLesson());
