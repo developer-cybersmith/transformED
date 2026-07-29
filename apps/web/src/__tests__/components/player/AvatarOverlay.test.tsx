@@ -204,6 +204,71 @@ describe('AvatarOverlay — outro', () => {
   });
 });
 
+describe('AvatarOverlay — network-stall watchdog (review fix)', () => {
+  const lessonWithIntro = { ...mockLessonPackage, avatar_intro_url: 'https://example.com/intro.mp4' };
+  const lessonWithOutro = { ...mockLessonPackage, avatar_outro_url: 'https://example.com/outro.mp4' };
+
+  it('gives up on the intro and starts the lesson if neither ended nor error fires within the watchdog window', () => {
+    vi.useFakeTimers();
+    try {
+      usePlayerStore.setState({ status: 'IDLE' });
+      render(<AvatarOverlay lesson={lessonWithIntro} />);
+
+      act(() => {
+        vi.advanceTimersByTime(8_001);
+      });
+
+      expect(usePlayerStore.getState().status).toBe('PLAYING');
+      expect(screen.queryByTestId('avatar-intro')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on the outro if neither ended nor error fires within the watchdog window', () => {
+    vi.useFakeTimers();
+    try {
+      usePlayerStore.setState({ status: 'ENDED' });
+      render(<AvatarOverlay lesson={lessonWithOutro} />);
+
+      act(() => {
+        vi.advanceTimersByTime(8_001);
+      });
+
+      expect(screen.queryByTestId('avatar-outro')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('AvatarOverlay — yields to a genuine audio error (review fix)', () => {
+  it('does not render the intro while audioError is true, so the Retry button underneath stays reachable', () => {
+    const lessonWithIntro = { ...mockLessonPackage, avatar_intro_url: 'https://example.com/intro.mp4' };
+    usePlayerStore.setState({ status: 'IDLE', audioError: true });
+
+    render(<AvatarOverlay lesson={lessonWithIntro} />);
+
+    expect(screen.queryByTestId('avatar-intro')).toBeNull();
+  });
+});
+
+describe('AvatarOverlay — static image error handling (review fix)', () => {
+  it('hides the static avatar after its image fails to load, instead of leaving a broken-image icon', () => {
+    const lessonWithStatic = { ...mockLessonPackage, avatar_static_url: 'https://example.com/static.png' };
+    usePlayerStore.setState({ status: 'PLAYING' });
+
+    render(<AvatarOverlay lesson={lessonWithStatic} />);
+    const img = screen.getByTestId('avatar-static').querySelector('img')!;
+
+    act(() => {
+      img.dispatchEvent(new Event('error'));
+    });
+
+    expect(screen.queryByTestId('avatar-static')).toBeNull();
+  });
+});
+
 describe('AvatarOverlay — all 3 fields configured together', () => {
   const fullLesson = {
     ...mockLessonPackage,

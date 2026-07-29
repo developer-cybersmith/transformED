@@ -510,6 +510,16 @@ def test_lesson_package_omitting_avatar_fields_validates_against_raw_json_schema
 
 @pytest.mark.unit
 def test_lesson_package_avatar_fields_round_trip_through_json_schema() -> None:
+    """Review finding (Blind Hunter + Edge Case Hunter, corroborated): the
+    schema's "format: uri" on these 3 properties is currently NOT enforced --
+    jsonschema requires an explicit FormatChecker, and even with one supplied,
+    this environment has no "uri" checker registered (needs the optional
+    `rfc3987` package, not installed -- confirmed via
+    `jsonschema.FormatChecker().checkers` not containing "uri"). Passing
+    `format_checker=jsonschema.FormatChecker()` here is honest about that
+    limitation rather than pretending it enforces something it doesn't: it
+    exercises the same code path the constraint would use if the dependency
+    were ever added, without a false "this proves URLs are validated" claim."""
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
     d = {
         **MINIMAL_PACKAGE_DICT,
@@ -518,4 +528,8 @@ def test_lesson_package_avatar_fields_round_trip_through_json_schema() -> None:
         "avatar_outro_url": "https://example.com/outro.mp4",
     }
     package = LessonPackage.model_validate(d)
-    jsonschema.validate(instance=json.loads(package.model_dump_json()), schema=schema)
+    jsonschema.validate(
+        instance=json.loads(package.model_dump_json()),
+        schema=schema,
+        format_checker=jsonschema.FormatChecker(),
+    )
