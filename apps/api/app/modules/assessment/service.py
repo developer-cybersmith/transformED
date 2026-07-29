@@ -648,7 +648,7 @@ async def get_session_report(
         )
 
     row = session_row
-    
+
     # Step 1b — Fetch lesson tier for contextualised report (Story 3-29)
     _lesson_id = str(row.get("lesson_id") or "")
     tier = "T2"  # safe default — matches lessons.tier DEFAULT 'T2'
@@ -980,7 +980,7 @@ async def get_learner_dna_data(
     *,
     user_id: str,
     supabase: Client,
-    redis: Any = None,
+    redis: Any = None,  # noqa: ANN401
 ) -> dict[str, Any]:
     """Fetch the learner_dna row for a user and return it as a plain dict.
 
@@ -1017,7 +1017,7 @@ async def get_learner_dna_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
         )
-        
+
     # ── Re-assessment flag (non-fatal Redis read) ─────────────────────────────
     reassessment_due: bool = False
     if redis is not None:

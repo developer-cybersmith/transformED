@@ -63,7 +63,7 @@ def _session_row(ended_at="2026-07-21T10:00:00Z", user_id="user-123"):
 
 
 def _dna_row(session_count: int = 9) -> dict:
-    row = {dim: 75.0 for dim in NINE_DIMS}
+    row = dict.fromkeys(NINE_DIMS, 75.0)
     row["session_count"] = session_count
     return row
 
@@ -85,9 +85,8 @@ def _build_supabase(
     def _table(name):
         tbl = MagicMock()
         if name == "sessions":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(
-                _session_row(user_id=user_id)
-            )
+            _mock_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _mock_exec.return_value = _resp(_session_row(user_id=user_id))
         elif name == "quiz_attempts":
             tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
         elif name == "teachback_attempts":
@@ -101,9 +100,8 @@ def _build_supabase(
                 tbl.insert.return_value.execute.return_value = _resp([])
         elif name == "learner_dna":
             dna = _dna_row(session_count)
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(
-                dna
-            )
+            _mock_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _mock_exec.return_value = _resp(dna)
             tbl.upsert.return_value.execute.return_value = _resp([])
         return tbl
 
@@ -124,9 +122,8 @@ def _build_dna_service_supabase(dna_data: dict | None = None) -> MagicMock:
     def _table(name):
         tbl = MagicMock()
         if name == "learner_dna":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
-                _resp(dna_data)
-            )
+            _mock_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _mock_exec.return_value = _resp(dna_data)
         return tbl
 
     supabase.table.side_effect = _table
@@ -581,9 +578,9 @@ def test_fuse_dna_does_not_set_flag_at_session_19():
 @pytest.mark.unit
 def test_fuse_dna_redis_raises_type_error_on_positional_arg():
     """Passing redis as a positional argument must raise TypeError (keyword-only guard)."""
-    from app.modules.assessment.dna_fusion import fuse_learner_dna
-
     import inspect
+
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     sig = inspect.signature(fuse_learner_dna)
     param = sig.parameters.get("redis")
