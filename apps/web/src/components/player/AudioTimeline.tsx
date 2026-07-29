@@ -214,11 +214,42 @@ export function AudioTimeline() {
   // play/pause semantics: pause()/resume() on status transitions (not
   // cancel()+respeak, which would restart narration from the beginning),
   // cancel() on segment change or on leaving virtual-clock mode entirely.
+  // Deps use segment_id (not the whole segment object) per AC-8 -- avoids
+  // re-running on a re-render that recreates the segment object without
+  // actually changing which segment is current (review fix).
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    if (
+      typeof window === 'undefined' ||
+      !window.speechSynthesis ||
+      typeof window.SpeechSynthesisUtterance !== 'function'
+    ) {
+      // Partial API support (has one but not the other) is treated the same
+      // as fully unsupported -- silent no-op, never throws (review fix).
+      return;
+    }
     const synth = window.speechSynthesis;
 
     if (hasAudio || !hasScript || !segment) {
+      synth.cancel();
+      spokenSegmentIdRef.current = null;
+      return;
+    }
+
+    // A new segment (or first entry into virtual-clock mode for it) -- stop
+    // whatever was playing/paused before, unconditional on status. AC-6
+    // requires cancel() on segment change regardless of PLAYING/PAUSED/QUIZ
+    // etc.; previously this only happened lazily on the next PLAYING
+    // transition, leaving a stale segment's utterance merely paused
+    // indefinitely if the segment changed while not PLAYING (review fix).
+    if (spokenSegmentIdRef.current !== segment.segment_id) {
+      synth.cancel();
+      spokenSegmentIdRef.current = null;
+    }
+
+    if (status === 'ENDED') {
+      // Lesson is genuinely over -- nothing can ever transition back to
+      // resume it, so free the speech queue immediately instead of leaving
+      // it paused until unmount (review fix, user's explicit call).
       synth.cancel();
       spokenSegmentIdRef.current = null;
       return;
@@ -234,24 +265,46 @@ export function AudioTimeline() {
       return;
     }
 
-    // New segment (or first entry into virtual-clock mode for it) -- stop
-    // whatever was playing before starting the new utterance.
-    synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(segment.narration.script);
-    // Set once at speak-time, not kept live -- browser TTS engines don't
-    // support changing an in-flight utterance's rate the way <audio>.playbackRate
-    // does (S2-34 AC-9, known limitation).
-    utterance.rate = usePlayerStore.getState().playbackRate;
-    synth.speak(utterance);
-    spokenSegmentIdRef.current = segment.segment_id;
-  }, [hasAudio, hasScript, segment, status]);
+    // Defer speak() by a tick after cancel() -- calling speak() in the same
+    // synchronous stack as cancel() is a documented race in some engines
+    // (notably Chrome) that can silently drop the new utterance (review
+    // fix). Cleanup clears the pending call if the effect re-runs (e.g. a
+    // rapid subsequent segment change) or unmounts before it fires.
+    const segmentId = segment.segment_id;
+    const script = segment.narration.script;
+    const rate = usePlayerStore.getState().playbackRate;
+    const timeoutId = window.setTimeout(() => {
+      const utterance = new SpeechSynthesisUtterance(script);
+      // Set once at speak-time, not kept live -- browser TTS engines don't
+      // support changing an in-flight utterance's rate the way <audio>.playbackRate
+      // does (S2-34 AC-9, known limitation).
+      utterance.rate = rate;
+      // Swallow engine failures (unavailable voice, permission, crash) --
+      // this is supplementary audio only; a failure here must never surface
+      // as an error or affect the lesson (review fix).
+      utterance.onerror = () => {};
+      synth.speak(utterance);
+      spokenSegmentIdRef.current = segmentId;
+    }, 0);
 
-  // Stop any in-progress/paused utterance on unmount (S2-34 AC-7).
+    return () => window.clearTimeout(timeoutId);
+    // segment_id (not the whole segment object) is the intended dependency
+    // per AC-8 -- re-running only when the segment actually changes, not on
+    // a re-render that happens to recreate the segment object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segment?.segment_id, hasAudio, hasScript, status]);
+
+  // Stop any in-progress/paused utterance on unmount (S2-34 AC-7). Also
+  // resets spokenSegmentIdRef -- without this, a React StrictMode dev
+  // double-mount's cleanup pass cancels the just-started utterance while the
+  // ref still claims it was spoken, so the second mount silently calls a
+  // no-op resume() instead of a fresh speak() (review fix).
   useEffect(() => {
     return () => {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
+      spokenSegmentIdRef.current = null;
     };
   }, []);
 

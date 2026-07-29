@@ -4,7 +4,7 @@ baseline_commit: 5a28343db7be2634cb1a65a2baf8860dc9d2f997
 
 # Story 2.34: Browser SpeechSynthesis Fallback for Virtual Playback Clock
 
-Status: review
+Status: done
 
 ## Story
 
@@ -72,6 +72,7 @@ jsdom (this project's `vitest.config.ts` test environment) has no native `Speech
 |------|--------|--------|
 | 2026-07-29 | Story created from Dev 1's handoff item 4c, explicitly requested despite its non-blocking label. Branch `sprint2/s2-34-speech-synthesis-fallback` off `main`. | Dev 2 |
 | 2026-07-29 | Implemented all 6 tasks in a single cohesive effect (plus a dedicated unmount-cancel effect). Full suite 54 files / 555 tests passing, `tsc --noEmit` clean, `eslint` clean. | Dev 2 |
+| 2026-07-29 | 3-agent code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor). 3 decision-needed items resolved by user (2 deferred as documented limitations, 1 applied), 7 patch findings applied, 1 pre-existing pattern deferred. Full suite 54 files / 560 tests passing, `tsc --noEmit` clean, `eslint` clean. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -90,8 +91,23 @@ jsdom (this project's `vitest.config.ts` test environment) has no native `Speech
 - Full `apps/web` test suite: 54 files, 555 tests (544 baseline + 11 new), all passing.
 - `tsc --noEmit`: clean. `eslint`: clean on both touched files.
 - Known, documented limitation (AC-9): `utterance.rate` is fixed at speak-time and does not live-update if the student changes `playbackRate` mid-segment — matches the story's explicit scope decision, not a defect.
+- **Post-review round:** applied all 7 patch findings — deferred `speak()` behind a `setTimeout(0)` after `cancel()` (Chrome same-tick race), added a swallowing `onerror` handler, extended the support guard to also check `SpeechSynthesisUtterance`, made segment-change `cancel()` unconditional on status (was previously deferred to the next `PLAYING` transition — a real AC-6 gap), changed the effect's dependency array to `segment?.segment_id` per AC-8's literal wording, special-cased `ENDED` to hard-`cancel()` (user's explicit call), and reset `spokenSegmentIdRef` in the unmount-cleanup effect (fixes a React StrictMode dev double-mount edge case). Two decision-needed items (seek resync, long-script truncation) were resolved by the user as documented limitations — no code change, logged in `docs/stories/deferred-work.md`.
+- Full `apps/web` test suite after the review round: 54 files, 560 tests (555 + 5 new), all passing. `tsc --noEmit` clean. `eslint` clean (one intentional `react-hooks/exhaustive-deps` suppression, matching existing precedent elsewhere in this codebase, for the deliberate `segment?.segment_id`-only dependency).
 
 ### File List
 
 - `apps/web/src/components/player/AudioTimeline.tsx` (MODIFIED — added `spokenSegmentIdRef`, the SpeechSynthesis lifecycle effect, and the unmount-only cancel effect)
 - `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` (MODIFIED — new `AudioTimeline — SpeechSynthesis fallback (S2-34)` describe block, 11 tests)
+
+### Review Findings
+
+- [x] [Review][Defer] Seeking within a script-only segment does not resync or restart narration — deferred, documented limitation: user opted to accept the drift rather than restart narration on every seek; no AC covers seek behavior, matches this story's stated scope. [apps/web/src/components/player/AudioTimeline.tsx]
+- [x] [Review][Defer] Long narration scripts risk truncation by browser TTS engines (a well-documented ~15s/Chromium behavior) — deferred, documented limitation: user opted to accept as a known limitation rather than implement sentence-chunked queuing now; chunking is a real scope increase beyond this story's stated ACs, logged as a follow-up story candidate. [apps/web/src/components/player/AudioTimeline.tsx]
+- [x] [Review][Patch] `ENDED` status should hard-`cancel()` the utterance instead of `pause()` — user's explicit call: the lesson is genuinely over, no reason to ever resume, and canceling frees the speech queue immediately instead of leaving it paused until unmount [apps/web/src/components/player/AudioTimeline.tsx:227-230]
+- [x] [Review][Patch] `cancel()` immediately followed by `speak()` in the same tick is a documented Chrome race that can silently drop the new utterance [apps/web/src/components/player/AudioTimeline.tsx:239-245]
+- [x] [Review][Patch] Utterance has no `onerror` handler — a TTS engine failure fails completely silently with no observability [apps/web/src/components/player/AudioTimeline.tsx:240-245]
+- [x] [Review][Patch] Support guard only checks `window.speechSynthesis`, never `window.SpeechSynthesisUtterance` — throws if only one exists [apps/web/src/components/player/AudioTimeline.tsx:218]
+- [x] [Review][Patch] AC-6 violation: `cancel()` is deferred (not fired) when the segment changes while `status !== 'PLAYING'` — only reached on the next `PLAYING` transition, not immediately on segment change as AC-6 requires unconditionally [apps/web/src/components/player/AudioTimeline.tsx:217-247]
+- [x] [Review][Patch] AC-8 dependency array uses the whole `segment` object instead of `segment?.segment_id` as the AC literally specifies — functionally equivalent today but fragile against a future store change that recreates `segment` without changing `segment_id` [apps/web/src/components/player/AudioTimeline.tsx:247]
+- [x] [Review][Patch] React StrictMode dev double-invoke can silently prevent narration from ever speaking on mount — the unmount-only cleanup effect's `cancel()` fires between the dev double-mount's two passes, but `spokenSegmentIdRef` isn't reset, so the second pass calls a no-op `resume()` on an already-canceled queue instead of a fresh `speak()` [apps/web/src/components/player/AudioTimeline.tsx:250-256]
+- [x] [Review][Defer] `utterance.rate` is unclamped [apps/web/src/components/player/AudioTimeline.tsx:279] — deferred, pre-existing: mirrors the identical unclamped pattern already used for real `<audio>.playbackRate` elsewhere in this same file; not a regression unique to this story.
