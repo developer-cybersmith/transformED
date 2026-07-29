@@ -37,9 +37,13 @@ import pytest
 def _make_mock_supabase(session_id: str | None = None) -> MagicMock:
     """Supabase client stub returning a minimal lesson_jobs row.
 
-    When *session_id* is provided, it is included in the row so the pipeline
-    publishes to ``lesson_ready:{session_id}`` instead of falling back to
-    ``lesson_ready:{lesson_id}``.  Omit it to exercise the fallback path.
+    ⚠️ *session_id* injects a column that **does not exist in the schema**
+    (D23 / Story 2-37: `lessons` has no `session_id`, confirmed against
+    `supabase/migrations/`). It is kept ONLY so
+    `test_publish_key_ignores_a_session_id_that_cannot_exist` can prove the
+    publish key ignores it. Postgres could never return this row — a Supabase
+    MagicMock has no catalog and cannot raise 42703, which is
+    `DEFECT-REGISTER.md` RC-1 exactly.
     """
     mock = MagicMock()
     row: dict = {
@@ -477,26 +481,41 @@ async def test_subscriber_handles_malformed_json(mocker) -> None:
     mock_manager.send.assert_not_called()
 
 
-# -- Test 5: regression -- session_id != lesson_id routing --------------------
+# -- Test 5: routing key is the LESSON (D23 / Story 2-37, Dev 4 option A) -----
+#
+# This test previously asserted the OPPOSITE: that a `session_id` on the row
+# must win over `lesson_id`, with the message "channel must not fall back to
+# lesson_id when session_id is present".
+#
+# That contract was never real. `lessons` has no `session_id` column, so
+# `.get("session_id")` always returned None and the fallback ALWAYS fired.
+# The test only passed because `_make_mock_supabase(session_id=...)` fabricated
+# a column Postgres would reject — a mock asserting a schema shape that cannot
+# exist. `DEFECT-REGISTER.md` RC-1, and the reason D23 survived: the worker
+# tests asserted a publish happened, the WebSocket tests asserted routing works
+# given a session_id, and nothing reconciled the key. Meanwhile `lesson_ready`
+# reached no client at all.
+#
+# Dev 4 chose option A (handoff 2026-07-29 §2): key by `lesson_id`, because
+# generation completion is a property of the lesson, not of a viewer — one
+# lesson is generated once and watched in many sessions. Dev 4 fans out from a
+# `lesson_waiters:{lesson_id}` set at delivery time.
 
 
 @pytest.mark.unit
-async def test_routing_reaches_correct_client_when_session_id_differs(mocker) -> None:
-    """Regression: when session_id != lesson_id, the event reaches the WebSocket
-    client identified by session_id, not lesson_id.
+async def test_publish_key_ignores_a_session_id_that_cannot_exist(mocker) -> None:
+    """The publish key must be the LESSON, even if a row carries a session_id.
 
-    Simulates the full pipeline path:
-      - lesson_jobs row has an explicit session_id different from lesson_id
-      - content_pipeline_job publishes to lesson_ready:{session_id}
-      - subscriber extracts session_id from channel and calls manager.send(session_id, ...)
+    Feeding a `session_id` here is the point: it is exactly what one unrelated
+    migration would create, and the old code would have followed it straight to
+    a channel nobody subscribes to.
     """
     lesson_id = "lesson-uuid-999"
-    session_id = "ws-session-uuid-111"  # genuinely different routing key
+    rogue_session_id = "ws-session-uuid-111"
     lesson_package = REAL_LESSON_PACKAGE
 
     mock_redis = AsyncMock()
-    # Row includes explicit session_id -- routes to the WebSocket client, not lesson_id
-    mock_supabase = _make_mock_supabase(session_id=session_id)
+    mock_supabase = _make_mock_supabase(session_id=rogue_session_id)
     _patch_pipeline_deps(mocker, mock_redis, mock_supabase, lesson_package)
 
     from app.workers.jobs.content_pipeline import content_pipeline_job
@@ -508,21 +527,18 @@ async def test_routing_reaches_correct_client_when_session_id_differs(mocker) ->
     published_json: str = mock_redis.publish.call_args[0][1]
     published_msg: dict = json.loads(published_json)
 
-    # Channel must route to the WebSocket session, NOT the lesson
-    assert published_channel == f"lesson_ready:{session_id}", (
-        f"expected channel lesson_ready:{session_id}, got {published_channel}"
+    assert published_channel == f"lesson_ready:{lesson_id}", (
+        f"expected lesson_ready:{lesson_id}, got {published_channel}"
     )
-    assert published_channel != f"lesson_ready:{lesson_id}", (
-        "channel must not fall back to lesson_id when session_id is present"
+    assert published_channel != f"lesson_ready:{rogue_session_id}", (
+        "the publish key still follows a session_id on the row — that is the "
+        "pre-D23 behaviour, and Dev 4's lesson_waiters fan-out would never see it"
     )
 
-    # Payload matches ws.ts's LessonReadyMessage exactly — no session_id
-    # inside the payload body (2026-07-16, Story 2-12); session_id is only
-    # ever the channel suffix / routing key.
+    # Payload contract unchanged — packages/shared/types/ws.ts LessonReadyMessage.
     assert published_msg["payload"] == {"lesson_id": lesson_id, "lesson": lesson_package}
 
-    # Simulate the subscriber receiving this message and verify it dispatches
-    # to manager.send with session_id (not lesson_id)
+    # The subscriber extracts the key from the CHANNEL name, never the payload.
     from app.core.pubsub import _run_lesson_subscriber
 
     mock_manager = MagicMock()
@@ -544,9 +560,6 @@ async def test_routing_reaches_correct_client_when_session_id_differs(mocker) ->
     mock_sub_conn.pubsub.return_value = mock_pubsub
     mocker.patch("app.core.pubsub.Redis").from_url.return_value = mock_sub_conn
 
-    # _run_lesson_subscriber calls get_settings(); mock it so no real Settings()
-    # (and no env vars) are required. Redis.from_url is already patched above, so
-    # redis_url is never dialled — the stub only prevents Settings() construction.
     mock_settings = MagicMock()
     mock_settings.redis_url = "redis://localhost:6379/0"
     mocker.patch("app.config.get_settings", return_value=mock_settings)
@@ -554,11 +567,7 @@ async def test_routing_reaches_correct_client_when_session_id_differs(mocker) ->
     with pytest.raises(asyncio.CancelledError):
         await _run_lesson_subscriber(mock_manager)
 
-    # manager.send must use session_id as the routing key
-    mock_manager.send.assert_called_once_with(session_id, published_msg)
-    # Sanity: it must NOT have been called with lesson_id
-    first_arg = mock_manager.send.call_args[0][0]
-    assert first_arg != lesson_id, "manager.send must not route to lesson_id"
+    mock_manager.send.assert_called_once_with(lesson_id, published_msg)
 
 
 # -- Test 6: lifespan wiring -- listener task start + clean cancel ------------
