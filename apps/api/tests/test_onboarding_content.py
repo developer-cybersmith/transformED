@@ -42,9 +42,8 @@ ONBOARDING_QUESTIONS_FILE = _ONBOARDING_DIR / "questions.ts"
 
 def _content() -> str:
     """Return the combined text of both onboarding content files (cached per test session)."""
-    return (
-        ONBOARDING_FLOW_FILE.read_text(encoding="utf-8")
-        + ONBOARDING_QUESTIONS_FILE.read_text(encoding="utf-8")
+    return ONBOARDING_FLOW_FILE.read_text(encoding="utf-8") + ONBOARDING_QUESTIONS_FILE.read_text(
+        encoding="utf-8"
     )
 
 

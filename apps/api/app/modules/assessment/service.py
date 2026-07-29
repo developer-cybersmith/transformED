@@ -784,7 +784,7 @@ async def get_session_report(
             )
         )
         _delta_map: dict[str, float | None] = {}
-        for evt in (_events_resp.data or []):
+        for evt in _events_resp.data or []:
             payload = evt.get("payload")
             if not isinstance(payload, dict):
                 continue
@@ -793,8 +793,7 @@ async def get_session_report(
                 _delta_map[dim] = payload.get("delta")
 
         _growth_labels: dict[str, str | None] = {
-            dim: _delta_to_growth_label(_delta_map.get(dim))
-            for dim in ALL_NINE_DIMENSIONS
+            dim: _delta_to_growth_label(_delta_map.get(dim)) for dim in ALL_NINE_DIMENSIONS
         }
         _dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}
 
@@ -1026,9 +1025,7 @@ async def get_learner_dna_data(
             val = await redis.get(f"user:{user_id}:reassessment_due")
             reassessment_due = val == "1"
         except Exception as exc:
-            logger.warning(
-                "get_learner_dna_data: redis check failed user=%s: %s", _safe_uid, exc
-            )
+            logger.warning("get_learner_dna_data: redis check failed user=%s: %s", _safe_uid, exc)
             reassessment_due = False
 
     return {
