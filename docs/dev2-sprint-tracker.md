@@ -34,7 +34,9 @@
 
 > **Cross-team note (2026-07-29):** independently audited all of Dev 1's Sprint 2 pipeline deliverables (11 nodes + cost ceiling + WebSocket `lesson_ready` push + eval harness) against the actual current code, since `docs/master-tracker.md`'s Dev 1 Sprint 2 section is dated 2026-07-13 and still shows everything as not-started — badly stale. Confirmed genuinely done and correct: `lesson_planner`, `slide_generator`, `tts_node`, cost ceiling enforcement, the WebSocket push, and the eval harness (its live 5-PDF run is intentionally gated behind a test marker, not a gap). The two bugs above were the only real defects found.
 
-> **Product bug (2026-07-29):** user reported the dashboard's mouse wheel scroll getting stuck (native scrollbar drag still worked) — a recurring issue, seen before on a different page. Root cause: `SmoothScroll.tsx` (Lenis) wraps the whole app and only calls `lenis.resize()` on route change; Lenis never observes DOM mutations on its own, so any page whose content grows after mount (SWR-fetched sections, images, async lists) leaves its cached scroll bounds stale — the wheel gets stuck at the old height while a scrollbar drag (reading the real DOM directly) still works. Fixed generally with a `ResizeObserver` on `document.body` inside `SmoothScroll.tsx`, calling `lenis.resize()` (rAF-debounced) on any body size change — fixes this class of bug for every page, not just the dashboard. Small, ad-hoc fix (no story per user's direction), committed directly to `sprint2-master`; not yet PR'd to `main` (user's call — batching with other small work later).
+> **Product bug (2026-07-29):** user reported the dashboard's mouse wheel scroll getting stuck (native scrollbar drag still worked) — a recurring issue, seen before on a different page. Root cause: `SmoothScroll.tsx` (Lenis) wraps the whole app and only calls `lenis.resize()` on route change; Lenis never observes DOM mutations on its own, so any page whose content grows after mount (SWR-fetched sections, images, async lists) leaves its cached scroll bounds stale — the wheel gets stuck at the old height while a scrollbar drag (reading the real DOM directly) still works. Fixed generally with a `ResizeObserver` on `document.body` inside `SmoothScroll.tsx`, calling `lenis.resize()` (rAF-debounced) on any body size change — fixes this class of bug for every page, not just the dashboard. Small, ad-hoc fix (no story per user's direction), merged to `main` via PR #108.
+
+> **Tracker correction (2026-07-29):** Sprint 1's **S1-09** (Library Real Data Integration) and **S1-10** (Dashboard Real Data Integration) were still shown `NOT STARTED` in §10 below, but both were actually completed under Sprint 2 story numbers (**2-14**, **2-15**) — same underlying task, tracked twice across two sprint sections. Corrected in §10; Sprint 1 dashboard count below updated accordingly (13/14 done, only **S1-05 AvatarOverlay** genuinely still open, blocked on a cross-team schema decision).
 
 ---
 
@@ -43,8 +45,8 @@
 | Sprint | Period | Total Tasks | Done | Partial | Not Started |
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 10 | **10** | 0 | **0** |
+| Sprint 1 | Weeks 2–3 | 14 | **13** | 0 | **1** |
+| Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
@@ -907,7 +909,7 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 
 ### S1-09 — Library Real Data Integration
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
+**Status:** ✅ DONE <!-- corrected 2026-07-29: was stale, done via S2-14/S2-15 --> — shipped as **Story 2-14** (real `GET /api/content/lessons` wiring) + **Story 2-15** (fixed the 401 this introduced by moving the fetch client-side). See Dev 2 tracker §11 S2-14/S2-15 for full detail. This Sprint 1 entry was never updated after that work landed under its Sprint 2 story numbers — same underlying task, tracked twice; correcting here rather than double-counting.
 **Files to modify:** `src/services/library.service.ts`, `src/components/library/LibraryView.tsx`
 
 Replace mock with real call to `GET /api/lessons` (paginated, user-scoped via JWT). Add status filter tabs: All / Generating / Ready / Failed. Show generation progress for `status: 'generating'` lessons using a polling interval (every 10s) or WebSocket subscription.
@@ -924,7 +926,7 @@ Replace mock with real call to `GET /api/lessons` (paginated, user-scoped via JW
 
 ### S1-10 — Dashboard Real Data Integration
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
+**Status:** ✅ DONE <!-- corrected 2026-07-29: was stale, done via S2-14/S2-15 --> — shipped as **Story 2-14** (real `GET /api/content/lessons` wiring, dedup + wider lookup window for the continue-learning card) + **Story 2-15** (fixed the 401). `GET /api/sessions/latest` never materialized as a separate endpoint (Dev 4 owns session state in Redis, not exposed via REST) — S2-14 derives "continue learning" from the same `GET /api/content/lessons` response instead. See Dev 2 tracker §11 S2-14/S2-15.
 **Files to modify:** `src/services/dashboard.service.ts`
 
 Replace mock data with real API calls:
