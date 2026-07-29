@@ -123,6 +123,78 @@ except (ImportError, AttributeError):
     _OPENAI_API_ERRORS = ()
     _OPENAI_NETWORK_ERRORS = ()
 
+# ── Redis exception classification (Story 2-36, D19) ─────────────────────────
+#
+# `redis.exceptions` defines its OWN `TimeoutError` and `ConnectionError` which
+# SHADOW the builtins by name and inherit from `RedisError`, NOT from them.
+# Verified by execution in `test_redis_exceptions_are_not_the_builtins`:
+#
+#     redis.exceptions.TimeoutError is builtins.TimeoutError            -> False
+#     issubclass(redis.exceptions.TimeoutError, builtins.TimeoutError)  -> False
+#
+# So `except (..., TimeoutError)` below reads as though it covers redis and
+# never matched a single redis error. Every one fell through to the catch-all
+# and was re-raised WITHOUT a retry.
+#
+# This is not theoretical: `is_circuit_open()` is the first statement of every
+# function wrapped by this decorator (providers/llm/openai.py:111 and the same
+# line in embeddings/ and both image providers), and it talks to Redis. A
+# momentary Redis blip therefore killed the node before the provider was ever
+# contacted — and killed it permanently.
+#
+# `ConnectionError` covers `BusyLoadingError` (a subclass), which Redis raises
+# while loading a dataset from disk — the definition of "retry in a moment".
+_REDIS_TRANSIENT_ERRORS: tuple[type[BaseException], ...]
+try:
+    import redis.exceptions as _redis_exc
+
+    _REDIS_TRANSIENT_ERRORS = _exception_classes(
+        _redis_exc.TimeoutError,
+        _redis_exc.ConnectionError,
+    )
+except (ImportError, AttributeError):
+    _REDIS_TRANSIENT_ERRORS = ()
+
+# ── httpx protocol errors (Story 2-36, D20) ──────────────────────────────────
+#
+# `RemoteProtocolError` is neither `NetworkError` nor `TimeoutException` — it is
+# a sibling under `TransportError` — so it fell through to the catch-all too. It
+# means the SERVER violated the protocol or closed the connection mid-response:
+# routine behaviour from a loaded provider, and exactly what retry is for.
+#
+# ⚠️ Named EXPLICITLY, and deliberately not by its parent. `httpx.ProtocolError`
+# is also the parent of `LocalProtocolError`, which means THIS PROCESS built a
+# malformed request — a code defect that cannot succeed on attempt two.
+# Widening to `ProtocolError` (or worse, `TransportError`, which also covers
+# `UnsupportedProtocol`) would turn one clear client-side error into three plus
+# ~7s of backoff. `test_client_side_protocol_errors_are_not_retried` is the only
+# test in the suite that fails if someone takes that shortcut.
+_HTTPX_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+)
+
+# The single tuple the decorator catches on. Assembled here rather than unpacked
+# inline at the `except`: mypy rejects a starred unpack there with
+# "Exception type must be derived from BaseException", whereas a named tuple of
+# the declared type checks cleanly — the same reason `_OPENAI_API_ERRORS` is a
+# constant. `TimeoutError` is the BUILTIN (asyncio), listed last and separately
+# because `redis.exceptions.TimeoutError` shadows its NAME without inheriting
+# from it. Both entries are required; neither implies the other. That confusion
+# IS D19.
+_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    *_HTTPX_TRANSIENT_ERRORS,
+    *_REDIS_TRANSIENT_ERRORS,
+    TimeoutError,
+)
+
+if not _REDIS_TRANSIENT_ERRORS:
+    logger.warning(
+        "Redis exception classification is DISABLED — redis.exceptions was not importable "
+        "as real exception classes. A Redis blip will NOT be retried."
+    )
+
 if not _OPENAI_API_ERRORS:
     # Story 2-32 review: without this, a production image built without the SDK
     # importable (or with it stubbed) silently reverts to the pre-story behaviour
@@ -180,7 +252,16 @@ def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
 
                     last_exc = exc
 
-                except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
+                except _TRANSIENT_ERRORS as exc:
+                    # Transport-level failures with no status to classify on:
+                    # httpx timeouts/network/remote-protocol (Story 2-36 D20),
+                    # redis timeouts/connection errors (D19), and the BUILTIN
+                    # TimeoutError from asyncio.
+                    #
+                    # The builtin is listed separately and last precisely because
+                    # `redis.exceptions.TimeoutError` shadows its NAME without
+                    # inheriting from it — the confusion that caused D19. Both
+                    # are needed; neither implies the other.
                     last_exc = exc
 
                 except CircuitOpenError:
