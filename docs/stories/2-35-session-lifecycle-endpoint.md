@@ -1,6 +1,6 @@
 # Story 2.35: Mint sessions server-side (D18 — demo blocker)
 
-Status: ready-for-dev
+Status: review — **implemented by Dev 1 under option B; requires Dev 3 review before merge**
 
 ## Story
 
@@ -83,10 +83,10 @@ implementing it only because it blocks the demo and Dev 1 found it.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC-1, AC-2): `POST /api/assessment/sessions` + service function; ownership check.
-- [ ] Task 2 (AC-3, AC-4, AC-5): tests — end-to-end mint→submit, unminted id still 404, re-learn yields a new id.
-- [ ] Task 3 (AC-6): handoff note for Dev 2 + register update.
-- [ ] Task 4 (AC-7): full suite, lint, types.
+- [x] Task 1 (AC-1, AC-2): `POST /api/assessment/sessions` + service function; ownership check.
+- [x] Task 2 (AC-3, AC-4, AC-5): tests — end-to-end mint→submit, unminted id still 404, re-learn yields a new id.
+- [x] Task 3 (AC-6): handoff note for Dev 2 + register update.
+- [x] Task 4 (AC-7): full suite, lint, types.
 
 ## Dev Notes
 
@@ -130,3 +130,68 @@ Zero `apps/web/**` (AC-6 is a handoff, not a change).
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-07-29 | Story created for D18, the demo blocker. **Lands in Dev 3's `assessment` module — needs Dev 3 review.** Dev 1 is implementing only because it blocks the demo. | Dev 1 |
+
+## Dev Agent Record
+
+### Completion Notes
+
+**Ownership.** Dev 3 chose **option B** — Dev 1 implements, Dev 3 reviews before merge. The
+deliberate CLAUDE.md §5.4 crossing is unchanged and still needs their sign-off.
+
+**Where the code went.** `schemas.py` (`SessionCreate` / `SessionCreated`), `service.py`
+(`create_session` — now the ONLY writer of `sessions` in the codebase), `router.py`
+(`POST /sessions`, 201). No migration, no `packages/shared` change — §16 gate not triggered.
+
+**AC-2 is one branch, not two.** `lesson_row is None or user_id mismatch` raises a single
+identical 404. Splitting it "for clarity" is the leak: a distinct 403 turns the endpoint into an
+existence oracle for lesson ids. A mutation doing exactly that is caught by
+`test_a_missing_lesson_returns_the_same_404_as_an_unowned_one`, which compares body as well as
+status.
+
+**AC-3 asserts the demo path, not the insert.** `test_a_minted_session_is_accepted_by_grade_quiz_ownership_check`
+mints through the endpoint and hands the id to `grade_quiz` backed by a store that only knows
+rows the endpoint actually created. It asserts **422, not 200** — reaching answer validation
+proves the ownership check passed, which is the thing D18 broke. A first draft of this test was
+failing on a *different* 404 (grade_quiz step 2, missing lesson `content`), so it would have
+"passed as red" for the wrong reason; the stub now carries real content.
+
+### Mutation testing
+
+9 mutants; **2 initial survivors, both investigated rather than accepted**:
+
+| Mutation | Result |
+|---|---|
+| D18 restored — no `sessions` writer | CAUGHT (7 tests) |
+| unowned lesson gets a distinct 403 | CAUGHT |
+| ownership check removed | CAUGHT |
+| client-chosen `session_id` sent to DB | CAUGHT |
+| client-chosen `started_at` sent to DB | CAUGHT |
+| empty-insert guard removed | **SURVIVED → real gap, test added** |
+| `user_id` trusted from body (via `getattr`) | survived — **bad mutation**, `SessionCreate` has no such field so it was a no-op |
+| `user_id` trusted from body (schema field added too) | CAUGHT — the faithful version |
+| reuse-if-exists instead of insert | **survived → the AC-5 test used two independent stubs, so a lookup found nothing and inserted anyway. Rewritten to share one store; the faithful reuse mutation now fails 5 tests.** |
+
+Both survivors were genuine weaknesses in the tests, not in the code — which is the point of
+running them.
+
+### Verification (repo-wide, CLAUDE.md binding rule 1)
+
+- `pytest tests/unit tests/integration` — **785 passed**, 1 skipped
+- `pytest tests` — 22 failed, **1487 passed** (was 1477; +10 new). Failure set unchanged: Dev 3 19, Dev 4 3.
+- `ruff check .` — All checks passed · `ruff format --check .` — clean · `mypy app` — 24 in 3 files, unchanged
+
+Measured on the FULL suite this time. On PR #113 earlier today I measured only the gating scope
+and merged a broken root test; that cost is recorded against D24.
+
+### File List
+
+- `apps/api/app/modules/assessment/schemas.py` (modified)
+- `apps/api/app/modules/assessment/service.py` (modified)
+- `apps/api/app/modules/assessment/router.py` (modified)
+- `apps/api/tests/test_session_create_endpoint.py` (new)
+
+### Still required before D18 can be called closed
+
+**AC-6 is not satisfied by this PR and cannot be.** `player.machine.ts:142` must stop calling
+`crypto.randomUUID()` and use the returned id — that is Dev 2's change. Until it lands, the
+backend is correct and the product still 404s.

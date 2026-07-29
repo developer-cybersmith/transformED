@@ -124,6 +124,82 @@ def _delta_to_growth_label(delta: float | None) -> str | None:
     return "Stable"
 
 
+async def create_session(
+    *,
+    lesson_id: str,
+    user_id: str,
+    supabase: Client,
+) -> dict[str, Any]:
+    """Mint a `sessions` row for *user_id* on *lesson_id* (Story 2-35 / D18).
+
+    **This is the only writer of `sessions` in the codebase.** Before this, all 7
+    `table("sessions")` references were `.select(...)`, `apps/web` never inserted
+    one either, and the frontend invented `crypto.randomUUID()`. So the ownership
+    check in `grade_quiz` correctly rejected an id that had never existed, and
+    quiz and teach-back 404'd for every student.
+
+    `session_id` and `started_at` are deliberately NOT sent — they are
+    `DEFAULT gen_random_uuid()` and `DEFAULT now()`. A client-chosen id would
+    reintroduce D18; a client-chosen `started_at` would make session duration and
+    Dev 3's CES-final logic meaningless.
+
+    Called once per lesson attempt. Re-learning the same lesson creates a NEW
+    session on purpose — sessions are attempt-scoped, and `analytics` and the CES
+    history depend on that. Do not add a unique constraint on
+    `(user_id, lesson_id)` or a reuse-if-exists shortcut.
+
+    Raises:
+        HTTPException 404: the lesson does not exist **or** belongs to someone
+            else. Deliberately the SAME response for both — a distinct 403 would
+            turn this endpoint into an existence oracle for lesson ids. Matches
+            `content/router.py:get_lesson` and `media/router.py:get_signed_url`.
+        HTTPException 500: the insert returned no row.
+    """
+    lesson_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("lessons")
+            .select("lesson_id, user_id")
+            .eq("lesson_id", lesson_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    lesson_row = single_row(lesson_resp)
+    if lesson_row is None or str(lesson_row.get("user_id", "")) != str(user_id):
+        # ONE response for both cases — see the docstring. Do not split this into
+        # a 404 and a 403 "for clarity"; the difference is the leak.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lesson not found",
+        )
+
+    insert_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .insert({"user_id": str(user_id), "lesson_id": str(lesson_id)})
+            .execute()
+        )
+    )
+    created = rows(insert_resp)
+    if not created:
+        logger.error(
+            "create_session: sessions insert returned no row for lesson=%s",
+            lesson_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create session.",
+        )
+
+    row = created[0]
+    started_at = row.get("started_at")
+    return {
+        "session_id": str(row["session_id"]),
+        "lesson_id": str(row.get("lesson_id") or lesson_id),
+        "started_at": str(started_at) if started_at is not None else None,
+    }
+
+
 async def grade_quiz(
     *,
     session_id: str,
