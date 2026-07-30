@@ -1,6 +1,6 @@
 # WebSocket Message Contract
 
-**Status:** Proposed for Dev 2 sign-off · **Owner:** Dev 4 · **Last updated:** 2026-07-23
+**Status:** ✅ Signed off by Dev 2 (2026-07-29) · **Owner:** Dev 4 · **Last updated:** 2026-07-29
 
 This document is the authoritative record of the **live WebSocket wire protocol** for HIE — every
 message the backend actually sends and accepts on `/ws/{session_id}`, with concrete examples.
@@ -87,7 +87,7 @@ Off-contract — not in the `ws.ts` `ClientMessage` union (see gap (a) below).
 | `type` | Shape | In `ws.ts`? | Source |
 |--------|-------|-------------|--------|
 | `lesson_ready` | `{type, payload:{session_id, lesson_id, lesson}}` | ⚠️ typed payload is `{lesson_id, lesson}` — runtime adds `session_id` | published at `workers/jobs/content_pipeline.py:94`; relayed to the socket by the subscriber at `core/pubsub.py:81` → `manager.send` |
-| `attention_ack` | `{type, payload:{session_id, ces}}` | ✅ exact match | `websocket.py:276` |
+| `attention_ack` | `{type, payload:{session_id, status:"ok"}}` | ⚠️ typed payload is `{session_id, ces}` — runtime no longer sends `ces` | `websocket.py:279-283` |
 | `tutor_intervene` | `{type, payload:{session_id, type, message}}` | ✅ matches (`action?` optional, currently omitted) | `service.py:252` |
 | `state_change` | `{type, payload:{session_id, from_state, to_state}}` | ✅ type matches | `websocket.py:77` |
 | `pong` | **flat** `{type:"pong"}` (no payload) | ❌ not in `ServerMessage` | `websocket.py:160` |
@@ -114,9 +114,11 @@ defensively (no-op) and must not depend on receiving them. Payload details are o
 }
 ```
 
-**`attention_ack`** — server acknowledges an `attention_signal` and returns the computed CES.
+**`attention_ack`** — server acknowledges an `attention_signal`. **As of 2026-07-24 (PRD §18 fix) this
+no longer returns the raw CES float** — `result.ces` was dropped from the payload entirely (never sent
+over the wire, not just hidden client-side), replaced with a bare acknowledgement.
 ```json
-{ "type": "attention_ack", "payload": { "session_id": "f1c2…uuid", "ces": 0.64 } }
+{ "type": "attention_ack", "payload": { "session_id": "f1c2…uuid", "status": "ok" } }
 ```
 
 **`tutor_intervene`** — a triggered intervention delivers the pre-generated message. `type` is one of
@@ -255,6 +257,14 @@ On reconnect the server sends `state_change` with `from_state == to_state`. The 
 *usage* is a convention worth pinning so Dev 2's client doesn't treat it as a real transition.
 **Proposed resolution:** document the `from == to` convention in the `ws.ts` doc comment (no shape change).
 
+### (f) `attention_ack` payload no longer matches `AttentionAckMessage`
+As of 2026-07-24 (PRD §18 — never expose raw clinical/CES scores to the client), the runtime payload is
+`{session_id, status:"ok"}`; the frozen type still specifies `{session_id, ces}`. Non-breaking today —
+`apps/web/src/hooks/useLessonSocket.ts` treats `attention_ack` as a no-op (Sprint 3 scope, doesn't read
+`.ces`) — but the type is now inaccurate. Found 2026-07-29 while re-verifying this doc for Dev 2 sign-off.
+**Proposed resolution:** change `AttentionAckMessage`'s payload to `{session_id, status: "ok"}` in the
+contract PR, dropping `ces` from the frozen type to match runtime.
+
 ### Code-cleanup flags (not contract changes — separate Dev-4 PRs)
 - `apps/api/app/core/websocket.py` module docstring (lines ~18, ~134) advertises an outbound
   **`intervention`** type that does not exist — the real type is `tutor_intervene`. A reviewer reading the
@@ -269,8 +279,23 @@ On reconnect the server sends `state_change` with `from_state == to_state`. The 
 | Role | Name | Status |
 |------|------|--------|
 | Author | Dev 4 | ✅ submitted |
-| Frontend WS client | **Dev 2** | ⏳ pending sign-off |
+| Frontend WS client | **Dev 2** | ✅ signed off 2026-07-29 |
 
 Per PRD §16, the WebSocket contract is frozen: **no breaking WS changes land after Dev 2 sign-off.**
 The reconciliation items above are the agreed delta to be applied in a single follow-up 4-dev `ws.ts` PR;
 anything beyond them requires a fresh contract review.
+
+**Sign-off basis (Dev 2, 2026-07-29):** verified this document against `apps/api/app/core/websocket.py`
+line-for-line as part of a full Sprint 2 completion audit. One divergence had crept in since this doc
+was last updated (2026-07-23): a 2026-07-24 PRD §18 compliance fix dropped the raw `ces` float from
+`attention_ack`'s payload, which this document's `attention_ack` row and example still described as
+the old shape. Corrected in this pass (see reconciliation item (f) above) before signing off — not
+rubber-stamped. That divergence is non-breaking today: `apps/web/src/lib/ws/lessonSocket.ts` /
+`hooks/useLessonSocket.ts` already treats `attention_ack` as a no-op (Sprint 3 scope) and never reads
+`.ces`. Everything else this doc requires the frontend client to handle is already true of the current
+client: reserved-but-unemitted types (`generation_progress`, `ces_update`) are defensive no-ops,
+session-scoped broadcasts are tolerated without assuming a 1:1 request/reply, nothing blocks awaiting
+`attention_ack`, and `state_change` with `from==to` is not treated as a real transition. Sign-off covers
+the wire protocol as documented here (now corrected); it does not assert the Sprint 3 consumers
+(`TutorInterventionCard`, `CESIndicator`, `AttentionMonitor`) are built yet — they aren't, by roadmap,
+and that's unrelated to freezing this contract.
