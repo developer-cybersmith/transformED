@@ -236,22 +236,13 @@ is what happens without it: three developers, three green suites, one broken pro
 |---|---|
 | Defects closed (fixed **and** guarded) | **22** |
 | Fixed, awaiting merge | **0** — everything Dev 1 owns is on `main` |
-<<<<<<< HEAD
-| **Open** | **7** |
-| Of which **live in production** | **2** (D18, D29) — D18 awaiting Dev 3's A/B/C on Story 2-35; D29 needs Dev 3 to write the consent row |
-=======
 | **Open** | **14** |
-| Of which **live in production** | **4** (D18, D29, D31, D35) — D31 is Dev 1's |
->>>>>>> bdd76b9 (docs(audit): record the frontend wiring audit — and amend the premature "Dev 1 finalized" claim)
+| Of which **live in production** | **4** — D18 (awaiting Dev 3's review of PR #119), D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), D35 (`setSessionId`, Dev 2) |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md` |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
-<<<<<<< HEAD
-| Open entries with a named owner **and** a trigger | **7 of 7** |
-=======
-| Open entries with a named owner **and** a trigger | **12 of 13** (D36 needs an owner) |
-| Found by the 2026-07-30 wiring audit | **7** registered (D31-D37), ~40 more in the report |
->>>>>>> bdd76b9 (docs(audit): record the frontend wiring audit — and amend the premature "Dev 1 finalized" claim)
+| Open entries with a named owner **and** a trigger | **13 of 14** (D36 has no owner) |
+| Found by the 2026-07-30 wiring audit | **7** registered (D31–D37), ~40 more in the report |
 
 That last row is the honest health metric. Five of eight rules currently depend on someone
 remembering. **BD-3 is the one that converts the most of them into machine checks, which is
