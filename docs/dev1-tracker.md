@@ -31,6 +31,43 @@ Dev 4 5). (2) **The $3.00/lesson ceiling was enforced but never measured** — t
 contained zero references to cost until Story 2-38. The meter exists now; the baseline lands on
 the next live run.
 
+**⚠️ CORRECTION 2026-07-30 — the "final handover" claim was premature.** A route-by-route
+backend↔frontend wiring audit (13 agents, 6 lanes, every finding adversarially verified, then
+re-verified by hand) was run *after* Dev 1 declared its work finalized. It found **three Dev 1
+defects plus one coverage gap**, all now registered:
+
+- **D31 (High)** — `NEXT_PUBLIC_API_URL` omits the `/api` segment in `.env.example:10`,
+  `.github/workflows/ci.yml:126` **and Dev 1's own Dev 2 handoff**. Every router is mounted
+  under `/api` with no unprefixed alias, so **following the setup documentation 404s every API
+  call.** A developer who configures nothing works; one who reads the docs does not. Two other
+  docs have it right — the repo contradicts itself in six places.
+- **D32 (Med)** — `graph.py:3856` does a raw `item["data"]` subscript while its docstring claims
+  *"Same defensive-skip philosophy as `_index_by_segment_id`"*. One malformed entry `KeyError`s
+  `package_builder_node` — the **last** node, after 100% of the lesson's spend. **Site 2 of a
+  defect closed at site 1** (binding rule 6).
+- **D33 (Low)** — `book_id`/`chapter_id` default to `""` against `UUID` fields, so a missing
+  upstream output surfaces as a bare `ValidationError` at the final node.
+- **D37 (Med)** — `_LIST_COLUMNS`' PostgREST JSON-path selectors have **never run against real
+  Postgres**. The `completed_at` reference in that exact select list already caused one
+  outage-class `42703`; a Supabase mock has no catalog and cannot raise it.
+
+**The good news, and it is the larger part:** the generate path is **genuinely wired** —
+upload → 202 → poll → `content` with 8-hour signed media URLs, not mocked and not half-built,
+read on both ends by three independent lanes. Auth (incl. on multipart), tier vocabulary,
+**status vocabulary** (`lessons.status` `generating|ready|failed` → `_STATUS_MAP` →
+`queued|running|ready|failed`, matching the frontend union exactly), package shape three-way,
+`limit`/`offset` paging, and server-side media signing all verified aligned. Also settled: **PR
+#90 is a no-op** — all three contract files already agree `LessonMetadata.tier` is optional.
+
+The audit also found ~40 lower-severity items across all four devs, and two register entries
+now have no owner at all (**D36**: `apps/web` is Next 16.2.9 / React 19.2.4 while `CLAUDE.md`
+locks "Next.js 14"). Full record: **`docs/reports/frontend-wiring-audit-2026-07-30.md`**.
+
+**Standing lesson, and it is the same one as always:** "finalized" was asserted from a green
+suite, and the suite could not see any of this. The audit that found it read *both ends of every
+seam* — RC-2. **Nothing was load-tested, and nobody has ever run the pipeline end to end
+against real providers**, so "the seams line up" remains the strongest supportable claim.
+
 **Still open, and not Dev 1's to close:** PR #119 (Story 2-35, D18 — the demo blocker) awaits
 Dev 3's review under the option-B agreement, and Dev 2's one-line `player.machine.ts` change is
 its other half. Dev 1 will not merge #119 unilaterally.

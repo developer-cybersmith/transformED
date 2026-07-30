@@ -151,9 +151,18 @@ exact env vars, so this isn't a CI-environment artefact:
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321 \
 NEXT_PUBLIC_SUPABASE_ANON_KEY=test \
-NEXT_PUBLIC_API_URL=http://localhost:8000 \
+NEXT_PUBLIC_API_URL=http://localhost:8000/api \
 pnpm build
 ```
+
+> **CORRECTION 2026-07-30 (register D31).** This block originally read
+> `NEXT_PUBLIC_API_URL=http://localhost:8000`, copied from `ci.yml:126`. **That value is wrong
+> and it 404s every API call** — every router is mounted under `/api` (`main.py:166-172`) with
+> no unprefixed alias, and axios joins a prefix-less base with a relative path to give
+> `/content/lessons`. `apps/web/src/lib/api.ts:4` falls back to the correct
+> `http://localhost:8000/api`, so a dev who set nothing worked and a dev who followed **this
+> document** did not. `.env.example:10` and `ci.yml:126` carry the same bug. Entirely Dev 1's.
+> See `docs/reports/frontend-wiring-audit-2026-07-30.md` §3.
 
 ### Why nobody caught it
 
