@@ -123,6 +123,23 @@ describe('loadLesson', () => {
     usePlayerStore.getState().loadLesson(makeLesson());
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
   });
+
+  it('resets sessionId to empty -- no client-invented id (D18/Story 2-39); a real one is set later via setSessionId', () => {
+    usePlayerStore.setState({ sessionId: 'stale-session-from-a-previous-lesson' });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().sessionId).toBe('');
+  });
+});
+
+describe('setSessionId (Story 2-39)', () => {
+  it('overrides sessionId with the server-minted id from POST /api/assessment/sessions', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().sessionId).toBe('');
+
+    usePlayerStore.getState().setSessionId('sess_real_abc123');
+
+    expect(usePlayerStore.getState().sessionId).toBe('sess_real_abc123');
+  });
 });
 
 describe('refreshLessonMedia (S2-33)', () => {

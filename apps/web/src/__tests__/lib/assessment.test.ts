@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({
   api: { get: apiGetMock, post: apiPostMock },
 }));
 
-import { getSessionReport, submitQuiz, submitTeachBack } from '@/lib/assessment';
+import { createSession, getSessionReport, submitQuiz, submitTeachBack } from '@/lib/assessment';
 
 beforeEach(() => {
   apiGetMock.mockReset();
@@ -55,6 +55,24 @@ describe('submitQuiz', () => {
 
     expect(apiPostMock).toHaveBeenCalledWith('/assessment/quiz', payload);
     expect(result).toEqual(responseData);
+  });
+});
+
+describe('createSession (D18/Story 2-39)', () => {
+  it('posts {lesson_id} only -- session_id/started_at are never client-sent, matching the DB-generated schema', async () => {
+    const responseData = { session_id: 'sess_real_1', lesson_id: 'lesson_1', started_at: '2026-07-30T00:00:00Z' };
+    apiPostMock.mockResolvedValue({ data: responseData });
+
+    const result = await createSession({ lesson_id: 'lesson_1' });
+
+    expect(apiPostMock).toHaveBeenCalledWith('/assessment/sessions', { lesson_id: 'lesson_1' });
+    expect(result).toEqual(responseData);
+  });
+
+  it('propagates a rejected request rather than swallowing it -- the caller (Player.tsx) decides how to handle failure', async () => {
+    apiPostMock.mockRejectedValue(new Error('network down'));
+
+    await expect(createSession({ lesson_id: 'lesson_1' })).rejects.toThrow('network down');
   });
 });
 
