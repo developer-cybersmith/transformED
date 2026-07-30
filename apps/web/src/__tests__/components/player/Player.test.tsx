@@ -6,19 +6,36 @@ import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
 const { useLessonSocketMock, apiPostMock } = vi.hoisted(() => ({
   useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
-  apiPostMock: vi.fn().mockResolvedValue({ data: {} }),
+  apiPostMock: vi.fn(),
 }));
 
 vi.mock('@/hooks/useLessonSocket', () => ({
   useLessonSocket: useLessonSocketMock,
 }));
 
-// Player fires analytics events directly via lib/analytics -> lib/api (Sprint 2
-// audit gap: tab_switch tracking) -- mock the underlying api client, not
-// lib/analytics itself, so the tests exercise the real trackEvent() logic.
+// Player fires two kinds of real api.post calls directly: analytics events
+// (lib/analytics, Sprint 2 audit gap) and session creation (lib/assessment,
+// Story 2-39 / D18 AC-6, fired once per mount). Mock the underlying api
+// client, not lib/analytics or lib/assessment, so tests exercise the real
+// logic. Branch by path so asserting on one doesn't require asserting "the
+// mock was never called" -- both fire on every mount now.
 vi.mock('@/lib/api', () => ({
   api: { post: apiPostMock },
 }));
+
+const TEST_SESSION_ID = 'sess_test_default';
+
+// Opts a single test into a resolving POST /assessment/sessions -- the
+// beforeEach default never resolves (see its own comment) to keep unrelated
+// tests free of "not wrapped in act()" warnings.
+function resolveSessionCreation(sessionId = TEST_SESSION_ID) {
+  apiPostMock.mockImplementation((url: string) => {
+    if (url === '/assessment/sessions') {
+      return Promise.resolve({ data: { session_id: sessionId, lesson_id: 'lesson_test', started_at: null } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+}
 
 const originalPlay = window.HTMLMediaElement.prototype.play;
 const originalPause = window.HTMLMediaElement.prototype.pause;
@@ -34,7 +51,19 @@ beforeEach(() => {
   useLessonSocketMock.mockClear();
   mockOnRefetchLesson.mockClear();
   mockOnRefetchLesson.mockResolvedValue(null);
-  apiPostMock.mockClear();
+  apiPostMock.mockReset();
+  apiPostMock.mockImplementation((url: string) => {
+    if (url === '/assessment/sessions') {
+      // Never resolves by default. Session creation (Story 2-39) fires on
+      // every mount and, once resolved, updates sessionId -- a legitimate
+      // React state update, but one almost no pre-existing test here cares
+      // about or awaits, which would otherwise spam every one of them with
+      // an "update not wrapped in act()" warning. Tests that specifically
+      // need a resolved session_id override this mock themselves.
+      return new Promise(() => {});
+    }
+    return Promise.resolve({ data: {} });
+  });
 });
 
 afterEach(() => {
@@ -357,10 +386,17 @@ describe('Player — audio buffering / error retry UI (S2-26)', () => {
 });
 
 describe('Player — lesson WebSocket (S2-06)', () => {
-  it('mounts useLessonSocket with the store sessionId, so the socket actually connects during a real session', () => {
+  it('mounts useLessonSocket with the store sessionId, so the socket actually connects during a real session', async () => {
+    resolveSessionCreation();
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
-    expect(useLessonSocketMock).toHaveBeenCalledWith(usePlayerStore.getState().sessionId);
+    // sessionId starts '' and only becomes real once createSession() resolves
+    // (Story 2-39) -- let that settle before asserting the socket receives it.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useLessonSocketMock).toHaveBeenLastCalledWith(usePlayerStore.getState().sessionId);
   });
 
   it('mounts CheckingInTransition — it becomes visible when tutorState is CHECKING_IN', () => {
@@ -375,8 +411,16 @@ describe('Player — lesson WebSocket (S2-06)', () => {
 });
 
 describe('Player — tab_switch analytics (Sprint 2 audit gap)', () => {
-  it('tracks a tab_switch event with the current segment_id when the tab is hidden', () => {
+  it('tracks a tab_switch event with the current segment_id when the tab is hidden', async () => {
+    resolveSessionCreation();
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    // trackEvent no-ops without a real sessionId (Story 2-39 made sessionId
+    // async) -- let session creation resolve first, matching how a real
+    // student would only switch tabs well after mount, not synchronously with it.
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
     act(() => {
@@ -400,12 +444,63 @@ describe('Player — tab_switch analytics (Sprint 2 audit gap)', () => {
 
   it('does not track anything when the tab becomes visible again', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+    apiPostMock.mockClear(); // drop the mount-time session-creation call (Story 2-39) -- only care about visibilitychange
 
     Object.defineProperty(document, 'hidden', { configurable: true, value: false });
     act(() => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    expect(apiPostMock).not.toHaveBeenCalled();
+    expect(apiPostMock).not.toHaveBeenCalledWith('/analytics/events', expect.anything());
+  });
+});
+
+describe('Player — real server-minted session_id (Story 2-39 / D18 AC-6)', () => {
+  it('calls POST /assessment/sessions with {lesson_id} exactly once on mount', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    const sessionCalls = apiPostMock.mock.calls.filter(([url]) => url === '/assessment/sessions');
+    expect(sessionCalls).toHaveLength(1);
+    expect(sessionCalls[0][1]).toEqual({ lesson_id: mockLessonPackage.lesson_id });
+  });
+
+  it('calls setSessionId with the server-returned session_id once the request resolves', async () => {
+    resolveSessionCreation();
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(usePlayerStore.getState().sessionId).toBe(TEST_SESSION_ID);
+  });
+
+  it('does not call POST /assessment/sessions again on a re-render for the same lesson_id (same guard as loadLesson)', () => {
+    const { rerender } = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    rerender(<Player onRefetchLesson={mockOnRefetchLesson} lesson={{ ...mockLessonPackage }} />);
+
+    const sessionCalls = apiPostMock.mock.calls.filter(([url]) => url === '/assessment/sessions');
+    expect(sessionCalls).toHaveLength(1);
+  });
+
+  it('logs and does not crash when session creation fails -- sessionId stays empty, playback is unaffected', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    apiPostMock.mockImplementation((url: string) => {
+      if (url === '/assessment/sessions') return Promise.reject(new Error('network down'));
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(usePlayerStore.getState().sessionId).toBe('');
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
   });
 });

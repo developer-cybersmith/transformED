@@ -6,6 +6,7 @@ import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { trackEvent } from '@/lib/analytics';
+import { createSession } from '@/lib/assessment';
 import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
@@ -121,6 +122,26 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
     // populated before restoreProgress validates the saved segmentIndex
     // against this lesson's actual bounds.
     usePlayerStore.getState().restoreProgress(lesson.lesson_id);
+
+    // Mints the real backend session (D18/Story 2-39) -- previously
+    // loadLesson() invented sessionId: crypto.randomUUID() locally, which the
+    // backend's ownership check correctly rejected (404 on every quiz/
+    // teach-back submission, for every student, always). Fired once per
+    // lesson mount under the same loadedLessonIdRef guard as loadLesson()
+    // above -- every call mints a new attempt row server-side, which is
+    // intentional (re-learning must produce a new session for CES history),
+    // but calling it more than once per mount would mint extra, orphaned rows.
+    createSession({ lesson_id: lesson.lesson_id })
+      .then(({ session_id }) => {
+        usePlayerStore.getState().setSessionId(session_id);
+      })
+      .catch((err) => {
+        // Non-fatal: sessionId stays '' and playback is unaffected. Quiz/
+        // teach-back submission will fail (existing catch blocks in
+        // QuizOverlay/TeachBackModal already degrade gracefully), but a
+        // failed session mint must not crash or block the player.
+        console.error('[Player] failed to create session -- quiz/teach-back submission will fail until this succeeds:', err);
+      });
   }, [lesson, loadLesson]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;
