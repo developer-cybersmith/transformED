@@ -2,6 +2,10 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story 2-39 (2026-07-30, wire real session_id)
+
+- **Quiz/teach-back can be submitted with `session_id: ''` in the brief window before `createSession()` resolves** — a student who answers a segment-0 quiz unusually fast (or on a slow network) posts an empty session id; the backend rejects it and the existing generic `catch` swallows the failure, silently losing that data point. Deferred — the real fix (gating `QuizOverlay.tsx`/`TeachBackModal.tsx` on a non-empty `sessionId`) is explicitly out of Story 2-39's scope (AC-5: no changes to those two files). Narrow window in practice, further shrunk by that story's own retry/cancellation patches. **Trigger:** revisit if this causes observed real-world data loss, or bundle into a future story that touches `QuizOverlay.tsx`/`TeachBackModal.tsx` anyway. [`apps/web/src/components/player/QuizOverlay.tsx`, `apps/web/src/components/player/TeachBackModal.tsx`]
+
 ## Deferred from: code review of story 2-34 (2026-07-29, SpeechSynthesis fallback)
 
 - **`utterance.rate` is unclamped** — set directly from `playbackRate` with no bounds check. Deferred — this mirrors the identical, already-accepted unclamped pattern used for the real `<audio>.playbackRate` assignment elsewhere in this same file; not a regression unique to this story, and no UI path currently sets `playbackRate` outside a fixed, valid set of values. [`apps/web/src/components/player/AudioTimeline.tsx`]

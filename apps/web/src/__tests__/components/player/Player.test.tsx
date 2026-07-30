@@ -484,23 +484,82 @@ describe('Player — real server-minted session_id (Story 2-39 / D18 AC-6)', () 
     expect(sessionCalls).toHaveLength(1);
   });
 
-  it('logs and does not crash when session creation fails -- sessionId stays empty, playback is unaffected', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('logs and does not crash when session creation fails after exhausting all retries -- sessionId stays empty, playback is unaffected', async () => {
+    vi.useFakeTimers();
+    try {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      let callCount = 0;
+      apiPostMock.mockImplementation((url: string) => {
+        if (url === '/assessment/sessions') {
+          callCount += 1;
+          return Promise.reject(new Error('network down'));
+        }
+        return Promise.resolve({ data: {} });
+      });
+
+      render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000); // past both backoff delays (worst case ~4s + ~5s)
+      });
+
+      expect(callCount).toBe(3); // review fix: 3 attempts (CLAUDE.md §14 critical-call policy), not just 1
+      expect(usePlayerStore.getState().sessionId).toBe('');
+      expect(consoleErrorSpy).toHaveBeenCalled();
+
+      consoleErrorSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries and succeeds if a later attempt works (review fix)', async () => {
+    vi.useFakeTimers();
+    try {
+      let callCount = 0;
+      apiPostMock.mockImplementation((url: string) => {
+        if (url === '/assessment/sessions') {
+          callCount += 1;
+          if (callCount < 2) return Promise.reject(new Error('network down'));
+          return Promise.resolve({
+            data: { session_id: TEST_SESSION_ID, lesson_id: 'lesson_test', started_at: null },
+          });
+        }
+        return Promise.resolve({ data: {} });
+      });
+
+      render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      expect(usePlayerStore.getState().sessionId).toBe(TEST_SESSION_ID);
+      expect(callCount).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not apply a stale session response that resolves after unmount (review fix -- cancellation guard)', async () => {
+    let resolveCreate!: (value: { data: { session_id: string; lesson_id: string; started_at: null } }) => void;
     apiPostMock.mockImplementation((url: string) => {
-      if (url === '/assessment/sessions') return Promise.reject(new Error('network down'));
+      if (url === '/assessment/sessions') {
+        return new Promise((resolve) => {
+          resolveCreate = resolve;
+        });
+      }
       return Promise.resolve({ data: {} });
     });
 
-    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+    const { unmount } = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+    unmount();
 
     await act(async () => {
-      await Promise.resolve();
+      resolveCreate({ data: { session_id: TEST_SESSION_ID, lesson_id: 'lesson_test', started_at: null } });
       await Promise.resolve();
     });
 
     expect(usePlayerStore.getState().sessionId).toBe('');
-    expect(consoleErrorSpy).toHaveBeenCalled();
-
-    consoleErrorSpy.mockRestore();
   });
 });

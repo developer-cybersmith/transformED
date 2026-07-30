@@ -4,7 +4,7 @@ baseline_commit: c3cd81e
 
 # Story 2.39: Wire the real server-minted session_id (D18 AC-6 / D35)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -61,6 +61,7 @@ so that they stop 404ing and my session actually shows up in my session report a
 |------|--------|--------|
 | 2026-07-30 | Story created to close D18/D35 from the frontend side, following Dev 1's PR #119 (backend session-minting endpoint, pending Dev 3 review). Branch `sprint2/s2-39-wire-real-session-id` off `main`. | Dev 2 |
 | 2026-07-30 | Implemented all 4 tasks. Full suite 55 files / 575 tests passing, `tsc --noEmit` clean, `eslint` clean. | Dev 2 |
+| 2026-07-30 | 3-agent code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor). 2 patch findings applied (cross-lesson session race via a `cancelled` guard, no-retry via CLAUDE.md §14's critical-call backoff policy), 1 finding deferred (empty-`session_id` submission window, out of AC-5's scope). Full suite 55 files / 577 tests passing, `tsc --noEmit` clean, `eslint` clean. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -79,6 +80,8 @@ so that they stop 404ing and my session actually shows up in my session report a
 - Full `apps/web` test suite: 55 files, 575 tests (567 baseline + 8 new: 2 in `player.machine.test.ts`, 2 in `assessment.test.ts`, 4 in `Player.test.tsx`), all passing, zero act() warnings.
 - `tsc --noEmit`: clean. `eslint`: clean on every touched file.
 - This closes D18/D35 from Dev 2's side. The backend half (PR #119) is still pending Dev 3's review as of this story's completion -- until that merges, `POST /api/assessment/sessions` doesn't exist on `main` yet, so this frontend code will 404 until PR #119 lands. That is expected and matches this codebase's established anti-deadlock pattern (build against a documented, stable contract before the other side's PR merges).
+- **Post-review round:** applied both patch findings -- a `cancelled` flag (matching `useLessonSocket.ts`'s existing pattern) guards against a stale `createSession()` response from an unmounted (lesson-changed) `Player` overwriting the current lesson's `sessionId`; a bounded retry (3 attempts, `2^attempt + random(0,1)` backoff, per CLAUDE.md §14's critical-call policy) means a single transient network failure no longer permanently disables quiz/teach-back for the whole session. One finding deferred to `docs/stories/deferred-work.md`: quiz/teach-back can still be submitted with an empty `session_id` in the brief window before the first `createSession()` attempt resolves -- the real fix requires touching `QuizOverlay.tsx`/`TeachBackModal.tsx`, explicitly out of this story's scope per AC-5.
+- Full `apps/web` test suite after the review round: 55 files, 577 tests (575 + 2 net new: the failure test now verifies all 3 retry attempts fire, plus new tests for retry-then-succeed and the unmount cancellation guard), all passing. `tsc --noEmit` clean. `eslint` clean.
 
 ### File List
 
@@ -88,3 +91,9 @@ so that they stop 404ing and my session actually shows up in my session report a
 - `apps/web/src/__tests__/stores/player.machine.test.ts` (MODIFIED -- `loadLesson` resets `sessionId` to `''`; new `setSessionId` describe block)
 - `apps/web/src/__tests__/lib/assessment.test.ts` (MODIFIED -- new `createSession` describe block)
 - `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED -- `apiPostMock` now branches by URL with a never-resolving default for `/assessment/sessions`; new `resolveSessionCreation()` helper; new describe block for session-creation wiring; 2 pre-existing tests updated for the new async `sessionId` timing)
+
+### Review Findings
+
+- [x] [Review][Patch] Cross-lesson session race: no cancellation guard on the `createSession()` promise -- a stale response from a lesson the student already navigated away from can overwrite the *current* lesson's `sessionId`, silently misattributing quiz/teach-back submissions and pointing the session-report link at the wrong session [apps/web/src/components/player/Player.tsx:126-144]
+- [x] [Review][Patch] No retry when `createSession()` fails -- a single transient network blip permanently disables quiz/teach-back submission for the entire lesson session, contradicting the failure comment's own "until this succeeds" framing [apps/web/src/components/player/Player.tsx:138-144]
+- [x] [Review][Defer] Quiz/teach-back can be submitted with `session_id: ''` in the brief window before `createSession()` resolves -- deferred: the real fix (gating `QuizOverlay.tsx`/`TeachBackModal.tsx` on a non-empty `sessionId`) is explicitly out of this story's scope per AC-5 ("no changes to QuizOverlay.tsx/TeachBackModal.tsx"). Narrow window in practice (a network round-trip, further shrunk by the retry/cancellation patches above); existing generic `catch` blocks already degrade gracefully rather than crash. Trigger: revisit if this causes observed real-world data loss, or bundle into a future story that touches those components anyway. [apps/web/src/components/player/QuizOverlay.tsx, apps/web/src/components/player/TeachBackModal.tsx]
