@@ -151,6 +151,7 @@ D31-D33 are **Dev 1's own**, found *after* Dev 1 declared its work finalized.
 | D34 | **`lesson_ready` is routed with the wrong key type.** `core/pubsub.py:67,80` strips the `lesson_ready:` prefix and passes the resulting **lesson_id** into `manager.send()`, which keys connections by the path-param **session_id** (`websocket.py:72,110`). The `lesson_waiters:{lesson_id}` set Dev 4 described does not exist in `apps/api`. | Med | Dev 4 owns the SADD/SMEMBERS fan-out. **Not currently load-bearing**: `useLessonSocket.ts:50-55` deliberately no-ops `lesson_ready` and readiness comes from REST polling — so this is dead code, not an outage. | *(to add — assert `manager.send` receives an id a client actually connected under)* |
 | D35 | **`setSessionId` has no caller.** `player.machine.ts:146` mints `sessionId: crypto.randomUUID()` and nothing ever replaces it, so the id sent to every session-scoped assessment route was never persisted. The frontend half of D18. | High | Dev 2 calls `setSessionId(server_session_id)` from the response to `POST /api/assessment/sessions` (PR #119) before the player can reach QUIZZING/TEACH_BACK. | *(to add — gate quiz submission on a server-issued id)* |
 | D36 | **Stack drift, unowned: `apps/web` is Next 16.2.9 / React 19.2.4 while `CLAUDE.md` locks "Next.js 14 + TypeScript + Tailwind".** Two major versions. Nobody was tasked with reconciling it, and it may silently invalidate other Next-14-shaped assumptions in the frontend and in this document. | Med | Either amend the locked stack in `CLAUDE.md` (a stack change needs the §16-style four-dev conversation) or pin back. **Do not leave the two disagreeing** — `CLAUDE.md` is declared the source of truth, so a divergence makes it untrustworthy generally. | DISCIPLINE — needs an owner first |
+| D38 | **`.env.example:41` says `LANGFUSE_HOST=http://localhost:3010`, implying Langfuse is self-hosted. It is not** — `config.py:87-88` defaults to `https://cloud.langfuse.com` and the live `.env` uses Cloud. **This directly caused an architecture-review question** ("is Langfuse still a 3rd service?"), i.e. the wrong template value propagated into someone else's mental model of the deployment topology. | Low | Correct the template. **Fix together with D31** — same file, same failure mode: the documented setup path is wrong while the code default is right, so whoever follows the instructions is worse off than whoever ignores them. | *(to add — assert `.env.example` values that have a code default agree with it)* |
 | D37 | **`_LIST_COLUMNS`' PostgREST JSON-path selectors have never been executed against real Postgres.** `subject:content->metadata->>subject` and the `estimated_duration_mins` sibling (`content/router.py:112-116`) are exercised only against Supabase mocks. **The `completed_at` reference in this exact select list already caused one outage-class `42703`** (D9), and per binding rule 4 a mock has no Postgres catalog and cannot raise it. | Med | One integration test against real PostgREST covering this select. Until then `GET /lessons` is unverified against the database it queries. | *(to add — real-PostgREST integration test)* |
 
 ---
@@ -236,13 +237,14 @@ is what happens without it: three developers, three green suites, one broken pro
 |---|---|
 | Defects closed (fixed **and** guarded) | **22** |
 | Fixed, awaiting merge | **0** — everything Dev 1 owns is on `main` |
-| **Open** | **14** |
+| **Open** | **15** |
 | Of which **live in production** | **4** — D18 (awaiting Dev 3's review of PR #119), D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), D35 (`setSessionId`, Dev 2) |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md` |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
 | Open entries with a named owner **and** a trigger | **13 of 14** (D36 has no owner) |
 | Found by the 2026-07-30 wiring audit | **7** registered (D31–D37), ~40 more in the report |
+| Found by the 2026-07-30 topology review | **1** (D38) — see `docs/decisions/ADR-001-india-region-migration-topology.md` |
 
 That last row is the honest health metric. Five of eight rules currently depend on someone
 remembering. **BD-3 is the one that converts the most of them into machine checks, which is
