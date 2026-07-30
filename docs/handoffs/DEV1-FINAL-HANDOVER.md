@@ -2,17 +2,37 @@
 
 **From:** Dev 1 (infra · content pipeline · 11 nodes · providers · embeddings · Langfuse)
 **Date:** 2026-07-30
-**Status:** **Dev 1 has nothing outstanding that Dev 1 can act on.** Everything below is either
-merged, owned by someone else, or has a named trigger.
+**Status:** ⚠️ **AMENDED 2026-07-30 — the original claim was wrong.**
 
-This is the single document to read. If something contradicts an older handoff, this wins.
+This document originally said *"Dev 1 has nothing outstanding that Dev 1 can act on."* A
+route-by-route frontend wiring audit run **after** that claim found **three Dev 1 defects**,
+one of which breaks the documented frontend setup path:
+
+| Register | Defect | Sev |
+|---|---|---|
+| **D31** | `NEXT_PUBLIC_API_URL` omits `/api` in `.env.example:10`, `ci.yml:126` and **§4 of this document's sibling Dev 2 handoff** — following the setup docs 404s every API call | High |
+| **D32** | `graph.py:3856` raw `item["data"]` subscript kills `package_builder_node` after 100% of the lesson's spend. **Site 2 of a defect closed at site 1** | Med |
+| **D33** | `book_id`/`chapter_id` default `""` against `UUID` fields → bare `ValidationError` at the final node instead of a diagnostic | Low |
+
+Plus a coverage gap Dev 1 owns: **D37** — `_LIST_COLUMNS`' PostgREST JSON-path selectors have
+never run against real Postgres, and a Supabase mock cannot raise the `42703` that already bit
+us once.
+
+**The lesson is the one this whole register is about:** "finalized" was asserted from a green
+test suite, and the suite could not see any of these. The audit that found them read *both ends
+of each seam*, which is RC-2. Declaring completion is not verification.
+
+Full audit: **`docs/reports/frontend-wiring-audit-2026-07-30.md`**.
+
+This is still the single document to read. If something contradicts an older handoff, this wins.
 
 ---
 
 ## 1. The one-paragraph version
 
-Sprint 0, 1 and 2 are complete and merged. Every defect Dev 1 owned is fixed, guarded by a test
-that fails if it returns, and on `main`. CI's lint, format and web jobs are green — the first
+Sprint 0, 1 and 2 are complete and merged. Every defect Dev 1 owned **as of 2026-07-29** is
+fixed, guarded, and on `main` — but the 2026-07-30 wiring audit found three more (see the
+status block above), so Dev 1 is **not** at zero. CI's lint, format and web jobs are green — the first
 green web job in the repo's history was 2026-07-30. **Three things block the demo and none of
 them are Dev 1's:** Dev 2's `player.machine.ts` change (§4), Dev 3's review of PR #119 (§3), and
 24 mypy errors split between Dev 3 and Dev 4 (§5).
@@ -245,8 +265,22 @@ surfacing now:
 
 ## What Dev 1 needs from the team
 
-**Nothing to unblock Dev 1.** One thing to unblock the demo:
+**Nothing to unblock Dev 1.** Dev 1's own remaining work is D31, D32, D33 and D37 — see the
+status block at the top.
 
-> **Dev 3: review PR #119. Dev 2: the one-line `player.machine.ts` change once it merges.**
+Two things to unblock the product:
 
-That is the entire critical path to a lesson that completes end to end.
+> **1. Dev 3: review PR #119. Dev 2: the one-line `player.machine.ts` change once it merges,
+>    plus `setSessionId` (D35) — the store mints `crypto.randomUUID()` and nothing replaces it.**
+>
+> **2. Someone must own D36:** `apps/web` is Next 16.2.9 / React 19.2.4 while `CLAUDE.md` locks
+>    "Next.js 14". Two major versions of divergence in the file declared the source of truth.
+
+### The good news the audit produced
+
+The generate path is **genuinely wired** — upload → 202 → poll → `content` with 8-hour signed
+media URLs. Not mocked, not half-built; read on both ends by three independent lanes. Auth,
+tier vocabulary, status vocabulary, package shape, and media signing all verified aligned.
+
+**A frontend developer can generate a lesson package today — provided they do not follow the
+setup documentation.** Fixing D31 makes that sentence unconditional.

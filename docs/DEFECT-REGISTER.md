@@ -2,8 +2,29 @@
 
 **Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-07-30 · **Status:** ACTIVE
 
-> **Dev 1 handover complete — see `docs/handoffs/DEV1-FINAL-HANDOVER.md`.** All 5 remaining open
-> entries have a named owner and a trigger; none is waiting on Dev 1.
+> **AMENDED 2026-07-30.** The line below previously read *"none is waiting on Dev 1"*. A
+> route-by-route frontend wiring audit run **after** that claim was made found **three Dev 1
+> defects** — D31, D32, D33 — one of which breaks the documented frontend setup path. The
+> claim was wrong when written. Full audit:
+> **`docs/reports/frontend-wiring-audit-2026-07-30.md`**.
+>
+> See also `docs/handoffs/DEV1-FINAL-HANDOVER.md` (amended). All open entries carry a named
+> owner and a trigger.
+>
+> ⚠️ **ID COLLISION — this actually happened, twice, on 2026-07-30.**
+>
+> 1. The wiring-audit tooling emitted labels `D-1…D-30` that collide numerically with register
+>    ids meaning something entirely different (audit `D-28` = a `package_builder` subscript bug;
+>    register **D28** = the chapter/subsection hierarchy inversion). The report therefore
+>    relabels everything **`W-*`**. **`W-…` ids are NOT register ids.**
+> 2. **Two devs independently claimed D29 and D30 the same day.** The Sprint 2 completion audit
+>    landed D29 (DPDP `user_consents`) / D30 (3 failing tutor tests) on `main` while Dev 1's
+>    wiring audit was being written against the same free ids. Dev 1's entries were renumbered
+>    **D31–D37** on discovery; nothing was overwritten.
+>
+> **Rule going forward: re-read the highest allocated id from `main` immediately before writing
+> a new entry, and never from a branch.** This register has no id allocator, so concurrent
+> branches will keep colliding until it does.
 
 This file exists because `docs/deferred-work.md` did not. That file was created to hold
 deferred findings; it contains **zero items** across a period in which the story files
@@ -117,6 +138,23 @@ purpose.
 | **D29** | **DPDP `user_consents` audit table has zero writers.** Migration `20260702000000_dpdp_user_consents.sql` genuinely creates the table, RLS, and a trigger syncing `users.attention_consent` — but `process_onboarding()` (`apps/api/app/modules/assessment/service.py:864-976`) never inserts into it. CLAUDE.md §18 names this table an explicit **Sprint 2 priority** precondition before any attention data is collected — schema shipped, the actual consent-write path was never built. Found 2026-07-29 during a cross-team Sprint 2 completion audit (`docs/sprint2-completion-audit-2026-07-29.md`); re-verified 2026-07-30 that no write path landed since. | High (compliance) | **Needs Dev 3.** Write a `user_consents` row (consent_type, policy_version, consented_at) at the point onboarding consent is captured, before Sprint 3's `AttentionMonitor` can legally initialize. | *(none — grep for `user_consents` in `apps/api` only matches a migration-name string in a test assertion)* |
 | **D30** | **3 tests failing on `main`** in `apps/api/tests/test_tutor_service.py`: `test_two_below_threshold_no_cooldown_dispatches`, `test_intervention_delivers_tutor_intervene_message`, `test_intervention_no_delivery_on_cache_miss`. Root cause: `service.py:328` added a `state_raw == "TEACHING"` guard on the CES-trigger check (itself correct — CLAUDE.md §10, CES monitoring only active in TEACHING), but the tests' mock Redis never returns `"TEACHING"` for `tutor_state:sess-1`, so the guard now silently blocks the trigger the tests assert on. Reproduced live via `pytest .venv` on 2026-07-29 and re-confirmed live on 2026-07-30 against current `main` (3 failed, exact same assertions). | Med (currently red on `main`) | **Needs Dev 4.** Update the mock Redis fixtures in `test_tutor_service.py` to return `"TEACHING"` for the relevant session key, matching the real guard's precondition — the guard itself is correct, don't touch it. | The 3 named tests themselves — currently failing, will pass once fixtures are updated |
 
+### OPEN — found by the 2026-07-30 frontend wiring audit
+
+Full report and the ~40 lower-severity items: **`docs/reports/frontend-wiring-audit-2026-07-30.md`**.
+D31-D33 are **Dev 1's own**, found *after* Dev 1 declared its work finalized.
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| **D31** | **`NEXT_PUBLIC_API_URL` omits the `/api` segment in every Dev-1-owned source, so following the setup documentation 404s every API call.** `apps/web/src/lib/api.ts:4` falls back to `http://localhost:8000/api` (correct), but `.env.example:10`, `.github/workflows/ci.yml:126` and `docs/handoffs/dev2-handoff-2026-07-29.md:154` all say `http://localhost:8000`. Verified empirically: axios joins that with `content/lessons` to give `/content/lessons`, and `main.py:166-172` mounts every router under `/api` with **no unprefixed alias**. A dev who configures nothing works; a dev who reads the docs, or runs a CI build, is dead on arrival. Two other docs have it right — the repo contradicts itself in six places. | High | Pick one convention and fix all sources. **Enforcement must be executable**: three independent verifier agents reached three different verdicts on whether this blocks generation, which is exactly what a test settles and prose does not. | *(to add — assert the resolved URL for a known route ends in `/api/content/lessons`)* |
+| **D32** | **`_group_by_segment_id` does a raw `item["data"]` subscript** (`graph.py:3856`) while its docstring claims *"Same defensive-skip philosophy as `_index_by_segment_id`"*. It guards `segment_id` and then subscripts blind, so one entry lacking `data` raises `KeyError` and kills `package_builder_node` — **the last node, after 100% of the lesson's LLM/TTS/image spend**. | Med | Apply the defensive skip the docstring already promises. **This is site 2 of a defect closed at site 1** (`_index_by_segment_id`, Story 2-31) — binding rule 6: wrong at site 2 means the pattern, not the instance, needed fixing. | *(to add)* |
+| **D33** | **`book_id`/`chapter_id` default to `""` against `UUID` fields.** `graph.py:711,3742` use `or ""` / `.get(..., "")`; `schemas/lesson.py:212-213` declare `UUID`. An empty string can never satisfy that, so a missing `chunk` output surfaces as a bare Pydantic `ValidationError` at the final node — after full spend — instead of a diagnostic naming the actual cause. | Low | Raise an explicit diagnostic that names the missing upstream output. | *(to add)* |
+| D34 | **`lesson_ready` is routed with the wrong key type.** `core/pubsub.py:67,80` strips the `lesson_ready:` prefix and passes the resulting **lesson_id** into `manager.send()`, which keys connections by the path-param **session_id** (`websocket.py:72,110`). The `lesson_waiters:{lesson_id}` set Dev 4 described does not exist in `apps/api`. | Med | Dev 4 owns the SADD/SMEMBERS fan-out. **Not currently load-bearing**: `useLessonSocket.ts:50-55` deliberately no-ops `lesson_ready` and readiness comes from REST polling — so this is dead code, not an outage. | *(to add — assert `manager.send` receives an id a client actually connected under)* |
+| D35 | **`setSessionId` has no caller.** `player.machine.ts:146` mints `sessionId: crypto.randomUUID()` and nothing ever replaces it, so the id sent to every session-scoped assessment route was never persisted. The frontend half of D18. | High | Dev 2 calls `setSessionId(server_session_id)` from the response to `POST /api/assessment/sessions` (PR #119) before the player can reach QUIZZING/TEACH_BACK. | *(to add — gate quiz submission on a server-issued id)* |
+| D36 | **Stack drift, unowned: `apps/web` is Next 16.2.9 / React 19.2.4 while `CLAUDE.md` locks "Next.js 14 + TypeScript + Tailwind".** Two major versions. Nobody was tasked with reconciling it, and it may silently invalidate other Next-14-shaped assumptions in the frontend and in this document. | Med | Either amend the locked stack in `CLAUDE.md` (a stack change needs the §16-style four-dev conversation) or pin back. **Do not leave the two disagreeing** — `CLAUDE.md` is declared the source of truth, so a divergence makes it untrustworthy generally. | DISCIPLINE — needs an owner first |
+| D37 | **`_LIST_COLUMNS`' PostgREST JSON-path selectors have never been executed against real Postgres.** `subject:content->metadata->>subject` and the `estimated_duration_mins` sibling (`content/router.py:112-116`) are exercised only against Supabase mocks. **The `completed_at` reference in this exact select list already caused one outage-class `42703`** (D9), and per binding rule 4 a mock has no Postgres catalog and cannot raise it. | Med | One integration test against real PostgREST covering this select. Until then `GET /lessons` is unverified against the database it queries. | *(to add — real-PostgREST integration test)* |
+
+---
+
 ### OPEN — accepted, with a named trigger
 
 Not "documented limitations". Each carries an explicit condition that reopens it.
@@ -198,12 +236,22 @@ is what happens without it: three developers, three green suites, one broken pro
 |---|---|
 | Defects closed (fixed **and** guarded) | **22** |
 | Fixed, awaiting merge | **0** — everything Dev 1 owns is on `main` |
+<<<<<<< HEAD
 | **Open** | **7** |
 | Of which **live in production** | **2** (D18, D29) — D18 awaiting Dev 3's A/B/C on Story 2-35; D29 needs Dev 3 to write the consent row |
+=======
+| **Open** | **14** |
+| Of which **live in production** | **4** (D18, D29, D31, D35) — D31 is Dev 1's |
+>>>>>>> bdd76b9 (docs(audit): record the frontend wiring audit — and amend the premature "Dev 1 finalized" claim)
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md` |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
+<<<<<<< HEAD
 | Open entries with a named owner **and** a trigger | **7 of 7** |
+=======
+| Open entries with a named owner **and** a trigger | **12 of 13** (D36 needs an owner) |
+| Found by the 2026-07-30 wiring audit | **7** registered (D31-D37), ~40 more in the report |
+>>>>>>> bdd76b9 (docs(audit): record the frontend wiring audit — and amend the premature "Dev 1 finalized" claim)
 
 That last row is the honest health metric. Five of eight rules currently depend on someone
 remembering. **BD-3 is the one that converts the most of them into machine checks, which is
