@@ -63,7 +63,7 @@ def _session_row(ended_at="2026-07-21T10:00:00Z", user_id="user-123"):
 
 
 def _dna_row(session_count: int = 9) -> dict:
-    row = {dim: 75.0 for dim in NINE_DIMS}
+    row = dict.fromkeys(NINE_DIMS, 75.0)
     row["session_count"] = session_count
     return row
 
@@ -85,9 +85,8 @@ def _build_supabase(
     def _table(name):
         tbl = MagicMock()
         if name == "sessions":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(
-                _session_row(user_id=user_id)
-            )
+            _mock_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _mock_exec.return_value = _resp(_session_row(user_id=user_id))
         elif name == "quiz_attempts":
             tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
         elif name == "teachback_attempts":
@@ -101,9 +100,8 @@ def _build_supabase(
                 tbl.insert.return_value.execute.return_value = _resp([])
         elif name == "learner_dna":
             dna = _dna_row(session_count)
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(
-                dna
-            )
+            _mock_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _mock_exec.return_value = _resp(dna)
             tbl.upsert.return_value.execute.return_value = _resp([])
         return tbl
 
@@ -124,9 +122,8 @@ def _build_dna_service_supabase(dna_data: dict | None = None) -> MagicMock:
     def _table(name):
         tbl = MagicMock()
         if name == "learner_dna":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
-                _resp(dna_data)
-            )
+            _mock_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _mock_exec.return_value = _resp(dna_data)
         return tbl
 
     supabase.table.side_effect = _table
@@ -392,9 +389,7 @@ def test_get_learner_dna_data_flag_false_when_redis_none():
     supabase = _build_dna_service_supabase(_DEFAULT_DNA_ROW)
     mock_redis = AsyncMock()
 
-    body = asyncio.run(
-        get_learner_dna_data(user_id="user-123", supabase=supabase, redis=None)
-    )
+    body = asyncio.run(get_learner_dna_data(user_id="user-123", supabase=supabase, redis=None))
 
     assert body["reassessment_due"] is False
     mock_redis.get.assert_not_called()
@@ -452,9 +447,7 @@ def test_submit_onboarding_clears_reassessment_flag():
             return_value=dummy_result,
         ),
     ):
-        asyncio.run(
-            submit_onboarding_diagnostic(body=body, current_user=current_user)
-        )
+        asyncio.run(submit_onboarding_diagnostic(body=body, current_user=current_user))
 
     # delete called for onboarding_done AND reassessment_due
     delete_keys = [c.args[0] for c in mock_redis.delete.call_args_list]
@@ -499,9 +492,7 @@ def test_submit_onboarding_flag_clear_failure_is_non_fatal():
             return_value=dummy_result,
         ),
     ):
-        result = asyncio.run(
-            submit_onboarding_diagnostic(body=body, current_user=current_user)
-        )
+        result = asyncio.run(submit_onboarding_diagnostic(body=body, current_user=current_user))
 
     assert result is dummy_result
 
@@ -581,9 +572,9 @@ def test_fuse_dna_does_not_set_flag_at_session_19():
 @pytest.mark.unit
 def test_fuse_dna_redis_raises_type_error_on_positional_arg():
     """Passing redis as a positional argument must raise TypeError (keyword-only guard)."""
-    from app.modules.assessment.dna_fusion import fuse_learner_dna
-
     import inspect
+
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     sig = inspect.signature(fuse_learner_dna)
     param = sig.parameters.get("redis")
@@ -739,9 +730,7 @@ def test_submit_onboarding_re_assessment_bypasses_idempotency_guard():
             return_value=dummy_result,
         ),
     ):
-        result = asyncio.run(
-            submit_onboarding_diagnostic(body=body, current_user=current_user)
-        )
+        result = asyncio.run(submit_onboarding_diagnostic(body=body, current_user=current_user))
 
     # onboarding_done must have been deleted (bypass) before the SET NX
     delete_keys = [c.args[0] for c in mock_redis.delete.call_args_list]

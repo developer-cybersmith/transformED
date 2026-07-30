@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { UploadCloud, Library, PieChart, ArrowUpRight } from "lucide-react";
+import { UploadCloud, Library, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 
 const actions = [
@@ -23,15 +23,11 @@ const actions = [
         bg: "bg-purple-50 border-purple-100",
         href: "/library",
     },
-    {
-        id: "reports",
-        title: "Reports",
-        description: "View your learning progression.",
-        icon: PieChart,
-        color: "text-emerald-500",
-        bg: "bg-emerald-50 border-emerald-100",
-        href: "/reports",
-    },
+    // "Reports" removed 2026-07-29 (Sprint 2 audit finding) -- it pointed at
+    // "/reports", which has never been a real route (the real route is
+    // session-scoped: "/reports/[sessionId]", reached from the player after
+    // a lesson ends). There is no session-history/index page yet to send
+    // this card to -- add it back once one exists, don't repoint to a guess.
 ];
 
 export function QuickActions() {

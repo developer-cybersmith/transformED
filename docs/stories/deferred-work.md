@@ -2,6 +2,12 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story 2-34 (2026-07-29, SpeechSynthesis fallback)
+
+- **`utterance.rate` is unclamped** — set directly from `playbackRate` with no bounds check. Deferred — this mirrors the identical, already-accepted unclamped pattern used for the real `<audio>.playbackRate` assignment elsewhere in this same file; not a regression unique to this story, and no UI path currently sets `playbackRate` outside a fixed, valid set of values. [`apps/web/src/components/player/AudioTimeline.tsx`]
+- **Seeking within a script-only segment does not resync or restart narration** — the utterance keeps playing from its original position after a seek, silently diverging from the slide the student now sees. Deferred by explicit user decision: accept the drift as a documented limitation rather than restart narration on every seek. No AC covers seek behavior; matches this story's stated scope. [`apps/web/src/components/player/AudioTimeline.tsx`]
+- **Long narration scripts risk truncation by browser TTS engines** — a well-documented ~15s/Chromium behavior; real segment scripts can run well past that. Deferred by explicit user decision: accept as a known limitation rather than implement sentence-chunked utterance queuing, which is a real scope increase (chunk boundaries, inter-chunk gaps, pause/resume across chunks) beyond this story's stated ACs. Logged as a follow-up story candidate. [`apps/web/src/components/player/AudioTimeline.tsx`]
+
 ## Deferred from: code review of story 2-26 (2026-07-27, audio buffering + playback-error retry)
 
 - **`exitTeachBack()` on the last segment doesn't reset `isBuffering`/`audioError`/`audioRetryCount`** — unlike every other segment transition, resuming `PLAYING` on the final segment after teach-back doesn't route through `advanceSegment()` (there's no next segment), so a stale flag from before the quiz could survive momentarily. Self-correcting once the same, already-loaded `<audio>` element's own `onPlaying`/`onCanPlay`/`onWaiting` events fire again; purely cosmetic, single-sourced (Edge Case Hunter only), not actioned. [`apps/web/src/stores/player.machine.ts::exitTeachBack`]

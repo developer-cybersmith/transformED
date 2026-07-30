@@ -855,3 +855,86 @@ async def test_openai_clients_disable_sdk_retries_and_set_explicit_timeouts() ->
         )
         assert timeout.connect == 5.0, f"{mod}: connect guard must stay at 5s"
         assert timeout.read == expected_timeout, f"{mod}: read timeout mismatch"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Story 2-36 — a Redis outage must not masquerade as a provider outage (D19)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# `is_circuit_open()` is the FIRST statement of every retried provider call
+# (providers/llm/openai.py:111 and the same line in embeddings/, image/imagen,
+# image/openai_image). It talks to Redis. So the first thing every provider
+# call does is a Redis round-trip — and if that round-trip fails, the node
+# fails before the provider is ever contacted.
+#
+# `guard_breaker`'s docstring already promises the opposite: "Bookkeeping is
+# best-effort. A Redis outage must never convert an already-paid-for provider
+# result into an exception." `_safe_record` honours that. `is_circuit_open`
+# did not.
+
+
+async def test_is_circuit_open_fails_open_when_redis_is_down() -> None:
+    """AC-1. A breaker whose state cannot be READ must not block traffic.
+
+    Refusing every provider call because the bookkeeping store is unreachable
+    converts a two-second Redis blip into a total generation outage — strictly
+    worse than the stale-state risk it would be avoiding. Fail open, log, and
+    let the provider decide.
+    """
+    import redis.exceptions as rex
+
+    from app.core.circuit_breaker import is_circuit_open
+
+    broken = MagicMock()
+    broken.get = AsyncMock(side_effect=rex.ConnectionError("redis is down"))
+
+    with patch("app.core.circuit_breaker.get_redis", return_value=broken):
+        assert await is_circuit_open("openai") is False
+
+
+async def test_is_circuit_open_fails_open_on_a_write_failure_too() -> None:
+    """AC-1, the branch a `get`-only test would miss.
+
+    The OPEN -> HALF_OPEN promotion WRITES (`redis.set`). A fix that wrapped
+    only the reads would still raise here, and the suite would look green while
+    the breaker's recovery path stayed fatal.
+    """
+    import time
+
+    import redis.exceptions as rex
+
+    from app.core.circuit_breaker import CircuitState, is_circuit_open
+
+    broken = MagicMock()
+    # State reads succeed and say "OPEN, and the recovery timeout has elapsed",
+    # which drives is_circuit_open into the promotion write.
+    broken.get = AsyncMock(side_effect=[CircuitState.OPEN.value, str(time.time() - 10_000)])
+    broken.set = AsyncMock(side_effect=rex.TimeoutError("write timed out"))
+
+    with patch("app.core.circuit_breaker.get_redis", return_value=broken):
+        assert await is_circuit_open("openai") is False
+
+
+async def test_redis_failure_does_not_open_the_breaker() -> None:
+    """AC-6. `_is_client_error` returns False for a redis error, so
+    `guard_breaker` counts it as a PROVIDER failure.
+
+    Five Redis blips inside the 120s window would therefore open the breaker for
+    a provider that is perfectly healthy and was never contacted — a 600-second
+    self-inflicted outage caused entirely by our own infrastructure. The breaker
+    exists to detect that a PROVIDER is unhealthy; it must not record failures
+    for errors the provider never raised.
+    """
+    import redis.exceptions as rex
+
+    from app.core.circuit_breaker import guard_breaker
+
+    async def _call() -> str:
+        raise rex.ConnectionError("redis is down")
+
+    record_failure = AsyncMock()
+    with patch("app.core.circuit_breaker.record_failure", new=record_failure):
+        with pytest.raises(rex.ConnectionError):
+            await guard_breaker("openai", _call)
+
+    record_failure.assert_not_awaited()

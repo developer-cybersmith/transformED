@@ -188,12 +188,14 @@ Raw text is re-extracted on demand via PyMuPDF using `page_start` and `page_end`
 
 ---
 
-### 7. Video delivery — Bunny Stream for reused avatar clips
-**Status:** 🟢 CONFIRMED  
+### 7. Video delivery — Bunny Stream (avatar clips + revision-mode lesson video)
+**Status:** 🟡 UPDATED (2026-07-28) — supersedes the original 2026-06 CONFIRMED decision  
 **PRD reference:** §6.2 (lesson player), HeyGen avatar  
-**Affects:** Dev 2 (infrastructure)
+**Affects:** Dev 1 (render + upload), Dev 2 (revision-mode player), infrastructure
 
-The lesson player uses a fixed reusable avatar clip, not a per-lesson generated video. Architecture is audio + slides in sync, with avatar clip playing at intro/outro only.
+#### 7a. First watch — unchanged, still CONFIRMED
+
+The **interactive** lesson player uses a fixed reusable avatar clip, not a per-lesson generated video. Architecture is audio + slides in sync, with avatar clip playing at intro/outro only.
 
 ```
 Avatar clips:    Generated once, stored in Bunny Stream
@@ -203,6 +205,28 @@ Lesson player:   Custom React audio-timeline state machine
 ```
 
 Bunny Stream at ~$2/month handles 500 users × 15 lesson plays at this scale. No transcoding cost — encode clips once on upload.
+
+**This remains the first-watch experience and must not be replaced.** It is the only mode that can carry the product's interactive mechanics: quiz overlays at segment boundaries, teach-back, CES/attention-driven tutor interventions (PRD §10/§11), and jargon hover tooltips. A flat video renders slides as pixels — nothing hoverable, nothing screen-reader accessible, and no way for the tutor FSM to interrupt mid-segment.
+
+#### 7b. Revision / re-watch — NEW (decided 2026-07-28)
+
+**Decision:** at generation time, additionally compile the lesson (slides + narration audio) into a single video, store it on Bunny Stream, and serve that for **re-watch/revision only** — where the student has already completed the assessment on first watch, so interactivity is not required.
+
+```
+First watch:     Interactive player (quizzes, teach-back, CES) — 7a above
+Revision:        Single compiled MP4 from Bunny Stream
+Source of truth: lessons.content JSONB remains authoritative for both
+```
+
+**Status: DECIDED, NOT DESIGNED, NOT IMPLEMENTED.** No video/ffmpeg/transcoding code exists anywhere in the repo as of 2026-07-28. Before any implementation:
+
+1. **Re-cost it.** The ~$2/month figure in 7a assumes *encode once*. Per-lesson video means transcode + store **every** generated lesson to serve the subset that is actually re-watched. Must be re-checked against the **$3.00/lesson ceiling** (PRD §12) and the >$5/month subscription economics.
+2. **Design the render path.** Slides are React components (title + bullets + AI image), not images — this needs headless-browser slide→frame rendering, then ffmpeg mux with the segment MP3s, then Bunny upload. None of it exists.
+3. **Keep it off the ARQ critical path.** The generation pipeline is already 5–15 min against `arq_job_timeout_s` with `max_jobs=5`. Video render must not extend it — treat as a separate post-completion job.
+4. **Dev 2 hand-off** — a revision-mode player that plays the video instead of mounting the interactive timeline.
+5. **4-dev review** — this adds a layer to CLAUDE.md's locked stack.
+
+**Cheaper alternatives considered.** If the real driver is bandwidth cost or playback reliability on Indian mobile networks, **Bunny CDN as a pull-zone in front of Supabase Storage** delivers cheap egress for the existing MP3s/images with *zero* transcoding, zero video pipeline, and zero player change. Recorded here so it is not re-discovered later; the revision-video decision was taken with this alternative known.
 
 ---
 

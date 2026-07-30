@@ -76,9 +76,19 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # the "T2" fallback here only matters for a row from before that
         # migration or a malformed select response.
         tier: str = lesson_row.get("tier") or "T2"
-        # session_id is the WebSocket routing key; falls back to lesson_id until
-        # the upload route stores it (Sprint 2 — Dev 4 coordinates)
-        session_id: str = lesson_row.get("session_id") or lesson_id
+        # Story 2-37 / D23: there is deliberately NO session_id here.
+        #
+        # This used to read `lesson_row.get("session_id") or lesson_id`. `lessons`
+        # has no `session_id` column, so the fallback ALWAYS fired — the channel
+        # was right by accident, and one unrelated migration adding that column
+        # would have silently changed the publish key under Dev 4's routing with
+        # no test failing. See `tests/unit/test_lesson_ready_routing_key.py`.
+        #
+        # The routing key is the LESSON, decided by Dev 4 (handoff 2026-07-29 §2,
+        # option A): generation completion is a property of the lesson, not of a
+        # viewer — a lesson is generated once and can be watched in many sessions.
+        # Dev 4 keeps a `lesson_waiters:{lesson_id}` set and fans out to every
+        # waiting session, so this side must never key on a viewer.
 
         # lesson_package is the REAL, schema-validated LessonPackage produced by
         # package_builder_node (Story 2-11, landed 2026-07-16) —
@@ -134,13 +144,16 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         from app.core.redis import get_redis
 
         redis = get_redis()
-        channel = f"lesson_ready:{session_id}"
+        channel = f"lesson_ready:{lesson_id}"
         # payload matches packages/shared/types/ws.ts's LessonReadyMessage
-        # exactly ({lesson_id, lesson}) — session_id is already the pub/sub
-        # channel suffix / WebSocket routing key, it does not need to be
-        # duplicated inside the payload too (2026-07-16 review finding,
-        # Story 2-12 — the subscriber in app/core/pubsub.py already extracts
-        # session_id from the CHANNEL name, never read it from the payload).
+        # exactly ({lesson_id, lesson}).
+        #
+        # Story 2-37 corrects the note that used to sit here. It said the payload
+        # need not carry session_id because session_id "is already the channel
+        # suffix". After D23 the channel suffix is the LESSON id, and no session
+        # is known on this side at all — Dev 4 resolves waiting sessions from
+        # `lesson_waiters:{lesson_id}` at delivery time. Leaving the old wording
+        # would have actively misled the next reader about the routing contract.
         message = {
             "type": "lesson_ready",
             "payload": {

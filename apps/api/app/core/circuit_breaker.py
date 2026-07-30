@@ -77,6 +77,43 @@ async def is_circuit_open(provider: str) -> bool:
     Also handles the HALF_OPEN → probe transition: if the recovery
     timeout has elapsed the state is promoted to HALF_OPEN and this
     function returns False (allowing one probe attempt through).
+
+    **Fails OPEN — Story 2-36, D19.** If Redis cannot be reached, this returns
+    `False` (allow the call) and logs a WARNING rather than propagating.
+
+    This function is the FIRST statement of every function wrapped by
+    `@with_retry` — `providers/llm/openai.py:111` and the same line in
+    `embeddings/openai.py`, `image/imagen.py`, `image/openai_image.py`. So the
+    first thing every provider call does is a Redis round-trip. Letting that
+    round-trip raise meant a momentary Redis blip failed the node before the
+    provider was ever contacted, and (until D19 was fixed in `core/retry.py`)
+    failed it permanently.
+
+    Refusing every provider call because the BOOKKEEPING store is unreachable
+    converts a two-second infrastructure blip into a total generation outage.
+    That is strictly worse than the risk it avoids — acting on breaker state we
+    could not read. `_safe_record` already takes the same position for writes;
+    this closes the read side.
+    """
+    try:
+        return await _is_circuit_open_inner(provider)
+    except Exception:  # noqa: BLE001 — a breaker we cannot read must not block traffic
+        logger.warning(
+            "Circuit breaker: state for provider '%s' is unreadable — failing OPEN "
+            "(allowing the call through)",
+            provider,
+            exc_info=True,
+        )
+        return False
+
+
+async def _is_circuit_open_inner(provider: str) -> bool:
+    """Body of `is_circuit_open`. Raises on Redis failure; the caller fails open.
+
+    Split out so the fail-open guard wraps the HALF_OPEN promotion `set()` as
+    well as the reads. A guard around the reads alone would leave the recovery
+    path fatal, and the suite would look green while the breaker could still
+    kill a node ten minutes after an outage.
     """
     redis = get_redis()
     state_key, _, opened_at_key = _keys(provider)
@@ -210,11 +247,34 @@ async def guard_breaker[T](
         # control open the shared circuit for every lesson.
         raise
     except Exception as exc:
-        if not _is_client_error(exc):
+        if not _is_client_error(exc) and not _is_our_infrastructure_error(exc):
             await _safe_record(record_failure, provider, "failure")
         raise
     await _safe_record(record_success, provider, "success")
     return result
+
+
+def _is_our_infrastructure_error(exc: BaseException) -> bool:
+    """True when *exc* blames OUR infrastructure, not the provider.
+
+    Story 2-36 AC-6. `is_circuit_open()` runs inside every retried provider call
+    and talks to Redis, so a Redis outage surfaces here as a call failure. Left
+    uncounted-for, five Redis blips inside the 120s window would open the
+    breaker for a provider that is perfectly healthy and **was never
+    contacted** — a 600-second outage caused entirely by our own bookkeeping
+    store, and one that recovers only on a timer because no probe can reach a
+    provider that was never the problem.
+
+    The breaker exists to detect that a PROVIDER is unhealthy. It must not
+    record failures for errors the provider never raised.
+
+    Narrow on purpose: only redis exceptions. An unknown exception is still
+    counted as a provider failure, because failing to open a breaker during a
+    real outage is worse than not opening one during ours.
+    """
+    from app.core.retry import _REDIS_TRANSIENT_ERRORS
+
+    return bool(_REDIS_TRANSIENT_ERRORS) and isinstance(exc, _REDIS_TRANSIENT_ERRORS)
 
 
 def _is_client_error(exc: BaseException) -> bool:

@@ -431,31 +431,6 @@ async def extract_node(state: PipelineState) -> PipelineState:
     }
 
 
-_STRUCTURE_SYSTEM_PROMPT = """You are a document structure analyser for educational textbooks.
-Given raw text from a PDF chapter and candidate headings detected by regex/font analysis,
-produce a corrected DocumentStructure with accurate chapter/section/topic hierarchy.
-
-Rules:
-- Use ONLY 3 levels: chapter > section > topic
-- Every document needs at least 1 section (even if no headings found)
-- Preserve ALL body text across sections — no text should be lost
-- If no clear heading structure exists, return 1 section at chapter level with full text
-- body text should not include the heading title itself
-- Keep body text verbatim — do not summarise or paraphrase"""
-
-
-def _build_structure_prompt(raw_text: str, candidates: list[dict[str, Any]]) -> str:
-    text_preview = raw_text[:6000] + ("..." if len(raw_text) > 6000 else "")
-    candidates_str = "\n".join(
-        f"- [{c['level']}] {c['text']!r} (char_offset={c['char_offset']})" for c in candidates[:30]
-    )
-    return (
-        f"Raw text (first 6000 chars of {len(raw_text)}):\n{text_preview}\n\n"
-        f"Rule-based heading candidates:\n{candidates_str or '(none detected)'}\n\n"
-        "Return a DocumentStructure with accurate section boundaries and full body text."
-    )
-
-
 async def structure_node(state: PipelineState) -> PipelineState:
     """Node 2: Detect chapter/section/topic boundaries using font metadata + LLM validation."""
     from app.config import get_settings
@@ -465,8 +440,11 @@ async def structure_node(state: PipelineState) -> PipelineState:
         coalesce_sections,
         detect_headings,
     )
-    from app.providers.llm.factory import get_llm_provider
-    from app.schemas import DocumentStructure
+
+    # Story 2-34: `get_llm_provider` and `DocumentStructure` were imported here
+    # solely for the removed LLM-validation pass. structure_node makes no LLM
+    # call now, so both imports go too — an unused provider import in a node is
+    # an invitation to wire it back up.
 
     lesson_id: str = state["lesson_id"]
     logger.info("[%s] structure_node: detecting document structure", lesson_id)
@@ -499,63 +477,42 @@ async def structure_node(state: PipelineState) -> PipelineState:
     candidates = detect_headings(raw_text, font_blocks)
     rule_sections = build_section_bodies(raw_text, candidates, total_pages)
 
-    # ── LLM validation ────────────────────────────────────────────────────────
+    # ── Structure detection is RULE-BASED ONLY (Story 2-34) ───────────────────
+    #
+    # There used to be an "LLM validation" pass here. It was ARITHMETICALLY dead
+    # for every real document and had been flagged as such in-place since Story
+    # 2-16 (RC-2): the prompt showed the model only `raw_text[:6000]`, while the
+    # acceptance guard required its sections to cover >= 90% of `len(raw_text)`.
+    # A model can only describe what it was shown, so the guard passed only when
+    # `len(raw_text) <= ~6,667` chars. A textbook chapter is 30,000-100,000. So on
+    # every real upload we paid for the call and always discarded the result — the
+    # check could only ever succeed on a document too small to need checking.
+    #
+    # Removing it does NOT improve detection. Headings are still found by
+    # `detect_headings`: a font-size + boldness threshold, plus a regex. That is a
+    # genuine limitation, recorded here rather than hidden:
+    #   - a heading that is coloured or in a different family, but NOT bold, is invisible
+    #   - one font size shared by headings and emphasised body text yields false positives
+    #   - multi-column layouts scramble reading order before detection starts
+    #   - on SCANNED pages there is no font metadata at all (`font_blocks` comes from
+    #     pdftext), so the font strategy collapses entirely and only the regex survives
+    #
+    # SPRINT 3 DIRECTION (decided 2026-07-29, not built): move to docling's document
+    # hierarchy. docling is already a dependency and already runs in
+    # extract_subprocess.py, but only for table-bearing page runs (Story 2-0b). It
+    # does ML layout analysis and emits typed section headers with levels — what the
+    # font thresholds above are approximating. Two blockers must be settled first:
+    #   1. TIME. config.py records page-scoped docling at 206-216s on 41 pages.
+    #      Full-document docling on a 200-300 page textbook must fit inside
+    #      extract_timeout_cap_s = 1500. That measurement decides viability.
+    #   2. CLAUDE.md pins the PDF stack, so changing docling's scope needs the §16
+    #      four-developer review.
+    #
+    # Do NOT reinstate an LLM pass here without fixing the window/guard mismatch
+    # above. In particular do not "fix" it by comparing against
+    # min(len(raw_text), 6000): that accepts output covering only the first 6,000
+    # chars and silently discards the rest (data loss).
     sections_list = rule_sections
-    # AC-4 hardening: with empty/whitespace raw_text the < 90% length proxy
-    # below is vacuously false (llm_total < 0 never holds), so hallucinated
-    # LLM sections would be adopted. Skip the LLM entirely — rule-based wins.
-    if not raw_text.strip():
-        logger.warning(
-            "[%s] structure_node: raw_text is empty — skipping LLM validation, "
-            "keeping rule-based sections",
-            lesson_id,
-        )
-    else:
-        try:
-            provider = get_llm_provider(settings.llm_mini, lesson_id=lesson_id)
-            messages = [
-                {"role": "system", "content": _STRUCTURE_SYSTEM_PROMPT},
-                {"role": "user", "content": _build_structure_prompt(raw_text, candidates)},
-            ]
-            result: DocumentStructure = await provider.complete_structured(
-                messages=messages,
-                model=settings.llm_mini,
-                response_format=DocumentStructure,
-            )
-            # AC-4 data-loss guard: the prompt only shows the LLM the first 6000
-            # chars of raw_text, so its sections can silently drop everything past
-            # that window. Only adopt the LLM output when its bodies cover ≥ 90%
-            # of the full raw text; otherwise keep the rule-based sections.
-            # Known limitation (Tier-3 #18): a pure length proxy — duplicated or
-            # padded bodies totalling ≥ 90% of len(raw_text) still pass.
-            llm_total = sum(len(s.body or "") for s in result.sections)
-            if llm_total < 0.9 * len(raw_text):
-                logger.warning(
-                    "[%s] structure_node: LLM sections cover %d/%d chars (< 90%%) — "
-                    "rejecting LLM output, keeping rule-based sections",
-                    lesson_id,
-                    llm_total,
-                    len(raw_text),
-                )
-            else:
-                sections_list = [s.model_dump() for s in result.sections]
-                logger.info(
-                    "[%s] structure_node: LLM produced %d sections", lesson_id, len(sections_list)
-                )
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "[%s] structure_node: LLM validation failed — using rule-based fallback",
-                lesson_id,
-            )
-
-    # KNOWN LIMITATION (Story 2-16 RC-2, deferred to Story 2-17): the LLM
-    # validation above is effectively dead for real chapters. _build_structure_prompt
-    # shows the LLM only raw_text[:6000], while the >= 90%-coverage guard compares
-    # against len(raw_text), so any chapter longer than ~6000/0.9 ≈ 6666 chars can
-    # never adopt the LLM output — rule-based detection always wins. Story 2-17
-    # (boundary-only LLM validation) is the proper fix. Do NOT "fix" this by
-    # comparing against min(len(raw_text), 6000): that accepts LLM output covering
-    # only the first 6000 chars, silently discarding the rest (data loss).
 
     # ── Bound over-segmentation (Story 2-16 RC-1) ─────────────────────────────
     # A step-by-step how-to PDF makes detect_headings treat each numbered step as
@@ -857,7 +814,20 @@ async def embed_node(state: PipelineState) -> PipelineState:
                     est,
                     _MAX_EMBED_INPUT_TOKENS,
                 )
-                text = text[: _MAX_EMBED_INPUT_TOKENS * 4]  # ~4 chars/token
+                # ~4 chars/token is an ENGLISH-ONLY heuristic. Measured against
+                # cl100k_base on 2026-07-29: English 6.0 chars/token, Hindi 1.06,
+                # Tamil 0.71. So this cut yields ~5,300 tokens for English (safe,
+                # under the 8,000 cap) but ~30,100 for Hindi and ~45,200 for Tamil
+                # — 4-6x OVER the cap, and the API would reject the request.
+                #
+                # Left as-is by decision 2026-07-29: English-only for now, and the
+                # branch is near-unreachable regardless — chunks target 512 tokens
+                # (settings.chunk_target_tokens) against this 8,000 cap, and
+                # token_count above is always a real cl100k_base count, so the
+                # len(text)//4 fallback does not run either. WHOEVER ADDS AN INDIC
+                # LANGUAGE MUST FIX THIS: count tokens with the real tokenizer and
+                # truncate on token boundaries, not characters. See Story 2-33.
+                text = text[: _MAX_EMBED_INPUT_TOKENS * 4]
                 est = _MAX_EMBED_INPUT_TOKENS
             if current and (
                 current_tokens + est > budget or len(current) >= _MAX_EMBED_BATCH_ITEMS

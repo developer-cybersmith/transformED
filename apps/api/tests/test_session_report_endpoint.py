@@ -105,7 +105,7 @@ _ALL_DIMS = (
     "study_independence",
 )
 
-_DNA_ROW = {dim: 85.0 for dim in _ALL_DIMS}  # score 85 → "Proficient"
+_DNA_ROW = dict.fromkeys(_ALL_DIMS, 85.0)  # score 85 → "Proficient"
 
 _GROWTH_EVENTS = [
     {"payload": {"dimension": dim, "old_value": 82.0, "new_value": 85.0, "delta": 3.0}}
@@ -139,7 +139,8 @@ def _build_report_supabase(
       4. teachback_attempts — .execute()      → data list
       5. session_events     — count query     → .count (intervention_triggered)
       6. learner_dna        — .maybe_single() → dna_data   (Story 3-30)
-      7. session_events     — .execute()      → growth_events (dna_update; only when dna_data is not None)
+      7. session_events     — .execute()      → growth_events (dna_update;
+         only when dna_data is not None)
 
     tier_data default (_NO_TIER_ROW sentinel) → {"tier": "T2"}.
     Pass tier_data=None explicitly to simulate a missing lessons row.
@@ -168,7 +169,8 @@ def _build_report_supabase(
             m_exec.return_value.data = session_data
         elif n == 2:
             # lessons — maybe_single (Story 3-29 — tier fetch)
-            m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = tier_data
+            _m = m.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _m.return_value.data = tier_data
         elif n == 3:
             # quiz_attempts — list (was n==2)
             m.select.return_value.eq.return_value.execute.return_value.data = quiz_rows
@@ -637,7 +639,10 @@ async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread)
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_get_report_asyncio_to_thread_called_6_times_when_no_dna():
-    """AC 9 (Story 3-30): 6 asyncio.to_thread calls when learner_dna row is absent (sessions+lessons+quiz+teachback+events_count+learner_dna)."""
+    """AC 9 (Story 3-30): 6 asyncio.to_thread calls when learner_dna row is absent.
+
+    Call order: sessions + lessons + quiz + teachback + events_count + learner_dna.
+    """
     from unittest.mock import patch
 
     from app.modules.assessment.service import get_session_report
@@ -839,13 +844,15 @@ async def test_report_none_dimension_value_maps_to_beginning(mock_to_thread):
     """AC 6: None dimension column → treated as 0.0 → 'Beginning'."""
     from app.modules.assessment.service import get_session_report
 
-    dna_none = {dim: None for dim in _ALL_DIMS}
+    dna_none = dict.fromkeys(_ALL_DIMS)
     supabase = _build_report_supabase(dna_data=dna_none, growth_events=[])
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
 
     labels = result.learner_dna_snapshot["dimension_labels"]
     for dim in _ALL_DIMS:
-        assert labels[dim] == "Beginning", f"{dim}: expected 'Beginning' for None, got {labels[dim]!r}"
+        assert labels[dim] == "Beginning", (
+            f"{dim}: expected 'Beginning' for None, got {labels[dim]!r}"
+        )
 
 
 @pytest.mark.unit
@@ -1063,7 +1070,11 @@ async def test_report_quiz_accuracy_label_developing_at_exact_60_percent(mock_to
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_report_asyncio_to_thread_called_7_times_on_happy_path():
-    """AC 9: exactly 7 asyncio.to_thread calls on happy path (sessions+lessons+quiz+teachback+events_count+learner_dna+events_dna_update)."""
+    """AC 9: exactly 7 asyncio.to_thread calls on happy path.
+
+    Call order: sessions + lessons + quiz + teachback + events_count
+    + learner_dna + events_dna_update.
+    """
     from unittest.mock import patch
 
     from app.modules.assessment.service import get_session_report
@@ -1088,4 +1099,6 @@ async def test_report_asyncio_to_thread_called_7_times_on_happy_path():
             supabase=supabase,
         )
 
-    assert len(call_log) == 7, f"Expected 7 asyncio.to_thread calls (happy path), got {len(call_log)}"
+    assert len(call_log) == 7, (
+        f"Expected 7 asyncio.to_thread calls (happy path), got {len(call_log)}"
+    )

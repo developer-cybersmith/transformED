@@ -8,6 +8,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { trackEvent } from "@/lib/analytics";
 
 interface JargonHoverProps {
     text: string;
@@ -57,7 +58,10 @@ export function JargonHover({ text, jargon }: JargonHoverProps) {
                                   * inline text by 1px. All other classes are constant so line height
                                   * stays stable across all bullet renders.
                                   */}
-                                <span className="cursor-help inline-block font-semibold text-[var(--accent-secondary)] bg-[var(--accent-secondary)]/8 border-b-[2px] border-dotted border-[var(--accent-secondary)]/60 hover:bg-[var(--accent-secondary)]/18 hover:border-solid hover:shadow-sm transition-all rounded-md px-1.5 py-0.5 mx-0.5 relative z-10">
+                                <span
+                                    className="cursor-help inline-block font-semibold text-[var(--accent-secondary)] bg-[var(--accent-secondary)]/8 border-b-[2px] border-dotted border-[var(--accent-secondary)]/60 hover:bg-[var(--accent-secondary)]/18 hover:border-solid hover:shadow-sm transition-all rounded-md px-1.5 py-0.5 mx-0.5 relative z-10"
+                                    onMouseEnter={() => trackEvent('jargon_hover', { term: dictKey })}
+                                >
                                     {matchedText}
                                 </span>
                             </TooltipTrigger>

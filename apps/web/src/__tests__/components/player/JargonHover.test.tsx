@@ -1,8 +1,15 @@
 import React from 'react';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi, beforeEach } from 'vitest';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { JargonHover } from '@/components/player/JargonHover';
 import type { JargonEntry } from '@hie/shared/types/lesson';
+
+const { trackEventMock } = vi.hoisted(() => ({ trackEventMock: vi.fn() }));
+vi.mock('@/lib/analytics', () => ({ trackEvent: trackEventMock }));
+
+beforeEach(() => {
+  trackEventMock.mockReset();
+});
 
 // Radix Tooltip portals to document.body — expose it in jsdom
 beforeAll(() => {
@@ -105,6 +112,20 @@ describe('JargonHover', () => {
     expect(entry?.definition).toBe(
       'An optimisation algorithm used to minimise a loss function.'
     );
+  });
+
+  it('tracks a jargon_hover analytics event with the matched term on mouseenter (Sprint 2 audit gap)', () => {
+    render(
+      <JargonHover
+        text="We use a Neural Network to classify images."
+        jargon={sampleJargon}
+      />
+    );
+    const trigger = document.querySelector('.cursor-help')!;
+
+    fireEvent.mouseEnter(trigger);
+
+    expect(trackEventMock).toHaveBeenCalledWith('jargon_hover', { term: 'Neural Network' });
   });
 
   it('no hover:-translate-y class on trigger span — no layout shift', () => {
