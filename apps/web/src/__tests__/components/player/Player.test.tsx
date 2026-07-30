@@ -4,12 +4,20 @@ import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { useLessonSocketMock } = vi.hoisted(() => ({
+const { useLessonSocketMock, apiPostMock } = vi.hoisted(() => ({
   useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
+  apiPostMock: vi.fn().mockResolvedValue({ data: {} }),
 }));
 
 vi.mock('@/hooks/useLessonSocket', () => ({
   useLessonSocket: useLessonSocketMock,
+}));
+
+// Player fires analytics events directly via lib/analytics -> lib/api (Sprint 2
+// audit gap: tab_switch tracking) -- mock the underlying api client, not
+// lib/analytics itself, so the tests exercise the real trackEvent() logic.
+vi.mock('@/lib/api', () => ({
+  api: { post: apiPostMock },
 }));
 
 const originalPlay = window.HTMLMediaElement.prototype.play;
@@ -26,6 +34,7 @@ beforeEach(() => {
   useLessonSocketMock.mockClear();
   mockOnRefetchLesson.mockClear();
   mockOnRefetchLesson.mockResolvedValue(null);
+  apiPostMock.mockClear();
 });
 
 afterEach(() => {
@@ -362,5 +371,41 @@ describe('Player — lesson WebSocket (S2-06)', () => {
     });
 
     expect(screen.queryByText(/checking in/i)).not.toBeNull();
+  });
+});
+
+describe('Player — tab_switch analytics (Sprint 2 audit gap)', () => {
+  it('tracks a tab_switch event with the current segment_id when the tab is hidden', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(apiPostMock).toHaveBeenCalledWith(
+      '/analytics/events',
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            event_type: 'tab_switch',
+            payload: { segment_id: mockLessonPackage.segments[0].segment_id },
+          }),
+        ],
+      })
+    );
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+  });
+
+  it('does not track anything when the tab becomes visible again', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(apiPostMock).not.toHaveBeenCalled();
   });
 });

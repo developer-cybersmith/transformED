@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
+import { trackEvent } from '@/lib/analytics';
 import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
@@ -80,6 +81,25 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   // Mounts the lesson WebSocket for the duration of the session — previously
   // never called anywhere, so the socket never connected during a real lesson.
   useLessonSocket(sessionId || null);
+
+  // Behavioral event instrumentation (analytics gap found in the 2026-07-29
+  // Sprint 2 audit): the backend's session_events ingestion has been fully
+  // built and tested since Dev 3's Sprint 2 work, but nothing in apps/web
+  // ever called it. Tracks a tab_switch each time the student navigates away
+  // from and back to this tab while a lesson is open.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        // Read fresh from the store rather than closing over `segment` --
+        // this effect intentionally mounts once for the whole session.
+        const state = usePlayerStore.getState();
+        const currentSegment = state.lesson?.segments[state.currentSegmentIndex] ?? null;
+        trackEvent('tab_switch', { segment_id: currentSegment?.segment_id ?? null });
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   // Keyed on lesson_id, NOT the lesson object reference (review fix, S2-33):
   // a retry-triggered refetch (handleRetryAudio -> onRefetchLesson -> SWR

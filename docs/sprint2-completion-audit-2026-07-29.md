@@ -54,12 +54,13 @@ CLAUDE.md §18 names this table an explicit **Sprint 2 priority**: a `user_conse
 
 ---
 
-## Dev 2 (my own) domain — gaps found, not yet fixed
+## Dev 2 (my own) domain — gaps found
 
-These are mine to own. Flagging them here rather than silently fixing them mid-audit, since the user's ask was to verify and document, not to expand scope unprompted.
+### 🟢 Fixed same day
+- **Dashboard "Reports" quick action was a dead link** — `QuickActions.tsx` linked to `/reports`, which has never been a real route (the real route is `/reports/[sessionId]`, session-scoped, reached from the player after a lesson ends). **Fixed:** removed the card rather than repoint it at a guess — there is no session-history/index page yet to send it to. Add it back once one exists.
+- **Behavioral event tracking was backend-ready but never called from the frontend.** Dev 3's `POST /api/analytics/events` is fully implemented and tested (jargon_hover, tab_switch, retry_after_fail, etc. all accepted) — but nothing in `apps/web` called it. **Fixed:** added `lib/analytics.ts` (a thin, fire-and-forget `trackEvent()` wrapper that never throws and no-ops before a session exists) and wired two real call sites — `jargon_hover` from `JargonHover.tsx` on term hover, and `tab_switch` from `Player.tsx` via a `visibilitychange` listener. 7 new tests, `tsc`/`eslint` clean. The remaining known event types (`retry_after_fail`, `quiz_skip`, `teachback_skip`, `intervention_acknowledged`) have no natural existing call site yet and are left for whoever builds the UI they'd attach to.
 
-- **Dashboard "Reports" quick action is a dead link** — `QuickActions.tsx` links to `/reports`, but no such route exists (the real route is `/reports/[sessionId]`, session-scoped). 404s on click.
-- **Behavioral event tracking is backend-ready but never called from the frontend.** Dev 3's `POST /api/analytics/events` is fully implemented and tested (jargon_hover, tab_switch, retry_after_fail, etc. all accepted) — but nothing in `apps/web` ever calls it. Session-level analytics (per CLAUDE.md's observability-from-commit-one principle) is currently a one-sided contract.
+### Not fixed — lower priority, noted for later
 - **Dead code:** `apps/web/src/mocks/api/auth.ts`, `lessonService.getLesson`/`updateProgress` (`lesson.service.ts`), and `reports.service.ts` are all unused by any real page — harmless today, but should be pruned before someone mistakenly builds on them.
 - **`SignInForm.tsx:44`** logs `console.error("Login map error:", err)` — stale/mislabeled debug text, not the actual error message.
 - **`SignInForm.tsx:103`** — "Forgot password?" is a non-interactive `<span>`, no `href`/`onClick`. Dead end (plausibly intentional — no password-reset flow exists yet — but unlabeled as such).
@@ -105,7 +106,7 @@ Verdict counts from independent per-dev verification, each cross-checked a secon
 | `GET /api/media/signed-url` | Real | None — dormant by design, signing happens inline in content router |
 | `GET/POST /api/admin/*` (jobs, jobs/{id}, costs, health) | Real | None — no admin UI in the web app |
 | `GET /api/tutor/session/{id}/state`, `POST .../intervene` | Stub (501) | None — Sprint 3 scope |
-| `POST /api/analytics/events` | Real | **None** — see Dev 2 gaps above |
+| `POST /api/analytics/events` | Real | `JargonHover.tsx` (jargon_hover), `Player.tsx` (tab_switch) — wired same day, see Dev 2 gaps above |
 | `GET /api/analytics/session/{id}/summary` | Real | None |
 
 ---
@@ -116,5 +117,6 @@ Verdict counts from independent per-dev verification, each cross-checked a secon
 - **`docs/ws-message-contract.md`**: a stale `attention_ack` payload description corrected first, then Dev 2 sign-off given, with the verification basis recorded inline.
 - **`docs/dev2-sprint-tracker.md`**, **`docs/master-tracker.md`**: cross-team notes added summarizing this audit.
 - This file created as the durable record of the audit itself.
+- **Both Dev 2-domain gaps fixed same day**: removed the dead `/reports` dashboard link (`QuickActions.tsx`); added `apps/web/src/lib/analytics.ts` and wired `jargon_hover`/`tab_switch` tracking into `JargonHover.tsx`/`Player.tsx`. 7 new tests, full suite green.
 
-Nothing else was changed. The two Dev 2-domain gaps (dead `/reports` link, unwired analytics events) and the two cross-team defects (D29, D30) are documented, not fixed — pending direction on priority.
+The two cross-team defects (D29, D30) remain documented, not fixed — they belong to Dev 3 and Dev 4 respectively, pending their direction on priority.
