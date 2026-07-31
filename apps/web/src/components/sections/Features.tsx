@@ -97,7 +97,7 @@ export default function Features() {
     });
 
     return (
-        <section id="features" ref={containerRef} className="py-24 lg:py-32 bg-transparent relative">
+        <section id="features" ref={containerRef} className="py-24 lg:py-32 bg-transparent relative overflow-hidden">
             <div className="max-w-6xl mx-auto px-6 lg:px-8">
 
                 <motion.div

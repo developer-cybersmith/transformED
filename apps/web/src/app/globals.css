@@ -37,6 +37,10 @@
 
 html {
   scroll-behavior: smooth;
+  /* body's overflow-x: hidden alone doesn't stop the viewport itself from
+     scrolling horizontally when a descendant overflows — html is the box the
+     browser actually scrolls. Needed both places. */
+  overflow-x: hidden;
 }
 
 body {

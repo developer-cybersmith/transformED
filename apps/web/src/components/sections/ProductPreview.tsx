@@ -40,10 +40,20 @@ function RealtimeWhiteboardVisual() {
     ];
 
     return (
-        <div className="relative w-full h-[350px] lg:h-[450px] flex items-center justify-center pointer-events-none">
+        <div className="relative w-full h-[260px] sm:h-[350px] lg:h-[450px] flex items-center justify-center pointer-events-none overflow-hidden">
 
-            {/* The central anchor point for the "Key Idea". Set to Left 25% / Top 50% */}
-            <div className="absolute left-[25%] top-[50%] w-0 h-0">
+            {/*
+             * The central anchor point for the "Key Idea". All descendants are
+             * positioned in fixed px offsets calibrated for the desktop column
+             * width (~500-600px) -- on a ~340px mobile column those offsets
+             * (branch nodes at left:210px, chaos words up to x:±220, the
+             * 500px SVG) land past the edge and get clipped, reading as
+             * content that "flies off screen and never comes back". Scaling
+             * the whole anchor down shrinks every descendant's offset
+             * proportionally around this same zero-size point, so the
+             * diagram keeps its shape but fits the narrower viewport.
+             */}
+            <div className="absolute left-[25%] top-[50%] w-0 h-0 scale-[0.48] sm:scale-[0.8] lg:scale-100">
 
                 {/* --- STATE 0: Chaos Floating Phrases --- */}
                 {chaosWords.map((word, i) => (

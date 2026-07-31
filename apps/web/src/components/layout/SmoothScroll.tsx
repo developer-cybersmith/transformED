@@ -13,6 +13,17 @@ export default function SmoothScroll({
     const pathname = usePathname();
 
     useEffect(() => {
+        // Native touch scrolling is already smooth and doesn't need Lenis.
+        // Lenis's touch virtualization recomputes scroll bounds off a
+        // ResizeObserver on document.body -- any section whose DOM mutates
+        // continuously (e.g. Hero's typewriter demo, ticking every 24-65ms)
+        // fires that resize mid-scroll, and Lenis snaps the visual position
+        // back toward its last cached target. Desktop wheel input isn't
+        // affected, so only skip Lenis on coarse-pointer (touch) devices.
+        if (window.matchMedia("(pointer: coarse)").matches) {
+            return;
+        }
+
         const lenis = new Lenis({
             duration: 1.2,
             easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), // expoOut easing
