@@ -45,7 +45,9 @@ export interface PlayerStore {
   // ── State ──────────────────────────────────────────────────────────────────
   status: PlayerStatus;
   lesson: LessonPackage | null;
-  /** Ephemeral session ID — generated on loadLesson; replaced by WS session_id in Sprint 2. */
+  /** Server-minted session id (D18/Story 2-39) -- empty until Player.tsx's
+   *  POST /api/assessment/sessions call resolves and calls setSessionId().
+   *  Never client-generated; a client-invented id here is exactly D18. */
   sessionId: string;
   currentSegmentIndex: number;
   /** String slide_id from NarrationTimestamp — NOT an array index. */
@@ -80,7 +82,7 @@ export interface PlayerStore {
    *  after a retry-triggered refetch) WITHOUT resetting playback progress --
    *  unlike loadLesson(), which is only for starting a lesson from scratch. */
   refreshLessonMedia: (pkg: LessonPackage) => void;
-  /** Override the session ID once the WebSocket handshake provides a real one (Sprint 2). */
+  /** Sets the real session id once POST /api/assessment/sessions resolves (D18/Story 2-39). */
   setSessionId: (id: string) => void;
   play: () => void;
   pause: () => void;
@@ -143,7 +145,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({
       status: 'IDLE',
       lesson: pkg,
-      sessionId: crypto.randomUUID(),
+      // Empty until the caller (Player.tsx) mints a real one via
+      // POST /api/assessment/sessions and calls setSessionId() (D18/Story
+      // 2-39) -- a client-invented id here was exactly D18: the backend
+      // ownership check correctly 404'd every quiz/teach-back submission
+      // because the id had never existed server-side.
+      sessionId: '',
       currentSegmentIndex: 0,
       currentSlideId: firstTimestamp?.slide_id ?? null,
       audioPositionMs: 0,
