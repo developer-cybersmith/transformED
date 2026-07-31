@@ -156,3 +156,6 @@ docs/LOCAL_DEV_SETUP.md
 
 # Broken WSL virtualenv — local artifact, never commit
 apps/api/.venv-broken-wsl/
+
+.vercel
+.env*
