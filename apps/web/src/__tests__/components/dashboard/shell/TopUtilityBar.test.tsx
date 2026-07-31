@@ -49,3 +49,52 @@ describe('TopUtilityBar — profile menu', () => {
     expect(avatar.src).not.toContain(encodeURIComponent('robert@example.com'));
   });
 });
+
+describe('TopUtilityBar — mobile nav (Sidebar is hidden lg:flex with no other mobile entry point)', () => {
+  it('opens on click, showing every Sidebar nav destination plus Settings and Sign Out', async () => {
+    const user = userEvent.setup();
+    render(<TopUtilityBar />);
+
+    await user.click(screen.getByRole('button', { name: /toggle navigation menu/i }));
+
+    expect(screen.getByRole('link', { name: /dashboard/i })).not.toBeNull();
+    expect(screen.getByRole('link', { name: /my library/i })).not.toBeNull();
+    expect(screen.getByRole('link', { name: /upload pdf/i })).not.toBeNull();
+    expect(screen.getByRole('link', { name: /reports/i })).not.toBeNull();
+    expect(screen.getByRole('link', { name: /settings/i })).not.toBeNull();
+    expect(screen.getByText('Sign Out')).not.toBeNull();
+  });
+
+  it('closes on Escape', async () => {
+    const user = userEvent.setup();
+    render(<TopUtilityBar />);
+
+    await user.click(screen.getByRole('button', { name: /toggle navigation menu/i }));
+    expect(screen.getByRole('link', { name: /dashboard/i })).not.toBeNull();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: /dashboard/i })).toBeNull());
+  });
+
+  it('closes after a nav link is clicked', async () => {
+    const user = userEvent.setup();
+    render(<TopUtilityBar />);
+
+    await user.click(screen.getByRole('button', { name: /toggle navigation menu/i }));
+    await user.click(screen.getByRole('link', { name: /my library/i }));
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: /my library/i })).toBeNull());
+  });
+
+  it('calls logout and closes when Sign Out is clicked', async () => {
+    const user = userEvent.setup();
+    render(<TopUtilityBar />);
+
+    await user.click(screen.getByRole('button', { name: /toggle navigation menu/i }));
+    await user.click(screen.getByText('Sign Out'));
+
+    expect(logoutMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByText('Sign Out')).toBeNull());
+  });
+});

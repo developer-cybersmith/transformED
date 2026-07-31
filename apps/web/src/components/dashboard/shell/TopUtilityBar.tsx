@@ -2,14 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Search, Bell, Flame, Settings, LogOut } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Search, Bell, Flame, Settings, LogOut, Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
-import { getInitials } from "@/lib/utils";
+import { getInitials, cn } from "@/lib/utils";
+import { mainNavItems } from "@/components/dashboard/shell/Sidebar";
 
 export function TopUtilityBar() {
     const { user, logout } = useAuth();
+    const pathname = usePathname();
     const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+    const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
     const profileMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -34,10 +38,87 @@ export function TopUtilityBar() {
         };
     }, [isProfileMenuOpen]);
 
+    // Sidebar (the only place these routes were reachable from) is `hidden
+    // lg:flex` with no mobile equivalent -- below lg a logged-in user had no
+    // way to reach Dashboard/Library/Upload/Reports except typing the URL.
+    useEffect(() => {
+        if (!isMobileNavOpen) return;
+
+        function handleEscape(event: KeyboardEvent) {
+            if (event.key === "Escape") setIsMobileNavOpen(false);
+        }
+
+        document.addEventListener("keydown", handleEscape);
+        return () => document.removeEventListener("keydown", handleEscape);
+    }, [isMobileNavOpen]);
+
     const displayName = user?.full_name || user?.email || "Guest";
 
     return (
         <header className="flex-shrink-0 h-24 px-8 lg:px-12 flex items-center justify-between relative z-40">
+
+            {/* Mobile Nav Toggle — Sidebar is hidden below lg with no other entry point */}
+            <button
+                suppressHydrationWarning
+                type="button"
+                onClick={() => setIsMobileNavOpen((open) => !open)}
+                aria-label="Toggle navigation menu"
+                aria-haspopup="menu"
+                aria-expanded={isMobileNavOpen}
+                className="lg:hidden mr-3 w-10 h-10 flex items-center justify-center rounded-full bg-white/60 hover:bg-white border border-neutral-100 shadow-sm transition-colors text-neutral-500 hover:text-neutral-800 shrink-0"
+            >
+                {isMobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+
+            <AnimatePresence>
+                {isMobileNavOpen && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.15 }}
+                        className="lg:hidden absolute top-full left-4 right-4 mt-2 p-1.5 rounded-2xl bg-white border border-neutral-100 shadow-[0_8px_30px_rgb(0,0,0,0.08)] z-20"
+                    >
+                        {mainNavItems.map((item) => {
+                            const isActive = pathname === item.href;
+                            return (
+                                <Link
+                                    key={item.name}
+                                    href={item.href}
+                                    onClick={() => setIsMobileNavOpen(false)}
+                                    className={cn(
+                                        "flex items-center gap-3 px-4 py-2.5 rounded-xl text-[14px] transition-colors",
+                                        isActive ? "text-[var(--accent-primary-hover)] font-medium bg-[var(--accent-primary)]/8" : "text-neutral-600 hover:bg-black/5 hover:text-neutral-900"
+                                    )}
+                                >
+                                    <item.icon className="w-4 h-4" />
+                                    {item.name}
+                                </Link>
+                            );
+                        })}
+                        <div className="h-px bg-neutral-100 my-1.5 mx-2" />
+                        <Link
+                            href="/settings"
+                            onClick={() => setIsMobileNavOpen(false)}
+                            className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-[14px] text-neutral-600 hover:bg-black/5 hover:text-neutral-900 transition-colors"
+                        >
+                            <Settings className="w-4 h-4" />
+                            Settings
+                        </Link>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsMobileNavOpen(false);
+                                logout();
+                            }}
+                            className="flex w-full items-center gap-3 px-4 py-2.5 rounded-xl text-[14px] text-neutral-600 hover:bg-black/5 hover:text-neutral-900 transition-colors"
+                        >
+                            <LogOut className="w-4 h-4" />
+                            Sign Out
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Search Widget */}
             <div className="flex-1 max-w-md hidden md:flex">

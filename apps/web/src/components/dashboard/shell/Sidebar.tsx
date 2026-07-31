@@ -9,7 +9,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
-const mainNavItems = [
+export const mainNavItems = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "My Library", href: "/library", icon: Library },
     { name: "Upload PDF", href: "/upload", icon: UploadCloud },
