@@ -131,7 +131,7 @@ export function TopUtilityBar() {
                         <input
                             suppressHydrationWarning
                             type="text"
-                            className="block w-full py-2.5 px-0 bg-transparent border-0 text-[14px] placeholder:text-neutral-400/80 focus:ring-0 outline-none text-neutral-800 placeholder:font-light"
+                            className="block w-full py-2.5 px-0 bg-transparent border-0 text-base sm:text-[14px] placeholder:text-neutral-400/80 focus:ring-0 outline-none text-neutral-800 placeholder:font-light"
                             placeholder="Find lessons, concepts, insights..."
                         />
                         <div className="pr-3 flex items-center gap-1 opacity-70 group-focus-within:opacity-100 transition-opacity">
