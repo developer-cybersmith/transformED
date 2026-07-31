@@ -24,7 +24,7 @@ function pathRequiresOnboarding(pathname: string): boolean {
     return ONBOARDING_GATED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     const { supabaseResponse, user, supabase } = await updateSession(request);
     const { pathname } = request.nextUrl;
 
@@ -49,7 +49,7 @@ export async function middleware(request: NextRequest) {
                 return NextResponse.redirect(new URL("/onboarding", request.url));
             }
         } catch {
-            // Network/exception failure — fail open rather than crash middleware
+            // Network/exception failure — fail open rather than crash proxy
             // for every /lesson and /upload request.
         }
     }
