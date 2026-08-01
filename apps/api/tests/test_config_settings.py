@@ -34,6 +34,16 @@ def _make_settings(monkeypatch, **overrides: str) -> Settings:
     """Create a Settings instance with required env vars set via monkeypatch."""
     for key, val in _REQUIRED.items():
         monkeypatch.setenv(key, val)
+    # Explicitly isolate from whatever a developer's own local .env file
+    # happens to contain -- docs/DEPLOYMENT-OPS-NOTES.md tells every
+    # teammate to add APPROVED_EMAILS (and ADMIN_EMAILS is just as easy to
+    # have set locally) to their own apps/api/.env, and pydantic-settings
+    # reads that file as a lower-priority source than real env vars but a
+    # higher-priority one than the field default. Without this, any test
+    # that doesn't explicitly override these two would silently pass or
+    # fail depending on what's in the runner's own .env, not the code.
+    monkeypatch.setenv("ADMIN_EMAILS", "")
+    monkeypatch.setenv("APPROVED_EMAILS", "")
     for key, val in overrides.items():
         monkeypatch.setenv(key.upper(), val)
     return Settings()
