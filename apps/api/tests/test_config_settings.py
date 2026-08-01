@@ -163,3 +163,40 @@ def test_admin_emails_accepts_json_array_and_lowercases(monkeypatch) -> None:
     silently locking out any admin whose JWT email casing differed."""
     s = _make_settings(monkeypatch, admin_emails='["Admin@Foo.com", "Other@Bar.com"]')
     assert s.admin_emails == ["admin@foo.com", "other@bar.com"]
+
+
+# ── approved_emails / _parse_approved_emails (beta access gate) ─────────────────
+
+
+@pytest.mark.unit
+def test_approved_emails_default_is_empty(monkeypatch) -> None:
+    """Empty by default -- require_approved_user must fail closed, not open,
+    when this is unset, so an empty allowlist is the correct/safe default."""
+    s = _make_settings(monkeypatch)
+    assert s.approved_emails == []
+
+
+@pytest.mark.unit
+def test_approved_emails_parses_comma_separated_string_and_lowercases(monkeypatch) -> None:
+    s = _make_settings(monkeypatch, approved_emails="Student@Foo.com, Other@Bar.com ,")
+    assert s.approved_emails == ["student@foo.com", "other@bar.com"]
+
+
+@pytest.mark.unit
+def test_approved_emails_accepts_json_array_and_lowercases(monkeypatch) -> None:
+    s = _make_settings(monkeypatch, approved_emails='["Student@Foo.com", "Other@Bar.com"]')
+    assert s.approved_emails == ["student@foo.com", "other@bar.com"]
+
+
+@pytest.mark.unit
+def test_admin_emails_and_approved_emails_are_independent(monkeypatch) -> None:
+    """The two allowlists share a parser (_parse_email_allowlist) but must
+    remain fully independent fields -- setting one must never leak into
+    the other."""
+    s = _make_settings(
+        monkeypatch,
+        admin_emails="admin@foo.com",
+        approved_emails="student@foo.com",
+    )
+    assert s.admin_emails == ["admin@foo.com"]
+    assert s.approved_emails == ["student@foo.com"]

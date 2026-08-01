@@ -30,6 +30,18 @@ FAKE_JOB_ID = "33333333-3333-3333-3333-333333333333"
 MINIMAL_PDF = b"%PDF-1.4 minimal\n%%EOF"
 
 
+def _approved_settings() -> MagicMock:
+    """Settings mock with FAKE_USER's email on the beta-access allowlist.
+
+    upload_lesson depends on ApprovedUser (require_approved_user), which 403s
+    unless the JWT email is in settings.approved_emails — every test here
+    needs this override or it never reaches the actual behavior under test.
+    """
+    settings = MagicMock()
+    settings.approved_emails = [FAKE_USER["email"]]
+    return settings
+
+
 def _make_supabase_mock(
     book_id: str = FAKE_BOOK_ID,
     lesson_id: str = FAKE_LESSON_ID,
@@ -106,7 +118,7 @@ def _make_arq_mock(job_id: str = FAKE_JOB_ID) -> AsyncMock:
 @pytest.fixture()
 def client() -> TestClient:
     """TestClient with all external deps mocked."""
-    from app.dependencies import get_arq_redis, get_current_user
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
     from app.main import app
 
     sb_mock = _make_supabase_mock()
@@ -114,11 +126,41 @@ def client() -> TestClient:
 
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
     app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+    app.dependency_overrides[get_settings] = _approved_settings
 
     with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
         yield TestClient(app, raise_server_exceptions=True)
 
     app.dependency_overrides.clear()
+
+
+# ── POST /lessons — beta access gate ────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_upload_lesson_403_not_approved() -> None:
+    """A signed-up user whose email is not on the beta-access allowlist is
+    rejected with 403 before any row is created or the file is processed --
+    upload_lesson depends on ApprovedUser, not CurrentUser."""
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    sb_mock = _make_supabase_mock()
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    app.dependency_overrides[get_settings] = lambda: MagicMock(approved_emails=[])
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
+        resp = TestClient(app, raise_server_exceptions=True).post(
+            "/api/content/lessons",
+            files={"file": ("chapter1.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 403
+    sb_mock.table.assert_not_called()
 
 
 # ── POST /lessons — happy path ─────────────────────────────────────────────────
@@ -700,7 +742,7 @@ def test_upload_lesson_429_rate_limit() -> None:
     """6th upload from the same JWT sub within a minute returns 429 with Retry-After header."""
     import jwt as pyjwt
 
-    from app.dependencies import get_arq_redis, get_current_user
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
     from app.main import app
 
     # Use a unique sub so this test's counter is isolated from other tests
@@ -720,6 +762,7 @@ def test_upload_lesson_429_rate_limit() -> None:
         "sub": "rate-limit-test-unique-sub-for-429",
     }
     app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+    app.dependency_overrides[get_settings] = _approved_settings
 
     with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
         tc = TestClient(app, raise_server_exceptions=False)
