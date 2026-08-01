@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # `NoDecode` disables pydantic-settings' default behavior of trying to
     # JSON-decode any list-typed env value before validation runs — without
     # it, a non-JSON comma-separated string (the documented format below)
-    # raises a SettingsError before _parse_admin_emails ever sees it. With
+    # raises a SettingsError before _parse_email_allowlist ever sees it. With
     # NoDecode, the raw env string always reaches the validator untouched,
     # which then handles both a JSON array and a comma-separated string itself.
     admin_emails: Annotated[list[str], NoDecode] = Field(
@@ -121,9 +121,31 @@ class Settings(BaseSettings):
         ),
     )
 
-    @field_validator("admin_emails", mode="before")
-    @classmethod
-    def _parse_admin_emails(cls, v: object) -> object:
+    # ── Beta access gate ──────────────────────────────────────────────────────
+    # Self-serve signup is open, but /lessons (upload), /onboarding/submit, and
+    # /teachback all trigger real OpenAI spend with no cost gate of their own.
+    # Same minimal-viable allowlist pattern as admin_emails (see above) — no DB
+    # migration required. Note: an empty allowlist means require_approved_user
+    # rejects EVERYONE (fail closed), same as admin_emails/require_admin today
+    # — this is a security boundary, not a UX nicety, so an unset env var must
+    # never silently mean "let everyone through".
+    #
+    # apps/web's proxy.ts checks the SAME env var name directly (its own copy,
+    # not NEXT_PUBLIC_ — never exposed to the browser) since the frontend talks
+    # to Supabase directly and has no dependency on this backend being up.
+    # Keep both copies in sync manually for now — see
+    # docs/DEPLOYMENT-OPS-NOTES.md.
+    approved_emails: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "Comma-separated allowlist of emails approved for dashboard/upload "
+            "access (APPROVED_EMAILS env var). Also accepts a JSON array string. "
+            "Checked against the JWT's `email` claim by require_approved_user()."
+        ),
+    )
+
+    @staticmethod
+    def _parse_email_allowlist(v: object) -> object:
         # v is either a raw env string (comma-separated or a JSON array
         # literal, thanks to NoDecode above) or an already-built list (when
         # Settings() is constructed directly, e.g. in tests). Story 2-25 code
@@ -141,6 +163,16 @@ class Settings(BaseSettings):
                 email.strip().lower() for email in v if isinstance(email, str) and email.strip()
             ]
         return v
+
+    @field_validator("admin_emails", mode="before")
+    @classmethod
+    def _parse_admin_emails(cls, v: object) -> object:
+        return cls._parse_email_allowlist(v)
+
+    @field_validator("approved_emails", mode="before")
+    @classmethod
+    def _parse_approved_emails(cls, v: object) -> object:
+        return cls._parse_email_allowlist(v)
 
     # ── Cost limits (PRD §12) ─────────────────────────────────────────────────
     max_lesson_cost_usd: float = Field(

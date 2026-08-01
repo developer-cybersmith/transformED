@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from app.core.db import get_supabase, rows, single_row
 from app.core.rate_limit import _get_user_key, limiter
 from app.core.storage import sign_storage_path
-from app.dependencies import ArqRedis, CurrentUser
+from app.dependencies import ApprovedUser, ArqRedis, CurrentUser
 
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
 # recorded): single source of truth for the tier default/valid set, shared
@@ -249,7 +249,7 @@ def _resolve_lesson_content(
 async def upload_lesson(
     request: Request,
     response: Response,
-    current_user: CurrentUser,
+    current_user: ApprovedUser,
     arq_redis: ArqRedis,
     file: UploadFile = File(..., description="PDF file to process (max 50 MB)"),  # noqa: B008
     tier: str = Form(  # noqa: B008
