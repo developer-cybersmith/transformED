@@ -25,6 +25,9 @@ const fraunces = Fraunces({
 
 export const metadata: Metadata = {
   title: "HIE — Human Intelligence Engine",
+  icons: {
+    icon: "/favicon.jpeg",
+  },
   description:
     "HIE combats cognitive decline and 7-second attention spans by transforming passive learning into an AI Tutor that monitors and prompts to build IQ, EQ, and Critical Thinking.",
   keywords: [
