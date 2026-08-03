@@ -282,6 +282,26 @@ project. **This closes D38 and is what moves Phase 2 to `✅ Verified`.**
 | Duplicate `(book_id, chapter_index)` | 0 | **0** — constraint accepted by live data |
 | `lessons.chapter_id` values | — | 27 / 27 NULL, correct: nothing links a chapter yet |
 
+**The four exit tests, executed against the live project 2026-08-03** — not inferred from the
+schema, executed and observed:
+
+| # | Test | Result on live Supabase |
+|:--:|---|---|
+| 1 | Insert a chapter with `lesson_id = NULL` | **SUCCEEDED** — row created, `lesson_id: None`, `boundary_confidence: 'toc'`, pages 272–306 |
+| 2 | Insert a duplicate `(book_id, chapter_index)` | **REJECTED — `23505`** `chapters_book_id_chapter_index_key` |
+| 2b | Out-of-enum `boundary_confidence` | **REJECTED — `23514`** `chapters_boundary_confidence_check` |
+| 3 | Existing 23 rows readable and valid | **PASSED** — all 23 intact, backfilled, none orphaned |
+| 4 | `supabase db reset` | **Not runnable** — Supabase CLI not installed. Substituted by replaying all 10 migration files in filename order (container + local Postgres). |
+
+**And the criterion that Phase 3 actually depends on:** the `lesson_id = NULL` chapter was
+**visible to its owner (1 row), invisible to another user (0) and to `anon` (0)**. Under the old
+`lessons`-rooted policies that row would have been invisible to *everyone* —
+`EXISTS (SELECT 1 FROM lessons WHERE lesson_id = NULL)` is never true. This is the re-rooting
+doing its job on production data.
+
+**Cleanup verified:** test row deleted, counts back to 27 / 23 / 27 / 2,161, zero `ZZZ-VERIFY`
+rows, zero chapters with a NULL `lesson_id`. Production is exactly as it was.
+
 **RLS re-rooting verified behaviourally on the live project**, by minting JWTs with the real
 `SUPABASE_JWT_SECRET` and querying PostgREST as each identity:
 
