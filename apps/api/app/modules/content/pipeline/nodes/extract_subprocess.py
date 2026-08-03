@@ -511,7 +511,7 @@ def extract_pdf(pdf_path: str, img_dir: str, ocr_threshold: int) -> dict[str, An
     }
 
 
-def extract_text_only(pdf_path: str) -> dict[str, Any]:
+def extract_text_only(pdf_path: str, front_pages: int = 0, head_chars: int = 0) -> dict[str, Any]:
     """Per-page text + the PDF outline. Nothing else.
 
     This is what chapter detection (Story 1-10) consumes, and deliberately ALL it
@@ -531,6 +531,22 @@ def extract_text_only(pdf_path: str) -> dict[str, Any]:
     document just as much as text extraction does, and CLAUDE.md §18 requires
     user-uploaded PDFs to be parsed in an isolated subprocess — reading the outline
     in the worker process would be the same class of exposure with a friendlier name.
+
+    Truncation (`front_pages`, `head_chars`) exists for stdout size, and it is not a
+    micro-optimisation. This subprocess returns its result as JSON over a pipe, so
+    a 1,151-page book ships ~2.4 MB of text the caller then re-parses. Measured on
+    the Phase 3 gate: full text put D2L at 14.56 s against a 15 s budget — 3 %
+    headroom, on a machine faster than CI.
+
+    The detector needs full text only for the pages the contents scan can reach,
+    and `TITLE_WINDOW` characters everywhere else. Passing those two numbers in
+    (rather than hardcoding the detector's constants here) keeps the extractor
+    ignorant of detection policy.
+
+    Args:
+        pdf_path:    absolute path to the PDF.
+        front_pages: pages from the start returned in FULL. 0 = no truncation.
+        head_chars:  characters kept per page beyond `front_pages`. 0 = no truncation.
 
     Returns:
         ``{"page_count": int, "page_texts": list[str], "toc": list[dict]}`` where
@@ -556,11 +572,15 @@ def extract_text_only(pdf_path: str) -> dict[str, Any]:
                 }
             )
 
+        truncate = front_pages > 0 and head_chars > 0
         page_texts: list[str] = []
         for page_idx in range(page_count):
             page = pdf_doc[page_idx]
             try:
-                page_texts.append(_page_text(page))
+                text = _page_text(page)
+                if truncate and page_idx >= front_pages:
+                    text = text[:head_chars]
+                page_texts.append(text)
             finally:
                 # Same per-page cache discipline as extract_pdf (AC-3, Story 2-0):
                 # memory stays O(1 page) on a 1,000-page book.
@@ -582,7 +602,9 @@ def main() -> None:
     chapter-detection path added by Story 1-10.
     """
     if len(sys.argv) >= 3 and sys.argv[1] == _TEXT_ONLY_FLAG:  # noqa: PLR2004
-        sys.stdout.write(json.dumps(extract_text_only(sys.argv[2])))
+        front = int(sys.argv[3]) if len(sys.argv) > 3 else 0  # noqa: PLR2004
+        head = int(sys.argv[4]) if len(sys.argv) > 4 else 0  # noqa: PLR2004
+        sys.stdout.write(json.dumps(extract_text_only(sys.argv[2], front, head)))
         return
 
     if len(sys.argv) < 4:  # noqa: PLR2004

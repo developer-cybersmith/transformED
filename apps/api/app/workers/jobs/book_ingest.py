@@ -45,7 +45,16 @@ async def _extract_text_only(pdf_bytes: bytes) -> dict[str, Any]:
     CLAUDE.md §18: user-uploaded PDFs are parsed in a subprocess, never in the
     worker process. That applies to `get_toc()` too, which is why the outline is
     read out here rather than in this module.
+
+    The two truncation numbers come from the detector, not from the extractor —
+    full text for the pages the contents scan can reach, `TITLE_WINDOW` characters
+    everywhere else. Passing them keeps the extractor ignorant of detection policy
+    while stopping a 1,151-page book from shipping 2.4 MB of JSON through a pipe
+    for the sake of 400-character lookups.
     """
+    from app.modules.content.chapter_detection.gate import CONTENTS_SCAN_PAGES
+    from app.modules.content.chapter_detection.text import TITLE_WINDOW
+
     with tempfile.TemporaryDirectory(prefix="book-ingest-") as tmp:
         pdf_path = Path(tmp) / "source.pdf"
         pdf_path.write_bytes(pdf_bytes)
@@ -56,6 +65,8 @@ async def _extract_text_only(pdf_bytes: bytes) -> dict[str, Any]:
             _SUBPROCESS_MODULE,
             "--text-only",
             str(pdf_path),
+            str(CONTENTS_SCAN_PAGES),
+            str(TITLE_WINDOW),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
