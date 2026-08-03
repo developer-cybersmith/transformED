@@ -88,9 +88,10 @@ constraints that current data already satisfies. No existing row can be invalida
 
 ---
 
-## ⚠️ Proposed scope addition — RLS re-rooting — NEEDS SIGN-OFF BEFORE IMPLEMENTATION
+## RLS re-rooting — IN SCOPE (signed off by Dev 1, 2026-08-03)
 
-**Not in the tracker's Phase 2 spec. Do not implement until Dev 1 confirms.**
+**Not in the tracker's original Phase 2 spec — added to this story by decision, because we are
+already paying for one 4-developer frozen-contract review and deferring would require a second.**
 
 All four `chapters` RLS policies and all four `chunks` RLS policies root through
 `lessons.user_id` (`20260611000000_initial_schema.sql:429-522`):
@@ -118,24 +119,36 @@ with `chunks` re-rooted `chunks → chapters → books`. Deferring means a secon
 review later, and a latent trap that only surfaces when Phase 6 adds
 `GET /books/{book_id}/chapters` or the frontend reads chapters directly.
 
-**If sign-off is given**, add:
+### Additional acceptance criteria
 
-- AC14 — the 4 `chapters` policies root through `books.user_id`, not `lessons.user_id`
-- AC15 — the 4 `chunks` policies root `chunks → chapters → books`
-- AC16 — with RLS **enabled** and a non-service-role connection acting as user A: a chapter
-  with `lesson_id = NULL` belonging to A's book is selectable by A and **not** by user B.
-  This must be tested with `SET LOCAL ROLE` / a JWT-bearing connection — a service-role
-  connection proves nothing here, because it bypasses the thing under test.
+14. All four `chapters` policies (`select`/`insert`/`update`/`delete` own) root through
+    `books.user_id` via `chapters.book_id`, not through `lessons.user_id`. The four old
+    policies are **dropped by name** before the new ones are created — Postgres does not
+    replace a policy on `CREATE`, and two policies on the same command OR together, which
+    would widen access rather than change it.
+15. All four `chunks` policies root `chunks → chapters → books`. Same drop-then-create rule.
+16. With RLS **enabled**, on a connection that is *not* service-role and carries user A's
+    identity: a chapter with `lesson_id = NULL` belonging to A's book is selectable by A, and
+    **not** selectable by user B. A service-role connection proves nothing here — it bypasses
+    the exact mechanism under test, so the test must set the role/JWT explicitly and assert
+    that a service-role run and a user run give *different* results.
+17. `lessons`, `books` and every other table's policies are untouched — asserted by name
+    against `pg_policies`, so a stray `DROP POLICY` cannot pass unnoticed.
 
-**If sign-off is refused**, open a `D-nn` entry in `docs/DEFECT-REGISTER.md` naming the
-condition that makes it real (a user-scoped read of `chapters`) — binding rule 5: a
-documented limitation without a register ID is a defect wearing a decision's clothes.
+**Why this is safe to do now:** `chapters.book_id` is `NOT NULL` with an FK to `books`
+(`20260625000000:57-59`) and `books.user_id NOT NULL → users` (`:28-37`), so the re-rooted
+predicate is total — it resolves for every existing chapter row, including ones that still
+carry a `lesson_id`. The change is a strict generalisation, not a narrowing: nothing readable
+before becomes unreadable.
+
+**Ordering constraint for the migration file:** re-root the policies **after** the DDL changes,
+so the new policies are created against the final column set.
 
 ---
 
 ## Tasks / Subtasks
 
-- [ ] **T1 — Confirm the RLS scope question above with Dev 1.** Blocks T3's final shape. (AC14–16)
+- [x] **T1 — RLS scope confirmed in scope by Dev 1, 2026-08-03.** (AC14–17)
 - [ ] **T2 — Pre-flight the data** (AC10)
   - [ ] Query for existing duplicate `(book_id, chapter_index)` pairs; record the count in the
         Dev Agent Record. Do not proceed if any exist — report instead.
@@ -149,6 +162,8 @@ documented limitation without a register ID is a defect wearing a decision's clo
   - [ ] `ALTER TABLE public.chapters ADD COLUMN boundary_confidence text NOT NULL DEFAULT 'fallback' CHECK (boundary_confidence IN ('toc','contents','heading','font','fallback'));`
   - [ ] `CREATE INDEX ON public.lessons (chapter_id);`
   - [ ] Header comment in the style of `20260625000000` — what changes, why, and the ADR/plan links
+  - [ ] **After** the DDL: `DROP POLICY` the 4 `chapters` + 4 `chunks` policies by name, then
+        `CREATE POLICY` re-rooted through `books.user_id` (AC14, AC15, AC17)
 - [ ] **T4 — RED: real-Postgres verification harness** (AC11, AC12)
   - [ ] `apps/api/tests/integration/test_migration_chapters_book_scoped.py`
   - [ ] Spin Postgres 15 + pgvector in Docker, replay **every** file in
@@ -157,6 +172,9 @@ documented limitation without a register ID is a defect wearing a decision's clo
   - [ ] Register a `postgres` marker in `apps/api/pyproject.toml` (`--strict-markers` is on)
         and skip cleanly when Docker is unavailable — **skip must be visible, never silent**
   - [ ] Run it and watch it FAIL before T3 is applied
+  - [ ] RLS cases (AC16, AC17) need two identities. Create two `users` rows + two `books`, then
+        exercise the policies on a non-service-role connection — a service-role run must be
+        included as a *contrast* case, showing it sees rows the user connection does not.
 - [ ] **T5 — GREEN** — apply T3, re-run T4 until green (AC1–12)
 - [ ] **T6 — Regression + repo-wide gates** (AC13)
   - [ ] Seed a pre-migration DB with representative `books`/`lessons`/`chapters`/`chunks` rows,
