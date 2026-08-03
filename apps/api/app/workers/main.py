@@ -22,6 +22,7 @@ from arq.connections import RedisSettings
 from app.config import get_settings
 from app.core.langfuse import get_langfuse
 from app.core.queues import PIPELINE_QUEUE
+from app.workers.jobs.book_ingest import book_ingest_job
 from app.workers.jobs.content_pipeline import content_pipeline_job
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class WorkerSettings:
     # ── Job registry ──
     functions = [
         content_pipeline_job,
+        book_ingest_job,
         # Add future jobs here:
         # quiz_generation_job,
         # teachback_evaluation_job,

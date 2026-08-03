@@ -511,10 +511,85 @@ def extract_pdf(pdf_path: str, img_dir: str, ocr_threshold: int) -> dict[str, An
     }
 
 
+def extract_text_only(pdf_path: str) -> dict[str, Any]:
+    """Per-page text + the PDF outline. Nothing else.
+
+    This is what chapter detection (Story 1-10) consumes, and deliberately ALL it
+    consumes. Compared with `extract_pdf` this skips:
+
+      - 300-DPI page rendering and image extraction
+      - the Tesseract OCR fallback
+      - pdfplumber table detection — measured at 579 ms/page in Phase 1, roughly
+        90 % of total extraction cost, and irrelevant to finding a chapter boundary
+      - docling table-run conversion
+      - pdftext font-block extraction
+
+    Phase 1 measured what remains at 2.8-7.9 ms/page: 5.53 s for a 1,671-page book,
+    against 11.1 minutes if the table scan were left in.
+
+    `get_toc()` runs here rather than in the caller on purpose. It parses the
+    document just as much as text extraction does, and CLAUDE.md §18 requires
+    user-uploaded PDFs to be parsed in an isolated subprocess — reading the outline
+    in the worker process would be the same class of exposure with a friendlier name.
+
+    Returns:
+        ``{"page_count": int, "page_texts": list[str], "toc": list[dict]}`` where
+        each toc entry is ``{"level", "title", "page_index"}`` with a 0-based
+        `page_index`. Entries whose destination cannot be resolved are omitted.
+    """
+    import pypdfium2 as pdfium
+
+    pdf_doc = pdfium.PdfDocument(pdf_path)
+    try:
+        page_count = len(pdf_doc)
+
+        toc: list[dict[str, Any]] = []
+        for item in pdf_doc.get_toc():
+            page_index = item.page_index
+            if page_index is None:
+                continue  # bookmark with an unresolvable destination
+            toc.append(
+                {
+                    "level": int(item.level),
+                    "title": (item.title or "").strip(),
+                    "page_index": int(page_index),
+                }
+            )
+
+        page_texts: list[str] = []
+        for page_idx in range(page_count):
+            page = pdf_doc[page_idx]
+            try:
+                page_texts.append(_page_text(page))
+            finally:
+                # Same per-page cache discipline as extract_pdf (AC-3, Story 2-0):
+                # memory stays O(1 page) on a 1,000-page book.
+                page.close()
+    finally:
+        pdf_doc.close()
+
+    return {"page_count": page_count, "page_texts": page_texts, "toc": toc}
+
+
+_TEXT_ONLY_FLAG = "--text-only"
+
+
 def main() -> None:
-    """CLI entry point — called by the ARQ worker's extract_node subprocess."""
+    """CLI entry point — called by the ARQ workers' isolated subprocesses.
+
+    Two modes. The legacy positional form is unchanged and is what
+    `extract_node` still calls (`graph.py:280-290`); `--text-only` is the
+    chapter-detection path added by Story 1-10.
+    """
+    if len(sys.argv) >= 3 and sys.argv[1] == _TEXT_ONLY_FLAG:  # noqa: PLR2004
+        sys.stdout.write(json.dumps(extract_text_only(sys.argv[2])))
+        return
+
     if len(sys.argv) < 4:  # noqa: PLR2004
-        sys.stderr.write("Usage: extract_subprocess <pdf_path> <img_dir> <ocr_threshold>\n")
+        sys.stderr.write(
+            "Usage: extract_subprocess <pdf_path> <img_dir> <ocr_threshold>\n"
+            "       extract_subprocess --text-only <pdf_path>\n"
+        )
         sys.exit(1)
 
     pdf_path_arg = sys.argv[1]
