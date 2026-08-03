@@ -16,6 +16,7 @@ import pytest
 from app.modules.content.chapter_detection.types import DetectedChapter
 
 BOOK_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+STORAGE_PATH = f"uuuuuuuu-uuuu-uuuu-uuuu-uuuuuuuuuuuu/{BOOK_ID}/book.pdf"
 USER_ID = "uuuuuuuu-uuuu-uuuu-uuuu-uuuuuuuuuuuu"
 
 
@@ -89,7 +90,7 @@ async def run_job(store: dict[str, Any], detected: list[DetectedChapter], **kw: 
             ),
         ),
     ):
-        return await book_ingest_job({}, BOOK_ID)
+        return await book_ingest_job({}, BOOK_ID, STORAGE_PATH)
 
 
 @pytest.mark.unit
@@ -174,7 +175,7 @@ async def test_marks_the_book_failed_when_extraction_fails() -> None:
         ),
         pytest.raises(BookIngestError),
     ):
-        await book_ingest_job({}, BOOK_ID)
+        await book_ingest_job({}, BOOK_ID, STORAGE_PATH)
 
     assert {"status": "failed"} in store["books"]["updates"]
 
@@ -194,7 +195,7 @@ async def test_failure_is_reraised_so_arq_can_retry() -> None:
         ),
         pytest.raises(BookIngestError),
     ):
-        await book_ingest_job({}, BOOK_ID)
+        await book_ingest_job({}, BOOK_ID, STORAGE_PATH)
 
 
 def _executable_source(path: str) -> str:

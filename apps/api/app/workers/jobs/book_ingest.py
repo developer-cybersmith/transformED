@@ -94,7 +94,7 @@ def _rows_for(book_id: str, chapters: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
-async def book_ingest_job(ctx: dict[str, Any], book_id: str) -> dict[str, Any]:
+async def book_ingest_job(ctx: dict[str, Any], book_id: str, storage_path: str) -> dict[str, Any]:
     """Detect and store the chapters of *book_id*.
 
     Lifecycle
@@ -114,8 +114,13 @@ async def book_ingest_job(ctx: dict[str, Any], book_id: str) -> dict[str, Any]:
     target, and stale rows beyond the new chapter count are removed.
 
     Args:
-        ctx:     ARQ worker context (redis, settings).
-        book_id: UUID string of the book to ingest.
+        ctx:          ARQ worker context (redis, settings).
+        book_id:      UUID string of the book to ingest.
+        storage_path: Supabase Storage key for the source PDF, passed in rather
+            than reconstructed. The router owns the layout
+            (`{user_id}/{book_id}/{filename}`) and `books` has no column for it,
+            so deriving it here would be a second source of truth that silently
+            breaks the day the router changes.
 
     Returns:
         ``{"book_id", "chapters", "boundary_confidence", "page_count"}``.
@@ -143,7 +148,6 @@ async def book_ingest_job(ctx: dict[str, Any], book_id: str) -> dict[str, Any]:
         if not book:
             raise BookIngestError(f"no books row for book_id={book_id}")
 
-        storage_path = f"{book['user_id']}/{book_id}.pdf"
         try:
             pdf_bytes = supabase.storage.from_(_SOURCE_BUCKET).download(storage_path)
         except Exception as exc:
