@@ -39,7 +39,12 @@ export function useLessonSocket(sessionId: string | null) {
           }
           break;
         case 'tutor_intervene':
-          usePlayerStore.getState().setActiveIntervention(msg.payload);
+          // Same defensive shape as state_change above: ignore a malformed frame
+          // (missing type/message) and a stale/foreign-session frame, rather
+          // than storing a partial payload the component would then crash on.
+          if (msg.payload?.session_id === sid && msg.payload?.type && msg.payload?.message) {
+            usePlayerStore.getState().setActiveIntervention(msg.payload);
+          }
           break;
         case 'ces_update':
           // Not emitted by any live path yet (Dev 3 owns it); no-op.

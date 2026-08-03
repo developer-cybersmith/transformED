@@ -197,7 +197,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   setSessionId: (id) => {
-    set({ sessionId: id });
+    // Review fix: a mid-lesson session re-mint (D18 retry path) must not let a
+    // card tied to the old session linger under the new one.
+    set({ sessionId: id, activeIntervention: null });
   },
 
   clearSeekRequest: () => {
@@ -295,7 +297,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         // fatal, the lesson still ends normally.
       }
     }
-    set({ status: 'ENDED' });
+    // Review fix: a stale card must not survive into the lesson-complete screen.
+    set({ status: 'ENDED', activeIntervention: null });
   },
 
   setTutorState: (s) => {

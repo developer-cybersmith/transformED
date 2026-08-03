@@ -4,7 +4,7 @@ baseline_commit: e34159c
 
 # Story 2.40: TutorInterventionCard Component (S3-03)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -47,6 +47,20 @@ so that I get re-engaged without my audio/lesson progress ever pausing or resett
   - [x] 5.2 GREEN: implement.
 - [x] Task 6 (AC: 9): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
+### Review Findings
+
+- [x] [Review][Patch] Malformed/missing `tutor_intervene` payload crashes the player [apps/web/src/hooks/useLessonSocket.ts:41-43, apps/web/src/components/player/TutorInterventionCard.tsx:28]
+- [x] [Review][Patch] Exit animation never plays — `!visible` guard sits outside `AnimatePresence` [apps/web/src/components/player/TutorInterventionCard.tsx:55-73]
+- [x] [Review][Patch] AC-6 violated: 30s auto-dismiss timer starts on receipt, not on visibility [apps/web/src/components/player/TutorInterventionCard.tsx:33-45]
+- [x] [Review][Patch] No `session_id` validation on `tutor_intervene` dispatch (sibling `state_change` case has one) [apps/web/src/hooks/useLessonSocket.ts:41-43]
+- [x] [Review][Patch] No fallback style for an unrecognized `type` value [apps/web/src/components/player/TutorInterventionCard.tsx]
+- [x] [Review][Patch] `AnimatePresence` child keyed on message text collides across distinct interventions with identical text [apps/web/src/components/player/TutorInterventionCard.tsx:62]
+- [x] [Review][Patch] `activeIntervention` not reset on `endLesson()` or `setSessionId()` [apps/web/src/stores/player.machine.ts]
+- [x] [Review][Patch] Weak test: 30s auto-dismiss test only asserts store state, never the DOM [apps/web/src/__tests__/components/player/TutorInterventionCard.test.tsx]
+- [x] [Review][Patch] AC-7 dispatch test only checks `status`, not other playback fields [apps/web/src/__tests__/hooks/useLessonSocket.test.ts]
+- [x] [Review][Defer] Stale WebSocket instance can still dispatch `tutor_intervene` after the hook has moved to a new session (no `cancelled` guard) [apps/web/src/hooks/useLessonSocket.ts:41-43] — deferred, pre-existing gap shared by every case in this switch, not unique to this diff
+- [x] [Review][Defer] No accessibility affordances (aria-live/role=alert, color-only variant cues) [apps/web/src/components/player/TutorInterventionCard.tsx] — deferred, tracked separately as a dedicated future accessibility pass (S4-04)
+
 ## Dev Notes
 
 ### What NOT to do
@@ -78,6 +92,7 @@ Follow `CheckingInTransition.test.tsx`'s exact pattern (`apps/web/src/__tests__/
 |------|--------|--------|
 | 2026-08-03 | Story created per S3-03 in `docs/dev2-sprint-tracker.md`, cross-referenced against `docs/bmad/epics/epic-2-lesson-player.md`. Branch `sprint3/s3-03-tutor-intervention-card` off `main`. | Dev 2 |
 | 2026-08-03 | Implemented all 6 tasks, TDD (RED confirmed before each GREEN). Full `apps/web` suite: 56 files / 598 tests passing. `tsc --noEmit` clean (after clearing a stale, gitignored `.next/` build-cache artifact from an unrelated branch). `eslint` clean on every touched file (removed one unused `useRef` import found during lint; the 3 pre-existing `useLessonSocket.ts` disable-directive warnings verified unrelated via `git stash`). | Dev 2 |
+| 2026-08-03 | 3-agent adversarial code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor). 9 patch findings applied, 2 deferred, 3 dismissed. Full suite 56 files / 605 tests passing, `tsc --noEmit` clean, `eslint` clean. Status → done. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -107,3 +122,17 @@ Follow `CheckingInTransition.test.tsx`'s exact pattern (`apps/web/src/__tests__/
 - `apps/web/src/__tests__/hooks/useLessonSocket.test.ts` (MODIFIED — removed `tutor_intervene` from the no-op `it.each`; new dedicated dispatch test; fixture reset updated)
 - `apps/web/src/__tests__/components/player/TutorInterventionCard.test.tsx` (NEW — full visibility/variant/dismissal test suite)
 - `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED — new mount-presence test)
+
+### Review Round (2026-08-03) — 3-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor)
+
+9 patch findings applied, 2 deferred (see `docs/stories/deferred-work.md`), 3 dismissed as noise (server-owned guard rules, a redundant-but-harmless test, a Tailwind-v4-false-positive on `text-current/60`).
+
+**Design note on the exit-animation finding:** both Blind Hunter and Edge Case Hunter independently flagged that `exit={{...}}` never plays because `if (!visible) return null` sits outside `AnimatePresence`. The literal fix (move the guard inside, keep `AnimatePresence` mounted) would make dismissal *animated* — but AC-3 explicitly requires the card to "vanish IMMEDIATELY" on a `TEACH_BACK` transition. An animated exit directly contradicts that wording for at least one of the three removal paths. Resolved by removing `AnimatePresence`/`exit` entirely rather than making it functional — the dead code was itself the defect (implying motion that never happened), and AC-3/AC-6 never require an animated exit, only the enter slide-in (AC-5).
+
+**Fixes applied:**
+- `useLessonSocket.ts`: `tutor_intervene` now validates `session_id === sid` and requires `type`/`message` present (mirrors the sibling `state_change` case) before dispatching — closes both the crash-on-malformed-payload and the no-session-validation findings with one change.
+- `TutorInterventionCard.tsx`: removed `AnimatePresence`/`exit` (see design note above); 30s timer effect now gated on `visible` (not just `activeIntervention`) so a payload arriving during `TEACH_BACK` doesn't burn its window before the student ever sees it; added `DEFAULT_VARIANT_STYLE` fallback for an unrecognized `type`; replaced the message-text-only `key` with `JSON.stringify(activeIntervention)` (content-derived, not ref/effect-derived — the project's lint config's `react-hooks/refs`/`react-hooks/set-state-in-effect` rules reject both a ref-mutated-during-render counter and a `setState`-in-`useEffect` counter, so a pure render-time key was the only compliant option).
+- `player.machine.ts`: `endLesson()` and `setSessionId()` both now also clear `activeIntervention`.
+- Test suites strengthened per findings 8/9 (DOM assertion added to the 30s-dismiss test; AC-7 test now checks `currentSegmentIndex`/`audioPositionMs`/`tutorState` alongside `status`), plus new tests for every other patch (malformed payload, wrong session_id, visibility-gated timer, unrecognized-type fallback, same-message-different-type remount, `endLesson`/`setSessionId` reset).
+
+Full `apps/web` suite after the review round: **56 files, 605 tests** (598 + 7 net new), all passing. `tsc --noEmit` clean. `eslint` clean on every touched file (one real lint error surfaced and fixed mid-patch: `react-hooks/set-state-in-effect` on the first key-counter attempt, then `react-hooks/refs` on the ref-based retry — both are stricter-than-default rules in this project's config, resolved by switching to the pure-render-time `JSON.stringify` key).

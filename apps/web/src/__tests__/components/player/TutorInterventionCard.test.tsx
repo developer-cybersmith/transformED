@@ -88,7 +88,7 @@ describe('TutorInterventionCard dismissal (S3-03 AC-6)', () => {
     expect(usePlayerStore.getState().activeIntervention).toBeNull();
   });
 
-  it('auto-dismisses after exactly 30000ms', () => {
+  it('auto-dismisses after exactly 30000ms, removing the card from the DOM (not just the store)', () => {
     vi.useFakeTimers();
     act(() => {
       usePlayerStore.setState({
@@ -96,6 +96,41 @@ describe('TutorInterventionCard dismissal (S3-03 AC-6)', () => {
       });
     });
     render(<TutorInterventionCard />);
+
+    act(() => {
+      vi.advanceTimersByTime(29_999);
+    });
+    expect(usePlayerStore.getState().activeIntervention).not.toBeNull();
+    expect(screen.queryByTestId('tutor-intervention-card')).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+    expect(screen.queryByTestId('tutor-intervention-card')).toBeNull();
+  });
+
+  it('does not start the 30s window until the card becomes visible (AC-6, review fix)', () => {
+    vi.useFakeTimers();
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'x' },
+        status: 'TEACH_BACK', // hidden by the render-level guard
+      });
+    });
+    render(<TutorInterventionCard />);
+
+    // Well past 30s while hidden -- the clock must not have been running.
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(usePlayerStore.getState().activeIntervention).not.toBeNull();
+
+    // Becomes visible now -- a fresh 30s window starts from this moment.
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    expect(screen.queryByTestId('tutor-intervention-card')).not.toBeNull();
 
     act(() => {
       vi.advanceTimersByTime(29_999);
@@ -159,5 +194,39 @@ describe('TutorInterventionCard dismissal (S3-03 AC-6)', () => {
         vi.advanceTimersByTime(30_000);
       });
     }).not.toThrow();
+  });
+});
+
+describe('TutorInterventionCard robustness (review fixes)', () => {
+  it('falls back to a default style (and does not throw) for an unrecognized type value', () => {
+    act(() => {
+      usePlayerStore.setState({
+        // A malformed/unexpected type that TS would normally reject -- simulates
+        // a runtime value from a server bug or contract drift.
+        activeIntervention: { session_id: 's1', type: 'unknown' as never, message: 'x' },
+      });
+    });
+    expect(() => render(<TutorInterventionCard />)).not.toThrow();
+    const card = screen.getByTestId('tutor-intervention-card');
+    expect(card.getAttribute('data-variant')).toBe('unknown');
+    expect(screen.getByText('x')).not.toBeNull();
+  });
+
+  it('remounts (fresh render identity) when a replacement intervention has identical message text but a different type', () => {
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'Same text' },
+      });
+    });
+    render(<TutorInterventionCard />);
+    expect(screen.getByTestId('tutor-intervention-card').getAttribute('data-variant')).toBe('distraction');
+
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'fatigue', message: 'Same text' },
+      });
+    });
+
+    expect(screen.getByTestId('tutor-intervention-card').getAttribute('data-variant')).toBe('fatigue');
   });
 });

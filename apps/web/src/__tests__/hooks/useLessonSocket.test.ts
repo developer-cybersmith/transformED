@@ -21,7 +21,14 @@ function latestFake(): FakeWebSocket {
 beforeEach(() => {
   FakeWebSocket.instances = [];
   global.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
-  usePlayerStore.setState({ tutorState: 'IDLE', wsSendControl: null, status: 'IDLE', activeIntervention: null });
+  usePlayerStore.setState({
+    tutorState: 'IDLE',
+    wsSendControl: null,
+    status: 'IDLE',
+    activeIntervention: null,
+    currentSegmentIndex: 0,
+    audioPositionMs: 0,
+  });
   getSessionMock.mockReset();
   getSessionMock.mockResolvedValue({ data: { session: { access_token: 'fake-token' } } });
 });
@@ -126,8 +133,46 @@ describe('useLessonSocket', () => {
     act(() => latestFake().simulateMessage({ type: 'tutor_intervene', payload }));
 
     expect(usePlayerStore.getState().activeIntervention).toEqual(payload);
-    // AC-7: this path must never touch playback/status.
+    // AC-7: this path must never touch playback/status or any other player field.
     expect(usePlayerStore.getState().status).toBe('IDLE');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+    expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().tutorState).toBe('IDLE');
+  });
+
+  it('ignores a tutor_intervene for a different session_id (stale message from an abandoned session, review fix)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'tutor_intervene',
+        payload: { session_id: 'sess_OTHER', type: 'confusion', message: 'x' },
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('does not throw and does not set activeIntervention on a malformed tutor_intervene (missing type/message, review fix)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    expect(() =>
+      act(() =>
+        latestFake().simulateMessage({
+          type: 'tutor_intervene',
+          payload: { session_id: 'sess_1' },
+        }),
+      ),
+    ).not.toThrow();
+
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
   });
 
   it('degrades gracefully (status closed, no socket) when the Supabase session lookup rejects', async () => {

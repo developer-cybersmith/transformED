@@ -141,6 +141,15 @@ describe('setSessionId (Story 2-39)', () => {
 
     expect(usePlayerStore.getState().sessionId).toBe('sess_real_abc123');
   });
+
+  it('clears activeIntervention -- a mid-lesson session re-mint must not carry a stale card into the new session (review fix)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().setActiveIntervention({ session_id: 'old', type: 'distraction', message: 'x' });
+
+    usePlayerStore.getState().setSessionId('sess_real_abc123');
+
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
 });
 
 describe('refreshLessonMedia (S2-33)', () => {
@@ -772,6 +781,15 @@ describe('endLesson clears saved progress', () => {
     usePlayerStore.getState().endLesson();
 
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('clears activeIntervention -- a stale card must not survive into the lesson-complete screen (review fix)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'fatigue', message: 'x' });
+
+    usePlayerStore.getState().endLesson();
+
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
   });
 
   it('does not throw when localStorage.removeItem throws', () => {
