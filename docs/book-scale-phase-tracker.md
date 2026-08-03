@@ -2,7 +2,8 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-03
-**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 2 🔨 In Progress, blocked on DB access; Phase 3 re-planned
+**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 2 🧪 Implemented (green on
+real Postgres; awaiting real-Supabase apply + 4-dev review); Phase 3 re-planned
 (`docs/bmad/phase-3-chapter-detection-plan.md`)
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
 
@@ -31,14 +32,14 @@
 | Phase | Title | Status | Verified on |
 |:-----:|-------|--------|-------------|
 | 1 | Prove chapter detection (spike) | ✅ Verified | 2026-08-03 |
-| 2 | Make chapters storable (migration) | 🔨 In Progress | — |
+| 2 | Make chapters storable (migration) | 🧪 Implemented | — |
 | 3 | Detect and store real chapters at upload | ⬜ Not Started | — |
 | 4 | Extract one chapter's pages | ⬜ Not Started | — |
 | 5 | Chapter-scoped generation | ⬜ Not Started | — |
 | 6 | Endpoints | ⬜ Not Started | — |
 | 7 | Prove it end to end | ⬜ Not Started | — |
 
-**Totals:** Not Started 5 · In Progress 1 · Implemented 0 · Verified 1 · Blocked 0
+**Totals:** Not Started 5 · In Progress 0 · Implemented 1 · Verified 1 · Blocked 0
 
 **Status values:** `⬜ Not Started` · `🔨 In Progress` · `🧪 Implemented (awaiting verification)` · `✅ Verified` · `🚧 Blocked`
 
@@ -157,7 +158,7 @@ single-chapter upload stays a first-class case for this segment, not a degenerat
 
 ## Phase 2 — Make chapters storable
 
-**Status:** 🔨 In Progress — 🚧 **blocked on database access**
+**Status:** 🧪 Implemented (awaiting verification) — 2026-08-03
 **Story:** `docs/stories/1-9-chapters-storable-migration.md`
 **Branch:** `book-scale/phase-2-chapters-storable`
 **Depends on:** Phase 1 verified
@@ -195,30 +196,67 @@ cannot 42703):
 
 ### Observed result
 
-**2026-08-03 — blocked before RED. No migration written. Not verified, not implemented.**
+**2026-08-03 — migration written and green against real PostgreSQL 16 + pgvector in Docker.**
+Story: `docs/stories/1-9-chapters-storable-migration.md` (status `review`).
+Migration: `supabase/migrations/20260803000000_chapters_book_scoped.sql` — 10th file in the chain.
 
-Harness built and committed (`be7a46a`): replays every file in `supabase/migrations/` in
-filename order against a real server and asserts on real SQLSTATEs.
-**25 tests collected, 25 skipped**, each with the visible reason *"Docker daemon not reachable
-— cannot start a Postgres container"*. Repo-wide `ruff check .` → All checks passed.
-`mypy` on the new test → Success, no issues.
+**RED → GREEN, with a mutation check:**
 
-Blockers, in the order hit:
+| Run | Result |
+|---|---|
+| RED — before the migration existed | **19 failed, 6 passed** |
+| GREEN — migration applied | **25 passed, 0 failed** |
+| Mutation — migration file moved away, re-run | **19 failed, 6 passed** again |
 
-1. **Docker daemon down.** CLI 29.1.3 present; `docker info` fails on the named pipe. Docker
-   Desktop was launched and after 5+ minutes `tasklist` showed zero docker processes.
-2. **Local PostgreSQL 18 IS running on `localhost:5432`** (PID 10552) and would satisfy
-   binding rule 4 without Docker — but the superuser password is unknown.
-3. **The chain cannot replay on stock Postgres regardless of server**, which changes the
-   harness design: it needs `auth.users` (FK `20260611000000:69`, trigger `:75-77`),
-   `auth.uid()` (**66** references), and `storage.buckets` (`20260710000000:18`).
-   A shim is committed at `apps/api/tests/integration/supabase_shim.sql`.
-   **`supabase db reset` — step 4 of the test list below — is not runnable: the Supabase CLI
-   is not installed.** Replaying the migration files directly is the substitute.
+The 6 passing in RED are premise checks (chain replays; `auth.uid()` resolves the JWT `sub`
+claim; RLS enabled on both tables; the `lesson_id` FK exists). They must pass *before* the
+migration or every other assertion is meaningless.
 
-**Unblock by either** starting Docker Desktop, **or** supplying the local Postgres 18
-superuser password (harness needs ~3 lines changed to use a throwaway database instead of a
-container).
+Real SQLSTATEs observed, not mocked: **`42703`** (`column "boundary_confidence" does not
+exist`), **`23505`** (duplicate `(book_id, chapter_index)`), **`23514`** (out-of-enum
+`boundary_confidence`), **`23503`** (chapter with a bogus `lesson_id`).
+
+**RLS re-rooting proven behaviourally, not just structurally:** a chapter with
+`lesson_id = NULL` on user A's book → **A sees 1, B sees 0, `service_role` sees 1**. Roles are
+Supabase's real `authenticated` / `service_role` (the latter with `BYPASSRLS`), not stand-ins.
+
+**Repo-wide gates (binding rule 1 — CI scope):**
+
+| Gate | `main` baseline | This branch |
+|---|---|---|
+| `pytest tests -q` | 19 failed, 1498 passed | **19 failed, 1523 passed** |
+| `ruff check .` | pass | **pass** |
+| `ruff format --check .` | 1 file (`tests/test_tutor_service.py`) | same 1 file |
+| `mypy app` | 24 errors / 3 files | same 24 |
+
+**Zero regressions.** 1523 = 1498 + 25 new tests; the 19 failures are identical to main's.
+The baseline was *measured* — `main` checked out into a git worktree and run — not assumed.
+
+Full-chain replay of all 10 migrations + container start: **~9.3 s**.
+
+**Two defects found in existing code:**
+
+1. `tests/unit/test_learner_mode_tier.py` asserted the tier migration is the **newest file in
+   the repo** — which forbade every future migration rather than catching a backdated one.
+   This story's file was the first to trip it. Re-anchored to a fixed predecessor. **Fixed.**
+2. **Pre-existing, not fixed here:** running `tests/integration` before
+   `tests/test_dna_growth.py` fails 18 of the latter — reproduced identically on `main`, and it
+   passes in isolation. State is leaking out of the integration suite, and CI's
+   `pytest tests -q` is red on `main` because of it. **Needs a `D-nn` register entry.**
+
+### Why this is 🧪 Implemented and not ✅ Verified
+
+Three gaps, all recorded rather than waved through:
+
+1. The migration has **not been applied to the real Supabase project** — everything above is a
+   container with a shim (`apps/api/tests/integration/supabase_shim.sql`, required because the
+   chain needs `auth.users`, `auth.uid()` × 66, and `storage.buckets`).
+2. Test 3 below ("existing 23 chapter rows still readable") was proven by **seeding a
+   legacy-shaped row**, not against the actual 23 production rows.
+3. Test 4 below (`supabase db reset`) **is not runnable** — the Supabase CLI is not installed.
+   Substituted by replaying all 10 migration files in filename order.
+
+Plus the 4-developer frozen-contract review has not happened yet.
 
 ### Files
 `supabase/migrations/` (new file — **not yet written**),

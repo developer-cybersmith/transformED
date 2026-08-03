@@ -34,15 +34,34 @@ def _find_tier_migration() -> Path:
     return candidates[0]
 
 
+# The newest migration in the repo when Story 2-2 authored the tier migration.
+# The tier migration must sort strictly after this one; that is what "not
+# backdated" means and it stays true forever.
+_LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED = "20260713020000_lesson_job_node_output_merge_fn.sql"
+
+
 @pytest.mark.unit
 def test_tier_migration_file_timestamp_is_after_latest_applied() -> None:
-    """Story 2-2 AC-2: the new migration's timestamp prefix must sort after
-    every other already-applied migration — never backdated, never edited
-    into an existing file."""
+    """Story 2-2 AC-2: the tier migration's timestamp prefix must sort after
+    every migration that already existed when it was written — never backdated,
+    never edited into an existing file.
+
+    It is deliberately NOT asserted to be the newest file in the repo. That was
+    the original wording, and it made the test fail the moment any later
+    migration was added (first hit by 20260803000000_chapters_book_scoped.sql,
+    Story 1-9) — it forbade every future migration rather than catching a
+    backdated one. Anchoring to a fixed predecessor preserves the real intent.
+    """
     all_migrations = sorted(p.name for p in _MIGRATIONS_DIR.glob("*.sql"))
     tier_migration = _find_tier_migration().name
-    assert all_migrations[-1] == tier_migration, (
-        f"tier migration must be the newest by filename sort; got order {all_migrations}"
+
+    assert _LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED in all_migrations, (
+        f"anchor migration {_LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED} is missing — "
+        f"an applied migration was renamed or deleted; got {all_migrations}"
+    )
+    assert tier_migration > _LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED, (
+        f"tier migration {tier_migration} must sort after "
+        f"{_LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED}; got order {all_migrations}"
     )
 
 

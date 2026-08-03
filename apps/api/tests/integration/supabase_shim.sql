@@ -63,16 +63,40 @@ CREATE TABLE IF NOT EXISTS storage.buckets (
   public boolean NOT NULL DEFAULT false
 );
 
--- ── test roles ──────────────────────────────────────────────
--- `app_user` is RLS-bound and stands in for an end user's PostgREST
--- connection. The owner/superuser running the replay stands in for the
--- service-role key, which bypasses RLS — the contrast AC16 requires.
+-- ── roles ───────────────────────────────────────────────────
+-- Supabase's three built-in roles. Required by the migration chain itself:
+-- 20260713020000_lesson_job_node_output_merge_fn.sql:55-58 REVOKEs from anon
+-- and authenticated and GRANTs to service_role, which errors 42704 without them.
+--
+-- These are also what makes AC16 faithful rather than approximate. An end user's
+-- PostgREST connection runs as `authenticated`; the server-side ARQ worker's
+-- service-role key runs as `service_role`, which carries BYPASSRLS. Using the
+-- real role names means the RLS test exercises the same identities production
+-- does, instead of an invented stand-in.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
-    CREATE ROLE app_user NOLOGIN;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    -- BYPASSRLS is the property apps/api/app/core/db.py:26-28 relies on when it
+    -- says server-side operations "bypass Row Level Security where needed".
+    CREATE ROLE service_role NOLOGIN BYPASSRLS;
   END IF;
 END
 $$;
 
-GRANT USAGE ON SCHEMA public, auth, storage TO app_user;
+GRANT USAGE ON SCHEMA public, auth, storage TO anon, authenticated, service_role;
+
+-- Supabase grants table privileges to these roles by default and relies on RLS —
+-- not on GRANT — to restrict rows. Without this, an RLS test would fail with
+-- 42501 (permission denied) and could be mistaken for a working policy.
+-- DEFAULT PRIVILEGES is used because the tables do not exist yet: this file is
+-- applied before the migration chain, by the same role that then applies it.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;

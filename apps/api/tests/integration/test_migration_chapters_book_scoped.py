@@ -67,12 +67,15 @@ def _find_psql() -> str | None:
 def _docker_up() -> bool:
     if shutil.which("docker") is None:
         return False
-    return subprocess.run(  # noqa: S603
-        ["docker", "info"],  # noqa: S607
-        capture_output=True,
-        timeout=30,
-        check=False,
-    ).returncode == 0
+    return (
+        subprocess.run(  # noqa: S603
+            ["docker", "info"],  # noqa: S607
+            capture_output=True,
+            timeout=30,
+            check=False,
+        ).returncode
+        == 0
+    )
 
 
 PSQL = _find_psql()
@@ -102,8 +105,7 @@ class SqlResult:
 
     def __repr__(self) -> str:
         return (
-            f"SqlResult(rc={self.returncode}, sqlstate={self.sqlstate}, "
-            f"err={self.stderr[:200]!r})"
+            f"SqlResult(rc={self.returncode}, sqlstate={self.sqlstate}, err={self.stderr[:200]!r})"
         )
 
 
@@ -115,14 +117,23 @@ def sql(
     role: str | None = None,
 ) -> SqlResult:
     """Execute SQL. `as_user` sets request.jwt.claims so auth.uid() resolves;
-    `role` switches the Postgres role so RLS actually applies (the connection
-    owner is superuser and bypasses RLS — that is the service-role contrast)."""
+    `role` switches the Postgres role.
+
+    Pass `role='authenticated'` to act as an end user's PostgREST connection —
+    RLS applies. Pass `role='service_role'` to act as the ARQ worker's
+    service-role key — BYPASSRLS applies. Passing no role leaves the connection
+    as superuser, which also bypasses RLS; prefer an explicit role so the test
+    states which identity it means."""
+    # SET rather than SELECT set_config(): set_config returns a row, which would
+    # be interleaved with the real result and force every caller to guess which
+    # line is theirs. SET emits nothing. Claims are set before SET ROLE, matching
+    # the order PostgREST uses.
     prelude = ""
-    if role:
-        prelude += f"SET ROLE {role};\n"
     if as_user is not None:
         claims = json.dumps({"sub": str(as_user)})
-        prelude += f"SELECT set_config('request.jwt.claims', {_lit(claims)}, false);\n"
+        prelude += f"SET request.jwt.claims TO {_lit(claims)};\n"
+    if role:
+        prelude += f"SET ROLE {role};\n"
 
     env = {**os.environ, "PGPASSWORD": PASSWORD}
     proc = subprocess.run(  # noqa: S603
@@ -130,6 +141,7 @@ def sql(
             PSQL or "psql",
             "-w",
             "-X",
+            "-q",
             "-h",
             "localhost",
             "-p",
@@ -165,10 +177,24 @@ def sql_file(path: pathlib.Path, *, db: str = DB) -> SqlResult:
     env = {**os.environ, "PGPASSWORD": PASSWORD}
     proc = subprocess.run(  # noqa: S603
         [
-            PSQL or "psql", "-w", "-X", "-h", "localhost", "-p", str(PORT),
-            "-U", "postgres", "-d", db,
-            "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=verbose",
-            "-f", str(path),
+            PSQL or "psql",
+            "-w",
+            "-X",
+            "-q",
+            "-h",
+            "localhost",
+            "-p",
+            str(PORT),
+            "-U",
+            "postgres",
+            "-d",
+            db,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-v",
+            "VERBOSITY=verbose",
+            "-f",
+            str(path),
         ],
         capture_output=True,
         text=True,
@@ -180,9 +206,13 @@ def sql_file(path: pathlib.Path, *, db: str = DB) -> SqlResult:
 
 
 def scalar(statement: str, **kwargs: object) -> str:
+    """Single value as text. Newlines are collapsed to spaces: pg_policies.qual
+    renders across several lines, and returning only the last one silently
+    truncated the value — which read as a failing assertion about the migration
+    when the migration was correct."""
     res = sql(statement, **kwargs)  # type: ignore[arg-type]
     assert res.ok, f"query failed: {res!r}"
-    return res.stdout.splitlines()[-1].strip() if res.stdout else ""
+    return " ".join(line.strip() for line in res.stdout.splitlines()).strip()
 
 
 # ── container lifecycle ──────────────────────────────────────────────────────
@@ -196,13 +226,22 @@ def pg() -> object:
     subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True, check=False)  # noqa: S603,S607
     up = subprocess.run(  # noqa: S603
         [  # noqa: S607
-            "docker", "run", "-d", "--name", CONTAINER,
-            "-e", f"POSTGRES_PASSWORD={PASSWORD}",
-            "-e", "POSTGRES_DB=postgres",
-            "-p", f"{PORT}:5432",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            CONTAINER,
+            "-e",
+            f"POSTGRES_PASSWORD={PASSWORD}",
+            "-e",
+            "POSTGRES_DB=postgres",
+            "-p",
+            f"{PORT}:5432",
             IMAGE,
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert up.returncode == 0, f"could not start {IMAGE}: {up.stderr}"
 
@@ -231,8 +270,12 @@ def pg() -> object:
 def seeded(pg: object) -> dict[str, str]:  # noqa: ARG001
     """Two users, each with one book — the two identities AC16 needs."""
     ids = {k: str(uuid.uuid4()) for k in ("user_a", "user_b", "book_a", "book_b")}
+    # Inserting into auth.users is enough: initial_schema.sql:74-79 has a trigger
+    # that copies (id, email) into public.users. email must be supplied — public.users.email
+    # is NOT NULL, so a NULL here fails 23502 inside the trigger.
     stmt = f"""
-    INSERT INTO auth.users (id) VALUES ('{ids["user_a"]}'), ('{ids["user_b"]}');
+    INSERT INTO auth.users (id, email) VALUES
+      ('{ids["user_a"]}', 'a@example.test'), ('{ids["user_b"]}', 'b@example.test');
     INSERT INTO public.books (book_id, user_id, filename) VALUES
       ('{ids["book_a"]}', '{ids["user_a"]}', 'a.pdf'),
       ('{ids["book_b"]}', '{ids["user_b"]}', 'b.pdf');
@@ -281,20 +324,26 @@ def test_chapter_row_can_exist_without_a_lesson(seeded: dict[str, str]) -> None:
 
 def test_lesson_id_is_nullable_in_catalog(pg: object) -> None:  # noqa: ARG001
     """AC2 — asserted against the catalog, not the .sql text."""
-    assert scalar(
-        "SELECT is_nullable FROM information_schema.columns "
-        "WHERE table_name='chapters' AND column_name='lesson_id'"
-    ) == "YES"
+    assert (
+        scalar(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='chapters' AND column_name='lesson_id'"
+        )
+        == "YES"
+    )
 
 
 def test_lesson_id_foreign_key_survived(pg: object) -> None:  # noqa: ARG001
     """AC3 — dropping NOT NULL must not drop the FK."""
-    assert scalar(
-        "SELECT count(*) FROM information_schema.table_constraints tc "
-        "JOIN information_schema.key_column_usage k USING (constraint_name) "
-        "WHERE tc.table_name='chapters' AND tc.constraint_type='FOREIGN KEY' "
-        "AND k.column_name='lesson_id'"
-    ) == "1"
+    assert (
+        scalar(
+            "SELECT count(*) FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage k USING (constraint_name) "
+            "WHERE tc.table_name='chapters' AND tc.constraint_type='FOREIGN KEY' "
+            "AND k.column_name='lesson_id'"
+        )
+        == "1"
+    )
 
 
 def test_chapter_with_bogus_lesson_id_still_rejected(seeded: dict[str, str]) -> None:
@@ -311,24 +360,33 @@ def test_chapter_with_bogus_lesson_id_still_rejected(seeded: dict[str, str]) -> 
 # AC4 — lessons.chapter_id
 # ════════════════════════════════════════════════════════════════════════════
 def test_lessons_chapter_id_exists_nullable_with_fk(pg: object) -> None:  # noqa: ARG001
-    assert scalar(
-        "SELECT is_nullable FROM information_schema.columns "
-        "WHERE table_name='lessons' AND column_name='chapter_id'"
-    ) == "YES"
-    assert scalar(
-        "SELECT rc.delete_rule FROM information_schema.referential_constraints rc "
-        "JOIN information_schema.key_column_usage k "
-        "  ON k.constraint_name = rc.constraint_name "
-        "WHERE k.table_name='lessons' AND k.column_name='chapter_id'"
-    ) == "SET NULL"
+    assert (
+        scalar(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='lessons' AND column_name='chapter_id'"
+        )
+        == "YES"
+    )
+    assert (
+        scalar(
+            "SELECT rc.delete_rule FROM information_schema.referential_constraints rc "
+            "JOIN information_schema.key_column_usage k "
+            "  ON k.constraint_name = rc.constraint_name "
+            "WHERE k.table_name='lessons' AND k.column_name='chapter_id'"
+        )
+        == "SET NULL"
+    )
 
 
 def test_lessons_chapter_id_is_indexed(pg: object) -> None:  # noqa: ARG001
     """AC7."""
-    assert scalar(
-        "SELECT count(*) FROM pg_indexes "
-        "WHERE tablename='lessons' AND indexdef LIKE '%chapter_id%'"
-    ) != "0"
+    assert (
+        scalar(
+            "SELECT count(*) FROM pg_indexes "
+            "WHERE tablename='lessons' AND indexdef LIKE '%chapter_id%'"
+        )
+        != "0"
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -387,17 +445,23 @@ def test_boundary_confidence_defaults_to_fallback(seeded: dict[str, str]) -> Non
         f"(book_id, lesson_id, title, page_start, page_end, chapter_index) "
         f"VALUES ('{seeded['book_a']}', NULL, 'defaulted', 0, 9, 201)"
     ).ok
-    assert scalar(
-        f"SELECT boundary_confidence FROM public.chapters "
-        f"WHERE book_id='{seeded['book_a']}' AND chapter_index=201"
-    ) == "fallback"
+    assert (
+        scalar(
+            f"SELECT boundary_confidence FROM public.chapters "
+            f"WHERE book_id='{seeded['book_a']}' AND chapter_index=201"
+        )
+        == "fallback"
+    )
 
 
 def test_boundary_confidence_is_not_null(pg: object) -> None:  # noqa: ARG001
-    assert scalar(
-        "SELECT is_nullable FROM information_schema.columns "
-        "WHERE table_name='chapters' AND column_name='boundary_confidence'"
-    ) == "NO"
+    assert (
+        scalar(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name='chapters' AND column_name='boundary_confidence'"
+        )
+        == "NO"
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -447,9 +511,9 @@ def test_lessonless_chapter_is_visible_to_its_owner_and_no_one_else(
     ).ok
 
     q = "SELECT count(*) FROM public.chapters WHERE chapter_index=300"
-    owner = scalar(q, as_user=seeded["user_a"], role="app_user")
-    other = scalar(q, as_user=seeded["user_b"], role="app_user")
-    service = scalar(q)
+    owner = scalar(q, as_user=seeded["user_a"], role="authenticated")
+    other = scalar(q, as_user=seeded["user_b"], role="authenticated")
+    service = scalar(q, role="service_role")
 
     assert owner == "1", f"owner cannot see their own lessonless chapter (got {owner})"
     assert other == "0", f"another user can see it — RLS leak (got {other})"
@@ -467,8 +531,8 @@ def test_service_role_and_user_role_disagree(seeded: dict[str, str]) -> None:
         f"VALUES ('{seeded['book_a']}', NULL, 'A only', 0, 39, 301)"
     ).ok
     q = "SELECT count(*) FROM public.chapters WHERE chapter_index=301"
-    assert scalar(q) == "1"
-    assert scalar(q, as_user=seeded["user_b"], role="app_user") == "0"
+    assert scalar(q, role="service_role") == "1"
+    assert scalar(q, as_user=seeded["user_b"], role="authenticated") == "0"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -479,8 +543,6 @@ def test_preexisting_lesson_backed_chapter_still_readable(seeded: dict[str, str]
     that DOES have a lesson_id, exactly as the old pipeline wrote it."""
     lesson_id = str(uuid.uuid4())
     assert sql(
-        f"INSERT INTO public.users (id, email) VALUES "
-        f"('{seeded['user_a']}', 'a@example.com') ON CONFLICT (id) DO NOTHING;"
         f"INSERT INTO public.lessons (lesson_id, user_id, title, book_id) VALUES "
         f"('{lesson_id}', '{seeded['user_a']}', 'legacy', '{seeded['book_a']}');"
         f"INSERT INTO public.chapters "
