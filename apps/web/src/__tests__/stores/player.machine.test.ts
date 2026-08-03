@@ -80,6 +80,7 @@ beforeEach(() => {
     isBuffering: false,
     audioError: false,
     audioRetryCount: 0,
+    activeIntervention: null,
   });
   localStorage.clear();
 });
@@ -371,6 +372,37 @@ describe('setTutorState', () => {
   it('mirrors tutor FSM state from WebSocket', () => {
     usePlayerStore.getState().setTutorState('TEACHING');
     expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+});
+
+describe('activeIntervention / setActiveIntervention (S3-03 AC-1)', () => {
+  it('defaults to null', () => {
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('setActiveIntervention() sets the payload', () => {
+    const payload = { session_id: 's1', type: 'distraction' as const, message: 'Stay with me!' };
+    usePlayerStore.getState().setActiveIntervention(payload);
+    expect(usePlayerStore.getState().activeIntervention).toEqual(payload);
+  });
+
+  it('a second setActiveIntervention() call replaces the first (no queue)', () => {
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'distraction', message: 'First' });
+    const second = { session_id: 's1', type: 'fatigue' as const, message: 'Second' };
+    usePlayerStore.getState().setActiveIntervention(second);
+    expect(usePlayerStore.getState().activeIntervention).toEqual(second);
+  });
+
+  it('setActiveIntervention(null) clears it', () => {
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'confusion', message: 'x' });
+    usePlayerStore.getState().setActiveIntervention(null);
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('loadLesson() resets activeIntervention to null', () => {
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'fatigue', message: 'Take a break' });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
   });
 });
 

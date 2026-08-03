@@ -4,7 +4,7 @@ baseline_commit: e34159c
 
 # Story 2.40: TutorInterventionCard Component (S3-03)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -30,22 +30,22 @@ so that I get re-engaged without my audio/lesson progress ever pausing or resett
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1): Add `activeIntervention`/`setActiveIntervention` to `player.machine.ts`; reset in `loadLesson()`.
-  - [ ] 1.1 RED: test asserting default `null`, action sets/replaces the field, `loadLesson()` resets it to `null`.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 2, 7): Wire `useLessonSocket.ts`'s `tutor_intervene` case to dispatch into the store.
-  - [ ] 2.1 RED: test that a `tutor_intervene` server message calls `setActiveIntervention` with the exact payload, and that no playback/status action is ever called from this path.
-  - [ ] 2.2 GREEN: implement.
-- [ ] Task 3 (AC: 3, 4, 5): Build `TutorInterventionCard.tsx` — render-level guard, three variants, framer-motion slide-in, corner positioning.
-  - [ ] 3.1 RED: tests for the full visibility matrix (null → hidden, TEACH_BACK-while-active → hidden, each `type` → correct variant class, message text rendered).
-  - [ ] 3.2 GREEN: implement.
-- [ ] Task 4 (AC: 6): Dismiss button + 30s auto-dismiss timer, with correct cleanup on unmount/replacement.
-  - [ ] 4.1 RED: tests for button dismiss, timer-based dismiss at exactly 30000ms (fake timers), no dismiss before 30000ms, timer doesn't fire against a message it no longer matches after a replacement.
-  - [ ] 4.2 GREEN: implement.
-- [ ] Task 5 (AC: 8): Mount `<TutorInterventionCard />` in `Player.tsx`.
-  - [ ] 5.1 RED: `Player.test.tsx` assertion that the component is present in the tree.
-  - [ ] 5.2 GREEN: implement.
-- [ ] Task 6 (AC: 9): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1): Add `activeIntervention`/`setActiveIntervention` to `player.machine.ts`; reset in `loadLesson()`.
+  - [x] 1.1 RED: test asserting default `null`, action sets/replaces the field, `loadLesson()` resets it to `null`.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 2, 7): Wire `useLessonSocket.ts`'s `tutor_intervene` case to dispatch into the store.
+  - [x] 2.1 RED: test that a `tutor_intervene` server message calls `setActiveIntervention` with the exact payload, and that no playback/status action is ever called from this path.
+  - [x] 2.2 GREEN: implement.
+- [x] Task 3 (AC: 3, 4, 5): Build `TutorInterventionCard.tsx` — render-level guard, three variants, framer-motion slide-in, corner positioning.
+  - [x] 3.1 RED: tests for the full visibility matrix (null → hidden, TEACH_BACK-while-active → hidden, each `type` → correct variant class, message text rendered).
+  - [x] 3.2 GREEN: implement.
+- [x] Task 4 (AC: 6): Dismiss button + 30s auto-dismiss timer, with correct cleanup on unmount/replacement.
+  - [x] 4.1 RED: tests for button dismiss, timer-based dismiss at exactly 30000ms (fake timers), no dismiss before 30000ms, timer doesn't fire against a message it no longer matches after a replacement.
+  - [x] 4.2 GREEN: implement.
+- [x] Task 5 (AC: 8): Mount `<TutorInterventionCard />` in `Player.tsx`.
+  - [x] 5.1 RED: `Player.test.tsx` assertion that the component is present in the tree.
+  - [x] 5.2 GREEN: implement.
+- [x] Task 6 (AC: 9): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -77,3 +77,33 @@ Follow `CheckingInTransition.test.tsx`'s exact pattern (`apps/web/src/__tests__/
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-08-03 | Story created per S3-03 in `docs/dev2-sprint-tracker.md`, cross-referenced against `docs/bmad/epics/epic-2-lesson-player.md`. Branch `sprint3/s3-03-tutor-intervention-card` off `main`. | Dev 2 |
+| 2026-08-03 | Implemented all 6 tasks, TDD (RED confirmed before each GREEN). Full `apps/web` suite: 56 files / 598 tests passing. `tsc --noEmit` clean (after clearing a stale, gitignored `.next/` build-cache artifact from an unrelated branch). `eslint` clean on every touched file (removed one unused `useRef` import found during lint; the 3 pre-existing `useLessonSocket.ts` disable-directive warnings verified unrelated via `git stash`). | Dev 2 |
+
+## Dev Agent Record
+
+### Implementation Plan
+
+- Read `useLessonSocket.ts`, `player.machine.ts`, `Player.tsx`, and the closest existing precedent (`CheckingInTransition.tsx` + its test) fully before writing anything, per the story's own Dev Notes.
+- `player.machine.ts`: added `activeIntervention`/`setActiveIntervention` mirroring the existing `tutorState`/`setTutorState` pair exactly; reset alongside `tutorState` in `loadLesson()`'s state block.
+- `useLessonSocket.ts`: replaced the `tutor_intervene` no-op with a direct `usePlayerStore.getState().setActiveIntervention(msg.payload)` call, matching this file's existing imperative-`getState()` pattern used elsewhere in the same handler (e.g. the `wsSendControl` wiring) rather than adding a new top-level selector for a plain event-handler function.
+- `TutorInterventionCard.tsx`: new component, store-driven and edge-triggered like `CheckingInTransition`, but deliberately a corner toast (not full-screen) per AC-5/AC-7 — non-blocking is the one hard visual departure from that precedent. Three variants keyed on `InterventionType` via a `data-variant` attribute (chosen over asserting raw Tailwind classes, for test robustness). The 30s auto-dismiss effect closes over the specific `activeIntervention` reference and re-checks it against the live store value before clearing — this is what makes the replace-not-queue behavior safe: a stale timer from a replaced intervention cannot clear the new one (same defect class `CheckingInTransition.tsx`'s own review-fix comment documents).
+- `Player.tsx`: mounted `<TutorInterventionCard />` next to `CheckingInTransition`/`AvatarOverlay`, no props, no other changes.
+
+### Completion Notes
+
+- All 6 tasks complete, all ACs (1-9) satisfied.
+- Full `apps/web` suite: 56 files, 598 tests, all passing (11 new: 5 in `player.machine.test.ts`, 1 in `useLessonSocket.test.ts` — plus 1 pre-existing no-op case removed from an `it.each` since `tutor_intervene` is no longer a no-op — 11 in the new `TutorInterventionCard.test.tsx`, 1 in `Player.test.tsx`).
+- `tsc --noEmit`: clean. `eslint`: clean on every touched file.
+- Encountered and cleared one environment issue unrelated to this story: a stale, gitignored `.next/dev/types/validator.ts` referencing a route (`pending-approval/page.js`) from a different branch's build cache was failing `tsc --noEmit`; confirmed it wasn't caused by this story's changes (not a tracked file, per `apps/web/.gitignore:17`) before deleting it and letting it regenerate clean.
+- Confirmed via `git stash` that the 3 `eslint` "unused eslint-disable directive" warnings in `useLessonSocket.ts` (lines 58, 93, 109 — far from this story's one-line change at line ~41) pre-exist on `main` and are not introduced by this story.
+
+### File List
+
+- `apps/web/src/stores/player.machine.ts` (MODIFIED — added `activeIntervention`/`setActiveIntervention`; reset in `loadLesson()`)
+- `apps/web/src/hooks/useLessonSocket.ts` (MODIFIED — `tutor_intervene` case now dispatches into the store instead of no-op'ing)
+- `apps/web/src/components/player/TutorInterventionCard.tsx` (NEW — the component itself)
+- `apps/web/src/components/player/Player.tsx` (MODIFIED — mounts `<TutorInterventionCard />`)
+- `apps/web/src/__tests__/stores/player.machine.test.ts` (MODIFIED — new `activeIntervention`/`setActiveIntervention` describe block; fixture reset updated)
+- `apps/web/src/__tests__/hooks/useLessonSocket.test.ts` (MODIFIED — removed `tutor_intervene` from the no-op `it.each`; new dedicated dispatch test; fixture reset updated)
+- `apps/web/src/__tests__/components/player/TutorInterventionCard.test.tsx` (NEW — full visibility/variant/dismissal test suite)
+- `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED — new mount-presence test)

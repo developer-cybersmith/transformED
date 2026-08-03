@@ -39,7 +39,7 @@ export function useLessonSocket(sessionId: string | null) {
           }
           break;
         case 'tutor_intervene':
-          // Sprint 3 — TutorInterventionCard consumes this; no-op for now.
+          usePlayerStore.getState().setActiveIntervention(msg.payload);
           break;
         case 'ces_update':
           // Not emitted by any live path yet (Dev 3 owns it); no-op.
