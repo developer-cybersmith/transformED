@@ -196,53 +196,54 @@ cannot 42703):
 
 ### Observed result
 
-**2026-08-03 — migration written and green against real PostgreSQL 16 + pgvector in Docker.**
-Story: `docs/stories/1-9-chapters-storable-migration.md` (status `review`).
+**2026-08-03 — migration written, green on real PostgreSQL, then hardened by a 5-agent review.**
+Story: `docs/stories/1-9-chapters-storable-migration.md`.
 Migration: `supabase/migrations/20260803000000_chapters_book_scoped.sql` — 10th file in the chain.
 
-**RED → GREEN, with a mutation check:**
+**RED → GREEN, with a mutation check (post-review suite, 43 tests):**
 
 | Run | Result |
 |---|---|
-| RED — before the migration existed | **19 failed, 6 passed** |
-| GREEN — migration applied | **25 passed, 0 failed** |
-| Mutation — migration file moved away, re-run | **19 failed, 6 passed** again |
+| RED — before the migration existed | 19 failed, 6 passed |
+| GREEN — migration applied | **43 passed, 0 failed** |
+| Mutation — migration file moved away, re-run | **1 failed, 42 errors** |
 
-The 6 passing in RED are premise checks (chain replays; `auth.uid()` resolves the JWT `sub`
-claim; RLS enabled on both tables; the `lesson_id` FK exists). They must pass *before* the
-migration or every other assertion is meaningless.
+Real SQLSTATEs observed, not mocked: **`42703`**, **`23505`**, **`23514`**, **`23503`**.
 
-Real SQLSTATEs observed, not mocked: **`42703`** (`column "boundary_confidence" does not
-exist`), **`23505`** (duplicate `(book_id, chapter_index)`), **`23514`** (out-of-enum
-`boundary_confidence`), **`23503`** (chapter with a bogus `lesson_id`).
+**What the review changed.** The first green run was 25 tests and three of the story's data-safety
+ACs were not actually exercised: the fixture applied all 10 migrations to an *empty* database, so
+every "pre-existing row" was created *after* the migration ran. AC8/AC9 tested the column default on
+INSERT rather than the backfill; AC10 had no test at all. The suite now provisions a **pre-migration
+schema, seeds real rows, and applies the migration second** — three separate databases inside one
+container (`transformed_test`, `transformed_legacy`, `transformed_dupes`).
 
-**RLS re-rooting proven behaviourally, not just structurally:** a chapter with
-`lesson_id = NULL` on user A's book → **A sees 1, B sees 0, `service_role` sees 1**. Roles are
-Supabase's real `authenticated` / `service_role` (the latter with `BYPASSRLS`), not stand-ins.
+**RLS proven behaviourally, both directions:** owner sees 1, other user sees 0, `service_role` sees
+1, `anon` sees 0 — using Supabase's real `authenticated`/`service_role` roles. Write-side is now
+covered too (cross-tenant INSERT rejected `42501`, DELETE leaves the row), and `chunks` rows are
+actually read under a role rather than asserted by substring.
 
-**Repo-wide gates (binding rule 1 — CI scope):**
+**Repo-wide gates** (baseline measured on `main` in a git worktree with the identical command):
 
 | Gate | `main` baseline | This branch |
 |---|---|---|
-| `pytest tests -q` | 19 failed, 1498 passed | **19 failed, 1523 passed** |
+| CI gating scope (`tests/unit tests/integration -m "not postgres"`) | green | **795 passed, 0 failed** |
+| `pytest tests -q` (advisory) | 19 failed, 1498 passed | **19 failed, 1543 passed** |
 | `ruff check .` | pass | **pass** |
-| `ruff format --check .` | 1 file (`tests/test_tutor_service.py`) | same 1 file |
-| `mypy app` | 24 errors / 3 files | same 24 |
+| `ruff format --check .` / `mypy app` | 1 file / 24 errors | unchanged |
 
-**Zero regressions.** 1523 = 1498 + 25 new tests; the 19 failures are identical to main's.
-The baseline was *measured* — `main` checked out into a git worktree and run — not assumed.
+**Zero regressions.** 1543 = 1498 + 45 new tests; the 19 failures are identical to main's (D40).
 
-Full-chain replay of all 10 migrations + container start: **~9.3 s**.
+**One production regression found by the review and fixed.** The new `UNIQUE (book_id, chapter_index)`
+turned a recoverable ARQ retry into a permanent failure: `chunk_node` writes its checkpoint *after*
+the chapter insert, so a failure in that window makes the retry re-write the same
+`(book_id, chapter_index=1)` → `23505` → stuck on all of `max_tries=3`. `graph.py` now upserts on
+that conflict target. Guarded by a unit test plus a real-Postgres counterpart.
 
-**Two defects found in existing code:**
-
-1. `tests/unit/test_learner_mode_tier.py` asserted the tier migration is the **newest file in
-   the repo** — which forbade every future migration rather than catching a backdated one.
-   This story's file was the first to trip it. Re-anchored to a fixed predecessor. **Fixed.**
-2. **Pre-existing, not fixed here:** running `tests/integration` before
-   `tests/test_dna_growth.py` fails 18 of the latter — reproduced identically on `main`, and it
-   passes in isolation. State is leaking out of the integration suite, and CI's
-   `pytest tests -q` is red on `main` because of it. **Needs a `D-nn` register entry.**
+**Also hardened:** the migration is now one transaction (so AC10's fail-loud abort is recoverable and
+its documented "re-apply" remedy actually works), `DROP POLICY IF EXISTS` throughout, the index is
+named, the test container binds to `127.0.0.1` only, and the `postgres` marker moved off CI's gating
+step into its own job that **fails if the tests skip** rather than passing green having verified
+nothing.
 
 ### Why this is 🧪 Implemented and not ✅ Verified
 
@@ -251,10 +252,14 @@ Three gaps, all recorded rather than waved through:
 1. The migration has **not been applied to the real Supabase project** — everything above is a
    container with a shim (`apps/api/tests/integration/supabase_shim.sql`, required because the
    chain needs `auth.users`, `auth.uid()` × 66, and `storage.buckets`).
-2. Test 3 below ("existing 23 chapter rows still readable") was proven by **seeding a
-   legacy-shaped row**, not against the actual 23 production rows.
+2. Test 3 below ("existing 23 chapter rows still readable") is now proven against rows seeded
+   **before** the migration runs — but still in a container, not against the actual 23
+   production rows (D39).
 3. Test 4 below (`supabase db reset`) **is not runnable** — the Supabase CLI is not installed.
    Substituted by replaying all 10 migration files in filename order.
+4. Registered rather than hand-waved: **D38** (shim fidelity — every RLS verdict is conditional
+   on it), **D39** (the duplicate pre-flight ran against an empty container, not production),
+   **D40** (the pre-existing `tests/integration` → `test_dna_growth` state leak).
 
 Plus the 4-developer frozen-contract review has not happened yet.
 

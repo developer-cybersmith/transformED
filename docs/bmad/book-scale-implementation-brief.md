@@ -59,7 +59,7 @@ goal above.
 | Cost-tracking split, `progress_pct`, `/admin/costs` | Alignment work, not a blocker |
 | Book-scoped storage re-pathing, content-hash dedup | Optimisation |
 | Frontend chapter picker and book library | Dev 2, follows this |
-| RLS re-rooting | Zero users today; follows immediately after |
+| ~~RLS re-rooting~~ | ~~Zero users today; follows immediately after~~ — **pulled INTO Phase 2 on 2026-08-03.** Making `chapters.lesson_id` nullable leaves all 8 `chapters`/`chunks` policies structurally unable to match a book-scoped row, and Phase 2 is already a frozen-contract migration requiring a 4-developer review — deferring buys a second one. Not a live break either way (`core/db.py` uses the service-role key, which bypasses RLS). See Story 1-9 AC14–17. |
 | WebSocket auth hole, session close-out, CES/attention, tutor state machine | Sprint 3 |
 | Fallback ladder rungs 2–5 | Only if Phase 1 shows rung 1 is insufficient |
 
