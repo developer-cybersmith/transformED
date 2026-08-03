@@ -156,6 +156,21 @@ is `NOT NULL` — that chain is why a chapter is currently impossible without a 
 
 ### Phase 3 — Detect and store real chapters at upload
 
+> ⚠️ **Re-planned 2026-08-03 — this section is superseded by
+> `docs/bmad/phase-3-chapter-detection-plan.md`.**
+>
+> Phase 1 measured `get_toc()` at 99.4 % accuracy on 5 of 8 real books and **0 % on the
+> three NCERT Indian school textbooks** — the target segment. The single fallback to
+> `detect_headings()` described below is the wrong shape: the failing books are
+> born-digital (no OCR needed), and the two available text signals are **complementary,
+> not alternatives**. A prototype of the merged detector resolved **22 of 22 chapters
+> across all three NCERT books**.
+>
+> The re-plan adds a five-rung ladder (R1 outline → R2 contents-page + R3 heading-sweep,
+> merged → R4 font-signals → R5 whole-document), a shared acceptance gate, and a
+> non-content filter. It also widens `chapters.boundary_confidence` — a **Phase 2**
+> change that must be folded in before that phase's 4-developer review.
+
 New ARQ job `book_ingest_job(book_id)`. Does **not** use the graph.
 
 - Read the chapter list via `get_toc()`; fall back to the existing `detect_headings()`

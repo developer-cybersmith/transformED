@@ -2,7 +2,8 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-03
-**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 2 not started
+**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 3 re-planned
+(`docs/bmad/phase-3-chapter-detection-plan.md`); Phase 2 not started
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
 
 > ## 🔒 GATE RULE — NO EXCEPTIONS
@@ -166,7 +167,13 @@ New migration in `supabase/migrations/`:
   `20260611000000_initial_schema.sql:132`)
 - Add `lessons.chapter_id` (nullable, FK to `chapters`)
 - Add `UNIQUE (book_id, chapter_index)`
-- Add `chapters.boundary_confidence` (`toc` | `font` | `fallback`)
+- Add `chapters.boundary_confidence` — **`toc` | `contents` | `heading` | `font` | `fallback`**
+
+> ⚠️ **Amended 2026-08-03 by the Phase 3 re-plan** (`docs/bmad/phase-3-chapter-detection-plan.md` §6).
+> The enum was `toc | font | fallback`. The measured detection ladder has **five** distinct
+> provenances; collapsing them destroys the only signal that says which detector is failing in
+> production. Phase 2 has not started, so this costs no rework — but it must be folded in
+> **before** the 4-developer review, not after. Nothing else in the migration changes.
 
 Direction is **permissive** — no existing row can be invalidated. Never modify an applied
 migration.
@@ -192,15 +199,38 @@ _Not yet run._
 
 ## Phase 3 — Detect and store real chapters at upload
 
-**Status:** ⬜ Not Started
+**Status:** ⬜ Not Started — **re-planned 2026-08-03**
 **Depends on:** Phase 2 verified
+**Full plan:** **`docs/bmad/phase-3-chapter-detection-plan.md`** — supersedes the Phase 3
+work list in the brief §5
+
+> **Why re-planned:** Phase 1 proved `get_toc()` covers 0 % of the NCERT sample. The original
+> single fallback to `detect_headings()` is the wrong shape: the failing books are
+> born-digital (no OCR needed), and the two text signals are **complementary, not
+> alternatives** — an either/or ladder solves 2 of 3 NCERT books, merging them solves 3 of 3.
 
 ### Work
-- New ARQ job `book_ingest_job(book_id)` — does **not** use the LangGraph
-- Read the chapter list via `get_toc()`; fall back to `detect_headings()`
-  (`nodes/structure_detection.py:29`) over text-only extraction when absent
-- Write **N** chapter rows: real `page_start`/`page_end`, sequential `chapter_index`,
-  `boundary_confidence`
+- New ARQ job `book_ingest_job(book_id)` — does **not** use the LangGraph, no LLM, no OCR,
+  no page rendering, no table scan
+- A **five-rung detection ladder** with a shared single text-only page sweep:
+
+  | Rung | Method | `boundary_confidence` | Status |
+  |---|---|---|---|
+  | **R1 outline** | `get_toc()` + level heuristic | `toc` | proven Phase 1, unchanged |
+  | **R2 contents-page** | parse the printed contents page | `contents` | **new scope** |
+  | **R3 heading-sweep** | in-body `CHAPTER n` openers | `heading` | **new scope** |
+  | **R4 font-signals** | existing `detect_headings()` (`structure_detection.py:29`) | `font` | wired, not tuned |
+  | **R5 whole-document** | one chapter — today's behaviour, made explicit and labelled | `fallback` | **new scope**, terminal |
+
+  R2 and R3 are **merged**, not tried in sequence. R3 is authoritative; R2 fills the gaps by
+  **title-anchored search**, not printed-page arithmetic.
+- A shared **acceptance gate** per rung (7 rules) — see the plan §4. Rule 4 ("no start on a
+  contents-like page") is load-bearing: the prototype's title check *passed* on two pages that
+  were not chapters, because a contents page contains every title in the book.
+- **Non-content filter** — drop `Index`, `Preface`, `Answer Key`, `Appendix *`, `Exercises`
+  etc. Unfiltered, the chapter picker offers "Index" as a lesson.
+- Write **N** chapter rows: real `page_start`/`page_end`, sequential `chapter_index` from 0
+  over kept chapters, `boundary_confidence`
 - Set `books.status='ready'` on success and `'failed'` on error — `'failed'` is currently
   never written anywhere
 - `POST /lessons` (`content/router.py:242`) becomes ingestion-only: creates the `books` row,
@@ -208,26 +238,46 @@ _Not yet run._
   enqueuing the pipeline (`:378`)
 - Replaces the hardcoded chapter row at `graph.py:609-638`, including `"chapter_index": 1`
   (`:624`)
+- Text sweep runs in the **isolated subprocess** (`CLAUDE.md` §18), never in the FastAPI process
+
+**Prototyped in the Phase 1 spike:** the merged R2+R3 detector resolved **22 of 22 chapters
+across all three NCERT books, 22/22 title-on-start-page.**
 
 ### Exit criterion
-Uploading the 1,151-page book produces 27 chapter rows in seconds.
+Uploading the 1,151-page book produces 27 chapter rows in seconds — **and** a bookmark-less
+NCERT book produces its real chapter list rather than one whole-book chapter.
 
 ### End-to-end test
 1. Upload the real book through the running API
 2. Query `chapters` — expect **27 rows**, `chapter_index` 0..26, no gaps, no duplicates
-3. Page ranges ascending, non-overlapping, covering the book
+3. Page ranges ascending, non-overlapping, within `[0, n-1]` — **gaps permitted only where a
+   non-content entry was dropped**
+   *(amended 2026-08-03: previously "covering the book", which the non-content filter makes
+   impossible — see plan §5)*
 4. `books.status = 'ready'`
 5. **No `lessons` row created by upload**
-6. Wall-clock from upload to `ready` — record it
-7. Upload a bookmark-less PDF → fallback path fires, `boundary_confidence = 'font'`
-8. Upload a corrupt PDF → `books.status = 'failed'`
+6. Wall-clock from upload to `ready` — record it. Budget **≤ 15 s** for a 1,000-page book
+   (measured: `get_toc()` 0.03–1.76 s; text sweep 2.8–7.9 ms/page → 5.53 s @ 1,671 p)
+7. Upload NCERT XI Physics Part 1 (no outline) → **7 chapters**, `boundary_confidence='heading'`
+   *(amended 2026-08-03: previously expected `'font'`)*
+8. Upload NCERT XII Physics Part 1 (no outline, no in-body openers) → **8 chapters**,
+   `boundary_confidence='contents'`
+9. Assert **no chapter starts on a contents-like page** — directly, not via the title check
+10. Upload a single-chapter PDF → exactly **1** chapter row, not an error (NCERT ships most of
+    its catalogue as one PDF per chapter)
+11. Upload a PDF with no usable signal → 1 chapter, `'fallback'`, `books.status='ready'`
+12. Upload a corrupt PDF → `books.status = 'failed'`
+13. Assert **no LLM call, no OCR, no page render, no table scan** occurred on this path
 
 ### Observed result
 _Not yet run._
 
 ### Files
-`apps/api/app/workers/jobs/` (new), `apps/api/app/modules/content/router.py`,
+`apps/api/app/workers/jobs/` (new), `apps/api/app/modules/content/chapter_detection/` (new —
+pure functions over `(page_count, toc, page_texts)`, no DB, so rungs are testable without a
+Supabase mock per binding rule 2), `apps/api/app/modules/content/router.py`,
 `apps/api/app/modules/content/pipeline/graph.py`,
+`apps/api/app/modules/content/pipeline/nodes/extract_subprocess.py`,
 `apps/api/app/modules/content/pipeline/nodes/structure_detection.py`
 
 ---

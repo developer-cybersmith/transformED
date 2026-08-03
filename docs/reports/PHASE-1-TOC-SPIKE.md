@@ -192,3 +192,66 @@ check stays a rung-4 backstop rather than a necessity.
   upload must therefore stay a first-class case — it is the common shape for this
   segment, not a degenerate one.
 - Publisher textbooks (Pearson, McGraw-Hill) could not be tested legally.
+
+---
+
+## 8. Addendum — rung 2 / rung 3 prototype (added 2026-08-03)
+
+Run after the Phase 1 decision, to make the Phase 3 re-plan
+(`docs/bmad/phase-3-chapter-detection-plan.md`) rest on measurement rather than prose.
+Scripts: scratchpad `rung23_probe.py`, `rung23_probe_v2.py`.
+
+### v1 — either/or ladder, and the two defects it exposed
+
+| Book | Heading sweep | Contents parse | Result |
+|---|---|---|---|
+| NCERT XI Part 1 | 8 raw → 7 chapters, 7/7 titles | unparseable | ✅ |
+| NCERT XI Part 2 | 10 raw → 7 chapters, 7/7 titles | unparseable | ✅ |
+| NCERT XII Part 1 | **2 false chapters** | 2 of 8 chapters, both 2 pages off | ❌ |
+
+Two defects a naive implementation would inherit:
+
+1. **A contents page contains every chapter title, so "the title appears on the start
+   page" passes on contents pages.** The sweep accepted PDF pages 1 and 2 of NCERT XII
+   Part 1 as chapters 1 and 3 — both are contents pages — and the title check
+   confirmed them. Monotonicity did not help: contents pages are early and in order.
+   *The verification rule was fooled by the thing it was meant to catch.*
+2. **Folio-mode offset derivation is not reliable.** Deriving `printed − pdf_index`
+   from page folios reached only **28 % consensus** and was **2 pages wrong**.
+
+### v2 — contents-page exclusion, min-span floor, title-anchored snapping
+
+| Book | Contents pages found | R3 | R2 | Combined | Title-on-start-page |
+|---|---|---:|---:|---:|:--:|
+| NCERT XI Physics Part 1 | 12, 13 | 7 | 0 | **7** | **7/7** |
+| NCERT XI Physics Part 2 | 8, 9 | 7 | 0 | **7** | **7/7** |
+| NCERT XII Physics Part 1 | 1, 2, 3 | 0 | 8 | **8** | **8/8** |
+| **Total** | | | | **22** | **22/22** |
+
+Detected chapter sizes: 12–50 pages — the same band as the bookmark-bearing books, and
+the band the pipeline was built for.
+
+**Complementarity is confirmed empirically, not assumed.** R3 resolves everything on
+the two XI books where R2 finds nothing; R2 resolves everything on XII Part 1 where R3
+finds nothing. Either/or solves 2 of 3. Merged solves 3 of 3.
+
+### One design item from §3 is now closed, not scheduled
+
+Phase 1 recorded "printed page numbers are not PDF indices — an offset must be derived"
+as new Phase 3 design work. **It is not required.** With zero offset anchors available,
+title-anchored search resolved 8 of 8 chapters in NCERT XII Part 1. The offset
+arithmetic is dropped from the plan entirely; monotonicity and a 3-page floor constrain
+the search instead.
+
+### Cost of the text sweep at book scale
+
+| Book | Pages | Text-only sweep | Per page |
+|---|---:|---:|---:|
+| OpenStax College Physics 2e | 1,671 | 5.53 s | 3.3 ms |
+| OpenStax Biology 2e | 1,475 | 4.15 s | 2.8 ms |
+| Dive into Deep Learning | 1,151 | 4.74 s | 4.1 ms |
+| Math for Machine Learning | 417 | 3.28 s | 7.9 ms |
+| Think Python 2e | 244 | 0.74 s | 3.0 ms |
+
+Rungs 2 and 3 therefore cost **~5 s on a book-scale PDF**, against the 579 ms/page
+table scan (11.1 min on the same book) that this path avoids entirely.
