@@ -2,7 +2,7 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-03
-**Overall status:** 0 of 7 phases verified — not started
+**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 2 not started
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
 
 > ## 🔒 GATE RULE — NO EXCEPTIONS
@@ -29,7 +29,7 @@
 
 | Phase | Title | Status | Verified on |
 |:-----:|-------|--------|-------------|
-| 1 | Prove chapter detection (spike) | ⬜ Not Started | — |
+| 1 | Prove chapter detection (spike) | ✅ Verified | 2026-08-03 |
 | 2 | Make chapters storable (migration) | ⬜ Not Started | — |
 | 3 | Detect and store real chapters at upload | ⬜ Not Started | — |
 | 4 | Extract one chapter's pages | ⬜ Not Started | — |
@@ -37,7 +37,7 @@
 | 6 | Endpoints | ⬜ Not Started | — |
 | 7 | Prove it end to end | ⬜ Not Started | — |
 
-**Totals:** Not Started 7 · In Progress 0 · Implemented 0 · Verified 0 · Blocked 0
+**Totals:** Not Started 6 · In Progress 0 · Implemented 0 · Verified 1 · Blocked 0
 
 **Status values:** `⬜ Not Started` · `🔨 In Progress` · `🧪 Implemented (awaiting verification)` · `✅ Verified` · `🚧 Blocked`
 
@@ -51,7 +51,7 @@ Sprint 3 does not begin until Phase 7 is `✅ Verified`.
 
 ## Phase 1 — Prove chapter detection
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Verified — 2026-08-03
 **Type:** Spike. No production code. No story file required.
 **Depends on:** nothing
 **Gates:** the shape of Phase 3
@@ -77,11 +77,80 @@ and confirm the title appears in the first 400 characters.
 27 chapters, **27/27** start pages correct, 4 s.
 
 ### Observed result
-_Not yet run._
+
+Run 2026-08-03 in `apps/api/.venv` (`pypdfium2` 4.30.0, Python 3.13.4) against **8 real
+textbooks**. Full evidence: **`docs/reports/PHASE-1-TOC-SPIKE.md`**.
+
+**Bookmark tree present — 5 of 8 books, 164 chapters:**
+
+| Book | Pages | TOC entries | `get_toc()` | Level | Chapters | Start page strict | ±1 | Median chapter |
+|---|---:|---:|---:|:--:|---:|:--:|:--:|---:|
+| Dive into Deep Learning (baseline) | 1,151 | 1,335 | 1.76 s | 0 | 27 | 27/27 | 27/27 | 40 p |
+| OpenStax College Physics 2e | 1,671 | 525 | 0.03 s | 0 | 42 | 42/42 | 42/42 | 44 p |
+| OpenStax Biology 2e | 1,475 | 591 | 0.05 s | 0 | 53 | 53/53 | 53/53 | 28 p |
+| Mathematics for Machine Learning | 417 | 104 | 0.06 s | 1 | 20 | 19/20 | 20/20 | 22 p |
+| Think Python 2e | 244 | 240 | 0.04 s | 0 | 22 | 22/22 | 22/22 | 10 p |
+| **Total** | | | | | **164** | **163/164 = 99.4 %** | **164/164 = 100 %** | |
+
+- Level-selection heuristic correct on **5 of 5**, no manual override. Chose level 0 on
+  four books, level 1 on MML (whose level 0 is 3 "Part" entries, median span 163 p).
+- All chosen levels monotonic — page ranges ascending and non-overlapping, which
+  Phases 3 and 4 depend on.
+- Baseline reproduced exactly: D2L → 27 chapters, 27/27 start pages. Measured 1.76 s
+  here vs 4 s recorded in the brief.
+- The one strict miss is MML entry `[8] "Exercises"` — bookmark one page early, found at
+  +1, and a non-content entry regardless.
+
+**No bookmark tree — 3 of 8 books, all NCERT Indian school physics (the target segment):**
+
+| Book | Pages | TOC | Text layer | Printed contents page | In-body `CHAPTER N` openers |
+|---|---:|---:|---:|:--:|---:|
+| NCERT Class XI Physics Part 1 (2025-26) | 184 | 0 | 2,738 chars/p | yes | 7 true (+1 false) |
+| NCERT Class XI Physics Part 2 (2006) | 189 | 0 | 2,816 chars/p | yes | 7 true, ch 9–15 (+4 false) |
+| NCERT Class XII Physics Part 1 | 291 | 0 | 2,296 chars/p | yes, well structured | 0 |
+
+- **None is a scan.** All three are born-digital with a full text layer — so rungs 2/3
+  need **no OCR and no vision model**. The brief §8 scanned-book risk did not materialise
+  in this sample.
+- The two fallback signals are **complementary**: the in-body heading sweep is clean on the
+  two books where it fires; on the third (XII Part 1, 0 hits) the printed contents page is
+  near machine-readable (`CHAPTER TWO / ELECTROSTATIC POTENTIAL AND CAPACITANCE / 2.1
+  Introduction 51`). Every no-bookmark book yielded at least one usable signal.
+
+**Two new design items this surfaced (not in the current Phase 3/6 work lists):**
+
+1. Contents-page numbers are **printed** page numbers, not PDF indices — the front-matter
+   offset must be derived, not assumed.
+2. Back matter produces **false chapter starts** (`p 175 Chapter 1`, `p 186 CHAPTER 9`) —
+   pages *referencing* a chapter, not opening one. Starts must be monotonic and
+   de-duplicated by chapter number.
+3. Outlines list front/back matter as peers of real chapters — Contents, Preface, Index,
+   Appendix, Answer Key, and 6× "Exercises" in MML. Unfiltered, the chapter picker offers
+   "Index" as a lesson. Needs a title blocklist + minimum page-span floor.
+
+**Brief's core premise confirmed:** median detected chapter is **10–44 pages** against a
+pipeline built at 41 pages. Outliers exist in both directions (D2L Appendix A = 138 p;
+several chapters 2–4 p), so Phase 5 must not assume ~40 pages.
 
 ### Decision this phase produces
 - ≥ 3 of 4 books yield a usable list → proceed to Phase 2 as planned
 - < 3 of 4 → add fallback rungs 2–5 and **re-plan before writing any code**
+
+**Decision taken:** the result splits by segment rather than falling on either side.
+Rung 1 needs **no change** — 99.4 % strict accuracy, worst case 1.76 s. But it covers
+**0 %** of the Indian school-textbook sample, which is the product's actual market.
+
+→ **Proceed to Phase 2 unchanged** (the migration is rung-agnostic; the
+`boundary_confidence` enum `toc | font | fallback` already accommodates a
+contents-page-derived value).
+→ **Rungs 2 and 3 move from contingency into required Phase 3 scope**, and Phase 3 must be
+re-planned to include them plus the three design items above, before Phase 3 begins.
+→ **Rungs 4 and 5 stay deferred** — nothing in this sample required them.
+
+**Not covered:** no genuinely image-only scan was tested; publisher textbooks (Pearson,
+McGraw-Hill) could not be tested legally. Also confirmed — NCERT ships most of its
+catalogue as **one PDF per chapter** (`ncert-keph1` → `keph101.pdf` … `keph108.pdf`), so
+single-chapter upload stays a first-class case for this segment, not a degenerate one.
 
 ---
 
