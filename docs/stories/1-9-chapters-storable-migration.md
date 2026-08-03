@@ -380,7 +380,7 @@ and the 5-agent `/bmad-code-review` gate.
 | Run | Result |
 |---|---|
 | RED (before the migration existed) | **19 failed, 6 passed** |
-| GREEN (migration applied) | **25 passed, 0 failed** |
+| GREEN (migration applied) | **51 passed, 0 failed** |
 | Mutation check — migration file moved away, re-run | **19 failed, 6 passed** again |
 
 The 6 that pass in RED are the premise checks — full chain replays, `auth.uid()` resolves the
@@ -422,8 +422,11 @@ command — not assumed.
 **Task outcomes:**
 
 - T1 ✅ RLS re-rooting confirmed in scope (AC14–17) and implemented.
-- T2 ✅ Duplicate `(book_id, chapter_index)` pre-flight: the container starts empty, so there
-  are none. **The production Supabase database has NOT been checked** — see Limitations.
+- T2 ✅ Duplicate `(book_id, chapter_index)` pre-flight **done against the live project**
+  (read-only, via PostgREST): 23 chapters over 23 distinct books, every `chapter_index=1`,
+  **0 duplicates**; `boundary_confidence` and `lessons.chapter_id` both `42703`, confirming the
+  schema is still pre-migration. The migration was then rehearsed over a production-shape copy
+  and applied cleanly. **D39 closed.**
 - T3 ✅ `supabase/migrations/20260803000000_chapters_book_scoped.sql`, 10th file in the chain.
 - T4 ✅ Harness ran; RED observed before any DDL was written.
 - T5 ✅ 25/25 green.
@@ -434,9 +437,10 @@ command — not assumed.
 
 - The migration has **not been applied to the real Supabase project**. Everything above is a
   container with a shim.
-- The tracker's Phase 2 test 3 ("existing 23 chapter rows still readable") was proven by
-  **seeding a legacy-shaped row** (a chapter that does carry a `lesson_id`) and asserting it
-  survives — not against the actual 23 production rows.
+- ~~The tracker's Phase 2 test 3~~ — **resolved.** Proven against a production-shape copy
+  (27 books / 27 lessons / 23 chapters / 2,161 chunks) with the migration applied **second**,
+  plus a read-only pre-flight against the live project. The seed reproduces structure only —
+  synthetic uuids, fabricated emails and chunk bodies, zero real identifiers.
 - The tracker's Phase 2 test 4 (`supabase db reset`) **is not runnable** — the Supabase CLI is
   not installed. Substituted by replaying all 10 migration files in filename order.
 - The shim reproduces the *contract* of `auth.uid()` / `auth.users` / `storage.buckets`, not

@@ -205,7 +205,7 @@ Migration: `supabase/migrations/20260803000000_chapters_book_scoped.sql` — 10t
 | Run | Result |
 |---|---|
 | RED — before the migration existed | 19 failed, 6 passed |
-| GREEN — migration applied | **43 passed, 0 failed** |
+| GREEN — migration applied | **51 passed, 0 failed** |
 | Mutation — migration file moved away, re-run | **1 failed, 42 errors** |
 
 Real SQLSTATEs observed, not mocked: **`42703`**, **`23505`**, **`23514`**, **`23503`**.
@@ -222,16 +222,37 @@ container (`transformed_test`, `transformed_legacy`, `transformed_dupes`).
 covered too (cross-tenant INSERT rejected `42501`, DELETE leaves the row), and `chunks` rows are
 actually read under a role rather than asserted by substring.
 
+**Production-shape rehearsal (2026-08-03).** The migration was replayed over a structural copy
+of the live project before ever touching it — pre-migration schema, seed, migration applied
+**second**:
+
+| Checked against the real shape | Result |
+|---|---|
+| Rows: books / lessons / chapters / chunks | 27 / 27 / **23** / 2,161 — **unchanged by the migration** |
+| Chapters keeping their original `lesson_id` **and** `book_id` | **23 / 23** |
+| Chapters backfilled to `boundary_confidence='fallback'` | **23 / 23** |
+| Duplicate `(book_id, chapter_index)` | **0** — the UNIQUE constraint was *accepted* by the real shape |
+| RLS across the 2,161-chunk graph | owner reads their own · stranger reads **0** · `service_role` reads **2,161** |
+
+**This closes D39.** The live project was also queried read-only beforehand: 23 chapters across
+23 distinct books, every `chapter_index = 1`, no duplicates, and `boundary_confidence` /
+`lessons.chapter_id` both returning `42703` — i.e. confirmed still pre-migration.
+
+The seed (`apps/api/tests/integration/prod_shape_seed.sql`) reproduces the live **structure**
+only: row counts, the one-chapter-per-book distribution and the full FK graph are real; every
+uuid is a deterministic `uuid5` stand-in and emails and chunk bodies are fabricated. **Zero real
+identifiers, student content or personal data.**
+
 **Repo-wide gates** (baseline measured on `main` in a git worktree with the identical command):
 
 | Gate | `main` baseline | This branch |
 |---|---|---|
 | CI gating scope (`tests/unit tests/integration -m "not postgres"`) | green | **795 passed, 0 failed** |
-| `pytest tests -q` (advisory) | 19 failed, 1498 passed | **19 failed, 1543 passed** |
+| `pytest tests -q` (advisory) | 19 failed, 1498 passed | **19 failed, 1551 passed** |
 | `ruff check .` | pass | **pass** |
 | `ruff format --check .` / `mypy app` | 1 file / 24 errors | unchanged |
 
-**Zero regressions.** 1543 = 1498 + 45 new tests; the 19 failures are identical to main's (D40).
+**Zero regressions.** 1551 = 1498 + 53 new tests; the 19 failures are identical to main's (D40).
 
 **One production regression found by the review and fixed.** The new `UNIQUE (book_id, chapter_index)`
 turned a recoverable ARQ retry into a permanent failure: `chunk_node` writes its checkpoint *after*
@@ -252,9 +273,9 @@ Three gaps, all recorded rather than waved through:
 1. The migration has **not been applied to the real Supabase project** — everything above is a
    container with a shim (`apps/api/tests/integration/supabase_shim.sql`, required because the
    chain needs `auth.users`, `auth.uid()` × 66, and `storage.buckets`).
-2. Test 3 below ("existing 23 chapter rows still readable") is now proven against rows seeded
-   **before** the migration runs — but still in a container, not against the actual 23
-   production rows (D39).
+2. ~~Test 3 ("existing 23 chapter rows still readable")~~ — **resolved.** Proven against a
+   production-shape copy with the migration applied second, plus a read-only pre-flight
+   against the live project. **D39 closed.**
 3. Test 4 below (`supabase db reset`) **is not runnable** — the Supabase CLI is not installed.
    Substituted by replaying all 10 migration files in filename order.
 4. Registered rather than hand-waved: **D38** (shim fidelity — every RLS verdict is conditional
