@@ -169,8 +169,14 @@ def test_session_id_and_started_at_are_not_sent_to_the_database(mock_to_thread: 
 
 @pytest.mark.unit
 def test_unauthenticated_request_is_rejected() -> None:
+    """HTTPBearer(auto_error=True) returns 403 for a missing token; the JWT
+    dependency itself raises 401 for an invalid one. Both are correct rejections —
+    the established pattern in this suite asserts `in (401, 403)`.
+    """
     resp = _unauth_client.post("/api/assessment/sessions", json={"lesson_id": LESSON_ID})
-    assert resp.status_code == 401
+    assert resp.status_code in (401, 403), (
+        f"Expected 401 or 403 for unauthenticated request, got {resp.status_code}"
+    )
 
 
 # ── AC-2: absence and non-ownership are indistinguishable ────────────────────

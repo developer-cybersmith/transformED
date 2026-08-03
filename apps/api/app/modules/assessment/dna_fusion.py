@@ -174,7 +174,7 @@ async def fuse_learner_dna(
     session_id: str,
     supabase: Client,
     settings: Settings,
-    redis: Any = None,
+    redis: Any = None,  # noqa: ANN401
 ) -> dict[str, float] | None:
     """Blend this session's behavioural signals into the user's Learner DNA profile.
 

@@ -724,7 +724,7 @@ async def get_session_report(
         )
 
     row = session_row
-    
+
     # Step 1b — Fetch lesson tier for contextualised report (Story 3-29)
     _lesson_id = str(row.get("lesson_id") or "")
     tier = "T2"  # safe default — matches lessons.tier DEFAULT 'T2'
@@ -860,7 +860,7 @@ async def get_session_report(
             )
         )
         _delta_map: dict[str, float | None] = {}
-        for evt in (_events_resp.data or []):
+        for evt in _events_resp.data or []:
             payload = evt.get("payload")
             if not isinstance(payload, dict):
                 continue
@@ -869,8 +869,7 @@ async def get_session_report(
                 _delta_map[dim] = payload.get("delta")
 
         _growth_labels: dict[str, str | None] = {
-            dim: _delta_to_growth_label(_delta_map.get(dim))
-            for dim in ALL_NINE_DIMENSIONS
+            dim: _delta_to_growth_label(_delta_map.get(dim)) for dim in ALL_NINE_DIMENSIONS
         }
         _dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}
 
@@ -1056,7 +1055,7 @@ async def get_learner_dna_data(
     *,
     user_id: str,
     supabase: Client,
-    redis: Any = None,
+    redis: Any = None,  # noqa: ANN401
 ) -> dict[str, Any]:
     """Fetch the learner_dna row for a user and return it as a plain dict.
 
@@ -1093,7 +1092,7 @@ async def get_learner_dna_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
         )
-        
+
     # ── Re-assessment flag (non-fatal Redis read) ─────────────────────────────
     reassessment_due: bool = False
     if redis is not None:
@@ -1102,9 +1101,7 @@ async def get_learner_dna_data(
             val = await redis.get(f"user:{user_id}:reassessment_due")
             reassessment_due = val == "1"
         except Exception as exc:
-            logger.warning(
-                "get_learner_dna_data: redis check failed user=%s: %s", _safe_uid, exc
-            )
+            logger.warning("get_learner_dna_data: redis check failed user=%s: %s", _safe_uid, exc)
             reassessment_due = False
 
     return {
