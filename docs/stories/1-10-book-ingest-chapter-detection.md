@@ -42,7 +42,7 @@ Full evidence: `docs/reports/PHASE-1-TOC-SPIKE.md`.
 
 ---
 
-## ⚠️ Decisions needed before implementation
+## Decisions — TAKEN 2026-08-03 (Dev 1)
 
 **D-A — This story breaks lesson generation until Phase 6, and breaks Dev 2's upload page now.**
 
@@ -58,16 +58,21 @@ So on merge:
 
 The brief's §3 rationale is "zero users today", which makes this survivable — but it is not
 currently written down as a consequence anywhere, and Dev 2 owns the upload page.
-**Options:** (a) accept the gap, tell Dev 2, and track it; (b) keep the old lesson-creating path
-behind a flag until Phase 6; (c) pull a minimal generate-from-chapter endpoint forward into this
-story. **Recommendation: (a)** — (b) doubles the surface this story has to keep working, and the
-whole point of Phase 3 is that whole-book generation is wrong.
+**DECIDED: (a) — accept the gap.** Zero users today, so the cost is internal only. Consequences to
+carry, not discover:
+- Lesson generation is **unavailable from this merge until Phase 6 lands**. That is three phases.
+- Dev 2's upload page (`apps/web`, Story 1-8) reads `lesson_id` off the upload response and polls
+  `GET /lessons/{id}`. It **will break**. Dev 2 must be told before this merges, not after.
+- Registered as a `D-nn` entry with the trigger *"Phase 6 lands"*, per binding rule 5.
+Rejected: (b) keeping the old path behind a flag doubles the surface this story must keep working;
+(c) pulling a Phase 6 endpoint forward makes this story two stories.
 
 **D-B — `tier` has nowhere to go.** `POST /lessons` takes `tier` as a form field
 (`router.py:255-261`) and writes it to `lessons.tier`. With no `lessons` row created, the parameter
 is accepted and silently dropped. The plan moves `tier` to the Phase 6 endpoint, which is correct —
-but this story must either reject the field or document that it is ignored. **Silently accepting and
-discarding it is the one option that must not ship.**
+but this story must either reject the field or document that it is ignored. **DECIDED: reject with 422.** If `tier` is supplied to `POST /lessons`, return **422** naming the
+Phase 6 endpoint that will accept it. Failing loudly beats accepting a parameter we no longer
+honour — a silent drop is how a caller keeps sending T3 and keeps getting T2.
 
 ---
 
@@ -141,8 +146,8 @@ discarding it is the one option that must not ship.**
 
 20. `POST /lessons` creates the `books` row, stores the PDF, enqueues `book_ingest_job`. Stops
     creating `lessons`/`lesson_jobs` rows and stops enqueuing `content_pipeline_job`.
-21. `tier` is handled per decision D-B — rejected or explicitly documented as ignored, **never
-    silently discarded**.
+21. Supplying `tier` to `POST /lessons` returns **422**, with a message naming the Phase 6 endpoint
+    that will accept it. Never silently discarded.
 22. The hardcoded chapter row at `graph.py:609-638` is **deleted**, including `"chapter_index": 1`.
 
 **Verification**
@@ -159,7 +164,7 @@ discarding it is the one option that must not ship.**
 
 ## Tasks / Subtasks
 
-- [ ] **T1 — Settle D-A and D-B with the user.** Blocks T6. (AC20, AC21)
+- [x] **T1 — D-A and D-B decided 2026-08-03:** accept the Phase 6 gap; reject `tier` with 422.
 - [ ] **T2 — Detection module**, `app/modules/content/chapter_detection/` (AC1–10, AC24)
   - [ ] `types.py` — `DetectedChapter(title, page_start, page_end, chapter_index, boundary_confidence)`
   - [ ] `rungs.py` — R1/R2/R3/R4/R5 as pure functions over `(page_count, toc, page_texts)`
