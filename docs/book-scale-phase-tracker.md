@@ -2,8 +2,8 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-03
-**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 3 re-planned
-(`docs/bmad/phase-3-chapter-detection-plan.md`); Phase 2 not started
+**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 2 🔨 In Progress, blocked on DB access; Phase 3 re-planned
+(`docs/bmad/phase-3-chapter-detection-plan.md`)
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
 
 > ## 🔒 GATE RULE — NO EXCEPTIONS
@@ -31,14 +31,14 @@
 | Phase | Title | Status | Verified on |
 |:-----:|-------|--------|-------------|
 | 1 | Prove chapter detection (spike) | ✅ Verified | 2026-08-03 |
-| 2 | Make chapters storable (migration) | ⬜ Not Started | — |
+| 2 | Make chapters storable (migration) | 🔨 In Progress | — |
 | 3 | Detect and store real chapters at upload | ⬜ Not Started | — |
 | 4 | Extract one chapter's pages | ⬜ Not Started | — |
 | 5 | Chapter-scoped generation | ⬜ Not Started | — |
 | 6 | Endpoints | ⬜ Not Started | — |
 | 7 | Prove it end to end | ⬜ Not Started | — |
 
-**Totals:** Not Started 6 · In Progress 0 · Implemented 0 · Verified 1 · Blocked 0
+**Totals:** Not Started 5 · In Progress 1 · Implemented 0 · Verified 1 · Blocked 0
 
 **Status values:** `⬜ Not Started` · `🔨 In Progress` · `🧪 Implemented (awaiting verification)` · `✅ Verified` · `🚧 Blocked`
 
@@ -157,9 +157,13 @@ single-chapter upload stays a first-class case for this segment, not a degenerat
 
 ## Phase 2 — Make chapters storable
 
-**Status:** ⬜ Not Started
+**Status:** 🔨 In Progress — 🚧 **blocked on database access**
+**Story:** `docs/stories/1-9-chapters-storable-migration.md`
+**Branch:** `book-scale/phase-2-chapters-storable`
 **Depends on:** Phase 1 verified
 **⚠️ FROZEN CONTRACT — 4-developer review required (`CLAUDE.md` §16)**
+**Scope amended 2026-08-03:** RLS re-rooting added (AC14–17) — the 4 `chapters` and 4 `chunks`
+policies root through `lessons.user_id` and can never match a chapter with `lesson_id = NULL`.
 
 ### Work
 New migration in `supabase/migrations/`:
@@ -190,10 +194,36 @@ cannot 42703):
 4. `supabase db reset` replays the full migration chain cleanly
 
 ### Observed result
-_Not yet run._
+
+**2026-08-03 — blocked before RED. No migration written. Not verified, not implemented.**
+
+Harness built and committed (`be7a46a`): replays every file in `supabase/migrations/` in
+filename order against a real server and asserts on real SQLSTATEs.
+**25 tests collected, 25 skipped**, each with the visible reason *"Docker daemon not reachable
+— cannot start a Postgres container"*. Repo-wide `ruff check .` → All checks passed.
+`mypy` on the new test → Success, no issues.
+
+Blockers, in the order hit:
+
+1. **Docker daemon down.** CLI 29.1.3 present; `docker info` fails on the named pipe. Docker
+   Desktop was launched and after 5+ minutes `tasklist` showed zero docker processes.
+2. **Local PostgreSQL 18 IS running on `localhost:5432`** (PID 10552) and would satisfy
+   binding rule 4 without Docker — but the superuser password is unknown.
+3. **The chain cannot replay on stock Postgres regardless of server**, which changes the
+   harness design: it needs `auth.users` (FK `20260611000000:69`, trigger `:75-77`),
+   `auth.uid()` (**66** references), and `storage.buckets` (`20260710000000:18`).
+   A shim is committed at `apps/api/tests/integration/supabase_shim.sql`.
+   **`supabase db reset` — step 4 of the test list below — is not runnable: the Supabase CLI
+   is not installed.** Replaying the migration files directly is the substitute.
+
+**Unblock by either** starting Docker Desktop, **or** supplying the local Postgres 18
+superuser password (harness needs ~3 lines changed to use a throwaway database instead of a
+container).
 
 ### Files
-`supabase/migrations/` (new file)
+`supabase/migrations/` (new file — **not yet written**),
+`apps/api/tests/integration/test_migration_chapters_book_scoped.py`,
+`apps/api/tests/integration/supabase_shim.sql`, `apps/api/pyproject.toml`
 
 ---
 

@@ -292,10 +292,64 @@ strictly after every existing file. Filename order **is** apply order.
 
 ### Agent Model Used
 
-_not yet run_
+claude-opus-5[1m] — 2026-08-03
 
 ### Debug Log References
 
+**BLOCKED at T4 (RED). No migration written. Story remains `in-progress`.**
+
+Three environment findings, in the order they were hit:
+
+1. **Docker daemon is not running.** The CLI is installed (29.1.3) but
+   `docker info` fails at `npipe:////./pipe/dockerDesktopLinuxEngine`. Docker Desktop was
+   launched from `C:\Program Files\Docker\Docker\Docker Desktop.exe`; after 5+ minutes
+   `tasklist` shows **zero** docker processes, so it did not start — likely needs an
+   interactive login or elevation.
+2. **A local PostgreSQL 18 server IS running on `localhost:5432`** (`C:\Program Files\PostgreSQL\18`,
+   PID 10552 listening). It would satisfy binding rule 4 without Docker, but the `postgres`
+   password is unknown — auth fails. Not brute-forced.
+3. **The migration chain cannot replay on stock Postgres at all** — this is true regardless of
+   which server is used, and it changes the harness design. The chain depends on three
+   Supabase-provisioned objects:
+
+   | Object | Needed by |
+   |---|---|
+   | `auth.users` | FK `20260611000000:69`, trigger `:75-77` |
+   | `auth.uid()` | **66** references — every RLS policy in the chain |
+   | `storage.buckets` | insert at `20260710000000:18` |
+
+   Without a shim, `psql -f 20260611000000_initial_schema.sql` fails at line 69 and nothing
+   downstream is verifiable. `supabase db reset` — named in the tracker's Phase 2 test list —
+   is not runnable either: the Supabase CLI is not installed.
+
+**Verification actually performed:** `pytest tests/integration/test_migration_chapters_book_scoped.py -m postgres`
+→ **25 tests collected, 25 skipped**, each with the visible reason
+`Docker daemon not reachable — cannot start a Postgres container`. Repo-wide
+`ruff check .` → **All checks passed**. `mypy` on the new test → **Success: no issues found**.
+
+**RED was not observed.** Per the phase gate and story AC11, the migration is deliberately
+not written: writing DDL whose constraints have never been seen to fire is exactly the
+"success-shaped result without a check" this effort exists to eliminate.
+
+**To unblock, either:**
+- start Docker Desktop (then `pytest -m postgres` runs the whole harness unattended), **or**
+- supply the local Postgres 18 superuser password — the harness needs a ~3-line change to
+  point at `localhost:5432` and create/drop a throwaway database instead of a container.
+
 ### Completion Notes List
 
+- T1 ✅ RLS re-rooting confirmed in scope (AC14–17).
+- T4 🔨 Harness written, collects and skips visibly; **cannot execute** — see Debug Log.
+- T2, T3, T5, T6, T7 ⬜ not started. T2 (row-count pre-flight) is itself blocked on DB access.
+- Deliberately **not** done: no `supabase/migrations/` file was created. A migration is not
+  written before its RED run under this story's AC11.
+- Known limitation to carry into review: the shim reproduces the *contract* of Supabase's
+  `auth.uid()`/`auth.users`/`storage.buckets`, not their implementation. Guarded by
+  `test_shim_auth_uid_reads_jwt_claims`, and by `test_service_role_and_user_role_disagree`
+  which fails if the role switch silently does nothing and the RLS assertions become vacuous.
+
 ### File List
+
+- `apps/api/tests/integration/test_migration_chapters_book_scoped.py` (new)
+- `apps/api/tests/integration/supabase_shim.sql` (new)
+- `apps/api/pyproject.toml` (modified — registered the `postgres` marker)
