@@ -43,14 +43,32 @@ CREATE TABLE IF NOT EXISTS auth.users (
 );
 
 -- Mirrors supabase's auth.uid(): the current request's JWT `sub` claim.
+-- Two details that matter for fidelity:
+--
+-- 1. NULLIF placement. Supabase applies nullif(current_setting(...), '') BEFORE
+--    the ::jsonb cast. Casting first — the obvious-looking order — makes an EMPTY
+--    GUC raise 22P02 inside every RLS policy, so the query errors instead of
+--    returning zero rows. PostgREST leaves the GUC empty on an unauthenticated
+--    request, so that is a live path, not a hypothetical.
+--    (A non-JSON GUC raises 22P02 in real Supabase too — that is matched, not
+--    guarded against. PostgREST never produces one.)
+--
+-- 2. The legacy `request.jwt.claim.sub` GUC is checked first, as Supabase does.
+--    Omitting it would make the shim resolve a user where production would not.
+--
+-- Covered by test_shim_auth_uid_reads_jwt_claims and
+-- test_shim_auth_uid_returns_null_for_empty_or_absent_claims.
 CREATE OR REPLACE FUNCTION auth.uid()
 RETURNS uuid
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT NULLIF(
-    current_setting('request.jwt.claims', true)::jsonb ->> 'sub',
-    ''
+  SELECT coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    nullif(
+      nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub',
+      ''
+    )
   )::uuid;
 $$;
 

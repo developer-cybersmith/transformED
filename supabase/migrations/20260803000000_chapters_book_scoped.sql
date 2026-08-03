@@ -33,8 +33,18 @@
 -- chapter row would destroy exactly the data this effort exists to produce.
 -- Resolve duplicates deliberately, then re-apply.
 --
+-- ATOMIC: the whole file is one transaction. Without it, `psql -f` autocommits
+-- each statement, so the fail-loud abort above would leave steps 1-2 committed —
+-- and the re-apply this header tells you to perform would then die at step 2 with
+-- 42701 (`column "chapter_id" of relation "lessons" already exists`), i.e. the
+-- documented remedy could not work. With BEGIN/COMMIT an abort rolls back
+-- completely and re-apply is always the correct next action.
+-- (No CREATE INDEX CONCURRENTLY here, which is what would forbid a transaction.)
+--
 -- Never modify an applied migration. This is a new file only.
 -- ============================================================
+
+BEGIN;
 
 
 -- ============================================================
@@ -62,7 +72,9 @@ ALTER TABLE public.chapters
 ALTER TABLE public.lessons
   ADD COLUMN chapter_id uuid REFERENCES public.chapters(chapter_id) ON DELETE SET NULL;
 
-CREATE INDEX ON public.lessons (chapter_id);
+-- Named explicitly: an auto-generated name can only be guessed by a future
+-- DROP INDEX, and applied migrations can never be edited to correct it.
+CREATE INDEX lessons_chapter_id_idx ON public.lessons (chapter_id);
 
 
 -- ============================================================
@@ -127,10 +139,10 @@ ALTER TABLE public.chapters
 -- rather than change it.
 -- ============================================================
 
-DROP POLICY "chapters: select own" ON public.chapters;
-DROP POLICY "chapters: insert own" ON public.chapters;
-DROP POLICY "chapters: update own" ON public.chapters;
-DROP POLICY "chapters: delete own" ON public.chapters;
+DROP POLICY IF EXISTS "chapters: select own" ON public.chapters;
+DROP POLICY IF EXISTS "chapters: insert own" ON public.chapters;
+DROP POLICY IF EXISTS "chapters: update own" ON public.chapters;
+DROP POLICY IF EXISTS "chapters: delete own" ON public.chapters;
 
 CREATE POLICY "chapters: select own"
   ON public.chapters FOR SELECT
@@ -174,10 +186,10 @@ CREATE POLICY "chapters: delete own"
 
 
 -- chunks: chapters → books (was chapters → lessons)
-DROP POLICY "chunks: select own" ON public.chunks;
-DROP POLICY "chunks: insert own" ON public.chunks;
-DROP POLICY "chunks: update own" ON public.chunks;
-DROP POLICY "chunks: delete own" ON public.chunks;
+DROP POLICY IF EXISTS "chunks: select own" ON public.chunks;
+DROP POLICY IF EXISTS "chunks: insert own" ON public.chunks;
+DROP POLICY IF EXISTS "chunks: update own" ON public.chunks;
+DROP POLICY IF EXISTS "chunks: delete own" ON public.chunks;
 
 CREATE POLICY "chunks: select own"
   ON public.chunks FOR SELECT
@@ -226,3 +238,6 @@ CREATE POLICY "chunks: delete own"
         AND b.user_id = auth.uid()
     )
   );
+
+
+COMMIT;

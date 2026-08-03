@@ -59,9 +59,48 @@ def test_tier_migration_file_timestamp_is_after_latest_applied() -> None:
         f"anchor migration {_LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED} is missing — "
         f"an applied migration was renamed or deleted; got {all_migrations}"
     )
+    # An APPLIED migration's filename is frozen outright — renaming it forward
+    # would reorder it against migrations authored later, which a `>` bound alone
+    # would not catch. Pin the exact name.
+    assert tier_migration == "20260714020000_add_lesson_tier.sql", (
+        f"the applied tier migration was renamed to {tier_migration}; "
+        f"applied migrations are immutable (CLAUDE.md §16)"
+    )
     assert tier_migration > _LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED, (
         f"tier migration {tier_migration} must sort after "
         f"{_LATEST_MIGRATION_WHEN_TIER_WAS_AUTHORED}; got order {all_migrations}"
+    )
+
+
+@pytest.mark.unit
+def test_no_migration_is_backdated_before_an_already_applied_one() -> None:
+    """The repo-wide invariant the old `all_migrations[-1] == tier_migration`
+    assertion enforced as a side effect, restored explicitly.
+
+    Re-anchoring that assertion fixed its false positive on every new migration,
+    but removed the only check that a NEW file cannot be backdated to sort ahead
+    of an already-applied one — which is exactly the abuse it was named for.
+    """
+    applied_frozen = "20260714020000_add_lesson_tier.sql"
+    all_migrations = sorted(p.name for p in _MIGRATIONS_DIR.glob("*.sql"))
+    idx = all_migrations.index(applied_frozen)
+    # Everything at or before the frozen anchor is the applied set; nothing new
+    # may appear inside it.
+    known_applied = {
+        "20260611000000_initial_schema.sql",
+        "20260625000000_chunks_inline_embedding.sql",
+        "20260630000000_unique_attempt_constraints.sql",
+        "20260702000000_dpdp_user_consents.sql",
+        "20260703000000_onboarding_unique_constraint.sql",
+        "20260703010000_add_analytics_consent.sql",
+        "20260710000000_storage_buckets.sql",
+        "20260713020000_lesson_job_node_output_merge_fn.sql",
+        applied_frozen,
+    }
+    assert set(all_migrations[: idx + 1]) == known_applied, (
+        "a migration was backdated to sort before or among the applied set: "
+        f"unexpected {set(all_migrations[: idx + 1]) - known_applied}, "
+        f"missing {known_applied - set(all_migrations[: idx + 1])}"
     )
 
 

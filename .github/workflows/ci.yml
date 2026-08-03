@@ -38,8 +38,12 @@ jobs:
       # GATING. Was `... -x -q`; `-x` stopped at the first failure, so CI never
       # enumerated its own damage. These two directories are green today and must
       # stay green.
+      # `-m "not postgres"`: the postgres-marked suite replays supabase/migrations/
+      # against a real container. It must not sit on the gating path, where an
+      # anonymous Docker Hub pull failure or rate-limit would turn main red for a
+      # reason unrelated to the change under test. It runs as its own job below.
       - name: Unit tests (gating)
-        run: pytest tests/unit tests/integration -q
+        run: pytest tests/unit tests/integration -q -m "not postgres"
         env:
           SUPABASE_URL: http://localhost:54321
           SUPABASE_ANON_KEY: test
@@ -63,6 +67,36 @@ jobs:
       # Honest caveat: running these would NOT have caught any of the 17 defects
       # found on 2026-07-29. Those tests are mock-shaped too. This is observability,
       # not verification. See BD-3.
+      # GATING, in its own step so a Docker Hub hiccup is attributable rather than
+      # being mistaken for a test failure. This is the ONLY verification of the
+      # frozen-contract migrations against a real Postgres catalog.
+      #
+      # `--no-skip-postgres` is enforced by the -rs check below rather than a flag:
+      # if psql or the Docker daemon is missing on the runner, all of these tests
+      # skip and the step would otherwise pass green while verifying nothing —
+      # binding rule 7's FIXED-UNGUARDED. Asserting a non-zero pass count is what
+      # makes the guard real.
+      - name: Migration tests (gating, real Postgres)
+        run: |
+          set -o pipefail
+          docker pull pgvector/pgvector:pg16 || docker pull pgvector/pgvector:pg16
+          pytest tests/integration -q -m postgres -rs | tee /tmp/pg-tests.log
+          if grep -qE "^[0-9]+ skipped|no tests ran" /tmp/pg-tests.log; then
+            echo "::error::postgres-marked tests skipped — the migration guard did not run"
+            exit 1
+          fi
+        env:
+          SUPABASE_URL: http://localhost:54321
+          SUPABASE_ANON_KEY: test
+          SUPABASE_SERVICE_ROLE_KEY: test
+          SUPABASE_JWT_SECRET: test-secret-at-least-32-chars-long!!
+          REDIS_URL: redis://localhost:6379
+          OPENAI_API_KEY: test
+          ELEVENLABS_API_KEY: test
+          HEYGEN_API_KEY: test
+          LANGFUSE_PUBLIC_KEY: test
+          LANGFUSE_SECRET_KEY: test
+
       - name: Full suite (advisory, not gating)
         continue-on-error: true
         run: pytest tests -q
