@@ -1043,3 +1043,99 @@ def test_unique_constraint_supports_the_pipelines_upsert_conflict_target(
         )
         == "1|retry write"
     )
+
+
+# ── Production-shape rehearsal ────────────────────────────────────────────────
+# The scenarios above use hand-built rows. This one replays the migration over a
+# structural copy of the LIVE project (27 books / 27 lessons / 23 chapters /
+# 2,161 chunks, real ids and relationships; emails and chunk bodies synthesised).
+# It is what turns D39 from "we counted duplicates through the API" into "the
+# migration was rehearsed against the real shape before it touched production".
+
+PROD_SEED = pathlib.Path(__file__).parent / "prod_shape_seed.sql"
+PROD_DB = "transformed_prodshape"
+PROD_COUNTS = {"books": 27, "lessons": 27, "chapters": 23, "chunks": 2161}
+
+
+@pytest.fixture(scope="session")
+def pg_prod(pg_server: object) -> None:  # noqa: ARG001
+    """Pre-migration schema → production-shaped data → migration applied second."""
+    _provision(PROD_DB, before_target=True)
+    seed = sql_file(PROD_SEED, db=PROD_DB)
+    assert seed.ok, f"production-shape seed failed to load: {seed!r}"
+    res = sql_file(MIGRATIONS_DIR / MIGRATION_UNDER_TEST, db=PROD_DB)
+    assert res.ok, f"MIGRATION FAILED AGAINST PRODUCTION-SHAPED DATA: {res!r}"
+    return None
+
+
+@pytest.mark.parametrize(("table", "expected"), sorted(PROD_COUNTS.items()))
+def test_prod_shape_row_counts_survive_the_migration(
+    pg_prod: None,  # noqa: ARG001
+    table: str,
+    expected: int,
+) -> None:
+    """Not one row added, dropped or orphaned by the migration."""
+    assert scalar(f"SELECT count(*) FROM public.{table}", db=PROD_DB) == str(expected)
+
+
+def test_prod_shape_every_chapter_keeps_its_lesson_and_book(pg_prod: None) -> None:  # noqa: ARG001
+    """The permissive direction must not orphan a legacy row: all 23 chapters
+    still carry the lesson_id and book_id they had before lesson_id went nullable."""
+    assert scalar("SELECT count(*) FROM public.chapters WHERE lesson_id IS NULL", db=PROD_DB) == "0"
+    assert (
+        scalar(
+            "SELECT count(*) FROM public.chapters c "
+            "JOIN public.lessons l ON l.lesson_id = c.lesson_id "
+            "JOIN public.books   b ON b.book_id   = c.book_id",
+            db=PROD_DB,
+        )
+        == "23"
+    )
+
+
+def test_prod_shape_all_existing_chapters_backfilled_to_fallback(pg_prod: None) -> None:  # noqa: ARG001
+    """AC9 against the real row count: every one of the 23 pre-existing chapters
+    was written by the hardcoded single-chapter path, so 'fallback' is accurate."""
+    assert (
+        scalar(
+            "SELECT count(*) FROM public.chapters WHERE boundary_confidence = 'fallback'",
+            db=PROD_DB,
+        )
+        == "23"
+    )
+
+
+def test_prod_shape_has_no_duplicate_book_chapter_index(pg_prod: None) -> None:  # noqa: ARG001
+    """D39, proven rather than sampled: the UNIQUE constraint was ACCEPTED by the
+    live data shape. If production had held a duplicate pair, the fixture's
+    migration apply would already have aborted with 23505."""
+    assert (
+        scalar(
+            "SELECT count(*) FROM (SELECT book_id, chapter_index FROM public.chapters "
+            "GROUP BY 1,2 HAVING count(*) > 1) d",
+            db=PROD_DB,
+        )
+        == "0"
+    )
+
+
+def test_prod_shape_chunks_are_readable_by_their_owner_under_rls(pg_prod: None) -> None:  # noqa: ARG001
+    """The re-rooted chunks policy resolves across the real 2,161-row graph, and
+    a non-owner sees none of it."""
+    owner = scalar(
+        "SELECT b.user_id FROM public.books b JOIN public.chapters c "
+        "ON c.book_id = b.book_id LIMIT 1",
+        db=PROD_DB,
+    )
+    mine = scalar(
+        "SELECT count(*) FROM public.chunks", db=PROD_DB, as_user=owner, role="authenticated"
+    )
+    stranger = scalar(
+        "SELECT count(*) FROM public.chunks",
+        db=PROD_DB,
+        as_user=str(uuid.uuid4()),
+        role="authenticated",
+    )
+    assert int(mine) > 0, "owner cannot read their own chunks after the re-rooting"
+    assert stranger == "0", f"a stranger read {stranger} chunks — RLS leak"
+    assert scalar("SELECT count(*) FROM public.chunks", db=PROD_DB, role="service_role") == "2161"
