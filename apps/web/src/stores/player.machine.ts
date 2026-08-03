@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { LessonPackage } from '@hie/shared/types/lesson';
-import type { TutorState } from '@hie/shared/types/ws';
+import type { TutorState, TutorInterveneMessage } from '@hie/shared/types/ws';
 import type { LocalControlOut } from '@/lib/ws/wireTypes';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 
@@ -60,6 +60,9 @@ export interface PlayerStore {
   /** Playback rate multiplier; default 1.0. */
   playbackRate: number;
   tutorState: TutorState;
+  /** Most recent tutor_intervene payload; null when no intervention is active.
+   *  A new one REPLACES the current one (no queue) — see setActiveIntervention. */
+  activeIntervention: TutorInterveneMessage['payload'] | null;
   /** segment_id values for segments where quiz has already fired this forward
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
@@ -104,6 +107,8 @@ export interface PlayerStore {
   exitTeachBack: () => void;
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
+  /** Sets/replaces (or clears with null) the active tutor_intervene payload (S3-03). */
+  setActiveIntervention: (payload: TutorInterveneMessage['payload'] | null) => void;
   setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
   setBuffering: (b: boolean) => void;
   setAudioError: (b: boolean) => void;
@@ -132,6 +137,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   seekRequestMs: null,
   playbackRate: 1.0,
   tutorState: 'IDLE',
+  activeIntervention: null,
   quizFiredForSegment: new Set<string>(),
   wsSendControl: null,
   isBuffering: false,
@@ -158,6 +164,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       seekRequestMs: null,
       playbackRate: 1.0,
       tutorState: 'IDLE',
+      activeIntervention: null,
       quizFiredForSegment: new Set<string>(),
       isBuffering: false,
       audioError: false,
@@ -190,7 +197,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   setSessionId: (id) => {
-    set({ sessionId: id });
+    // Review fix: a mid-lesson session re-mint (D18 retry path) must not let a
+    // card tied to the old session linger under the new one.
+    set({ sessionId: id, activeIntervention: null });
   },
 
   clearSeekRequest: () => {
@@ -288,11 +297,16 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         // fatal, the lesson still ends normally.
       }
     }
-    set({ status: 'ENDED' });
+    // Review fix: a stale card must not survive into the lesson-complete screen.
+    set({ status: 'ENDED', activeIntervention: null });
   },
 
   setTutorState: (s) => {
     set({ tutorState: s });
+  },
+
+  setActiveIntervention: (payload) => {
+    set({ activeIntervention: payload });
   },
 
   setWsSendControl: (fn) => {

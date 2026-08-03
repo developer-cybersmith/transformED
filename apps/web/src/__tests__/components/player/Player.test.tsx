@@ -408,6 +408,18 @@ describe('Player — lesson WebSocket (S2-06)', () => {
 
     expect(screen.queryByText(/checking in/i)).not.toBeNull();
   });
+
+  it('mounts TutorInterventionCard — it becomes visible when a tutor_intervene payload is active (S3-03 AC-8)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'Stay with me!' },
+      });
+    });
+
+    expect(screen.queryByTestId('tutor-intervention-card')).not.toBeNull();
+  });
 });
 
 describe('Player — tab_switch analytics (Sprint 2 audit gap)', () => {

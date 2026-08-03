@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
+| **Last Updated** | 2026-08-03 (S3-03 TutorInterventionCard shipped — Story 2-40, 3-agent review passed, 9 patches applied. See §12.) — previously 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
 | **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 original tasks done, +8 additional stories shipped — all Dev 2 scope) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is not yet end-to-end functional; see audit note below** |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is not yet end-to-end functional; see audit note below** · Sprint 3 IN PROGRESS (1/10 — S3-03 done) |
 
 ---
 
@@ -53,10 +53,10 @@
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **14** | 0 | **0** |
 | Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
-| Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
+| Sprint 3 | Weeks 6–7 | 10 | **1** | 0 | **9** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **29** | **0** | **26** |
+| **Total** | **10 weeks** | **55** | **30** | **0** | **25** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -150,7 +150,7 @@ apps/web/src/components/
 │   ├── QuizOverlay.tsx                     ✅ DONE — shipped 2026-07-01 (renamed from planned QuizModal), further edits in progress uncommitted
 │   ├── TeachBackModal.tsx                  ✅ DONE — shipped 2026-07-01, further edits in progress uncommitted
 │   ├── PlayerControls.tsx                  ✅ DONE — not in original plan; seek bar, ±10s skip, speed control
-│   ├── TutorInterventionCard.tsx           ✗ Sprint 3 — slides in from right
+│   ├── TutorInterventionCard.tsx           ✅ DONE 2026-08-03 — S3-03 (Story 2-40)
 │   ├── AttentionMonitor.tsx                ✗ Sprint 3 — MediaPipe WASM
 │   └── CESIndicator.tsx                   ✗ Sprint 3 — subtle score display
 ├── lesson/
@@ -559,7 +559,7 @@ Public routes (no auth check):
 | Quiz overlay (planned as QuizModal) | `components/player/QuizOverlay.tsx` | ✓ DONE 2026-07-01 |
 | Teach-back modal | `components/player/TeachBackModal.tsx` | ✓ DONE 2026-07-01 |
 | Player controls (unplanned addition) | `components/player/PlayerControls.tsx` | ✓ DONE 2026-07-01 |
-| Tutor intervention card | `components/player/TutorInterventionCard.tsx` | ✗ Sprint 3 |
+| Tutor intervention card | `components/player/TutorInterventionCard.tsx` | ✅ DONE 2026-08-03 |
 | Attention monitor | `components/player/AttentionMonitor.tsx` | ✗ Sprint 3 |
 | CES indicator | `components/player/CESIndicator.tsx` | ✗ Sprint 3 |
 
@@ -1542,9 +1542,9 @@ MediaPipe Face Landmarker WASM → 30fps local processing (never sent)
 
 ---
 
-### S3-03 — TutorInterventionCard Component
+### S3-03 — TutorInterventionCard Component — ✓ DONE 2026-08-03
 **Priority:** P0  
-**Status:** 🔲 NOT STARTED  
+**Status:** ✅ DONE 2026-08-03 — Story `2-40-tutor-intervention-card.md`, branch `sprint3/s3-03-tutor-intervention-card`, 3-agent review passed (9 patches applied). Built against mock WS events per the frozen `ws.ts` contract — real end-to-end delivery still depends on Dev 4's tutor FSM (D30) and Dev 3/Dev 1's D18/D29 fixes, tracked separately.  
 **Files to create:** `src/components/player/TutorInterventionCard.tsx`
 
 Receives `TutorInterveneMessage` from `LessonSocket`. Slides in from the right side of the player. Three types:
@@ -1565,11 +1565,11 @@ socket.on('tutor_intervene', (msg: TutorInterveneMessage) => {
 Audio does NOT pause for interventions — card is non-blocking. User dismisses manually or it auto-dismisses after 30s.
 
 **Acceptance criteria:**
-- [ ] Card slides in from right with 200ms ease animation
-- [ ] Dismisses on button click or after 30s timeout
-- [ ] Audio continues playing during intervention
-- [ ] Three visual variants (distraction / confusion / fatigue)
-- [ ] NEVER shows while `store.status === 'TEACH_BACK'` — guard at render level
+- [x] Card slides in from right with 200ms ease animation
+- [x] Dismisses on button click or after 30s timeout
+- [x] Audio continues playing during intervention
+- [x] Three visual variants (distraction / confusion / fatigue)
+- [x] NEVER shows while `store.status === 'TEACH_BACK'` — guard at render level
 
 ---
 

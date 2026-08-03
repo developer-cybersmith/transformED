@@ -80,6 +80,7 @@ beforeEach(() => {
     isBuffering: false,
     audioError: false,
     audioRetryCount: 0,
+    activeIntervention: null,
   });
   localStorage.clear();
 });
@@ -139,6 +140,15 @@ describe('setSessionId (Story 2-39)', () => {
     usePlayerStore.getState().setSessionId('sess_real_abc123');
 
     expect(usePlayerStore.getState().sessionId).toBe('sess_real_abc123');
+  });
+
+  it('clears activeIntervention -- a mid-lesson session re-mint must not carry a stale card into the new session (review fix)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().setActiveIntervention({ session_id: 'old', type: 'distraction', message: 'x' });
+
+    usePlayerStore.getState().setSessionId('sess_real_abc123');
+
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
   });
 });
 
@@ -371,6 +381,37 @@ describe('setTutorState', () => {
   it('mirrors tutor FSM state from WebSocket', () => {
     usePlayerStore.getState().setTutorState('TEACHING');
     expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+});
+
+describe('activeIntervention / setActiveIntervention (S3-03 AC-1)', () => {
+  it('defaults to null', () => {
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('setActiveIntervention() sets the payload', () => {
+    const payload = { session_id: 's1', type: 'distraction' as const, message: 'Stay with me!' };
+    usePlayerStore.getState().setActiveIntervention(payload);
+    expect(usePlayerStore.getState().activeIntervention).toEqual(payload);
+  });
+
+  it('a second setActiveIntervention() call replaces the first (no queue)', () => {
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'distraction', message: 'First' });
+    const second = { session_id: 's1', type: 'fatigue' as const, message: 'Second' };
+    usePlayerStore.getState().setActiveIntervention(second);
+    expect(usePlayerStore.getState().activeIntervention).toEqual(second);
+  });
+
+  it('setActiveIntervention(null) clears it', () => {
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'confusion', message: 'x' });
+    usePlayerStore.getState().setActiveIntervention(null);
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('loadLesson() resets activeIntervention to null', () => {
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'fatigue', message: 'Take a break' });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
   });
 });
 
@@ -740,6 +781,15 @@ describe('endLesson clears saved progress', () => {
     usePlayerStore.getState().endLesson();
 
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('clears activeIntervention -- a stale card must not survive into the lesson-complete screen (review fix)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'fatigue', message: 'x' });
+
+    usePlayerStore.getState().endLesson();
+
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
   });
 
   it('does not throw when localStorage.removeItem throws', () => {
