@@ -1,6 +1,6 @@
 # Story 1.9: Make chapters storable without a lesson (book-scale Phase 2)
 
-Status: review
+Status: in-progress
 
 **Sprint:** Book-scale ingestion, Phase 2 of 7
 **Owner:** Dev 1
@@ -429,3 +429,52 @@ command — not assumed.
 - `apps/api/tests/integration/supabase_shim.sql` (new)
 - `apps/api/tests/unit/test_learner_mode_tier.py` (modified — over-tight assertion re-anchored)
 - `apps/api/pyproject.toml` (modified — registered the `postgres` marker)
+
+---
+
+## Review Findings — 5-agent adversarial review, 2026-08-03
+
+Layers run: Story Quality · Blind Hunter (security) · Test Coverage · AC Completeness ·
+Process Integrity · Edge Case Hunter (6 total; CLAUDE.md mandates 5).
+
+**Outcome: Changes Requested.** AC audit: **7 SATISFIED · 5 PARTIAL · 5 UNSATISFIED**.
+
+### Decisions needed
+
+- [ ] [Review][Decision] **UNIQUE (book_id, chapter_index) turns a recoverable pipeline retry into a permanent failure** — VERIFIED against source. `chunk_node` is idempotent via `node_outputs["chunk"]` (`graph.py:594-597`), but the checkpoint is written at `:671`, *after* the chapter insert at `:616` and the chunks upsert at `:660`. If the upsert fails, the retry re-runs the insert with the same `(book_id, chapter_index=1)` → `23505` → `RuntimeError` at `:629`. Before this migration the duplicate insert succeeded and the job completed. `workers/main.py` sets `max_tries=3`, so all three attempts now fail identically. Options: (a) make the insert idempotent in this PR despite the story's "no graph.py edits" scope, (b) hold the migration until Phase 3 deletes `graph.py:609-638`, (c) register `D-nn` and accept the window.
+- [ ] [Review][Decision] **AC13 is ticked but literally unmet** — AC says "repo-wide ruff, mypy and the full pytest suite **pass**". Recorded: 19 failed, 24 mypy errors, 1 format failure. "Zero regressions against a measured baseline" is a different and defensible claim, but it is not what the AC says. Either amend AC13 to the regression wording with the baseline numbers, or mark it failed. Note CI's full-suite step is `continue-on-error: true` (`ci.yml:66`), so no gate distinguishes 19 from 20.
+- [ ] [Review][Decision] **RLS re-rooting contradicts the approved brief and was self-signed-off** — `book-scale-implementation-brief.md` §3 still lists "RLS re-rooting" as explicitly out of scope with a `D-nn` promised. The story pulled it in under "signed off by Dev 1" — the story's own owner. Amend the brief or record the reversal.
+
+### Patches
+
+- [ ] [Review][Patch] AC8/AC9 are structurally untested — the `pg` fixture applies all 10 migrations to an **empty** DB, so every "pre-existing row" is created *after* the migration ran. AC9 tests the column DEFAULT on INSERT, not the `ADD COLUMN NOT NULL DEFAULT` backfill. Fix: replay files `< 20260803000000`, seed legacy rows incl. a `chunks` row, snapshot, apply, diff field-by-field [tests/integration/test_migration_chapters_book_scoped.py]
+- [ ] [Review][Patch] AC10 (fail-loud on duplicates) has **no test at all** — the story's only data-destruction guard. Add: seed a duplicate pair pre-migration, assert the file aborts 23505 and rows survive; plus a text scan for `DELETE|TRUNCATE|ON CONFLICT` [tests/integration/test_migration_chapters_book_scoped.py]
+- [ ] [Review][Patch] Container publishes a superuser Postgres on `0.0.0.0:55433` with a repo-committed password — `-p 55433:5432` does not bind loopback. Postgres superuser is RCE via `COPY … FROM PROGRAM`. Fix: `-p 127.0.0.1:55433:5432` [tests/integration/test_migration_chapters_book_scoped.py:200]
+- [ ] [Review][Patch] The `postgres` marker runs in the **gating** CI job — `ci.yml:41` is `pytest tests/unit tests/integration -q` with no deselection, and `ubuntu-latest` has Docker + psql. Every PR now pulls a ~400 MB image on the gating path, with no `timeout=` on `docker run`, no pull retry, and `assert up.returncode == 0` outside the `try:` so a failed start leaks the container. Conversely, if a runner image drops psql, all 25 skip silently and the guard vanishes (rule 7) [ci.yml:41, test file:203]
+- [ ] [Review][Patch] Policy assertions cannot detect a wide-open or mis-commanded policy — `string_agg` of all four predicates means `"books" in joined` passes if *any one* mentions books; `pg_policies.cmd` and `policyname` are never queried, so four `FOR SELECT` policies pass. `coalesce(qual, with_check)` also discards `with_check` when both exist. Fix: assert the literal `{(policyname, cmd)}` set [test file:472-489]
+- [ ] [Review][Patch] AC17 says "asserted **by name** … every other table" — implemented as `count(*)==4` on `lessons` and `books` only (2 of ~14 tables). A drop-and-recreate under a new name, or any stray drop elsewhere, passes. Fix: snapshot `(tablename, policyname, cmd)` and compare to a literal set [test file:494-495]
+- [ ] [Review][Patch] Write-side RLS is never exercised — every `INSERT` in the file runs as superuser (`role=None`), and no `chunks` row is ever inserted or read under a role. The `WITH CHECK` on `chapters: insert own` and all four `chunks` policies have zero behavioural coverage; a wrong join predicate (`c.chapter_id = chunks.chunk_id` — both uuid, no type error) passes every assertion while making all chunks invisible in production [test file]
+- [ ] [Review][Patch] AC3 never asserts `ON DELETE CASCADE` or the referenced table, though the sibling AC4 test does assert `delete_rule` — the asymmetry is the tell [test file:338]
+- [ ] [Review][Patch] Migration is not transactional and not re-appliable — no `BEGIN/COMMIT`, no `IF EXISTS` on 8 `DROP POLICY`, no `IF NOT EXISTS` on DDL. Under `psql -f` each statement autocommits, so an abort at step 3 leaves steps 1-2 committed; the header's own remedy ("resolve duplicates, then re-apply") then fails at step 2 with 42701 [20260803000000_chapters_book_scoped.sql]
+- [ ] [Review][Patch] Shim `auth.uid()` raises 22P02 where real Supabase returns NULL — it casts `::jsonb` before `NULLIF`; Supabase applies `nullif(…,'')` first. The file's header explicitly claims it "returns NULL when the GUC is unset or malformed, matching Supabase" — false for the malformed case [supabase_shim.sql:64-73]
+- [ ] [Review][Patch] `test_shim_auth_uid_reads_jwt_claims` validates the shim against the shim — it is a conversation with the fixture (binding rule 2). Mark `# MOCK-CONTRACT:` and name the real-dependency test, which does not yet exist [test file:300]
+- [ ] [Review][Patch] `CREATE INDEX ON public.lessons (chapter_id)` is unnamed — every other object in the migration is explicitly named; a future `DROP INDEX` must guess `lessons_chapter_id_idx` [migration STEP 2]
+- [ ] [Review][Patch] `44813fb` contains the migration, the tests **and** the story file — CLAUDE.md: "NEVER merge a PR where story and implementation share a commit." Split before merge
+- [ ] [Review][Patch] Story limitations understate the gaps — the bullet "proven by seeding a legacy-shaped row" implies the pre-existing-row case was exercised; it was not. Add AC8/9/10, transactionality, rollback, and write-side RLS
+- [ ] [Review][Patch] Cross-tenant FK integrity is unconstrained — `lessons.chapter_id` and `chapters.lesson_id` can both be pointed at another tenant's row; FK checks bypass RLS, so a successful write is an existence oracle. `chunks.book_id` is likewise never tied to `chapters.book_id`
+- [ ] [Review][Patch] `role` is interpolated raw into `SET ROLE {role}` while every other value goes through `_lit()` — harmless today (no external caller), maximal blast radius (superuser connection) if ever parametrised [test file:134]
+- [ ] [Review][Patch] Re-anchored tier assertion no longer catches an **applied** migration being renamed forward — the stronger form is `assert tier_migration == "20260714020000_add_lesson_tier.sql"`, since an applied migration's name is frozen outright. Nothing now asserts a *new* migration isn't backdated [tests/unit/test_learner_mode_tier.py]
+- [ ] [Review][Patch] Fixed container name + fixed port 55433 collide across concurrent runs/worktrees; `docker rm -f` unconditionally destroys another session's DB. Catalog queries in 3 tests lack a schema filter; tests query `chapters` by `chapter_index` with no `book_id` filter and no cleanup, so a re-run in-session silently changes results
+- [ ] [Review][Patch] `docs/dev1-tracker.md` carries an authoritative `chapters`/`lessons` schema reference (L257, L277ff) still dated 2026-07-30 and unaware of all four column changes — a stale schema doc is how D9 reached production
+- [ ] [Review][Patch] Spec drift: constraint named `chapters_book_id_chapter_index_key` vs T3's `chapters_book_chapter_idx_key`; harness uses `pgvector:pg16` vs Dev Notes' `pg15`, and production's Postgres major is stated nowhere
+
+### Deferred (pre-existing, not caused by this change)
+
+- [x] [Review][Defer] `tests/integration` leaks state into `tests/test_dna_growth.py` (18 failures) — reproduced identically on `main`; needs a `D-nn` entry
+- [x] [Review][Defer] `mypy app` 24 errors / 3 files and `ruff format` on `tests/test_tutor_service.py` — both pre-existing on `main`
+- [x] [Review][Defer] `test_no_existing_applied_migration_was_modified` checks filename presence only, never content — AC1 has no real machine guard
+
+### Dismissed (2)
+
+- **"`embeddings` RLS policies still root through `lessons`"** (Process Integrity) — false positive. `20260625000000_chunks_inline_embedding.sql:126` runs `DROP TABLE public.embeddings;`; the table and its policies no longer exist.
+- **"Chapter insert re-runs on every ARQ retry"** in its broad form — `chunk_node` *is* idempotent (`graph.py:594-597`). Only the narrow window between the insert and the checkpoint is real; kept as the decision item above.
