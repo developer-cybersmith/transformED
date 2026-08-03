@@ -12,6 +12,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 __all__ = [
+    "SessionCreate",
+    "SessionCreated",
     "QuizAnswer",
     "QuizSubmission",
     "QuizResult",

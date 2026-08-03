@@ -1,6 +1,6 @@
 # Story 2.35: Mint sessions server-side (D18 — demo blocker)
 
-Status: review — **implemented by Dev 1 under option B; requires Dev 3 review before merge**
+Status: done
 
 ## Story
 
@@ -87,6 +87,11 @@ implementing it only because it blocks the demo and Dev 1 found it.
 - [x] Task 2 (AC-3, AC-4, AC-5): tests — end-to-end mint→submit, unminted id still 404, re-learn yields a new id.
 - [x] Task 3 (AC-6): handoff note for Dev 2 + register update.
 - [x] Task 4 (AC-7): full suite, lint, types.
+
+### Review Findings (2026-08-03)
+
+- [x] [Review][Patch] `SessionCreate`/`SessionCreated` missing from `schemas.py` `__all__` [apps/api/app/modules/assessment/schemas.py:14] — **applied**: added both to `__all__` for consistency with all other exported schemas.
+- [x] [Review][Defer] `SessionCreate.lesson_id` has no `min_length=1` validator [apps/api/app/modules/assessment/schemas.py:51] — deferred, pre-existing pattern (all other session/lesson_id string fields also lack min_length; `""` always 404s via Postgres UUID comparison, not a security issue).
 
 ## Dev Notes
 

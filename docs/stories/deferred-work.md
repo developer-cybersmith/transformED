@@ -2,6 +2,10 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of story 2-35 (2026-08-03, session lifecycle endpoint / D18)
+
+- **`SessionCreate.lesson_id` has no `min_length=1` validator** — an empty string `""` makes a DB roundtrip that always 404s (Postgres rejects `""` in a UUID column). Not a security issue; consistent with `QuizSubmission.session_id`, `TeachbackSubmission.session_id`, and all other string ID fields in the codebase. The correct fix is a pattern-wide validator standard, not a per-schema one-off. [`apps/api/app/modules/assessment/schemas.py:51`]
+
 ## Deferred from: code review of story 2-26 (2026-07-27, audio buffering + playback-error retry)
 
 - **`exitTeachBack()` on the last segment doesn't reset `isBuffering`/`audioError`/`audioRetryCount`** — unlike every other segment transition, resuming `PLAYING` on the final segment after teach-back doesn't route through `advanceSegment()` (there's no next segment), so a stale flag from before the quiz could survive momentarily. Self-correcting once the same, already-loaded `<audio>` element's own `onPlaying`/`onCanPlay`/`onWaiting` events fire again; purely cosmetic, single-sourced (Edge Case Hunter only), not actioned. [`apps/web/src/stores/player.machine.ts::exitTeachBack`]
