@@ -1,6 +1,6 @@
 # Story 1.9: Make chapters storable without a lesson (book-scale Phase 2)
 
-Status: review
+Status: done — verified on the live Supabase project 2026-08-03
 
 **Sprint:** Book-scale ingestion, Phase 2 of 7
 **Owner:** Dev 1
@@ -433,10 +433,12 @@ command — not assumed.
 - T6 ✅ Regression + repo-wide gates above.
 - T7 ✅ Tracker updated with these numbers.
 
-**Limitations — carry these into review, they are why Phase 2 is `🧪 Implemented`, not `✅ Verified`:**
+**Limitations — the first two are now CLOSED (see 'Applied to the live project' in the tracker):**
 
-- The migration has **not been applied to the real Supabase project**. Everything above is a
-  container with a shim.
+- ~~The migration has not been applied to the real Supabase project.~~ **Applied 2026-08-03**
+  and verified there — columns present, `lesson_id` nullable in the live OpenAPI schema, 23/23
+  backfilled, counts unchanged, RLS confirmed with minted JWTs (owner 9 chapters / 1,507 chunks,
+  stranger 0, anon 0, matching the ownership graph exactly). **D38 closed.**
 - ~~The tracker's Phase 2 test 3~~ — **resolved.** Proven against a production-shape copy
   (27 books / 27 lessons / 23 chapters / 2,161 chunks) with the migration applied **second**,
   plus a read-only pre-flight against the live project. The seed reproduces structure only —

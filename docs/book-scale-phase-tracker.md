@@ -2,8 +2,8 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-03
-**Overall status:** 1 of 7 phases verified — Phase 1 ✅ Verified; Phase 2 🧪 Implemented (green on
-real Postgres; awaiting real-Supabase apply + 4-dev review); Phase 3 re-planned
+**Overall status:** 2 of 7 phases verified — Phases 1 and 2 ✅ Verified; Phase 3 re-planned and
+unblocked
 (`docs/bmad/phase-3-chapter-detection-plan.md`)
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
 
@@ -32,14 +32,14 @@ real Postgres; awaiting real-Supabase apply + 4-dev review); Phase 3 re-planned
 | Phase | Title | Status | Verified on |
 |:-----:|-------|--------|-------------|
 | 1 | Prove chapter detection (spike) | ✅ Verified | 2026-08-03 |
-| 2 | Make chapters storable (migration) | 🧪 Implemented | — |
+| 2 | Make chapters storable (migration) | ✅ Verified | 2026-08-03 |
 | 3 | Detect and store real chapters at upload | ⬜ Not Started | — |
 | 4 | Extract one chapter's pages | ⬜ Not Started | — |
 | 5 | Chapter-scoped generation | ⬜ Not Started | — |
 | 6 | Endpoints | ⬜ Not Started | — |
 | 7 | Prove it end to end | ⬜ Not Started | — |
 
-**Totals:** Not Started 5 · In Progress 0 · Implemented 1 · Verified 1 · Blocked 0
+**Totals:** Not Started 5 · In Progress 0 · Implemented 0 · Verified 2 · Blocked 0
 
 **Status values:** `⬜ Not Started` · `🔨 In Progress` · `🧪 Implemented (awaiting verification)` · `✅ Verified` · `🚧 Blocked`
 
@@ -158,7 +158,7 @@ single-chapter upload stays a first-class case for this segment, not a degenerat
 
 ## Phase 2 — Make chapters storable
 
-**Status:** 🧪 Implemented (awaiting verification) — 2026-08-03
+**Status:** ✅ Verified — 2026-08-03 (applied to the live Supabase project and confirmed there)
 **Story:** `docs/stories/1-9-chapters-storable-migration.md`
 **Branch:** `book-scale/phase-2-chapters-storable`
 **Depends on:** Phase 1 verified
@@ -266,23 +266,35 @@ named, the test container binds to `127.0.0.1` only, and the `postgres` marker m
 step into its own job that **fails if the tests skip** rather than passing green having verified
 nothing.
 
-### Why this is 🧪 Implemented and not ✅ Verified
+### Applied to the live Supabase project — 2026-08-03
 
-Three gaps, all recorded rather than waved through:
+Applied by a teammate via the Supabase SQL editor, then verified read-only against the live
+project. **This closes D38 and is what moves Phase 2 to `✅ Verified`.**
 
-1. The migration has **not been applied to the real Supabase project** — everything above is a
-   container with a shim (`apps/api/tests/integration/supabase_shim.sql`, required because the
-   chain needs `auth.users`, `auth.uid()` × 66, and `storage.buckets`).
-2. ~~Test 3 ("existing 23 chapter rows still readable")~~ — **resolved.** Proven against a
-   production-shape copy with the migration applied second, plus a read-only pre-flight
-   against the live project. **D39 closed.**
-3. Test 4 below (`supabase db reset`) **is not runnable** — the Supabase CLI is not installed.
-   Substituted by replaying all 10 migration files in filename order.
-4. Registered rather than hand-waved: **D38** (shim fidelity — every RLS verdict is conditional
-   on it), **D39** (the duplicate pre-flight ran against an empty container, not production),
-   **D40** (the pre-existing `tests/integration` → `test_dna_growth` state leak).
+| Check | Before | After |
+|---|---|---|
+| `chapters.boundary_confidence` | `42703` (absent) | **present**, `required=true` in the live OpenAPI schema |
+| `lessons.chapter_id` | `42703` (absent) | **present**, `required=false` (nullable) |
+| `chapters.lesson_id` nullability | `NOT NULL` | **`required=false`** — nullable, the whole point of Phase 2 |
+| Rows: books / chapters / lessons / chunks | 27 / 23 / 27 / 2,161 | **27 / 23 / 27 / 2,161 — unchanged** |
+| Backfill | — | **23 / 23** chapters at `boundary_confidence='fallback'` |
+| Legacy rows | 23 carrying `lesson_id` | **23 still carrying it**, none orphaned |
+| Duplicate `(book_id, chapter_index)` | 0 | **0** — constraint accepted by live data |
+| `lessons.chapter_id` values | — | 27 / 27 NULL, correct: nothing links a chapter yet |
 
-Plus the 4-developer frozen-contract review has not happened yet.
+**RLS re-rooting verified behaviourally on the live project**, by minting JWTs with the real
+`SUPABASE_JWT_SECRET` and querying PostgREST as each identity:
+
+| Identity | chapters | chunks |
+|---|---:|---:|
+| Owner (owns 13 of the 27 books) | **9** | **1,507** |
+| Stranger (random `sub`) | **0** | **0** |
+| `anon` key, unauthenticated | **0** | — |
+
+Cross-checked against the ownership graph: exactly **9** of the 23 chapters sit on books that
+user owns. The policy resolves *exactly*, not approximately — the re-rooted
+`books.user_id` predicate returns the right rows and nothing else, on real data, through the
+real PostgREST stack.
 
 ### Files
 `supabase/migrations/` (new file — **not yet written**),
