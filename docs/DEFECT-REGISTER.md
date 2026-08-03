@@ -1,6 +1,6 @@
 # Defect Register & Binding Decisions
 
-**Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-07-30 · **Status:** ACTIVE
+**Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-08-03 · **Status:** ACTIVE
 
 > **AMENDED 2026-07-30.** The line below previously read *"none is waiting on Dev 1"*. A
 > route-by-route frontend wiring audit run **after** that claim was made found **three Dev 1
@@ -103,6 +103,7 @@ system.
 | ~~D27~~ | **CLOSED 2026-07-29 by Dev 2 (commit 158e51f).** `next build` failed on a missing Suspense boundary around `useSearchParams()` at `/signin`, so `apps/web` had **never produced a production build** and was never deployable. Invisible to every workflow anyone used — `next dev` does not prerender and `vitest` does not either — and the one job that would have caught it (D25) had been dead since it was written. | BW | Dev 2 wrapped `<SignInForm />` in `<Suspense fallback={<SignInFormSkeleton />}>`. Dev 1 raised it and deliberately left the fallback choice to Dev 2, since it is visible UX on their page. | The `Build` step in the web job — **verified green in CI run 30470590163**, the first successful web job in the repo's history |
 | D25 | **The entire `web` CI job has never executed on any commit.** `cache-dependency-path: apps/web/pnpm-lock.yaml` — but this is a pnpm *workspace*, so the single lockfile is at the repo root. `actions/setup-node` failed with "Some specified paths were not resolved", killing the job before install. Lint, type-check and build have therefore never run. Compounding it, `pnpm type-check` did not exist as a script in `apps/web/package.json` at all, so the step would have failed even once setup-node was fixed. | SELF (infra) | Point at the root lockfile; add `"type-check": "tsc --noEmit"`. Verified 2026-07-29: lint 0 errors, `tsc --noEmit` clean, **506 tests pass**. All three web steps now gate. | The job itself — it now runs, and a green run is the proof it never had |
 | D9 | `completed_at` named in a narrowed select — a `lesson_jobs` column, not `lessons`. Would 42703 `GET /lessons` for every user. | SELF | Column lists must be validated against the migrations. | `test_list_columns_names_no_column_absent_from_the_lessons_table` — **but see D22: this guards one table only** |
+| ~~D30~~ | **CLOSED 2026-08-03 (commit d0669aa).** 3 tests in `test_tutor_service.py` failing: `_setup()` and `_intervention_redis()` mock Redis never returned `"TEACHING"` for `tutor_state:sess-1`, so `service.py:328`'s correct TEACHING-state CES guard silently blocked all three trigger assertions. | SELF | Updated both fixtures to return `"TEACHING"` for the session key — guard is correct (CLAUDE.md §10), tests were wrong. | `test_two_below_threshold_no_cooldown_dispatches`, `test_intervention_delivers_tutor_intervene_message`, `test_intervention_no_delivery_on_cache_miss` — now pass; will fail if fixture is stripped |
 
 ### Fixed, in open PR
 
@@ -136,7 +137,7 @@ purpose.
 | **D18** | **`sessions` has zero writers anywhere in `apps/api`** — all 7 references are `.select(...)`. The frontend invents `crypto.randomUUID()`; `assessment/service.py:175` raises **404** if the row is absent. **Quiz and teach-back cannot complete for any student.** Both suites green — Dev 3 seeds the row in tests, Dev 2 mocks the POST. | **Blocker** | Backend must mint the session. Joint Dev 2 + Dev 3 + Dev 4 decision — see Part 4. | *(none — needs a real-DB test)* |
 | ~~D22~~ | **CLOSED 2026-07-29.** D9's class was live at 43 sites; replanting it on `sessions` left the suite green. | High | Guard generalised to every table + column, resolving module-level constants. | `test_schema_column_guard.py` — **mutation-verified**: catches the replant both via a literal AND via `_LIST_COLUMNS` |
 | **D29** | **DPDP `user_consents` audit table has zero writers.** Migration `20260702000000_dpdp_user_consents.sql` genuinely creates the table, RLS, and a trigger syncing `users.attention_consent` — but `process_onboarding()` (`apps/api/app/modules/assessment/service.py:864-976`) never inserts into it. CLAUDE.md §18 names this table an explicit **Sprint 2 priority** precondition before any attention data is collected — schema shipped, the actual consent-write path was never built. Found 2026-07-29 during a cross-team Sprint 2 completion audit (`docs/sprint2-completion-audit-2026-07-29.md`); re-verified 2026-07-30 that no write path landed since. | High (compliance) | **Needs Dev 3.** Write a `user_consents` row (consent_type, policy_version, consented_at) at the point onboarding consent is captured, before Sprint 3's `AttentionMonitor` can legally initialize. | *(none — grep for `user_consents` in `apps/api` only matches a migration-name string in a test assertion)* |
-| **D30** | **3 tests failing on `main`** in `apps/api/tests/test_tutor_service.py`: `test_two_below_threshold_no_cooldown_dispatches`, `test_intervention_delivers_tutor_intervene_message`, `test_intervention_no_delivery_on_cache_miss`. Root cause: `service.py:328` added a `state_raw == "TEACHING"` guard on the CES-trigger check (itself correct — CLAUDE.md §10, CES monitoring only active in TEACHING), but the tests' mock Redis never returns `"TEACHING"` for `tutor_state:sess-1`, so the guard now silently blocks the trigger the tests assert on. Reproduced live via `pytest .venv` on 2026-07-29 and re-confirmed live on 2026-07-30 against current `main` (3 failed, exact same assertions). | Med (currently red on `main`) | **Needs Dev 4.** Update the mock Redis fixtures in `test_tutor_service.py` to return `"TEACHING"` for the relevant session key, matching the real guard's precondition — the guard itself is correct, don't touch it. | The 3 named tests themselves — currently failing, will pass once fixtures are updated |
+| ~~D30~~ | **CLOSED 2026-08-03 (commit d0669aa).** See closed section above. | — | — | — |
 
 ### OPEN — found by the 2026-07-30 frontend wiring audit
 
@@ -234,9 +235,9 @@ is what happens without it: three developers, three green suites, one broken pro
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | **22** |
+| Defects closed (fixed **and** guarded) | **23** |
 | Fixed, awaiting merge | **0** — everything Dev 1 owns is on `main` |
-| **Open** | **14** |
+| **Open** | **13** |
 | Of which **live in production** | **4** — D18 (awaiting Dev 3's review of PR #119), D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), D35 (`setSessionId`, Dev 2) |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md` |
