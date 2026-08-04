@@ -268,10 +268,21 @@ def test_unbounded_text_only_equals_explicit_full_bounds() -> None:
 
 
 @pytest.mark.unit
-def test_graph_still_uses_the_three_argument_form() -> None:
-    """AC3 / Dev Notes: passing bounds from `extract_node` is Phase 5, not this
-    story. If graph.py starts passing bounds here, the compatibility guarantee
-    above stops being exercised by production code."""
+def test_graph_passes_page_bounds_to_the_extraction_subprocess() -> None:
+    """Phase 5 (Story 1-13 AC2) — the inverse of this file's Phase 4 marker.
+
+    This test was written for Phase 4 as a deliberate "not yet wired" guard:
+    it asserted graph.py did NOT pass bounds, and its stated purpose was to
+    fail the day Phase 5 landed. It has now done that job, so rather than
+    delete it (which would lose the coverage entirely) it is inverted: the
+    same call site is still pinned, now in the opposite direction.
+
+    The whole point of the effort is that `extract_node` extracts ONE
+    chapter's pages. If the spawn call silently reverts to the 3-argument
+    form, extraction goes back to the whole 1,151-page book and every other
+    test in this file — which exercises the subprocess directly — would still
+    pass. This is the only guard on the production wiring.
+    """
     graph = (API_DIR / "app" / "modules" / "content" / "pipeline" / "graph.py").read_text(
         encoding="utf-8"
     )
@@ -286,9 +297,10 @@ def test_graph_still_uses_the_three_argument_form() -> None:
 
     assert "local_pdf" in spawn_args and "img_dir" in spawn_args
     assert "ocr_text_yield_threshold" in spawn_args
-    assert "page_start" not in spawn_args and "page_end" not in spawn_args, (
-        f"graph.py is passing page bounds — that is Phase 5. Phase 4 must leave "
-        f"the 3-argument call untouched. Call site:\n{spawn_args}"
+    assert "page_start" in spawn_args and "page_end" in spawn_args, (
+        f"graph.py is back to the 3-argument form — extract_node would extract "
+        f"the WHOLE document instead of the requested chapter, silently. "
+        f"Call site:\n{spawn_args}"
     )
     assert "--text-only" not in spawn_args
 

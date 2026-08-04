@@ -1,6 +1,6 @@
 # Story 1.13: Chapter-scoped generation (book-scale Phase 5)
 
-Status: ready-for-dev
+Status: review
 
 **Sprint:** Book-scale ingestion, Phase 5 of 9
 **Owner:** Dev 1
@@ -185,10 +185,80 @@ story is its first.
 
 ### Agent Model Used
 
-_not yet run_
+claude-opus-5[1m] — 2026-08-04. Four agents: implementation, new tests, and two test-repair
+agents on disjoint files.
 
 ### Debug Log References
 
+**Verified against the code, not by inspection:**
+
+| AC | Check | Result |
+|---|---|---|
+| 1 | `chapter_id` on `PipelineState`, `run_pipeline`, and read from `lessons.chapter_id` | yes |
+| 2 | `page_start`/`page_end` reach the subprocess spawn args | yes |
+| 4 | `"chapter_index": 1` gone; **any** `chapters` write from `pipeline/` | **none** |
+| 7 | D33 — `or ""` now normalises then raises a diagnostic before Pydantic sees it | yes |
+| 8 | Guard widened to `books` **and** `chapters`, mutation-checked | yes |
+| 9 | Of the eleven generation nodes, **none touched** | confirmed by line-to-function mapping |
+
+AC9 was checked by mapping every changed line to its enclosing function rather than by reading
+the diff: `extract_node`, `chunk_node`, `package_builder_node`, `run_pipeline` and one new helper.
+`package_builder_node` appears only because AC7 mandates the D33 fix there — it assembles the
+package, it does not generate content. **`lesson_planner`, `slide_generator`, quiz, narration,
+jargon, interventions, complexity, TTS and image are byte-identical.** That was the phase's
+central bet: ~40 pages makes their existing defaults correct without edits.
+
+**AC6 is guarded by a counting test, not an inspection.** Two lessons over one chapter run through
+`chunk_node → embed_node` against a shared mutable chunk store; run 2 asserts the embedding
+provider's constructor `call_count == 0` and `embed_texts.await_count == 0`. Mutation-checked by
+the test author: disabling reuse makes it fail.
+
+**Chunk reuse costs nothing extra to get right.** It sits before `chunk_sections`, so a reused
+chapter skips tokenisation too, and it needs no migration: reused chunks already carry non-NULL
+`embedding`, so `embed_node`'s existing `is_("embedding","null")` query returns nothing and it
+takes its "all already done" branch. A `UNIQUE (chapter_id, chunk_index)` constraint was
+considered and rejected — it would have dragged a frozen-contract review into a phase needing none.
+
+**25 existing tests failed and every one was repaired without weakening an assertion.** Two
+categories, handled differently:
+
+- **21 stale fixtures** — subprocess spawn/timeout/reaping, image-upload concurrency, retry,
+  ordering, checkpoint shape. All still assert exactly what they did before; only the state and
+  the Supabase double changed. The cancellation/reaping tests came from a real incident where
+  4 GB tesseract orphans survived, so their assertions were left byte-identical.
+- **4 asserting the old shape — inverted, not deleted.**
+  `test_chunk_node_writes_chapter_row` now asserts the pipeline writes **no** chapter row;
+  `test_chunk_node_chapter_write_is_retry_safe` becomes "a retry cannot collide because there is
+  no write to collide"; `test_graph_still_uses_the_three_argument_form` — a Phase 4 marker whose
+  docstring said it existed to fail when Phase 5 landed — now guards the wiring in the opposite
+  direction; the D33 symptom test now asserts a diagnostic error and explicitly **not** a
+  `pydantic.ValidationError`.
+
+**A story error the implementer caught.** The contract said "`chapter_id` is only required on the
+PDF path". That is wrong: `chunks.chapter_id` is `UUID NOT NULL` and the row `chunk_node` used to
+manufacture is gone, so **every** path that writes chunks needs one. The raw-text
+(`chapter_content`) affordance is test-only; the integration tests now pass a `chapter_id`. The
+story's wording was the defect, not the implementation.
+
+**Stale line numbers in the story:** D33's sites were `:569` and `:4091`/`:3752`, not `:711` and
+`:3742`. Fixed at the real sites.
+
 ### Completion Notes List
 
+- T1-T7 complete. **AC10 (a real paid end-to-end generation) is NOT done** — see below.
+- Gating scope **917 passed, 1 skipped** (was 898). `ruff check .` clean. `mypy app` 24 errors in
+  3 files, unchanged from `main`. `ruff format --check` flags only the pre-existing
+  `tests/test_tutor_service.py`.
+- **Phase 5 is Implemented, not Verified.** AC10 requires generating a real chapter through all
+  eleven nodes, which spends real money on the project's OpenAI key (the repo's own `live_eval`
+  marker exists for exactly this class of run). That is the user's call, not mine.
+
 ### File List
+
+- `apps/api/app/modules/content/pipeline/graph.py` (modified)
+- `apps/api/app/workers/jobs/content_pipeline.py` (modified — first reader of `lessons.chapter_id`)
+- `apps/api/tests/unit/test_chapter_scoped_generation.py` (new — 18 tests)
+- `apps/api/tests/unit/test_pipeline_writes_no_books.py` (modified — widened to `chapters`)
+- `apps/api/tests/unit/test_extract_node.py`, `test_pipeline_tier1.py`, `test_extract_page_bounds.py` (repaired)
+- `apps/api/tests/unit/test_chunk_node.py`, `test_package_builder_node.py` (repaired/inverted)
+- `apps/api/tests/integration/test_howto_pipeline_e2e.py` (modified — passes `chapter_id`)

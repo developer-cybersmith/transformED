@@ -407,9 +407,17 @@ async def test_all_segments_without_slides_raises_runtime_error_and_writes_nothi
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_model_validate_failure_propagates_uncaught() -> None:
-    """AC-9: a schema violation (here: no valid chapter_id available because
-    the chunk checkpoint is missing) must raise, never be swallowed."""
+async def test_missing_chapter_id_raises_diagnostic_not_model_validate_failure() -> None:
+    """AC-9 kept, D33 (Story 1-13 AC7) inverted.
+
+    The failure must still propagate uncaught — that half is unchanged. What
+    changed is WHICH failure. Before Story 1-13 the `or ""` default let an
+    absent chapter_id travel all the way into `LessonPackage.model_validate()`
+    and surface as a bare pydantic ValidationError that named neither the
+    lesson nor the missing upstream node — after every LLM/TTS/image call had
+    already been billed. AC7 replaces it with a diagnostic raise that names the
+    lesson and what is missing.
+    """
     from app.modules.content.pipeline.graph import package_builder_node
 
     jobs_table = MagicMock()
@@ -430,8 +438,15 @@ async def test_model_validate_failure_propagates_uncaught() -> None:
     sb.table.side_effect = _table_router
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        with pytest.raises(ValidationError):  # not RuntimeError
+        with pytest.raises(RuntimeError) as excinfo:
             await package_builder_node(_base_state())
+
+    assert not isinstance(excinfo.value, ValidationError), (
+        "D33: an absent chapter_id must no longer reach LessonPackage.model_validate()"
+    )
+    message = str(excinfo.value)
+    assert "chapter_id" in message, "the diagnostic must name what is missing"
+    assert FAKE_LESSON_ID in message, "the diagnostic must name the lesson"
 
     lessons_table.update.assert_not_called()
 
@@ -503,9 +518,13 @@ async def test_segment_with_zero_quiz_and_jargon_still_included() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_chunk_present_but_missing_chapter_id_key_behaves_like_chunk_absent() -> None:
-    """The .get("chapter_id", "") fallback must handle both 'chunk absent'
-    and 'chunk present without chapter_id' identically — both should fail
-    LessonPackage's UUID validation the same way."""
+    """The chunk-checkpoint fallback must handle both 'chunk absent' and
+    'chunk present without chapter_id' identically.
+
+    Story 1-13 AC7 changes what "identically" means: both now raise the same
+    early diagnostic RuntimeError, where both previously fell through the `or ""`
+    default into LessonPackage's UUID validation. The equivalence being asserted
+    is the point of the test and is unchanged."""
     from app.modules.content.pipeline.graph import package_builder_node
 
     jobs_table = MagicMock()
@@ -526,27 +545,78 @@ async def test_chunk_present_but_missing_chapter_id_key_behaves_like_chunk_absen
     sb.table.side_effect = _table_router
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        with pytest.raises(ValidationError):
+        with pytest.raises(RuntimeError) as excinfo:
             await package_builder_node(_base_state())
+
+    assert not isinstance(excinfo.value, ValidationError)
+    assert "chapter_id" in str(excinfo.value)
 
     lessons_table.update.assert_not_called()
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_missing_book_id_fails_model_validate() -> None:
-    """book_id follows the same UUID-required path as chapter_id — a missing
-    book_id must also fail validation, not silently produce an invalid
-    'valid' package."""
+async def test_missing_book_id_raises_diagnostic_not_model_validate_failure() -> None:
+    """book_id follows the same required-UUID path as chapter_id — a missing
+    book_id must also stop the node, not silently produce an invalid 'valid'
+    package.
+
+    Story 1-13 AC7 (D33) inverts only the mechanism: this used to assert the
+    SYMPTOM — an empty string reaching `LessonPackage.model_validate()` and
+    blowing up as a bare pydantic ValidationError at the FINAL node, after the
+    whole pipeline had been paid for. It now asserts the diagnostic raise that
+    replaced it, which names the lesson and the missing field.
+    """
     from app.modules.content.pipeline.graph import package_builder_node
 
     sb, _, lessons_table = _mock_supabase()
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        with pytest.raises(ValidationError):
+        with pytest.raises(RuntimeError) as excinfo:
             await package_builder_node(_base_state(book_id=""))
 
+    assert not isinstance(excinfo.value, ValidationError), (
+        "D33: an absent book_id must no longer reach LessonPackage.model_validate()"
+    )
+    message = str(excinfo.value)
+    assert "book_id" in message, "the diagnostic must name what is missing"
+    assert FAKE_LESSON_ID in message, "the diagnostic must name the lesson"
+
     lessons_table.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_chapter_id_on_state_is_used_without_any_chunk_checkpoint() -> None:
+    """Story 1-13: chapter_id is a PipelineState field; the chunk checkpoint is
+    only a fallback for jobs that started before Phase 5 landed. State alone
+    must therefore be sufficient — with node_outputs empty, the package still
+    names the state chapter."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    jobs_table = MagicMock()
+    jobs_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+        "node_outputs": {}  # no chunk checkpoint at all
+    }
+    jobs_table.update.return_value.eq.return_value.execute.return_value = MagicMock()
+    lessons_table = MagicMock()
+    lessons_table.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    def _table_router(name: str) -> MagicMock:
+        if name == "lesson_jobs":
+            return jobs_table
+        if name == "lessons":
+            return lessons_table
+        return MagicMock()
+
+    sb = MagicMock()
+    sb.table.side_effect = _table_router
+    sb.storage = MagicMock()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(chapter_id=FAKE_CHAPTER_ID))
+
+    assert result["lesson_package"]["chapter_id"] == FAKE_CHAPTER_ID
 
 
 @pytest.mark.unit

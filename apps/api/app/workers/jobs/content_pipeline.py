@@ -58,7 +58,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # ── 2. Fetch lesson metadata from lessons table ───────────────────────
         result = (
             supabase.table("lessons")
-            .select("user_id, source_file_path, book_id, tier")
+            .select("user_id, source_file_path, book_id, chapter_id, tier")
             .eq("lesson_id", lesson_id)
             .single()
             .execute()
@@ -68,6 +68,18 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         user_id: str = lesson_row.get("user_id", "")
         source_pdf_path: str = lesson_row.get("source_file_path", "")
         book_id: str = lesson_row.get("book_id", "")
+        # Story 1-13 (book-scale Phase 5): `lessons.chapter_id` — added by
+        # migration 20260803000000 and, until this line, read by NOTHING in the
+        # codebase. It names the ONE chapter this lesson is generated from;
+        # extract_node turns it into a page range so the pipeline sees ~40
+        # pages instead of the whole 1,151-page book.
+        #
+        # `or ""` here is NOT a D33-style silent default: the column is
+        # nullable, and this is the boundary that converts "column is NULL" to
+        # "argument is empty". extract_node then raises a diagnostic naming
+        # both ids rather than extracting the whole document. Phase 6's
+        # generate endpoint is what sets the column at lesson creation.
+        chapter_id: str = lesson_row.get("chapter_id") or ""
         # S2-LM3: tier reaches the pipeline via this SAME lessons-table
         # re-fetch, not a separate ARQ job-payload argument (corrects the
         # tracker's original "thread into the ARQ job" wording, per Story
@@ -109,6 +121,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
             user_id=user_id,
             source_pdf_path=source_pdf_path,
             book_id=book_id,
+            chapter_id=chapter_id,
             tier=tier,
             attempt=attempt,
         )
