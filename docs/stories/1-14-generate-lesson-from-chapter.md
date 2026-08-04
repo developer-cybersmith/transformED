@@ -1,6 +1,9 @@
+---
+baseline_commit: d94d5b5
+---
 # Story 1.14: Generate a lesson from a chapter (book-scale Phase 6)
 
-Status: ready-for-dev
+Status: review
 
 **Branch:** `book-scale/phase-6-endpoints` (from `book-scale/integration`)
 **Phase:** 6 of 9 — `docs/book-scale-phase-tracker.md` § "Phase 6 — Endpoints"
@@ -380,22 +383,22 @@ a named owner and a trigger. Do not leave it implicit. The suite must keep skipp
 
 ## Tasks / Subtasks
 
-- [ ] **T1 — Path constant, request/response models** (AC1, AC2, AC3)
-- [ ] **T2 — Authorization + gate order** (AC4, AC5)
-- [ ] **T3 — Create the work** (AC6, AC7, AC8, AC9, AC10)
-  - [ ] `_source_pdf_path` helper; `upload_lesson` refactored onto it
-  - [ ] `lessons` INSERT → `lesson_jobs` INSERT → enqueue; `job is None` → 500
-  - [ ] idempotent 200 path with `enqueue_job.await_count == 0`
-  - [ ] **[PG]** rollback test: `books`, storage object, `chapters` row and its `chunks` all survive
-- [ ] **T4 — Gates** (AC11, AC12, AC13)
-- [ ] **T5 — Reads learn the truth** (AC14, AC15, AC16, AC17, AC18)
-  - [ ] widen the `chapters`-write scan to `app/modules/content/`
-  - [ ] `_CHAPTER_COLUMNS` + `_LIST_COLUMNS` embeds; defensive list unwrap
-  - [ ] **[PGRST]** unqualified-embed-is-300 test · **[PG]** FK-name premise · service_role shape test
-- [ ] **T6 — Existing guards + contract** (AC19, AC23)
-  - [ ] teach both column guards to parse embeds — do not delete them
-- [ ] **T7 — Register entries + the CI decision** (AC22, AC24)
-- [ ] **T8 — End-to-end run + tracker** (AC20, AC21)
+- [x] **T1 — Path constant, request/response models** (AC1, AC2, AC3)
+- [x] **T2 — Authorization + gate order** (AC4, AC5)
+- [x] **T3 — Create the work** (AC6, AC7, AC8, AC9, AC10)
+  - [x] `_source_pdf_path` helper; `upload_lesson` refactored onto it
+  - [x] `lessons` INSERT → `lesson_jobs` INSERT → enqueue; `job is None` → 500
+  - [x] idempotent 200 path with `enqueue_job.await_count == 0`
+  - [x] **[PG]** rollback test: `books`, storage object, `chapters` row and its `chunks` all survive
+- [x] **T4 — Gates** (AC11, AC12, AC13)
+- [x] **T5 — Reads learn the truth** (AC14, AC15, AC16, AC17, AC18)
+  - [x] widen the `chapters`-write scan to `app/modules/content/`
+  - [x] `_CHAPTER_COLUMNS` + `_LIST_COLUMNS` embeds; defensive list unwrap
+  - [x] **[PGRST]** unqualified-embed-is-300 test · **[PG]** FK-name premise · service_role shape test
+- [x] **T6 — Existing guards + contract** (AC19, AC23)
+  - [x] teach both column guards to parse embeds — do not delete them
+- [x] **T7 — Register entries + the CI decision** (AC22, AC24)
+- [x] **T8 — End-to-end run + tracker** (AC20, AC21)
 
 ---
 
@@ -457,8 +460,81 @@ models stay local to the content module; `packages/shared` is a frozen four-dev 
 
 ### Agent Model Used
 
+claude-opus-5[1m] — 2026-08-04. Five agents on disjoint files (implementation; new endpoint
+tests; real-infrastructure tests; existing-guard repairs; register + contract), preceded by a
+seven-investigator reconnaissance and an adversarial synthesis.
+
 ### Debug Log References
+
+**Live gate — real 1,151-page book, real Supabase, real API.**
+
+| Step | Result |
+|---|---|
+| Ingest | 1,151 pages, 21 chapters, upload 58.0 s, end-to-end 90.3 s |
+| Generation half (AC20 3-7) | **12/12** |
+| Page bounds reaching the subprocess (AC20 8) | **3/3** — argv `(40, 68)`, images on 52/54/55/61, 82,665 chars for 29 p vs ~3,280,945 for the whole book |
+| Gating suite | **1068 passed, 1 skipped** (was 968 / 10) |
+| ruff repo-wide · mypy | clean · 24 errors in 3 files, unchanged from `main` |
+
+**Two defects found that the unit suite could not have caught.**
+
+`D52` — `_get_user_key` decoded the bearer token with no `audience=`. Every Supabase token carries
+`aud: "authenticated"`, PyJWT raises `InvalidAudienceError` in exactly that case, the bare
+`except` swallowed it, and it fell through to `get_remote_address`. **Every authenticated user
+shared one IP-keyed bucket** — one caller exhausting `3/minute` locked out everyone behind the
+same egress IP. It predates this story: `upload_lesson`'s `5/minute` has had it since it was
+written. Found because AC20 step 7d expected a 404 for another user's book and got a 429. Fixed
+with `verify_aud: False`, the fallback log raised DEBUG→WARNING (reaching it is a security
+posture change, not a detail), and 8 regression tests including a premise test that pins the
+PyJWT behaviour. Mutation-checked: removing the flag reddens 3.
+
+`D51` — CI's anti-vacuum guard on the gating `-m postgres` step read
+`grep -qE "^[0-9]+ skipped|no tests ran"`, which only ever matches an ALL-skipped run. pytest's
+mixed summary is `9 passed, 12 skipped in 3.20s`, so a PARTIAL skip passed green: the PostgREST
+half of the harness had been skipping in CI, unreported, since it was written. Tightened to fail
+on any skip and truth-tabled over four summary shapes. `postgresql-client` is now installed
+explicitly rather than assumed from the runner image.
+
+**A cross-endpoint contract inconsistency, found by a test agent and fixed at the source.**
+`LessonGenerationResponse.status` returned `"queued"` on the 202 branch but the raw DB column on
+the 200 branch — and `latest_lesson.status` did the same. `lessons.status` is
+`generating|ready|failed`; every lesson-facing response in this API is
+`queued|running|ready|failed` via `_map_status`. Dev 2 would have seen `"generating"` from the
+chapter card and `"running"` from `GET /lessons` for the same lesson, so a status switch matching
+on `"running"` would silently fall through on chapter cards only. Both paths now map.
+
+**A story error the implementer caught.** The frozen contract left the bad-tier 422 shape
+unspecified. Validation lives in `GenerateLessonRequest` as a pydantic `field_validator`, so the
+body is pydantic's error list with `loc` ending in `tier`, not a plain string. Observed live.
+
+**Three stale-process incidents**, all the same shape as the defects above — something reporting
+success without being checked. A stale `uvicorn` served 3 book routes while source had 4; my own
+port-free check used `LISTENING.*:8077`, which can never match Windows `netstat` column order and
+so reported "free" unconditionally; and two stale ARQ workers running pre-Story-1-13 code (their
+lesson `SELECT` predates `chapter_id`) failed every lesson within seconds and produced three false
+gate failures. Also worth recording: `app.routes` is the wrong instrument on this FastAPI version
+— module routes are `_IncludedRouter` branches with no `.path`. Use `app.openapi()`.
 
 ### Completion Notes List
 
+- All ACs discharged, including the seven marked [PG]/[PGRST] — the harness now self-provisions
+  its containers, so nothing skips except with no Docker daemon.
+- `chapters.lesson_id` is neither read nor written anywhere in `app/modules/content/`, guarded by
+  a widened source scan AND a real-Postgres test that demonstrates the cascade it would cause.
+- No AC in this story spent money. The eleven generation nodes were never run to completion; that
+  is Story 1-13 AC10, folded into Phase 7 by D43.
+
 ### File List
+
+- `apps/api/app/modules/content/router.py`, `schemas.py`, `apps/api/app/config.py` (modified)
+- `apps/api/app/core/rate_limit.py` (modified — D52)
+- `.github/workflows/ci.yml` (modified — D51)
+- `apps/api/tests/unit/test_generate_lesson_endpoint.py` (new — 69 tests)
+- `apps/api/tests/unit/test_rate_limit_key.py` (new — 8 tests, D52)
+- `apps/api/tests/integration/test_generate_rollback_postgres.py` (new)
+- `apps/api/tests/integration/test_book_select_lists_against_postgrest.py`,
+  `test_migration_chapters_book_scoped.py` (extended)
+- `apps/api/tests/unit/test_content_router.py`, `test_book_endpoints.py`,
+  `test_pipeline_writes_no_books.py` (guards updated, none weakened)
+- `docs/DEFECT-REGISTER.md` (D44-D52, D34 amended), `docs/contracts/book-api.v1.json` (1.1.0),
+  `docs/book-scale-phase-tracker.md`

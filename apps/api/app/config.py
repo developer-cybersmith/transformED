@@ -152,6 +152,37 @@ class Settings(BaseSettings):
         description="Daily per-user AI spend cap in USD",
     )
 
+    # ── Book-scale chapter generation gates (Story 1-14, book-scale Phase 6) ──
+    max_chapter_pages: int = Field(
+        default=200,
+        ge=1,
+        description=(
+            "Refuse to generate a lesson from a chapter spanning more than this "
+            "many pages (page_end - page_start + 1, read from the chapters row, "
+            "never from client input). This is the CATASTROPHE gate, not the "
+            "truncation gate: it must sit above every real chapter, and the "
+            "largest measured across the 8-book Phase 1 corpus is 138 pages "
+            "(D2L Appendix A; medians 10-44). 200 clears that with headroom and "
+            "still refuses a rung-5 whole-document 'chapter' (1,151/1,671 pages), "
+            "which is the failure this effort exists to fix. A lower cap (80) "
+            "would refuse a legitimate chapter and break the project's success "
+            "criterion. Truncation is warned about separately at 40 pages "
+            "(router._TRUNCATION_WARN_PAGES)."
+        ),
+    )
+    max_concurrent_generations_per_user: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Maximum lessons in status='generating' one user may have at once; "
+            "at or above this, POST .../chapters/{id}/lessons returns 429 with "
+            "Retry-After. This — not the rate limit — is the control that "
+            "actually bounds per-user spend: a rate limit caps request RATE, "
+            "while this caps concurrent pipelines, each of which can cost up to "
+            "max_lesson_cost_usd."
+        ),
+    )
+
     # ── LLM model names ────────────────────────────────────────────────────────
     # All model IDs are env-var driven. Never hardcode model strings in business logic.
     # Status: evaluation sprint planned for Sprint 1, Week 1.

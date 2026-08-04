@@ -28,6 +28,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.core.db import get_supabase, rows, single_row
 from app.core.rate_limit import _get_user_key, limiter
 from app.core.storage import sign_storage_path
@@ -35,7 +36,13 @@ from app.dependencies import ArqRedis, CurrentUser
 
 # Story 1-11: book/chapter read models live in this module, NOT packages/shared
 # (frozen contract, 4-dev review — CLAUDE.md §16).
-from app.modules.content.schemas import BookResponse, ChapterResponse
+from app.modules.content.schemas import (
+    BookResponse,
+    ChapterResponse,
+    GenerateLessonRequest,
+    LatestLesson,
+    LessonGenerationResponse,
+)
 
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
 # recorded): single source of truth for the tier default/valid set, shared
@@ -48,6 +55,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["content"])
 
 MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+# Story 1-14 (book-scale Phase 6) — the one path that turns a detected chapter
+# into a lesson. Declared as a constant because it is consumed TWICE: by the
+# route decorator below, and by `upload_lesson`'s 422 detail, which tells a
+# caller who supplied `tier` on upload where tier now belongs. Two hand-typed
+# copies would drift the moment the route moves, and the drifted one is the copy
+# the client reads.
+GENERATE_LESSON_PATH: str = "/books/{book_id}/chapters/{chapter_id}/lessons"
+
+# Story 1-14 AC11 — the TRUNCATION warn threshold, deliberately a different
+# number from `settings.max_chapter_pages` (200) because the two gate different
+# failures.
+#
+# `structure_max_sections` (15) x `_get_section_body(max_chars=6000)` means
+# ~90,000 characters is the entire LLM-visible window REGARDLESS of page count.
+# At the 2,296-2,816 chars/page measured across the Phase 1 corpus that is
+# 32-39 pages. Above ~40 pages the lesson is genuinely built from only part of
+# the chapter — cheap and wrong rather than expensive, so the $3.00 cost ceiling
+# never fires and cannot protect us here. That is a QUALITY problem the caller
+# deserves to be told about (`truncation_expected: true`), not a reason to
+# refuse the request: the largest real chapter in the corpus is 138 pages.
+#
+# `max_chapter_pages` is the CATASTROPHE gate — it refuses a rung-5
+# whole-document "chapter" of 1,151 pages. See config.py for why it is 200.
+_TRUNCATION_WARN_PAGES: int = 40
+
+# Retry-After (seconds) on the AC12 concurrency 429. A pipeline run is minutes,
+# not seconds, so a short retry would just burn the client's rate-limit budget.
+_CONCURRENCY_RETRY_AFTER_S: int = 60
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -74,6 +110,14 @@ class LessonStatusResponse(BaseModel):
     # Cheap scalars only — NOT the whole package (see `content` below).
     subject: str | None = None
     estimated_duration_mins: float | None = None
+    # Story 1-14 (book-scale Phase 6): which chapter this lesson was generated
+    # from. All three are nullable and legitimately null for every lesson created
+    # before Phase 6 — `lessons.chapter_id` is a nullable column added by
+    # 20260803000000, and the PostgREST embed returns `null` for those rows.
+    # A client must therefore treat "no chapter" as a normal case, not an error.
+    chapter_id: str | None = None
+    chapter_title: str | None = None
+    chapter_index: int | None = None
     # Story 1-6: populated by get_lesson ONLY (never list_lessons — resolving
     # every asset's signed URL for every row in a paginated list would be an
     # N-lessons x M-assets signing storm).
@@ -114,10 +158,23 @@ _EMBEDDED_MEDIA_EXPIRY_S: int = 8 * 60 * 60
 # `42703 column lessons.completed_at does not exist`, i.e. GET /lessons fails for
 # every user on every request. `_row_to_status_response` still reads it via
 # .get(), so the response field keeps its existing always-null behaviour.
+# Story 1-14 adds `chapter_id` (a real column since 20260803000000:73) and a
+# to-ONE embed back to `chapters`. The FK qualifier is mandatory and is NOT
+# ceremony: TWO foreign keys exist between `lessons` and `chapters`
+# (`chapters_lesson_id_fkey`, the dead scalar, and `lessons_chapter_id_fkey`,
+# the live one), so a bare `chapters(...)` embed is rejected with PGRST201 —
+# which PostgREST returns as HTTP 300, not a 4xx, so a naive `>= 400` check
+# reads the failure as success. Naming the wrong one resolves through the dead
+# column and returns a permanently-null chapter: green tests, dead feature.
+#
+# This side of `lessons_chapter_id_fkey` is to-ONE, so it arrives as a JSON
+# OBJECT (or `null`), unlike `_CHAPTER_COLUMNS` below which names the SAME
+# constraint from the other side and gets an ARRAY.
 _LIST_COLUMNS: str = (
-    "lesson_id,status,title,created_at,"
+    "lesson_id,status,title,created_at,chapter_id,"
     "subject:content->metadata->>subject,"
-    "estimated_duration_mins:content->metadata->>estimated_duration_mins"
+    "estimated_duration_mins:content->metadata->>estimated_duration_mins,"
+    "chapter:chapters!lessons_chapter_id_fkey(chapter_id,title,chapter_index)"
 )
 
 
@@ -144,8 +201,33 @@ _BOOK_COLUMNS: str = "book_id,user_id,filename,status,page_count,created_at"
 # It makes chapter_count ONE query for the whole page rather than N+1 per book.
 _BOOK_SELECT: str = f"{_BOOK_COLUMNS},chapters(count)"
 
+# Story 1-14 (Phase 6): the lesson link is re-sourced from `lessons`.
+#
+# The scalar `chapters.lesson_id` is GONE from this list — dropped outright, not
+# kept as a "harmless fallback". It is a dead column with a live
+# `ON DELETE CASCADE` to `lessons` (20260611000000:132), and `chunks.chapter_id`
+# cascades from the chapter (:147), so pointing it at a lesson and later rolling
+# that lesson back would delete the chapter and every chunk and embedding under
+# it. It is also scalar, and one chapter can legitimately have lessons at three
+# tiers. Nothing in `app/modules/content/` reads or writes it.
+#
+# `lessons!lessons_chapter_id_fkey` is the SAME constraint `_LIST_COLUMNS` names,
+# viewed from the other side: to-MANY, so it arrives as a JSON ARRAY and is `[]`
+# for the normal case of a chapter with no lessons yet. `_row_to_chapter_response`
+# unwraps it defensively — a bare `[0]` would 500 the entire chapter list for any
+# book mid-ingestion.
 _CHAPTER_COLUMNS: str = (
-    "chapter_id,chapter_index,title,page_start,page_end,boundary_confidence,lesson_id"
+    "chapter_id,chapter_index,title,page_start,page_end,boundary_confidence,"
+    "lessons!lessons_chapter_id_fkey(lesson_id,status,tier,created_at)"
+)
+
+# Columns the generate endpoint needs off the chapters row. `book_id` is
+# selected so ownership can be RE-checked on the returned row even though the
+# query already filters on it (the same belt-and-braces `_fetch_owned_book`
+# uses); `page_start`/`page_end` drive the AC11 span gate and must come from the
+# database, never from client input, or the gate is trivially bypassed.
+_GENERATE_CHAPTER_COLUMNS: str = (
+    "chapter_id,book_id,chapter_index,title,page_start,page_end,boundary_confidence"
 )
 
 
@@ -162,10 +244,34 @@ def _map_status(db_status: str) -> str:
     return _STATUS_MAP.get(db_status, "queued")
 
 
+def _embedded_object(value: Any) -> dict[str, Any] | None:  # noqa: ANN401 — embed shape varies
+    """Unwrap a PostgREST to-ONE embed into a dict, or None (Story 1-14).
+
+    `chapter:chapters!lessons_chapter_id_fkey(...)` is a to-one relation, so
+    PostgREST sends an object or `null`. A legacy lesson has `chapter_id IS NULL`
+    and therefore no chapter at all, which is the NORMAL state for every lesson
+    created before Phase 6 — it must yield None, not raise. A list is tolerated
+    too: the same constraint viewed from the chapters side is to-many, and
+    confusing the two is the single most likely mistake here (see
+    `_CHAPTER_COLUMNS`). Being permissive costs nothing; 500-ing the whole
+    lesson list costs the dashboard.
+    """
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return value if isinstance(value, dict) else None
+
+
 def _row_to_status_response(
     lesson: dict[str, Any],
     error: str | None = None,
 ) -> LessonStatusResponse:
+    # `get_lesson` selects `*` (no embed) and `list_lessons` selects the embed,
+    # so chapter_id is read from the flat column — present on both paths — while
+    # title/index come from the embed and stay None on the `*` path rather than
+    # costing a second round-trip per lesson.
+    chapter = _embedded_object(lesson.get("chapter"))
+    chapter_id = lesson.get("chapter_id") or (chapter or {}).get("chapter_id")
+    chapter_index = (chapter or {}).get("chapter_index")
     return LessonStatusResponse(
         lesson_id=str(lesson["lesson_id"]),
         status=_map_status(lesson.get("status", "generating")),
@@ -175,6 +281,9 @@ def _row_to_status_response(
         completed_at=str(lesson["completed_at"]) if lesson.get("completed_at") else None,
         subject=_coerce_str(_metadata_field(lesson, "subject")),
         estimated_duration_mins=_coerce_float(_metadata_field(lesson, "estimated_duration_mins")),
+        chapter_id=str(chapter_id) if chapter_id else None,
+        chapter_title=_coerce_str((chapter or {}).get("title")),
+        chapter_index=int(chapter_index) if isinstance(chapter_index, int | float) else None,
     )
 
 
@@ -264,10 +373,66 @@ def _row_to_book_response(book: dict[str, Any]) -> BookResponse:
     )
 
 
+def _embedded_lessons(value: Any) -> list[dict[str, Any]]:  # noqa: ANN401 — embed shape varies
+    """Unwrap the to-MANY `lessons` embed into a list of rows (Story 1-14).
+
+    A chapter with no lessons is the NORMAL state — it is what every chapter of
+    a freshly ingested book looks like — and PostgREST sends `[]` for it. A bare
+    `[0]` index would therefore 500 the entire chapter list for any book that has
+    not been generated from yet, i.e. the common case. Mirrors `_embedded_count`
+    above: tolerate list, dict-for-a-to-one, and null alike, and never raise.
+    """
+    if isinstance(value, dict):
+        return [value]
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
+
+
+def _latest_lesson(lessons: list[dict[str, Any]]) -> LatestLesson | None:
+    """Pick the newest lesson by `created_at`, or None.
+
+    PostgREST does not order embedded rows for us, so the ordering happens here.
+    `created_at` is `timestamptz NOT NULL DEFAULT now()` and PostgREST renders it
+    ISO-8601, which sorts correctly as a string; a missing value sorts first so a
+    malformed row can never win the max().
+    """
+    if not lessons:
+        return None
+    newest = max(lessons, key=lambda row: str(row.get("created_at") or ""))
+    lesson_id = newest.get("lesson_id")
+    if not lesson_id:
+        return None
+    # `_map_status`, not the raw column. `lessons.status` is the DB vocabulary
+    # ('generating'|'ready'|'failed'); every lesson-facing response in this API
+    # speaks the CLIENT vocabulary ('queued'|'running'|'ready'|'failed') — see
+    # `LessonStatusResponse` and `_row_to_status_response`. Returning the raw
+    # value here would hand Dev 2 'generating' from the chapter card and
+    # 'running' from `GET /lessons` for the same lesson, so a status switch
+    # matching on 'running' silently falls through on chapter cards only.
+    return LatestLesson(
+        lesson_id=str(lesson_id),
+        status=_map_status(str(newest.get("status") or "generating")),
+        tier=str(newest.get("tier") or ""),
+        created_at=str(newest["created_at"]) if newest.get("created_at") else None,
+    )
+
+
 def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
-    # AC4: has_lesson is DERIVED from lesson_id, never stored, so it is already
-    # correct the moment Phase 6 starts writing chapters.lesson_id.
-    lesson_id = chapter.get("lesson_id")
+    """Build one chapter card, with its lesson link sourced from `lessons`.
+
+    Story 1-14: `has_lesson`/`lesson_id` are still DERIVED, never stored, but
+    they are now derived from the embedded `lessons` rows rather than from the
+    dead scalar `chapters.lesson_id` — which this module neither reads nor
+    writes, because its `ON DELETE CASCADE` makes writing it destructive (see
+    `_CHAPTER_COLUMNS`). Their meaning changed accordingly: `lesson_id` is the
+    NEWEST lesson, and `has_lesson` means "at least one lesson exists, in any
+    state". `latest_lesson` carries the status alongside it precisely because
+    "at least one, in any state" is not enough for the client — a chapter whose
+    only lesson is `failed` must not render a Watch button that 404s the player.
+    """
+    lessons = _embedded_lessons(chapter.get("lessons"))
+    latest = _latest_lesson(lessons)
     return ChapterResponse(
         chapter_id=str(chapter["chapter_id"]),
         chapter_index=int(chapter["chapter_index"]),
@@ -275,8 +440,10 @@ def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
         page_start=int(chapter["page_start"]),
         page_end=int(chapter["page_end"]),
         boundary_confidence=str(chapter.get("boundary_confidence") or "fallback"),
-        lesson_id=str(lesson_id) if lesson_id else None,
-        has_lesson=bool(lesson_id),
+        lesson_id=latest.lesson_id if latest else None,
+        has_lesson=bool(lessons),
+        lesson_count=len(lessons),
+        latest_lesson=latest,
     )
 
 
@@ -294,6 +461,56 @@ def _validated_book_id(book_id: str) -> str:
             status_code=status.HTTP_404_NOT_FOUND, detail="Book not found"
         ) from None
     return book_id
+
+
+def _validated_chapter_id(chapter_id: str) -> str:
+    """A malformed chapter_id is a 404, never a 500 (Story 1-14 AC4/AC5).
+
+    Deliberately symmetric with `_validated_book_id` above — a different shape
+    here would be a different security posture on the same request. It runs
+    BEFORE any DB call, so a garbage path segment never reaches PostgREST (where
+    it would produce a `22P02 invalid input syntax for type uuid` and a 500 that
+    tells the caller the id was merely malformed rather than absent).
+
+    The detail is the flat "Chapter not found" — byte-identical to the 404 for a
+    chapter that belongs to a different book of the caller's, and carrying no
+    title, page range or index (AC5).
+    """
+    try:
+        uuid.UUID(chapter_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found"
+        ) from None
+    return chapter_id
+
+
+def _source_pdf_path(user_id: str, book_id: str, filename: str) -> str:
+    """The ONE expression of the `source-pdfs` storage key layout (Story 1-14 AC7).
+
+    `books` has no path column — the table is created once
+    (20260625000000:28-45) and the only later ALTER enables RLS — so the key has
+    to be RECONSTRUCTED whenever a lesson is generated, minutes or days after the
+    upload that wrote the object. Two independent f-strings would be two sources
+    of truth for a value that must be byte-exact, and the failure mode of a
+    mismatch is silent here: the `lessons` INSERT succeeds, the caller gets a
+    202, and the pipeline dies minutes later inside `extract_node` looking like a
+    parsing bug. Hence one helper, used by both `upload_lesson` (which writes the
+    object) and `generate_chapter_lesson` (which reconstructs the key).
+
+    Reconstruction is exact because `upload_lesson` sanitises the filename ONCE
+    and stores that same sanitised value in `books.filename`; the pre-Phase-3
+    formula was identical, so legacy rows reconstruct too. `filename` must
+    therefore come from the fetched `books` row — never re-sanitised here, and
+    never taken from the request.
+
+    `user_id` likewise comes from the books row rather than the JWT. They are
+    equal on every path that reaches here (ownership is proven first), but the
+    row is what the object was actually written under, and a future admin or
+    support path with a different caller identity must not silently point at a
+    key that does not exist.
+    """
+    return f"{user_id}/{book_id}/{filename}"
 
 
 def _fetch_owned_book(
@@ -418,7 +635,7 @@ async def upload_lesson(
             detail=(
                 "tier is no longer accepted on upload — a book has no tier. Choose it "
                 "per chapter when generating a lesson "
-                "(POST /books/{book_id}/chapters/{chapter_id}/lessons)."
+                f"(POST {GENERATE_LESSON_PATH})."
             ),
         )
 
@@ -476,7 +693,10 @@ async def upload_lesson(
         book_id = books_rows[0]["book_id"]
 
         # ── 2. Storage upload ─────────────────────────────────────────────────
-        storage_path = f"{user_id}/{book_id}/{safe_filename}"
+        # The key layout lives in ONE place (AC7) — `generate_chapter_lesson`
+        # must reconstruct this exact string from the books row long after the
+        # upload, and `books` has no column to store it in.
+        storage_path = _source_pdf_path(user_id, str(book_id), safe_filename)
         supabase.storage.from_("source-pdfs").upload(
             path=storage_path,
             file=pdf_bytes,
@@ -682,7 +902,10 @@ async def list_book_chapters(
     service-role client there is no RLS to fall back on, so an unchecked
     `chapters.eq(book_id)` would be a straight IDOR.
 
-    `lesson_id`/`has_lesson` are always null/false until Phase 6 (AC4).
+    `lesson_count`, `has_lesson`, `lesson_id` and `latest_lesson` are derived
+    from the embedded `lessons` rows on the same query (Story 1-14) — one
+    round-trip for the whole book, not one per chapter — and are `0/false/null`
+    for a chapter nobody has generated from yet, which is the normal state.
     """
     user_id: str = current_user["sub"]
     supabase = get_supabase()
@@ -697,3 +920,297 @@ async def list_book_chapters(
         .execute()
     )
     return [_row_to_chapter_response(row) for row in rows(resp)]
+
+
+@router.post(
+    GENERATE_LESSON_PATH,
+    response_model=LessonGenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Generate a lesson from one chapter at a chosen difficulty tier",
+)
+@limiter.limit("3/minute;20/hour", key_func=_get_user_key)
+async def generate_chapter_lesson(
+    request: Request,
+    response: Response,
+    book_id: str,
+    chapter_id: str,
+    body: GenerateLessonRequest,
+    current_user: CurrentUser,
+    arq_redis: ArqRedis,
+) -> LessonGenerationResponse:
+    """Create one `lessons` row for one chapter and enqueue the pipeline.
+
+    This is the single write that reconnects book ingestion to lesson
+    generation. `content_pipeline_job` already selects `chapter_id` and threads
+    it to `extract_node`, which looks the chapter up and passes its real
+    `page_start`/`page_end` to the isolated PDF subprocess — all of that is built
+    and merged. Nothing wrote the column, so between Phase 3 and now there was no
+    way to generate a lesson at all. One INSERT lights the whole path up.
+
+    ── `request: Request` is load-bearing ────────────────────────────────────
+    slowapi resolves the client key by looking for a parameter LITERALLY named
+    `request` of type `Request`; without it `@limiter.limit` raises at call time,
+    not at import time, so the failure would first appear in production. The
+    parameter is otherwise unused — do not "clean it up".
+
+    ── Authorization: 404, never 403, and no timing padding ──────────────────
+    The Supabase client is service-role and bypasses RLS, and `chapters` has no
+    `user_id` column at all, so application-layer filtering is the ONLY control
+    here. Ownership is resolved on `books` first and re-checked on the returned
+    row; the chapter fetch is additionally scoped by `book_id` and re-checked
+    after the fetch. Those post-fetch re-checks are not redundant — they are what
+    survives a future refactor that drops a `.eq()`.
+
+    A 403 would confirm the id exists, so both "absent" and "someone else's" are
+    the same 404 with the same body, carrying no filename, title, page range or
+    index.
+
+    There is deliberately NO timing padding between the one-query and two-query
+    404s. The difference is only reachable AFTER the caller has proven ownership
+    of the book, and it distinguishes states they can already enumerate for free
+    via `GET /books/{id}/chapters`. Padding it would add latency and guard
+    nothing — please do not "fix" this later.
+
+    `extract_node` does re-verify that the chapter belongs to the book, but this
+    endpoint must NOT lean on that: by then the `lessons` row, the `lesson_jobs`
+    row and the ARQ job all exist, so the caller receives a 202 and a `failed`
+    lesson instead of a 404, and a worker slot has been burnt.
+
+    ── Idempotency is best-effort and TOCTOU-racy, by construction ───────────
+    A 202 invites a retry, so an existing `generating`/`ready` lesson for the
+    same (chapter, tier, user) is returned with 200 and no second enqueue. Only
+    `failed` matches are regenerated; a different tier is always a new lesson,
+    which the schema permits deliberately (`lessons_chapter_id_idx` is
+    NON-unique).
+
+    This check is a read followed by a write with no lock between them: two
+    concurrent requests can both see nothing and both insert. There is no
+    database uniqueness to lean on — no UNIQUE exists on `lessons.chapter_id`,
+    `chapters.lesson_id` or `(chapter_id, tier)` in any migration. The durable
+    fix is a partial unique index `(chapter_id, tier) WHERE status <> 'failed'`,
+    which is a frozen-contract migration and out of scope; it is registered in
+    the defect register instead. Treat the 200 path as an optimisation, never as
+    a guarantee.
+
+    ── Two different page numbers gate two different failures ────────────────
+    `settings.max_chapter_pages` (200) refuses a CATASTROPHE — a rung-5
+    whole-document "chapter" of 1,151 pages, the exact bug this effort exists to
+    fix. `_TRUNCATION_WARN_PAGES` (40) warns about a QUALITY cliff: only ~90,000
+    characters of any chapter are ever LLM-visible, so past ~40 pages the lesson
+    is genuinely built from part of the chapter. The $3.00 cost ceiling does not
+    protect against either — a too-large chapter produces a cheap WRONG lesson,
+    not an expensive one, and never trips the ceiling. Span is computed from the
+    DB row, never from client input.
+
+    ── What rollback may touch ──────────────────────────────────────────────
+    Only what this request created: `lesson_jobs` then `lessons`. Never the
+    `books` row, never the storage object, and never the `chapters` row. The
+    pre-Phase-3 code deleted all three, correctly, because upload and generation
+    were one call; doing it here would destroy a whole book's ingestion over one
+    failed generation.
+    """
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+    settings = get_settings()
+    tier: str = body.tier
+
+    # ── Gate 1-2: both ids validated BEFORE any DB call ───────────────────────
+    validated_book_id = _validated_book_id(book_id)
+    validated_chapter_id = _validated_chapter_id(chapter_id)
+
+    # ── Gate 3a: ownership of the BOOK, proven first ──────────────────────────
+    # `user_id` and `filename` are selected because `_source_pdf_path` must
+    # reconstruct the storage key from the row that was actually written, not
+    # from the JWT. `books` has no path column to read it back from.
+    book = _fetch_owned_book(
+        supabase, validated_book_id, user_id, "book_id,user_id,filename,status"
+    )
+
+    # ── Gate 3b: the chapter, scoped to that book, then re-checked ────────────
+    chapter_resp = (
+        supabase.table("chapters")
+        .select(_GENERATE_CHAPTER_COLUMNS)
+        .eq("chapter_id", validated_chapter_id)
+        .eq("book_id", validated_book_id)
+        .maybe_single()
+        .execute()
+    )
+    chapter: dict[str, Any] | None = single_row(chapter_resp)
+    if not chapter or str(chapter.get("book_id")) != validated_book_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found")
+
+    # ── Gate 4: the book must have finished ingestion ─────────────────────────
+    # 409, not 404: the book exists and the caller owns it — there is simply
+    # nothing to generate from yet, and 'processing' becomes 'ready' on its own.
+    # A 'failed' book needs a re-upload, which is also the caller's move.
+    if str(book.get("status") or "") != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Book is not ready — chapter detection has not finished",
+        )
+
+    # Arithmetic only; the 422 it feeds is raised below, after idempotency.
+    page_span = int(chapter["page_end"]) - int(chapter["page_start"]) + 1
+    truncation_expected = page_span > _TRUNCATION_WARN_PAGES
+
+    # ── Gate 5: idempotency (best-effort — see the docstring) ─────────────────
+    existing_resp = (
+        supabase.table("lessons")
+        .select("lesson_id,status,tier")
+        .eq("chapter_id", validated_chapter_id)
+        .eq("tier", tier)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    for existing in rows(existing_resp):
+        existing_status = str(existing.get("status") or "")
+        if existing_status in ("generating", "ready"):
+            # 200, not 202: nothing was accepted for processing this time, and
+            # no job was enqueued. `job_id` stays None — the original ARQ id is
+            # not persisted anywhere and inventing one would hand the client a
+            # token it could poll forever.
+            response.status_code = status.HTTP_200_OK
+            return LessonGenerationResponse(
+                lesson_id=str(existing["lesson_id"]),
+                chapter_id=validated_chapter_id,
+                tier=tier,
+                # Mapped, so `status` means the same thing on both branches of
+                # this endpoint AND across every other lesson-facing route:
+                # 'queued' on the 202 (the job was just enqueued and no node has
+                # run), then 'running'|'ready'|'failed' thereafter. Returning the
+                # raw 'generating' here would make one field mean "API acceptance
+                # state" on one branch and "DB lifecycle state" on the other.
+                status=_map_status(existing_status),
+                job_id=None,
+                truncation_expected=truncation_expected,
+            )
+
+    # ── Gate 6: the catastrophe gate ──────────────────────────────────────────
+    if page_span > settings.max_chapter_pages:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "chapter_too_large",
+                "page_span": page_span,
+                "max_page_span": settings.max_chapter_pages,
+                # Returned so the client can explain WHY the span is absurd: a
+                # 'fallback' boundary means detection found no signal at all and
+                # made the whole document one chapter. It is NOT itself a gate —
+                # a legitimate 60-page single-chapter PDF is also rung 5.
+                "boundary_confidence": str(chapter.get("boundary_confidence") or "fallback"),
+            },
+        )
+
+    # ── Gate 7: per-user concurrency — the real spend control ─────────────────
+    # The rate limit above bounds request RATE; this bounds concurrent
+    # PIPELINES, each of which can cost up to `max_lesson_cost_usd`. Counted
+    # rows rather than a PostgREST exact count so the value survives the
+    # `rows()` helper unchanged.
+    running = rows(
+        supabase.table("lessons")
+        .select("lesson_id")
+        .eq("user_id", user_id)
+        .eq("status", "generating")
+        .execute()
+    )
+    if len(running) >= settings.max_concurrent_generations_per_user:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Too many lessons are already generating — wait for one to finish "
+                "before starting another"
+            ),
+            headers={"Retry-After": str(_CONCURRENCY_RETRY_AFTER_S)},
+        )
+
+    # ── Create the work ───────────────────────────────────────────────────────
+    lesson_id: str | None = None
+    try:
+        # Every key below is a REAL column. `lessons` has no `error`, no
+        # `completed_at`, no `session_id` and no `subject`; naming one makes
+        # PostgREST reject the whole statement with 42703 — the D9 outage shape,
+        # which a Supabase mock cannot reproduce. `status` must be 'generating'
+        # ('queued' violates lessons_status_check) and `tier` is already
+        # constrained to the valid set by the request model.
+        source_file_path = _source_pdf_path(
+            str(book["user_id"]), validated_book_id, str(book.get("filename") or "")
+        )
+        lessons_resp = (
+            supabase.table("lessons")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "book_id": validated_book_id,
+                    "chapter_id": validated_chapter_id,
+                    "tier": tier,
+                    "status": "generating",
+                    "title": str(chapter.get("title") or f"Chapter {chapter['chapter_index']}"),
+                    "source_file_path": source_file_path,
+                }
+            )
+            .execute()
+        )
+        lessons_rows = rows(lessons_resp)
+        if not lessons_rows:
+            raise RuntimeError("lessons insert returned no rows")
+        lesson_id = str(lessons_rows[0]["lesson_id"])
+
+        # `chapters.lesson_id` is deliberately NOT written here. That FK is
+        # ON DELETE CASCADE and `chunks.chapter_id` cascades from the chapter, so
+        # pointing the chapter at this lesson and then rolling the lesson back
+        # below would delete the chapter and every chunk and embedding under it —
+        # a whole book's ingestion destroyed by one failed generation. The column
+        # is also scalar and cannot express one chapter with lessons at three
+        # tiers. It is dead; the reads source the link from `lessons` instead.
+
+        supabase.table("lesson_jobs").insert(
+            {"lesson_id": lesson_id, "status": "pending"}
+        ).execute()
+
+        # `pipeline:{lesson_id}` is kept verbatim: it is the retry-safety key the
+        # worker and CLAUDE.md's thread_id rule already reference. A
+        # chapter-keyed variant would collide across tiers and would block a
+        # legitimate regeneration after a failure.
+        job = await arq_redis.enqueue_job(
+            "content_pipeline_job", lesson_id, _job_id=f"pipeline:{lesson_id}"
+        )
+        if job is None:
+            # `lesson_id` was minted by the INSERT immediately above, so ARQ
+            # cannot be deduplicating an in-flight key — this is unreachable by
+            # construction. It is checked anyway (never assume) but it is a
+            # server fault, not the caller's: it falls into the generic 500 and
+            # the rollback below, rather than the old 409 whose message ("a job
+            # is already queued for this ID") would now be a false statement.
+            raise RuntimeError(f"ARQ returned no job for lesson_id={lesson_id}")
+        job_id: str = job.job_id
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "generate_chapter_lesson failed user_id=%s book_id=%s chapter_id=%s",
+            user_id,
+            validated_book_id,
+            validated_chapter_id,
+        )
+        # Only what THIS request created, child before parent, each isolated so a
+        # transient failure on one does not abandon the rest. Never `books`,
+        # never the storage object, never `chapters` — see the docstring.
+        if lesson_id:
+            with contextlib.suppress(Exception):
+                supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
+            with contextlib.suppress(Exception):
+                supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start lesson generation — please retry",
+        ) from exc
+
+    return LessonGenerationResponse(
+        lesson_id=lesson_id,
+        chapter_id=validated_chapter_id,
+        tier=tier,
+        status="queued",
+        job_id=job_id,
+        truncation_expected=truncation_expected,
+    )

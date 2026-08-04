@@ -10,7 +10,74 @@ The router still declares its older lesson models inline; new models land here.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.schemas.lesson import DEFAULT_TIER, VALID_TIERS
+
+
+class GenerateLessonRequest(BaseModel):
+    """Body of POST /books/{book_id}/chapters/{chapter_id}/lessons (Story 1-14).
+
+    `tier` is the ONLY thing the client gets to choose. Everything else the
+    pipeline needs — book_id, chapter_id, the page range, the source PDF path —
+    is read from the database rows the caller has already been proven to own,
+    never accepted from the request body. A client-supplied page range would be
+    a straight authorization bypass of the AC11 size gate.
+
+    The default and the valid set are imported from `app.schemas.lesson`, which
+    is the single source of truth shared with the pipeline graph. A local copy
+    of the tier literals here would be the third one in the repo and is the DRY
+    violation a previous Blind Hunter review already rejected once.
+
+    Validation is a field validator rather than a `Literal[...]` annotation so
+    the set stays imported (one source of truth) instead of being retyped into a
+    type expression. It runs during request parsing, i.e. strictly BEFORE the
+    handler body and therefore before any DB call — an invalid tier can never
+    reach `supabase.table(...)`.
+    """
+
+    tier: str = DEFAULT_TIER
+
+    @field_validator("tier")
+    @classmethod
+    def _tier_must_be_known(cls, value: str) -> str:
+        if value not in VALID_TIERS:
+            raise ValueError(f"tier must be one of {', '.join(sorted(VALID_TIERS))}")
+        return value
+
+
+class LatestLesson(BaseModel):
+    """The newest lesson generated from a chapter, embedded in ChapterResponse.
+
+    `status` is carried deliberately: `has_lesson=true` on a chapter whose only
+    lesson is `failed` would render a "Watch" button that 404s the player.
+    """
+
+    lesson_id: str
+    status: str  # generating | ready | failed (lessons_status_check)
+    tier: str  # T1 | T2 | T3
+    created_at: str | None = None
+
+
+class LessonGenerationResponse(BaseModel):
+    """Result of requesting a lesson for one chapter at one tier (Story 1-14).
+
+    Returned with 202 when a new lesson was created and enqueued, and with 200
+    when an existing non-failed lesson for the same (chapter, tier, user) was
+    returned instead (the idempotent path).
+
+    `job_id` is None on the 200 path: the ARQ id of the original enqueue is not
+    persisted anywhere, and inventing one would be a lie the client could try to
+    poll. `truncation_expected` is True when the chapter is large enough that the
+    LLM-visible window covers only part of it — see router._TRUNCATION_WARN_PAGES.
+    """
+
+    lesson_id: str
+    chapter_id: str
+    tier: str
+    status: str  # "queued" on create; the lesson's own status on the 200 path
+    job_id: str | None = None
+    truncation_expected: bool = False
 
 
 class BookResponse(BaseModel):
@@ -35,9 +102,17 @@ class BookResponse(BaseModel):
 class ChapterResponse(BaseModel):
     """One detected chapter, as returned by GET /books/{book_id}/chapters.
 
-    `lesson_id` and `has_lesson` ship now (AC4) even though both are always
-    null/false until Phase 6 makes lesson generation per-chapter — including
-    them today means Dev 2's chapter card is not rebuilt at W3.
+    Story 1-14 (Phase 6) re-sourced the lesson link. It is now derived from the
+    `lessons` side of `lessons_chapter_id_fkey` — a to-MANY relation — and not
+    from the scalar `chapters.lesson_id`, which is a dead column with a live
+    ON DELETE CASCADE and is never read or written (see router._CHAPTER_COLUMNS).
+
+    `lesson_id` and `has_lesson` are kept because they are Dev 2's committed
+    contract, but their meaning is now: the NEWEST lesson generated from this
+    chapter, and "at least one lesson exists in any state". A scalar column could
+    never express one chapter with lessons at three tiers; `lesson_count` and
+    `latest_lesson` can. Zero-lesson chapters are the normal state, so all four
+    fields have empty defaults.
     """
 
     chapter_id: str
@@ -48,3 +123,5 @@ class ChapterResponse(BaseModel):
     boundary_confidence: str  # toc | contents | heading | font | fallback
     lesson_id: str | None = None
     has_lesson: bool = False
+    lesson_count: int = 0
+    latest_lesson: LatestLesson | None = None

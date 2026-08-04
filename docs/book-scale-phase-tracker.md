@@ -2,7 +2,7 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-04
-**Overall status:** 5 of 9 backend phases verified (1, 2, 3, 3.5, 4). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
+**Overall status:** 6 of 9 backend phases verified (1, 2, 3, 3.5, 4, 6). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
 frontend: two backend phases inserted (3.5, 6.5) and a parallel **Track W** added for Dev 2.
 Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.md`
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
@@ -41,7 +41,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | **3.5** | **Books and chapters readable + pipeline writers removed** | ✅ Verified | 2026-08-04 |
 | 4 | Extract one chapter's pages | ✅ Verified | 2026-08-04 |
 | 5 | Chapter-scoped generation | 🧪 Implemented | — |
-| 6 | Endpoints (the write endpoint + `tier` relocation) | ⬜ Not Started | — |
+| 6 | Endpoints (the write endpoint + `tier` relocation) | ✅ Verified | 2026-08-04 |
 | **6.5** | **`lesson_ready` actually reaches a client** | ⬜ Not Started | — |
 | 7 | Prove it end to end + the single merge to `main` | ⬜ Not Started | — |
 
@@ -55,7 +55,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | **W3** | Generate from chapter (`tier` moves here) | ⬜ Not Started | SYNC-2 |
 | **W4** | MSW off — the whole UI against the live API | ⬜ Not Started | Phase 6 Verified |
 
-**Totals:** Backend — Not Started 2 · Implemented 1 · Verified 5. Track W — Not Started 5.
+**Totals:** Backend — Not Started 1 · Implemented 1 · Verified 6. Track W — Not Started 5.
 
 ### Synchronisation points
 
@@ -733,7 +733,60 @@ The whole flow is drivable over the API.
 7. Over the page-count gate → clean rejection
 
 ### Observed result
-_Not yet run._
+
+**✅ Verified 2026-08-04.** Story: `docs/stories/1-14-generate-lesson-from-chapter.md`.
+
+**Live, against the real 1,151-page book and the real Supabase project.**
+
+| | |
+|---|---|
+| Ingest | 1,151 pages, **21 chapters**, upload 58.0 s, end-to-end **90.3 s** |
+| Generation half | **12/12** — create 202, idempotent 200, second tier, all four negatives |
+| Page bounds reaching the subprocess | **3/3** |
+| Gating suite | **1068 passed, 1 skipped** (was 968 passed / 10 skipped) |
+| ruff repo-wide / mypy | clean / 24 errors in 3 files, unchanged from `main` |
+
+**The premise, measured.** `extract_node` spawned the subprocess with argv `(40, 68)` — the
+chapter's real bounds — and returned **82,665 chars for 29 pages (~2,851/page)**. A
+whole-document extraction of the same book would be **~3,280,945 chars**. Every extracted image
+landed on pages 52, 54, 55, 61 — all inside the chapter. That is the book-scale premise
+demonstrated end to end, not argued.
+
+**The cap does not refuse anything real.** Largest detected chapter in this book: **98 pages**,
+against a 200 cap. The 40-page warn band set `truncation_expected` where it should.
+
+**One chapter, two lessons, two tiers** — `lesson_count: 2` with `latest_lesson` resolving to the
+newer by `created_at`. The dead scalar `chapters.lesson_id` could never have expressed this.
+
+### Found by this phase, and fixed
+
+**D52 — the rate limiter was keyed by IP, not by user.** `_get_user_key` decoded the bearer token
+with no `audience=`, and every Supabase token carries `aud: "authenticated"` — PyJWT raises
+`InvalidAudienceError` in exactly that case, the bare `except` swallowed it, and it returned
+`get_remote_address`. Every authenticated user shared one bucket: one caller exhausting
+`3/minute` locked out everyone behind the same egress IP. Present since `upload_lesson`'s
+`5/minute` was written. Caught because the gate expected a 404 for another user's book and got a
+**429**. 8 regression tests, mutation-checked.
+
+**D51 — CI's anti-vacuum guard had never fired.** `grep -qE "^[0-9]+ skipped|no tests ran"` only
+matches an ALL-skipped run; pytest's mixed summary is `9 passed, 12 skipped`, so a partial skip
+passed green. The PostgREST half of the harness had been skipping in CI, unreported, since it was
+written. Guard tightened to fail on any skip; truth-tabled over four summary shapes.
+
+### Stale processes cost most of the debugging time
+
+Three separate incidents in one session, all the same shape — *something reported success without
+being checked*:
+
+1. A stale `uvicorn` served **3** book routes while source had **4**; the live `/openapi.json`
+   disagreed with the code.
+2. My own port-free check used `LISTENING.*:8077`, which can never match Windows `netstat`
+   column order — so it reported "free" unconditionally.
+3. Two stale ARQ workers running pre-Story-1-13 code (their lesson `SELECT` predates
+   `chapter_id`) failed every lesson within seconds and produced three false gate failures.
+
+`app.routes` is also the wrong instrument on this FastAPI version — module routes are
+`_IncludedRouter` branches with no `.path`. Use `app.openapi()`.
 
 ### Files
 `apps/api/app/modules/content/router.py`, `apps/api/app/modules/content/schemas.py`
