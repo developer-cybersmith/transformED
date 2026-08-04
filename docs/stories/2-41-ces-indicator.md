@@ -1,0 +1,76 @@
+---
+baseline_commit: cd776fe
+---
+
+# Story 2.41: CES Indicator Component (S3-04)
+
+Status: ready-for-dev
+
+## Story
+
+As a student in an active lesson,
+I want a subtle, glanceable sense of how engaged I appear to the tutor,
+so that I'm not blindsided by an intervention, without the display becoming a distracting score I obsess over.
+
+**Source:** `docs/dev2-sprint-tracker.md` §12, S3-04 (Sprint 3, P2). Epic: `docs/bmad/epics/epic-2-lesson-player.md` names `CESIndicator` as a Lesson Player component; not in that doc's own component table (added later in the Sprint 3 tracker), but it slots into the same `components/player/` family.
+
+**Dependency note:** `ces_update` is already live on the wire per the frozen `packages/shared/types/ws.ts` contract (`{ session_id, ces, window_index }`), but `useLessonSocket.ts`'s handler currently no-ops it with the comment `// Not emitted by any live path yet (Dev 3 owns it); no-op.` This story turns that no-op into a real dispatch, the same way Story 2-40 (S3-03) did for `tutor_intervene`. Whether Dev 3's CES formula and Dev 4's tutor FSM actually *emit* a real `ces_update` in production is out of scope here — this story must work correctly against a manually-dispatched or mocked message regardless, matching this codebase's "build against the frozen contract, flip to real later" pattern.
+
+**Branch note:** built from `main` at `cd776fe`, which does **not** yet include Story 2-40's `activeIntervention` store field or its `useLessonSocket.ts`/`Player.tsx` changes (those live on `sprint3/s3-03-tutor-intervention-card` / `sprint3-master`, not yet merged to `main`). This story must not assume 2-40's code exists — implement independently, following the same *pattern*, not the same diff. Expect a trivial, non-conflicting merge when both land in `sprint3-master` (different fields, same file, same shape of change).
+
+## Acceptance Criteria
+
+1. **AC-1** — New `cesScore: number | null` field + `setCesScore(score: number | null)` action added to `player.machine.ts`, following the exact pattern of the existing `tutorState`/`setTutorState` pair. Initial value `null`. Reset to `null` in `loadLesson()`'s state reset block (same place `tutorState` resets to `'IDLE'`) so a fresh lesson never inherits a stale score from a previous one.
+2. **AC-2** — `useLessonSocket.ts`'s `case 'ces_update':` calls `usePlayerStore.getState().setCesScore(msg.payload.ces)` instead of no-op'ing, guarded the same way the sibling `state_change` case is guarded (`msg.payload?.session_id === sid`) — a stale/foreign-session update must not overwrite the current score. This path must never touch `status` or any playback field — it only ever calls `setCesScore`.
+3. **AC-3** — New `CESIndicator.tsx` (`apps/web/src/components/player/`), self-contained (reads `cesScore` + `status` from `usePlayerStore` directly, no props). Renders `null` when `cesScore` is `null` **or** `status !== 'PLAYING'` — checked on every render (render-level guard, not just at receipt time), so the indicator disappears immediately if `status` changes away from `PLAYING` (e.g. into `QUIZ`) even without a new WS message.
+4. **AC-4** — Shows a **qualitative label only**, never the raw float: `cesScore < 0.4` → `"Low"`, `0.4 <= cesScore <= 0.7` → `"Engaged"`, `cesScore > 0.7` → `"Focused"`. The raw `cesScore` number must never appear in the rendered DOM text (verify with a test that greps rendered text for a decimal pattern and finds none). This mirrors the same "never show a raw score" convention already established for CES/teach-back on `SessionReport.tsx` (S2-10 tracker note).
+5. **AC-5** — Small and non-intrusive: max 40px in either dimension (a colored dot or a subtle progress arc), positioned in a player corner that doesn't collide with the existing tier badge (`top-3 left-3`) or `TutorInterventionCard`'s corner (`top-24 right-4`, once 2-40 lands) — use `top-3 right-3` or similar, distinct from both.
+6. **AC-6** — Updates on every `ces_update` receipt; no client-side smoothing/debouncing beyond simply re-rendering with the latest value — Dev 3's CES formula already owns any smoothing server-side, this component just displays whatever it's told.
+7. **AC-7** — Tests: the store's new field/action (default `null`, `setCesScore` sets it, `loadLesson()` resets it to `null`), the component's full visibility/label matrix (hidden when `null`, hidden when `status !== 'PLAYING'` even with a non-null score, hides immediately on a `status` change away from `PLAYING`, correct label per each of the three bands including the exact `0.4`/`0.7` boundary values), and `useLessonSocket.ts`'s dispatch on a real `ces_update` message (assert `cesScore` actually changed to the real value, plus the session-id guard rejecting a foreign-session update — per `docs/DEFECT-REGISTER.md` binding rule 2, not just "the mock was called"). Full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean.
+
+## Tasks / Subtasks
+
+- [ ] Task 1 (AC: 1): Add `cesScore`/`setCesScore` to `player.machine.ts`; reset in `loadLesson()`.
+  - [ ] 1.1 RED: test asserting default `null`, action sets the field, `loadLesson()` resets it to `null`.
+  - [ ] 1.2 GREEN: implement.
+- [ ] Task 2 (AC: 2): Wire `useLessonSocket.ts`'s `ces_update` case to dispatch into the store, with the same `session_id` guard as `state_change`.
+  - [ ] 2.1 RED: test that a `ces_update` server message for the current session sets `cesScore`; a message for a different `session_id` is ignored; no playback/status action is ever called from this path.
+  - [ ] 2.2 GREEN: implement.
+- [ ] Task 3 (AC: 3, 4, 5): Build `CESIndicator.tsx` — render-level guard, qualitative label mapping, ≤40px corner placement.
+  - [ ] 3.1 RED: tests for the full visibility/label matrix (null → hidden, `status !== 'PLAYING'` → hidden even with a score, status change away from PLAYING hides immediately, each band's label, boundary values at exactly 0.4 and 0.7).
+  - [ ] 3.2 GREEN: implement.
+- [ ] Task 4 (AC: 6): Mount `<CESIndicator />` in `Player.tsx`.
+  - [ ] 4.1 RED: `Player.test.tsx` assertion that the component is present in the tree and updates on a `cesScore` change.
+  - [ ] 4.2 GREEN: implement.
+- [ ] Task 5 (AC: 7): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+
+## Dev Notes
+
+### What NOT to do
+
+- Do NOT render the raw `cesScore` float anywhere, in text, `title`, `aria-label`, or a `data-*` attribute a test might accidentally treat as "not really showing it" — the hard constraint is the number never reaches the DOM in human-readable form. (A `data-band="focused"`-style attribute for testability is fine, matching S3-03's `data-variant` pattern — that's not the raw score.)
+- Do NOT touch `status`, pause audio, or call any playback-affecting store action from this component or from the `ces_update` WS case.
+- Do NOT add client-side smoothing, rolling averages, or debounce logic — display exactly what the server sends, whenever it sends it.
+- Do NOT gate visibility only at receipt time — AC-3 explicitly requires a render-level guard so a `status` change away from `PLAYING` hides the indicator immediately without needing a new WS message (same pattern Story 2-40 used for its `TEACH_BACK` guard).
+- Do NOT assume Story 2-40's `activeIntervention`/`TutorInterventionCard` code exists in this branch's `player.machine.ts`/`useLessonSocket.ts`/`Player.tsx` — it doesn't yet (see Branch note above). Add this story's field/case/mount independently; don't try to "extend" code that isn't there.
+
+### Testing standards
+
+Follow `CheckingInTransition.test.tsx`'s pattern (`apps/web/src/__tests__/components/player/`): `usePlayerStore.setState(...)` to drive state directly, `act()` around every state change. For the "never shows the raw score" AC, assert on the rendered text content directly (e.g. a regex like `/\d\.\d/` should NOT match anything in the container) rather than only checking for the presence of the qualitative label — a test that only checks the label appears would pass even if the raw number were *also* rendered alongside it. Per `docs/DEFECT-REGISTER.md` binding rule 2, the `useLessonSocket.ts` dispatch test must assert the actual store state changed, not merely that a mock function was invoked with no shape check.
+
+### References
+
+- [Source: docs/dev2-sprint-tracker.md §12, S3-04 — full spec: colored dot/arc, ≤40px, qualitative label, hidden outside PLAYING]
+- [Source: packages/shared/types/ws.ts — `CesUpdateMessage` (frozen contract: `{ session_id, ces, window_index }`), do not modify]
+- [Source: apps/web/src/hooks/useLessonSocket.ts — the `ces_update` no-op case this story replaces, and the `state_change` case's `session_id === sid` guard to mirror]
+- [Source: apps/web/src/stores/player.machine.ts — `tutorState`/`setTutorState` as the pattern to mirror for `cesScore`/`setCesScore`; `loadLesson()`'s reset block]
+- [Source: apps/web/src/components/player/CheckingInTransition.tsx — closest existing precedent: store-driven, render-level-guarded overlay component]
+- [Source: apps/web/src/components/player/Player.tsx:191-200 — tier badge occupies `top-3 left-3`; pick a non-colliding corner]
+- [Source: docs/dev2-sprint-tracker.md's S2-10 note — "never show a raw score" convention already established for CES/teach-back elsewhere in this codebase]
+- [Source: docs/stories/2-40-tutor-intervention-card.md — sibling Sprint 3 story, same "build against frozen contract, flip to real later" pattern, not yet merged to `main` as of this story's baseline]
+
+## Change Log
+
+| Date | Change | Author |
+|------|--------|--------|
+| 2026-08-04 | Story created per S3-04 in `docs/dev2-sprint-tracker.md`. Branch `sprint3/s3-04-ces-indicator` off `main`. | Dev 2 |
