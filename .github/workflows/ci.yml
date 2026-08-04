@@ -1,10 +1,17 @@
 name: CI
 
+# AC8 (Story W0). These triggers used to be `push: [main, dev]` and
+# `pull_request: [main]` only, which meant a PR into `book-scale/integration` —
+# the branch every Track W/V story merges into — ran NO CI AT ALL. Not "ran and
+# passed": ran nothing, reported nothing, and merged green because there was no
+# check to be red. The book-scale branches are added explicitly rather than left
+# implicit; when the effort lands on main and the integration branch is deleted,
+# delete these two lines with it.
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, 'book-scale/**']
   pull_request:
-    branches: [main]
+    branches: [main, dev, 'book-scale/integration']
 
 jobs:
   api:
@@ -99,7 +106,7 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
           psql --version
           docker pull pgvector/pgvector:pg16 || docker pull pgvector/pgvector:pg16
-          docker pull postgrest/postgrest || docker pull postgrest/postgrest
+          docker pull postgrest/postgrest:v12.2.3 || docker pull postgrest/postgrest:v12.2.3
           pytest tests/integration -q -m postgres -rs | tee /tmp/pg-tests.log
           if grep -qE "no tests ran" /tmp/pg-tests.log; then
             echo "::error::no postgres-marked tests ran — the migration guard did not run"
@@ -109,8 +116,19 @@ jobs:
             echo "::error::postgres-marked tests SKIPPED — a skipped guard guards nothing (D51)"
             exit 1
           fi
-          if ! grep -qE "[0-9]+ passed" /tmp/pg-tests.log; then
-            echo "::error::no postgres-marked test passed — the migration guard did not run"
+          if grep -qE "[0-9]+ (xfailed|xpassed|deselected|error)" /tmp/pg-tests.log; then
+            echo "::error::postgres-marked tests xfailed/deselected/errored — that is not verification (D51)"
+            exit 1
+          fi
+          # An EXACT count, not a non-zero one. `[0-9]+ passed` still passes green
+          # if a whole test FILE is deleted or loses its marker — which is exactly
+          # how the PostgREST half of this suite went un-run in the first place.
+          # Removing a postgres test must be a deliberate edit to this number.
+          EXPECTED_PG_TESTS=76
+          if ! grep -qE "\b${EXPECTED_PG_TESTS} passed\b" /tmp/pg-tests.log; then
+            echo "::error::expected ${EXPECTED_PG_TESTS} postgres-marked tests to pass; the log disagrees."
+            echo "::error::If you added or removed one, update EXPECTED_PG_TESTS in this file deliberately."
+            tail -5 /tmp/pg-tests.log
             exit 1
           fi
         env:
@@ -185,4 +203,103 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
           NEXT_PUBLIC_SUPABASE_ANON_KEY: test
+          # ⚠️ FLAGGED, deliberately NOT fixed here (Story W0 Dev Notes).
+          # This is missing the `/api` suffix that `src/lib/api.ts`'s default
+          # carries (`http://localhost:8000/api`). It is harmless today because
+          # this is a BUILD-only variable and nothing calls the API during
+          # `next build` — but any RUNTIME environment that sets
+          # NEXT_PUBLIC_API_URL this way 404s every single request, silently,
+          # because axios would resolve `content/lessons` against the origin
+          # instead of the `/api` mount. Changing a deploy variable is not this
+          # story's business; owner: Dev 1, trigger: first Railway/Fly deploy of
+          # apps/web.
           NEXT_PUBLIC_API_URL: http://localhost:8000
+
+  # ── Contract job (Story W0 AC7) ─────────────────────────────────────────────
+  # `apps/web` builds its MSW fixtures from docs/contracts/book-api.v1.json. That
+  # makes the frontend suite honest about what it believes, but it cannot notice
+  # when the BACKEND moves: a renamed field ships green on both sides and the
+  # product dies in production. This job is the only thing comparing the frozen
+  # contract to the live FastAPI schema.
+  contract:
+    name: Contract — frozen book-api.v1.json vs live OpenAPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        working-directory: apps/api
+        run: uv pip install -e ".[dev]" --system
+
+      # GATING, and built to the same anti-vacuum shape as `Migration tests`
+      # above — read D51 there before touching this. The lesson: a guard that can
+      # report success without having compared anything is not a guard. So the
+      # comparison COUNT is printed by the script and re-checked in the shell;
+      # a run that compares zero paths, or fewer schemas than the contract
+      # declares, fails the step rather than passing quietly.
+      #
+      # `--lifespan off` is load-bearing and is NOT a way of dodging a failure:
+      # `create_app()` builds every router at import, so the OpenAPI schema is
+      # fully determined without startup. The lifespan, by contrast, opens a
+      # Redis pool, an ARQ pool and a real Supabase client and asserts real
+      # storage buckets exist — none of which CI has, and none of which can
+      # change a single path or field in the schema being compared.
+      - name: Diff book-scale contract against live /openapi.json
+        run: |
+          set -o pipefail
+          cd apps/api
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 --lifespan off &
+          UVICORN_PID=$!
+          trap 'kill $UVICORN_PID 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:8000/openapi.json -o /tmp/openapi.json; then
+              break
+            fi
+            sleep 1
+          done
+          if [ ! -s /tmp/openapi.json ]; then
+            echo "::error::the API never served /openapi.json — nothing was compared"
+            exit 1
+          fi
+
+          cd "$GITHUB_WORKSPACE"
+          python .github/scripts/check_book_contract.py \
+            docs/contracts/book-api.v1.json /tmp/openapi.json | tee /tmp/contract.log
+
+          # ── Anti-vacuum re-check, copied from `Migration tests` (D51) ───────
+          # The script already exits non-zero on a mismatch. These greps exist
+          # for the OTHER failure mode: a script that runs to completion having
+          # compared nothing (a renamed contract key, an empty `endpoints`
+          # block, an early `return` added by a future edit). A count of zero is
+          # a failure, and a MISSING count is a failure too — the D51 bug was a
+          # guard whose pattern simply never matched.
+          for key in CONTRACT_ENDPOINTS_CHECKED CONTRACT_SCHEMAS_CHECKED CONTRACT_COMPARISONS; do
+            if ! grep -qE "^${key}=[0-9]+$" /tmp/contract.log; then
+              echo "::error::${key} was never reported — the contract check verified nothing"
+              exit 1
+            fi
+            value=$(grep -E "^${key}=[0-9]+$" /tmp/contract.log | tail -1 | cut -d= -f2)
+            if [ "$value" -eq 0 ]; then
+              echo "::error::${key}=0 — the contract check ran but compared nothing (D51)"
+              exit 1
+            fi
+          done
+        env:
+          SUPABASE_URL: http://localhost:54321
+          SUPABASE_ANON_KEY: test
+          SUPABASE_SERVICE_ROLE_KEY: test
+          SUPABASE_JWT_SECRET: test-secret-at-least-32-chars-long!!
+          REDIS_URL: redis://localhost:6379
+          OPENAI_API_KEY: test
+          ELEVENLABS_API_KEY: test
+          HEYGEN_API_KEY: test
+          LANGFUSE_PUBLIC_KEY: test
+          LANGFUSE_SECRET_KEY: test

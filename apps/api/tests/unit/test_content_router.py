@@ -811,6 +811,20 @@ def test_upload_rejects_tier_with_422(client: TestClient) -> None:
     and keeps getting T2, with nothing anywhere to show why. This replaces the
     three S2-LM3 tests that asserted tier was persisted onto the lesson upload
     created — there is no longer a lesson to persist it onto.
+
+    Story 1-14 AC19 bullet 4 adds the second half. The 422 does not merely refuse
+    the caller, it TELLS THEM WHERE TO GO instead, by naming the generate route.
+    If that message names a path that is not the one actually served, a client
+    following the error gets a 404 and has no way to discover the real route —
+    and the only symptom is a support ticket. Asserting `"tier" in detail` alone
+    passes with the path in the message rewritten to anything at all.
+
+    The expected path is read off the app's OWN OpenAPI document, never retyped
+    here: a literal in this test and a literal in the message can be wrong
+    together, which is the entire failure mode. `app.routes` is not usable for
+    this on this FastAPI version — routes added by `include_router` are lazy
+    `_IncludedRouter` branches with no `.path`, so a walk of it finds none of the
+    content routes and would report a correctly mounted endpoint as missing.
     """
     from app.core.rate_limit import limiter
 
@@ -821,7 +835,28 @@ def test_upload_rejects_tier_with_422(client: TestClient) -> None:
         data={"tier": "T3"},
     )
     assert resp.status_code == 422
-    assert "tier" in resp.json()["detail"].lower()
+    detail = resp.json()["detail"]
+    assert "tier" in detail.lower()
+
+    served = _served_post_path(client.app, "generate_chapter_lesson")
+    assert served, "the generate route is not registered — the 422 points at nothing"
+    assert served.removeprefix("/api/content") in detail, (
+        f"upload's tier-422 must name the registered generate path {served!r}; "
+        f"the message says: {detail!r}"
+    )
+
+
+def _served_post_path(app: Any, endpoint_name: str) -> str:
+    """The mounted path a POST to *endpoint_name* is served at, read out of the
+    OpenAPI document (FastAPI derives each operationId from the handler name)."""
+    matches = [
+        path
+        for path, item in app.openapi()["paths"].items()
+        for method, op in item.items()
+        if method == "post" and str(op.get("operationId", "")).startswith(endpoint_name)
+    ]
+    assert len(matches) == 1, f"expected exactly one POST for {endpoint_name}, got {matches}"
+    return matches[0]
 
 
 @pytest.mark.unit
@@ -886,6 +921,170 @@ def test_list_lessons_returns_subject_and_duration() -> None:
     body = resp.json()
     assert body[0]["subject"] == "Physics"
     assert body[0]["estimated_duration_mins"] == 12.5, "text must be coerced to float"
+
+
+# ── Story 1-14 AC17 — GET /lessons learns its chapter ────────────────────────
+#
+# `_LIST_COLUMNS` gained `chapter_id` and a to-ONE embed back to `chapters`, and
+# `LessonStatusResponse` gained `chapter_id`, `chapter_title`, `chapter_index`.
+# Nothing asserted that any of the three ever reaches the client: hardcoding all
+# three to None in `_row_to_status_response` passed the whole suite, and
+# `grep -rn "chapter_title" tests/` returned nothing at all. These four tests
+# cover the embed's four real shapes.
+
+FAKE_CHAPTER_ID = "44444444-4444-4444-4444-444444444444"
+
+
+def _list_row_with_chapter(chapter: Any) -> dict[str, Any]:
+    row = copy.deepcopy(_LIST_ROW)
+    row["chapter_id"] = FAKE_CHAPTER_ID
+    row["chapter"] = chapter
+    return row
+
+
+def _get_lessons(rows_data: list[dict[str, Any]]) -> Any:
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = _make_list_supabase_mock(rows_data)
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            return TestClient(app).get("/api/content/lessons")
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.unit
+def test_list_lessons_returns_the_chapter_id_title_and_index_from_the_embed() -> None:
+    """AC17's entire client-visible payoff.
+
+    What breaks in production if this fails: Dev 2's dashboard lists every lesson
+    a student has, and after book-scale a student has many lessons from the SAME
+    book. Without the chapter's title and index they are an undifferentiated list
+    of rows all named after the book — the student cannot tell which lesson is
+    which, and the "which chapter am I resuming?" question has no answer in the
+    payload. The endpoint returns 200 the whole time.
+    """
+    resp = _get_lessons(
+        [
+            _list_row_with_chapter(
+                {
+                    "chapter_id": FAKE_CHAPTER_ID,
+                    "title": "Kinematics Of A Particle",
+                    "chapter_index": 3,
+                }
+            )
+        ]
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()[0]
+    assert body["chapter_id"] == FAKE_CHAPTER_ID
+    assert body["chapter_title"] == "Kinematics Of A Particle"
+    assert body["chapter_index"] == 3
+
+
+@pytest.mark.unit
+def test_list_lessons_handles_a_legacy_lesson_whose_chapter_embed_is_null() -> None:
+    """Every lesson created before Phase 6 has `chapter_id IS NULL`, so PostgREST
+    sends `chapter: null` for it. That is the NORMAL state for most rows in the
+    table on the day this ships, not an edge case.
+
+    What breaks in production if this fails: `GET /lessons` 500s for any student
+    with even one pre-Phase-6 lesson — i.e. the dashboard is dead for exactly the
+    existing users, while every new account looks fine.
+    """
+    row = copy.deepcopy(_LIST_ROW)
+    row["chapter_id"] = None
+    row["chapter"] = None
+
+    resp = _get_lessons([row])
+
+    assert resp.status_code == 200
+    body = resp.json()[0]
+    assert body["chapter_id"] is None
+    assert body["chapter_title"] is None
+    assert body["chapter_index"] is None
+
+
+@pytest.mark.unit
+def test_list_lessons_unwraps_a_list_shaped_chapter_embed() -> None:
+    """`lessons_chapter_id_fkey` is to-ONE from this side and to-MANY from the
+    chapters side — the SAME constraint, two JSON shapes. Confusing them is the
+    single most likely mistake in this area, and PostgREST has historically
+    returned a one-element array for a to-one embed depending on how the
+    relationship is resolved.
+
+    What breaks in production if the unwrap is dropped: `chapter_title` becomes
+    `None` for every lesson (a dict was expected, a list arrived) or the response
+    model raises and the whole list endpoint 500s — decided by a shape the API
+    does not control.
+    """
+    resp = _get_lessons(
+        [
+            _list_row_with_chapter(
+                [{"chapter_id": FAKE_CHAPTER_ID, "title": "Work And Energy", "chapter_index": 7}]
+            )
+        ]
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()[0]
+    assert body["chapter_title"] == "Work And Energy"
+    assert body["chapter_index"] == 7
+
+    # ...and the empty relation is not an error either.
+    empty = _get_lessons([_list_row_with_chapter([])])
+    assert empty.status_code == 200
+    assert empty.json()[0]["chapter_title"] is None
+
+
+@pytest.mark.unit
+def test_get_lesson_reports_chapter_id_but_not_title_or_index() -> None:
+    """`get_lesson` selects `*` and carries no embed — deliberately, so a single
+    lesson fetch does not cost a second round-trip. So `chapter_id` (a flat
+    column) is populated and title/index are None BY DESIGN.
+
+    Asserting it stops two opposite regressions: someone "fixing" the nulls by
+    adding an embed to a hot single-row path, and someone concluding the flat
+    `chapter_id` is unused and dropping it from the response — the player reads
+    it to know which chapter it is showing.
+    """
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    lesson_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "generating",
+        "title": "Thermo",
+        "created_at": "2026-07-28T00:00:00Z",
+        # A flat column on `lessons`, present on the `select("*")` path; there
+        # is deliberately no `chapter` embed here.
+        "chapter_id": FAKE_CHAPTER_ID,
+    }
+    sb = MagicMock()
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            resp = TestClient(app).get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["chapter_id"] == FAKE_CHAPTER_ID
+    assert body["chapter_title"] is None, "get_lesson carries no embed — title must stay None"
+    assert body["chapter_index"] is None
 
 
 @pytest.mark.unit
@@ -1003,12 +1202,31 @@ def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
        now embed-aware: outer names are still checked against `lessons`, and
        names INSIDE the embed are checked against `chapters`. Strictly more is
        validated than before, never less.
+
+    Review follow-up (binding rule 4): both sets below used to be hand-typed. A
+    hand-typed set is a second copy of the schema — it can go stale in the safe
+    direction (missing a real column, as `chapter_id` was) or in the fatal one
+    (listing a column that was dropped, which makes this guard bless a select
+    list that 42703s). They are now PARSED from `supabase/migrations/` by the
+    same `_columns_of` used next door in test_book_endpoints.py, and the
+    hand-typed sets are kept as an equality assertion against the parse — so the
+    guard is authoritative AND a schema change that silently alters either table
+    fails here rather than in production.
     """
     from app.modules.content.router import _LIST_COLUMNS
+    from tests.unit.test_book_endpoints import _columns_of
 
     # Real columns per 20260611000000_initial_schema.sql + later ALTERs
     # (20260625000000 book_id, 20260714020000 tier, 20260803000000 chapter_id).
-    real_columns = {
+    real_columns = _columns_of("lessons")
+    # public.chapters per 20260611000000_initial_schema.sql:128-137
+    # + 20260803000000_chapters_book_scoped.sql (boundary_confidence).
+    real_chapter_columns = _columns_of("chapters")
+
+    # The sets the review reasoned about, pinned. If the migrations ever stop
+    # agreeing with these, the membership loop below is checking against
+    # something nobody reviewed — fail here, loudly, instead.
+    assert real_columns == {
         "lesson_id",
         "user_id",
         "title",
@@ -1020,10 +1238,8 @@ def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
         "book_id",
         "tier",
         "chapter_id",
-    }
-    # public.chapters per 20260611000000_initial_schema.sql:128-137
-    # + 20260803000000_chapters_book_scoped.sql (boundary_confidence).
-    real_chapter_columns = {
+    }, f"public.lessons is no longer the reviewed set: {sorted(real_columns)}"
+    assert real_chapter_columns == {
         "chapter_id",
         "book_id",
         "lesson_id",
@@ -1033,14 +1249,50 @@ def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
         "chapter_index",
         "boundary_confidence",
         "created_at",
-    }
+    }, f"public.chapters is no longer the reviewed set: {sorted(real_chapter_columns)}"
 
-    for table, spec in _split_select(_LIST_COLUMNS):
+    pairs = _split_select(_LIST_COLUMNS)
+    assert pairs, "_LIST_COLUMNS parsed to nothing — this guard would pass vacuously"
+    for table, spec in pairs:
         real = real_columns if table == "lessons" else real_chapter_columns
         assert spec in real, (
             f"_LIST_COLUMNS references {spec!r}, which is not a column on "
             f"public.{table} — PostgREST will 42703 the entire list endpoint"
         )
+
+
+@pytest.mark.unit
+def test_split_select_attributes_embedded_names_to_the_embedded_table() -> None:
+    """Premise assertion (binding rule 3) for `_split_select`.
+
+    The guard above is a `for` loop over this function's output. If it returned
+    `[]` — or dropped the embed, or reported the embedded names under `lessons` —
+    the loop body would never run, or would check `chapters` columns against the
+    `lessons` set, and the guard would pass while proving nothing. Its sibling in
+    test_book_endpoints.py protects against exactly this with `assert pairs`;
+    this side had no such premise at all.
+
+    What breaks in production if the attribution is wrong: a name that exists on
+    `lessons` but not on `chapters` (or vice versa) sails through the guard and
+    PostgREST 42703s the whole of `GET /lessons` for every user on every request
+    — D9's shape, and the reason `_LIST_COLUMNS` is asserted against SQL at all.
+    """
+    assert _split_select("lesson_id,status") == [("lessons", "lesson_id"), ("lessons", "status")]
+    # alias + JSONB path: the real column is the head of the path
+    assert _split_select("subject:content->metadata->>subject") == [("lessons", "content")]
+    # the embed: inner names belong to `chapters`, outer ones still to `lessons`
+    assert _split_select("chapter_id,chapter:chapters!lessons_chapter_id_fkey(title,page_end)") == [
+        ("lessons", "chapter_id"),
+        ("chapters", "title"),
+        ("chapters", "page_end"),
+    ]
+    # and the real constant is neither empty nor collapsed into one table
+    from app.modules.content.router import _LIST_COLUMNS
+
+    tables = {table for table, _ in _split_select(_LIST_COLUMNS)}
+    assert tables == {"lessons", "chapters"}, (
+        f"_LIST_COLUMNS should resolve names on both tables, got {tables}"
+    )
 
 
 def _split_select(select: str) -> list[tuple[str, str]]:

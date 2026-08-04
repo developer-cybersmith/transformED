@@ -214,7 +214,24 @@
         "lesson_count": 0,
         "latest_lesson": null
       }
-    ]
+    ],
+    "verified_against_real_postgrest": {
+      "date": "2026-08-04",
+      "checks_passed": "19/19",
+      "note": "chapters(count) is a PostgREST embedded aggregate; it resolved unambiguously despite books having three inbound FKs, returning 21."
+    },
+    "other_books_observed": {
+      "NCERT XI Physics Part 1": {
+        "page_count": 184,
+        "chapter_count": 7,
+        "boundary_confidence": "heading"
+      },
+      "NCERT XII Physics Part 1": {
+        "page_count": 291,
+        "chapter_count": 8,
+        "boundary_confidence": "contents"
+      }
+    }
   },
   "notes_for_dev_2": [
     "lesson_id and has_lesson are present from day one so the chapter card does not need rebuilding at W3. As of 1.1.0 they finally carry real values \u2014 the 1.0.0 annotations saying they were permanently empty until Phase 6 are deleted and must not be re-added.",
@@ -226,5 +243,6 @@
     "Ingestion status is REST-polled via GET /books/{id}. Do NOT request it over WebSocket \u2014 ws.ts is a frozen contract (CLAUDE.md \u00a716) and adding a book message triggers a 4-developer review.",
     "No packages/shared change is needed: LessonPackage already requires book_id and chapter_id.",
     "chapter_count comes from a PostgREST embedded aggregate; it is 0, not null, for a book still ingesting."
-  ]
+  ],
+  "provenance_note": "`verified_against_real_postgrest` and `other_books_observed` were deleted during the 1.1.0 re-capture and RESTORED 2026-08-04 after the Process Integrity review layer caught it. AC23 authorised removing two now-false annotations and re-capturing `real_example`; it did not authorise deleting the record of what was verified against real PostgREST. Provenance is append-only here: a re-capture replaces the EXAMPLE, never the evidence."
 }

@@ -13,6 +13,7 @@ import math
 import os
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import (
@@ -216,6 +217,10 @@ _BOOK_SELECT: str = f"{_BOOK_COLUMNS},chapters(count)"
 # for the normal case of a chapter with no lessons yet. `_row_to_chapter_response`
 # unwraps it defensively — a bare `[0]` would 500 the entire chapter list for any
 # book mid-ingestion.
+#
+# The embed carries NO user predicate of its own — a select list cannot express
+# one. `list_book_chapters` adds `.eq("lessons.user_id", ...)` to the query
+# instead; see the note there for why that is not redundant.
 _CHAPTER_COLUMNS: str = (
     "chapter_id,chapter_index,title,page_start,page_end,boundary_confidence,"
     "lessons!lessons_chapter_id_fkey(lesson_id,status,tier,created_at)"
@@ -242,6 +247,37 @@ _STATUS_MAP: dict[str, str] = {
 
 def _map_status(db_status: str) -> str:
     return _STATUS_MAP.get(db_status, "queued")
+
+
+def _generating_cutoff_iso() -> str:
+    """The `created_at` before which a `generating` lesson cannot still be running (D53).
+
+    NOTHING but the worker ever moves a lesson out of `generating` — there is no
+    reaper, and the rollback path below can itself fail. So a worker killed
+    mid-run (OOM per D50, a deploy, a container eviction) leaves a row that
+    nothing clears, and an unbounded `status = 'generating'` query treats that
+    corpse as live work forever. Two things then break permanently for that user:
+    the idempotency pre-check keeps returning 200 with the dead lesson so the
+    chapter+tier can never be regenerated (`?force=true` is D54, unbuilt), and
+    three such rows exhaust `max_concurrent_generations_per_user` and 429 them
+    out of ALL generation, with a `Retry-After: 60` that will never come true.
+
+    The bound is `settings.arq_job_timeout_s` rather than a fresh constant on
+    purpose: it is ARQ's own `job_timeout` for the whole pipeline, so it is the
+    longest a run can possibly last before ARQ cancels it. A new magic number
+    here would silently drift away from the real ceiling the first time that
+    setting is tuned.
+
+    KNOWN LIMITATION (D53): the clock starts at `lessons.created_at`, which is
+    written before the job is enqueued, so the bound covers RUN time but not
+    queue-wait time. A job that sits queued behind others for longer than the
+    timeout could be declared stale while still live, costing a duplicate
+    enqueue. Accepted for now — the queue is per-user-bounded at 3 concurrent,
+    and the alternative failure (a permanent lockout) is strictly worse than a
+    rare duplicate. The durable fix is the D53 reaper plus a real `started_at`.
+    """
+    timeout_s = get_settings().arq_job_timeout_s
+    return (datetime.now(UTC) - timedelta(seconds=timeout_s)).isoformat()
 
 
 def _embedded_object(value: Any) -> dict[str, Any] | None:  # noqa: ANN401 — embed shape varies
@@ -453,14 +489,25 @@ def _validated_book_id(book_id: str) -> str:
     Same guard and same convention as `get_lesson` (:429-433) — deliberately
     identical, because a different shape here would be a different security
     posture. The detail string carries no metadata (AC5).
+
+    Returns the CANONICAL form (`str(uuid.UUID(x))`), never the caller's string.
+    `uuid.UUID()` accepts far more spellings than it emits: uppercase hex,
+    `{braces}`, and a `urn:uuid:` prefix all parse. Postgres compares uuids
+    canonically, so an uppercase id matches its row perfectly — but any
+    STRING comparison this module then makes against the returned value fails.
+    That mismatch is not hypothetical: `generate_chapter_lesson` compares the
+    fetched `chapter["book_id"]` to this value, so an uppercase book_id used to
+    produce a 404 for a chapter the caller owns and can see in
+    `GET /books/{id}/chapters`. Canonicalise once, here, and every downstream
+    comparison, INSERT and storage-key reconstruction is on the same footing.
     """
     try:
-        uuid.UUID(book_id)
+        canonical = uuid.UUID(book_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Book not found"
         ) from None
-    return book_id
+    return str(canonical)
 
 
 def _validated_chapter_id(chapter_id: str) -> str:
@@ -475,14 +522,20 @@ def _validated_chapter_id(chapter_id: str) -> str:
     The detail is the flat "Chapter not found" — byte-identical to the 404 for a
     chapter that belongs to a different book of the caller's, and carrying no
     title, page range or index (AC5).
+
+    Returns the CANONICAL form for the same reason as `_validated_book_id` — see
+    the note there. Here the canonical value is what gets INSERTed into
+    `lessons.chapter_id` and echoed back in the response, so returning the
+    caller's spelling would let the response `chapter_id` differ byte-for-byte
+    from the one `GET /books/{id}/chapters` reports for the same row.
     """
     try:
-        uuid.UUID(chapter_id)
+        canonical = uuid.UUID(chapter_id)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found"
         ) from None
-    return chapter_id
+    return str(canonical)
 
 
 def _source_pdf_path(user_id: str, book_id: str, filename: str) -> str:
@@ -503,6 +556,14 @@ def _source_pdf_path(user_id: str, book_id: str, filename: str) -> str:
     formula was identical, so legacy rows reconstruct too. `filename` must
     therefore come from the fetched `books` row — never re-sanitised here, and
     never taken from the request.
+
+    `book_id` must likewise be the CANONICAL uuid string. `upload_lesson` writes
+    the object under the id Postgres minted, which is always lowercase-hyphenated;
+    a caller spelling the same id in uppercase would reconstruct a key that does
+    not exist. `_validated_book_id` now guarantees that form. Until it did, this
+    was safe only by accident — the uppercase request was rejected earlier by the
+    unrelated `chapter["book_id"] != validated_book_id` string comparison, so the
+    "byte-exact" guarantee above was a property of a bug, not of this code.
 
     `user_id` likewise comes from the books row rather than the JWT. They are
     equal on every path that reaches here (ownership is proven first), but the
@@ -912,10 +973,27 @@ async def list_book_chapters(
     validated_id = _validated_book_id(book_id)
     _fetch_owned_book(supabase, validated_id, user_id, "book_id,user_id")
 
+    # `lessons.user_id` is an EMBEDDED filter: it constrains the rows inside the
+    # `lessons` array, not which chapters come back. (Verified against a real
+    # PostgREST: a chapter whose only lessons belong to another user is still
+    # returned, with `lessons: []` — it does not vanish from the list, and a
+    # mistyped embedded column is a 400/42703, not a silent 200.)
+    #
+    # Defence in depth, and only that TODAY: this endpoint is the sole writer of
+    # `lessons.chapter_id`, and it always writes the caller's own user_id, so
+    # `lessons.user_id` currently equals the book owner by construction. But the
+    # Supabase client is service-role with no RLS backstop, and the moment a
+    # second writer exists — admin regenerate, a shared book, a backfill —
+    # another user's `lesson_id`, `status` and `tier` would surface on the
+    # owner's chapter cards, and `_latest_lesson` could hand back a `lesson_id`
+    # that `GET /lessons/{id}` then 404s. Enforcing the invariant here makes it a
+    # property of this query rather than something inherited from who happens to
+    # write the table.
     resp = (
         supabase.table("chapters")
         .select(_CHAPTER_COLUMNS)
         .eq("book_id", validated_id)
+        .eq("lessons.user_id", user_id)
         .order("chapter_index")
         .execute()
     )
@@ -952,6 +1030,15 @@ async def generate_chapter_lesson(
     `request` of type `Request`; without it `@limiter.limit` raises at call time,
     not at import time, so the failure would first appear in production. The
     parameter is otherwise unused — do not "clean it up".
+
+    ── The rate limit is only correct at ONE replica (AC13, D49) ─────────────
+    `RATE_LIMIT_STORAGE_URL` defaults to `memory://` (`core/rate_limit.py:69`),
+    which is per-process storage, so N API replicas enforce N x `3/minute;20/hour`
+    and every counter resets on restart. This endpoint spends real money — at the
+    $3.00/lesson ceiling the hourly limit is ~$60/user/hour PER REPLICA — so the
+    number chosen to bound spend holds only while there is exactly one replica.
+    Set `RATE_LIMIT_STORAGE_URL` to the Railway Redis URL before scaling out or
+    migrating to the India region (D49).
 
     ── Authorization: 404, never 403, and no timing padding ──────────────────
     The Supabase client is service-role and bypasses RLS, and `chapters` has no
@@ -1051,12 +1138,43 @@ async def generate_chapter_lesson(
 
     # Arithmetic only; the 422 it feeds is raised below, after idempotency.
     page_span = int(chapter["page_end"]) - int(chapter["page_start"]) + 1
+
+    # ── Gate 4b: the span must be a real span ─────────────────────────────────
+    # Nothing in `supabase/migrations/` CHECKs `page_end >= page_start`, so a
+    # detection bug can persist a chapter whose span is zero or negative. Every
+    # gate below is an upper bound, so such a row sails through both of them: it
+    # is under `max_chapter_pages`, and under `_TRUNCATION_WARN_PAGES` too, so
+    # the caller is told the lesson is complete while `extract_node` is handed a
+    # page range that selects nothing.
+    #
+    # 409, not 422: the request is well-formed and the caller supplied no page
+    # numbers at all (they are read from the DB precisely so they cannot be), so
+    # this is a broken chapter row, not bad input — and unlike the 422 below it
+    # is not something a smaller/different request would fix. Raised eagerly
+    # rather than deferred past idempotency like the catastrophe gate, because
+    # returning 200 with an existing lesson would report success for a chapter
+    # whose page range is nonsense.
+    if page_span < 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Chapter page range is invalid — re-ingest the book",
+        )
+
     truncation_expected = page_span > _TRUNCATION_WARN_PAGES
 
     # ── Gate 5: idempotency (best-effort — see the docstring) ─────────────────
+    # `created_at` is selected purely to age out dead `generating` rows (D53).
+    #
+    # The staleness bound is applied HERE, in Python, and not as a `.gte()` on
+    # the query — deliberately, and the difference from Gate 7 below matters. A
+    # query-level age filter would drop old `ready` lessons too, and a `ready`
+    # lesson is idempotent FOREVER: aging it out would regenerate a lesson that
+    # already exists and bill the user a second time for it. Only the
+    # `generating` branch gets a clock.
+    stale_before = _generating_cutoff_iso()
     existing_resp = (
         supabase.table("lessons")
-        .select("lesson_id,status,tier")
+        .select("lesson_id,status,tier,created_at")
         .eq("chapter_id", validated_chapter_id)
         .eq("tier", tier)
         .eq("user_id", user_id)
@@ -1064,6 +1182,22 @@ async def generate_chapter_lesson(
     )
     for existing in rows(existing_resp):
         existing_status = str(existing.get("status") or "")
+        if existing_status == "generating" and str(existing.get("created_at") or "") < stale_before:
+            # Older than any run can last, so no worker is on it. Fall through
+            # and generate a replacement rather than handing the caller a corpse
+            # they have no way to clear (D53; `?force=true` is D54, unbuilt).
+            # `created_at` is `timestamptz` rendered ISO-8601 by PostgREST and
+            # the cutoff is built the same way, so the string compare is a real
+            # time compare — the same property `_latest_lesson` relies on.
+            logger.warning(
+                "stale generating lesson ignored for idempotency (D53): "
+                "lesson_id=%s chapter_id=%s tier=%s created_at=%s",
+                existing.get("lesson_id"),
+                validated_chapter_id,
+                tier,
+                existing.get("created_at"),
+            )
+            continue
         if existing_status in ("generating", "ready"):
             # 200, not 202: nothing was accepted for processing this time, and
             # no job was enqueued. `job_id` stays None — the original ARQ id is
@@ -1106,11 +1240,19 @@ async def generate_chapter_lesson(
     # PIPELINES, each of which can cost up to `max_lesson_cost_usd`. Counted
     # rows rather than a PostgREST exact count so the value survives the
     # `rows()` helper unchanged.
+    #
+    # `.gte("created_at", ...)` bounds it by age (D53). Unlike Gate 5 the
+    # predicate belongs on the QUERY here, because this query already filters to
+    # `status = 'generating'` and nothing else — there is no `ready` row for an
+    # age filter to wrongly discard. Without it, three lessons abandoned by
+    # killed workers consume every slot permanently and 429 the user out of all
+    # generation forever, behind a `Retry-After` that can never come true.
     running = rows(
         supabase.table("lessons")
         .select("lesson_id")
         .eq("user_id", user_id)
         .eq("status", "generating")
+        .gte("created_at", stale_before)
         .execute()
     )
     if len(running) >= settings.max_concurrent_generations_per_user:
@@ -1196,11 +1338,33 @@ async def generate_chapter_lesson(
         # Only what THIS request created, child before parent, each isolated so a
         # transient failure on one does not abandon the rest. Never `books`,
         # never the storage object, never `chapters` — see the docstring.
+        #
+        # Each failure is LOGGED, not merely suppressed. A rollback that fails
+        # leaves the `lessons` row in `generating` with no job behind it, which
+        # is exactly the dead row D53 is about: it blocks this chapter+tier from
+        # ever being generated again and consumes one of the caller's three
+        # concurrency slots until the staleness bound above ages it out. Silent
+        # suppression made that state invisible at the only moment we could see
+        # it being created — the caller gets a 500 either way, so the log line is
+        # the sole record that the cleanup did not happen.
         if lesson_id:
-            with contextlib.suppress(Exception):
+            try:
                 supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
-            with contextlib.suppress(Exception):
+            except Exception:  # noqa: BLE001 — best-effort rollback; the 500 below still stands
+                logger.warning(
+                    "rollback failed to delete lesson_jobs for lesson_id=%s (D53)",
+                    lesson_id,
+                    exc_info=True,
+                )
+            try:
                 supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+            except Exception:  # noqa: BLE001 — best-effort rollback; the 500 below still stands
+                logger.warning(
+                    "rollback failed to delete lesson for lesson_id=%s — it will sit in "
+                    "'generating' until the staleness bound ages it out (D53)",
+                    lesson_id,
+                    exc_info=True,
+                )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to start lesson generation — please retry",

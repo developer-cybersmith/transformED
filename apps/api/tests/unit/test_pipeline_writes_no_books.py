@@ -229,3 +229,190 @@ def test_no_content_module_writes_to_chapters() -> None:
         "is the sole writer, and `chapters.lesson_id` carries an ON DELETE CASCADE "
         f"that would destroy the chapter and its chunks. Found: {offenders}"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AC14, the other half — `chapters.lesson_id` must not be READ either
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# The write scan above covers insert/update/upsert/delete. It says nothing about
+# SELECT, and AC14 forbids reading the column as well as writing it — for a
+# reason that no write guard can express:
+#
+#   * Re-adding `lesson_id` to `_CHAPTER_COLUMNS` passes every existing guard,
+#     INCLUDING the migration column-name validator in test_book_endpoints.py,
+#     because `chapters.lesson_id` IS a real column. There is nothing malformed
+#     about the query — it is simply always NULL now that Story 1-13 deleted its
+#     last writer, so `has_lesson` returns false forever. Green tests, dead
+#     feature: Dev 2's chapter cards never show a lesson that exists.
+#   * A read is also how a write comes back. Once the column is in the select
+#     list it looks live again, and the "obvious" next step is to populate it —
+#     which is the ON DELETE CASCADE data-loss path the module docstring above
+#     describes.
+#
+# The distinction this scan has to make, and the whole point of it: the embed
+# `lessons!lessons_chapter_id_fkey(lesson_id,status,tier,created_at)` in
+# `_CHAPTER_COLUMNS` also contains the text `lesson_id`, and that one is
+# LEGITIMATE — it is `lessons.lesson_id`, reached through the live FK from the
+# other side. A grep cannot tell those apart. So the select list is parsed:
+# outer names belong to `chapters`, names inside an embed belong to the embedded
+# table, and only a top-level scalar `lesson_id` on a `chapters` query is a
+# finding.
+#
+# The select-list parser is imported from tests/unit/test_book_endpoints.py
+# rather than reimplemented, because it already carries its own premise test
+# (`test_select_pair_parser_understands_embeds`) — two copies would be two
+# chances to get the embed attribution backwards, in the one place where getting
+# it backwards is the defect.
+
+
+def _module_string_constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level `NAME = "..."` / `NAME: str = "..."` bindings."""
+    values: dict[str, str] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            targets: list[ast.expr] = [stmt.target]
+        elif isinstance(stmt, ast.Assign):
+            targets = list(stmt.targets)
+        else:
+            continue
+        value = stmt.value
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                values[target.id] = value.value
+    return values
+
+
+def _chapters_select_lists(source: str) -> list[tuple[str, str]]:
+    """Return `(how_it_was_written, select_list)` for every `.select(...)` whose
+    builder chain starts at `.table("chapters")`.
+
+    Raises if a chapters select list cannot be resolved to a literal: a guard
+    that quietly skips what it cannot read is a guard that passes for the wrong
+    reason, and this is the exact column where that matters.
+    """
+    tree = ast.parse(ast.unparse(_strip_docstrings(ast.parse(source))))
+    constants = _module_string_constants(tree)
+
+    found: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "select":
+            continue
+        if _selected_table(func.value) != "chapters":
+            continue
+        if not node.args:  # `.select()` with no argument selects everything
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            found.append((ast.unparse(arg), arg.value))
+        elif isinstance(arg, ast.Name) and arg.id in constants:
+            found.append((arg.id, constants[arg.id]))
+        else:
+            raise AssertionError(
+                "a `chapters` select list is not a resolvable string literal, so "
+                f"this guard cannot inspect it: {ast.unparse(node)!r}"
+            )
+    return found
+
+
+def _reads_scalar_chapter_lesson_id(source: str) -> list[str]:
+    """Findings: chapters select lists naming the scalar `chapters.lesson_id`."""
+    from tests.unit.test_book_endpoints import _select_pairs
+
+    findings: list[str] = []
+    for written_as, select in _chapters_select_lists(source):
+        pairs = _select_pairs(select, "chapters")
+        assert pairs, f"{written_as} parsed to nothing — the guard would pass vacuously"
+        if ("chapters", "lesson_id") in pairs:
+            findings.append(f"{written_as} -> {select}")
+    return findings
+
+
+@pytest.mark.unit
+def test_the_read_scanner_tells_the_dead_scalar_from_the_live_embed() -> None:
+    """Premise, and the single most important assertion in this file.
+
+    `chapters.lesson_id` (dead scalar) and the `lesson_id` INSIDE
+    `lessons!lessons_chapter_id_fkey(...)` (live, and what AC15 replaced the
+    scalar with) are the same eight characters. A scanner that flags both would
+    be deleted within a day for flagging the correct implementation; one that
+    flags neither is decoration. Both directions are pinned here.
+    """
+    dead = 'supabase.table("chapters").select("chapter_id,lesson_id,title").execute()\n'
+    assert _reads_scalar_chapter_lesson_id(dead), "scanner missed the dead scalar read"
+
+    live = (
+        'supabase.table("chapters")'
+        '.select("chapter_id,lessons!lessons_chapter_id_fkey(lesson_id,status)")'
+        ".execute()\n"
+    )
+    assert not _reads_scalar_chapter_lesson_id(live), (
+        "scanner flagged the LEGITIMATE embed — that `lesson_id` belongs to "
+        "`lessons`, not to `chapters`, and AC15 requires it"
+    )
+
+    # Resolved through a module-level constant, which is how the real code
+    # writes it — an inline-literal-only scanner would miss `_CHAPTER_COLUMNS`.
+    via_constant = (
+        '_COLS = "chapter_id,lesson_id"\n'
+        'supabase.table("chapters").select(_COLS).execute()\n'
+    )
+    assert _reads_scalar_chapter_lesson_id(via_constant), (
+        "scanner does not follow a module-level select-list constant"
+    )
+
+    # A `lessons` query selecting its own `lesson_id` is not this defect.
+    other_table = 'supabase.table("lessons").select("lesson_id,status").execute()\n'
+    assert not _reads_scalar_chapter_lesson_id(other_table)
+
+    # Prose, once more — the Story 1-10 failure mode.
+    prose = (
+        '"""Never select chapters.lesson_id: '
+        'supabase.table(\\"chapters\\").select(\\"lesson_id\\")."""\n'
+    )
+    assert not _reads_scalar_chapter_lesson_id(prose)
+
+
+@pytest.mark.unit
+def test_the_content_module_issues_at_least_one_chapters_select() -> None:
+    """A guard over an empty set of select lists passes forever. `router.py` has
+    two chapters reads — the chapter list and the generate endpoint's lookup — so
+    finding fewer than two means the scan stopped resolving them and the test
+    below is vacuous."""
+    lists = [
+        item
+        for path in _content_modules()
+        for item in _chapters_select_lists(path.read_text(encoding="utf-8"))
+    ]
+    assert len(lists) >= 2, f"expected at least two chapters select lists, found {lists}"
+
+
+@pytest.mark.unit
+def test_no_content_module_reads_the_dead_chapters_lesson_id() -> None:
+    """Story 1-14 AC14, the read half.
+
+    What breaks in production if this fails: nothing, visibly — and that is the
+    danger. `chapters.lesson_id` is a real column, so the query succeeds; it has
+    had no writer since Story 1-13, so it is NULL on every row ingested from now
+    on. A chapter list that sources `has_lesson` from it reports `false` for
+    every chapter forever, and the student's "Generate" button never becomes
+    "Watch" for a lesson that exists and finished. The frontend contract looks
+    healthy, the tests are green, and the feature is dead — which is exactly the
+    shape of the bug the whole book-scale effort exists to undo.
+    """
+    offenders: dict[str, list[str]] = {}
+    for path in _content_modules():
+        found = _reads_scalar_chapter_lesson_id(path.read_text(encoding="utf-8"))
+        if found:
+            offenders[path.relative_to(CONTENT_DIR).as_posix()] = found
+
+    assert not offenders, (
+        "`chapters.lesson_id` is a dead column and must not appear in any "
+        "`chapters` select list — source the link from `lessons` via "
+        f"`lessons!lessons_chapter_id_fkey` instead. Found: {offenders}"
+    )

@@ -2,7 +2,7 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-04
-**Overall status:** 6 of 9 backend phases verified (1, 2, 3, 3.5, 4, 6). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
+**Overall status:** 5 of 9 backend phases verified (1, 2, 3, 3.5, 4); 5 and 6 are Implemented, both awaiting the single paid Phase 7 run (D43). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
 frontend: two backend phases inserted (3.5, 6.5) and a parallel **Track W** added for Dev 2.
 Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.md`
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
@@ -41,21 +41,31 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | **3.5** | **Books and chapters readable + pipeline writers removed** | ✅ Verified | 2026-08-04 |
 | 4 | Extract one chapter's pages | ✅ Verified | 2026-08-04 |
 | 5 | Chapter-scoped generation | 🧪 Implemented | — |
-| 6 | Endpoints (the write endpoint + `tier` relocation) | ✅ Verified | 2026-08-04 |
-| **6.5** | **`lesson_ready` actually reaches a client** | ⬜ Not Started | — |
+| 6 | Endpoints (the write endpoint + `tier` relocation) | 🧪 Implemented | — |
+| **6.5** | **`lesson_ready` actually reaches a client** | 🧪 Implemented | — |
 | 7 | Prove it end to end + the single merge to `main` | ⬜ Not Started | — |
 
 ### Track W — Dev 2, `apps/web` (parallel)
 
 | Phase | Title | Status | Starts after |
 |:-----:|-------|--------|--------------|
-| **W0** | Contract harness (MSW + real fixtures + CI that can go red) | ⬜ Not Started | now — no backend dependency |
-| **W1** | Upload becomes ingestion (poll the book, not the lesson) | ⬜ Not Started | W0 Verified + SYNC-1 |
-| **W2** | Book library + chapter picker | ⬜ Not Started | W1 Verified |
-| **W3** | Generate from chapter (`tier` moves here) | ⬜ Not Started | SYNC-2 |
-| **W4** | MSW off — the whole UI against the live API | ⬜ Not Started | Phase 6 Verified |
+| **W0** | Contract harness (MSW + real fixtures + CI that can go red) | 🧪 Implemented | — |
+| **W1** | Upload becomes ingestion (poll the book, not the lesson) | 🧪 Implemented | — |
+| **W2** | Book library + chapter picker | 🧪 Implemented | — |
+| **W3** | Generate from chapter (`tier` moves here) — restores Sprint 2 **S2-09** | 🧪 Implemented | — |
+| **W4** | Live API, no mocks + a guard that keeps it that way | 🧪 Implemented | — |
 
-**Totals:** Backend — Not Started 1 · Implemented 1 · Verified 6. Track W — Not Started 5.
+**Totals:** Backend — Not Started 1 · Implemented 3 · Verified 5. Track W — Implemented 5.
+
+> **All five W phases are Implemented; none is Verified.** Suite: **66 files / 752 tests**. Every W
+> exit criterion is *browser-driven* ("upload a real book and watch chapters appear"), and no browser
+> run has happened — that run is Phase 7. Recipe: `docs/book-scale-phase-7-run-recipe.md`.
+>
+> **W4's premise turned out to be wrong, and that was the finding.** It was scoped as "MSW off", but
+> MSW was never in the app path — a devDependency wired only into `vitest.config.ts`. The book-scale
+> path was already mock-free by construction. W4 therefore ships a transitive import guard that makes
+> it a *property* rather than a fact about today: injecting one mock import into `books.service.ts`
+> reddens 7 entry points.
 
 ### Synchronisation points
 
@@ -591,7 +601,7 @@ had marked `failed`.
 
 ## Phase 4 — Extract one chapter's pages
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Verified — 2026-08-04
 **Depends on:** Phase 3 verified
 
 ### Work
@@ -644,7 +654,7 @@ pages and the phase would have achieved nothing.
 
 ## Phase 5 — Chapter-scoped generation
 
-**Status:** ⬜ Not Started
+**Status:** 🧪 Implemented — awaiting the Phase 7 run (D43)
 **Depends on:** Phase 4 verified
 
 ### Work
@@ -709,8 +719,9 @@ number so the acceptance run cannot pass without discharging it.
 
 ## Phase 6 — Endpoints
 
-**Status:** ⬜ Not Started
-**Depends on:** Phase 5 verified
+**Status:** 🧪 Implemented — awaiting the Phase 7 run (D43)
+**Depends on:** Phase 5 *implemented* (amended 2026-08-04 — D43 authorises Phase 6 to START on
+Phase 5's implementation; it does not authorise either to be marked Verified)
 
 ### Work
 - `GET /books`
@@ -734,7 +745,16 @@ The whole flow is drivable over the API.
 
 ### Observed result
 
-**✅ Verified 2026-08-04.** Story: `docs/stories/1-14-generate-lesson-from-chapter.md`.
+**🧪 Implemented 2026-08-04 — NOT Verified.** Story: `docs/stories/1-14-generate-lesson-from-chapter.md`.
+
+> **Why not Verified, corrected by the five-agent review.** This phase's own end-to-end test above
+> lists items 3 and 4 as *"lesson generates"* and *"generates at T3 slide count"*. **Neither was
+> run** — the gate stops at the subprocess spawn because generation spends real money. It was
+> briefly marked `✅ Verified` on 2026-08-04 and the Story Quality layer caught it: **D43 authorises
+> Phase 6 to *start* on Phase 5's implementation; it says nothing about marking Phase 6 Verified.**
+> Gate rule clause 5 — a phase "is never partially passed forward". Both phases become Verified
+> together in the Phase 7 acceptance run, or neither does. The criteria were left as written rather
+> than amended to match what was achieved.
 
 **Live, against the real 1,151-page book and the real Supabase project.**
 
@@ -789,14 +809,27 @@ being checked*:
 `_IncludedRouter` branches with no `.path`. Use `app.openapi()`.
 
 ### Files
-`apps/api/app/modules/content/router.py`, `apps/api/app/modules/content/schemas.py`
+
+The plan named two; the change touched **17**. Listed in full because a Files section that
+under-reports is a reviewer's blind spot (found by the 2026-08-04 AC-completeness layer).
+
+**Production:** `apps/api/app/modules/content/router.py` · `schemas.py` · `app/config.py` ·
+`app/core/rate_limit.py` (D52) · `.github/workflows/ci.yml` (D51, and the trigger fix — no CI ran
+on any book-scale branch before it)
+**Tests:** `tests/unit/test_generate_lesson_endpoint.py` (new) · `test_rate_limit_key.py` (new,
+D52) · `tests/integration/test_generate_rollback_postgres.py` (new) ·
+`test_book_select_lists_against_postgrest.py` · `test_migration_chapters_book_scoped.py` ·
+`tests/unit/test_content_router.py` · `test_book_endpoints.py` · `test_pipeline_writes_no_books.py`
+**Docs:** `docs/stories/1-14-generate-lesson-from-chapter.md` · `docs/DEFECT-REGISTER.md` ·
+`docs/contracts/book-api.v1.json` · this file
 
 ---
 
 ## Phase 6.5 — `lesson_ready` actually reaches a client
 
-**Status:** ⬜ Not Started · **NEW 2026-08-04** · **Owner:** Dev 1 (Dev 4 notified)
-**Depends on:** Phase 6 ✅
+**Status:** 🧪 Implemented — awaiting the Phase 7 run · **NEW 2026-08-04** · **Owner:** Dev 1 (Dev 4 notified)
+**Depends on:** Phase 6 *implemented* (second use of the D43 exception, recorded in the story's
+Gate note — if a third phase needs it, the gate rule needs amending rather than exempting)
 
 ### Why this exists
 `core/pubsub.py` strips the `lesson_ready:` prefix and passes the **lesson_id** into
@@ -813,7 +846,33 @@ A generated lesson pushes `lesson_ready` to a connected client and the client ac
 2. Assert `manager.send` receives an id a client actually connected under (closes D34)
 
 ### Observed result
-_Not yet run._
+
+**🧪 Implemented 2026-08-04.** Story: `docs/stories/1-15-lesson-ready-reaches-a-client.md`. **D34 CLOSED.**
+
+The one-line rename at `pubsub.py:67` bound a **lesson** id to a variable called `session_id` and
+handed it to a manager keyed by **session** id, so `send()` iterated an empty list and returned
+silently — with a reassuring "manager.send called" log naming the wrong id. The same wrong id was
+the `lesson_package:` cache key, which two live consumers read by session id, so both missed on
+every lesson ever generated.
+
+Fixed at the writer. Waiting sessions resolve from `sessions.lesson_id` — NOT NULL, indexed, and
+already the right fact. The `lesson_waiters:{lesson_id}` set the comments describe was
+deliberately **not** built: it does not exist, and it would be a second source of truth beside a
+correct column.
+
+| | |
+|---|---|
+| Gating suite | **1029 passed, 1 skipped** (was 1018 / 1) |
+| Mutation check | reintroduce the defect → **4 tests red**; revert → 7 pass |
+| Guard relocation | root `tests/` (CI **advisory**) → `tests/integration/` (CI **gating**) |
+
+The guard previously *could not fail*: it used **one string for both ids**, so "delivered to the
+right session" and "passed the lesson id straight through" were indistinguishable. It now uses
+distinct ids, asserts the resolved session id, and asserts the sent id is **not** the lesson id.
+
+**Not Verified:** AC10 needs a real WebSocket connected under a real session while a real lesson
+completes — that is the Phase 7 paid run. Residual timing gap registered as **D55**: a session
+started *after* a lesson is already `ready` gets no cache entry (owner Dev 4).
 
 ---
 
