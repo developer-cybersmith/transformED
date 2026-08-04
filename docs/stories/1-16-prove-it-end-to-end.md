@@ -1,6 +1,6 @@
 # Story 1.16: Prove it end to end (book-scale Phase 7)
 
-Status: ready-for-dev
+Status: in-progress — build half done, acceptance run pending
 
 **Branch:** `book-scale/integration` · **Phase:** 7 of 9 — the last one
 **Discharges:** Story 1-13 AC10 · Phases 5, 6, 6.5 · Track W W0–W4
@@ -81,3 +81,53 @@ D43 exception; there is no partial credit.
   real file.
 - `settings.max_chapter_pages` is 200 and `_TRUNCATION_WARN_PAGES` is 40. They gate different
   failures — do not collapse them into one number.
+
+## Dev Agent Record — build half (AC1-AC3)
+
+### What was verified rather than assumed
+
+Before writing anything I mutation-checked the two Phase 7 work items the tracker lists as
+outstanding. **Both were already satisfied** by guards Phases 3-6 shipped:
+
+| Mutation | Result |
+|---|---|
+| `chapter_index` reverted to the pre-book-scale constant `1` | **RED** — `test_writes_one_row_per_chapter_with_null_lesson_id` |
+| `max_chapter_pages` silently moved 200 → 2000 | **RED** — 4 tests in `test_generate_lesson_endpoint.py` |
+
+So the tracker's step 8 needed no new work. Building a third guard to make the phase look
+substantial would have been the same instinct that produces tests which cannot fail.
+
+### The one gap that was real
+
+Detection tests prove the ladder finds the right chapters. Endpoint tests prove the generate
+endpoint refuses an over-cap span. **Nothing asserted the two agree** — that what detection offers
+a student is something the endpoint will accept. A chapter wider than the cap would leave both
+suites green and the UI showing a Generate button that 422s every time. The failure lives in the
+join, which is exactly where the original bug lived.
+
+`tests/integration/test_book_scale_composition.py`, 9 tests over one book **with** a bookmark tree
+(`d2l`) and one **without** (`ncert-xii-phys-part1`).
+
+**AC2 mutation — the assertion fires.** The corpus maximum is 98 pages against a 200 cap, so a
+pass proves little on its own. Lowering the cap to 50 produced:
+
+> `d2l: 7 detected chapter(s) exceed max_chapter_pages=50 and would be un-generatable from the
+> chapter card: [(1, 'Preliminaries', 52), (7, 'Modern Convolutional Neural Networks', 57), …
+> (13, 'Computer Vision', 98) …]`
+
+Reverted; 9 pass.
+
+**One thing the test does that the story did not ask for.** `DetectedChapter.page_span` and the
+endpoint's inline `page_end - page_start + 1` are two expressions of the same number in two
+layers. The test asserts they **agree** rather than picking one — a divergence between the span
+the student is shown and the span the gate enforces would otherwise be invisible.
+
+**AC3** — the module docstring states plainly that this runs over captured detection output, not a
+live PDF parse, and asserts nothing about generated content. A green run here is not end-to-end
+proof.
+
+Gating suite **1038 passed, 1 skipped**. ruff clean.
+
+### Still outstanding — AC4-AC14
+
+The acceptance run and the merge. Both need authorisation to spend and a person at a browser.
