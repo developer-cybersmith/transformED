@@ -7,7 +7,7 @@ Coverage:
 - AC 3:  keyword-only signature (positional args raise TypeError)
 - AC 4:  no hardcoded weight literals in ces.py
 - AC 5:  all 5 inputs clamped to [0,1], silent (quiz, teachback, behavioral, head_pose, blink)
-- AC 6:  full 5-signal weighted sum formula
+- AC 6:  full 5-signal weighted sum formula; output clamped to [0.0, 100.0]
 - AC 7:  teachback_score=None redistributes weights proportionally (per-weight verified)
 - AC 8:  quiz_accuracy=None treated as 0.0, weight retained; teachback=0.0 uses full formula
 - AC 9:  division-by-zero guard returns 0.0
@@ -19,7 +19,6 @@ Coverage:
 - AC 15: out-of-range inputs clamped, not rejected (all 5 signals covered)
 - AC 16: custom non-default weights produce correct result
 - AC 17: no forbidden imports in ces.py
-- Output clamp: CES never exceeds 100.0 even when weights sum to 1.001 (±tolerance)
 
 All tests are @pytest.mark.unit — no DB, no LLM, no network.
 """
@@ -88,11 +87,16 @@ def test_dunder_all_contains_only_compute_ces():
 
 @pytest.mark.unit
 def test_positional_args_raise_type_error():
-    """AC 3: All parameters are keyword-only — positional call must raise TypeError."""
+    """AC 3: All parameters are keyword-only and the function is synchronous (not async)."""
+    import inspect  # noqa: PLC0415
+
     compute_ces = _import_compute_ces()
     s = _settings()
     with pytest.raises(TypeError):
         compute_ces(1.0, 1.0, 1.0, 1.0, 1.0, s)  # type: ignore[call-arg]
+    assert not inspect.iscoroutinefunction(compute_ces), (
+        "compute_ces must be synchronous — Dev 4 calls it on the hot WebSocket path"
+    )
 
 
 # ── AC 4: no hardcoded weight literals ───────────────────────────────────────
@@ -102,20 +106,20 @@ def test_positional_args_raise_type_error():
 def test_no_hardcoded_weight_literals_in_ces_py():
     """AC 4: ces.py must not contain hardcoded numeric weight literals.
 
-    Checks that the specific default weight values (0.35, 0.25, 0.20, 0.12, 0.08)
-    and their common redistribution products (0.75, 0.467, 0.267, 0.16, 0.107)
-    do not appear as float literals in the AST of ces.py.
+    Uses an allowlist — only {0.0, 1.0, 100.0} are permitted float literals.
+    This is structurally complete: any weight literal (however named) that isn't
+    0.0, 1.0, or 100.0 will be caught, including redistribution products.
     """
     ces_path = Path(__file__).parent.parent / "app" / "modules" / "assessment" / "ces.py"
     source = ces_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
-    forbidden = {0.35, 0.25, 0.20, 0.12, 0.08, 0.75, 0.4667, 0.2667, 0.16, 0.1067}
+    allowed = {0.0, 1.0, 100.0}
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, float):
-            if node.value in forbidden:
+            if node.value not in allowed:
                 found.append(node.value)
-    assert not found, f"Hardcoded weight literals found in ces.py: {found}"
+    assert not found, f"Unexpected float literals in ces.py (only 0.0/1.0/100.0 allowed): {found}"
 
 
 # ── AC 10: all-zeros → 0.0 ───────────────────────────────────────────────────
@@ -487,11 +491,11 @@ def test_teachback_zero_uses_full_formula_not_redistribution():
 
 @pytest.mark.unit
 def test_output_clamped_to_100_when_weights_sum_exceeds_one():
-    """CES never exceeds 100.0 even when weights sum to 1.001 (±tolerance allowed).
+    """AC 6 (output clamp): CES never exceeds 100.0 even when weights sum to 1.001.
 
     Settings @model_validator allows abs(sum - 1.0) <= 0.001. In the redistribution
     branch, (sum - w_teachback) / remaining can be slightly > 1.0, pushing raw > 1.
-    compute_ces must clamp the output to 100.0.
+    compute_ces must clamp the output via min(100.0, ...) as specified in AC 6.
     """
     compute_ces = _import_compute_ces()
     # Sum = 0.3503 + 0.001 + 0.20 + 0.12 + 0.3296 = 1.0009 (within ±0.001 tolerance)
