@@ -1,10 +1,10 @@
 """Unit tests for CES per-learner baseline computation (Story 3-24).
 
-Test count: 25
+Test count: 27
 Coverage:
 - AC 1:  ces_baseline.py importable (implicit — import failure cascades to all tests)
 - AC 2:  __all__ contains only "compute_and_store_ces_baseline"
-- AC 3:  keyword-only async signature (positional args raise TypeError)
+- AC 3:  keyword-only async signature; iscoroutinefunction asserted explicitly
 - AC 4:  single session → baseline = that session's ces_final
 - AC 5:  fewer sessions than window → average of all available
 - AC 6:  more sessions than window → average of most recent window only
@@ -13,13 +13,15 @@ Coverage:
           (covers: empty rows, resp.data=None, all ended_at=None)
 - AC 9:  baseline written to Redis key user:{user_id}:ces_baseline as STRING
 - AC 10: Redis key has TTL = ces_baseline_ttl_seconds
+- AC 11: ces_baseline_window = Field(default=5, ge=1, le=50) in Settings
+- AC 12: ces_baseline_ttl_seconds = Field(default=86400, ge=60) in Settings
 - AC 13: Redis write failure → logged, does NOT raise, baseline still returned
 - AC 14: DB failure → raises HTTPException(503)
 - AC 15: no hardcoded window literal (5) in ces_baseline.py (AST)
 - AC 16: no forbidden imports in ces_baseline.py (AST)
 - AC 17: Supabase query bounded by window*3 rows (fetch_limit checked)
 - AC 18: baseline rounded to 4 decimal places
-- AC 19: Redis.set NOT called when baseline is None
+- AC 19: ≥15 @pytest.mark.unit tests all pass; 0 regressions in full suite
 
 All tests are @pytest.mark.unit — no DB, no network.
 Redis and Supabase are mocked with unittest.mock.
@@ -116,8 +118,18 @@ def test_dunder_all_exports_only_compute_and_store():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_positional_args_raise_type_error():
-    """AC 3: All parameters are keyword-only — positional call raises TypeError."""
+    """AC 3: All parameters are keyword-only and the function is async (awaitable).
+
+    Explicitly asserts iscoroutinefunction so a future accidental `def` → `async def`
+    revert is caught immediately rather than via an obscure downstream failure.
+    Dev 4 awaits this function in the WebSocket handler — sync would deadlock.
+    """
+    import inspect  # noqa: PLC0415
+
     func = _import_func()
+    assert inspect.iscoroutinefunction(func), (
+        "compute_and_store_ces_baseline must be async — Dev 4 awaits it in the WebSocket handler"
+    )
     with pytest.raises(TypeError):
         await func("user-1", MagicMock(), AsyncMock(), _settings())  # type: ignore[call-arg]
 
@@ -518,3 +530,48 @@ async def test_async_all_rows_ended_at_none_returns_none():
     result = await func(user_id="user-1", supabase=supabase, redis=redis, settings=_settings())
     assert result is None
     redis.set.assert_not_called()
+
+
+# ── AC 11: ces_baseline_window field in Settings ──────────────────────────────
+
+
+@pytest.mark.unit
+def test_config_ces_baseline_window_default_and_constraints():
+    """AC 11: Settings.ces_baseline_window = Field(default=5, ge=1, le=50).
+
+    Verifies the field exists with the correct default and that pydantic rejects
+    values outside [1, 50] with a ValidationError.
+    """
+    import pydantic  # noqa: PLC0415
+
+    s = _settings()
+    assert s.ces_baseline_window == 5, "default window must be 5"
+    assert _settings(window=1).ces_baseline_window == 1, "lower bound 1 must be accepted"
+    assert _settings(window=50).ces_baseline_window == 50, "upper bound 50 must be accepted"
+
+    with pytest.raises(pydantic.ValidationError):
+        _settings(window=0)  # violates ge=1
+
+    with pytest.raises(pydantic.ValidationError):
+        _settings(window=51)  # violates le=50
+
+
+# ── AC 12: ces_baseline_ttl_seconds field in Settings ─────────────────────────
+
+
+@pytest.mark.unit
+def test_config_ces_baseline_ttl_default_and_constraints():
+    """AC 12: Settings.ces_baseline_ttl_seconds = Field(default=86400, ge=60).
+
+    Verifies the field exists with the correct default (24 h in seconds) and that
+    pydantic rejects values below 60 s with a ValidationError.
+    """
+    import pydantic  # noqa: PLC0415
+
+    s = _settings()
+    assert s.ces_baseline_ttl_seconds == 86400, "default TTL must be 86400 (24 h)"
+    assert _settings(ttl=60).ces_baseline_ttl_seconds == 60, "lower bound 60 s must be accepted"
+    assert _settings(ttl=3600).ces_baseline_ttl_seconds == 3600, "arbitrary valid TTL accepted"
+
+    with pytest.raises(pydantic.ValidationError):
+        _settings(ttl=59)  # violates ge=60
