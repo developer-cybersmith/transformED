@@ -22,6 +22,9 @@ export function useLessonSocket(sessionId: string | null) {
     const sid = sessionId; // stable, non-null alias for use inside the nested async init()
 
     let cancelled = false;
+    // Effect-scoped (not component-scoped) so it resets naturally whenever this
+    // effect re-runs for a new sessionId -- same pattern as `cancelled` below.
+    let lastCesWindowIndex = -Infinity;
     // Deliberately synchronous: a consumer's first render after `sessionId`
     // goes non-null must see 'connecting' immediately (no one-tick flash of
     // 'closed' first) — this is asserted directly by useLessonSocket.test.ts.
@@ -46,9 +49,28 @@ export function useLessonSocket(sessionId: string | null) {
             usePlayerStore.getState().setActiveIntervention(msg.payload);
           }
           break;
-        case 'ces_update':
-          // Not emitted by any live path yet (Dev 3 owns it); no-op.
+        case 'ces_update': {
+          // Same session_id guard as state_change above -- a stale/foreign-session
+          // update must not overwrite the current score. Also validates the score
+          // is a finite number in [0,1] (a malformed/NaN/out-of-range value must
+          // not silently render as the reassuring "Focused" band) and rejects an
+          // out-of-order frame (lower window_index than one already applied) --
+          // review fixes, S3-04.
+          const p = msg.payload;
+          const ces = p?.ces;
+          if (
+            p?.session_id === sid &&
+            typeof ces === 'number' &&
+            Number.isFinite(ces) &&
+            ces >= 0 &&
+            ces <= 1 &&
+            p.window_index >= lastCesWindowIndex
+          ) {
+            lastCesWindowIndex = p.window_index;
+            usePlayerStore.getState().setCesScore(ces);
+          }
           break;
+        }
         case 'attention_ack':
           // Live on the wire, but out of scope until Sprint 3 sends real signals; no-op.
           break;

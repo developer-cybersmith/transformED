@@ -81,6 +81,7 @@ beforeEach(() => {
     audioError: false,
     audioRetryCount: 0,
     activeIntervention: null,
+    cesScore: null,
   });
   localStorage.clear();
 });
@@ -277,6 +278,16 @@ describe('enterQuiz / exitQuiz / enterTeachBack / exitTeachBack', () => {
     usePlayerStore.getState().enterQuiz();
     expect(usePlayerStore.getState().status).toBe('IDLE');
   });
+
+  it('enterQuiz() clears cesScore — a stale score must not reappear when PLAYING resumes after quiz/teach-back (S3-04 review fix)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().setCesScore(0.9);
+
+    usePlayerStore.getState().enterQuiz();
+
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
 });
 
 describe('quizFiredForSegment — double-fire prevention', () => {
@@ -412,6 +423,29 @@ describe('activeIntervention / setActiveIntervention (S3-03 AC-1)', () => {
     usePlayerStore.getState().setActiveIntervention({ session_id: 's1', type: 'fatigue', message: 'Take a break' });
     usePlayerStore.getState().loadLesson(makeLesson());
     expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+});
+
+describe('cesScore / setCesScore (S3-04 AC-1)', () => {
+  it('defaults to null', () => {
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it('setCesScore() sets the score', () => {
+    usePlayerStore.getState().setCesScore(0.62);
+    expect(usePlayerStore.getState().cesScore).toBe(0.62);
+  });
+
+  it('setCesScore(null) clears it', () => {
+    usePlayerStore.getState().setCesScore(0.5);
+    usePlayerStore.getState().setCesScore(null);
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it('loadLesson() resets cesScore to null', () => {
+    usePlayerStore.getState().setCesScore(0.8);
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().cesScore).toBeNull();
   });
 });
 

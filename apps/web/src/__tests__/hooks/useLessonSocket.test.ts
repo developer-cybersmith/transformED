@@ -26,6 +26,7 @@ beforeEach(() => {
     wsSendControl: null,
     status: 'IDLE',
     activeIntervention: null,
+    cesScore: null,
     currentSegmentIndex: 0,
     audioPositionMs: 0,
   });
@@ -109,7 +110,6 @@ describe('useLessonSocket', () => {
   });
 
   it.each([
-    ['ces_update', { session_id: 'sess_1', ces: 0.5, window_index: 1 }],
     ['attention_ack', { session_id: 'sess_1', ces: 0.5 }],
     ['lesson_ready', { session_id: 'sess_1', lesson_id: 'lsn_1', lesson: {} }],
     ['generation_progress', { session_id: 'sess_1', lesson_id: 'lsn_1', node: 'x', progress: 1, message: 'x' }],
@@ -173,6 +173,110 @@ describe('useLessonSocket', () => {
     ).not.toThrow();
 
     expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('dispatches a ces_update message into the player store (S3-04 AC-2)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.62, window_index: 3 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBe(0.62);
+    // AC-2: this path must never touch playback/status.
+    expect(usePlayerStore.getState().status).toBe('IDLE');
+  });
+
+  it('ignores a ces_update for a different session_id (stale message from an abandoned session)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_OTHER', ces: 0.9, window_index: 1 },
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['a string', '0.5'],
+    ['negative', -0.1],
+    ['above 1', 1.1],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('rejects a ces value that is %s (review fix)', async (_label, badValue) => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: badValue, window_index: 1 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it('rejects an out-of-order ces_update (lower window_index than one already applied, review fix)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.5, window_index: 5 },
+      }),
+    );
+    expect(usePlayerStore.getState().cesScore).toBe(0.5);
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.9, window_index: 2 },
+      }),
+    );
+
+    // Stale, lower window_index must not overwrite the newer score.
+    expect(usePlayerStore.getState().cesScore).toBe(0.5);
+  });
+
+  it('accepts a later ces_update with a higher window_index', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.5, window_index: 5 },
+      }),
+    );
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.9, window_index: 6 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBe(0.9);
   });
 
   it('degrades gracefully (status closed, no socket) when the Supabase session lookup rejects', async () => {

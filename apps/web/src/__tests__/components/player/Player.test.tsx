@@ -420,6 +420,17 @@ describe('Player — lesson WebSocket (S2-06)', () => {
 
     expect(screen.queryByTestId('tutor-intervention-card')).not.toBeNull();
   });
+
+  it('mounts CESIndicator — it becomes visible when a ces_update score is active while PLAYING (S3-04 AC-6)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING', cesScore: 0.85 });
+    });
+
+    expect(screen.queryByTestId('ces-indicator')).not.toBeNull();
+    expect(screen.getByTestId('ces-indicator').getAttribute('title')).toBe('Focused');
+  });
 });
 
 describe('Player — tab_switch analytics (Sprint 2 audit gap)', () => {

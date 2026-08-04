@@ -16,6 +16,7 @@ import { QuizOverlay } from './QuizOverlay';
 import { TeachBackModal } from './TeachBackModal';
 import { CheckingInTransition } from './CheckingInTransition';
 import { TutorInterventionCard } from './TutorInterventionCard';
+import { CESIndicator } from './CESIndicator';
 
 interface PlayerProps {
   lesson: LessonPackage;
@@ -310,6 +311,9 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
         {/* Tutor intervention card (S3-03) — self-contained, non-blocking corner
             toast; never shows during TEACH_BACK (render-level guard inside). */}
         <TutorInterventionCard />
+
+        {/* CES indicator (S3-04) — subtle, qualitative-only engagement dot; top-3 right-3, distinct from the tier badge (top-3 left-3). */}
+        <CESIndicator />
 
         {/* Avatar intro/static/outro (S1-05) — self-contained, reads lesson +
             store state directly; renders nothing when no avatar fields are

@@ -63,6 +63,8 @@ export interface PlayerStore {
   /** Most recent tutor_intervene payload; null when no intervention is active.
    *  A new one REPLACES the current one (no queue) — see setActiveIntervention. */
   activeIntervention: TutorInterveneMessage['payload'] | null;
+  /** Most recent ces_update value; null when no score has been received yet. */
+  cesScore: number | null;
   /** segment_id values for segments where quiz has already fired this forward
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
@@ -109,6 +111,8 @@ export interface PlayerStore {
   setTutorState: (s: TutorState) => void;
   /** Sets/replaces (or clears with null) the active tutor_intervene payload (S3-03). */
   setActiveIntervention: (payload: TutorInterveneMessage['payload'] | null) => void;
+  /** Sets/clears (with null) the most recent CES score (S3-04). */
+  setCesScore: (score: number | null) => void;
   setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
   setBuffering: (b: boolean) => void;
   setAudioError: (b: boolean) => void;
@@ -138,6 +142,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   playbackRate: 1.0,
   tutorState: 'IDLE',
   activeIntervention: null,
+  cesScore: null,
   quizFiredForSegment: new Set<string>(),
   wsSendControl: null,
   isBuffering: false,
@@ -165,6 +170,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       playbackRate: 1.0,
       tutorState: 'IDLE',
       activeIntervention: null,
+      cesScore: null,
       quizFiredForSegment: new Set<string>(),
       isBuffering: false,
       audioError: false,
@@ -251,7 +257,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!segment) return;
     const next = new Set(quizFiredForSegment);
     next.add(segment.segment_id);
-    set({ status: 'QUIZ', quizFiredForSegment: next });
+    // cesScore cleared here (review fix, S3-04): PLAYING can resume minutes
+    // later after quiz/teach-back, and the old score/band must not reappear
+    // stale before a fresh ces_update arrives.
+    set({ status: 'QUIZ', quizFiredForSegment: next, cesScore: null });
     // Immediate, not throttled — audio is paused for the quiz so no further
     // updateAudioPosition ticks will fire to flush this update; closing the
     // tab here must not lose it (would re-fire an already-answered quiz).
@@ -307,6 +316,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   setActiveIntervention: (payload) => {
     set({ activeIntervention: payload });
+  },
+
+  setCesScore: (score) => {
+    set({ cesScore: score });
   },
 
   setWsSendControl: (fn) => {
