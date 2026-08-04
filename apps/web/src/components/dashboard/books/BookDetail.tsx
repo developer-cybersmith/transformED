@@ -9,7 +9,12 @@ import { ChapterRow } from "./ChapterRow";
 
 export function BookDetail({ bookId }: { bookId: string }) {
     const { data: book, error: bookError, isLoading: bookLoading } = useBook(bookId);
-    const { data: chapters, error: chaptersError, isLoading: chaptersLoading } = useChapters(bookId, book?.status);
+    const {
+        data: chapters,
+        error: chaptersError,
+        isLoading: chaptersLoading,
+        revalidate: revalidateChapters,
+    } = useChapters(bookId, book?.status);
 
     // The 404 body is byte-identical for absent / malformed-uuid / another
     // user's book -- never 403, because a 403 would confirm the id exists.
@@ -87,7 +92,14 @@ export function BookDetail({ bookId }: { bookId: string }) {
             {chapters != null && chapters.length > 0 && (
                 <ul className="flex flex-col gap-3 pb-24">
                     {chapters.map((chapter) => (
-                        <ChapterRow key={chapter.chapter_id} chapter={chapter} />
+                        <ChapterRow
+                            key={chapter.chapter_id}
+                            chapter={chapter}
+                            bookId={bookId}
+                            // AC6: after a generation response, re-read the
+                            // server rather than mutating the card locally.
+                            onGenerated={revalidateChapters}
+                        />
                     ))}
                 </ul>
             )}

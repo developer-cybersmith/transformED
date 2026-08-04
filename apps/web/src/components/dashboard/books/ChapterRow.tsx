@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Play, Loader2, AlertCircle, Sparkles } from "lucide-react";
+import { Play, Loader2, AlertCircle } from "lucide-react";
 import { watchableLessonId, type ChapterResponse } from "@/services/books.service";
+import { ChapterGenerateControl } from "./ChapterGenerateControl";
 
-// W3 wires the real POST .../lessons call. Until then the button ships
-// DISABLED with a stated reason -- never enabled-and-inert (AC10).
-export const GENERATE_DISABLED_REASON =
-    "Lesson generation from a chapter isn't available yet — it arrives in the next release.";
+// W2 shipped Generate DISABLED with a stated reason, because nothing behind it
+// existed yet (W2 AC10: never enabled-and-inert). W3 is that "next release" --
+// the button is now live, so the reason constant is gone rather than left behind
+// as a string nothing renders.
 
 // Page ranges are 0-BASED PDF page indices, not printed page numbers. Never
 // show a bare "page 69" to a student without saying what the number is.
@@ -18,7 +19,15 @@ function lessonCountLabel(count: number): string {
     return count === 1 ? "1 lesson" : `${count} lessons`;
 }
 
-export function ChapterRow({ chapter }: { chapter: ChapterResponse }) {
+interface ChapterRowProps {
+    chapter: ChapterResponse;
+    /** Needed for the generate path -- the endpoint is nested under the book. */
+    bookId: string;
+    /** Re-read the chapter list after a generation response (AC6). */
+    onGenerated?: () => void;
+}
+
+export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
     // AC3: gated on latest_lesson.status, NEVER on has_lesson. A chapter whose
     // only lesson failed has has_lesson === true and a non-null lesson_id.
     const readyLessonId = watchableLessonId(chapter);
@@ -27,7 +36,9 @@ export function ChapterRow({ chapter }: { chapter: ChapterResponse }) {
     const pageSpan = chapter.page_end - chapter.page_start + 1;
 
     return (
-        <li className="flex flex-col gap-3 rounded-2xl border border-neutral-100 bg-white/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        // flex-wrap + basis-full lets ChapterGenerateControl contribute a
+        // full-width panel BELOW the row while its button stays inline in it.
+        <li className="flex flex-col flex-wrap gap-3 rounded-2xl border border-neutral-100 bg-white/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs font-medium text-neutral-400 tabular-nums">
@@ -63,8 +74,8 @@ export function ChapterRow({ chapter }: { chapter: ChapterResponse }) {
                 )}
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
-                {readyLessonId != null ? (
+            {readyLessonId != null ? (
+                <div className="flex shrink-0 items-center gap-2">
                     <Link
                         href={`/lesson/${readyLessonId}`}
                         className="inline-flex items-center gap-2 rounded-full bg-[var(--accent-primary)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-primary-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
@@ -72,24 +83,21 @@ export function ChapterRow({ chapter }: { chapter: ChapterResponse }) {
                         <Play className="h-4 w-4" />
                         Watch
                     </Link>
-                ) : isGenerating ? (
+                </div>
+            ) : isGenerating ? (
+                <div className="flex shrink-0 items-center gap-2">
                     <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 px-4 py-2 text-sm text-neutral-500">
                         <Loader2 className="h-4 w-4 animate-spin" />
                         Generating…
                     </span>
-                ) : (
-                    <button
-                        type="button"
-                        disabled
-                        aria-disabled="true"
-                        title={GENERATE_DISABLED_REASON}
-                        className="inline-flex cursor-not-allowed items-center gap-2 rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-400"
-                    >
-                        <Sparkles className="h-4 w-4" />
-                        {latest?.status === "failed" ? "Retry" : "Generate"}
-                    </button>
-                )}
-            </div>
+                </div>
+            ) : (
+                <ChapterGenerateControl
+                    bookId={bookId}
+                    chapter={chapter}
+                    onGenerated={onGenerated}
+                />
+            )}
         </li>
     );
 }

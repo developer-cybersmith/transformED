@@ -15,7 +15,9 @@ import {
     BOOKS as CONTRACT_BOOKS,
     CHAPTERS as CONTRACT_CHAPTERS,
     PROCESSING_BOOK as CONTRACT_PROCESSING_BOOK,
+    RATE_LIMITED_CHAPTER as CONTRACT_RATE_LIMITED_CHAPTER,
     READY_BOOK as CONTRACT_READY_BOOK,
+    TOO_LARGE_CHAPTER as CONTRACT_TOO_LARGE_CHAPTER,
 } from '@/test/fixtures';
 import type { BookResponse, ChapterResponse } from '@/services/books.service';
 
@@ -77,6 +79,27 @@ export const CHAPTERS_21: ChapterResponse[] = [
         } satisfies ChapterResponse;
     }),
 ];
+
+// ── W3 additions: the generate-path chapters, still derived from W0 ──────────
+
+/**
+ * The rung-5 chapter the 200-page gate exists to refuse: detection found no
+ * signal and made the whole 1,151-page book one chapter. Drives the OBJECT-shaped
+ * `chapter_too_large` 422.
+ */
+export const CHAPTER_TOO_LARGE: ChapterResponse = asChapter(CONTRACT_TOO_LARGE_CHAPTER);
+
+/** A chapter whose owner already has 3 lessons generating → 429 + Retry-After. */
+export const CHAPTER_RATE_LIMITED: ChapterResponse = asChapter(CONTRACT_RATE_LIMITED_CHAPTER);
+
+/**
+ * Chapter 2 spans pages [121..163] = 43 pages, over the ~40-page LLM-visible
+ * window, so the server returns `truncation_expected: true` — and it has no
+ * lessons, so the Generate control is the thing the card renders for it.
+ */
+export const CHAPTER_TRUNCATING: ChapterResponse = CHAPTER_NO_LESSON;
+/** Chapter 0, pages [40..68] = 29 pages: below the truncation threshold. */
+export const CHAPTER_NO_TRUNCATION: ChapterResponse = CHAPTER_LATEST_FAILED;
 
 /** Shaped like the axios rejection for the contract's identical-body 404. */
 export function bookNotFoundError(): unknown {

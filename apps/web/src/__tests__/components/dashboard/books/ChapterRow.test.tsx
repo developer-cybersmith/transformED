@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ChapterRow } from '@/components/dashboard/books/ChapterRow';
 import {
+    BOOK_READY,
     CHAPTER_LATEST_FAILED,
     CHAPTER_LESSON_COUNT_2,
     CHAPTER_LESSON_READY,
@@ -12,7 +13,7 @@ import {
 function renderRow(chapter: Parameters<typeof ChapterRow>[0]['chapter']) {
     return render(
         <ul>
-            <ChapterRow chapter={chapter} />
+            <ChapterRow chapter={chapter} bookId={BOOK_READY.book_id} />
         </ul>,
     );
 }
@@ -46,21 +47,36 @@ describe('ChapterRow — AC3, the Watch gate', () => {
     });
 });
 
-describe('ChapterRow — AC10, no dead-end CTAs', () => {
-    it('ships Generate DISABLED with an explanatory reason, not enabled-and-inert', () => {
+/**
+ * W2 asserted these two buttons were DISABLED with a "next release" reason,
+ * because nothing behind them existed (W2 AC10: never enabled-and-inert). W3 IS
+ * that next release — `POST .../chapters/{id}/lessons` is now wired — so the
+ * same two cases are re-pointed at the live behaviour rather than deleted. The
+ * invariant W2 was protecting ("a CTA is never enabled unless it does something")
+ * is unchanged; only which side of it is true has changed.
+ */
+describe('ChapterRow — AC10, no dead-end CTAs (W3: the CTA is now live)', () => {
+    it('offers an ENABLED Generate button for a chapter with no lessons', () => {
         renderRow(CHAPTER_NO_LESSON);
 
         const button = screen.getByRole('button', { name: /generate/i });
-        expect((button as HTMLButtonElement).disabled).toBe(true);
-        expect(button.getAttribute('title')).toMatch(/next release/i);
+        expect((button as HTMLButtonElement).disabled).toBe(false);
+        // The W2 placeholder reason is gone, not left behind on a live control.
+        expect(button.getAttribute('title')).toBeNull();
     });
 
-    it('offers Retry — also disabled — when the latest lesson failed', () => {
+    it('offers Retry — enabled — when the latest lesson failed', () => {
         renderRow(CHAPTER_LATEST_FAILED);
 
         const button = screen.getByRole('button', { name: /retry/i });
-        expect((button as HTMLButtonElement).disabled).toBe(true);
-        expect(button.getAttribute('title')).not.toBeNull();
+        expect((button as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('offers no Generate control at all while a lesson is already generating', () => {
+        renderRow(CHAPTER_LESSON_COUNT_2);
+
+        expect(screen.queryByRole('button', { name: /generate/i })).toBeNull();
+        expect(screen.getByText(/generating/i)).not.toBeNull();
     });
 });
 

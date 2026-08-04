@@ -10,6 +10,14 @@ interface UseChaptersResult {
     data: ChapterResponse[] | null;
     isLoading: boolean;
     error: unknown;
+    /**
+     * Re-fetch the chapter list (W3 AC6). After a 202 the card must move to
+     * "Generating…" without a page reload, and the honest way to do that is to
+     * ask the server again -- the card's state comes from `latest_lesson.status`,
+     * so local optimistic state would be a second source of truth that can
+     * disagree with it.
+     */
+    revalidate: () => void;
 }
 
 /**
@@ -25,7 +33,7 @@ export function useChapters(bookId: string, bookStatus?: BookStatus): UseChapter
     const { user } = useAuth();
     const pollingStartedAtRef = useRef<number | null>(null);
 
-    const { data, error, isLoading } = useSWR<ChapterResponse[]>(
+    const { data, error, isLoading, mutate } = useSWR<ChapterResponse[]>(
         user && bookId ? `chapters:${user.id}:${bookId}` : null,
         () => booksService.listChapters(bookId),
         {
@@ -36,5 +44,15 @@ export function useChapters(bookId: string, bookStatus?: BookStatus): UseChapter
         },
     );
 
-    return { data: data ?? null, isLoading, error };
+    return {
+        data: data ?? null,
+        isLoading,
+        error,
+        // Fire-and-forget: a failed revalidation surfaces through `error` and the
+        // stale-data banner, exactly like a failed poll. Returning the promise
+        // would invite a caller to await it and block the UI on a GET.
+        revalidate: () => {
+            void mutate();
+        },
+    };
 }

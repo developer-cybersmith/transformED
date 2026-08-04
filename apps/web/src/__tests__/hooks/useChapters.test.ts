@@ -87,3 +87,27 @@ describe('useChapters', () => {
         expect(refreshInterval(undefined)).toBe(0);
     });
 });
+
+/**
+ * Story W3 AC6 — after a generation response the chapter card must reflect the
+ * SERVER, not a locally-invented status that can disagree with it.
+ */
+describe('useChapters — revalidate (W3 AC6)', () => {
+    it('re-fetches the same SWR key rather than mutating anything locally', () => {
+        const mutate = vi.fn();
+        useSWRMock.mockReturnValue({
+            data: CHAPTERS_CAPTURED,
+            error: undefined,
+            isLoading: false,
+            mutate,
+        });
+
+        const { result } = renderHook(() => useChapters(BOOK_ID, 'ready'));
+        result.current.revalidate();
+
+        // No argument: a bare re-fetch. Passing data here would be the optimistic
+        // local state AC6 exists to forbid.
+        expect(mutate).toHaveBeenCalledTimes(1);
+        expect(mutate).toHaveBeenCalledWith();
+    });
+});
