@@ -245,7 +245,7 @@ from returning `new_dims`. Verified by test that patches `record_dna_growth` to 
 
 - [x] Task 3: Write apps/api/tests/test_dna_growth.py (RED → GREEN) — ✓ 2026-07-06
   - [x] 3.1 `test_dunder_all_exports_only_record_dna_growth`
-  - [x] 3.2 `test_positional_args_raise_type_error`
+  - [x] 3.2 `test_positional_args_raise_type_error` — AC 2 (post-audit 2026-08-04: `iscoroutinefunction` assertion added)
   - [x] 3.3 `test_record_dna_growth_inserts_9_rows_for_all_dims`
   - [x] 3.4 `test_record_dna_growth_uses_single_bulk_insert` — verify insert called once
   - [x] 3.5 `test_record_dna_growth_payload_structure` — all 4 keys present + correct types
@@ -266,8 +266,8 @@ from returning `new_dims`. Verified by test that patches `record_dna_growth` to 
   - [x] 3.20 `test_no_hardcoded_model_string_in_dna_growth` (AC 16)
 
 - [x] Task 4: Run full test suite — AC 17 — ✓ 2026-07-06
-  - [x] 4.1 `pytest -m unit tests/test_dna_growth.py` → 20/20 passed
-  - [x] 4.2 `pytest -m unit tests/test_dna_fusion.py` → 29/29 passed (0 regressions)
+  - [x] 4.1 `pytest -m unit tests/test_dna_growth.py` → 21/21 passed (post-impl audit 2026-08-04: 21/21 confirmed, AC 2 iscoroutinefunction assertion added; test count unchanged — existing test strengthened)
+  - [x] 4.2 `pytest -m unit tests/test_dna_fusion.py` → 30/30 passed (0 regressions)
   - [x] 4.3 Full suite `pytest -m unit` → 0 new regressions (pre-existing Dev 4 failures unchanged)
 
 ---
@@ -355,7 +355,14 @@ for row in rows:
     )
 ```
 
-### Complete dna_growth.py template
+### Complete dna_growth.py — FINAL implementation (after Review R3)
+
+> **NOTE:** The original Dev Notes showed a direct `asyncio.to_thread` implementation.
+> Code review R3 (module boundary decision) resolved to **Option B**: add
+> `write_system_events()` to `analytics/service.py` and route `dna_growth.py`
+> through it via local import. This eliminates the direct `session_events` DB write
+> from within the `assessment` module and satisfies the one-discipline rule.
+> `dna_growth.py` does NOT import `asyncio` — that lives in `analytics/service.py`.
 
 ```python
 """DNA growth tracking — writes dna_update events after each learner_dna upsert.
@@ -364,11 +371,16 @@ Called by fuse_learner_dna() as Step 6 after the learner_dna upsert succeeds.
 Writes one session_events row per dimension (9 total) recording the old value,
 new EMA-blended value, and delta. Non-fatal: returns 0 on any failure.
 
+Separation of concerns:
+  - dna_fusion.py  — EMA math, learner_dna upsert       (Story 3-25)
+  - dna_profile.py — LLM profile text, profile_text upsert (Story 3-26)
+  - dna_growth.py  — growth events, session_events insert  (Story 3-27)
+
 No LLM calls. No model strings. Pure analytics write.
+Delegates DB insert to analytics.service.write_system_events (R3 decision).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -384,22 +396,6 @@ async def record_dna_growth(
     new_dims: dict[str, float],
     supabase: Any,
 ) -> int:
-    """Insert dna_update session_events rows for each dimension in new_dims.
-
-    Builds one row per dimension with payload:
-        {"dimension": str, "old_value": float|None, "new_value": float, "delta": float|None}
-
-    delta = round(new - old, 4) when old is float; None when old is None (first session).
-
-    Args:
-        session_id: UUID of the session that just ended.
-        old_dims:   {dim: old_float | None} — None means no prior DB row (first session).
-        new_dims:   {dim: new_float} — EMA-blended values from fuse_learner_dna.
-        supabase:   Synchronous Supabase client (service-role key).
-
-    Returns:
-        Number of rows inserted (normally 9); 0 on any failure.
-    """
     if not new_dims:
         return 0
 
@@ -409,35 +405,47 @@ async def record_dna_growth(
     for dim, new_val in new_dims.items():
         old_val = old_dims.get(dim)
         delta = round(new_val - old_val, 4) if old_val is not None else None
-        rows.append({
-            "session_id": session_id,
-            "event_type": "dna_update",
-            "payload": {
-                "dimension": dim,
-                "old_value": old_val,
-                "new_value": new_val,
-                "delta": delta,
-            },
-        })
+        rows.append(
+            {
+                "session_id": session_id,
+                "event_type": "dna_update",
+                "payload": {
+                    "dimension": dim,
+                    "old_value": old_val,
+                    "new_value": new_val,
+                    "delta": delta,
+                },
+            }
+        )
 
+    from app.modules.analytics.service import write_system_events  # local import (avoids circular)
+
+    count = await write_system_events(rows=rows, supabase=supabase)
+    if count > 0:
+        logger.info("DNA growth: inserted %d rows session=%s", count, _safe_sid)
+    else:
+        logger.warning("DNA growth: insert failed session=%s", _safe_sid)
+    return count
+```
+
+**write_system_events** in `apps/api/app/modules/analytics/service.py` (added by R3):
+
+```python
+async def write_system_events(*, rows: list[dict[str, Any]], supabase: Any) -> int:
+    """Insert system-generated session_events rows. Non-fatal — returns 0 on any failure."""
+    if not rows:
+        return 0
     try:
         resp = await asyncio.to_thread(
             lambda: supabase.table("session_events").insert(rows).execute()
         )
-        insert_error = getattr(resp, "error", None)
-        if insert_error:
-            safe_err = str(insert_error).replace("\n", " ").replace("\r", " ")
-            logger.warning(
-                "DNA growth: insert error session=%s: %s",
-                _safe_sid,
-                safe_err,
-            )
+        if getattr(resp, "error", None):
+            safe_err = str(resp.error).replace("\n", " ").replace("\r", " ")
+            logger.warning("analytics: system_events insert error: %s", safe_err)
             return 0
-        inserted = len(resp.data or [])
-        logger.info("DNA growth: inserted %d rows session=%s", inserted, _safe_sid)
-        return inserted
+        return len(resp.data or [])
     except Exception as exc:
-        logger.warning("DNA growth: insert exception session=%s: %s", _safe_sid, exc)
+        logger.warning("analytics: system_events insert exception: %s", exc)
         return 0
 ```
 
@@ -546,22 +554,22 @@ that exactly 9 rows were in the insert payload.
 
 ### Completion Notes
 
-- 20/20 new tests GREEN, 29/29 `test_dna_fusion.py` regression tests GREEN (49/49 total)
-- Pre-existing Dev 4 failures (test_tutor_graph, test_tutor_service, 9× test_websocket_session)
-  unchanged — confirmed by git stash verification
-- `record_dna_growth` is always non-fatal internally (returns 0 on any exception)
-- Step 6 in `fuse_learner_dna` adds belt-and-suspenders try/except so growth tracking can never
-  propagate exceptions to the session-end handler
-- Local import pattern (`from app.modules.assessment.dna_growth import record_dna_growth` inside
-  `fuse_learner_dna`) prevents circular import risk at module load time
+- 21/21 unit tests GREEN (20 original + 1 post-review R1 caplog test), 30/30 `test_dna_fusion.py` regression tests GREEN (51/51 total)
+- Pre-existing Dev 4 failures (test_tutor_graph, test_tutor_service, 9× test_websocket_session) unchanged
+- `record_dna_growth` is always non-fatal internally (returns 0 on any exception via `write_system_events`)
+- Step 6 in `fuse_learner_dna` adds belt-and-suspenders try/except so growth tracking can never propagate exceptions
+- Local import pattern (`from app.modules.assessment.dna_growth import record_dna_growth` inside `fuse_learner_dna`) prevents circular import risk
+- **R3 design change**: `record_dna_growth` does NOT directly call `supabase.table("session_events")` — it delegates to `analytics.service.write_system_events()` via local import. `dna_growth.py` does NOT import `asyncio`; that lives in `analytics/service.py`.
+- Post-impl audit (2026-08-04): AC 2 `iscoroutinefunction(record_dna_growth)` assertion added to `test_positional_args_raise_type_error`; Dev Notes template corrected to R3 implementation; tracker branch note corrected to merged state; validation report at `docs/reports/sprint3-task5-bmad-validation-report.md`
 
 ### File List
 
 | File | Action |
 |------|--------|
-| `apps/api/app/modules/assessment/dna_growth.py` | CREATED — 70 lines, `record_dna_growth` |
-| `apps/api/app/modules/assessment/dna_fusion.py` | MODIFIED — Step 6 added (~14 lines) |
-| `apps/api/tests/test_dna_growth.py` | CREATED — 20 unit tests |
+| `apps/api/app/modules/assessment/dna_growth.py` | CREATED — 77 lines, `record_dna_growth` (delegates to `write_system_events`) |
+| `apps/api/app/modules/assessment/dna_fusion.py` | MODIFIED — Step 6 added (~18 lines incl. `_safe_sid_growth` R2 fix) |
+| `apps/api/app/modules/analytics/service.py` | MODIFIED — `write_system_events()` added (R3 module boundary fix) |
+| `apps/api/tests/test_dna_growth.py` | CREATED — 21 unit tests (20 original + R1 caplog test); post-audit: AC 2 iscoroutinefunction assertion |
 
 ### Change Log
 
@@ -569,7 +577,8 @@ that exactly 9 rows were in the insert payload.
 |------|--------|
 | 2026-07-06 | Story created — Sprint 3 Task 5 |
 | 2026-07-06 | Implementation complete — 20/20 tests GREEN, 0 regressions |
-| 2026-07-06 | Code review complete — 5-agent adversarial review, 2 BLOCKERs + 1 decision |
+| 2026-07-06 | Code review complete — 5-agent adversarial review, 2 BLOCKERs + 1 decision (R3 write_system_events) |
+| 2026-08-04 | Post-impl audit remediation — AC 2 iscoroutinefunction assertion added; Dev Notes R3 template corrected; tracker branch note updated; validation report created |
 
 ---
 
@@ -620,3 +629,33 @@ that exactly 9 rows were in the insert payload.
 - [x] R1 — Add caplog test for AC 10 log injection prevention
 - [x] R2 — Fix raw session_id in dna_fusion.py:369 logger call
 - [x] R3 — Resolve module boundary decision (Option B applied — write_system_events added to analytics.service)
+
+---
+
+## Post-Implementation Audit (2026-08-04)
+
+### Gaps Found
+
+| ID | Severity | Description |
+|----|----------|-------------|
+| F1 | MEDIUM | `test_positional_args_raise_type_error` lacked `inspect.iscoroutinefunction(record_dna_growth)` assertion — sprint-wide recurring gap (also found in Tasks 2, 3, 4). `fuse_learner_dna()` awaits this function; a sync revert crashes the session-end pipeline. |
+| F2 | LOW | Dev Notes "Complete dna_growth.py template" showed pre-R3 code: `import asyncio`, direct `asyncio.to_thread`, try/except inside `record_dna_growth`. The actual R3 implementation delegates to `write_system_events` and has no `asyncio` import. |
+| F3 | LOW | Tracker entry read "pushed to origin, PR pending". Actual state: PR #68 merged `dev3-sprint3-task5` → `main` (commit `e563f13`). Remote branch deleted post-merge. |
+
+### Fixes Applied
+
+| ID | Fix |
+|----|-----|
+| F1 | `inspect.iscoroutinefunction(record_dna_growth)` assertion added to `test_positional_args_raise_type_error`; coverage header updated |
+| F2 | Dev Notes "Complete dna_growth.py template" replaced with actual R3 implementation + `write_system_events` excerpt |
+| F3 | Tracker line corrected: "merged into `main` via PR #68 (commit `e563f13`); post-audit remediation on `sprint3-task5-dev3`" |
+
+### Validation Results
+
+| Check | Result |
+|-------|--------|
+| Tests | 21/21 passed in 1.92s |
+| Regressions (`test_dna_fusion.py`) | 30/30 passed, 0 regressions |
+| Ruff lint | All checks passed |
+| Production logic changes | None |
+| 18/18 ACs satisfied | Confirmed |

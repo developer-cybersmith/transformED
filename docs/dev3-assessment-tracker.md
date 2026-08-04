@@ -651,7 +651,8 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - **AC:** `session_events` contains `dna_update` rows with correct deltas after session completion
   - 21 unit tests GREEN; 5-agent adversarial review APPROVED; all 3 BLOCKERs resolved (R1 caplog AC10, R2 log injection, R3 analytics.service.write_system_events)
   - Story 3-27 at `docs/stories/3-27-dna-growth-tracking.md` — status: done
-  - Branch: `dev3-sprint3-task5` — pushed to origin, PR pending
+  - Post-impl audit (2026-08-04): AC 2 iscoroutinefunction assertion added; Dev Notes R3 template corrected; validation report at `docs/reports/sprint3-task5-bmad-validation-report.md`
+  - Branch: `dev3-sprint3-task5` — merged into `main` via PR #68 (commit `e563f13`); post-audit remediation on `sprint3-task5-dev3`
 
 - [x] **Session report: Learner DNA section** — ✓ 2026-07-21
   - Extend `GET /api/assessment/session/{id}/report` to include a `learner_dna_snapshot` field
