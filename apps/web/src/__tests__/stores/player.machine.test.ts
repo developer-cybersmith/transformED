@@ -16,6 +16,7 @@ function makeLesson(segmentCount = 3): LessonPackage {
       total_segments: segmentCount,
       estimated_duration_mins: 10,
       complexity_level: 'medium',
+      tier: 'T2',
     },
     segments: Array.from({ length: segmentCount }, (_, i) => ({
       segment_id: `seg_${i}`,
@@ -75,6 +76,10 @@ beforeEach(() => {
     audioPositionMs: 0,
     tutorState: 'IDLE',
     quizFiredForSegment: new Set(),
+    wsSendControl: null,
+    isBuffering: false,
+    audioError: false,
+    audioRetryCount: 0,
   });
   localStorage.clear();
 });
@@ -117,6 +122,43 @@ describe('loadLesson', () => {
     usePlayerStore.setState({ audioPositionMs: 9999 });
     usePlayerStore.getState().loadLesson(makeLesson());
     expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+  });
+
+  it('resets sessionId to empty -- no client-invented id (D18/Story 2-39); a real one is set later via setSessionId', () => {
+    usePlayerStore.setState({ sessionId: 'stale-session-from-a-previous-lesson' });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().sessionId).toBe('');
+  });
+});
+
+describe('setSessionId (Story 2-39)', () => {
+  it('overrides sessionId with the server-minted id from POST /api/assessment/sessions', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().sessionId).toBe('');
+
+    usePlayerStore.getState().setSessionId('sess_real_abc123');
+
+    expect(usePlayerStore.getState().sessionId).toBe('sess_real_abc123');
+  });
+});
+
+describe('refreshLessonMedia (S2-33)', () => {
+  it('replaces the lesson content without resetting playback progress', () => {
+    const lesson = makeLesson(3);
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.getState().advanceSegment(); // currentSegmentIndex -> 1
+    usePlayerStore.setState({
+      audioPositionMs: 5000,
+      quizFiredForSegment: new Set(['seg_0']),
+    });
+
+    const refreshed = { ...lesson, segments: lesson.segments.map((s) => ({ ...s })) };
+    usePlayerStore.getState().refreshLessonMedia(refreshed);
+
+    expect(usePlayerStore.getState().lesson).toBe(refreshed);
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+    expect(usePlayerStore.getState().audioPositionMs).toBe(5000);
+    expect(usePlayerStore.getState().quizFiredForSegment.has('seg_0')).toBe(true);
   });
 });
 
@@ -195,6 +237,28 @@ describe('enterQuiz / exitQuiz / enterTeachBack / exitTeachBack', () => {
     usePlayerStore.getState().exitQuiz();
     usePlayerStore.getState().exitTeachBack();
     expect(usePlayerStore.getState().status).toBe('PLAYING');
+  });
+
+  it('exitTeachBack() resets tutorState to TEACHING when advancing to the next segment (S2-06 AC7)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson(5));
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().enterQuiz();
+    usePlayerStore.setState({ tutorState: 'CHECKING_IN' });
+    usePlayerStore.getState().exitQuiz();
+    usePlayerStore.getState().exitTeachBack(); // not the last segment — advances
+    expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+  });
+
+  it('exitTeachBack() resets tutorState to TEACHING when resuming playback on the last segment (S2-06 AC7)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson(1)); // single-segment lesson — this is the last segment
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().enterQuiz();
+    usePlayerStore.setState({ tutorState: 'CHECKING_IN' });
+    usePlayerStore.getState().exitQuiz();
+    usePlayerStore.getState().exitTeachBack();
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
   });
 
   it('enterQuiz() is no-op when not PLAYING', () => {
@@ -307,6 +371,79 @@ describe('setTutorState', () => {
   it('mirrors tutor FSM state from WebSocket', () => {
     usePlayerStore.getState().setTutorState('TEACHING');
     expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+});
+
+describe('audio buffering / error / retry (S2-26)', () => {
+  it('defaults to not buffering, no error, zero retries', () => {
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(0);
+  });
+
+  it('setBuffering(true/false) toggles isBuffering', () => {
+    usePlayerStore.getState().setBuffering(true);
+    expect(usePlayerStore.getState().isBuffering).toBe(true);
+    usePlayerStore.getState().setBuffering(false);
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+
+  it('setAudioError(true) sets audioError', () => {
+    usePlayerStore.getState().setAudioError(true);
+    expect(usePlayerStore.getState().audioError).toBe(true);
+  });
+
+  it('retryAudio() clears audioError and increments audioRetryCount', () => {
+    usePlayerStore.getState().setAudioError(true);
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(1);
+
+    usePlayerStore.getState().setAudioError(true);
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().audioRetryCount).toBe(2);
+  });
+
+  it('retryAudio() also clears isBuffering (review fix — a stall-then-error sequence must not leave a stale buffering flag on the fresh element)', () => {
+    usePlayerStore.setState({ isBuffering: true, audioError: true });
+    usePlayerStore.getState().retryAudio();
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+  });
+
+  it('loadLesson() resets isBuffering/audioError/audioRetryCount', () => {
+    usePlayerStore.setState({ isBuffering: true, audioError: true, audioRetryCount: 3 });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(0);
+  });
+
+  it('advanceSegment() resets isBuffering/audioError/audioRetryCount so a prior segment\'s stall/error does not leak forward', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.setState({ isBuffering: true, audioError: true, audioRetryCount: 2 });
+    usePlayerStore.getState().advanceSegment();
+    expect(usePlayerStore.getState().isBuffering).toBe(false);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    expect(usePlayerStore.getState().audioRetryCount).toBe(0);
+  });
+});
+
+describe('wsSendControl (S2-06)', () => {
+  it('defaults to null', () => {
+    expect(usePlayerStore.getState().wsSendControl).toBeNull();
+  });
+
+  it('setWsSendControl registers a callable function', () => {
+    const fn = vi.fn();
+    usePlayerStore.getState().setWsSendControl(fn);
+    usePlayerStore.getState().wsSendControl?.({ type: 'segment_complete' });
+    expect(fn).toHaveBeenCalledWith({ type: 'segment_complete' });
+  });
+
+  it('setWsSendControl(null) clears a previously registered function', () => {
+    usePlayerStore.getState().setWsSendControl(vi.fn());
+    usePlayerStore.getState().setWsSendControl(null);
+    expect(usePlayerStore.getState().wsSendControl).toBeNull();
   });
 });
 

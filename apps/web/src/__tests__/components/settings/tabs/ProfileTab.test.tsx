@@ -8,6 +8,10 @@ vi.mock('@/services/settings.service', () => ({
   settingsService: { getProfile: getProfileMock },
 }));
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: null }),
+}));
+
 const PROFILE = {
   id: 'usr_1',
   name: 'J. Robert Oppenheimer',
@@ -38,5 +42,16 @@ describe('ProfileTab', () => {
     expect(screen.getByText(PROFILE.academicFocus)).not.toBeNull();
     expect(screen.queryByText('Master Advanced Calculus')).toBeNull();
     expect(screen.queryByText('Mathematics & Physics')).toBeNull();
+  });
+
+  it('seeds the avatar with the profile id, never the real name or email (review fix — PII leak to a third-party CDN)', async () => {
+    render(<ProfileTab />);
+
+    await waitFor(() => expect(screen.getByText(PROFILE.name)).not.toBeNull());
+    const avatar = screen.getByAltText('Profile Avatar') as HTMLImageElement;
+
+    expect(avatar.src).toContain(encodeURIComponent(PROFILE.id));
+    expect(avatar.src).not.toContain(encodeURIComponent(PROFILE.name));
+    expect(avatar.src).not.toContain(encodeURIComponent(PROFILE.email));
   });
 });

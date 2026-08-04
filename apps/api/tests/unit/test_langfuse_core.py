@@ -19,6 +19,7 @@ from app.core.langfuse import get_langfuse
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_settings(
     pub: str = "pk-test", sec: str = "sk-test", host: str = "https://host.test"
 ) -> MagicMock:

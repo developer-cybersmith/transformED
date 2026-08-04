@@ -37,6 +37,15 @@
 
 html {
   scroll-behavior: smooth;
+  /* NOT overflow-x: hidden here -- any ancestor with non-visible overflow on
+     either axis disables `position: sticky` for every descendant, even one
+     that never actually scrolls (see Features.tsx's CognitiveVisualization
+     column). html is normally the page's true scrolling element, so this is
+     the single worst place to add it. The real mobile horizontal-overflow
+     fix is containing the offending elements at their source (Features.tsx's
+     ambient divs, ProductPreview's diagram) -- already done and verified
+     (scrollWidth === clientWidth) without this line ever being needed.
+     body still has its own overflow-x: hidden as a lighter-weight guard. */
 }
 
 body {

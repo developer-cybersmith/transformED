@@ -27,7 +27,8 @@
 | OCR | **Tesseract** (in-container) | Azure Doc Intelligence removed |
 | PDF | **pypdfium2 + pdftext + pdfplumber (table detection only) + docling (table markdown)** | PyMuPDF/fitz BANNED — AGPL-3.0. pypdfium2 (Apache 2.0) for text + rendering; pdftext (Apache 2.0) for font/layout metadata; pdfplumber (MIT) retained only to trigger docling on table pages |
 | Attention | **MediaPipe Face Landmarker WASM** | WebGazer REJECTED |
-| Lesson player | **Custom React audio-timeline state machine** | Reveal.js REJECTED |
+| Lesson player | **Custom React audio-timeline state machine** | Reveal.js REJECTED. This is the FIRST-WATCH experience — never replace it with video; it is the only mode that carries quizzes, teach-back, CES interventions and jargon tooltips. |
+| Video delivery | **Bunny Stream** — avatar clips (live) + compiled revision-mode lesson video (DECIDED 2026-07-28, not yet designed or implemented) | Revision/re-watch ONLY, never first watch. No video/ffmpeg code exists yet. Must be re-costed against the $3.00/lesson ceiling and kept off the ARQ critical path — see `docs/decisionupdate.md` §7b before implementing. |
 | Realtime | **Native FastAPI WebSockets** | |
 | Observability | **Langfuse + Sentry + OTel + PostHog** | Wire before feature work |
 | Deploy | **Railway + GitHub Actions** | railway.toml |
@@ -187,6 +188,8 @@ Applied and frozen migrations (do not alter):
 - No PostgresSaver — custom lesson_jobs + MemorySaver
 - No direct provider calls in business logic — go through providers/
 - Pin LangGraph version — never auto-upgrade
+- **A LangGraph node must return ONLY the state keys it owns — never `return {**state, ...}`.** Any channel annotated `Annotated[list, operator.add]` is a *concatenating reducer*: spreading the incoming state back out re-appends every accumulated value, so each node that does it **doubles** those channels. Four such nodes after a fan-in = 2⁴ = **16× duplication in a single clean run**, with no retry involved. Found in production 2026-07-28 (`quiz_questions` 45 → 720, `segment_summaries` 15 → 240) across 18 sites in the content pipeline, and independently in `modules/tutor/state_machine/graph.py`. Guarded by `tests/unit/test_node_return_shape.py` — a source-level scan that fails CI on any `**state` spread inside a node return. Applies to **every** StateGraph in the repo, not just the content pipeline.
+- **A LangGraph `thread_id` must be unique per pipeline attempt.** `MemorySaver` is process-local and never evicted; reusing `thread_id=lesson_id` retains accumulated channels across retries and across the worker's lifetime. Resume must be rebuilt from the durable Supabase `node_outputs` checkpoints, **never** from MemorySaver. Note `router.py` pins `_job_id=f"pipeline:{lesson_id}"`, so `job_id` alone is *not* a uniquifier — `job_try` must be part of the token.
 - Never import `fitz` / `pymupdf` / `pymupdf4llm` / `borb` — all AGPL-3.0; PDF extraction uses `pypdfium2` + `pdftext` instead
 - PDF image extraction must render at **300 DPI** minimum (not 150 DPI) — use `page.render(scale=300/72)` in pypdfium2
 - No raw IQ/EQ/SQ claims — branded as "Learner DNA"
@@ -196,6 +199,43 @@ Applied and frozen migrations (do not alter):
 - No STT in MVP — typed teach-back only
 - Chunk embeddings at ingestion only — never regenerate stored chunk embeddings. Phase 2 RAG tutor query-embedding IS allowed (embed the student question at query time).
 - API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1)
+
+## Defect Register — READ BEFORE FIXING ANYTHING
+
+**`docs/DEFECT-REGISTER.md` is authoritative for known defects and the decisions about them.**
+Consult it before opening a story; add to it before deferring anything.
+
+Established by evidence on 2026-07-29, not by opinion:
+
+- **9 of 11 pre-existing defects never worked for one minute.** Only 1 of 17 was a true
+  regression. This codebase is not unstable — its verification never confirmed anything
+  worked, so the same never-tested assumption resurfaces in a new subsystem and feels like
+  recurrence.
+- **24% of test assertions (567 of 2,328) describe a conversation with a mock**, not an
+  outcome. A mock written by the consumer cannot disconfirm the consumer's belief.
+- **Prose guidance does not hold.** Dev 1 wrote `DEV1-FIX-PLAN.md` and then deviated from it
+  four times in a single day. Every deviation was caught by review, none by a machine.
+
+### Binding rules
+
+1. **Verification scope = CI scope.** Never scope an AC gate to "touched files" — CI checks
+   repo-wide. That exact wording let 78 repo-wide ruff errors accumulate unseen.
+2. **No test may assert only on a mock it constructed.** Assert an observable outcome, or
+   mark it `# MOCK-CONTRACT:` and name the real-dependency test covering that path.
+3. **Any `except SomeLib.Error` needs an executable premise assertion** proving the type
+   hierarchy is what you think. Four separate defects were "we assumed a base class".
+   Pattern to copy: `test_openai_exceptions_are_not_httpx_derived`.
+4. **Any code naming a DB table/column must be validated against `supabase/migrations/`.**
+   A Supabase mock has no Postgres catalog and cannot 42703.
+5. **A documented limitation is NOT an accepted one.** Every `KNOWN LIMITATION` / `TODO` /
+   `FIXME` must carry a `D-nn` register ID. A comment without an ID is a defect wearing a
+   decision's clothes — that is exactly how the inert `structure_node` LLM call survived
+   multiple sprints of review.
+6. **"Matches existing accepted pattern" is not a justification.** It is the ratchet that
+   took `return {**state, ...}` from one site to eighteen. Wrong at site 19 means wrong at
+   site 1 — open a register entry instead.
+7. **A fix without a guard is `FIXED-UNGUARDED`, not fixed.** Closure requires something in
+   CI that fails if the defect returns.
 
 ## BMAD Pre-Implementation Checklist (Story-First Gate)
 
@@ -246,6 +286,19 @@ Anti-deadlock: after Week 1 schema freeze, each dev mocks the other's interface.
 
 ## Sprint Tracker Auto-Update Rule
 
+> **Each developer has their own tracker with its own format. Follow the rule for the tracker whose task you are working on.**
+>
+> | Dev | Tracker | Format |
+> |-----|---------|--------|
+> | Dev 1 | `docs/dev1-tracker.md` | `- [ ]` / `- [x]` checkboxes |
+> | Dev 2 | `docs/dev2-sprint-tracker.md` | see that file |
+> | Dev 3 | `docs/dev3-assessment-tracker.md` | see that file |
+> | Dev 4 | `docs/dev4-tracker.md` | `[Not Started]` / `[Partial]` / `[Completed]` labels |
+>
+> When editing this section, **add alongside — never replace another dev's rule.** (The Dev 1 rule below was silently dropped by an unrelated merge on 2026-07-28 and had to be restored.)
+
+### Dev 1 — `docs/dev1-tracker.md`
+
 Whenever you mark any task complete in `docs/dev1-tracker.md` — either because you just implemented it or the user confirms it is done — you MUST immediately, in the same response:
 
 1. Change the task checkbox from `- [ ]` to `- [x]`
@@ -255,11 +308,24 @@ Whenever you mark any task complete in `docs/dev1-tracker.md` — either because
 
 Do this without being asked. Never mark a task complete without also updating the dashboard. Never update the dashboard without also updating the header date.
 
+### Dev 4 — `docs/dev4-tracker.md`
+
+The Dev 4 tracker is `docs/dev4-tracker.md`. It uses three-state labels — `[Not Started]` / `[Partial]` / `[Completed]` — one per task, each tagged with a `<!-- CHECK:tag -->` marker, and is auto-maintained by `scripts/check_dev4_progress.py` (flips `[Not Started]`↔`[Completed]` by code presence; never downgrades a human-set `[Partial]`).
+
+Whenever you finish implementing a task, or the user confirms one is done — either way, in the same response — you MUST:
+
+1. Set the task's label to `[Completed]` and append ` ✅ YYYY-MM-DD (short note)` to the task title line. Use `[Partial]` (with a `⚠️ PARTIAL — <reason>` note) when the code exists but is untested, unmerged, or blocked on an external dependency.
+2. Update the **Quick Status Dashboard** table at the top of the file (adjust Completed / Partial / Not Started on the correct sprint row, and update the **Total** row so the columns still sum to 39).
+3. Update **Last updated** and **Overall status** in the header to today's date and the new counts.
+4. Prefer running `python scripts/check_dev4_progress.py` to auto-apply label changes and print the authoritative per-sprint counts — then reconcile the dashboard/header to match its output. The script updates labels only, not the dashboard table.
+
+Do this without being asked. Never mark a task complete without also updating the dashboard. Never update the dashboard without also updating the header date. Keep the dashboard totals consistent with the script's reported counts.
+
 ## Sprint Task Branch Rule
 
 **Apply automatically — do not wait to be asked.**
 
-When you begin implementing any sprint task from `docs/dev1-tracker.md`, the very first action before any file edit must be to create a dedicated git branch.
+When you begin implementing any sprint task from **any dev's tracker** (`docs/dev1-tracker.md`, `docs/dev2-sprint-tracker.md`, `docs/dev3-assessment-tracker.md`, `docs/dev4-tracker.md`), the very first action before any file edit must be to create a dedicated git branch.
 
 ### Branch naming
 

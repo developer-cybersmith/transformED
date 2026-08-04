@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NarrationTimestamp } from '@hie/shared/types/lesson';
 import { binarySearchTimestamps, processTimeUpdate } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
@@ -25,6 +25,7 @@ beforeEach(() => {
     audioPositionMs: 0,
     tutorState: 'IDLE',
     quizFiredForSegment: new Set(),
+    wsSendControl: null,
   });
 });
 
@@ -128,6 +129,41 @@ describe('processTimeUpdate — segment boundary + quiz guard', () => {
 
     // Status stays PLAYING — quiz was not re-triggered
     expect(usePlayerStore.getState().status).toBe('PLAYING');
+  });
+
+  it('sends segment_complete and sets tutorState to CHECKING_IN in the same call as enterQuiz() (S2-06 AC2/AC6)', () => {
+    const sendControl = vi.fn();
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING', wsSendControl: sendControl });
+
+    processTimeUpdate(92000); // seg_0's boundary
+
+    expect(sendControl).toHaveBeenCalledTimes(1);
+    expect(sendControl).toHaveBeenCalledWith({ type: 'segment_complete' });
+    expect(usePlayerStore.getState().tutorState).toBe('CHECKING_IN');
+    expect(usePlayerStore.getState().status).toBe('QUIZ'); // enterQuiz() still fired, unaffected (AC4)
+  });
+
+  it('does not call wsSendControl again on a boundary crossing already recorded in quizFiredForSegment (S2-06 AC2)', () => {
+    const sendControl = vi.fn();
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      quizFiredForSegment: new Set(['seg_0']),
+      wsSendControl: sendControl,
+    });
+
+    processTimeUpdate(92000);
+
+    expect(sendControl).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when wsSendControl is null (socket never connected) (S2-06 AC3)', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING', wsSendControl: null });
+
+    expect(() => processTimeUpdate(92000)).not.toThrow();
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
   });
 });
 

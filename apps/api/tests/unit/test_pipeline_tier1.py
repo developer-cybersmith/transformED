@@ -87,12 +87,7 @@ def _make_chunks_table(pages: list[list[dict[str, Any]]]) -> MagicMock:
         return resp
 
     (
-        t.select.return_value
-        .eq.return_value
-        .is_.return_value
-        .order.return_value
-        .range.return_value
-        .execute.side_effect
+        t.select.return_value.eq.return_value.is_.return_value.order.return_value.range.return_value.execute.side_effect
     ) = _execute
     t.upsert.return_value.execute.return_value = MagicMock()
     return t
@@ -198,6 +193,10 @@ async def test_structure_guard_rejects_llm_output_with_tiny_bodies() -> None:
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)
 
     sections = result["sections"]
@@ -208,8 +207,67 @@ async def test_structure_guard_rejects_llm_output_with_tiny_bodies() -> None:
 
 
 @pytest.mark.unit
-async def test_structure_guard_adopts_faithful_llm_output() -> None:
-    """LLM sections whose bodies cover ≥ 90% of raw_text ARE adopted."""
+@pytest.mark.asyncio
+async def test_structure_never_adopts_llm_output() -> None:
+    """Story 2-34: structure detection is rule-based only; nothing can be adopted.
+
+    SUPERSEDES three tests that pinned the old >= 90%-coverage acceptance guard:
+      - test_structure_guard_adopts_faithful_llm_output
+      - test_structure_guard_adopts_llm_output_at_exact_90_percent_boundary
+      - test_structure_guard_duplicated_bodies_pass_length_proxy (Tier-3 #18,
+        the known length-proxy hole: bodies duplicating the first half twice
+        totalled 100% of len(raw_text) while covering 50% of the content)
+
+    All three described a guard that no longer exists. They are replaced rather
+    than deleted so the behaviour they protected is on the record: the guard was
+    removed because it could never fire for a real document (the prompt showed the
+    model raw_text[:6000] while the guard measured against len(raw_text)), not
+    because those edge cases stopped mattering. If an LLM pass is ever reinstated,
+    the length-proxy hole above is still unsolved and needs content-aware coverage.
+    """
+    from app.modules.content.pipeline.graph import structure_node
+
+    raw = "Chapter 1: Intro\n\n" + ("Body sentence for the introduction. " * 300)
+    assert len(raw) > 6667, "must exceed the old acceptance threshold to be meaningful"
+
+    provider = MagicMock()
+    provider.complete_structured = AsyncMock(return_value=MagicMock(sections=[]))
+
+    sb = MagicMock()
+    chain = sb.table.return_value.select.return_value.eq.return_value
+    payload = {"node_outputs": {}}
+    chain.single.return_value.execute.return_value.data = payload
+    chain.maybe_single.return_value.execute.return_value.data = payload
+
+    state = {
+        "lesson_id": FAKE_LESSON_ID,
+        "book_id": FAKE_BOOK_ID,
+        "raw_text": raw,
+        "font_blocks": [{"text": "Chapter 1: Intro", "font": {"size": 18.0, "bold": True}}],
+        "page_count": 5,
+    }
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch(
+            "app.modules.content.pipeline.graph._update_job_progress",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await structure_node(state)  # type: ignore[arg-type]
+
+    provider.complete_structured.assert_not_awaited()
+    assert result.get("sections"), "rule-based detection must still produce sections"
+
+
+@pytest.mark.unit
+async def test_structure_guard_llm_raises_keeps_rule_based_sections() -> None:
+    """2026-07-20 review finding (Test Coverage layer): the branch where the
+    LLM provider RAISES mid-call (e.g. complete_structured throws) was
+    untested — only the <90% reject / ≥90% adopt / empty-skip paths were. A
+    provider exception with non-empty raw_text must be caught and the
+    rule-based sections kept, never crash the node."""
     from app.modules.content.pipeline.graph import structure_node
 
     state = {
@@ -222,22 +280,30 @@ async def test_structure_guard_adopts_faithful_llm_output() -> None:
     }
     sb = MagicMock()
     sb.table.return_value = _make_jobs_table({})
-    half = len(LARGE_RAW_TEXT) // 2
-    llm_result = _make_llm_sections([LARGE_RAW_TEXT[:half], LARGE_RAW_TEXT[half:]])
+
+    # Provider whose complete_structured RAISES rather than returns.
+    instance = MagicMock()
+    instance.complete_structured = AsyncMock(side_effect=RuntimeError("provider exploded"))
+    fake_module = MagicMock()
+    fake_module.OpenAILLMProvider = MagicMock(return_value=instance)
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.config.get_settings") as mock_settings,
-        patch.dict("sys.modules", _make_llm_provider_patch(llm_result)),
+        patch.dict("sys.modules", {"app.providers.llm.openai": fake_module}),
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
-        result = await structure_node(state)
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
+        result = await structure_node(state)  # must NOT raise
 
     sections = result["sections"]
-    assert len(sections) == 2
-    assert [s["title"] for s in sections] == ["LLM Section 0", "LLM Section 1"]
-    assert sections[0]["body"] + sections[1]["body"] == LARGE_RAW_TEXT
+    # Rule-based fallback for headingless prose = 1 section with the FULL text.
+    assert len(sections) == 1
+    assert sections[0]["body"] == LARGE_RAW_TEXT
 
 
 @pytest.mark.unit
@@ -275,6 +341,10 @@ async def test_structure_guard_empty_raw_text_skips_llm_keeps_rule_based(
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        # Story 2-16 (RC-1): no-op coalesce bounds for these structure-guard
+        # tests (they assert on the 90% adoption proxy, not on coalescing).
+        mock_settings.return_value.structure_min_section_chars = 1
+        mock_settings.return_value.structure_max_sections = 10_000
         result = await structure_node(state)
 
     # LLM never called — no tokens burned, no hallucination window
@@ -284,79 +354,6 @@ async def test_structure_guard_empty_raw_text_skips_llm_keeps_rule_based(
     assert len(sections) == 1
     assert sections[0]["title"] == "Document"
     assert not any(s["title"].startswith("LLM Section") for s in sections)
-
-
-@pytest.mark.unit
-async def test_structure_guard_adopts_llm_output_at_exact_90_percent_boundary() -> None:
-    """Boundary pin: the guard rejects on STRICT less-than — LLM bodies
-    totalling EXACTLY 0.9 × len(raw_text) are adopted."""
-    from app.modules.content.pipeline.graph import structure_node
-
-    state = {
-        "lesson_id": FAKE_LESSON_ID,
-        "book_id": FAKE_BOOK_ID,
-        "raw_text": LARGE_RAW_TEXT,
-        "font_blocks": [],
-        "progress_pct": 7.0,
-        "error": None,
-    }
-    sb = MagicMock()
-    sb.table.return_value = _make_jobs_table({})
-    boundary_len = int(0.9 * len(LARGE_RAW_TEXT))
-    assert boundary_len == 0.9 * len(LARGE_RAW_TEXT), "fixture must hit the boundary exactly"
-    llm_result = _make_llm_sections([LARGE_RAW_TEXT[:boundary_len]])
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.config.get_settings") as mock_settings,
-        patch.dict("sys.modules", _make_llm_provider_patch(llm_result)),
-        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
-    ):
-        mock_settings.return_value.llm_mini = "gpt-4o-mini"
-        result = await structure_node(state)
-
-    sections = result["sections"]
-    assert [s["title"] for s in sections] == ["LLM Section 0"]
-    assert len(sections[0]["body"]) == boundary_len
-
-
-@pytest.mark.unit
-async def test_structure_guard_duplicated_bodies_pass_length_proxy() -> None:
-    """Pinning test — KNOWN LIMITATION (Tier-3 #18): the AC-4 guard is a pure
-    LENGTH proxy. LLM output that duplicates the first half of raw_text twice
-    totals 100% of len(raw_text) while actually covering only 50% of the
-    content, and IS adopted. Fixing this needs content-aware coverage
-    (boundary-only structure LLM) — out of scope for Story 2-0."""
-    from app.modules.content.pipeline.graph import structure_node
-
-    state = {
-        "lesson_id": FAKE_LESSON_ID,
-        "book_id": FAKE_BOOK_ID,
-        "raw_text": LARGE_RAW_TEXT,
-        "font_blocks": [],
-        "progress_pct": 7.0,
-        "error": None,
-    }
-    sb = MagicMock()
-    sb.table.return_value = _make_jobs_table({})
-    half = len(LARGE_RAW_TEXT) // 2
-    # Same first half twice: length sums to len(raw_text), content covers half.
-    llm_result = _make_llm_sections([LARGE_RAW_TEXT[:half], LARGE_RAW_TEXT[:half]])
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.config.get_settings") as mock_settings,
-        patch.dict("sys.modules", _make_llm_provider_patch(llm_result)),
-        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
-    ):
-        mock_settings.return_value.llm_mini = "gpt-4o-mini"
-        result = await structure_node(state)
-
-    # Documents (does not endorse) current behavior: duplicated bodies adopted.
-    assert [s["title"] for s in result["sections"]] == ["LLM Section 0", "LLM Section 1"]
-
-
-# ── AC-5: extract timeout formula ─────────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -396,7 +393,9 @@ def test_extract_timeout_never_below_one_second() -> None:
 
     for arq_timeout in (300, 200, 100, 1):
         for size in (0, 1, 30_000, 10**9):
-            timeout = _compute_extract_timeout(size, _timeout_settings(arq_job_timeout_s=arq_timeout))
+            timeout = _compute_extract_timeout(
+                size, _timeout_settings(arq_job_timeout_s=arq_timeout)
+            )
             assert timeout >= 1.0
     # And the clamp floors exactly at 1.0 when arq − 300 goes non-positive
     assert _compute_extract_timeout(10**9, _timeout_settings(arq_job_timeout_s=300)) == 1.0
@@ -518,11 +517,18 @@ async def test_embed_node_empty_chunk_does_not_misalign_vectors() -> None:
 
     e_first = [0.11] * 4
     e_third = [0.33] * 4
-    pages = [[
-        {"chunk_id": "chunk-a", "content": "first text", "chunk_index": 0, "token_count": 10},
-        {"chunk_id": "chunk-b", "content": "   ", "chunk_index": 0, "token_count": 0},  # empty → skipped
-        {"chunk_id": "chunk-c", "content": "third text", "chunk_index": 0, "token_count": 10},
-    ]]
+    pages = [
+        [
+            {"chunk_id": "chunk-a", "content": "first text", "chunk_index": 0, "token_count": 10},
+            {
+                "chunk_id": "chunk-b",
+                "content": "   ",
+                "chunk_index": 0,
+                "token_count": 0,
+            },  # empty → skipped
+            {"chunk_id": "chunk-c", "content": "third text", "chunk_index": 0, "token_count": 10},
+        ]
+    ]
     sb, jobs, chk = _make_embed_supabase(pages)
 
     provider = AsyncMock()
@@ -584,10 +590,7 @@ async def test_embed_node_paginates_past_1000_row_cap() -> None:
     assert sum(embedded_counts) == 1001, "all 1001 chunks must be embedded"
 
     # The select walked consecutive .range() windows
-    range_mock = (
-        chk.select.return_value.eq.return_value.is_.return_value
-        .order.return_value.range
-    )
+    range_mock = chk.select.return_value.eq.return_value.is_.return_value.order.return_value.range
     range_windows = [c.args for c in range_mock.call_args_list]
     assert range_windows[0] == (0, 999)
     assert range_windows[1] == (1000, 1999)
@@ -607,7 +610,12 @@ async def test_embed_node_completion_check_blocks_checkpoint() -> None:
     embed_node must raise and must NOT write its checkpoint."""
     from app.modules.content.pipeline.graph import embed_node
 
-    stubborn = {"chunk_id": "stuck", "content": "never got embedded", "chunk_index": 0, "token_count": 10}
+    stubborn = {
+        "chunk_id": "stuck",
+        "content": "never got embedded",
+        "chunk_index": 0,
+        "token_count": 10,
+    }
     # Page sequence: initial fetch finds it; completion re-query finds it AGAIN
     # (simulating a silently failed writeback).
     sb, jobs, chk = _make_embed_supabase([[stubborn], [stubborn]])

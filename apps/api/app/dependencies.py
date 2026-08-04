@@ -21,10 +21,12 @@ if TYPE_CHECKING:
 
 # Re-export for use in route type annotations
 __all__ = [
+    "AdminUser",
     "ArqRedis",
     "CurrentUser",
     "get_arq_redis",
     "get_current_user",
+    "require_admin",
     "get_redis",
     "get_settings",
 ]
@@ -112,7 +114,28 @@ async def get_current_user(
     return payload
 
 
-async def get_arq_redis(request: Request) -> "ArqRedisType":
+async def require_admin(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """Gate a route to admin users only.
+
+    Admin check is a static email allowlist (`ADMIN_EMAILS` env var), not a
+    DB flag — the minimal viable mechanism today (see Story 2-25 Dev Notes).
+    The caller is already authenticated (get_current_user ran first); a
+    non-admin gets 403, not 404/401, since they're a real authenticated user
+    who is simply not authorized for this route.
+    """
+    email = current_user.get("email")
+    if not email or email.lower() not in settings.admin_emails:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
+async def get_arq_redis(request: Request) -> ArqRedisType:
     """Inject the ARQ Redis pool from app state (for job enqueue only).
 
     Distinct from get_redis() which returns redis.asyncio.Redis.
@@ -130,6 +153,9 @@ async def get_arq_redis(request: Request) -> "ArqRedisType":
 
 CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 """Type alias: inject the current user's decoded JWT payload."""
+
+AdminUser = Annotated[dict[str, Any], Depends(require_admin)]
+"""Type alias: inject the current user's JWT payload, 403 if not an admin."""
 
 ArqRedis = Annotated["ArqRedisType", Depends(get_arq_redis)]
 """Type alias: inject the ARQ job-enqueue pool."""

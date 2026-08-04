@@ -19,12 +19,13 @@ Coverage:
   AC 22,23 — no forbidden imports, no hardcoded EMA weights (AST)
   AC 24 — returns exactly 9 dimension keys
 """
+
 from __future__ import annotations
 
 import ast
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -32,6 +33,7 @@ from fastapi import HTTPException
 from app.config import Settings
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _settings(retain: float = 0.7) -> Settings:
     return Settings(
@@ -75,16 +77,17 @@ def _supabase_mock(
         r.error = err
         return r
 
-    call_count = [0]
-
     def _table(name):
         tbl = MagicMock()
 
         if name == "sessions":
+            sessions_exec = (
+                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            )
             if session_raises:
-                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.side_effect = Exception("DB down")
+                sessions_exec.side_effect = Exception("DB down")
             else:
-                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(session_row)
+                sessions_exec.return_value = _resp(session_row)
 
         elif name == "quiz_attempts":
             tbl.select.return_value.eq.return_value.execute.return_value = _resp(quiz_rows)
@@ -97,7 +100,9 @@ def _supabase_mock(
 
         elif name == "learner_dna":
             select_chain = tbl.select.return_value
-            select_chain.eq.return_value.maybe_single.return_value.execute.return_value = _resp(dna_row)
+            select_chain.eq.return_value.maybe_single.return_value.execute.return_value = _resp(
+                dna_row
+            )
 
             upsert_chain = tbl.upsert.return_value.execute
             if upsert_raises:
@@ -113,30 +118,37 @@ def _supabase_mock(
     return supabase
 
 
-_DNA_FILE = (
-    Path(__file__).parent.parent
-    / "app" / "modules" / "assessment" / "dna_fusion.py"
-)
+_DNA_FILE = Path(__file__).parent.parent / "app" / "modules" / "assessment" / "dna_fusion.py"
 
 NINE_DIMS = (
-    "pattern_recognition", "logical_deduction", "processing_speed",
-    "frustration_tolerance", "persistence", "help_seeking",
-    "goal_orientation", "curiosity_index", "study_independence",
+    "pattern_recognition",
+    "logical_deduction",
+    "processing_speed",
+    "frustration_tolerance",
+    "persistence",
+    "help_seeking",
+    "goal_orientation",
+    "curiosity_index",
+    "study_independence",
 )
 
 # ── AC 2: __all__ ─────────────────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_dunder_all_exports_only_fuse_learner_dna():
     from app.modules.assessment import dna_fusion
+
     assert dna_fusion.__all__ == ["fuse_learner_dna"]
 
 
 # ── AC 3: keyword-only signature ──────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_positional_args_raise_type_error():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     with pytest.raises(TypeError):
         asyncio.get_event_loop().run_until_complete(
             fuse_learner_dna("uid", "sid", MagicMock(), _settings())
@@ -145,16 +157,19 @@ def test_positional_args_raise_type_error():
 
 # ── AC 4: _apply_ema ──────────────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_apply_ema_basic_formula():
     from app.modules.assessment.dna_fusion import _apply_ema
+
     result = _apply_ema(50.0, 100.0, 0.7)
     assert result == pytest.approx(65.0, abs=0.001)
 
 
 @pytest.mark.unit
 def test_apply_ema_none_old_uses_neutral():
-    from app.modules.assessment.dna_fusion import _apply_ema, _NEUTRAL
+    from app.modules.assessment.dna_fusion import _NEUTRAL, _apply_ema
+
     result = _apply_ema(None, 100.0, 0.7)
     expected = round(0.7 * _NEUTRAL + 0.3 * 100.0, 4)
     assert result == pytest.approx(expected, abs=0.001)
@@ -163,6 +178,7 @@ def test_apply_ema_none_old_uses_neutral():
 @pytest.mark.unit
 def test_apply_ema_clamps_above_100():
     from app.modules.assessment.dna_fusion import _apply_ema
+
     # old=100, signal=100, retain=0.7 → 100.0 (already at max, no overshoot possible)
     # old=100, signal=200 (out of range) — clamp on output
     # Use retain=0.0 so result = signal directly
@@ -173,6 +189,7 @@ def test_apply_ema_clamps_above_100():
 @pytest.mark.unit
 def test_apply_ema_clamps_below_0():
     from app.modules.assessment.dna_fusion import _apply_ema
+
     # retain=0.0 → result = signal; signal = -10 → clamped to 0
     result = _apply_ema(50.0, -10.0, 0.0)
     assert result == 0.0
@@ -181,6 +198,7 @@ def test_apply_ema_clamps_below_0():
 @pytest.mark.unit
 def test_apply_ema_rounded_to_4dp():
     from app.modules.assessment.dna_fusion import _apply_ema
+
     result = _apply_ema(33.3333, 66.6667, 0.5)
     # round(0.5*33.3333 + 0.5*66.6667, 4) = round(50.0, 4) = 50.0
     assert result == pytest.approx(50.0, abs=0.001)
@@ -188,9 +206,11 @@ def test_apply_ema_rounded_to_4dp():
 
 # ── AC 5-13: _compute_signals ─────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_compute_signals_quiz_accuracy_maps_to_pattern_and_logical():
     from app.modules.assessment.dna_fusion import _compute_signals
+
     quiz_rows = [
         {"is_correct": True, "response_time_ms": 5000},
         {"is_correct": True, "response_time_ms": 5000},
@@ -204,7 +224,8 @@ def test_compute_signals_quiz_accuracy_maps_to_pattern_and_logical():
 
 @pytest.mark.unit
 def test_compute_signals_no_quiz_returns_zero_for_cognitive_dims():
-    from app.modules.assessment.dna_fusion import _compute_signals, _NEUTRAL
+    from app.modules.assessment.dna_fusion import _NEUTRAL, _compute_signals
+
     sigs = _compute_signals(quiz_rows=[], tb_rows=[], event_counts={})
     # AC 6: pattern/logical = 0.0 when no quiz attempts (no data = pessimistic signal)
     assert sigs["pattern_recognition"] == 0.0
@@ -215,7 +236,8 @@ def test_compute_signals_no_quiz_returns_zero_for_cognitive_dims():
 
 @pytest.mark.unit
 def test_compute_signals_fast_response_processing_speed_100():
-    from app.modules.assessment.dna_fusion import _compute_signals, _FAST_RESPONSE_MS
+    from app.modules.assessment.dna_fusion import _FAST_RESPONSE_MS, _compute_signals
+
     quiz_rows = [{"is_correct": True, "response_time_ms": _FAST_RESPONSE_MS}]
     sigs = _compute_signals(quiz_rows=quiz_rows, tb_rows=[], event_counts={})
     assert sigs["processing_speed"] == pytest.approx(100.0, abs=0.01)
@@ -223,7 +245,8 @@ def test_compute_signals_fast_response_processing_speed_100():
 
 @pytest.mark.unit
 def test_compute_signals_slow_response_processing_speed_0():
-    from app.modules.assessment.dna_fusion import _compute_signals, _SLOW_RESPONSE_MS
+    from app.modules.assessment.dna_fusion import _SLOW_RESPONSE_MS, _compute_signals
+
     quiz_rows = [{"is_correct": True, "response_time_ms": _SLOW_RESPONSE_MS}]
     sigs = _compute_signals(quiz_rows=quiz_rows, tb_rows=[], event_counts={})
     assert sigs["processing_speed"] == pytest.approx(0.0, abs=0.01)
@@ -231,7 +254,8 @@ def test_compute_signals_slow_response_processing_speed_0():
 
 @pytest.mark.unit
 def test_compute_signals_high_interventions_frustration_tolerance_0():
-    from app.modules.assessment.dna_fusion import _compute_signals, _INTERVENTION_CAP
+    from app.modules.assessment.dna_fusion import _INTERVENTION_CAP, _compute_signals
+
     counts = {"intervention_triggered": _INTERVENTION_CAP}
     sigs = _compute_signals(quiz_rows=[], tb_rows=[], event_counts=counts)
     assert sigs["frustration_tolerance"] == pytest.approx(0.0, abs=0.001)
@@ -239,7 +263,8 @@ def test_compute_signals_high_interventions_frustration_tolerance_0():
 
 @pytest.mark.unit
 def test_compute_signals_persistence_retry_after_low_score():
-    from app.modules.assessment.dna_fusion import _compute_signals, _TEACHBACK_LOW_SCORE
+    from app.modules.assessment.dna_fusion import _TEACHBACK_LOW_SCORE, _compute_signals
+
     tb_rows = [
         {"score": _TEACHBACK_LOW_SCORE - 10, "attempt_number": 1, "segment_id": "seg-1"},
         {"score": 75, "attempt_number": 2, "segment_id": "seg-1"},
@@ -250,7 +275,8 @@ def test_compute_signals_persistence_retry_after_low_score():
 
 @pytest.mark.unit
 def test_compute_signals_persistence_no_retry_good_scores():
-    from app.modules.assessment.dna_fusion import _compute_signals, _TEACHBACK_LOW_SCORE
+    from app.modules.assessment.dna_fusion import _TEACHBACK_LOW_SCORE, _compute_signals
+
     tb_rows = [
         {"score": _TEACHBACK_LOW_SCORE + 10, "attempt_number": 1, "segment_id": "seg-1"},
         {"score": _TEACHBACK_LOW_SCORE + 20, "attempt_number": 1, "segment_id": "seg-2"},
@@ -262,7 +288,8 @@ def test_compute_signals_persistence_no_retry_good_scores():
 
 @pytest.mark.unit
 def test_compute_signals_persistence_gave_up_no_retry():
-    from app.modules.assessment.dna_fusion import _compute_signals, _TEACHBACK_LOW_SCORE
+    from app.modules.assessment.dna_fusion import _TEACHBACK_LOW_SCORE, _compute_signals
+
     tb_rows = [
         {"score": _TEACHBACK_LOW_SCORE - 5, "attempt_number": 1, "segment_id": "seg-1"},
     ]
@@ -273,7 +300,8 @@ def test_compute_signals_persistence_gave_up_no_retry():
 
 @pytest.mark.unit
 def test_compute_signals_help_seeking_and_study_independence_are_inverse():
-    from app.modules.assessment.dna_fusion import _compute_signals, _HELP_CAP
+    from app.modules.assessment.dna_fusion import _HELP_CAP, _compute_signals
+
     counts = {"help_seeking": _HELP_CAP}
     sigs = _compute_signals(quiz_rows=[], tb_rows=[], event_counts=counts)
     assert sigs["help_seeking"] == pytest.approx(100.0, abs=0.001)
@@ -284,7 +312,8 @@ def test_compute_signals_help_seeking_and_study_independence_are_inverse():
 
 @pytest.mark.unit
 def test_compute_signals_goal_orientation_decreases_with_skips():
-    from app.modules.assessment.dna_fusion import _compute_signals, _SKIP_CAP
+    from app.modules.assessment.dna_fusion import _SKIP_CAP, _compute_signals
+
     counts = {"skip_segment": _SKIP_CAP}
     sigs = _compute_signals(quiz_rows=[], tb_rows=[], event_counts=counts)
     assert sigs["goal_orientation"] == pytest.approx(0.0, abs=0.001)
@@ -295,7 +324,8 @@ def test_compute_signals_goal_orientation_decreases_with_skips():
 
 @pytest.mark.unit
 def test_compute_signals_curiosity_index_increases_with_jargon():
-    from app.modules.assessment.dna_fusion import _compute_signals, _JARGON_CAP
+    from app.modules.assessment.dna_fusion import _JARGON_CAP, _compute_signals
+
     counts = {"jargon_hover": _JARGON_CAP}
     sigs = _compute_signals(quiz_rows=[], tb_rows=[], event_counts=counts)
     assert sigs["curiosity_index"] == pytest.approx(100.0, abs=0.001)
@@ -306,10 +336,12 @@ def test_compute_signals_curiosity_index_increases_with_jargon():
 
 # ── AC 14: ended_at=None → None ──────────────────────────────────────────────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_session_not_ended_returns_none():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": None}
     supabase = _supabase_mock(session_row, [], [], [], None)
     result = await fuse_learner_dna(
@@ -320,10 +352,12 @@ async def test_async_session_not_ended_returns_none():
 
 # ── AC 15: user_id mismatch → 404 ───────────────────────────────────────────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_user_id_mismatch_raises_404():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     session_row = {
         "session_id": "s1",
         "user_id": "different-user",
@@ -339,10 +373,12 @@ async def test_async_user_id_mismatch_raises_404():
 
 # ── AC 16: DB failure on session read → 503 ──────────────────────────────────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_db_failure_raises_503():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     supabase = _supabase_mock(None, [], [], [], None, session_raises=True)
     with pytest.raises(HTTPException) as exc_info:
         await fuse_learner_dna(
@@ -353,10 +389,12 @@ async def test_async_db_failure_raises_503():
 
 # ── AC 19 + 24: no DNA row → neutral old, returns 9 dims ────────────────────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_no_dna_row_uses_neutral_old():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
     supabase = _supabase_mock(session_row, [], [], [], dna_row=None)
     result = await fuse_learner_dna(
@@ -367,6 +405,7 @@ async def test_async_no_dna_row_uses_neutral_old():
 
 
 # ── AC 21: dna_ema_retain in Settings ───────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_dna_ema_retain_in_settings():
@@ -379,10 +418,12 @@ def test_dna_ema_retain_in_settings():
 
 # ── AC 20 + 24: happy path → 9 dims returned, session_count incremented ─────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_happy_path_returns_9_dimension_dict():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
     quiz_rows = [
         {"is_correct": True, "response_time_ms": 8000},
@@ -422,11 +463,12 @@ async def test_async_happy_path_returns_9_dimension_dict():
 @pytest.mark.asyncio
 async def test_async_session_count_incremented():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
     dna_row = {
         "user_id": "u1",
         "session_count": 3,
-        **{dim: 50.0 for dim in NINE_DIMS},
+        **dict.fromkeys(NINE_DIMS, 50.0),
     }
     supabase = _supabase_mock(session_row, [], [], [], dna_row)
 
@@ -437,27 +479,29 @@ async def test_async_session_count_incremented():
         tbl = original_table(name)
         if name == "learner_dna":
             orig_upsert = tbl.upsert
+
             def tracked_upsert(payload, **kwargs):
                 upsert_calls.append(dict(payload))  # snapshot — guard against mutation
                 return orig_upsert(payload, **kwargs)
+
             tbl.upsert = tracked_upsert
         return tbl
 
     supabase.table.side_effect = tracking_table
 
-    await fuse_learner_dna(
-        user_id="u1", session_id="s1", supabase=supabase, settings=_settings()
-    )
+    await fuse_learner_dna(user_id="u1", session_id="s1", supabase=supabase, settings=_settings())
     assert len(upsert_calls) == 1
     assert upsert_calls[0].get("session_count") == 4  # 3 + 1
 
 
 # ── AC 17: upsert DB failure → 503 ──────────────────────────────────────────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_upsert_failure_raises_503():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
     supabase = _supabase_mock(session_row, [], [], [], None, upsert_raises=True)
     with pytest.raises(HTTPException) as exc_info:
@@ -469,12 +513,14 @@ async def test_async_upsert_failure_raises_503():
 
 # ── AC 18: quiz/teachback/events read failure → non-fatal ────────────────────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_data_read_failure_is_non_fatal():
     """AC 18: DB failures on quiz/teachback/events reads log WARNING and use
     neutral signals — they do NOT raise and do NOT abort the DNA update."""
     from app.modules.assessment.dna_fusion import fuse_learner_dna
+
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
 
     supabase = MagicMock()
@@ -488,11 +534,17 @@ async def test_async_data_read_failure_is_non_fatal():
     def _table(name):
         tbl = MagicMock()
         if name == "sessions":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(session_row)
+            sessions_exec = (
+                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            )
+            sessions_exec.return_value = _resp(session_row)
         elif name in ("quiz_attempts", "teachback_attempts", "session_events"):
-            tbl.select.return_value.eq.return_value.execute.side_effect = Exception("DB read failed")
+            tbl.select.return_value.eq.return_value.execute.side_effect = Exception(
+                "DB read failed"
+            )
         elif name == "learner_dna":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = _resp(None)
+            dna_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
+            dna_exec.return_value = _resp(None)
             tbl.upsert.return_value.execute.return_value = _resp([])
         return tbl
 
@@ -507,6 +559,7 @@ async def test_async_data_read_failure_is_non_fatal():
 
 
 # ── AC 23: no hardcoded EMA weights in dna_fusion.py ─────────────────────────
+
 
 @pytest.mark.unit
 def test_no_hardcoded_ema_weights():
@@ -525,6 +578,7 @@ def test_no_hardcoded_ema_weights():
 
 
 # ── AC 22: no forbidden imports ──────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_no_forbidden_imports():

@@ -36,9 +36,9 @@ All parameters are keyword-only (`*`). Returns `float` in range [0.0, 100.0]. Sy
 **AC 6 — Full 5-signal formula:** When both `quiz_accuracy` and `teachback_score` are not `None`:
 ```
 raw = qa*w_quiz + tb*w_teachback + beh*w_behavioral + hp*w_head_pose + bl*w_blink
-CES = round(raw * 100, 4)
+CES = min(100.0, round(raw * 100, 4))
 ```
-Where each input is first clamped per AC 5.
+Where each input is first clamped per AC 5. The `min(100.0, …)` guard prevents raw from exceeding 100 when weights sum to 1.001 (within the ±0.001 tolerance allowed by `@model_validator`).
 
 **AC 7 — `teachback_score=None` redistribution (teach-back skipped):** When `teachback_score` is `None`, the teachback weight is redistributed proportionally across the remaining 4 signals:
 ```python
@@ -282,7 +282,7 @@ def compute_ces(
             + bl  * settings.ces_weight_blink
         )
 
-    return round(raw * 100, 4)
+    return min(100.0, round(raw * 100, 4))
 ```
 
 ### Files created / modified

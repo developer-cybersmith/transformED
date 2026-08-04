@@ -79,12 +79,7 @@ def _make_chunks_table(pages: list[list[dict[str, Any]]]) -> MagicMock:
         return resp
 
     (
-        t.select.return_value
-        .eq.return_value
-        .is_.return_value
-        .order.return_value
-        .range.return_value
-        .execute.side_effect
+        t.select.return_value.eq.return_value.is_.return_value.order.return_value.range.return_value.execute.side_effect
     ) = _execute
     t.upsert.return_value.execute.return_value = MagicMock()
     return t
@@ -175,7 +170,9 @@ async def test_embed_node_happy_path() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.config.get_settings") as mock_settings,
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
-        patch("app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider) as mock_cls,
+        patch(
+            "app.providers.embeddings.openai.OpenAIEmbeddingsProvider", return_value=provider
+        ) as mock_cls,
     ):
         _configure_settings(mock_settings)
         result = await embed_node({**_BASE_STATE})
@@ -210,8 +207,12 @@ async def test_embed_node_happy_path() -> None:
     # candidate tuple BEFORE ON CONFLICT arbitration, so dropping them
     # fails prod with 23502 even though only the UPDATE arm runs.
     assert set(rows[0]) >= {
-        "chunk_id", "chapter_id", "content", "chunk_index",
-        "embedding", "embedding_metadata",
+        "chunk_id",
+        "chapter_id",
+        "content",
+        "chunk_index",
+        "embedding",
+        "embedding_metadata",
     }
 
     # books.update called with status=ready, keyed on book_id
@@ -381,8 +382,12 @@ async def test_embed_node_embedding_metadata_written() -> None:
     assert "ingested_at" in meta
     # AC-6d upsert SHAPE: NOT-NULL echo columns must survive (see happy path)
     assert set(rows[0]) >= {
-        "chunk_id", "chapter_id", "content", "chunk_index",
-        "embedding", "embedding_metadata",
+        "chunk_id",
+        "chapter_id",
+        "content",
+        "chunk_index",
+        "embedding",
+        "embedding_metadata",
     }
 
 
@@ -568,7 +573,8 @@ async def test_embed_node_oversized_single_chunk_truncates_api_input() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_embed_node_provider_retry_on_429() -> None:
-    """Provider embed_texts raises on first call (simulates 429) then succeeds — node retries (P7)."""
+    """Provider embed_texts raises on first call (simulates 429) then succeeds
+    — node retries (P7)."""
     from app.modules.content.pipeline.graph import embed_node
 
     sb, jobs, chk, bks = _make_supabase(

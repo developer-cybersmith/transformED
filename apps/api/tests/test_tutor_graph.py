@@ -22,11 +22,11 @@ _STATE_TTL = 86_400  # mirrors graph._STATE_TTL
 
 @pytest.fixture(autouse=True)
 def _stub_langfuse(mocker):
-    """dispatch_event traces every call via get_langfuse(); stub it so no real Langfuse client is
-    built in any graph test. Returns the stub client for trace-assertion tests."""
-    client = MagicMock()
-    mocker.patch("app.core.langfuse.get_langfuse", return_value=client)
-    return client
+    """Stub _trace_dispatch so tests don't require app.core.langfuse to exist."""
+    mocker.patch(
+        "app.modules.tutor.state_machine.graph._trace_dispatch",
+        return_value=None,
+    )
 
 
 def _redis(current_state: str | None) -> AsyncMock:
@@ -249,7 +249,8 @@ async def test_session_reset_returns_to_idle(mocker) -> None:
 
 @pytest.mark.unit
 async def test_session_end_noop_terminates_without_running_a_node(mocker) -> None:
-    """SESSION_END + unrecognised event → entry routes straight to END; no crash, stays SESSION_END."""
+    """SESSION_END + unrecognised event → entry routes straight to END; no crash, stays
+    SESSION_END."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis("SESSION_END"))
 
     from app.modules.tutor.state_machine.graph import dispatch_event
@@ -379,7 +380,8 @@ def _assert_intervention_suppressed(redis: AsyncMock, sid: str) -> None:
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_cooldown_stays_teaching(mocker) -> None:
-    """distraction_detected during an active cooldown → guard blocks → stays TEACHING (suppressed)."""
+    """distraction_detected during an active cooldown → guard blocks → stays TEACHING
+    (suppressed)."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-cool", state="TEACHING", exists=1)  # cooldown active
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -394,7 +396,8 @@ async def test_distraction_blocked_by_cooldown_stays_teaching(mocker) -> None:
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_max_count_stays_teaching(mocker) -> None:
-    """distraction_detected at the per-session cap (count == max) → guard blocks → stays TEACHING."""
+    """distraction_detected at the per-session cap (count == max) → guard blocks → stays
+    TEACHING."""
     _patch_settings(mocker, max_distraction=3)
     redis = _keyed_redis("s-cap", state="TEACHING", count="3", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -427,7 +430,9 @@ async def test_distraction_allowed_just_below_max(mocker) -> None:
 @pytest.mark.unit
 async def test_fatigue_blocked_when_already_fired_stays_teaching(mocker) -> None:
     """fatigue_detected after fatigue already fired this session → guard blocks → stays TEACHING."""
-    _patch_settings(mocker)  # consistency: future fatigue-guard changes won't crash on MagicMock attrs
+    _patch_settings(
+        mocker
+    )  # consistency: future fatigue-guard changes won't crash on MagicMock attrs
     redis = _keyed_redis("s-fat2", state="TEACHING", exists=1)  # fatigue_fired present
     mocker.patch("app.core.redis.get_redis", return_value=redis)
 
@@ -468,7 +473,8 @@ async def test_fatigue_blocked_during_teach_back(mocker) -> None:
 
 @pytest.mark.unit
 async def test_teach_back_stays_on_unrelated_event(mocker) -> None:
-    """Any non teach-back-outcome event keeps the FSM in TEACH_BACK (not the old default→TEACHING)."""
+    """Any non teach-back-outcome event keeps the FSM in TEACH_BACK (not the old
+    default→TEACHING)."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACH_BACK"))
 
     from app.modules.tutor.state_machine.graph import dispatch_event
@@ -546,7 +552,8 @@ async def test_start_session_dispatches_session_start(mocker) -> None:
 
 @pytest.mark.unit
 async def test_fatigue_detected_sets_fatigue_fired_flag(mocker) -> None:
-    """AC1/AC2: fatigue_detected now records the fatigue flag (intervention_type derived = fatigue)."""
+    """AC1/AC2: fatigue_detected now records the fatigue flag (intervention_type derived =
+    fatigue)."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-ff", state="TEACHING", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -561,7 +568,8 @@ async def test_fatigue_detected_sets_fatigue_fired_flag(mocker) -> None:
 
 @pytest.mark.unit
 async def test_distraction_detected_increments_count(mocker) -> None:
-    """AC2: distraction_detected increments the distraction counter (intervention_type = distraction)."""
+    """AC2: distraction_detected increments the distraction counter (intervention_type =
+    distraction)."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-dc", state="TEACHING", count="0", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -576,7 +584,8 @@ async def test_distraction_detected_increments_count(mocker) -> None:
 
 @pytest.mark.unit
 async def test_intervention_message_selected_from_payload(mocker) -> None:
-    """AC3: intervening_node selects the pre-generated message for the active type from the payload."""
+    """AC3: intervening_node selects the pre-generated message for the active type from the
+    payload."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-msg", state="TEACHING", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -598,7 +607,8 @@ async def test_intervention_message_selected_from_payload(mocker) -> None:
 
 @pytest.mark.unit
 async def test_intervention_message_none_when_absent(mocker) -> None:
-    """AC4: no package supplied → intervention_message is None, recording/transition still happen."""
+    """AC4: no package supplied → intervention_message is None, recording/transition still
+    happen."""
     _patch_settings(mocker)
     redis = _keyed_redis("s-nomsg", state="TEACHING", count="0", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -612,22 +622,29 @@ async def test_intervention_message_none_when_absent(mocker) -> None:
 
 
 @pytest.mark.unit
-async def test_langfuse_trace_called_on_dispatch(mocker, _stub_langfuse) -> None:
-    """AC5: dispatch_event emits a Langfuse trace."""
+async def test_langfuse_trace_called_on_dispatch(mocker) -> None:
+    """_trace_dispatch is called once per dispatch."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+    trace_spy = mocker.patch(
+        "app.modules.tutor.state_machine.graph._trace_dispatch",
+        return_value=None,
+    )
 
     from app.modules.tutor.state_machine.graph import dispatch_event
 
     await dispatch_event("s-lf", "session_start")
 
-    _stub_langfuse.trace.assert_called_once()
+    trace_spy.assert_called_once()
 
 
 @pytest.mark.unit
 async def test_langfuse_failure_does_not_break_dispatch(mocker) -> None:
-    """AC5: a Langfuse failure must never break a dispatch (best-effort tracing)."""
-    mocker.patch("app.core.langfuse.get_langfuse", side_effect=RuntimeError("no langfuse"))
+    """A tracing failure must never break a dispatch (best-effort, try/except in dispatch_event)."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+    mocker.patch(
+        "app.modules.tutor.state_machine.graph._trace_dispatch",
+        side_effect=RuntimeError("simulated trace failure"),
+    )
 
     from app.modules.tutor.state_machine.graph import dispatch_event
 
@@ -661,7 +678,8 @@ async def test_teach_back_sets_in_teachback(mocker) -> None:
 
 
 def _stateful_full_redis(initial: str) -> AsyncMock:
-    """Stateful Redis for the full intervention cycle: live tutor_state + count='0' + no cooldown."""
+    """Stateful Redis for the full intervention cycle: live tutor_state + count='0' + no
+    cooldown."""
     store = {"tutor_state": initial}
     redis = AsyncMock()
 
@@ -788,3 +806,299 @@ async def test_fatigue_fires_once_then_blocked(mocker) -> None:
 
     r2 = await dispatch_event(sid, "fatigue_detected")
     assert r2["current_state"] == TutorState.TEACHING  # blocked — fatigue already fired
+
+
+# ── state_change WebSocket broadcast ─────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_state_change_broadcast_fires_on_real_transition(mocker) -> None:
+    """dispatch_event broadcasts state_change when from_state != to_state."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis(None))
+    mock_send = AsyncMock()
+    mocker.patch("app.core.websocket.manager.send", mock_send)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event("s-sc1", "session_start")
+
+    mock_send.assert_awaited_once()
+    call_args = mock_send.call_args
+    assert call_args[0][0] == "s-sc1"
+    msg = call_args[0][1]
+    assert msg["type"] == "state_change"
+    assert msg["payload"]["from_state"] == "IDLE"
+    assert msg["payload"]["to_state"] == "TEACHING"
+    assert msg["payload"]["session_id"] == "s-sc1"
+
+
+@pytest.mark.unit
+async def test_state_change_broadcast_silent_on_no_transition(mocker) -> None:
+    """dispatch_event does NOT broadcast when state does not change (e.g. noop from TEACHING)."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+    mock_send = AsyncMock()
+    mocker.patch("app.core.websocket.manager.send", mock_send)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event("s-sc2", "noop")
+
+    mock_send.assert_not_awaited()
+
+
+@pytest.mark.unit
+async def test_state_change_broadcast_payload_matches_ws_ts_contract(mocker) -> None:
+    """Payload shape must match the frozen StateChangeMessage in ws.ts exactly."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+    _patch_settings(mocker)
+    mock_send = AsyncMock()
+    mocker.patch("app.core.websocket.manager.send", mock_send)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event("s-sc3", "segment_complete")
+
+    mock_send.assert_awaited_once()
+    msg = mock_send.call_args[0][1]
+    payload = msg["payload"]
+    assert set(payload.keys()) == {"session_id", "from_state", "to_state"}
+    assert isinstance(payload["session_id"], str)
+    assert isinstance(payload["from_state"], str)
+    assert isinstance(payload["to_state"], str)
+
+
+# ── Story 4-20: QUIZZING deadline enforcement ─────────────────────────────────
+
+
+def _deadline_redis(sid: str, *, state: str = "TEACHING", qa_secs: str | None = "300") -> AsyncMock:
+    """Key-aware Redis for deadline tests.
+
+    GET returns *state* for ``tutor_state:{sid}``, *qa_secs* for
+    ``session:{sid}:qa_phase_seconds``, and None for everything else.
+    SET side-effect updates the tutor_state store so chained dispatches see
+    the post-transition value.
+    """
+    store: dict[str, str] = {f"tutor_state:{sid}": state}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"session:{sid}:qa_phase_seconds":
+            return qa_secs
+        return store.get(key)
+
+    async def _set(key: str, value, **kw):
+        store[key] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    return redis
+
+
+@pytest.mark.unit
+async def test_quizzing_node_writes_quiz_deadline_at(mocker) -> None:
+    """AC1: entering QUIZZING writes quiz_deadline_at = int(time.time()) + qa_phase_seconds."""
+    import time as _time
+
+    sid = "s-qdl-write"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs="300")
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1, "quiz_deadline_at must be written exactly once"
+    written = int(deadline_calls[0].args[1])
+    assert before + 300 <= written <= after + 300
+    assert deadline_calls[0].kwargs.get("ex") == 86400
+
+
+@pytest.mark.unit
+async def test_quizzing_node_uses_t1_qa_seconds(mocker) -> None:
+    """AC1: T1 tier qa_phase_seconds (600 s) is honoured — deadline is +600 s."""
+    import time as _time
+
+    sid = "s-qdl-t1"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs="600")
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1
+    written = int(deadline_calls[0].args[1])
+    assert before + 600 <= written <= after + 600
+
+
+@pytest.mark.unit
+async def test_quizzing_node_fallback_300_when_qa_seconds_missing(mocker) -> None:
+    """AC1: missing qa_phase_seconds key → quizzing_node falls back to 300 s (T2 default)."""
+    import time as _time
+
+    sid = "s-qdl-fb"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs=None)  # no qa_phase_seconds key
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1
+    written = int(deadline_calls[0].args[1])
+    assert before + 300 <= written <= after + 300
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_expired_deadline_auto_quiz_complete(mocker) -> None:
+    """AC4: expired quiz_deadline_at → advance_tutor_state auto-dispatches quiz_complete via
+    the REAL FSM (dispatch_event not mocked) → session lands in TEACHING."""
+    import time as _time
+
+    sid = "s-qdl-e2e"
+    expired = str(int(_time.time()) - 60)
+
+    store: dict = {"state": "QUIZZING"}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return store["state"]
+        if key == f"session:{sid}:quiz_deadline_at":
+            return expired
+        return None
+
+    async def _set(key: str, value, **kw):
+        if key.startswith("tutor_state:"):
+            store["state"] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    redis.delete = AsyncMock(return_value=1)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    assert store["state"] == "TEACHING"
+    redis.delete.assert_awaited_once_with(f"session:{sid}:quiz_deadline_at")
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_not_expired_deadline_normal_flow(mocker) -> None:
+    """AC5/AC6: deadline not yet expired → student quiz_complete dispatched normally → TEACHING."""
+    import time as _time
+
+    sid = "s-qdl-active"
+    future = str(int(_time.time()) + 3600)
+
+    store: dict = {"state": "QUIZZING"}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return store["state"]
+        if key == f"session:{sid}:quiz_deadline_at":
+            return future
+        return None
+
+    async def _set(key: str, value, **kw):
+        if key.startswith("tutor_state:"):
+            store["state"] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    assert store["state"] == "TEACHING"
+    redis.delete.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_missing_deadline_no_auto_advance(mocker) -> None:
+    """AC6: missing quiz_deadline_at → _quiz_deadline_expired returns False → normal dispatch."""
+    sid = "s-qdl-none"
+
+    store: dict = {"state": "QUIZZING"}
+    redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return store["state"]
+        return None  # no quiz_deadline_at
+
+    async def _set(key: str, value, **kw):
+        if key.startswith("tutor_state:"):
+            store["state"] = str(value)
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(side_effect=_set)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    assert store["state"] == "TEACHING"
+    redis.delete.assert_not_called()
+
+
+# ── Story 4-20 review patches ─────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_quizzing_node_uses_t3_qa_seconds(mocker) -> None:
+    """AC1: T3 tier qa_phase_seconds (150 s) is honoured — deadline is +150 s."""
+    import time as _time
+
+    sid = "s-qdl-t3"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs="150")
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1
+    written = int(deadline_calls[0].args[1])
+    assert before + 150 <= written <= after + 150
+
+
+@pytest.mark.unit
+async def test_quizzing_node_redis_failure_still_returns_quizzing(mocker) -> None:
+    """quizzing_node Redis failure during quiz_deadline_at write is best-effort:
+    exception is caught and the FSM still returns QUIZZING state."""
+    sid = "s-qdl-fail"
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="300")  # qa_phase_seconds present
+
+    async def _set(key: str, value, **kw):
+        if "quiz_deadline_at" in key:
+            raise RuntimeError("redis unavailable")
+        # tutor_state:* write succeeds (used by _persist_state inside the same mock)
+
+    redis.set = AsyncMock(side_effect=_set)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import quizzing_node
+
+    result = await quizzing_node({"session_id": sid, "current_state": "CHECKING_IN"})
+
+    assert result["current_state"].value == "QUIZZING"

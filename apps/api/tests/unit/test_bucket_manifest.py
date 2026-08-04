@@ -47,13 +47,17 @@ _PROVISIONED = set(REQUIRED_BUCKETS)
 # accepted manually. Key: "<path relative to app/>:<identifier>". Each entry
 # must document why it is safe. A stale entry (reference removed) fails the
 # scanner test so this list cannot rot.
-_MANUAL_DYNAMIC_REFERENCES: frozenset[str] = frozenset({
-    # get_signed_url's `bucket` is a request query param constrained to the
-    # module's _ALLOWED_BUCKETS allowlist before any storage call; the
-    # .storage.from_(bucket) text is currently only a TODO docstring and the
-    # endpoint returns 501. Runtime values are covered by the allowlist check.
-    "modules/media/router.py:bucket",
-})
+_MANUAL_DYNAMIC_REFERENCES: frozenset[str] = frozenset(
+    {
+        # sign_storage_path()'s `bucket` param (Story 1-6) is a shared helper
+        # used by both media/router.py's get_signed_url (bucket already
+        # validated against _ALLOWED_BUCKETS before this call) and
+        # content/router.py's _resolve_lesson_content (called only with the
+        # hardcoded literals "lesson-audio"/"lesson-images", never raw user
+        # input). No call site passes an unvalidated value.
+        "core/storage.py:bucket",
+    }
+)
 
 # Storage bucket access by string literal: supabase.storage.from_("...").
 # (PostgREST table access `.from_("table")` without the .storage prefix is
@@ -132,9 +136,7 @@ def test_no_unresolvable_bucket_identifiers() -> None:
 def test_migration_provisions_every_bucket() -> None:
     migration_text = _MIGRATION.read_text(encoding="utf-8")
     for bucket in _PROVISIONED | _referenced_buckets():
-        assert bucket in migration_text, (
-            f"bucket '{bucket}' missing from {_MIGRATION.name}"
-        )
+        assert bucket in migration_text, f"bucket '{bucket}' missing from {_MIGRATION.name}"
 
 
 def test_migration_provisions_all_buckets_private() -> None:
@@ -200,8 +202,7 @@ def test_assert_raises_naming_missing_bucket() -> None:
 
 def test_assert_raises_naming_public_bucket() -> None:
     buckets = [
-        SimpleNamespace(name=n, public=(n == "lesson-images"))
-        for n in sorted(REQUIRED_BUCKETS)
+        SimpleNamespace(name=n, public=(n == "lesson-images")) for n in sorted(REQUIRED_BUCKETS)
     ]
     with pytest.raises(RuntimeError, match=r"must be private.*lesson-images"):
         assert_required_buckets(_client(buckets))

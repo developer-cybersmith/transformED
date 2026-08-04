@@ -32,7 +32,8 @@ class TutorSessionState(BaseModel):
 
 
 class InterventionRequest(BaseModel):
-    intervention_type: str  # distraction | confusion | fatigue (+ admin prompt types: quiz_prompt | teachback_prompt)
+    # distraction | confusion | fatigue (+ admin prompt types: quiz_prompt | teachback_prompt)
+    intervention_type: str
     force: bool = False  # override cooldown (admin / test use only)
 
 

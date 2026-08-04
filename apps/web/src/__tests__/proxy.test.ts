@@ -10,7 +10,7 @@ vi.mock('@/lib/supabase/middleware', () => ({
 }));
 
 // Imported after the mock so the module under test picks it up.
-import { middleware } from '@/middleware';
+import { proxy } from '@/proxy';
 
 function makeRequest(pathname: string): NextRequest {
   return new NextRequest(new URL(pathname, 'http://localhost:3000'));
@@ -72,7 +72,7 @@ describe('middleware — protected route coverage', () => {
       supabase: makeSupabaseStub(null),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response.status).toBe(307); // NextResponse.redirect default status
     expect(response.headers.get('location')).toBe(`http://localhost:3000/signin`);
@@ -86,7 +86,7 @@ describe('middleware — protected route coverage', () => {
       supabase: makeSupabaseStub({ user_id: 'u1' }),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response).toBe(passThrough);
   });
@@ -99,7 +99,7 @@ describe('middleware — protected route coverage', () => {
       supabase: makeSupabaseStub(null),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response).toBe(passThrough);
   });
@@ -116,7 +116,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
       supabase: makeSupabaseStub(null),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe('http://localhost:3000/onboarding');
@@ -130,7 +130,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
       supabase: makeSupabaseStub({ user_id: 'u1' }),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response).toBe(passThrough);
   });
@@ -143,7 +143,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
       supabase: makeSupabaseStub(null),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response).toBe(passThrough);
   });
@@ -156,7 +156,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
       supabase: makeSupabaseErrorStub(),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response).toBe(passThrough);
   });
@@ -169,7 +169,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
       supabase: makeSupabaseThrowingStub(),
     });
 
-    const response = await middleware(makeRequest(path));
+    const response = await proxy(makeRequest(path));
 
     expect(response).toBe(passThrough);
   });
@@ -182,7 +182,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
       supabase: makeSupabaseStub(null),
     });
 
-    const response = await middleware(makeRequest('/lessons'));
+    const response = await proxy(makeRequest('/lessons'));
 
     expect(response).toBe(passThrough);
   });

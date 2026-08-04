@@ -1,12 +1,12 @@
 # Dev 4 — WebSocket, JWT & Tutor State Machine: Sprint Tracker
 
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
-**Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions
+**Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-06-30 (Sprint 4 analysis tasks — methodology/skeleton docs authored → Partial; findings pending real data)
-**Overall status:** 28/36 Completed · 6 Partial · 2 Not Started
+**Last updated:** 2026-07-24 (Story 4-19 learner-tier-runtime all 6 ACs done; Learner Mode sprint complete 3/3; PR #90 for 4-dev contract sign-off on optional tier field)
+**Overall status:** 31/39 Completed · 6 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
-**Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file
+**Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
 
@@ -21,8 +21,9 @@
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
+| Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **36** | **28** | **6** | **2** |
+| **Total** | | **39** | **31** | **6** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -599,6 +600,40 @@ MAX_DISTRACTION_PER_SESSION=3
   - **🔎 Surfaced prerequisite:** needs 5 generated lesson packages (Dev 1's pipeline); also flagged Dev 1's
     `content/pipeline/graph.py:249` stale `encouragement` TODO to reconcile to `distraction|confusion|fatigue`.
   - **⏳ Pending:** 5 real packages → verdict table + fix requests to Dev 1. No messages reviewed/invented yet.
+
+---
+
+## Learner Mode — Feature Sprint
+
+> **Goal:** Session runtime adapts Q&A phase duration and pacing based on the learner tier embedded in the lesson package.
+
+<!-- CHECK:learner_tier_runtime -->
+- [Completed] **Session runtime reads tier from lesson package; sets duration + Q&A phase length** ✅ 2026-07-24 (all 6 ACs done; PR #90 opened for 4-dev sign-off on making `tier` optional in frozen schema) `[High]`
+  - Story: `docs/stories/4-19-learner-tier-runtime.md` (status `done`)
+  - AC1: `LessonMetadata.tier?` (optional) in both frozen files; PR #90 opened for 4-dev review; `_seed_learner_tier` bug fixed (was reading `learner_tier`, corrected to `tier`)
+  - AC2–AC6: `_seed_learner_tier()` reads `lesson_package:{sid}` cache; writes `session:{sid}:learner_tier` + `session:{sid}:qa_phase_seconds` via pipeline (24h TTL)
+  - Store tier in Redis: `session:{session_id}:learner_tier` (24h TTL)
+  - Use tier to derive Q&A phase length: T1→600s, T2→300s, T3→150s; write `session:{session_id}:qa_phase_seconds`
+  - Settings: `LEARNER_TIER_T1_QA_SECONDS`, `LEARNER_TIER_T2_QA_SECONDS`, `LEARNER_TIER_T3_QA_SECONDS`, `LEARNER_TIER_DEFAULT_QA_SECONDS`
+  - **AC:** Given a lesson package with `tier = "T1"`, session initialises with Q&A phase = 10 min; T2 → 5 min; T3 → 2.5 min ✅
+
+<!-- CHECK:learner_qa_phase_length -->
+- [Completed] **Q&A phase length per tier enforced in state machine (T1:10 min, T2:5 min, T3:2.5 min)** ✅ 2026-07-23 (merged to `dev4/learner-module`; review patches — 8 issues resolved; +568 test lines in test_tutor_graph/test_tutor_service) `[Medium]`
+  - Story: `docs/stories/4-20-learner-qa-phase-length.md`
+  - `quizzing_node` writes `session:{session_id}:quiz_deadline_at` (Unix timestamp) on QUIZZING entry
+  - Deadline check in `advance_tutor_state` + `process_attention_signal`: auto-dispatch `quiz_complete` on expiry (never `quiz_failed` — never gate progress)
+  - Double-fire guard: `redis.delete(quiz_deadline_at)` before dispatch
+  - **Depends on:** Story 4-19 (`session:{session_id}:qa_phase_seconds` must exist)
+  - **AC:** Unit test: FSM with backdated `quiz_deadline_at` → auto `quiz_complete` fires; not-yet-expired → no-op; T1→600s, T2→300s, T3→150s enforced end-to-end
+
+<!-- CHECK:learner_ws_tier -->
+- [Completed] **Learner tier included in WebSocket session-start message (WS contract addition)** ✅ 2026-07-23 (merged to `dev4/learner-module` via PR #88; 3-layer adversarial review; 59 tests green) `[Medium]`
+  - Story: `docs/stories/4-21-learner-ws-tier.md` (status `done`)
+  - Tier keys written atomically via `redis.pipeline()` (torn-write fix from review); multi-connection precedence documented as last-writer-wins
+  - `_handle_session_start` reads `learner_tier` from the WS payload dict; overwrites Redis tier keys if valid T1/T2/T3
+  - `session_start` is already off-contract (flat control message); no frozen `ws.ts` change required for this story
+  - Document `learner_tier?` field in `docs/ws-message-contract.md`
+  - **AC:** Sending `{ type: "session_start", learner_tier: "T2" }` → `session:{sid}:learner_tier` = "T2"; missing/invalid field → no write (4-19 value preserved)
 
 ---
 

@@ -46,6 +46,18 @@
       "items": {
         "$ref": "#/definitions/GlossaryEntry"
       }
+    },
+    "avatar_intro_url": {
+      "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }],
+      "default": null
+    },
+    "avatar_static_url": {
+      "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }],
+      "default": null
+    },
+    "avatar_outro_url": {
+      "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }],
+      "default": null
     }
   },
   "definitions": {
@@ -64,7 +76,8 @@
         "subject": { "type": "string" },
         "total_segments": { "type": "integer", "minimum": 1 },
         "estimated_duration_mins": { "type": "number", "minimum": 0 },
-        "complexity_level": { "type": "string" }
+        "complexity_level": { "type": "string" },
+        "tier": { "type": "string", "enum": ["T1", "T2", "T3"], "default": "T2" }
       }
     },
     "SegmentComplexity": {
@@ -111,10 +124,10 @@
           "items": { "type": "string" }
         },
         "image_url": {
-          "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }]
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
         },
         "fallback_image_url": {
-          "oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }]
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
         }
       }
     },

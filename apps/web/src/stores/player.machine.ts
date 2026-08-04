@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import type { TutorState } from '@hie/shared/types/ws';
+import type { LocalControlOut } from '@/lib/ws/wireTypes';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 
 const SAVE_THROTTLE_MS = 2000;
@@ -44,7 +45,9 @@ export interface PlayerStore {
   // ── State ──────────────────────────────────────────────────────────────────
   status: PlayerStatus;
   lesson: LessonPackage | null;
-  /** Ephemeral session ID — generated on loadLesson; replaced by WS session_id in Sprint 2. */
+  /** Server-minted session id (D18/Story 2-39) -- empty until Player.tsx's
+   *  POST /api/assessment/sessions call resolves and calls setSessionId().
+   *  Never client-generated; a client-invented id here is exactly D18. */
   sessionId: string;
   currentSegmentIndex: number;
   /** String slide_id from NarrationTimestamp — NOT an array index. */
@@ -61,11 +64,25 @@ export interface PlayerStore {
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
   quizFiredForSegment: Set<string>;
+  /** Registered by useLessonSocket once connected; null while disconnected.
+   *  Lets non-component code (AudioTimeline's plain functions) send a
+   *  LocalControlOut without holding a direct reference to the socket. */
+  wsSendControl: ((msg: LocalControlOut) => void) | null;
+  /** True while the current segment's <audio> element is stalled/buffering. */
+  isBuffering: boolean;
+  /** True after the current segment's <audio> element fires a load/decode error. */
+  audioError: boolean;
+  /** Incremented by retryAudio(); included in AudioTimeline's <audio> key to force a remount. */
+  audioRetryCount: number;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
   loadLesson: (pkg: LessonPackage) => void;
-  /** Override the session ID once the WebSocket handshake provides a real one (Sprint 2). */
+  /** Replace the loaded lesson's content (e.g. freshly re-signed media URLs
+   *  after a retry-triggered refetch) WITHOUT resetting playback progress --
+   *  unlike loadLesson(), which is only for starting a lesson from scratch. */
+  refreshLessonMedia: (pkg: LessonPackage) => void;
+  /** Sets the real session id once POST /api/assessment/sessions resolves (D18/Story 2-39). */
   setSessionId: (id: string) => void;
   play: () => void;
   pause: () => void;
@@ -87,6 +104,11 @@ export interface PlayerStore {
   exitTeachBack: () => void;
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
+  setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
+  setBuffering: (b: boolean) => void;
+  setAudioError: (b: boolean) => void;
+  /** Clears audioError and increments audioRetryCount to force AudioTimeline's <audio> to remount. */
+  retryAudio: () => void;
   updateAudioPosition: (ms: number) => void;
   /** Write current segment/position/quiz progress to localStorage, keyed by lesson_id. No-op with no lesson loaded. */
   saveProgress: () => void;
@@ -111,6 +133,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   playbackRate: 1.0,
   tutorState: 'IDLE',
   quizFiredForSegment: new Set<string>(),
+  wsSendControl: null,
+  isBuffering: false,
+  audioError: false,
+  audioRetryCount: 0,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -119,7 +145,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({
       status: 'IDLE',
       lesson: pkg,
-      sessionId: crypto.randomUUID(),
+      // Empty until the caller (Player.tsx) mints a real one via
+      // POST /api/assessment/sessions and calls setSessionId() (D18/Story
+      // 2-39) -- a client-invented id here was exactly D18: the backend
+      // ownership check correctly 404'd every quiz/teach-back submission
+      // because the id had never existed server-side.
+      sessionId: '',
       currentSegmentIndex: 0,
       currentSlideId: firstTimestamp?.slide_id ?? null,
       audioPositionMs: 0,
@@ -128,7 +159,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       playbackRate: 1.0,
       tutorState: 'IDLE',
       quizFiredForSegment: new Set<string>(),
+      isBuffering: false,
+      audioError: false,
+      audioRetryCount: 0,
     });
+  },
+
+  refreshLessonMedia: (pkg) => {
+    set({ lesson: pkg });
   },
 
   play: () => {
@@ -189,6 +227,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       // Keep previous audioDurationMs until loadedmetadata fires on the new element —
       // avoids a flash where the seek bar is disabled between segments.
       seekRequestMs: null,
+      // A stall/error on the previous segment must not leak into the next one.
+      isBuffering: false,
+      audioError: false,
+      audioRetryCount: 0,
     });
     get().saveProgress();
   },
@@ -223,7 +265,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (get().status !== 'TEACH_BACK') return;
     const { lesson, currentSegmentIndex } = get();
     const isLastSegment = !lesson || currentSegmentIndex >= lesson.segments.length - 1;
-    set({ status: 'PLAYING' });
+    // tutorState reset to TEACHING here (not just status) so the *next* segment's
+    // boundary crossing is a genuine edge-transition into CHECKING_IN — see
+    // CheckingInTransition, which is edge-triggered, not a persistent gate.
+    set({ status: 'PLAYING', tutorState: 'TEACHING' });
     if (!isLastSegment) {
       get().advanceSegment();
     }
@@ -248,6 +293,24 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   setTutorState: (s) => {
     set({ tutorState: s });
+  },
+
+  setWsSendControl: (fn) => {
+    set({ wsSendControl: fn });
+  },
+
+  setBuffering: (b) => {
+    set({ isBuffering: b });
+  },
+
+  setAudioError: (b) => {
+    set({ audioError: b });
+  },
+
+  retryAudio: () => {
+    // isBuffering reset too — otherwise a stale true from a stall-then-error
+    // sequence on the old element survives into the fresh one's initial render.
+    set((state) => ({ audioError: false, isBuffering: false, audioRetryCount: state.audioRetryCount + 1 }));
   },
 
   updateAudioPosition: (ms) => {

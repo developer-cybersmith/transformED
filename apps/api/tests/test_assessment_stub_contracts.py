@@ -25,7 +25,6 @@ from app.dependencies import get_current_user
 from app.modules.analytics.router import router as analytics_router
 from app.modules.assessment.router import (
     LearnerDNA,
-    OnboardingDiagnosticSubmission,
     QuizSubmission,
     TeachbackSubmission,
     router,
@@ -35,6 +34,7 @@ from app.modules.assessment.router import (
 # Override get_current_user so endpoint tests reach the route handler without
 # a real JWT. The stubs raise 501 before any user data is used, so a fake
 # payload is sufficient.
+
 
 async def _fake_user() -> dict:  # type: ignore[type-arg]
     return {"sub": "test-user-id", "email": "test@example.com"}
@@ -56,9 +56,7 @@ _QUIZ_PAYLOAD = {
     "session_id": "sess-001",
     "lesson_id": "lesson-001",
     "segment_id": "seg-001",
-    "answers": [
-        {"question_id": "q1", "response_index": 0, "response_time_ms": 1500}
-    ],
+    "answers": [{"question_id": "q1", "response_index": 0, "response_time_ms": 1500}],
 }
 
 _TEACHBACK_PAYLOAD = {
@@ -93,14 +91,16 @@ def test_teachback_endpoint_is_live_not_501() -> None:
     """
     response = client.post("/api/assessment/teachback", json=_TEACHBACK_PAYLOAD)
     assert response.status_code != 501, (
-        f"Teachback endpoint returned 501 — implementation is missing. "
+        "Teachback endpoint returned 501 — implementation is missing. "
         "Sprint 1 requires this endpoint to be live."
     )
 
 
 @pytest.mark.unit
 def test_report_endpoint_is_live_not_501() -> None:
-    """GET /api/assessment/session/{session_id}/report must NOT return 501 (implemented in Sprint 2).
+    """GET /api/assessment/session/{session_id}/report must NOT return 501.
+
+    (Implemented in Sprint 2.)
 
     The endpoint is now live — it delegates to get_session_report() in service.py.
     Without a real Supabase session it will return 4xx/5xx, but never 501.
@@ -108,7 +108,7 @@ def test_report_endpoint_is_live_not_501() -> None:
     """
     response = client.get("/api/assessment/session/test-id/report")
     assert response.status_code != 501, (
-        f"Session report endpoint returned 501 — implementation is missing. "
+        "Session report endpoint returned 501 — implementation is missing. "
         "Sprint 2 requires this endpoint to be live."
     )
 
@@ -123,14 +123,16 @@ def test_dna_endpoint_is_live_not_501() -> None:
     """
     response = client.get("/api/assessment/user/dna")
     assert response.status_code != 501, (
-        f"Learner DNA endpoint returned 501 — implementation is missing. "
+        "Learner DNA endpoint returned 501 — implementation is missing. "
         "Story 3-22 requires this endpoint to be live."
     )
 
 
 @pytest.mark.unit
 def test_onboarding_endpoint_is_live_not_501() -> None:
-    """POST /api/assessment/onboarding/submit must NOT return 501 (implemented in Sprint 2, Story 3-18).
+    """POST /api/assessment/onboarding/submit must NOT return 501.
+
+    (Implemented in Sprint 2, Story 3-18.)
 
     The endpoint is now live — it delegates to process_onboarding() in service.py.
     Without a real Supabase/Redis session it will return 4xx/5xx, but never 501.
@@ -138,7 +140,7 @@ def test_onboarding_endpoint_is_live_not_501() -> None:
     """
     response = client.post("/api/assessment/onboarding/submit", json=_ONBOARDING_PAYLOAD)
     assert response.status_code != 501, (
-        f"Onboarding endpoint returned 501 — implementation is missing. "
+        "Onboarding endpoint returned 501 — implementation is missing. "
         "Story 3-18 requires this endpoint to be live."
     )
 
@@ -202,9 +204,13 @@ def test_learner_dna_response_no_raw_scores() -> None:
 
     # Must NOT have raw numeric dimension fields
     banned_patterns = [
-        "iq", "eq", "sq",
-        "raw_score", "raw_dimension",
-        "dimension_score", "dimension_scores",
+        "iq",
+        "eq",
+        "sq",
+        "raw_score",
+        "raw_dimension",
+        "dimension_score",
+        "dimension_scores",
         "numeric_score",
     ]
     for banned in banned_patterns:
@@ -231,23 +237,27 @@ def test_analytics_events_endpoint_is_live_not_501() -> None:
         response = analytics_client.post(
             "/api/analytics/events",
             json={
-                "events": [{
-                    "session_id": "sess-stub-check",
-                    "event_type": "segment_complete",
-                    "payload": {},
-                    "client_timestamp_ms": 1_700_000_000_000,
-                }]
+                "events": [
+                    {
+                        "session_id": "sess-stub-check",
+                        "event_type": "segment_complete",
+                        "payload": {},
+                        "client_timestamp_ms": 1_700_000_000_000,
+                    }
+                ]
             },
         )
     assert response.status_code != 501, (
-        f"Analytics events endpoint returned 501 — implementation is missing. "
+        "Analytics events endpoint returned 501 — implementation is missing. "
         "Story 3-20 requires this endpoint to be live."
     )
 
 
 @pytest.mark.unit
 def test_analytics_summary_endpoint_is_live_not_501() -> None:
-    """GET /api/analytics/session/{id}/summary must NOT return 501 (implemented in Sprint 2, Story 3-21).
+    """GET /api/analytics/session/{id}/summary must NOT return 501.
+
+    (Implemented in Sprint 2, Story 3-21.)
 
     The endpoint is now live — it delegates to get_session_summary() in analytics/service.py.
     Without a real Supabase session it will return 4xx/5xx, but never 501.

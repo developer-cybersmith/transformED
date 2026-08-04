@@ -11,13 +11,16 @@ Algorithm: greedy paragraph-then-sentence packing with token-level overlap.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import tiktoken
 
 _PARA_SEP = re.compile(r"\n\n+")
 _SENT_SEP = re.compile(r"(?<=[.!?])\s+")
 
 
-def count_tokens(text: str, encoding: Any) -> int:
+def count_tokens(text: str, encoding: tiktoken.Encoding) -> int:
     return len(encoding.encode(text))
 
 
@@ -43,7 +46,7 @@ def split_into_segments(text: str) -> list[str]:
 
 def chunk_section(
     section: dict[str, Any],
-    encoding: Any,
+    encoding: tiktoken.Encoding,
     target: int,
     overlap: int,
 ) -> list[dict[str, Any]]:
@@ -83,17 +86,23 @@ def chunk_section(
         if buffer_tokens + seg_tokens > target and buffer:
             chunk_text = (overlap_prefix + "".join(buffer)).strip()
             chunk_tokens = count_tokens(chunk_text, encoding)
-            chunks.append({
-                "id": f"{section_id}_c{len(chunks)}",
-                "section_id": section_id,
-                "text": chunk_text,
-                "token_count": chunk_tokens,
-                "section_title": section_title,
-                "page_start": page_start,
-                "page_end": page_end,
-            })
+            chunks.append(
+                {
+                    "id": f"{section_id}_c{len(chunks)}",
+                    "section_id": section_id,
+                    "text": chunk_text,
+                    "token_count": chunk_tokens,
+                    "section_title": section_title,
+                    "page_start": page_start,
+                    "page_end": page_end,
+                }
+            )
             full_tokens = encoding.encode(chunk_text)
-            overlap_prefix = encoding.decode(full_tokens[-overlap:]) if len(full_tokens) >= overlap else encoding.decode(full_tokens)
+            overlap_prefix = (
+                encoding.decode(full_tokens[-overlap:])
+                if len(full_tokens) >= overlap
+                else encoding.decode(full_tokens)
+            )
             buffer = [seg]
             buffer_tokens = seg_tokens
         else:
@@ -103,15 +112,17 @@ def chunk_section(
     if buffer:
         chunk_text = (overlap_prefix + "".join(buffer)).strip()
         chunk_tokens = count_tokens(chunk_text, encoding)
-        chunks.append({
-            "id": f"{section_id}_c{len(chunks)}",
-            "section_id": section_id,
-            "text": chunk_text,
-            "token_count": chunk_tokens,
-            "section_title": section_title,
-            "page_start": page_start,
-            "page_end": page_end,
-        })
+        chunks.append(
+            {
+                "id": f"{section_id}_c{len(chunks)}",
+                "section_id": section_id,
+                "text": chunk_text,
+                "token_count": chunk_tokens,
+                "section_title": section_title,
+                "page_start": page_start,
+                "page_end": page_end,
+            }
+        )
 
     return chunks
 

@@ -246,28 +246,40 @@ export default function Hero() {
                         ))}
                     </p>
 
-                    <div
-                        className="overflow-hidden transition-[max-height,opacity,margin] duration-500 ease-out"
-                        style={{ maxHeight: promptOpen ? 116 : 0, opacity: promptOpen ? 1 : 0, marginTop: promptOpen ? 14 : 0 }}
-                    >
-                        <div className="rounded-xl border border-[var(--accent-secondary)] bg-gradient-to-b from-[var(--accent-secondary)]/8 to-transparent p-4">
-                            <p className="text-[0.94rem] font-semibold text-primary mb-2">{passage.question}</p>
-                            <div className="h-9 bg-[var(--color-light-bg)] rounded-lg border border-[var(--color-border-soft)] px-3.5 flex items-center">
-                                <span className="text-[0.85rem] text-primary font-medium">{typedAnswer}</span>
-                                {phase === "answering" && (
-                                    <span className="inline-block w-[2px] h-4 bg-[var(--accent-secondary)] ml-0.5 animate-pulse" />
-                                )}
+                    {/*
+                     * Both slots below are always present in flow, stacked in the same
+                     * grid cell, and only ever fade via opacity. Previously they animated
+                     * maxHeight 0 -> 116/32px on every cycle of the typewriter loop above
+                     * (which repeats forever) -- since Hero sits at the top of normal
+                     * document flow, that repeated height change shifted the entire page
+                     * up/down every few seconds. Grid auto-sizes this wrapper to the
+                     * taller slot once, permanently, so neither toggle changes document
+                     * height again.
+                     */}
+                    <div className="grid mt-3.5">
+                        <div
+                            className="[grid-area:1/1] self-start transition-opacity duration-500 ease-out"
+                            style={{ opacity: promptOpen ? 1 : 0, pointerEvents: promptOpen ? "auto" : "none" }}
+                        >
+                            <div className="rounded-xl border border-[var(--accent-secondary)] bg-gradient-to-b from-[var(--accent-secondary)]/8 to-transparent p-4">
+                                <p className="text-[0.94rem] font-semibold text-primary mb-2">{passage.question}</p>
+                                <div className="h-9 bg-[var(--color-light-bg)] rounded-lg border border-[var(--color-border-soft)] px-3.5 flex items-center">
+                                    <span className="text-[0.85rem] text-primary font-medium">{typedAnswer}</span>
+                                    {phase === "answering" && (
+                                        <span className="inline-block w-[2px] h-4 bg-[var(--accent-secondary)] ml-0.5 animate-pulse" />
+                                    )}
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div
-                        className="overflow-hidden transition-[max-height,opacity,margin] duration-500 ease-out"
-                        style={{ maxHeight: phase === "retained" ? 32 : 0, opacity: phase === "retained" ? 1 : 0, marginTop: phase === "retained" ? 12 : 0 }}
-                    >
-                        <span className="inline-flex items-center gap-1.5 text-[0.8rem] font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
-                            ✓ Retained — concept understood, not just seen
-                        </span>
+                        <div
+                            className="[grid-area:1/1] self-start transition-opacity duration-500 ease-out"
+                            style={{ opacity: phase === "retained" ? 1 : 0, pointerEvents: phase === "retained" ? "auto" : "none" }}
+                        >
+                            <span className="inline-flex items-center gap-1.5 text-[0.8rem] font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
+                                ✓ Retained — concept understood, not just seen
+                            </span>
+                        </div>
                     </div>
                 </motion.div>
 

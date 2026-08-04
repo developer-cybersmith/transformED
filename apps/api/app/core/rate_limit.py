@@ -13,11 +13,14 @@ router.py — circular import.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+logger = logging.getLogger(__name__)
 
 
 def _get_user_key(request: Request) -> str:
@@ -39,7 +42,7 @@ def _get_user_key(request: Request) -> str:
             if sub:
                 return f"user:{sub}"
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug("rate-limit key JWT decode failed; falling back to IP", exc_info=True)
     return get_remote_address(request)
 
 

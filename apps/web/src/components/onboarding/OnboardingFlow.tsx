@@ -21,6 +21,10 @@ interface PersistedProgress {
     current: number;
     answers: Record<string, number>;
     disclaimerAcknowledged: boolean;
+    // Set only while resuming a re-assessment (Story 2-12) — ties the persisted blob to the
+    // specific reassessment instance so a stale attempt from an earlier due session_count is
+    // never silently resumed against a later, different one.
+    dueSessionCount?: number;
 }
 
 function loadPersistedProgress(): PersistedProgress | null {
@@ -36,6 +40,7 @@ function loadPersistedProgress(): PersistedProgress | null {
             current: parsed.current,
             answers: parsed.answers,
             disclaimerAcknowledged: Boolean(parsed.disclaimerAcknowledged),
+            dueSessionCount: typeof parsed.dueSessionCount === "number" ? parsed.dueSessionCount : undefined,
         };
     } catch {
         return null;
@@ -77,16 +82,33 @@ export function OnboardingFlow() {
     const [result, setResult] = useState<OnboardingResult | LearnerDNA | null>(null);
     const [submitError, setSubmitError] = useState<string | null>(null);
     const [submitErrorTerminal, setSubmitErrorTerminal] = useState(false);
+    const [dueSessionCount, setDueSessionCount] = useState<number | undefined>(undefined);
 
     useEffect(() => {
         let cancelled = false;
         onboardingService
             .getLearnerDna()
-            .then(() => {
-                if (!cancelled) {
-                    clearPersistedProgress();
-                    router.push("/dashboard");
+            .then((dna) => {
+                if (cancelled) return;
+                if (dna.reassessment_due) {
+                    // Due for a re-assessment — proceed into the same disclaimer/questions
+                    // flow a first-time user gets rather than redirecting away. Only resume
+                    // persisted progress if it was captured for this exact reassessment
+                    // instance (dueSessionCount) — otherwise it's a stale attempt from an
+                    // earlier reassessment and must not be silently mixed in.
+                    setDueSessionCount(dna.session_count);
+                    const persisted = loadPersistedProgress();
+                    if (persisted?.disclaimerAcknowledged && persisted.dueSessionCount === dna.session_count) {
+                        setCurrent(persisted.current);
+                        setAnswers(persisted.answers);
+                        setPhase("questions");
+                    } else {
+                        setPhase("disclaimer");
+                    }
+                    return;
                 }
+                clearPersistedProgress();
+                router.push("/dashboard");
             })
             .catch((err) => {
                 if (cancelled) return;
@@ -115,9 +137,9 @@ export function OnboardingFlow() {
 
     useEffect(() => {
         if (phase === "questions" || phase === "error") {
-            persistProgress({ current, answers, disclaimerAcknowledged: true });
+            persistProgress({ current, answers, disclaimerAcknowledged: true, dueSessionCount });
         }
-    }, [phase, current, answers]);
+    }, [phase, current, answers, dueSessionCount]);
 
     const question = QUESTIONS[current];
     const selectedIndex = question ? answers[question.id] : undefined;

@@ -8,13 +8,41 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-13 (`main` pulled — Dev 1's Sprint 1 backend, incl. real `POST/GET /api/content/lessons`, landed. `S1-08` picked back up: its original sketch assumed an API that never shipped — `POST /api/pipeline/submit` + WS-streamed 14-stage progress. Rewrote the story to match the real contract (multipart upload + 5s status polling, no stage/percentage data exists) and implemented it on branch `sprint1/s1-8-upload-real-api`. See `docs/stories/1-8-upload-real-api.md` and the S1-08 entry below.) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (5/6 done — S2-06 partially blocked, escalated to Dev 4) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 IN PROGRESS (11/14) · Sprint 2 IN PROGRESS (5/6) |
+| **Last Updated** | 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
+| **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 original tasks done, +8 additional stories shipped — all Dev 2 scope) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is not yet end-to-end functional; see audit note below** |
 
 ---
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against `apps/web/src/mocks/data/lessonPackage.ts` and existing fixtures; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
+
+> **Cross-team note (2026-07-23):** the `apps/web/src/mocks/data/lessonPackage.ts` blocker above is now resolved. A real PDF was uploaded and processed end-to-end through Dev 1's now-fixed content pipeline (segment_id sanitization + over-segmentation bugs both fixed), but the player showed "This lesson could not be loaded" — traced to `lesson.service.ts` still calling the mock, and (once that was found) to `GET /api/content/lessons/{id}` never having actually returned `content` at all (a genuine Sprint 1 gap, not new scope — Dev 1 confirmed and fixed via Story 1-6). Implemented the frontend half as **Story 1-7** (`docs/stories/1-7-wire-player-to-real-lesson-content.md`, branch `sprint1/s1-7-wire-real-lesson-content`): `lesson.service.ts`/`useLesson.ts` now call the real endpoint and surface `status`/`error` alongside the resolved package; `PlayerLoader.tsx` shows a real "still generating" state for `running`/`queued` and the real backend error for `failed`, instead of collapsing every non-ready response into a permanent error page; `AudioTimeline.tsx` degrades gracefully when a segment's `audio_url` is `""` (a real, reachable per-asset signing-failure value now, per Story 1-6's degrade-not-drop design). See `docs/master-tracker.md`'s "Lesson load from real API" line (now checked off).
+
+> **Cross-team note (2026-07-23):** Learner Mode task **S2-10** ("Tier Badge on Player + Session Report") is now done, completing all of Dev 2's Sprint 2 Learner Mode tasks (S2-07–S2-10). It was blocked on Dev 3 adding a `tier` field to `SessionReport` — Dev 3 shipped that and more via **Stories 3-29** (tier/tier_label/quiz counts/quiz_accuracy_label) and **3-30** (learner_dna_snapshot), both merged to `main`. Implemented as **Story 2-10** (`docs/stories/2-10-tier-context-wiring.md`, branch `sprint2/s2-10-tier-context-wiring`): `Player.tsx` shows a persistent tier badge (`Full-Depth`/`Standard`/`Refresher`, from the already-available `lesson.metadata.tier` — needed zero backend work); `SessionReport.tsx` shows `tier_label` and a Learner DNA snapshot section (9 dimension labels + growth indicators, hidden when the user has no DNA profile yet). Also fixed a real bug found while scoping this: the report was displaying `quiz_score` as a raw percentage — replaced with absolute counts (`"3 / 4 correct"`) + the backend's own `quiz_accuracy_label`, matching the "never show a raw score" convention already used for CES/teach-back on this same page. Note: this branch's S2-07–S2-09 sections don't exist on `sprint2-master`'s copy of this file yet (they live on the still-unmerged `feature-learner-mode` branch) — this note stands alone until that branch merges and the full Learner Mode section reconciles.
+
+> **Cross-team note (2026-07-23):** investigated Dev 3's **Story 3-28** (tier-aware quiz question count, 1–5 questions/segment instead of always 1, merged to `main`) to scope the frontend counterpart. Found `QuizOverlay.tsx` already correctly handles a variable question count end-to-end (no code change needed there) — but the investigation surfaced a real, pre-existing, currently-shipping bug unrelated to Story 3-28: the quiz score-summary feedback list used field names (`correct`/`message`) that don't match the real backend contract (`is_correct`/`explanation`, verified directly against `apps/api/app/modules/assessment/service.py::grade_quiz`), so every quiz result's feedback line has been rendering blank/`undefined`. Fixed as **Story 2-11** (`docs/stories/2-11-quiz-feedback-field-fix.md`, branch `sprint2/s2-11-variable-quiz-count`): `lib/assessment.ts`'s `QuizFeedbackItem` and `QuizOverlay.tsx`'s render corrected to the real shape; `types/assessment.ts`'s parallel, unused-at-runtime `QuizResult` type (which had the same wrong shape, backed by its own passing-but-wrong test) now reuses `lib/assessment.ts`'s type instead of re-declaring a third drifting copy.
+
+> **Cross-team note (2026-07-23):** scoped and completed the frontend counterpart to Dev 3's **Story 3-31** (re-assessment prompt after every 10 sessions, adds `reassessment_due` to `GET /api/assessment/user/dna`, merged to `main`). Confirmed feasible end-to-end by reading the real backend directly: `types/assessment.ts`'s `LearnerDNA` already had `reassessment_due: boolean` matching the backend model field-for-field, and the onboarding submit endpoint's re-assessment bypass (clearing the idempotency lock before `SET NX`) needs no special-casing from the frontend at all. But found a real, blocking gap beyond "just add a banner": `OnboardingFlow.tsx`'s mount check unconditionally redirected any already-onboarded user (any 200 response) straight to `/dashboard`, never inspecting `reassessment_due` — meaning a "Take Assessment" CTA would have been a dead end. Fixed as **Story 2-12** (`docs/stories/2-12-reassessment-prompt.md`, branch `sprint2/s2-12-reassessment-prompt`): `OnboardingFlow.tsx`'s mount effect now proceeds into the disclaimer/questions flow when due instead of redirecting; new `ReassessmentPrompt.tsx` is a self-contained dismissible dashboard banner (own `getLearnerDna()` fetch, dismissal persisted to `localStorage` keyed on the specific `session_count` so a session-10 dismissal doesn't suppress the session-20 prompt) mounted on the dashboard page after `HeroSection`.
+
+> **Cross-team note (2026-07-27):** live end-to-end testing (real backend + real Supabase, first time past `package_builder` landing for real) surfaced a batch of real gaps in one session: `apps/web/src/__tests__` had drifted against `OnboardingFlow.tsx`/`questions.ts` after a stale-path scan (fixed as a test-only correction, no product code change); assessment library test gaps and a `RubricScores` type drift were fixed as **Story 2-13** (`docs/stories/2-13-assessment-test-fixes.md`); dashboard/library were confirmed still mock-backed despite `GET /api/content/lessons` being real and ready, wired for real as **Story 2-14** (`docs/stories/2-14-real-dashboard-library.md`, dedup + wider lookup window + mock-pulse isolation added in review); the very first live test of that wiring then hit a 401 (Server Components can't use `api.ts`'s browser-only auth interceptor), fixed same-day as **Story 2-15** (`docs/stories/2-15-fix-dashboard-library-auth.md`) by converting both pages to Client Components with new `useDashboard`/`useLibrary` SWR hooks, matching the established `useLesson`/`useSessionReport` pattern.
+
+> **Cross-team note (2026-07-29):** ran a full Sprint 2 completion audit at the user's request — two independent methods (every frontend page read in full for what it actually calls; every backend endpoint accessible to the frontend read in full for whether it's genuinely implemented and who calls it), then cross-referenced against each other and against all 4 devs' Sprint 2/Learner Mode tracker claims. **Full writeup: `docs/sprint2-completion-audit-2026-07-29.md`.** Headline: the upload→generate→play-lesson path is genuinely solid end-to-end (Dev 1 pipeline + Dev 2 frontend, nothing mocked, nothing stubbed). The assessment path (quiz/teach-back submission, session report) is structurally broken for any real student — not a frontend or backend bug, but the already-registered **D18**: nothing anywhere in `apps/api` ever creates a `sessions` row, so `POST /quiz`, `POST /teachback`, and `GET /session/{id}/report` (all correctly implemented) 404/lookup-miss in practice; still open, re-confirmed against `main` a day later. Two new defects found and registered: **D29** (DPDP `user_consents` table has a migration but zero writers — a CLAUDE.md §18 Sprint 2 priority, unmet) and **D30** (3 tests currently failing on `main` in `test_tutor_service.py`, reproduced live twice). One long-pending item resolved: **signed off on `docs/ws-message-contract.md`** after independently verifying it against `apps/api/app/core/websocket.py` line-for-line — caught and corrected one staleness in the doc itself (a 2026-07-24 PRD §18 fix had dropped `attention_ack`'s raw `ces` field, which the doc still described in its old shape) before signing off. Two small gaps found in my own domain, **both fixed same day**: Dashboard's "Reports" quick action linked to a dead `/reports` route (real route is session-scoped) — removed rather than repointed at a guess. Dev 3's `POST /api/analytics/events` was fully backend-ready but nothing in `apps/web` called it — added `lib/analytics.ts` and wired `jargon_hover`/`tab_switch` tracking. 7 new tests, full suite green (55 files / 567 tests).
+
+> **Cross-team note (2026-07-29):** Dev 1's handoff (`docs/handoffs/dev2-handoff-2026-07-29.md`) flagged that `apps/web` had never produced a successful production build — `useSearchParams()` in `SignInForm.tsx` needs a Suspense boundary Next.js couldn't statically prerender around. Fixed same day (D27): `src/app/(auth)/signin/page.tsx` wraps `<SignInForm />` in `<Suspense>` with a new skeleton fallback (`SignInFormSkeleton.tsx`) matching the form layout. Verified locally with CI's exact env vars — `next build` now completes clean, `/signin` prerenders static. The same handoff's items 4a/4b (virtual playback clock, signed-URL retry re-fetch) turned out to already be shipped via S2-33 before the handoff was written. Item 4c (browser SpeechSynthesis, explicitly non-blocking) was implemented anyway per user request as **S2-34**. All of this, plus Stories 2-11 through 2-15 that had been sitting on `sprint2-master` unmerged, went to `main` together via **PR #114**.
+
+> **Cross-team note (2026-07-27):** live-tested lesson generation end-to-end and found two real, live-reproducible pipeline bugs, reported to Dev 1: (1) quiz questions duplicating exactly 16× regardless of question count (2 unique → 32, 3 unique → 48); (2) a segment whose TTS synthesis failed showed "0:00 total time" and the quiz fired instantly. Root-caused both by reading `apps/api/app/modules/content/pipeline/graph.py` directly (not guessing from symptoms): (1) `PipelineState`'s `operator.add`-annotated reducer fields re-accumulate on any re-invocation; (2) `_fallback_narration()` hardcoded a blank script even though the real text was sitting in `state["narration_scripts"]`. Communicated to Dev 1 directly (not as a formal doc this time — see chat history if needed).
+
+> **Cross-team note (2026-07-28/29):** Dev 1 fixed both bugs for real — verified directly in the merged diffs, not just taken on faith. **Bug 1** — PR #100 (Story 2-28): root cause was not what either of us first thought (ARQ only retries 3×, so 16 retries was never possible) — every downstream node was spreading `**state` into its return, which re-appends an already-accumulated `operator.add` list; `2⁴ = 16×` in a single clean run, no retry involved. Fixed by dropping the `**state` spread from every node's return. **Bug 2** — PR #101 (Story 2-31): `_fallback_narration()` now recovers the real script from `state["narration_scripts"]` before falling back to blank. Dev 1's own handoff (`docs/dev2-narration-playback-handoff.md`) correctly flagged that **the backend fix alone doesn't change what the student sees** — `AudioTimeline.tsx`'s `!hasAudio` branch still called `handleEnded()` immediately regardless of script presence, so the frontend half was still needed. Also separately requested a genuine gap in our own recent work: `retryAudio()` (Story 2-26) remounted the same expired signed URL rather than re-fetching a fresh one.
+
+> **Cross-team note (2026-07-29):** implemented the frontend half of Bug 2, plus the retry re-fetch gap, as **Story 2-33** (`docs/stories/2-33-virtual-playback-clock.md`, merged to `main` via PR #106). `AudioTimeline.tsx` now branches three ways (`hasAudio` / `!hasAudio && hasScript` / neither) — the new `hasScript` case runs a `setInterval`-driven virtual playback clock that drives the exact same `processTimeUpdate` boundary logic a real `<audio>` element would, closing the "quiz fires at 0:00" symptom for real. `Player.tsx`'s Retry button now re-fetches the lesson (fresh signed media URL) before retrying. The 3-agent code review caught two real **High** severity bugs before merge, both fixed with regression tests: (1) a pre-existing `Player.tsx` mount effect keyed on the `lesson` **prop's object identity** rather than `lesson_id` silently reset all playback progress on every retry-triggered refetch — confirmed by all 3 reviewers, one of whom reproduced it directly; fixed with a `lesson_id`-keyed ref guard; (2) the virtual clock had no path to ever reach `ENDED` for a script-only last segment resumed after teach-back — fixed with a narrowly-scoped post-quiz `handleEnded()` call, safe against re-firing the quiz. Both bugs Dev 2 originally reported are now fully closed, frontend + backend.
+
+> **Cross-team note (2026-07-29):** independently audited all of Dev 1's Sprint 2 pipeline deliverables (11 nodes + cost ceiling + WebSocket `lesson_ready` push + eval harness) against the actual current code, since `docs/master-tracker.md`'s Dev 1 Sprint 2 section is dated 2026-07-13 and still shows everything as not-started — badly stale. Confirmed genuinely done and correct: `lesson_planner`, `slide_generator`, `tts_node`, cost ceiling enforcement, the WebSocket push, and the eval harness (its live 5-PDF run is intentionally gated behind a test marker, not a gap). The two bugs above were the only real defects found.
+
+> **Product bug (2026-07-29):** user reported the dashboard's mouse wheel scroll getting stuck (native scrollbar drag still worked) — a recurring issue, seen before on a different page. Root cause: `SmoothScroll.tsx` (Lenis) wraps the whole app and only calls `lenis.resize()` on route change; Lenis never observes DOM mutations on its own, so any page whose content grows after mount (SWR-fetched sections, images, async lists) leaves its cached scroll bounds stale — the wheel gets stuck at the old height while a scrollbar drag (reading the real DOM directly) still works. Fixed generally with a `ResizeObserver` on `document.body` inside `SmoothScroll.tsx`, calling `lenis.resize()` (rAF-debounced) on any body size change — fixes this class of bug for every page, not just the dashboard. Small, ad-hoc fix (no story per user's direction), merged to `main` via PR #108.
+
+> **Tracker correction (2026-07-29):** Sprint 1's **S1-09** (Library Real Data Integration) and **S1-10** (Dashboard Real Data Integration) were still shown `NOT STARTED` in §10 below, but both were actually completed under Sprint 2 story numbers (**2-14**, **2-15**) — same underlying task, tracked twice across two sprint sections. Corrected in §10.
+
+> **Cross-team note (2026-07-29):** **S1-05 (AvatarOverlay) shipped** — `docs/stories/1-5-avatar-overlay.md`, merged to `main` via PR #109. Confirmed cross-team sign-off (user, on behalf of all 4 devs) on `docs/proposals/avatar-fields-schema-change.md`, then independently re-verified the change was genuinely safe before touching the frozen contract: no direct `LessonPackage(...)` Pydantic constructor calls exist anywhere outside `apps/api/app/schemas/lesson.py` itself, and the only 2 full `LessonPackage`-literal sites on the frontend are unaffected by an added optional field. One corrected design decision vs. the proposal's own draft: the 3 new avatar fields are NOT marked `required` in the JSON schema — the draft's version would have repeated the exact `tier`/Story 2-25 regression (a retroactively-added required field breaks raw-schema validation of any pre-existing lesson/fixture that predates it). New `AvatarOverlay.tsx` is fully self-contained (zero changes to `Player.tsx`'s existing status conditionals) and gracefully skips every piece when its URL is absent — currently the only reachable case, since `package_builder_node` doesn't populate these fields yet (Dev 1's separate follow-up). 3-agent review caught and fixed 6 real issues (video watchdog timeout for a hung load, an intro-vs-audio-error z-index conflict, honest test wording after discovering this environment has no `uri` format checker installed, static-thumbnail error handling, and two stale-doc corrections — `GET /media/signed-url` is no longer a 501 stub, and `avatar-clips` was actually *removed* from its bucket allowlist by Story 2-25, both corrected in the proposal doc for whoever picks up the remaining backend wiring).
 
 ---
 
@@ -23,12 +51,12 @@
 | Sprint | Period | Total Tasks | Done | Partial | Not Started |
 |---|---|---|---|---|---|
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
-| Sprint 1 | Weeks 2–3 | 14 | **11** | 0 | **3** |
-| Sprint 2 | Weeks 4–5 | 6 | **5** | 0 | **1** |
+| Sprint 1 | Weeks 2–3 | 14 | **14** | 0 | **0** |
+| Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **51** | **24** | **0** | **27** |
+| **Total** | **10 weeks** | **55** | **29** | **0** | **26** |
 
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
@@ -779,10 +807,10 @@ Renders: `slide.title`, `slide.bullets[]`, `slide.image_url` (with `slide.fallba
 
 ---
 
-### S1-05 — AvatarOverlay Component
+### S1-05 — AvatarOverlay Component — ✅ 2026-07-29
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/components/player/AvatarOverlay.tsx`
+**Status:** ✅ DONE — `docs/stories/1-5-avatar-overlay.md`, merged to `main` via PR #109. Unblocked after cross-team sign-off on `docs/proposals/avatar-fields-schema-change.md` (3 new optional `LessonPackage` avatar fields, corrected from the proposal's original "required" draft to avoid repeating the `tier`/Story 2-25 regression). 3-agent review, 6 findings fixed (watchdog timeout, audioError-yield guard, static-image error handling, honest format-checker fix, stale doc corrections, wording precision).
+**Files:** `src/components/player/AvatarOverlay.tsx` (new), `src/components/player/Player.tsx`, `packages/shared/types/lesson.ts`, `packages/shared/lesson_package.schema.json`, `apps/api/app/schemas/lesson.py`
 
 ```
 lesson start → play HeyGen intro video (lesson_package.avatar_intro_url)
@@ -793,11 +821,13 @@ lesson end   → play HeyGen outro video (lesson_package.avatar_outro_url)
 The HeyGen video URL is **pre-generated at build time** — never call HeyGen API at player load. Player must not block on avatar — if video URL is null, skip intro/outro gracefully.
 
 **Acceptance criteria:**
-- [ ] Intro video plays automatically before first audio segment
-- [ ] Static image shown during lesson body with mouth animation cue (CSS pulse on blink interval)
-- [ ] Outro plays after `store.endLesson()` fires
-- [ ] If `avatar_intro_url` is null: skip silently, start lesson audio immediately
-- [ ] Video does not cause hydration error (`ssr: false` in PlayerLoader covers this)
+- [x] Intro video plays automatically before first audio segment
+- [x] Static image shown during lesson body (mouth-animation "blink" cue implemented as a CSS pulse on the thumbnail)
+- [x] Outro plays after `store.endLesson()` fires
+- [x] If `avatar_intro_url` is null: skip silently, start lesson audio immediately
+- [x] Video does not cause hydration error (`AvatarOverlay` is a normal import inside `Player.tsx`, covered by `PlayerLoader.tsx`'s existing single `dynamic(..., {ssr:false})` wrapper for the whole tree — no second dynamic import needed)
+
+**Important caveat — not yet visible to real students:** `package_builder_node` doesn't populate the 3 new avatar fields yet (Dev 1's separate follow-up, explicitly out of scope for this story). Every real lesson today still has all 3 fields absent, so `AvatarOverlay` correctly renders nothing — this story's code is real, tested, and working, but the feature has no visible effect until that backend wiring lands. Also flagged during review: `GET /media/signed-url`'s `avatar-clips` bucket entry was removed by Story 2-25 (structurally broken path shape) — whoever picks up the backend follow-up needs to re-enable a corrected bucket entry (or make it public) as a prerequisite, not just resolve the original signed-URL-expiry question.
 
 ---
 
@@ -887,7 +917,7 @@ After getting `session_id`, connect `uploadGenerationService` real socket to `/w
 
 ### S1-09 — Library Real Data Integration
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
+**Status:** ✅ DONE <!-- corrected 2026-07-29: was stale, done via S2-14/S2-15 --> — shipped as **Story 2-14** (real `GET /api/content/lessons` wiring) + **Story 2-15** (fixed the 401 this introduced by moving the fetch client-side). See Dev 2 tracker §11 S2-14/S2-15 for full detail. This Sprint 1 entry was never updated after that work landed under its Sprint 2 story numbers — same underlying task, tracked twice; correcting here rather than double-counting.
 **Files to modify:** `src/services/library.service.ts`, `src/components/library/LibraryView.tsx`
 
 Replace mock with real call to `GET /api/lessons` (paginated, user-scoped via JWT). Add status filter tabs: All / Generating / Ready / Failed. Show generation progress for `status: 'generating'` lessons using a polling interval (every 10s) or WebSocket subscription.
@@ -904,7 +934,7 @@ Replace mock with real call to `GET /api/lessons` (paginated, user-scoped via JW
 
 ### S1-10 — Dashboard Real Data Integration
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
+**Status:** ✅ DONE <!-- corrected 2026-07-29: was stale, done via S2-14/S2-15 --> — shipped as **Story 2-14** (real `GET /api/content/lessons` wiring, dedup + wider lookup window for the continue-learning card) + **Story 2-15** (fixed the 401). `GET /api/sessions/latest` never materialized as a separate endpoint (Dev 4 owns session state in Redis, not exposed via REST) — S2-14 derives "continue learning" from the same `GET /api/content/lessons` response instead. See Dev 2 tracker §11 S2-14/S2-15.
 **Files to modify:** `src/services/dashboard.service.ts`
 
 Replace mock data with real API calls:
@@ -1050,7 +1080,7 @@ Follow-up to S1-15: the palette was right but the hero itself was flagged as "ju
 ---
 
 ## 11. Sprint 2 — Assessment + Session Flow
-**Period:** Weeks 4–5 | **Status:** 🔵 5/6 done — S2-06 (segment-end → CHECKING_IN) newly added 2026-07-06, not blocked, not started  
+**Period:** Weeks 4–5 | **Status:** ✅ 10/10 done — S2-01–S2-06 plus Learner Mode S2-07–S2-10 all complete, see entries below  
 **Dependency:** Dev 3 assessment API must be callable (can mock responses if not ready) — confirmed live 2026-07-01
 
 ---
@@ -1221,9 +1251,11 @@ Dev 4 restores tutor state from Redis on WebSocket reconnect — Dev 2 only need
 
 ---
 
-### S2-06 — Segment-End Detection → CHECKING_IN State
+### S2-06 — Segment-End Detection → CHECKING_IN State — ✓ 2026-07-21
 **Priority:** P2  
-**Status:** 🔴 PARTIALLY BLOCKED — escalated to Dev 4 2026-07-06, holding on the receive-side half. Added 2026-07-06 (tracked in `docs/master-tracker.md`'s Dev 2 Sprint 2 checklist since 2026-07-02 but never had its own entry in this file's S2-xx numbering; brought in here after the user flagged it was missing from a Sprint 2 status review). Branch `sprint2/s2-6-segment-checkin` created; BMAD story creation paused at the escalation, not yet resumed.  
+**Status:** ✅ DONE. Dev 4 replied to the escalation below confirming his fix (`dispatch_event` in `graph.py` now broadcasts `state_change` on every real FSM transition) — merged and unit-tested (44/44 passing) on his side, but not yet pushed/merged to `main` at the time. Per user instruction, proceeded to implement and ship this story built and tested against `FakeWebSocket` (same posture S1-07/S2-04 were already shipped against for their own backend dependencies) rather than wait on his push — a live end-to-end check against his real backend is a follow-up once his branch lands, not a design unknown (the wire shape is already frozen in `packages/shared/types/ws.ts`). Implemented via full BMAD story `docs/stories/2-6-segment-checkin.md` (branch `sprint2/s2-6-segment-checkin`, merged into `sprint2-master`): `useLessonSocket` now mounted live in `Player.tsx`; `AudioTimeline.tsx` sends `segment_complete` + an optimistic `setTutorState('CHECKING_IN')` at all 3 segment-boundary call sites, with zero added latency to the (unchanged) client-authoritative quiz trigger; new `CheckingInTransition.tsx` renders an edge-triggered ~500ms "Checking in…" overlay. 5-agent review round applied 3 patches (stuck-visible fix, `wsSendControl` instance-identity guard, `PlayerLoader` remount-per-lesson key) and deferred 2 (documented, out of scope). Full `apps/web` suite 373/373 passing at merge time. **This was the last open item in Dev 2's official Sprint 2 list — Sprint 2 is now 6/6 done.**  
+**Files modified:** `src/components/player/Player.tsx`, `src/components/player/AudioTimeline.tsx`, `src/stores/player.machine.ts`, new `src/components/player/CheckingInTransition.tsx`, `src/hooks/useLessonSocket.ts`, plus all their tests
+
 **Files likely touched:** `src/components/player/Player.tsx` or `PlayerLoader.tsx` (mount the socket), `src/components/player/AudioTimeline.tsx` (send on segment boundary), `src/stores/player.machine.ts` (`tutorState` already exists), a new CHECKING_IN UI component (none exists, blocked)
 
 **Investigated 2026-07-06 — found the actual gap is larger than the master tracker's 2026-07-02 note suggested.** That note read as "just wire the send side," implying the receive side was already live. Verified against the actual code:
@@ -1275,6 +1307,164 @@ None of these three ever call `manager.send()`. Confirmed by reading all three f
 </details>
 
 **Recommendation:** given the real architectural decision buried in this "line item" and the fact that nothing here has ever been scoped into acceptance criteria, run this as a full BMAD story (`bmad-create-story` → `bmad-dev-story` → 5-agent review) rather than a quick patch — same rigor as S2-01 through S2-05, once Dev 4 unblocks the receive side (or a decision is made to ship the send-side half alone in the meantime).
+
+</details>
+
+---
+
+### S2-07 — Learner Mode Selection Screen — ✅ 2026-07-14
+**Priority:** High  
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/2-7-mode-selection-screen.md` on branch `sprint2/s2-7-mode-selection` (branched from `sprint1/s1-8-upload-real-api`, not main — see branch note below), feeds into feature master `feature-learner-mode`. 5-agent adversarial review complete (Blind Hunter, Edge Case Hunter, Acceptance Auditor) — 0 decision-needed, 3 patch, 2 defer, 2 dismissed. All 3 patches applied (see below); the 2 deferred items are tracked in `_bmad-output/implementation-artifacts/deferred-work.md`.  
+**Files created:** `src/types/learnerMode.ts`, `src/components/dashboard/upload/ModeSelection.tsx`, `src/__tests__/components/dashboard/upload/ModeSelection.test.tsx`  
+**Files modified:** `src/components/dashboard/upload/UploadFlow.tsx` (new `'selecting-mode'` state, `handleTierSelect`/`handleCancelModeSelection`), `src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` (existing tests updated to select a tier before the upload call fires — an intentional, in-scope behavior change, not a regression)
+
+**Branch note:** this task's branch — and the 3 remaining Learner Mode tasks (S2-08, S2-09, S2-10) — are cut from `sprint1/s1-8-upload-real-api` rather than `main`, since that branch carries real unmerged auth/upload backend fixes this feature builds directly on top of (`UploadFlow.tsx`). Task branches stay local; each merges into the dedicated feature master `feature-learner-mode` (not `sprint2-master`), which is what gets pushed and PR'd.
+
+New feature: **Learner Mode** — student picks a tier before generation begins. The mode-selection screen now appears right after a file is dropped/selected and size-validated, **before** the upload POST fires (not after upload completes — confirmed with the user; this lines up with S2-09 needing the tier known before that POST is made). 3 cards:
+- **Deep** (full-depth lesson, no time constraint)
+- **Balanced** (time-boxed depth)
+- **Refresher** (condensed review only)
+
+**Scope boundary (per story):** this task is the selection screen only. Tier disclaimers (S2-08), sending the tier to the backend (S2-09 — no field exists in `POST /api/content/lessons` yet, needs Dev 1 sign-off), and the tier badge on player/report (S2-10) are separate, not-yet-started follow-on tasks. `selectedTier` is captured in `UploadFlow.tsx` component state only (surfaced via a non-visible `data-selected-tier` attribute for S2-10 to pick up later) — not yet persisted or sent anywhere.
+
+**Acceptance criteria:**
+- [x] Screen renders after a file is selected/size-validated, before the upload POST fires
+- [x] 3 selectable cards, real `<button>`s: Deep / Balanced / Refresher, each with a one-line description
+- [x] Clicking a card is both the selection and the confirmation — captures the tier and immediately proceeds to upload (no separate "Continue" button)
+- [x] "Choose a different file" returns to the idle drop zone without ever calling the upload API
+- [x] Oversized-file rejection path unaffected (still short-circuits to the error state before reaching mode-selection)
+- [x] No regression to Story 1-8's upload/polling behavior once a tier is picked — byte-for-byte the same from that point on
+
+15 new/updated tests from initial implementation (4 in `ModeSelection.test.tsx`, 11 in `UploadFlow.test.tsx`) + 5 more from the review-patch pass (2 in `ModeSelection.test.tsx`, 3 in `UploadFlow.test.tsx`) = 20 total. Full `apps/web` suite: 337/337 passing. `tsc --noEmit` clean. `eslint`: 0 errors, 37 warnings (all pre-existing, 0 new).
+
+**Review patches applied:** `handleCancelModeSelection` now clears `file`/`selectedTier`/the file input value (so re-picking the same file after cancelling works); tier cards now have `focus-visible` ring styling matching `Button`'s pattern; `ModeSelection` moves focus to the first card on mount so keyboard users land on the screen without re-tabbing.
+
+**Deferred (tracked in `_bmad-output/implementation-artifacts/deferred-work.md`):** no drag-and-drop guard on the new screen (pre-existing gap, needs a broader fix across all non-idle screens); tier choice has no functional effect on generation yet (by design — S2-09's job — but current copy oversells it).
+
+---
+
+### S2-08 — Tier Disclaimers — ✅ 2026-07-14
+**Priority:** Medium  
+**Status:** ✅ DONE <!-- completed: 2026-07-14 --> — implemented via BMAD story `docs/stories/2-8-tier-disclaimers.md` on branch `sprint2/s2-8-tier-disclaimers` (branched from `feature-learner-mode`, which already has S2-07 merged in), feeds into feature master `feature-learner-mode`  
+**Files modified:** `src/types/learnerMode.ts` (new `disclaimer?: string` field on `LearnerTierOption` + copy for `balanced`/`refresher`), `src/components/dashboard/upload/ModeSelection.tsx` (conditional inline disclaimer block, `AlertTriangle` icon + amber tint), `src/__tests__/components/dashboard/upload/ModeSelection.test.tsx` (4 new tests)
+
+Per-tier inline warning-style disclaimer shown on the mode selection screen:
+- **Deep:** no disclaimer
+- **Balanced:** time-deficit warning ("Content may be trimmed or condensed to fit your available time.")
+- **Refresher:** refresher-only warning ("Assumes you already have prior mastery — not a full first-pass lesson.")
+
+**Acceptance criteria:**
+- [x] Deep card shows no disclaimer
+- [x] Balanced card shows a time-deficit inline warning
+- [x] Refresher card shows a refresher-only inline warning
+- [x] Disclaimers styled consistently as an inline warning (icon + tinted background, not a modal/toast) — no reusable `Alert` component existed in the codebase, so this is kept local to `ModeSelection.tsx` per the story's explicit scope
+- [x] No regression to S2-07's card click/focus-visible/mount-autofocus behavior; `UploadFlow.tsx` and its tests untouched (confirmed via `git diff --stat`)
+
+11 tests total in `ModeSelection.test.tsx` (6 unmodified from S2-07 + 5 new). Full `apps/web` suite: 342/342 passing. `tsc --noEmit` clean. `eslint` clean, 0 new warnings.
+
+**5-agent adversarial review (2026-07-14) — 2 patches applied, 3 dismissed as noise:** disclaimer text now has a screen-reader-only "Warning:" prefix so assistive tech can distinguish it from the description (button accessible names were a flat concatenation before); the `option.disclaimer &&` render guard is now an explicit `option.disclaimer && option.disclaimer.trim().length > 0 ? (...) : null`, codifying the "must be entirely absent, not empty string" invariant in code rather than only in a comment. Dismissed: a claim that `AlertTriangle` needed explicit `aria-hidden` (verified false by reading `lucide-react`'s installed source — it already sets this automatically), a false "new dependency" concern (`lucide-react` is already used elsewhere in this codebase), and a "brittle exact-count test" critique (the `toHaveLength(2)` test is intentionally behavioral).
+
+---
+
+### S2-09 — Wire Selected Tier into Lesson Creation — ✓ 2026-07-21 (implemented, pending 5-agent code review)
+**Priority:** Medium  
+**Status:** ✅ DONE — implementation + tests complete; code review not yet run  
+**Files modified:** `apps/web/src/types/learnerMode.ts` (new `LEARNER_TIER_TO_BACKEND` mapping), `apps/web/src/services/upload.service.ts` (`uploadLesson` gains `tier?` param), `apps/web/src/components/dashboard/upload/UploadFlow.tsx` (call site + visible tier label), plus both files' tests
+
+Unblocked 2026-07-21 once Dev 1's Sprint 2 Phase B backend merge (PR #74) landed `tier: Form(...)` on `POST /lessons` (multipart, default `T2`, 422 on invalid — confirmed by reading `apps/api/app/modules/content/router.py`/`apps/api/app/schemas/lesson.py` directly, not assumed). Mapping confirmed by matching backend semantics (`docs/stories/2-lm3-lm4-lm5-tier-aware-generation.md`) to the existing frontend tier descriptions: `deep→T1`, `balanced→T2`, `refresher→T3`. Full story: `docs/stories/2-9-wire-tier-into-lesson-creation.md`. Branch `sprint2/s2-09-wire-tier` off `feature-learner-mode` (task branch kept local, merged into the feature master per standing convention).
+
+**Acceptance criteria:**
+- [x] Selected tier included in the lesson-creation request body (`FormData.append('tier', ...)`, mapped T1/T2/T3)
+- [x] Chosen tier displayed on the generating/progress screen (`data-testid="selected-tier-label"`)
+- [x] No regression to the existing upload flow — tier omitted entirely (not defaulted client-side) when unset, relying on the backend's own `T2` default
+
+**Note:** `GET /lessons/{id}` still doesn't echo `tier` back — this story only wires the send side (upload-time). S2-10 (below) is now unblocked to re-scope, but will still need its own decision on how the player/session report actually gets a tier value (no read-back path exists yet).
+
+---
+
+### S2-10 — Tier Badge on Player + Session Report
+**Priority:** Low  
+**Status:** 🔲 NOT STARTED — re-investigated 2026-07-21 now that S2-09 has landed. **Splits into two genuinely different states — see below.** <!-- added 2026-07-14 -->  
+**Files to modify:** `src/components/player/Player.tsx` (unblocked), `src/components/reports/SessionReport.tsx` (still blocked — cross-team)
+
+Small badge showing the lesson's tier and duration, e.g. `Deep · 45 min`.
+
+**Originally investigated 2026-07-18** (branch `sprint2/s2-10-tier-badge`, no commits, story creation halted): confirmed neither target component had any data path for a tier value. **Decision (user, 2026-07-18): defer S2-10 until S2-09 lands.**
+
+**Re-investigated 2026-07-21, after S2-09:**
+- **Player side — genuinely unblocked, no cross-team dependency.** `packages/shared/types/lesson.ts`'s `LessonMetadata` now has a required `tier: LessonTier` field (Dev1's PR #74, self-certified §16-compatible — see `docs/reports/s16-lessonpackage-compat.md`), and `package_builder_node` explicitly bakes the `lessons.tier` column value into it. `Player.tsx` already receives the full `LessonPackage` as a prop — `lesson.metadata.tier` is real, present data today. This half needs no backend work at all.
+- **Session report side — still blocked, and it's a different blocker than before.** `apps/web/src/types/assessment.ts`'s `SessionReport` interface (the frozen-ish contract from story 3-19, owned by **Dev 3**'s assessment module) has no `tier` field — confirmed by reading `apps/api/app/modules/assessment/router.py`'s response model directly (also no `tier`). S2-09 never touched this; it only wired the upload-time send (`lessons.tier` column), not anything Dev 3's assessment/session-report endpoint reads. Adding `tier` to `SessionReport` is a small, additive, non-breaking change in spirit — but it's Dev 3's contract to change, per team-ownership rules (CLAUDE.md §"modules communicate only through service layer" / per-dev file ownership) — not something to add unilaterally from the frontend side.
+
+**Decision needed:** ship the player badge now (fully unblocked) and split the session-report badge into its own follow-up pending a small ask to Dev 3, or hold both halves together as one task until Dev 3's field lands. Not yet decided — ask before implementing either half.
+
+**Acceptance criteria (unchanged, split per the above once a path is chosen):**
+- [ ] Badge visible in the lesson player (header/chrome area)
+- [ ] Same badge shown on the session report (S2-04)
+- [ ] Badge format: `{Tier label} · {duration} min`
+
+---
+
+### S2-11 — Fix Quiz Feedback Field-Name Mismatch — ✅ 2026-07-23
+**Status:** ✅ DONE — `docs/stories/2-11-quiz-feedback-field-fix.md`, branch `sprint2/s2-11-variable-quiz-count`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
+**Files:** `apps/web/src/lib/assessment.ts`, `apps/web/src/components/player/QuizOverlay.tsx`, `apps/web/src/types/assessment.ts`
+
+Every quiz result's feedback line had been rendering blank/`undefined` in every environment — `QuizFeedbackItem`/`QuizOverlay.tsx` read `correct`/`message`, but the real backend (`apps/api/app/modules/assessment/service.py::grade_quiz`) sends `is_correct`/`explanation`. Found while scoping Dev 3's Story 3-28 (tier-aware quiz count), unrelated to it. Fixed the real shape at both the live call site and the parallel, unused-at-runtime `QuizResult` type in `types/assessment.ts` (which had the same wrong shape, backed by its own passing-but-wrong test) — now reuses `lib/assessment.ts`'s type instead of a third drifting copy. 5-agent review, 1 patch applied.
+
+---
+
+### S2-12 — Re-Assessment Prompt After 10 Sessions — ✅ 2026-07-23
+**Status:** ✅ DONE — `docs/stories/2-12-reassessment-prompt.md`, branch `sprint2/s2-12-reassessment-prompt`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
+**Files:** `apps/web/src/components/onboarding/OnboardingFlow.tsx`, `apps/web/src/components/dashboard/sections/ReassessmentPrompt.tsx` (new)
+
+Frontend counterpart to Dev 3's Story 3-31 (`reassessment_due` on `GET /api/assessment/user/dna`). `OnboardingFlow.tsx`'s mount check previously redirected any already-onboarded user straight to `/dashboard`, unconditionally, never checking `reassessment_due` — a "Take Assessment" CTA would have been a dead end. Fixed: mount effect now proceeds into the flow when due. New `ReassessmentPrompt.tsx` is a self-contained dismissible dashboard banner, dismissal persisted to `localStorage` keyed on `session_count` (so dismissing at session 10 doesn't suppress the session-20 prompt). 3-agent review.
+
+---
+
+### S2-13 — Assessment Library Test Gaps + RubricScores Type Drift — ✅ 2026-07-27
+**Status:** ✅ DONE — `docs/stories/2-13-assessment-test-fixes.md`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
+**Files:** `apps/web/src/lib/assessment.ts`, its test file, plus a stale-path correction across `OnboardingFlow.tsx`/`questions.ts` tests
+
+Surfaced during the first live end-to-end test session against the real backend + real Supabase. Fixed a real `RubricScores` type drift and closed test coverage gaps in the assessment library that had gone unnoticed under mocks. 3-agent review.
+
+---
+
+### S2-14 — Wire Dashboard and Library to Real GET /lessons Endpoint — ✅ 2026-07-27
+**Status:** ✅ DONE — `docs/stories/2-14-real-dashboard-library.md`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
+**Files:** `apps/web/src/services/dashboard.service.ts`, `apps/web/src/services/library.service.ts`, `apps/web/src/components/dashboard/sections/*`, `apps/web/src/components/library/LibraryView.tsx`
+
+Confirmed via `docs/master-tracker.md` that `GET /api/content/lessons` was real, tested, and ready on Dev 1's side — but dashboard/library were still calling mocks. Wired both services to the real, paginated endpoint. Review round added: wider lookup window (`limit: 20`), dedup between `continueLearning` and `recentLessons`, isolated the mock learning-pulse call behind its own try/catch so its failure can't take down the rest of the dashboard, and an `all` field on `LibraryData` for robust "All" tab rendering. Dropped fabricated fields (`chapterTitle`, `durationSeconds`, etc.) per this project's never-fabricate-data convention. 3-agent review.
+
+---
+
+### S2-15 — Fix Dashboard/Library 401 by Moving Real Data Fetching Client-Side — ✅ 2026-07-27
+**Status:** ✅ DONE — `docs/stories/2-15-fix-dashboard-library-auth.md`, merged to `sprint2-master`, and to `main` via PR #114 (2026-07-29)
+**Files:** `apps/web/src/hooks/useDashboard.ts` (new), `apps/web/src/hooks/useLibrary.ts` (new), `apps/web/src/app/(dashboard)/dashboard/page.tsx`, `apps/web/src/app/(dashboard)/library/page.tsx`
+
+The very first live test of S2-14's wiring hit a 401: both pages were Server Components, but `api.ts`'s auth interceptor only attaches a Bearer token client-side (`typeof window !== 'undefined'`) — a Server Component running in Node.js has no `window`, so every real API call went out with no auth header at all. Fixed by converting both pages to Client Components using two new SWR-based hooks, matching the already-established `useLesson`/`useSessionReport` pattern (real, authenticated data fetching in this codebase is always client-side). Review round added a loading state (was flashing empty-lesson sections) and per-user SWR cache key scoping (`` `dashboard:${user.id}` ``) to prevent cross-user data leakage in a shared browser tab. Merged before review (user was actively blocked live-testing), reviewed immediately after — 2 findings fixed.
+
+---
+
+### S2-26 — Audio Buffering + Playback-Error Retry States — ✅ 2026-07-29
+**Status:** ✅ DONE — `docs/stories/2-26-audio-buffer-error-retry.md`, merged to `main` via PR #95
+**Files:** `apps/web/src/stores/player.machine.ts`, `apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/components/player/Player.tsx`
+
+Re-implemented, against current `main`, the still-valuable half of a 3-week-stale PR (#71) that had diverged too far to merge cleanly (its `PlayerLoader.tsx` approach predated the real backend integration and would have regressed the current, better `status`-based loading/error handling). Adds `isBuffering`/`audioError`/`audioRetryCount` state, `onWaiting`/`onPlaying`/`onCanPlay`/`onError` wiring on the `<audio>` element, a non-blocking buffering indicator, and a playback-error screen with a Retry button. 3-agent review caught and fixed: `retryAudio()` not actually resuming playback (missing effect dependency — clearing the error but never calling `.play()` again on the remounted element), and the error overlay blocking `QUIZ`/`TEACH_BACK`/`ENDED` when a stale error survived into those states. Also fixed in the same PR: an unrelated pre-existing `tsc` break on `main` (Story 2-25's `LessonMetadata.tier` optionality change had broken S2-10's `TIER_LABELS` lookup).
+
+---
+
+### S2-33 — Virtual Playback Clock + Retry Re-Fetch on Media Error — ✅ 2026-07-29
+**Status:** ✅ DONE — `docs/stories/2-33-virtual-playback-clock.md`, merged to `main` via PR #106
+**Files:** `apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/components/player/Player.tsx`, `apps/web/src/components/player/PlayerLoader.tsx`, `apps/web/src/hooks/useLesson.ts`, `apps/web/src/stores/player.machine.ts`
+
+The frontend half needed to actually close the TTS-fallback bug Dev 2 reported to Dev 1 — see the cross-team notes above for the full bug-report/fix history with Dev 1. `AudioTimeline.tsx` now branches three ways (real audio / recovered-script-but-no-audio / neither); the new middle case runs a wall-clock-accurate, `playbackRate`-aware virtual clock driving the same `processTimeUpdate` boundary logic real audio would, closing the "quiz fires at 0:00" symptom for good. `Player.tsx`'s Retry button now re-fetches the lesson (fresh signed media URL) via a new `useLesson` `refetch` + `refreshLessonMedia` store action, instead of remounting the same expired URL. 3-agent review caught 2 real **High** severity bugs pre-merge (see cross-team note above for detail) plus 4 Medium/Low fixes (seek-vs-tick race, in-flight retry-button guard, drift correction, defensive duration reset) — all with regression tests. Full suite 53 files / 521 tests passing throughout.
+
+---
+
+### S2-34 — Browser SpeechSynthesis Fallback for Virtual Playback Clock — ✅ 2026-07-29
+**Status:** ✅ DONE — `docs/stories/2-34-speech-synthesis-fallback.md`, branch `sprint2/s2-34-speech-synthesis-fallback`, merged to `sprint2-master` then to `main` via PR #114 (2026-07-29)
+**Files:** `apps/web/src/components/player/AudioTimeline.tsx`, `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx`
+
+Implements the last tier of CLAUDE.md's TTS fallback chain (Sarvam Bulbul v2 → Azure TTS → **Browser Speech**), requested directly by the user from Dev 1's 2026-07-29 handoff (item 4c) despite its explicit non-blocking label there. Layers the native `SpeechSynthesis` API onto S2-33's virtual clock's `!hasAudio && hasScript` branch — the clock remains the sole timing authority; speech is purely supplementary audio and never drives `processTimeUpdate`/segment advancement. Mirrors `<audio>` play/pause semantics: `pause()`/`resume()` on status transitions, `cancel()` on segment change or leaving virtual-clock mode. 3-agent review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) surfaced 10 findings; user resolved 3 decision-needed items (2 accepted as documented limitations — seek doesn't resync narration, long scripts risk browser TTS truncation — logged in `docs/stories/deferred-work.md`; 1 applied — `ENDED` hard-cancels instead of pausing) and all 7 patch findings were applied: deferred `speak()` behind a `setTimeout(0)` after `cancel()` (same-tick Chrome race), added a swallowing `onerror` handler, guarded on `SpeechSynthesisUtterance` existence, made segment-change `cancel()` unconditional on status (real AC-6 gap), switched the effect's deps to `segment?.segment_id` per the spec's literal wording, and reset the spoken-segment ref in the unmount-cleanup effect (fixes a React StrictMode dev double-mount edge case). Full suite 54 files / 560 tests passing, `tsc --noEmit` clean, `eslint` clean.
 
 ---
 

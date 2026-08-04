@@ -7,6 +7,9 @@ learner DNA retrieval, and onboarding diagnostic submission.
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
@@ -21,9 +24,13 @@ from app.modules.assessment.schemas import (
     QuizAnswer,
     QuizResult,
     QuizSubmission,
+    SessionCreate,
+    SessionCreated,
     TeachbackResult,
     TeachbackSubmission,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["assessment"])
 
@@ -42,6 +49,14 @@ class SessionReport(BaseModel):
     teachback_score: float | None
     duration_minutes: float
     completed_at: str | None
+    # Story 3-29 — tier context fields (additive; existing fields unchanged)
+    tier: str
+    tier_label: str
+    quiz_total_questions: int
+    quiz_correct_count: int
+    quiz_accuracy_label: str | None
+    # Story 3-30 — Learner DNA snapshot (descriptive labels + growth direction)
+    learner_dna_snapshot: dict[str, Any] | None = None
 
 
 class LearnerDNA(BaseModel):
@@ -60,6 +75,35 @@ class LearnerDNA(BaseModel):
 
 
 @router.post(
+    "/sessions",
+    response_model=SessionCreated,
+    status_code=status.HTTP_201_CREATED,
+    summary="Start a lesson attempt — mints the session row",
+)
+async def create_session_endpoint(
+    body: SessionCreate,
+    current_user: CurrentUser,
+) -> SessionCreated:
+    """Create the `sessions` row for this lesson attempt and return its id.
+
+    Story 2-35 / D18. Call this ONCE when a lesson starts, not per segment —
+    every call is a new attempt, which is intentional (re-learning must produce a
+    new session for CES history).
+
+    `user_id` is taken from the verified JWT and is never read from the body.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import create_session
+
+    created = await create_session(
+        lesson_id=body.lesson_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
+    return SessionCreated(**created)
+
+
+@router.post(
     "/quiz",
     response_model=QuizResult,
     summary="Submit quiz answers for a session",
@@ -71,6 +115,7 @@ async def submit_quiz(
     """Grade a quiz submission and update the session's CES score."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
     from app.modules.assessment.service import grade_quiz
+
     return await grade_quiz(
         session_id=body.session_id,
         lesson_id=body.lesson_id,
@@ -93,6 +138,7 @@ async def submit_teachback(
     """Evaluate a student's typed teach-back response using the GPT-4o-mini rubric."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
     from app.modules.assessment.service import grade_teachback
+
     return await grade_teachback(
         session_id=body.session_id,
         lesson_id=body.lesson_id,
@@ -142,11 +188,17 @@ async def get_learner_dna(
 ) -> LearnerDNA:
     """Return the learner DNA profile for the authenticated user."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.core.redis import get_redis  # lazy — prevents circular import at module load
     from app.modules.assessment.service import get_analytics_consent, get_learner_dna_data
 
     user_id: str = current_user["sub"]
     supabase = get_supabase()
-    body = await get_learner_dna_data(user_id=user_id, supabase=supabase)
+    redis_client = None
+    try:
+        redis_client = get_redis()
+    except Exception as exc:
+        logger.debug("Redis unavailable for reassessment_due check: %s", exc)
+    body = await get_learner_dna_data(user_id=user_id, supabase=supabase, redis=redis_client)
     consent = await get_analytics_consent(user_id=user_id, supabase=supabase)
     capture_event(
         distinct_id=user_id,
@@ -179,10 +231,20 @@ async def submit_onboarding_diagnostic(
 
     user_id: str = current_user["sub"]
     onboarding_key = f"user:{user_id}:onboarding_done"
+    reassessment_key = f"user:{user_id}:reassessment_due"
 
     # Atomic SET NX eliminates the TOCTOU race between a read-check and a later write.
     # Returns True if key was newly set; None/False if key already existed.
     redis = get_redis()
+
+    # Re-assessment bypass: if the re-assessment flag is set, the user is allowed to
+    # resubmit the onboarding form. Delete the idempotency key so SET NX succeeds below.
+    try:
+        if await redis.get(reassessment_key) is not None:
+            await redis.delete(onboarding_key)
+    except Exception as exc:
+        logger.debug("Re-assessment bypass check failed (non-fatal): %s", exc)
+
     was_set = await redis.set(onboarding_key, "1", nx=True)
     if not was_set:
         raise HTTPException(
@@ -200,4 +262,12 @@ async def submit_onboarding_diagnostic(
         # Release the lock so the user can retry after a transient failure.
         await redis.delete(onboarding_key)
         raise
+
+    # Clear re-assessment flag — the fresh onboarding resets the cycle (non-fatal).
+    _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+    try:
+        await redis.delete(reassessment_key)
+    except Exception as exc:
+        logger.warning("onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc)
+
     return result

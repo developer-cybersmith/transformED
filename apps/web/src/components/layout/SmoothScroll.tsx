@@ -13,6 +13,17 @@ export default function SmoothScroll({
     const pathname = usePathname();
 
     useEffect(() => {
+        // Native touch scrolling is already smooth and doesn't need Lenis.
+        // Lenis's touch virtualization recomputes scroll bounds off a
+        // ResizeObserver on document.body -- any section whose DOM mutates
+        // continuously (e.g. Hero's typewriter demo, ticking every 24-65ms)
+        // fires that resize mid-scroll, and Lenis snaps the visual position
+        // back toward its last cached target. Desktop wheel input isn't
+        // affected, so only skip Lenis on coarse-pointer (touch) devices.
+        if (window.matchMedia("(pointer: coarse)").matches) {
+            return;
+        }
+
         const lenis = new Lenis({
             duration: 1.2,
             easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), // expoOut easing
@@ -32,7 +43,29 @@ export default function SmoothScroll({
 
         requestAnimationFrame(raf);
 
+        // Lenis only measures scrollable height at init (and when we call
+        // resize() below on route change) -- it does NOT observe DOM
+        // mutations on its own. Any page whose content grows after mount
+        // (SWR-fetched dashboard sections, images, async lists, etc.) leaves
+        // Lenis's cached scroll bounds stale: the mouse wheel gets "stuck" at
+        // the old (shorter) height while a native scrollbar drag -- which
+        // reads the real DOM directly, bypassing Lenis -- still works fine.
+        // This is exactly that symptom, recurring on whichever page loads
+        // content asynchronously. Observing document.body's size and calling
+        // resize() on every change fixes it generally, not just for one page.
+        let rafId: number | null = null;
+        const resizeObserver = new ResizeObserver(() => {
+            if (rafId !== null) return; // coalesce bursts of mutations into one resize
+            rafId = requestAnimationFrame(() => {
+                lenis.resize();
+                rafId = null;
+            });
+        });
+        resizeObserver.observe(document.body);
+
         return () => {
+            resizeObserver.disconnect();
+            if (rafId !== null) cancelAnimationFrame(rafId);
             lenis.destroy();
         };
     }, []);

@@ -141,23 +141,33 @@ export default function Features() {
 
             </div>
 
-            {/* Ambient Intelligence Flow */}
-            <motion.div
-                animate={{
-                    x: ["-100%", "200%"],
-                    opacity: [0, 0.05, 0]
-                }}
-                transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
-                className="absolute top-1/3 left-0 w-[400px] h-[200px] bg-gradient-to-r from-transparent via-primary/20 to-transparent blur-[80px] pointer-events-none -z-10"
-            />
-            <motion.div
-                animate={{
-                    x: ["200%", "-100%"],
-                    opacity: [0, 0.08, 0]
-                }}
-                transition={{ duration: 18, repeat: Infinity, ease: "linear", delay: 2 }}
-                className="absolute bottom-1/3 left-0 w-[600px] h-[300px] bg-gradient-to-r from-transparent via-[var(--accent-secondary)]/20 to-transparent blur-[100px] pointer-events-none -z-10"
-            />
+            {/*
+             * Ambient Intelligence Flow -- clipped by this wrapper, not the
+             * <section> itself. overflow-hidden on any ancestor of the sticky
+             * CognitiveVisualization column above disables position: sticky
+             * entirely (it needs every ancestor's overflow to stay visible),
+             * which is exactly what put overflow-hidden on the section broke.
+             * This wrapper is a sibling of the grid, not an ancestor, so it
+             * clips these two x-animated divs without touching sticky at all.
+             */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none -z-10">
+                <motion.div
+                    animate={{
+                        x: ["-100%", "200%"],
+                        opacity: [0, 0.05, 0]
+                    }}
+                    transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+                    className="absolute top-1/3 left-0 w-[400px] h-[200px] bg-gradient-to-r from-transparent via-primary/20 to-transparent blur-[80px]"
+                />
+                <motion.div
+                    animate={{
+                        x: ["200%", "-100%"],
+                        opacity: [0, 0.08, 0]
+                    }}
+                    transition={{ duration: 18, repeat: Infinity, ease: "linear", delay: 2 }}
+                    className="absolute bottom-1/3 left-0 w-[600px] h-[300px] bg-gradient-to-r from-transparent via-[var(--accent-secondary)]/20 to-transparent blur-[100px]"
+                />
+            </div>
         </section>
     );
 }

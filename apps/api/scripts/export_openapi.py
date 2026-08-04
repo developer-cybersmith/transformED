@@ -7,6 +7,7 @@ Usage (from apps/api/):
     python scripts/export_openapi.py
     python scripts/export_openapi.py --out ../../docs/openapi-assessment.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +19,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from fastapi import FastAPI  # noqa: E402
+
 from app.modules.assessment.router import router as assessment_router  # noqa: E402
 
 
@@ -49,20 +51,18 @@ def _check_cwd() -> None:
     """
     expected = pathlib.Path.cwd() / "app" / "main.py"
     if not expected.is_file():
-        print("ERROR: Run this script from the apps/api/ directory.")
-        print(f"  Current directory : {pathlib.Path.cwd()}")
-        print(f"  Expected to find  : {expected}")
-        print()
-        print("  cd apps/api && python scripts/export_openapi.py")
+        print("ERROR: Run this script from the apps/api/ directory.")  # noqa: T201
+        print(f"  Current directory : {pathlib.Path.cwd()}")  # noqa: T201
+        print(f"  Expected to find  : {expected}")  # noqa: T201
+        print()  # noqa: T201
+        print("  cd apps/api && python scripts/export_openapi.py")  # noqa: T201
         sys.exit(1)
 
 
 def main() -> None:
     _check_cwd()
 
-    parser = argparse.ArgumentParser(
-        description="Dump the assessment OpenAPI spec to a JSON file."
-    )
+    parser = argparse.ArgumentParser(description="Dump the assessment OpenAPI spec to a JSON file.")
     parser.add_argument(
         "--out",
         default="../../docs/openapi-assessment.json",
@@ -86,21 +86,19 @@ def main() -> None:
 
     assessment_paths = [p for p in spec.get("paths", {}) if "/assessment/" in p]
     schemas = spec.get("components", {}).get("schemas", {})
-    _HTTP_VERBS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    http_verbs = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
 
-    print(f"DONE: Spec written to {out_path}")
-    print(f"  Total paths  : {len(spec.get('paths', {}))}")
-    print(f"  Assessment   : {len(assessment_paths)} endpoints")
-    print(f"  Schemas      : {', '.join(sorted(schemas.keys()))}")
-    print()
-    print("Assessment endpoints:")
+    print(f"DONE: Spec written to {out_path}")  # noqa: T201
+    print(f"  Total paths  : {len(spec.get('paths', {}))}")  # noqa: T201
+    print(f"  Assessment   : {len(assessment_paths)} endpoints")  # noqa: T201
+    print(f"  Schemas      : {', '.join(sorted(schemas.keys()))}")  # noqa: T201
+    print()  # noqa: T201
+    print("Assessment endpoints:")  # noqa: T201
     for path in sorted(assessment_paths):
         # Filter path-item keys to HTTP verbs only (OpenAPI path items may also
         # contain 'summary', 'description', 'parameters', 'servers', etc.)
-        methods = ", ".join(
-            k.upper() for k in spec["paths"][path].keys() if k in _HTTP_VERBS
-        )
-        print(f"  [{methods}] {path}")
+        methods = ", ".join(k.upper() for k in spec["paths"][path].keys() if k in http_verbs)
+        print(f"  [{methods}] {path}")  # noqa: T201
 
 
 if __name__ == "__main__":

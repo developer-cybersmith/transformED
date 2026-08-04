@@ -4,7 +4,7 @@ All tests are @pytest.mark.unit — no real Supabase connection required.
 asyncio.to_thread is shimmed to run synchronously so MagicMock chain works correctly.
 
 Covers:
-  - AC 1: HTTP 200 + all 9 fields present
+  - AC 1: HTTP 200 + all fields present (Story 3-24 + Story 3-29 new fields)
   - AC 2: SEC-006 (wrong-user → 404, not 403)
   - AC 3: Non-existent session → 404
   - AC 4: ces_score from sessions.ces_final (including NULL → 0.0)
@@ -18,26 +18,34 @@ Covers:
   - AC 12: duration_minutes from timestamps
   - AC 13: completed_at as ISO string or None
   - AC 14: No LLM calls
-  - AC 15: asyncio.to_thread used (mock_to_thread fixture required)
+  - AC 15: asyncio.to_thread used (5 calls — mock_to_thread fixture required)
   - AC 16: Unauthenticated → HTTP 401
   - AC 17: user_id and lesson_id come from DB row, not JWT
+  Story 3-29 tier-context tests (ACs 1-5, 8):
+  - tier/tier_label from lessons.tier (T1/T2/T3)
+  - quiz_total_questions, quiz_correct_count from existing quiz_attempts data
+  - quiz_accuracy_label: Strong/Developing/Needs Review/None
+  - Unknown tier or missing lesson row → graceful T2 default
 """
+
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
+
 import pytest
-from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from unittest.mock import MagicMock, AsyncMock, patch
 
 from app.dependencies import get_current_user
 from app.modules.assessment.router import router
 
-
 # ── HTTP-layer client (router integration) ────────────────────────────────────
+
 
 async def _fake_user() -> dict:
     return {"sub": "user-report-001", "email": "report@example.com"}
+
 
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
@@ -55,8 +63,8 @@ _SESSION_ID = "session-report-001"
 _USER_ID = "user-report-001"
 _LESSON_ID = "lesson-report-001"
 
-_STARTED_AT = datetime(2026, 7, 2, 10, 0, 0, tzinfo=timezone.utc)
-_ENDED_AT = datetime(2026, 7, 2, 10, 30, 0, tzinfo=timezone.utc)  # 30 minutes
+_STARTED_AT = datetime(2026, 7, 2, 10, 0, 0, tzinfo=UTC)
+_ENDED_AT = datetime(2026, 7, 2, 10, 30, 0, tzinfo=UTC)  # 30 minutes
 
 _SESSION_ROW = {
     "session_id": _SESSION_ID,
@@ -80,27 +88,71 @@ _TEACHBACK_ROWS = [
 
 _INTERVENTION_COUNT = 2
 
+# Sentinel — distinct from None so callers can pass tier_data=None to mean "no lesson row found"
+_NO_TIER_ROW = object()
+
+# ── DNA snapshot test fixtures (Story 3-30) ───────────────────────────────────
+
+_ALL_DIMS = (
+    "pattern_recognition",
+    "logical_deduction",
+    "processing_speed",
+    "frustration_tolerance",
+    "persistence",
+    "help_seeking",
+    "goal_orientation",
+    "curiosity_index",
+    "study_independence",
+)
+
+_DNA_ROW = dict.fromkeys(_ALL_DIMS, 85.0)  # score 85 → "Proficient"
+
+_GROWTH_EVENTS = [
+    {"payload": {"dimension": dim, "old_value": 82.0, "new_value": 85.0, "delta": 3.0}}
+    for dim in _ALL_DIMS
+]  # delta 3.0 > 2.0 → "Improving"
+
+
+def _growth_event_for(dim: str, delta: float) -> list[dict]:
+    """Build a single-dim growth events list for threshold boundary tests."""
+    return [{"payload": {"dimension": dim, "old_value": 0.0, "new_value": delta, "delta": delta}}]
+
 
 # ── Mock builder ──────────────────────────────────────────────────────────────
 
+
 def _build_report_supabase(
     session_data=_SESSION_ROW,
+    tier_data=_NO_TIER_ROW,
     quiz_rows=None,
     tb_rows=None,
     intervention_count=0,
+    dna_data=None,
+    growth_events=None,
 ) -> MagicMock:
     """Build a mock Supabase client for get_session_report.
 
     Table call order (must match service implementation exactly):
-      1. sessions   — .maybe_single() → session_data
-      2. quiz_attempts   — .execute() → data list
-      3. teachback_attempts — .execute() → data list
-      4. session_events — count query → .count
+      1. sessions           — .maybe_single() → session_data
+      2. lessons            — .maybe_single() → tier_data  (Story 3-29)
+      3. quiz_attempts      — .execute()      → data list
+      4. teachback_attempts — .execute()      → data list
+      5. session_events     — count query     → .count (intervention_triggered)
+      6. learner_dna        — .maybe_single() → dna_data   (Story 3-30)
+      7. session_events     — .execute()      → growth_events (dna_update;
+         only when dna_data is not None)
+
+    tier_data default (_NO_TIER_ROW sentinel) → {"tier": "T2"}.
+    Pass tier_data=None explicitly to simulate a missing lessons row.
     """
+    if tier_data is _NO_TIER_ROW:
+        tier_data = {"tier": "T2"}  # matches lessons.tier DEFAULT 'T2'
     if quiz_rows is None:
         quiz_rows = []
     if tb_rows is None:
         tb_rows = []
+    if growth_events is None:
+        growth_events = []
 
     mock = MagicMock()
     call_count = [0]
@@ -113,16 +165,32 @@ def _build_report_supabase(
         captured[n] = m
         if n == 1:
             # sessions — maybe_single
-            m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
+            m_exec = m.select.return_value.eq.return_value.maybe_single.return_value.execute
+            m_exec.return_value.data = session_data
         elif n == 2:
-            # quiz_attempts — list
-            m.select.return_value.eq.return_value.execute.return_value.data = quiz_rows
+            # lessons — maybe_single (Story 3-29 — tier fetch)
+            _m = m.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _m.return_value.data = tier_data
         elif n == 3:
-            # teachback_attempts — list
-            m.select.return_value.eq.return_value.execute.return_value.data = tb_rows
+            # quiz_attempts — list (was n==2)
+            m.select.return_value.eq.return_value.execute.return_value.data = quiz_rows
         elif n == 4:
+            # teachback_attempts — list (was n==3)
+            m.select.return_value.eq.return_value.execute.return_value.data = tb_rows
+        elif n == 5:
             # session_events — count (two .eq() filters: session_id, event_type)
-            m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = intervention_count
+            m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = (
+                intervention_count
+            )
+        elif n == 6:
+            # learner_dna — maybe_single (Story 3-30)
+            m_exec = m.select.return_value.eq.return_value.maybe_single.return_value.execute
+            m_exec.return_value.data = dna_data
+        elif n == 7:
+            # session_events dna_update — two .eq() filters → data list of payloads
+            m.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = (
+                growth_events
+            )
         return m
 
     mock.table.side_effect = _table
@@ -131,6 +199,7 @@ def _build_report_supabase(
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def _mock_settings(monkeypatch) -> None:
@@ -144,12 +213,15 @@ def _mock_settings(monkeypatch) -> None:
 @pytest.fixture
 def mock_to_thread(monkeypatch):
     """Replace asyncio.to_thread with a synchronous shim."""
+
     async def _sync_shim(func, *args, **kwargs):
         return func(*args, **kwargs)
+
     monkeypatch.setattr("app.modules.assessment.service.asyncio.to_thread", _sync_shim)
 
 
 # ── Service-layer tests ───────────────────────────────────────────────────────
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -185,6 +257,7 @@ async def test_get_report_returns_200_with_all_fields(mock_to_thread):
 async def test_get_report_wrong_user_returns_404(mock_to_thread):
     """AC 2: SEC-006 — session owned by another user returns HTTP 404, not 403."""
     from fastapi import HTTPException
+
     from app.modules.assessment.service import get_session_report
 
     session_owned_by_other = {**_SESSION_ROW, "user_id": "other-user-999"}
@@ -199,6 +272,10 @@ async def test_get_report_wrong_user_returns_404(mock_to_thread):
     assert exc_info.value.status_code == 404
     # SEC-006: detail must be identical to the nonexistent-session path (no ownership leak)
     assert exc_info.value.detail == "Session not found."
+    # AC 9 (SEC-006): lessons table must NOT be queried — ownership check fires before Step 1b
+    assert len(supabase._captured_mocks) == 1, (
+        "lessons table must not be queried when ownership check fails (only sessions was called)"
+    )
 
 
 @pytest.mark.unit
@@ -206,6 +283,7 @@ async def test_get_report_wrong_user_returns_404(mock_to_thread):
 async def test_get_report_nonexistent_session_returns_404(mock_to_thread):
     """AC 3: Non-existent session_id returns HTTP 404."""
     from fastapi import HTTPException
+
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(session_data=None)
@@ -228,9 +306,7 @@ async def test_get_report_ces_score_from_sessions_ces_final(mock_to_thread):
 
     session = {**_SESSION_ROW, "ces_final": 83.75}
     supabase = _build_report_supabase(session_data=session)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.ces_score == pytest.approx(83.75)
 
 
@@ -242,9 +318,7 @@ async def test_get_report_ces_score_null_returns_zero(mock_to_thread):
 
     session = {**_SESSION_ROW, "ces_final": None}
     supabase = _build_report_supabase(session_data=session)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.ces_score == pytest.approx(0.0)
 
 
@@ -255,9 +329,7 @@ async def test_get_report_quiz_score_calculated_from_attempts(mock_to_thread):
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     # 2 correct / 3 total = 66.666... → 66.67
     assert result.quiz_score == pytest.approx(66.67, abs=0.01)
 
@@ -269,9 +341,7 @@ async def test_get_report_quiz_score_none_when_no_attempts(mock_to_thread):
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(quiz_rows=[])
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.quiz_score is None
 
 
@@ -283,9 +353,7 @@ async def test_get_report_quiz_score_perfect(mock_to_thread):
 
     all_correct = [{"is_correct": True}, {"is_correct": True}, {"is_correct": True}]
     supabase = _build_report_supabase(quiz_rows=all_correct)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.quiz_score == pytest.approx(100.0)
 
 
@@ -296,9 +364,7 @@ async def test_get_report_teachback_score_calculated_from_attempts(mock_to_threa
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(tb_rows=_TEACHBACK_ROWS)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     # AVG([80, 90]) = 85.0
     assert result.teachback_score == pytest.approx(85.0)
 
@@ -310,9 +376,7 @@ async def test_get_report_teachback_score_none_when_no_attempts(mock_to_thread):
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(tb_rows=[])
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.teachback_score is None
 
 
@@ -323,10 +387,14 @@ async def test_get_report_ces_breakdown_has_exactly_5_keys(mock_to_thread):
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase()
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
-    assert set(result.ces_breakdown.keys()) == {"quiz", "teachback", "behavioral", "head_pose", "blink"}
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert set(result.ces_breakdown.keys()) == {
+        "quiz",
+        "teachback",
+        "behavioral",
+        "head_pose",
+        "blink",
+    }
 
 
 @pytest.mark.unit
@@ -337,9 +405,7 @@ async def test_get_report_ces_breakdown_quiz_matches_formula(mock_to_thread):
 
     # 2/3 accuracy = 0.6667, weight=0.35 → 0.6667 * 0.35 * 100 = 23.3333
     supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     expected = round((2 / 3) * 0.35 * 100, 4)
     assert result.ces_breakdown["quiz"] == pytest.approx(expected, rel=1e-4)
 
@@ -351,9 +417,7 @@ async def test_get_report_ces_breakdown_quiz_zero_when_no_attempts(mock_to_threa
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(quiz_rows=[])
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.ces_breakdown["quiz"] == pytest.approx(0.0)
 
 
@@ -365,9 +429,7 @@ async def test_get_report_ces_breakdown_teachback_matches_formula(mock_to_thread
 
     # AVG(80, 90) = 85.0 → (85/100) * 0.25 * 100 = 21.25
     supabase = _build_report_supabase(tb_rows=_TEACHBACK_ROWS)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     expected = round((85.0 / 100.0) * 0.25 * 100, 4)
     assert result.ces_breakdown["teachback"] == pytest.approx(expected, rel=1e-4)
 
@@ -379,9 +441,7 @@ async def test_get_report_ces_breakdown_teachback_zero_when_no_attempts(mock_to_
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(tb_rows=[])
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.ces_breakdown["teachback"] == pytest.approx(0.0)
 
 
@@ -396,9 +456,7 @@ async def test_get_report_ces_breakdown_attention_always_zero(mock_to_thread):
         tb_rows=_TEACHBACK_ROWS,
         intervention_count=3,
     )
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.ces_breakdown["behavioral"] == pytest.approx(0.0)
     assert result.ces_breakdown["head_pose"] == pytest.approx(0.0)
     assert result.ces_breakdown["blink"] == pytest.approx(0.0)
@@ -407,16 +465,17 @@ async def test_get_report_ces_breakdown_attention_always_zero(mock_to_thread):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_get_report_interventions_count_from_session_events(mock_to_thread):
-    """AC 11: interventions_count = COUNT(*) from session_events WHERE event_type='intervention_triggered'."""
+    """AC 11: interventions_count = COUNT(*) from session_events.
+
+    WHERE event_type='intervention_triggered'.
+    """
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(intervention_count=3)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.interventions_count == 3
     # Verify the event_type='intervention_triggered' filter was actually passed to the query
-    events_mock = supabase._captured_mocks[4]
+    events_mock = supabase._captured_mocks[5]
     second_eq = events_mock.select.return_value.eq.return_value.eq
     second_eq.assert_called_once_with("event_type", "intervention_triggered")
 
@@ -428,9 +487,7 @@ async def test_get_report_interventions_count_zero_when_no_events(mock_to_thread
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(intervention_count=0)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.interventions_count == 0
     assert isinstance(result.interventions_count, int)
 
@@ -443,9 +500,7 @@ async def test_get_report_duration_minutes_computed_from_timestamps(mock_to_thre
 
     # _ENDED_AT - _STARTED_AT = 30 minutes
     supabase = _build_report_supabase()
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.duration_minutes == pytest.approx(30.0, abs=0.01)
 
 
@@ -455,13 +510,11 @@ async def test_get_report_duration_minutes_fractional(mock_to_thread):
     """AC 12: duration_minutes handles fractional minutes correctly."""
     from app.modules.assessment.service import get_session_report
 
-    started = datetime(2026, 7, 2, 10, 0, 0, tzinfo=timezone.utc)
-    ended = datetime(2026, 7, 2, 10, 12, 30, tzinfo=timezone.utc)  # 12.5 minutes
+    started = datetime(2026, 7, 2, 10, 0, 0, tzinfo=UTC)
+    ended = datetime(2026, 7, 2, 10, 12, 30, tzinfo=UTC)  # 12.5 minutes
     session = {**_SESSION_ROW, "started_at": started.isoformat(), "ended_at": ended.isoformat()}
     supabase = _build_report_supabase(session_data=session)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.duration_minutes == pytest.approx(12.5, abs=0.01)
 
 
@@ -473,9 +526,7 @@ async def test_get_report_duration_minutes_zero_when_ended_at_null(mock_to_threa
 
     session = {**_SESSION_ROW, "ended_at": None}
     supabase = _build_report_supabase(session_data=session)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.duration_minutes == pytest.approx(0.0)
 
 
@@ -486,9 +537,7 @@ async def test_get_report_completed_at_isoformat_when_ended_at_set(mock_to_threa
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase()
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.completed_at is not None
     # Must be a parseable ISO 8601 string
     parsed = datetime.fromisoformat(result.completed_at.replace("Z", "+00:00"))
@@ -503,9 +552,7 @@ async def test_get_report_completed_at_none_when_ended_at_null(mock_to_thread):
 
     session = {**_SESSION_ROW, "ended_at": None}
     supabase = _build_report_supabase(session_data=session)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     assert result.completed_at is None
 
 
@@ -544,9 +591,7 @@ async def test_get_report_no_llm_calls(mock_to_thread):
         # If get_session_report ever instantiates OpenAILLMProvider it will be recorded
         # We guard against future regressions that accidentally add LLM calls
         try:
-            await get_session_report(
-                session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-            )
+            await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
         except Exception:
             pass  # Import error is fine — we just care about no instantiation
         mock_llm.assert_not_called()
@@ -559,9 +604,7 @@ async def test_get_report_ces_breakdown_all_zeros_when_no_data(mock_to_thread):
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(quiz_rows=[], tb_rows=[], intervention_count=0)
-    result = await get_session_report(
-        session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
-    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
     for key in ("quiz", "teachback", "behavioral", "head_pose", "blink"):
         assert result.ces_breakdown[key] == pytest.approx(0.0), f"Expected 0.0 for {key!r}"
 
@@ -571,6 +614,7 @@ async def test_get_report_ces_breakdown_all_zeros_when_no_data(mock_to_thread):
 async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread):
     """SEC-006: nonexistent session and wrong-user session return the SAME detail string."""
     from fastapi import HTTPException
+
     from app.modules.assessment.service import get_session_report
 
     # Path 1 — session does not exist
@@ -584,9 +628,7 @@ async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread)
     session_other_user = {**_SESSION_ROW, "user_id": "other-user-999"}
     supabase_other = _build_report_supabase(session_data=session_other_user)
     with pytest.raises(HTTPException) as exc_other:
-        await get_session_report(
-            session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase_other
-        )
+        await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase_other)
 
     assert exc_none.value.status_code == exc_other.value.status_code == 404
     assert exc_none.value.detail == exc_other.value.detail, (
@@ -596,10 +638,14 @@ async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_asyncio_to_thread_called_4_times():
-    """AC 15: get_session_report wraps all 4 DB calls in asyncio.to_thread."""
-    from app.modules.assessment.service import get_session_report
+async def test_get_report_asyncio_to_thread_called_6_times_when_no_dna():
+    """AC 9 (Story 3-30): 6 asyncio.to_thread calls when learner_dna row is absent.
+
+    Call order: sessions + lessons + quiz + teachback + events_count + learner_dna.
+    """
     from unittest.mock import patch
+
+    from app.modules.assessment.service import get_session_report
 
     call_log: list[bool] = []
 
@@ -611,6 +657,7 @@ async def test_get_report_asyncio_to_thread_called_4_times():
         quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG,
         tb_rows=_TEACHBACK_ROWS,
         intervention_count=1,
+        dna_data=None,
     )
     with patch("app.modules.assessment.service.asyncio.to_thread", side_effect=_counting_shim):
         await get_session_report(
@@ -619,10 +666,11 @@ async def test_get_report_asyncio_to_thread_called_4_times():
             supabase=supabase,
         )
 
-    assert len(call_log) == 4, f"Expected 4 asyncio.to_thread calls, got {len(call_log)}"
+    assert len(call_log) == 6, f"Expected 6 asyncio.to_thread calls (no DNA), got {len(call_log)}"
 
 
 # ── HTTP-layer tests ──────────────────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_http_get_report_returns_200():
@@ -635,6 +683,7 @@ def test_http_get_report_returns_200():
         # Wire async shim
         async def _shim(func, *args, **kwargs):
             return func(*args, **kwargs)
+
         mock_thread.side_effect = _shim
 
         mock_settings = MagicMock()
@@ -653,9 +702,24 @@ def test_http_get_report_returns_200():
     assert resp.status_code == 200
     body = resp.json()
     required_keys = {
-        "session_id", "user_id", "lesson_id", "ces_score",
-        "ces_breakdown", "interventions_count", "quiz_score",
-        "teachback_score", "duration_minutes", "completed_at",
+        "session_id",
+        "user_id",
+        "lesson_id",
+        "ces_score",
+        "ces_breakdown",
+        "interventions_count",
+        "quiz_score",
+        "teachback_score",
+        "duration_minutes",
+        "completed_at",
+        # Story 3-29 tier-context fields
+        "tier",
+        "tier_label",
+        "quiz_total_questions",
+        "quiz_correct_count",
+        "quiz_accuracy_label",
+        # Story 3-30 DNA snapshot
+        "learner_dna_snapshot",
     }
     assert required_keys.issubset(body.keys())
 
@@ -670,3 +734,371 @@ def test_http_get_report_unauthenticated_returns_401():
     """
     resp = _unauth_client.get(f"/api/assessment/session/{_SESSION_ID}/report")
     assert resp.status_code in (401, 403)
+
+
+# ── Story 3-29: Session Report Tier Context ───────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_tier_t1_returns_full_depth_label(mock_to_thread):
+    """AC 1+2: lessons.tier='T1' → tier='T1', tier_label='Full-Depth' in report."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "T1"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T1"
+    assert result.tier_label == "Full-Depth"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_dna_snapshot_present_when_dna_exists(mock_to_thread):
+    """AC 2, AC 4: learner_dna_snapshot is a dict with exactly 2 keys when DNA row exists."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=_DNA_ROW, growth_events=_GROWTH_EVENTS)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot is not None
+    assert set(result.learner_dna_snapshot.keys()) == {"dimension_labels", "growth_labels"}
+    assert len(result.learner_dna_snapshot["dimension_labels"]) == 9
+    assert len(result.learner_dna_snapshot["growth_labels"]) == 9
+    # All 9 canonical dimensions present
+    for dim in _ALL_DIMS:
+        assert dim in result.learner_dna_snapshot["dimension_labels"]
+        assert dim in result.learner_dna_snapshot["growth_labels"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_tier_t2_returns_standard_label(mock_to_thread):
+    """AC 1+2: lessons.tier='T2' → tier='T2', tier_label='Standard' in report."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "T2"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T2"
+    assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_dna_snapshot_none_when_no_dna(mock_to_thread):
+    """AC 3: learner_dna_snapshot is None when the user has no learner_dna row."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=None)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_tier_t3_returns_refresher_label(mock_to_thread):
+    """AC 1+2: lessons.tier='T3' → tier='T3', tier_label='Refresher' in report."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "T3"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T3"
+    assert result.tier_label == "Refresher"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_dimension_labels_map_scores_to_labels(mock_to_thread):
+    """AC 5: dimension_labels values are descriptive strings — no raw floats returned.
+
+    score=85.0 → "Proficient" per _score_to_label thresholds.
+    """
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=_DNA_ROW, growth_events=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    labels = result.learner_dna_snapshot["dimension_labels"]
+    for dim in _ALL_DIMS:
+        assert labels[dim] == "Proficient", f"{dim}: expected 'Proficient', got {labels[dim]!r}"
+    # Verify no raw numbers leak through
+    for val in labels.values():
+        assert isinstance(val, str), f"dimension_labels must contain strings only, got {type(val)}"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_total_questions_and_correct_count(mock_to_thread):
+    """AC 3+4: quiz_total_questions = len(attempts), quiz_correct_count = sum(is_correct)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_total_questions == 3
+    assert result.quiz_correct_count == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_none_dimension_value_maps_to_beginning(mock_to_thread):
+    """AC 6: None dimension column → treated as 0.0 → 'Beginning'."""
+    from app.modules.assessment.service import get_session_report
+
+    dna_none = dict.fromkeys(_ALL_DIMS)
+    supabase = _build_report_supabase(dna_data=dna_none, growth_events=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    labels = result.learner_dna_snapshot["dimension_labels"]
+    for dim in _ALL_DIMS:
+        assert labels[dim] == "Beginning", (
+            f"{dim}: expected 'Beginning' for None, got {labels[dim]!r}"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_strong(mock_to_thread):
+    """AC 5: 4/4 correct (100%) → quiz_accuracy_label='Strong' (≥80% threshold)."""
+    from app.modules.assessment.service import get_session_report
+
+    all_correct = [{"is_correct": True}] * 4
+    supabase = _build_report_supabase(quiz_rows=all_correct)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Strong"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_improving_when_delta_above_threshold(mock_to_thread):
+    """AC 7: delta > 2.0 → 'Improving'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("pattern_recognition", 2.1),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["pattern_recognition"] == "Improving"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_developing(mock_to_thread):
+    """AC 5: 2/3 correct (66.67%) → quiz_accuracy_label='Developing' (60-79% range)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Developing"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_needs_attention_when_delta_below_threshold(mock_to_thread):
+    """AC 7: delta < -2.0 → 'Needs Attention'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("persistence", -2.1),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["persistence"] == "Needs Attention"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_needs_review(mock_to_thread):
+    """AC 5: 1/3 correct (33.33%) → quiz_accuracy_label='Needs Review' (<60% threshold)."""
+    from app.modules.assessment.service import get_session_report
+
+    rows = [{"is_correct": True}, {"is_correct": False}, {"is_correct": False}]
+    supabase = _build_report_supabase(quiz_rows=rows)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Needs Review"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_stable_within_range(mock_to_thread):
+    """AC 7: -2.0 <= delta <= 2.0 (exclusive boundaries) → 'Stable'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("curiosity_index", 1.9),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["curiosity_index"] == "Stable"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_none_when_no_questions(mock_to_thread):
+    """AC 5: 0 quiz attempts → quiz_accuracy_label=None (cannot evaluate accuracy)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(quiz_rows=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label is None
+    assert result.quiz_total_questions == 0
+    assert result.quiz_correct_count == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_none_when_no_events(mock_to_thread):
+    """AC 8: all growth_labels are None when no dna_update events exist for the session."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(dna_data=_DNA_ROW, growth_events=[])
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    growth = result.learner_dna_snapshot["growth_labels"]
+    for dim in _ALL_DIMS:
+        assert growth[dim] is None, f"{dim}: expected None when no events, got {growth[dim]!r}"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_unknown_tier_defaults_to_t2(mock_to_thread):
+    """AC 8: lessons.tier='TX' (not in T1/T2/T3) → tier='T2', tier_label='Standard'."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data={"tier": "TX"})
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T2"
+    assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_stable_at_exact_positive_threshold(mock_to_thread):
+    """AC 7 boundary: delta == 2.0 → 'Stable', NOT 'Improving' (strict > required)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("logical_deduction", 2.0),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["logical_deduction"] == "Stable"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_missing_lesson_row_defaults_to_t2(mock_to_thread):
+    """AC 8: lessons row absent (data=None) → tier='T2', tier_label='Standard' (safe default)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(tier_data=None)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.tier == "T2"
+    assert result.tier_label == "Standard"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_label_stable_at_exact_negative_threshold(mock_to_thread):
+    """AC 7 boundary: delta == -2.0 → 'Stable', NOT 'Needs Attention' (strict < required)."""
+    from app.modules.assessment.service import get_session_report
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=_growth_event_for("goal_orientation", -2.0),
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot["growth_labels"]["goal_orientation"] == "Stable"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_strong_at_exact_80_percent(mock_to_thread):
+    """AC 5: exactly 80% (4/5) → 'Strong' — verifies the ≥0.8 boundary is inclusive."""
+    from app.modules.assessment.service import get_session_report
+
+    rows = [{"is_correct": True}] * 4 + [{"is_correct": False}]  # 4/5 = 0.80 exactly
+    supabase = _build_report_supabase(quiz_rows=rows)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Strong"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_sec006_learner_dna_not_queried_for_wrong_user(mock_to_thread):
+    """AC 10 (SEC-006): learner_dna table is NEVER queried when ownership check fails.
+
+    Only supabase.table("sessions") should be called (n=1). The function must raise 404
+    before reaching call 6 (learner_dna).
+    """
+    from fastapi import HTTPException
+
+    from app.modules.assessment.service import get_session_report
+
+    session_other = {**_SESSION_ROW, "user_id": "other-user-999"}
+    supabase = _build_report_supabase(session_data=session_other)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert exc_info.value.status_code == 404
+    assert len(supabase._captured_mocks) == 1, (
+        f"Only sessions table should be queried; got {len(supabase._captured_mocks)} table calls"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_quiz_accuracy_label_developing_at_exact_60_percent(mock_to_thread):
+    """AC 5: exactly 60% (3/5) → 'Developing' — verifies the ≥0.6 boundary is inclusive."""
+    from app.modules.assessment.service import get_session_report
+
+    rows = [{"is_correct": True}] * 3 + [{"is_correct": False}] * 2  # 3/5 = 0.60 exactly
+    supabase = _build_report_supabase(quiz_rows=rows)
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+    assert result.quiz_accuracy_label == "Developing"
+
+
+# ── Story 3-30: Learner DNA snapshot tests ────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_asyncio_to_thread_called_7_times_on_happy_path():
+    """AC 9: exactly 7 asyncio.to_thread calls on happy path.
+
+    Call order: sessions + lessons + quiz + teachback + events_count
+    + learner_dna + events_dna_update.
+    """
+    from unittest.mock import patch
+
+    from app.modules.assessment.service import get_session_report
+
+    call_log: list[bool] = []
+
+    async def _counting_shim(func, *args, **kwargs):
+        call_log.append(True)
+        return func(*args, **kwargs)
+
+    supabase = _build_report_supabase(
+        quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG,
+        tb_rows=_TEACHBACK_ROWS,
+        intervention_count=1,
+        dna_data=_DNA_ROW,
+        growth_events=_GROWTH_EVENTS,
+    )
+    with patch("app.modules.assessment.service.asyncio.to_thread", side_effect=_counting_shim):
+        await get_session_report(
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            supabase=supabase,
+        )
+
+    assert len(call_log) == 7, (
+        f"Expected 7 asyncio.to_thread calls (happy path), got {len(call_log)}"
+    )

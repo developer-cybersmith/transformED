@@ -23,12 +23,14 @@ FAKE_USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 FAKE_PDF_PATH = f"{FAKE_USER_ID}/{FAKE_BOOK_ID}/chapter1.pdf"
 FAKE_PDF_BYTES = b"%PDF-1.4 minimal\n%%EOF"
 
-SUBPROCESS_STDOUT = json.dumps({
-    "raw_text": "Chapter 1: Introduction\n\nThis is the text.",
-    "page_count": 3,
-    "image_files": [],
-    "font_blocks": [],
-}).encode()
+SUBPROCESS_STDOUT = json.dumps(
+    {
+        "raw_text": "Chapter 1: Introduction\n\nThis is the text.",
+        "page_count": 3,
+        "image_files": [],
+        "font_blocks": [],
+    }
+).encode()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -38,11 +40,9 @@ def _make_supabase_mock(node_outputs: dict | None = None) -> MagicMock:
     """Return a Supabase client mock whose table() side_effect distinguishes tables."""
     jobs_mock = MagicMock()
     jobs_data = {"node_outputs": node_outputs or {}}
-    (jobs_mock.select.return_value
-               .eq.return_value
-               .single.return_value
-               .execute.return_value
-               .data) = jobs_data
+    (
+        jobs_mock.select.return_value.eq.return_value.single.return_value.execute.return_value.data
+    ) = jobs_data
 
     books_mock = MagicMock()
 
@@ -246,7 +246,13 @@ async def test_extract_node_idempotent() -> None:
         "raw_text": "Cached text from previous run",
         "extracted_images": [{"page": 1, "path": "lesson-images/foo.png", "caption": ""}],
         "page_count": 5,
-        "font_blocks": [{"text": "Chapter 1", "bbox": [0, 0, 100, 20], "font": {"name": "Arial-Bold", "size": 18.0, "bold": True}}],
+        "font_blocks": [
+            {
+                "text": "Chapter 1",
+                "bbox": [0, 0, 100, 20],
+                "font": {"name": "Arial-Bold", "size": 18.0, "bold": True},
+            }
+        ],
     }
 
     state = _base_state()
@@ -307,18 +313,22 @@ async def test_extract_node_uploads_images() -> None:
         img_path = fh.name
 
     try:
-        stdout_with_img = json.dumps({
-            "raw_text": "Chapter 1: Introduction",
-            "page_count": 1,
-            "image_files": [{"page": 1, "local_path": img_path}],
-        }).encode()
+        stdout_with_img = json.dumps(
+            {
+                "raw_text": "Chapter 1: Introduction",
+                "page_count": 1,
+                "image_files": [{"page": 1, "local_path": img_path}],
+            }
+        ).encode()
         exec_mock = _make_subprocess_mock(stdout=stdout_with_img)
 
         with (
             patch("app.core.db.get_supabase", return_value=sb),
             patch("app.config.get_settings") as mock_settings,
             patch("asyncio.create_subprocess_exec", exec_mock),
-            patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+            patch(
+                "app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock
+            ),
         ):
             _configure_settings(mock_settings)
             result = await extract_node(state)
@@ -349,13 +359,15 @@ def _write_fake_images(dir_path: str, n: int) -> list[dict[str, Any]]:
 
 
 def _stdout_with_images(image_files: list[dict[str, Any]], **extra: Any) -> bytes:
-    return json.dumps({
-        "raw_text": "Chapter 1: Introduction",
-        "page_count": len(image_files) or 1,
-        "image_files": image_files,
-        "font_blocks": [],
-        **extra,
-    }).encode()
+    return json.dumps(
+        {
+            "raw_text": "Chapter 1: Introduction",
+            "page_count": len(image_files) or 1,
+            "image_files": image_files,
+            "font_blocks": [],
+            **extra,
+        }
+    ).encode()
 
 
 @pytest.mark.unit
@@ -442,7 +454,8 @@ async def test_extract_node_upload_failure_fails_node(tmp_path: Any) -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.config.get_settings") as mock_settings,
         patch("asyncio.create_subprocess_exec", exec_mock),
-        patch("time.sleep"), patch("random.random", return_value=0.0),  # skip retry backoff in tests
+        patch("time.sleep"),
+        patch("random.random", return_value=0.0),  # skip retry backoff in tests
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         _configure_settings(mock_settings)
@@ -481,7 +494,8 @@ async def test_extract_node_upload_transient_blip_recovers(tmp_path: Any) -> Non
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.config.get_settings") as mock_settings,
         patch("asyncio.create_subprocess_exec", exec_mock),
-        patch("time.sleep"), patch("random.random", return_value=0.0),
+        patch("time.sleep"),
+        patch("random.random", return_value=0.0),
         patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
     ):
         _configure_settings(mock_settings)
@@ -591,7 +605,6 @@ async def test_extract_node_old_subprocess_json_shape_still_checkpoints() -> Non
 async def test_extract_node_subprocess_timeout_raises() -> None:
     """extract_node raises RuntimeError and reaps the child when the dynamic
     (settings-driven) timeout fires — cleanup now lives in try/finally (AC-5)."""
-    import asyncio as _asyncio
     import sys as _sys
 
     from app.modules.content.pipeline.graph import extract_node
@@ -610,7 +623,7 @@ async def test_extract_node_subprocess_timeout_raises() -> None:
     timeout_exec_mock = AsyncMock(return_value=timeout_proc)
 
     async def _raise_timeout(coro: object, timeout: float) -> tuple[bytes, bytes]:
-        raise _asyncio.TimeoutError
+        raise TimeoutError
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),

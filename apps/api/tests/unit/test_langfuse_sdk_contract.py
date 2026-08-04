@@ -41,6 +41,7 @@ def _ensure_openai_submodule_stubs() -> None:
         sys.modules.setdefault("openai.types", MagicMock())
         sys.modules.setdefault("openai.types.chat", MagicMock())
 
+
 # ---------------------------------------------------------------------------
 # Version pin
 # ---------------------------------------------------------------------------

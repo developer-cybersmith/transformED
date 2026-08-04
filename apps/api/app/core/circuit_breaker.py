@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 
 import sentry_sdk
@@ -42,6 +43,28 @@ class CircuitState(StrEnum):
     HALF_OPEN = "HALF_OPEN"
 
 
+class CircuitOpenError(RuntimeError):
+    """Raised when a call is rejected because the provider's circuit is OPEN.
+
+    Story 2-32. This is a *rejection*, not a provider failure, and the two must
+    be distinguishable:
+
+    - `guard_breaker` must NOT count it via `record_failure`. Counting a
+      rejection would let the breaker feed itself — every rejected call would
+      extend the very failure window keeping it open, so it could never close.
+    - `with_retry` must not retry it. Retrying against a breaker already known
+      to be open is pure latency and spend.
+
+    Deliberately a `RuntimeError` subclass so that broad `except RuntimeError`
+    handlers elsewhere keep working. Note that `SanitizedHTTPError` and Sarvam's
+    quota error are also `RuntimeError`s, so a handler that only catches
+    `RuntimeError` cannot tell "breaker rejected the call" from "provider
+    returned a redacted HTTP error" from "quota exhausted" — three cases with
+    completely different remediation. Catch this class specifically when the
+    distinction matters.
+    """
+
+
 def _keys(provider: str) -> tuple[str, str, str]:
     """Return the three Redis keys for a given provider."""
     base = f"circuit:{provider}"
@@ -54,6 +77,43 @@ async def is_circuit_open(provider: str) -> bool:
     Also handles the HALF_OPEN → probe transition: if the recovery
     timeout has elapsed the state is promoted to HALF_OPEN and this
     function returns False (allowing one probe attempt through).
+
+    **Fails OPEN — Story 2-36, D19.** If Redis cannot be reached, this returns
+    `False` (allow the call) and logs a WARNING rather than propagating.
+
+    This function is the FIRST statement of every function wrapped by
+    `@with_retry` — `providers/llm/openai.py:111` and the same line in
+    `embeddings/openai.py`, `image/imagen.py`, `image/openai_image.py`. So the
+    first thing every provider call does is a Redis round-trip. Letting that
+    round-trip raise meant a momentary Redis blip failed the node before the
+    provider was ever contacted, and (until D19 was fixed in `core/retry.py`)
+    failed it permanently.
+
+    Refusing every provider call because the BOOKKEEPING store is unreachable
+    converts a two-second infrastructure blip into a total generation outage.
+    That is strictly worse than the risk it avoids — acting on breaker state we
+    could not read. `_safe_record` already takes the same position for writes;
+    this closes the read side.
+    """
+    try:
+        return await _is_circuit_open_inner(provider)
+    except Exception:  # noqa: BLE001 — a breaker we cannot read must not block traffic
+        logger.warning(
+            "Circuit breaker: state for provider '%s' is unreadable — failing OPEN "
+            "(allowing the call through)",
+            provider,
+            exc_info=True,
+        )
+        return False
+
+
+async def _is_circuit_open_inner(provider: str) -> bool:
+    """Body of `is_circuit_open`. Raises on Redis failure; the caller fails open.
+
+    Split out so the fail-open guard wraps the HALF_OPEN promotion `set()` as
+    well as the reads. A guard around the reads alone would leave the recovery
+    path fatal, and the suite would look green while the breaker could still
+    kill a node ten minutes after an outage.
     """
     redis = get_redis()
     state_key, _, opened_at_key = _keys(provider)
@@ -71,7 +131,9 @@ async def is_circuit_open(provider: str) -> bool:
             if elapsed >= RECOVERY_TIMEOUT_SECONDS:
                 # Promote to HALF_OPEN — allow one probe
                 await redis.set(state_key, CircuitState.HALF_OPEN)
-                logger.info("Circuit for '%s' promoted to HALF_OPEN after %ds", provider, int(elapsed))
+                logger.info(
+                    "Circuit for '%s' promoted to HALF_OPEN after %ds", provider, int(elapsed)
+                )
                 return False
         return True  # Still within recovery timeout
 
@@ -90,7 +152,9 @@ async def record_failure(provider: str) -> None:
         # First failure in window — set TTL
         await redis.expire(failures_key, FAILURE_WINDOW_SECONDS)
 
-    logger.warning("Circuit breaker: failure %d/%d for provider '%s'", failures, FAILURE_THRESHOLD, provider)
+    logger.warning(
+        "Circuit breaker: failure %d/%d for provider '%s'", failures, FAILURE_THRESHOLD, provider
+    )
 
     if failures >= FAILURE_THRESHOLD:
         state_raw = await redis.get(state_key)
@@ -112,7 +176,7 @@ async def record_failure(provider: str) -> None:
             sentry_sdk.capture_message(
                 f"Circuit breaker OPENED for AI provider '{provider}'",
                 level="error",
-                extras={  # type: ignore[call-arg]
+                extras={
                     "provider": provider,
                     "failures": failures,
                     "threshold": FAILURE_THRESHOLD,
@@ -134,3 +198,120 @@ async def record_success(provider: str) -> None:
 
     # Reset everything
     await redis.delete(state_key, failures_key, opened_at_key)
+
+
+async def guard_breaker[T](
+    provider: str,
+    call: Callable[[], Awaitable[T]],
+) -> T:
+    """Run *call* under circuit-breaker accounting — exactly ONE outcome per
+    logical call, however many times *call* retries internally (Story 2-32 AC-3).
+
+    `record_failure` used to live inside the function wrapped by `@with_retry`.
+    That was invisible while OpenAI SDK exceptions were never classified as
+    retryable (Story 2-32 AC-1): a 429 produced one attempt and therefore one
+    recorded failure. The moment AC-1 makes those retryable, the same logical
+    call records `max_attempts` failures:
+
+        FAILURE_THRESHOLD = 5 over a 120 s window
+        1 failure/call  -> breaker opens after 5 logical calls
+        3 failures/call -> breaker opens after 2 logical calls
+
+    i.e. fixing the retry classification alone would trip the breaker ~2.5x
+    faster and turn a brief rate-limit into a 10-minute half-open outage. The
+    threshold is not what was wrong; the accounting was. Hence this wrapper sits
+    OUTSIDE the retry decorator, and the retried function keeps only the
+    per-attempt `is_circuit_open` check.
+
+    `CircuitOpenError` is re-raised WITHOUT being counted — see its docstring.
+
+    Neither is a **client-side** error. The breaker exists to detect that a
+    PROVIDER is unhealthy; a 400 content-policy rejection or a 422 validation
+    error says the request was bad, not the provider. Counting those let five
+    reliably-rejected uploads inside the 120s window open the shared breaker for
+    every tenant — an attacker-triggerable outage. `_NON_RETRYABLE_STATUS_CODES`
+    already encodes exactly this distinction; `_is_client_error` reuses it.
+
+    Bookkeeping is best-effort. A Redis outage must never convert an already-paid-for
+    provider result into an exception, nor mask the provider error that
+    `with_retry` needs in order to classify the failure.
+    """
+    from app.core.cost_tracker import CostCeilingError
+
+    try:
+        result = await call()
+    except CircuitOpenError:
+        raise
+    except CostCeilingError:
+        # OUR budget, not the provider's health. Counting it would let the cost
+        # control open the shared circuit for every lesson.
+        raise
+    except Exception as exc:
+        if not _is_client_error(exc) and not _is_our_infrastructure_error(exc):
+            await _safe_record(record_failure, provider, "failure")
+        raise
+    await _safe_record(record_success, provider, "success")
+    return result
+
+
+def _is_our_infrastructure_error(exc: BaseException) -> bool:
+    """True when *exc* blames OUR infrastructure, not the provider.
+
+    Story 2-36 AC-6. `is_circuit_open()` runs inside every retried provider call
+    and talks to Redis, so a Redis outage surfaces here as a call failure. Left
+    uncounted-for, five Redis blips inside the 120s window would open the
+    breaker for a provider that is perfectly healthy and **was never
+    contacted** — a 600-second outage caused entirely by our own bookkeeping
+    store, and one that recovers only on a timer because no probe can reach a
+    provider that was never the problem.
+
+    The breaker exists to detect that a PROVIDER is unhealthy. It must not
+    record failures for errors the provider never raised.
+
+    Narrow on purpose: only redis exceptions. An unknown exception is still
+    counted as a provider failure, because failing to open a breaker during a
+    real outage is worse than not opening one during ours.
+    """
+    from app.core.retry import _REDIS_TRANSIENT_ERRORS
+
+    return bool(_REDIS_TRANSIENT_ERRORS) and isinstance(exc, _REDIS_TRANSIENT_ERRORS)
+
+
+def _is_client_error(exc: BaseException) -> bool:
+    """True when *exc* blames the request, not the provider.
+
+    Kept deliberately narrow: only an explicit non-retryable HTTP status counts.
+    An unknown exception is still treated as a provider failure, because failing
+    to open a breaker on a real outage is worse than opening one spuriously.
+    """
+    from app.core.retry import _NON_RETRYABLE_STATUS_CODES
+
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    return status in _NON_RETRYABLE_STATUS_CODES
+
+
+async def _safe_record(
+    fn: Callable[[str], Awaitable[None]],
+    provider: str,
+    label: str,
+) -> None:
+    """Record a breaker outcome without ever displacing the real result.
+
+    `record_success` runs on the happy path, after the provider call has already
+    been made and billed; letting a Redis error escape here would throw away a
+    paid-for completion and make ARQ re-run (and re-pay for) the node. On the
+    failure path an escaping Redis error would REPLACE the provider exception,
+    so callers would see a Redis error instead of the 429 they must classify.
+    """
+    try:
+        await fn(provider)
+    except Exception:  # noqa: BLE001 — bookkeeping must never displace the result
+        logger.warning(
+            "Circuit breaker: failed to record %s for provider '%s' — breaker state may be stale",
+            label,
+            provider,
+            exc_info=True,
+        )

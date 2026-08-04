@@ -6,9 +6,9 @@ are used so the contract is both isolated and demonstrated end-to-end:
 1. A synthetic ``GET /protected`` route — isolates the verification logic itself.
 2. The real ``app.modules.tutor.router`` mounted under ``/api/tutor`` — proves at least one real
    module router actually enforces ``CurrentUser`` (no-token requests are rejected before the
-   handler runs). The verification logic is shared verbatim across all eight ``CurrentUser``-protected
-   HTTP routers (analytics, tutor, admin, content, auth, media, assessment), so this proves the
-   contract for every such route.
+   handler runs). The verification logic is shared verbatim across all eight
+   ``CurrentUser``-protected HTTP routers (analytics, tutor, admin, content, auth, media,
+   assessment), so this proves the contract for every such route.
 
 Scope note: the WebSocket endpoint (``core/websocket.py`` ``/ws/{session_id}``) is intentionally
 NOT covered here — it does not use ``CurrentUser`` and its auth is a separate, not-yet-implemented
@@ -25,21 +25,22 @@ correct regardless of the day the suite runs.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import jwt
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-from unittest.mock import MagicMock
 
 from app.config import get_settings
 from app.dependencies import CurrentUser
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-_SECRET = "test-jwt-secret"
-_PAST_EPOCH = 1_700_000_000        # 2023-11-14 — provably in the past
-_FUTURE_EPOCH = 4_102_444_800      # 2100-01-01 — provably in the future
-_DROP = object()                   # sentinel: omit a claim from the minted token
+_SECRET = "test-jwt-secret-padded-to-32-bytes!!"  # PyJWT ≥2.10 enforces a 32-byte minimum for HS256
+_PAST_EPOCH = 1_700_000_000  # 2023-11-14 — provably in the past
+_FUTURE_EPOCH = 4_102_444_800  # 2100-01-01 — provably in the future
+_DROP = object()  # sentinel: omit a claim from the minted token
 
 
 # ── App under test ───────────────────────────────────────────────────────────
@@ -82,7 +83,8 @@ def _token(secret: str = _SECRET, **overrides) -> str:
     Pass a claim set to the ``_DROP`` sentinel to omit it entirely (tests the
     ``options={"require": [...]}`` enforcement path).
     """
-    claims = {"sub": "user-001", "iat": _PAST_EPOCH, "exp": _FUTURE_EPOCH}
+    # get_current_user requires audience="authenticated" (Supabase convention, 4-17 ES256 work).
+    claims = {"sub": "user-001", "iat": _PAST_EPOCH, "exp": _FUTURE_EPOCH, "aud": "authenticated"}
     claims.update(overrides)
     claims = {k: v for k, v in claims.items() if v is not _DROP}
     return jwt.encode(claims, secret, algorithm="HS256")
@@ -127,7 +129,9 @@ def test_expired_token_returns_401() -> None:
 @pytest.mark.unit
 def test_wrong_secret_returns_401() -> None:
     """AC 4: token signed with a different secret → InvalidSignatureError → 401."""
-    resp = _client.get("/protected", headers=_auth(_token(secret="a-completely-different-secret")))
+    resp = _client.get(
+        "/protected", headers=_auth(_token(secret="a-completely-different-secret!!!"))
+    )
     assert resp.status_code == 401
 
 

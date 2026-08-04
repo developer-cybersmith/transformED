@@ -11,7 +11,12 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
+    from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +32,8 @@ class NormalizedSignal:
     """Internal representation of an attention signal after boundary mapping."""
 
     session_id: str
-    quiz_accuracy: float | None       # None when quiz not yet attempted
-    teachback_score: float | None     # None when teach-back skipped
+    quiz_accuracy: float | None  # None when quiz not yet attempted
+    teachback_score: float | None  # None when teach-back skipped
     behavioral_score: float
     head_pose_score: float
     blink_rate: float
@@ -53,7 +58,7 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
     and a flat dict.  Handles quiz_accuracy=None and teachback_score=None.
     """
     # Unwrap WsMessage envelope if present
-    data: dict[str, Any] = payload.get("payload") or payload  # type: ignore[assignment]
+    data: dict[str, Any] = payload.get("payload") or payload
 
     session_id = data.get("session_id")
     if not session_id:
@@ -101,15 +106,16 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
 def compute_ces(signal: NormalizedSignal) -> float:
     """Weighted Cognitive Engagement Score on the 0–100 scale (PRD §11).
 
-    ``CES = (Σ signalᵢ × weightᵢ) × 100`` using the frozen ``settings.ces_weight_*`` weights, matching
-    Dev 3's ``ces_contribution`` scale contract (assessment/service.py) so ``ces_threshold = 50`` is
-    correct.
+    ``CES = (Σ signalᵢ × weightᵢ) × 100`` using the frozen ``settings.ces_weight_*``
+    weights, matching Dev 3's ``ces_contribution`` scale contract
+    (assessment/service.py) so ``ces_threshold = 50`` is correct.
 
-    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None`` (not yet attempted
-    / skipped). The weight of any ``None`` signal is redistributed proportionally across the present
-    signals (each present weight ÷ sum-of-present-weights). This generalises the §11 teachback-``None``
-    rule — when only teachback is ``None`` the present weights sum to 0.75, so each is divided by 0.75,
-    reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
+    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None``
+    (not yet attempted / skipped). The weight of any ``None`` signal is redistributed
+    proportionally across the present signals (each present weight ÷
+    sum-of-present-weights). This generalises the §11 teachback-``None`` rule — when
+    only teachback is ``None`` the present weights sum to 0.75, so each is divided by
+    0.75, reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
     """
     from app.config import get_settings
 
@@ -130,7 +136,48 @@ def compute_ces(signal: NormalizedSignal) -> float:
     return max(0.0, min(100.0, ces))
 
 
+# ── Learner Mode helpers ──────────────────────────────────────────────────────
+
+
+def qa_phase_seconds(tier: str | None) -> int:
+    """Map a learner tier string to Q&A phase duration in seconds.
+
+    T1 (beginner) → longest Q&A window (default 600 s / 10 min)
+    T2 (intermediate) → standard window (default 300 s / 5 min)
+    T3 (advanced) → shortest window (default 150 s / 2.5 min)
+    Unknown / None → T2 default (300 s)
+
+    All durations are env-var tunable via ``settings.learner_tier_*_qa_seconds``.
+    """
+    from app.config import get_settings
+
+    s = get_settings()
+    return {
+        "T1": s.learner_tier_t1_qa_seconds,
+        "T2": s.learner_tier_t2_qa_seconds,
+        "T3": s.learner_tier_t3_qa_seconds,
+    }.get(tier or "", s.learner_tier_default_qa_seconds)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
+
+
+async def _quiz_deadline_expired(session_id: str, redis: Redis) -> bool:
+    """Return True if the QUIZZING time limit has elapsed for this session.
+
+    Returns False on any error — degrading safely so the session never auto-advances
+    due to a Redis blip. The key absence (lesson generated without a tier) also returns
+    False, leaving the student in QUIZZING until they explicitly submit.
+    """
+    import time as _time  # noqa: PLC0415
+
+    try:
+        raw = await redis.get(f"session:{session_id}:quiz_deadline_at")
+        if not raw:
+            return False
+        return _time.time() > float(raw)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 async def start_session(session_id: str) -> None:
@@ -170,21 +217,33 @@ async def advance_tutor_state(session_id: str, event: str) -> None:
     if event not in _CLIENT_DRIVABLE_EVENTS:
         raise ValueError(f"event not client-drivable: {event!r}")
 
+    from app.core.redis import get_redis
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    redis = get_redis()
+
+    # Learner Mode: auto-advance a QUIZZING session when the Q&A time limit elapses.
+    # Uses delete-before-dispatch as a double-fire guard: if two concurrent calls both
+    # see an expired deadline, only the one whose delete returns 1 (key existed) fires
+    # quiz_complete — the other's delete returns 0 and skips the dispatch.
+    state_raw = await redis.get(f"tutor_state:{session_id}")
+    if state_raw == "QUIZZING" and await _quiz_deadline_expired(session_id, redis):
+        deleted = await redis.delete(f"session:{session_id}:quiz_deadline_at")
+        if deleted:
+            logger.info("[tutor:%s] Q&A deadline expired — auto quiz_complete", session_id)
+            await dispatch_event(session_id, "quiz_complete")
+        return
+
     # Completing a segment advances the student's position (used to pick the right segment's
     # pre-generated intervention messages). 24h TTL, matching the other session keys.
     if event == "segment_complete":
-        from app.core.redis import get_redis
-
-        redis = get_redis()
         await redis.incr(f"session:{session_id}:segment_index")
         await redis.expire(f"session:{session_id}:segment_index", 86_400)
-
-    from app.modules.tutor.state_machine.graph import dispatch_event
 
     await dispatch_event(session_id, event)
 
 
-async def _segment_intervention_messages(session_id: str, redis: Any) -> dict[str, Any]:
+async def _segment_intervention_messages(session_id: str, redis: Redis) -> dict[str, Any]:
     """Return the current segment's ``intervention_messages`` from the cached LessonPackage.
 
     Returns ``{}`` on any miss (no cache / parse error / no segments / bad index). Performs ONLY
@@ -244,14 +303,20 @@ async def process_attention_signal(
     await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)  # ces_computation (s3-3)
 
     # Prepend to history and trim to keep only the last _CES_HISTORY_MAX values
-    await redis.lpush(history_key, ces)
-    await redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1)
+    await cast("Awaitable[int]", redis.lpush(history_key, ces))
+    await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
     await redis.expire(history_key, _CES_WINDOW_TTL)
 
     # Read history to evaluate the intervention trigger
-    history_raw: list[str] = await redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+    history_raw: list[str] = await cast(
+        "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+    )
 
     intervention_dispatched = False
+
+    # Read tutor state once — used by both the CES intervention guard and the deadline check below.
+    # CLAUDE.md §10: CES monitoring ONLY active in TEACHING state.
+    state_raw = await redis.get(f"tutor_state:{session_id}")
 
     if len(history_raw) >= 2:
         # Index 0 is most recent (LPUSH prepends)
@@ -259,7 +324,12 @@ async def process_attention_signal(
         cooldown_key = f"tutor_cooldown:{session_id}"
         in_cooldown = await redis.exists(cooldown_key)
 
-        if all(v < settings.ces_threshold for v in recent) and not in_cooldown:
+        # Enforce CLAUDE.md §10: CES interventions only fire in TEACHING state.
+        if (
+            state_raw == "TEACHING"
+            and all(v < settings.ces_threshold for v in recent)
+            and not in_cooldown
+        ):
             logger.info(
                 "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching distraction_detected",
                 session_id,
@@ -294,6 +364,20 @@ async def process_attention_signal(
                     )
                 except Exception:
                     logger.exception("tutor_intervene delivery failed for %s", session_id)
+
+    # Learner Mode: auto-advance a QUIZZING session when the Q&A time limit elapses.
+    # This attention-signal path (fires every ~5 s) is the primary deadline enforcer
+    # when the student is not actively submitting client events.
+    # Delete-before-dispatch guard prevents double-fire from concurrent signals.
+    # state_raw is already populated above (used for CES guard too).
+    if state_raw == "QUIZZING" and await _quiz_deadline_expired(session_id, redis):
+        deleted = await redis.delete(f"session:{session_id}:quiz_deadline_at")
+        if deleted:
+            logger.info(
+                "[tutor:%s] Q&A deadline expired via attention signal — auto quiz_complete",
+                session_id,
+            )
+            await dispatch_event(session_id, "quiz_complete")
 
     logger.debug(
         "[tutor:%s] ces=%.4f intervention_dispatched=%s",

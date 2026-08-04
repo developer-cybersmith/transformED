@@ -4,19 +4,59 @@ Assessment module Pydantic schemas.
 Shared between router.py (request/response binding) and service.py (business logic).
 Neither imports the other — both import from here to avoid circular imports.
 """
+
 from __future__ import annotations
 
-from typing import Any
-
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 __all__ = [
-    "QuizAnswer", "QuizSubmission", "QuizResult",
-    "TeachbackSubmission", "TeachbackResult",
-    "OnboardingAnswer", "OnboardingDiagnosticSubmission", "OnboardingResult",
+    "QuizAnswer",
+    "QuizSubmission",
+    "QuizResult",
+    "TeachbackSubmission",
+    "TeachbackResult",
+    "OnboardingAnswer",
+    "OnboardingDiagnosticSubmission",
+    "OnboardingResult",
 ]
+
+
+# ── Session lifecycle schemas (Story 2-35 / D18) ───────────────────────────────
+#
+# `sessions` had ZERO writers anywhere in the codebase, so quiz and teach-back
+# 404'd for every student. The schema shows server-side minting was always the
+# intent:
+#
+#     session_id  uuid PRIMARY KEY DEFAULT gen_random_uuid()
+#     user_id     uuid NOT NULL REFERENCES public.users(id)
+#     lesson_id   uuid NOT NULL REFERENCES public.lessons(lesson_id)
+#     started_at  timestamptz NOT NULL DEFAULT now()
+#
+# A client-chosen UUID cannot satisfy those foreign keys or make `started_at`
+# mean anything.
+
+
+class SessionCreate(BaseModel):
+    """Request body for `POST /sessions`.
+
+    `lesson_id` ONLY. `user_id` comes from the verified JWT and `session_id` /
+    `started_at` are database-generated. Pydantic ignores unknown fields by
+    default, so a client sending any of those three is silently ignored rather
+    than trusted — asserted by
+    `test_user_id_comes_from_the_jwt_and_is_never_accepted_from_the_client`.
+    """
+
+    lesson_id: str
+
+
+class SessionCreated(BaseModel):
+    """Response body for `POST /sessions` — all three values come from the DB."""
+
+    session_id: str
+    lesson_id: str
+    started_at: str | None = None
 
 
 class QuizAnswer(BaseModel):
@@ -45,11 +85,14 @@ class QuizResult(BaseModel):
 # Frozen contract (Sprint 1) — shape changes require 4-dev PR review.
 # NO transcript field (STT banned). NO duration_seconds field (implies timer).
 
+
 class TeachbackSubmission(BaseModel):
     session_id: str
     lesson_id: str
     segment_id: str
-    response_text: str = Field(min_length=1, max_length=4000, description="Student's typed teach-back response")
+    response_text: str = Field(
+        min_length=1, max_length=4000, description="Student's typed teach-back response"
+    )
 
 
 class TeachbackResult(BaseModel):
@@ -66,6 +109,7 @@ class TeachbackResult(BaseModel):
 # ── Onboarding schemas ─────────────────────────────────────────────────────────
 # Frozen contract (Sprint 2, Story 3-18) — shape changes require 4-dev PR review.
 # No raw numeric dimension scores in OnboardingResult (CLAUDE.md Learner DNA rules).
+
 
 class OnboardingAnswer(BaseModel):
     question_id: str

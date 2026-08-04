@@ -11,6 +11,7 @@ session and to supply the current baseline for Learner DNA delta direction.
 Redis key pattern: user:{user_id}:ces_baseline  (consistent with
 user:{user_id}:dna and user:{user_id}:onboarding_done from the initial schema).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,9 +50,9 @@ def _compute_baseline(scores: list[float]) -> float | None:
 async def compute_and_store_ces_baseline(
     *,
     user_id: str,
-    supabase: Any,
-    redis: "Redis",
-    settings: "Settings",
+    supabase: Any,  # noqa: ANN401
+    redis: Redis,
+    settings: Settings,
 ) -> float | None:
     """Compute and cache the rolling CES baseline for a user.
 
@@ -86,23 +87,23 @@ async def compute_and_store_ces_baseline(
 
     try:
         resp = await asyncio.to_thread(
-            lambda: supabase.table("sessions")
-            .select("ces_final, ended_at")
-            .eq("user_id", user_id)
-            .order("ended_at", desc=True)
-            .limit(fetch_limit)
-            .execute()
+            lambda: (
+                supabase.table("sessions")
+                .select("ces_final, ended_at")
+                .eq("user_id", user_id)
+                .order("ended_at", desc=True)
+                .limit(fetch_limit)
+                .execute()
+            )
         )
     except Exception as exc:
-        logger.error(
-            "CES baseline DB query failed user=%s: %s", user_id, exc, exc_info=True
-        )
+        logger.error("CES baseline DB query failed user=%s: %s", user_id, exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not read session history.",
-        )
+        ) from exc
 
-    rows: list[dict] = resp.data or []
+    rows: list[dict[str, Any]] = resp.data or []
 
     # Keep only rows where both fields are non-NULL and ces_final is finite.
     # PostgreSQL NUMERIC(5,2) cannot store NaN/Inf, but guard anyway for robustness.

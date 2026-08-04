@@ -2,11 +2,12 @@
 
 Covers ``apps/api/app/modules/tutor/service.py``:
 - ``_parse_signal``           — boundary mapping (envelope/flat, required vs optional fields)
-- ``process_attention_signal`` — Redis ``ces_window`` write + ``ces_history`` LPUSH/LTRIM/EXPIRE/LRANGE
-  and the ``distraction_detected`` trigger guards (2-below-threshold + cooldown).
+- ``process_attention_signal`` — Redis ``ces_window`` write + ``ces_history``
+  LPUSH/LTRIM/EXPIRE/LRANGE and the ``distraction_detected`` trigger guards
+  (2-below-threshold + cooldown).
 
-``process_attention_signal`` lazy-imports ``get_redis``, ``get_settings`` and ``dispatch_event`` inside
-the function body, so the effective patch targets are the SOURCE modules
+``process_attention_signal`` lazy-imports ``get_redis``, ``get_settings`` and
+``dispatch_event`` inside the function body, so the effective patch targets are the SOURCE modules
 (``app.core.redis.get_redis`` etc.) — the namespaces the lazy ``from ... import`` resolve against.
 
 All tests are ``@pytest.mark.unit`` — no real Redis / state machine. ``asyncio_mode = "auto"``
@@ -45,18 +46,49 @@ _HISTORY_KEY = "session:sess-1:ces_history"
 _EXPECTED_CES = compute_ces(_parse_signal(_VALID_PAYLOAD))
 
 
+def _settings_mock(threshold: float = 0.5) -> MagicMock:
+    """MagicMock settings carrying the five §11 CES weights (config.py defaults).
+
+    compute_ces() reads settings.ces_weight_* at call time; without these a bare
+    MagicMock leaks into weight_sum and raises TypeError. Matching config defaults
+    makes compute_ces() on the mock equal the module-level _EXPECTED_CES.
+    """
+    s = MagicMock()
+    s.ces_threshold = threshold
+    s.ces_weight_quiz = 0.35
+    s.ces_weight_teachback = 0.25
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
+    return s
+
+
 def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float = 0.5):
     """Patch the three lazy-imported dependencies and return (mock_redis, mock_dispatch)."""
     mock_redis = AsyncMock()
     mock_redis.lrange = AsyncMock(return_value=lrange_vals)
     mock_redis.exists = AsyncMock(return_value=exists)
+    # Key-aware get: tutor_state must be TEACHING for the CES intervention guard to fire
+    # (CLAUDE.md §10 — CES interventions only active in TEACHING). All other keys default to None:
+    # no cached lesson_package → selection degrades to {} (cache-miss), no QUIZZING deadline set.
+    # Without this, the 4-8 package fetch would json.loads() a bare AsyncMock and raise.
+    async def _get(key: str):
+        if key == "tutor_state:sess-1":
+            return "TEACHING"
+        return None
+
+    mock_redis.get = AsyncMock(side_effect=_get)
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = threshold
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(threshold))
 
-    mock_dispatch = AsyncMock()
+    # dispatch_event returns the FSM result dict. Default to INTERVENING with no message so a fired
+    # trigger doesn't spuriously enter the 4-8 delivery path — result.get("intervention_message")
+    # would otherwise be a truthy MagicMock driving manager.send against the real manager. Delivery
+    # is covered explicitly by the _intervention_redis tests below.
+    mock_dispatch = AsyncMock(
+        return_value={"current_state": "INTERVENING", "intervention_message": None}
+    )
     mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
 
     return mock_redis, mock_dispatch
@@ -286,7 +318,7 @@ async def test_only_two_most_recent_considered(mocker) -> None:
 
 @pytest.mark.unit
 async def test_cesresult_fields(mocker) -> None:
-    """AC11: CesResult carries the correct session_id and ces (stub 0.5)."""
+    """AC11: CesResult carries the correct session_id and the real §11 weighted CES."""
     _setup(mocker, lrange_vals=["0.5"])
 
     from app.modules.tutor.service import process_attention_signal
@@ -295,8 +327,11 @@ async def test_cesresult_fields(mocker) -> None:
 
     assert isinstance(result, CesResult)
     assert result.session_id == "sess-1"
-    assert result.ces == compute_ces(_parse_signal(_VALID_PAYLOAD))
-    assert result.ces == 0.5
+    # Pinned to the real formula (0.5 stub is gone); _EXPECTED_CES ≈ 75.733 for _VALID_PAYLOAD.
+    assert result.ces == _EXPECTED_CES
+    # Concrete literal anchor so this is NOT circular: a compute_ces regression would move
+    # _EXPECTED_CES with the code, but not this hard-coded §11 value.
+    assert result.ces == pytest.approx(75.733, abs=0.01)
 
 
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────
@@ -308,6 +343,8 @@ def _intervention_redis(package_json: str | None) -> AsyncMock:
     redis = AsyncMock()
 
     async def _get(key: str):
+        if key == "tutor_state:sess-1":
+            return "TEACHING"  # §10: CES interventions only fire in TEACHING state
         if key == "lesson_package:sess-1":
             return package_json
         if key == "session:sess-1:segment_index":
@@ -321,7 +358,8 @@ def _intervention_redis(package_json: str | None) -> AsyncMock:
 
 
 def _patch_dispatch(mocker, intervention_message):
-    """Mock dispatch_event to return an INTERVENING result (real selection covered in test_tutor_graph)."""
+    """Mock dispatch_event to return an INTERVENING result
+    (real selection covered in test_tutor_graph)."""
     mock_dispatch = AsyncMock(
         return_value={
             "current_state": "INTERVENING",
@@ -335,17 +373,22 @@ def _patch_dispatch(mocker, intervention_message):
 
 @pytest.mark.unit
 async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
-    """Triggered intervention passes the segment's messages to the FSM and delivers tutor_intervene."""
+    """Triggered intervention passes the segment's messages to the FSM
+    and delivers tutor_intervene."""
     # Segment field is `interventions` per the frozen LessonPackage schema (SegmentInterventions).
     pkg = {
         "segments": [
-            {"interventions": {"distraction": ["focus up", "x", "y"], "confusion": ["c"], "fatigue": ["f"]}}
+            {
+                "interventions": {
+                    "distraction": ["focus up", "x", "y"],
+                    "confusion": ["c"],
+                    "fatigue": ["f"],
+                }
+            }
         ]
     }
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     mock_dispatch = _patch_dispatch(mocker, "focus up")
 
     mock_manager = MagicMock()
@@ -374,10 +417,10 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
 @pytest.mark.unit
 async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
     """Cache miss → no message → tutor_intervene skipped; no crash; CesResult still returned."""
-    mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(None))  # no cached package
-    mock_settings = MagicMock()
-    mock_settings.ces_threshold = 0.5
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
+    mocker.patch(
+        "app.core.redis.get_redis", return_value=_intervention_redis(None)
+    )  # no cached package
+    mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
     _patch_dispatch(mocker, None)  # FSM returns no message when no package supplied
 
     mock_manager = MagicMock()
@@ -427,10 +470,12 @@ async def test_segment_messages_returns_interventions_for_segment(mocker) -> Non
     """Reads the frozen `interventions` field for the current segment."""
     from app.modules.tutor.service import _segment_intervention_messages
 
-    pkg = {"segments": [
-        {"interventions": {"distraction": ["d0"], "confusion": ["c0"], "fatigue": ["f0"]}},
-        {"interventions": {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}},
-    ]}
+    pkg = {
+        "segments": [
+            {"interventions": {"distraction": ["d0"], "confusion": ["c0"], "fatigue": ["f0"]}},
+            {"interventions": {"distraction": ["d1"], "confusion": ["c1"], "fatigue": ["f1"]}},
+        ]
+    }
     redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "1"})
 
     out = await _segment_intervention_messages("s", redis)
@@ -467,9 +512,348 @@ async def test_segment_messages_index_clamped_to_range(mocker) -> None:
     """An out-of-range segment_index (e.g. stale) clamps to the last segment instead of raising."""
     from app.modules.tutor.service import _segment_intervention_messages
 
-    pkg = {"segments": [{"interventions": {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}}]}
+    pkg = {
+        "segments": [
+            {"interventions": {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}}
+        ]
+    }
     redis = _pkg_redis({"lesson_package:s": json.dumps(pkg), "session:s:segment_index": "9"})
 
     out = await _segment_intervention_messages("s", redis)
 
     assert out == {"distraction": ["only"], "confusion": ["c"], "fatigue": ["f"]}
+
+
+# ── Story 4-20: _quiz_deadline_expired helper ─────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_quiz_deadline_expired_true_when_past() -> None:
+    """_quiz_deadline_expired returns True when the stored timestamp is in the past."""
+    import time as _time
+
+    from app.modules.tutor.service import _quiz_deadline_expired
+
+    past = str(int(_time.time()) - 10)
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=past)
+
+    assert await _quiz_deadline_expired("s", redis) is True
+
+
+@pytest.mark.unit
+async def test_quiz_deadline_expired_false_when_future() -> None:
+    """_quiz_deadline_expired returns False when the stored timestamp is in the future."""
+    import time as _time
+
+    from app.modules.tutor.service import _quiz_deadline_expired
+
+    future = str(int(_time.time()) + 3600)
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=future)
+
+    assert await _quiz_deadline_expired("s", redis) is False
+
+
+@pytest.mark.unit
+async def test_quiz_deadline_expired_false_when_key_missing() -> None:
+    """_quiz_deadline_expired returns False (safe default) when the key is absent."""
+    from app.modules.tutor.service import _quiz_deadline_expired
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+
+    assert await _quiz_deadline_expired("s", redis) is False
+
+
+@pytest.mark.unit
+async def test_quiz_deadline_expired_false_on_redis_error() -> None:
+    """_quiz_deadline_expired returns False (never crashes) when Redis raises."""
+    from app.modules.tutor.service import _quiz_deadline_expired
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=RuntimeError("redis down"))
+
+    assert await _quiz_deadline_expired("s", redis) is False
+
+
+# ── Story 4-20: advance_tutor_state deadline check ────────────────────────────
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_quizzing_expired_dispatches_quiz_complete(mocker) -> None:
+    """AC2: QUIZZING + expired deadline → advance_tutor_state dispatches quiz_complete."""
+    import time as _time
+
+    sid = "s-adv-exp"
+    expired = str(int(_time.time()) - 60)
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return "QUIZZING"
+        if key == f"session:{sid}:quiz_deadline_at":
+            return expired
+        return None
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=_get)
+    redis.delete = AsyncMock(return_value=1)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    mock_dispatch.assert_called_once_with(sid, "quiz_complete")
+    redis.delete.assert_awaited_once_with(f"session:{sid}:quiz_deadline_at")
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_double_fire_guard_no_dispatch_on_second(mocker) -> None:
+    """AC2: redis.delete returns 0 (key already gone) → second dispatch is suppressed."""
+    import time as _time
+
+    sid = "s-adv-dfg"
+    expired = str(int(_time.time()) - 60)
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return "QUIZZING"
+        if key == f"session:{sid}:quiz_deadline_at":
+            return expired
+        return None
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=_get)
+    redis.delete = AsyncMock(return_value=0)  # key already deleted by a concurrent signal
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "quiz_complete")
+
+    mock_dispatch.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_non_quizzing_state_normal_dispatch(mocker) -> None:
+    """AC2: non-QUIZZING state → deadline check skipped, event dispatched normally."""
+    sid = "s-adv-teach"
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return "TEACHING"
+        return None  # no quiz_deadline_at — state guard exits before reading it
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=_get)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "segment_complete")
+
+    mock_dispatch.assert_called_once_with(sid, "segment_complete")
+
+
+# ── Story 4-20: process_attention_signal deadline check ──────────────────────
+
+
+def _attention_deadline_setup(mocker, *, expired: bool, has_deadline: bool = True):
+    """Setup for process_attention_signal deadline tests.
+
+    Returns (mock_redis, mock_dispatch). History has only 1 value so the
+    distraction trigger (len >= 2) is never reached — deadline path isolated.
+    """
+    import time as _time
+
+    if has_deadline:
+        deadline = str(int(_time.time()) - 60) if expired else str(int(_time.time()) + 3600)
+    else:
+        deadline = None
+
+    async def _get(key: str):
+        if "tutor_state" in key:
+            return "QUIZZING"
+        if "quiz_deadline_at" in key:
+            return deadline
+        return None  # lesson_package, segment_index — empty
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(side_effect=_get)
+    mock_redis.lrange = AsyncMock(return_value=["0.9"])  # 1 value → no distraction trigger
+    mock_redis.exists = AsyncMock(return_value=0)
+    mock_redis.delete = AsyncMock(return_value=1 if (has_deadline and expired) else 0)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    mock_settings = MagicMock()
+    mock_settings.ces_threshold = 50
+    # Numeric weights required by compute_ces — avoids TypeError on MagicMock arithmetic
+    mock_settings.ces_weight_quiz = 0.35
+    mock_settings.ces_weight_teachback = 0.25
+    mock_settings.ces_weight_behavioral = 0.20
+    mock_settings.ces_weight_head_pose = 0.12
+    mock_settings.ces_weight_blink = 0.08
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    return mock_redis, mock_dispatch
+
+
+@pytest.mark.unit
+async def test_process_attention_quizzing_expired_deadline_dispatches_quiz_complete(mocker) -> None:
+    """AC3: QUIZZING + expired deadline → process_attention_signal auto-dispatches quiz_complete."""
+    mock_redis, mock_dispatch = _attention_deadline_setup(mocker, expired=True)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_dispatch.assert_called_once_with("sess-1", "quiz_complete")
+    mock_redis.delete.assert_awaited_once_with("session:sess-1:quiz_deadline_at")
+    assert isinstance(result, CesResult)
+    assert result.intervention_dispatched is False  # auto-advance path must not set the flag
+
+
+@pytest.mark.unit
+async def test_process_attention_quizzing_active_deadline_no_auto_dispatch(mocker) -> None:
+    """AC3/AC6: QUIZZING + deadline not yet expired → no auto-dispatch."""
+    _, mock_dispatch = _attention_deadline_setup(mocker, expired=False)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_dispatch.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_process_attention_quizzing_missing_deadline_no_auto_dispatch(mocker) -> None:
+    """AC6: QUIZZING + missing quiz_deadline_at → graceful no-op, no crash."""
+    _, mock_dispatch = _attention_deadline_setup(mocker, expired=False, has_deadline=False)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_dispatch.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_process_attention_deadline_double_fire_guard(mocker) -> None:
+    """AC3: delete returns 0 (key gone) → second dispatch suppressed even in QUIZZING+expired."""
+    mock_redis, mock_dispatch = _attention_deadline_setup(mocker, expired=True)
+    mock_redis.delete = AsyncMock(return_value=0)  # simulate concurrent delete
+
+    from app.modules.tutor.service import process_attention_signal
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_dispatch.assert_not_called()
+
+
+# ── Story 4-20 review patches ─────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_non_quiz_complete_event_substituted_on_expired_deadline(
+    mocker,
+) -> None:
+    """AC2 substitution: non-quiz_complete event (segment_complete) while QUIZZING+expired
+    → quiz_complete dispatched instead, original event dropped."""
+    import time as _time
+
+    sid = "s-adv-sub"
+    expired = str(int(_time.time()) - 60)
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return "QUIZZING"
+        if key == f"session:{sid}:quiz_deadline_at":
+            return expired
+        return None
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=_get)
+    redis.delete = AsyncMock(return_value=1)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "segment_complete")  # client sends segment_complete
+
+    # quiz_complete dispatched instead; segment_complete never reached
+    mock_dispatch.assert_called_once_with(sid, "quiz_complete")
+
+
+@pytest.mark.unit
+async def test_quiz_deadline_expired_false_on_corrupt_redis_value() -> None:
+    """_quiz_deadline_expired returns False (safely) when the stored value is non-numeric."""
+    from app.modules.tutor.service import _quiz_deadline_expired
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="CORRUPT_NOT_A_TIMESTAMP")
+
+    assert await _quiz_deadline_expired("s", redis) is False
+
+
+@pytest.mark.unit
+async def test_process_attention_quizzing_expired_with_low_ces_only_quiz_complete_dispatched(
+    mocker,
+) -> None:
+    """P7: QUIZZING + expired deadline + two below-threshold CES values →
+    ONLY quiz_complete dispatched (no distraction_detected) — CLAUDE.md §10:
+    CES interventions only active in TEACHING state."""
+    import time as _time
+
+    sid = "sess-double"
+    expired = str(int(_time.time()) - 60)
+
+    async def _get(key: str):
+        if "tutor_state" in key:
+            return "QUIZZING"
+        if "quiz_deadline_at" in key:
+            return expired
+        return None
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(side_effect=_get)
+    # Two below-threshold CES values — would trigger distraction in TEACHING state
+    mock_redis.lrange = AsyncMock(return_value=["0.1", "0.2"])
+    mock_redis.exists = AsyncMock(return_value=0)  # no cooldown
+    mock_redis.delete = AsyncMock(return_value=1)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    mock_settings = MagicMock()
+    mock_settings.ces_threshold = 50
+    mock_settings.ces_weight_quiz = 0.35
+    mock_settings.ces_weight_teachback = 0.25
+    mock_settings.ces_weight_behavioral = 0.20
+    mock_settings.ces_weight_head_pose = 0.12
+    mock_settings.ces_weight_blink = 0.08
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    result = await process_attention_signal(sid, _VALID_PAYLOAD)
+
+    # Only quiz_complete — distraction_detected must NOT fire from QUIZZING state
+    mock_dispatch.assert_called_once_with(sid, "quiz_complete")
+    assert result.intervention_dispatched is False

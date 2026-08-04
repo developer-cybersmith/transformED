@@ -20,7 +20,11 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 <input
                     type={type}
                     className={cn(
-                        "flex h-12 w-full rounded-2xl border border-neutral-200/50 bg-white/50 px-4 py-2 text-sm text-neutral-800 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] backdrop-blur-sm transition-all duration-300",
+                        // text-base (16px) below sm, not text-sm (14px) -- iOS Safari
+                        // auto-zooms the whole page in on focusing any input under
+                        // 16px, and its zoom-out reset on blur is unreliable, which
+                        // reads as the page "shrinking". Desktop keeps the tighter look.
+                        "flex h-12 w-full rounded-2xl border border-neutral-200/50 bg-white/50 px-4 py-2 text-base sm:text-sm text-neutral-800 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] backdrop-blur-sm transition-all duration-300",
                         "file:border-0 file:bg-transparent file:text-sm file:font-medium",
                         "placeholder:text-neutral-400",
                         "focus-visible:outline-none focus-visible:border-[var(--accent-primary)] focus-visible:ring-4 focus-visible:ring-[var(--accent-primary)]/10 focus-visible:bg-white",

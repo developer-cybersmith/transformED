@@ -12,10 +12,12 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+import httpx
+from langfuse import Langfuse
 from openai import AsyncOpenAI
 
 from app.config import get_settings
-from app.core.circuit_breaker import is_circuit_open, record_failure, record_success
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.langfuse import get_langfuse
 from app.core.retry import with_retry
 from app.providers.base import EmbeddingsProvider
@@ -28,7 +30,7 @@ _PROVIDER_KEY = "openai"
 _EMBED_COST_PER_1K_USD = 0.00002
 
 
-def _safe_trace(call: Callable[[], Any]) -> Any | None:
+def _safe_trace(call: Callable[[], Any]) -> Any | None:  # noqa: ANN401
     """Run a Langfuse tracing call; observability failures must NEVER fail the pipeline."""
     try:
         return call()
@@ -44,10 +46,24 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
 
     def __init__(self, lesson_id: str | None = None) -> None:
         settings = get_settings()
-        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # Story 2-32: max_retries=0 — the SDK defaults to 2, so layering
+        # with_retry(max_attempts=N) on top of it means N x 3 HTTP requests per
+        # logical call with two independent backoff schedules. `core/retry.py` is
+        # the only layer that knows the PRD §14 rules and the circuit-breaker
+        # state, so it owns retry entirely.
+        #
+        # Timeout is an explicit httpx.Timeout, NEVER a bare float: a bare float
+        # sets connect= to the same value, replacing the SDK's 5s connect guard
+        # with (here) 120s and making a connect hang strictly worse.
+        self._client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            max_retries=0,
+            timeout=httpx.Timeout(settings.openai_request_timeout_s, connect=5.0),
+        )
         self._model = settings.embedding_model
         # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to
         # no-tracing, never crash the provider mid-job.
+        self._langfuse: Langfuse | None
         try:
             self._langfuse = get_langfuse()
         except Exception:
@@ -58,8 +74,19 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
             self._langfuse = None
         self._lesson_id = lesson_id
 
-    @with_retry(max_attempts=3)
     async def embed_texts(
+        self,
+        texts: list[str],
+    ) -> tuple[list[list[float]], int]:
+        """Embed *texts*, recording exactly one breaker outcome (Story 2-32 AC-3).
+
+        Accounting lives here, OUTSIDE the retry decorator, so internal retries
+        cannot multiply the failure count. See `guard_breaker`.
+        """
+        return await guard_breaker(_PROVIDER_KEY, lambda: self._embed_texts_inner(texts))
+
+    @with_retry(max_attempts=3)
+    async def _embed_texts_inner(
         self,
         texts: list[str],
     ) -> tuple[list[list[float]], int]:
@@ -72,10 +99,15 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
             (embeddings, total_tokens) where embeddings[i] corresponds to texts[i].
 
         Raises:
-            RuntimeError: If the circuit breaker is open for the OpenAI provider.
+            CircuitOpenError: if the circuit breaker is open for this provider.
+            openai.APIStatusError / APIConnectionError: propagated after retries
+                are exhausted (see app/core/retry.py for the PRD §14 rules).
+            CostCeilingError: the lesson hit its own $3.00 spend ceiling.
         """
+        # Checked on EVERY attempt (AC-4): stop rather than finish the remaining
+        # attempts against a provider concurrent traffic already tripped.
         if await is_circuit_open(_PROVIDER_KEY):
-            raise RuntimeError(
+            raise CircuitOpenError(
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — embeddings call rejected"
             )
 
@@ -83,9 +115,10 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         # Tracing is best-effort — the OpenAI call must never fail because of it.
         # self._langfuse is None when init failed (AC-3) — skip tracing entirely.
         generation = None
-        if self._langfuse is not None:
+        langfuse = self._langfuse
+        if langfuse is not None:
             generation = _safe_trace(
-                lambda: self._langfuse.start_observation(
+                lambda: langfuse.start_observation(
                     name="openai.embeddings",
                     as_type="generation",
                     model=self._model,
@@ -119,16 +152,12 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
 
             # Cost accumulation reads response.usage directly — never depends on tracing.
             await self._maybe_accumulate_cost(total_tokens)
-            await record_success(_PROVIDER_KEY)
             return embeddings, total_tokens
 
         except Exception as exc:
             if generation is not None:
                 error_message = str(exc)
-                _safe_trace(
-                    lambda: generation.update(level="ERROR", status_message=error_message)
-                )
-            await record_failure(_PROVIDER_KEY)
+                _safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
             raise
 
         finally:
@@ -145,6 +174,8 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
 
         total = await accumulate_cost(self._lesson_id, cost)
         if await check_ceiling(self._lesson_id):
-            raise RuntimeError(
+            from app.core.cost_tracker import CostCeilingError
+
+            raise CostCeilingError(
                 f"Lesson {self._lesson_id} exceeded cost ceiling at ${total:.4f} — pipeline aborted"
             )
