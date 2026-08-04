@@ -1,5 +1,5 @@
 {
-  "$comment": "Book-scale read API, v1. Frozen for Dev 2's Track W (SYNC-1). Field names and types are what apps/api actually returns \u2014 the W0 contract CI job compares this against the live FastAPI schema and must fail when they diverge.",
+  "$comment": "Book-scale read API, v1. Frozen for Dev 2's Track W (SYNC-1). These are REAL responses captured on 2026-08-04 from a live ingest of the 1,151-page Dive into Deep Learning through the running API against real PostgREST \u2014 not hand-written examples (Story 1-11 AC9). The W0 contract CI job compares this against the live FastAPI schema and must fail when they diverge.",
   "version": "1.0.0",
   "captured": "2026-08-04",
   "source": "Story 1-11 (book-scale Phase 3.5)",
@@ -48,29 +48,61 @@
     }
   },
   "real_example": {
-    "$comment": "Observed 2026-08-04 from the Phase 3 gate: the real 1,151-page Dive into Deep Learning.",
-    "book": {
+    "$comment": "Verbatim API responses. filename/book_id/created_at redacted; every other value is as returned.",
+    "GET /books/{book_id}": {
+      "book_id": "<uuid>",
       "filename": "d2l.pdf",
       "status": "ready",
       "page_count": 1151,
-      "chapter_count": 21
+      "chapter_count": 21,
+      "created_at": "<iso-8601>"
     },
-    "first_chapter": {
-      "chapter_index": 0,
-      "title": "Introduction",
-      "page_start": 40,
-      "page_end": 68,
-      "boundary_confidence": "toc",
-      "lesson_id": null,
-      "has_lesson": false
-    },
-    "last_chapter": {
+    "GET /books/{book_id}/chapters \u2014 first 3 of 21": [
+      {
+        "chapter_id": "<uuid>",
+        "chapter_index": 0,
+        "title": "Introduction",
+        "page_start": 40,
+        "page_end": 68,
+        "boundary_confidence": "toc",
+        "lesson_id": null,
+        "has_lesson": false
+      },
+      {
+        "chapter_id": "<uuid>",
+        "chapter_index": 1,
+        "title": "Preliminaries",
+        "page_start": 69,
+        "page_end": 120,
+        "boundary_confidence": "toc",
+        "lesson_id": null,
+        "has_lesson": false
+      },
+      {
+        "chapter_id": "<uuid>",
+        "chapter_index": 2,
+        "title": "Linear Neural Networks for Regression",
+        "page_start": 121,
+        "page_end": 163,
+        "boundary_confidence": "toc",
+        "lesson_id": null,
+        "has_lesson": false
+      }
+    ],
+    "GET /books/{book_id}/chapters \u2014 last": {
+      "chapter_id": "<uuid>",
       "chapter_index": 20,
+      "title": "Recommender Systems",
       "page_start": 932,
       "page_end": 935,
       "boundary_confidence": "toc",
       "lesson_id": null,
       "has_lesson": false
+    },
+    "verified_against_real_postgrest": {
+      "date": "2026-08-04",
+      "checks_passed": "19/19",
+      "note": "chapters(count) is a PostgREST embedded aggregate; it resolved unambiguously despite books having three inbound FKs, returning 21."
     },
     "other_books_observed": {
       "NCERT XI Physics Part 1": {
