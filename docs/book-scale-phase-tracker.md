@@ -40,7 +40,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | 3 | Detect and store real chapters at upload | ✅ Verified | 2026-08-04 |
 | **3.5** | **Books and chapters readable + pipeline writers removed** | ✅ Verified | 2026-08-04 |
 | 4 | Extract one chapter's pages | ✅ Verified | 2026-08-04 |
-| 5 | Chapter-scoped generation | ⬜ Not Started | — |
+| 5 | Chapter-scoped generation | 🧪 Implemented | — |
 | 6 | Endpoints (the write endpoint + `tier` relocation) | ⬜ Not Started | — |
 | **6.5** | **`lesson_ready` actually reaches a client** | ⬜ Not Started | — |
 | 7 | Prove it end to end + the single merge to `main` | ⬜ Not Started | — |
@@ -55,7 +55,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | **W3** | Generate from chapter (`tier` moves here) | ⬜ Not Started | SYNC-2 |
 | **W4** | MSW off — the whole UI against the live API | ⬜ Not Started | Phase 6 Verified |
 
-**Totals:** Backend — Not Started 3 · Verified 5. Track W — Not Started 5.
+**Totals:** Backend — Not Started 2 · Implemented 1 · Verified 5. Track W — Not Started 5.
 
 ### Synchronisation points
 
@@ -668,7 +668,32 @@ A chapter of the big book produces a valid `LessonPackage`.
 7. Total cost recorded and under the $3.00 ceiling
 
 ### Observed result
-_Not yet run._
+
+**Implemented 2026-08-04, NOT yet Verified.** Story: `docs/stories/1-13-chapter-scoped-generation.md`.
+
+Verified against the code by line-to-function mapping rather than by reading the diff:
+
+| AC | Check | Result |
+|---|---|---|
+| 1 | `chapter_id` on state, on `run_pipeline`, read from `lessons.chapter_id` | yes |
+| 2 | `page_start`/`page_end` reach the subprocess spawn args | yes |
+| 4 | `"chapter_index": 1` gone; any `chapters` write from `pipeline/` | **none** |
+| 7 | D33 closed — normalise then raise a diagnostic before Pydantic sees it | yes |
+| 8 | Guard widened to `books` **and** `chapters`, mutation-checked | yes |
+| 9 | **Of the eleven generation nodes, none touched** | confirmed |
+
+AC9 is the phase's central bet and it held: `lesson_planner`, `slide_generator`, quiz, narration,
+jargon, interventions, complexity, TTS and image are byte-identical. Only `extract_node`,
+`chunk_node`, `package_builder_node`, `run_pipeline` and one new helper changed.
+
+25 existing tests failed and every one was repaired **without weakening an assertion** — 21 stale
+fixtures, 4 inverted to assert the new invariant rather than deleted.
+
+Gating scope **917 passed, 1 skipped** (was 898); ruff clean; mypy unchanged at 24/3.
+
+**Why this is not Verified:** AC10 requires generating a real chapter through all eleven nodes,
+which spends real money on the project's OpenAI key. The repo has a `live_eval` marker for exactly
+this class of run. Awaiting the go-ahead.
 
 ### Files
 `apps/api/app/modules/content/pipeline/graph.py`

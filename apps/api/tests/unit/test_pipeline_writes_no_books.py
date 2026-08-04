@@ -31,7 +31,11 @@ PIPELINE_DIR = Path(__file__).resolve().parents[2] / "app" / "modules" / "conten
 _TABLE_SELECTORS = frozenset({"table", "from_"})
 _WRITE_METHODS = frozenset({"insert", "update", "upsert", "delete"})
 
-FORBIDDEN_TABLE = "books"
+# Story 1-11 scoped this to `books` alone, because the pipeline still had to write
+# `chapters` — chunk_node manufactured a chapter row and `chunks.chapter_id` is NOT NULL.
+# Story 1-13 (AC4) deleted that writer once a real chapter_id reached PipelineState, so the
+# guard now covers both. `book_ingest_job` is the sole writer of either table.
+FORBIDDEN_TABLES = frozenset({"books", "chapters"})
 
 
 def _strip_docstrings(tree: ast.AST) -> ast.AST:
@@ -73,7 +77,7 @@ def _selected_table(node: ast.expr) -> str | None:
 
 
 def _books_writes(source: str) -> list[str]:
-    """Return `table("books").<write>()` call descriptions found in *source*."""
+    """Return `table("books"|"chapters").<write>()` call descriptions found in *source*."""
     tree = ast.parse(source)
     # Round-trip through unparse so only executable code survives (no comments).
     executable = ast.unparse(_strip_docstrings(tree))
@@ -84,7 +88,7 @@ def _books_writes(source: str) -> list[str]:
         func = node.func
         if not isinstance(func, ast.Attribute) or func.attr not in _WRITE_METHODS:
             continue
-        if _selected_table(func.value) == FORBIDDEN_TABLE:
+        if _selected_table(func.value) in FORBIDDEN_TABLES:
             findings.append(f"{ast.unparse(func)}(...)")
     return findings
 
@@ -103,7 +107,7 @@ def test_pipeline_dir_is_where_we_think_it_is() -> None:
 
 
 @pytest.mark.unit
-def test_scanner_detects_a_books_write() -> None:
+def test_scanner_detects_a_forbidden_write() -> None:
     """Premise: the detector fires on the exact statement it is meant to catch.
 
     Without this, a scanner that silently matches nothing looks identical to a
@@ -112,9 +116,16 @@ def test_scanner_detects_a_books_write() -> None:
     positive = 'supabase.table("books").update({"page_count": 3}).eq("book_id", b).execute()\n'
     assert _books_writes(positive), "scanner failed to flag a real books write"
 
-    # ...and does not fire on a books READ or on a chapters write.
+    # Story 1-13 AC8 widened the guard: a chapters write is forbidden too, so the
+    # scanner MUST fire on it now. Until Story 1-13 this asserted the opposite,
+    # because chunk_node still had to manufacture a chapter row.
+    assert _books_writes('supabase.table("chapters").upsert(payload).execute()\n'), (
+        "scanner failed to flag a chapters write"
+    )
+
+    # ...and does not fire on a READ of either table.
     assert not _books_writes('supabase.table("books").select("book_id").execute()\n')
-    assert not _books_writes('supabase.table("chapters").upsert(payload).execute()\n')
+    assert not _books_writes('supabase.table("chapters").select("chapter_id").execute()\n')
 
     # ...and does not fire on prose, which is the Story 1-10 failure mode.
     prose = '"""Never call supabase.table(\\"books\\").update(...) from here."""\n'
@@ -122,7 +133,7 @@ def test_scanner_detects_a_books_write() -> None:
 
 
 @pytest.mark.unit
-def test_no_pipeline_module_writes_to_books() -> None:
+def test_no_pipeline_module_writes_to_books_or_chapters() -> None:
     """AC8: nothing under `pipeline/` may insert/update/upsert/delete `books`."""
     offenders: dict[str, list[str]] = {}
     for path in _pipeline_modules():

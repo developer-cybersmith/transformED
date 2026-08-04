@@ -87,6 +87,13 @@ class PipelineState(TypedDict, total=False):
     lesson_id: str
     user_id: str
     book_id: str
+    # Story 1-13 (book-scale Phase 5): the chapter this lesson is generated
+    # FROM. Required on the PDF path — extract_node resolves the chapter's
+    # page range from it and chunk_node writes it onto every chunk row. It
+    # arrives from `lessons.chapter_id` via content_pipeline_job. It is NOT
+    # required on the raw-text (`chapter_content`) path, which never reaches
+    # extract_node's PDF branch.
+    chapter_id: str
     source_pdf_path: str
     chapter_content: str  # Raw text passed directly (for testing without PDF)
     tier: str  # Learner Mode tier: "T1" | "T2" | "T3" (S2-LM3/LM4/LM5); defaults "T2"
@@ -225,8 +232,12 @@ async def extract_node(state: PipelineState) -> PipelineState:
     from app.core.db import get_supabase
 
     lesson_id: str = state["lesson_id"]
-    # `book_id` is deliberately not read here — extract_node no longer writes to
-    # `books` (Story 1-11 AC7); it stays on PipelineState for downstream nodes.
+    # `book_id` IS read here now (Story 1-13) — not to write `books` (the
+    # pipeline is still a strict non-writer of that table, Story 1-11 AC7) but
+    # to prove the requested chapter actually belongs to this lesson's book
+    # before a single page is parsed.
+    book_id: str = state.get("book_id") or ""
+    chapter_id: str = state.get("chapter_id") or ""
     source_pdf_path: str = state.get("source_pdf_path", "")
 
     logger.info("[%s] extract_node: starting", lesson_id)
@@ -259,6 +270,78 @@ async def extract_node(state: PipelineState) -> PipelineState:
     if not source_pdf_path:
         raise RuntimeError(f"extract_node: source_pdf_path missing for lesson_id={lesson_id}")
 
+    # ── Story 1-13 (AC2/AC3): resolve THIS chapter's page range ───────────────
+    #
+    # Everything below runs BEFORE the PDF is downloaded: a 1,151-page book is
+    # not worth fetching to discover the chapter reference was wrong.
+    #
+    # There is deliberately NO fallback to whole-document extraction on any
+    # failure path here. Whole-document extraction is the defect this phase
+    # exists to remove — a fallback would silently generate a lesson from 4 %
+    # of a book while looking like robustness. Every failure raises.
+    if not chapter_id:
+        raise RuntimeError(
+            f"extract_node: chapter_id missing for lesson_id={lesson_id} "
+            f"(book_id={book_id or '<missing>'}). The PDF path is chapter-scoped "
+            "since Story 1-13 — `lessons.chapter_id` must be set before the "
+            "pipeline is enqueued. Refusing to extract the whole document."
+        )
+    if not book_id:
+        raise RuntimeError(
+            f"extract_node: book_id missing for lesson_id={lesson_id} "
+            f"(chapter_id={chapter_id}) — the chapter's ownership cannot be "
+            "verified without it."
+        )
+
+    # `.limit(1).execute()`, not `.single()`: a missing row must surface as this
+    # node's own diagnostic message naming both ids, not as a raw PostgREST
+    # PGRST116 that names neither.
+    chapter_resp = (
+        supabase.table("chapters")
+        .select("chapter_id, book_id, page_start, page_end")
+        .eq("chapter_id", chapter_id)
+        .limit(1)
+        .execute()
+    )
+    chapter_rows = rows(chapter_resp)
+    if not chapter_rows:
+        raise RuntimeError(
+            f"extract_node: chapter_id={chapter_id} does not exist "
+            f"(book_id={book_id}, lesson_id={lesson_id}). Refusing to fall back "
+            "to whole-document extraction."
+        )
+    chapter_row = chapter_rows[0]
+
+    row_book_id = str(chapter_row.get("book_id") or "")
+    if row_book_id != book_id:
+        raise RuntimeError(
+            f"extract_node: chapter_id={chapter_id} belongs to book_id={row_book_id or '<null>'} "
+            f"but lesson_id={lesson_id} is for book_id={book_id}. Refusing to fall back "
+            "to whole-document extraction."
+        )
+
+    page_start = chapter_row.get("page_start")
+    page_end = chapter_row.get("page_end")
+    if page_start is None or page_end is None:
+        raise RuntimeError(
+            f"extract_node: chapter_id={chapter_id} (book_id={book_id}, "
+            f"lesson_id={lesson_id}) has page_start={page_start!r} page_end={page_end!r} — "
+            "both are NOT NULL in `chapters`, so this row is corrupt. Refusing to "
+            "fall back to whole-document extraction."
+        )
+    # Story 1-12 built argv 4/5 as 0-based INCLUSIVE, deliberately matching
+    # `chapters.page_start`/`page_end` byte-for-byte. No conversion here — an
+    # off-by-one introduced at this seam would be invisible in the output.
+    page_start_arg = int(page_start)
+    page_end_arg = int(page_end)
+    logger.info(
+        "[%s] extract_node: chapter-scoped extraction chapter_id=%s pages %d-%d (inclusive)",
+        lesson_id,
+        chapter_id,
+        page_start_arg,
+        page_end_arg,
+    )
+
     pdf_bytes: bytes = supabase.storage.from_("source-pdfs").download(source_pdf_path)
 
     # ── Run extraction in isolated subprocess ─────────────────────────────────
@@ -285,6 +368,11 @@ async def extract_node(state: PipelineState) -> PipelineState:
             local_pdf,
             img_dir,
             str(settings.ocr_text_yield_threshold),
+            # argv 4/5 — Story 1-12's page bounds, 0-based INCLUSIVE. Both are
+            # always supplied together; the subprocess rejects a half-specified
+            # range rather than defaulting the other end.
+            str(page_start_arg),
+            str(page_end_arg),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             **spawn_kwargs,
@@ -408,7 +496,15 @@ async def extract_node(state: PipelineState) -> PipelineState:
     # Story 2-0b additive observability keys — defensive .get: the subprocess
     # change lands in a parallel lane, so BOTH old JSON (keys absent) and new
     # JSON (keys present) must checkpoint cleanly.
-    for _extra_key in ("tables_detected", "docling_pages"):
+    # Story 1-13 adds extracted_page_count/page_offset to the same defensive
+    # list: they are how you tell from a checkpoint alone whether a run was
+    # chapter-scoped (extracted_page_count << page_count) or whole-document.
+    for _extra_key in (
+        "tables_detected",
+        "docling_pages",
+        "extracted_page_count",
+        "page_offset",
+    ):
         if _extra_key in result:
             extract_cache[_extra_key] = result[_extra_key]
     try:
@@ -551,24 +647,91 @@ async def structure_node(state: PipelineState) -> PipelineState:
     return {"sections": sections_list, "progress_pct": 14.0}
 
 
+def _existing_chunks_for_chapter(
+    supabase: Any,  # noqa: ANN401 — supabase client type varies
+    chapter_id: str,
+) -> list[dict[str, Any]]:
+    """Story 1-13 AC6: read back already-stored chunks for *chapter_id*.
+
+    Returns them in the in-memory shape ``chunk_sections`` produces, so the
+    reuse path and the fresh path put the SAME shape on PipelineState.
+
+    ``section_id`` is not a `chunks` column — it only ever existed in memory,
+    and nothing downstream of chunk_node reads ``state["chunks"]`` at all
+    (embed_node re-queries the table by chapter_id). It is reconstructed from
+    the persisted section title so the shape stays complete rather than
+    silently gaining a missing key.
+
+    Paginated past PostgREST's 1000-row cap: a truncated read here would look
+    like "only these chunks exist" and re-chunk + re-embed the rest.
+    """
+    page_size = 1000
+    out: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        resp = (
+            supabase.table("chunks")
+            .select("chunk_id, section, page_start, page_end, content, chunk_index, token_count")
+            .eq("chapter_id", chapter_id)
+            .order("chunk_index")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        page = rows(resp)
+        for row in page:
+            section_title = row.get("section") or ""
+            out.append(
+                {
+                    "id": str(row.get("chunk_id") or ""),
+                    "section_id": section_title,
+                    "section_title": section_title,
+                    "text": row.get("content") or "",
+                    "token_count": row.get("token_count") or 0,
+                    "page_start": row.get("page_start"),
+                    "page_end": row.get("page_end"),
+                }
+            )
+        if len(page) < page_size:
+            return out
+        offset += page_size
+
+
 async def chunk_node(state: PipelineState) -> PipelineState:
     """Node 3: Split sections into token-bounded chunks and write to Supabase.
 
     Uses tiktoken cl100k_base (text-embedding-3-small tokenizer) with a
-    configurable target size and overlap. Creates one `chapters` row then
-    bulk-upserts all chunk rows (without embeddings — Story 1.5 sets those).
+    configurable target size and overlap. Bulk-upserts all chunk rows against
+    the chapter carried on state (without embeddings — Story 1.5 sets those).
 
-    Idempotent: if node_outputs["chunk"] already exists, cached data is
-    restored and no DB writes are issued.
+    Story 1-13: this node NO LONGER creates a `chapters` row. It used to
+    hardcode exactly one chapter per ingestion (`chapter_index=1`) because
+    `chunks.chapter_id` is NOT NULL and nothing upstream supplied a real id.
+    `book_ingest_job` now detects and writes every chapter at upload time and
+    `lessons.chapter_id` names the one being generated, so the pipeline is a
+    strict non-writer of `chapters` exactly as it already is of `books`.
+
+    Idempotency, two independent layers:
+      1. node_outputs["chunk"] — THIS lesson already chunked (ARQ retry).
+      2. `chunks` rows already exist for this chapter_id — ANOTHER lesson
+         already chunked this same chapter (e.g. a second lesson at a
+         different tier). Those rows and their embeddings are reused verbatim:
+         CLAUDE.md, "Chunk embeddings at ingestion only — never regenerate
+         stored chunk embeddings". Reuse also makes embed_node a no-op, since
+         its `embedding IS NULL` filter then matches nothing.
     """
     from app.config import get_settings
     from app.core.db import get_supabase
     from app.modules.content.pipeline.nodes.chunking import chunk_sections
 
     lesson_id: str = state["lesson_id"]
-    book_id: str = (
-        state.get("book_id") or ""
-    )  # coerce None → "" so NOT NULL constraint gives clear error
+    # D33 (Story 1-13 AC7): NO `or ""` default survives here. `chunks.book_id`
+    # and `chunks.chapter_id` are both UUID NOT NULL, and
+    # `schemas/lesson.py`'s LessonPackage.book_id/chapter_id are `UUID` — an
+    # empty string can never satisfy either. Defaulting it only deferred the
+    # failure to package_builder, where it surfaced as a bare Pydantic
+    # ValidationError AFTER every LLM/TTS/image call had been paid for.
+    book_id: str = state.get("book_id") or ""
+    chapter_id: str = state.get("chapter_id") or ""
     sections: list[dict[str, Any]] = state.get("sections", [])
 
     logger.info("[%s] chunk_node: chunking %d sections", lesson_id, len(sections))
@@ -592,6 +755,56 @@ async def chunk_node(state: PipelineState) -> PipelineState:
         logger.info("[%s] chunk_node: cache hit — skipping re-chunking", lesson_id)
         return {"chunks": cached["chunks"], "progress_pct": 20.0}
 
+    # ── D33: required ids, checked before any work or spend ───────────────────
+    if not chapter_id:
+        raise RuntimeError(
+            f"chunk_node: chapter_id missing from pipeline state for lesson_id={lesson_id} "
+            f"(book_id={book_id or '<missing>'}). `chunks.chapter_id` is UUID NOT NULL and "
+            "this node no longer invents a chapter row — `lessons.chapter_id` must be set "
+            "before the pipeline is enqueued (Story 1-13)."
+        )
+    if not book_id:
+        raise RuntimeError(
+            f"chunk_node: book_id missing from pipeline state for lesson_id={lesson_id} "
+            f"(chapter_id={chapter_id}). `chunks.book_id` is UUID NOT NULL."
+        )
+
+    # ── Reuse: this chapter may already be chunked and embedded ───────────────
+    # "Process once, reuse everywhere" (PRD §5.2). Two lessons built from one
+    # chapter at different tiers share ONE set of chunks and ONE embedding
+    # spend. Checked BEFORE chunk_sections so a reused chapter costs no
+    # tokenisation either.
+    #
+    # Paginated: PostgREST silently caps a select at 1000 rows, and a partial
+    # read here would look like "no chunks exist" only for the tail — which is
+    # precisely how a chapter would get re-chunked and re-embedded.
+    existing_chunks = _existing_chunks_for_chapter(supabase, chapter_id)
+    if existing_chunks:
+        logger.info(
+            "[%s] chunk_node: reusing %d existing chunks for chapter_id=%s — "
+            "skipping chunking and embedding (embeddings are never regenerated)",
+            lesson_id,
+            len(existing_chunks),
+            chapter_id,
+        )
+        reuse_cache: dict[str, Any] = {
+            "chunks": existing_chunks,
+            "chapter_id": chapter_id,
+            "reused": True,
+        }
+        try:
+            supabase.table("lesson_jobs").update(
+                {
+                    "last_node": "chunk",
+                    "node_outputs": {**node_outputs, "chunk": reuse_cache},
+                }
+            ).eq("lesson_id", lesson_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.warning("[%s] chunk_node: failed to write reuse checkpoint", lesson_id)
+
+        await _update_job_progress(lesson_id, 20.0, "chunk")
+        return {"chunks": existing_chunks, "progress_pct": 20.0}
+
     # ── Token-bounded chunking ────────────────────────────────────────────────
     chunks = chunk_sections(
         sections,
@@ -606,49 +819,16 @@ async def chunk_node(state: PipelineState) -> PipelineState:
         len(sections),
     )
 
-    # ── Create one chapter row (one chapter per lesson ingestion in MVP) ──────
-    chapter_title = sections[0].get("title", "Chapter") if sections else "Chapter"
-    chapter_page_start = sections[0].get("page_start", 1) if sections else 1
-    chapter_page_end = sections[-1].get("page_end", 1) if sections else 1
-
-    # UPSERT, not INSERT. `20260803000000_chapters_book_scoped.sql` adds
-    # UNIQUE (book_id, chapter_index), and this node's checkpoint is written at the
-    # END of the node — after the chunks upsert below. A failure in that window
-    # leaves node_outputs["chunk"] unset, so the ARQ retry re-enters here and
-    # re-inserts the same (book_id, chapter_index=1). Before the constraint that
-    # produced a duplicate row and the job completed; a plain INSERT afterwards
-    # raises 23505 on every one of max_tries=3 attempts, turning a transient
-    # failure into a permanently stuck lesson.
-    #
-    # Phase 3 deletes this whole block (the hardcoded single chapter is replaced by
-    # real detection in book_ingest_job) — this keeps the existing path recoverable
-    # until then. Guarded by test_chunk_node_chapter_insert_is_retry_safe.
-    try:
-        chapter_resp = (
-            supabase.table("chapters")
-            .upsert(
-                {
-                    "lesson_id": lesson_id,
-                    "book_id": book_id,
-                    "title": chapter_title,
-                    "page_start": chapter_page_start,
-                    "page_end": chapter_page_end,
-                    "chapter_index": 1,
-                },
-                on_conflict="book_id,chapter_index",
-            )
-            .execute()
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            f"chunk_node: failed to create chapter row for lesson_id={lesson_id}"
-        ) from exc
-
-    if not chapter_resp.data:
-        raise RuntimeError(
-            f"chunk_node: chapters insert returned no data for lesson_id={lesson_id}"
-        )
-    chapter_id: str = rows(chapter_resp)[0]["chapter_id"]
+    # ── Story 1-13 AC4: the hardcoded `chapters` upsert used to live here ────
+    # It manufactured one chapter row per ingestion (`chapter_index=1`,
+    # title/page range taken from whatever sections happened to be detected)
+    # purely so `chunks.chapter_id` had something to point at. That is why the
+    # pipeline could only ever produce "chapter 1 of this upload". Story 1-10
+    # AC23 deferred its deletion twice, because :659 below consumed the
+    # chapter_id it produced. State now carries a real one, so it is gone —
+    # along with the UNIQUE (book_id, chapter_index) retry hazard the upsert
+    # existed to survive. The pipeline is now a strict non-writer of `chapters`
+    # as well as `books`.
 
     # ── Bulk-upsert chunk rows (embedding column left NULL — Story 1.5 fills it) ─
     # Zero-token chunks (empty section bodies) are excluded from DB to prevent
@@ -3747,9 +3927,30 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 
     await _update_job_progress(lesson_id, 95.0, "package_builder")
 
-    # chapter_id was never a PipelineState field — chunk_node wrote it into
-    # its OWN checkpoint, and embed_node already reads it back the same way.
-    chapter_id = (node_outputs.get("chunk") or {}).get("chapter_id", "")
+    # Story 1-13: chapter_id IS a PipelineState field now. The chunk checkpoint
+    # remains a fallback for a job that started before this landed and is being
+    # resumed mid-flight; it and state agree by construction otherwise.
+    #
+    # D33 (AC7): no `""` default. `LessonPackage.chapter_id`/`book_id` are
+    # `UUID` (schemas/lesson.py:212-213), which an empty string can never
+    # satisfy — the default did not avoid a failure, it moved the failure to
+    # `LessonPackage.model_validate()` forty lines below, as a bare Pydantic
+    # ValidationError naming neither the lesson nor the missing upstream node,
+    # AFTER every LLM/TTS/image call in the pipeline had already been billed.
+    chapter_id = state.get("chapter_id") or (node_outputs.get("chunk") or {}).get("chapter_id", "")
+    book_id = state.get("book_id") or ""
+    if not chapter_id:
+        raise RuntimeError(
+            f"package_builder_node: chapter_id missing for lesson_id={lesson_id} — "
+            "absent from both PipelineState and the chunk checkpoint. The package "
+            "cannot name the chapter it was generated from."
+        )
+    if not book_id:
+        raise RuntimeError(
+            f"package_builder_node: book_id missing for lesson_id={lesson_id} "
+            f"(chapter_id={chapter_id}) — it is set at run_pipeline() entry from "
+            "`lessons.book_id`, so an empty value means the lesson row has none."
+        )
 
     lesson_plan: dict[str, Any] = state.get("lesson_plan", {})
     plan_segments: list[dict[str, Any]] = lesson_plan.get("segments", [])
@@ -4088,7 +4289,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 
     assembled: dict[str, Any] = {
         "lesson_id": lesson_id,
-        "book_id": state.get("book_id", ""),
+        "book_id": book_id,
         "chapter_id": chapter_id,
         "created_at": datetime.now(UTC).isoformat(),
         "metadata": {
@@ -4493,6 +4694,7 @@ async def run_pipeline(
     user_id: str = "",
     source_pdf_path: str = "",
     book_id: str = "",
+    chapter_id: str = "",
     tier: str = "T2",
     attempt: str = "",
 ) -> dict[str, Any]:
@@ -4504,7 +4706,15 @@ async def run_pipeline(
                           or for testing without a PDF file).
         user_id:          UUID of the lesson owner.
         source_pdf_path:  Storage path of the source PDF in Supabase Storage.
-        book_id:          UUID of the parent book (for books.page_count write).
+        book_id:          UUID of the parent book.
+        chapter_id:       UUID of the `chapters` row this lesson is generated
+                          FROM (Story 1-13, book-scale Phase 5). Supplied from
+                          `lessons.chapter_id` by content_pipeline_job.
+                          REQUIRED on the PDF path: extract_node resolves the
+                          chapter's page range from it and refuses to extract
+                          the whole document without it. The default of "" only
+                          serves the raw-text (`chapter_content`) callers, which
+                          never reach extract_node's PDF branch.
         tier:             Learner Mode tier ("T1"/"T2"/"T3", S2-LM3/LM4/LM5) —
                           drives lesson_planner's/slide_generator's slide-count
                           target and lesson_planner's content-depth framing.
@@ -4523,6 +4733,7 @@ async def run_pipeline(
         "lesson_id": lesson_id,
         "user_id": user_id,
         "book_id": book_id,
+        "chapter_id": chapter_id,
         "chapter_content": chapter_content,
         "source_pdf_path": source_pdf_path,
         "tier": tier if tier in _VALID_TIERS else _DEFAULT_TIER,
