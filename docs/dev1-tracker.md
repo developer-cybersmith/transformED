@@ -281,7 +281,7 @@ Redis keys Dev 1 WRITES:
 |--------|------|-------------|---------|
 | `chapter_id` | `uuid` | PK, `gen_random_uuid()` | Chapter unit identifier |
 | `book_id` | `uuid` | FK → `books.book_id` ON DELETE CASCADE, NOT NULL | Parent book (FK retrofitted in migration 20260625) |
-| `lesson_id` | `uuid` | FK → `lessons.lesson_id` ON DELETE CASCADE, **nullable** ✅ migrated 20260803 (Story 1-9) | Associated lesson. Nullable since book-scale Phase 2: a chapter belongs to a **book**, and exists before any lesson is generated from it |
+| `lesson_id` | `uuid` | FK → `lessons.lesson_id` ON DELETE CASCADE, **nullable** ✅ migrated 20260803 (Story 1-9) | **DEAD since Story 1-13 (D44)** — was: associated lesson. Nothing writes it; the link is now `lessons.chapter_id` (one chapter, many lessons at different tiers). The FK and its ON DELETE CASCADE are still live, so writing it and rolling the lesson back destroys the chapter and its chunks. Do not read it, do not write it. Original description: associated lesson. Nullable since book-scale Phase 2: a chapter belongs to a **book**, and exists before any lesson is generated from it |
 | `title` | `text` | NOT NULL | Chapter title from structure detection |
 | `page_start` | `integer` | NOT NULL | First page (1-indexed) |
 | `page_end` | `integer` | NOT NULL | Last page (inclusive) |
