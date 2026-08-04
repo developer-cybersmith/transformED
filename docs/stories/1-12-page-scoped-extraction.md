@@ -1,6 +1,6 @@
 # Story 1.12: Extract one chapter's pages (book-scale Phase 4)
 
-Status: ready-for-dev
+Status: review
 
 **Sprint:** Book-scale ingestion, Phase 4 of 9
 **Owner:** Dev 1
@@ -174,10 +174,68 @@ straight and say which is which at each site.
 
 ### Agent Model Used
 
-_not yet run_
+claude-opus-5[1m] — 2026-08-04. Contract-first: one agent implemented, one wrote tests to the
+same spec in a different file, in parallel.
 
 ### Debug Log References
 
+**Real-book verification — chapter 9 of the 1,151-page book, pages 272-306:**
+
+| | |
+|---|---|
+| `page_texts[0]` first line | `'7 Convolutional Neural Networks'` — the right chapter |
+| `extracted_page_count` / `page_offset` / `page_count` | **35 / 272 / 1151** |
+| Slice equals `whole[272:307]` byte for byte | **True** |
+| Page 0 present in the slice | **False** |
+| Off-by-one guards (`first != whole[271]`, `last != whole[307]`) | both **True** |
+| Wall-clock | **2.75 s** vs 10.02 s whole-document — **3.6x faster** |
+| AC3 unbounded == explicit full bounds | **True** |
+| AC4 out-of-range | exit 1, message names the bad value and the page count — **never clamped** |
+
+A naive first leak check flagged the token `'Learning'` as escaping from page 0. It is a generic
+word in a deep-learning textbook; the distinctive tokens (`ZACHARY`, `LIPTON`, `ALEXANDER`) did
+not appear. Replaced with slice equality against the whole-document extraction, which is
+decisive rather than heuristic.
+
+**Two problems found that neither agent introduced:**
+
+1. **A pre-existing test forbade the very thing its name promised.**
+   `test_output_contract_preserved_with_additive_keys` asserted `set(result) == {...}` — exact
+   equality — so `extracted_page_count` and `page_offset` failed a test written to permit
+   additive keys. Relaxed to a superset check. A consumer breaks when a key disappears or changes
+   meaning, never when one is added.
+2. **24 of these 28 tests would have skipped in CI.** `apps/api/.gitignore:40` ignores
+   `tests/fixtures/eval_pdfs/*.pdf`, so on a fresh clone the fixtures do not exist. A guard that
+   skips in CI is not a guard (binding rule 7). They now generate on demand — the generator is
+   deterministic and re-runnable by design (Story 2-14 AC-2).
+
+   **My first attempt at that was wrong and I caught it by testing it.** I used a session-scoped
+   autouse fixture; `skipif` is evaluated at COLLECTION time, so the PDFs regenerated but the
+   tests had already been marked skipped — `4 passed, 24 skipped` with 5 files on disk afterwards.
+   Moved to import time. Verified by deleting every PDF and re-running: **28 passed from clean.**
+
+**Deliberate scope holds:** `graph.py:280-290` still calls the 3-argument form (Phase 5 passes
+bounds), and `graph.py:609-651` is untouched (Phase 5 deletes it, when a real `chapter_id` exists).
+
+**Interface decision the contract did not specify:** in bounded `--text-only`, the `toc` stays
+whole-document with absolute `page_index`. An outline is a document-level object the caller uses
+to *find* chapters, so filtering it to the slice would be lossy.
+
 ### Completion Notes List
 
+- T1-T6 complete. 28 new tests; gating scope **898 passed, 1 skipped** (was 870).
+- `ruff check .` clean; `mypy app` 24 errors / 3 files, unchanged from `main`.
+  `ruff format --check` flags only the pre-existing `tests/test_tutor_service.py`.
+- `_extract_font_blocks` is now bounded via `_build_sub_pdf` with a `+page_start` remap — measured
+  2,830 blocks in 0.5 s for pages 5-9 against 31,726 in 7.3 s whole-document, with identical page
+  numbers and span text for the overlapping range. Left unbounded it would have parsed all 1,151
+  pages and defeated the phase.
+- `_convert_table_runs` / `_group_table_runs` / `_append_fallback_tables` now carry an explicit
+  index base: everything absolute, one documented conversion at the splice
+  (`rel = abs - page_start`).
+
 ### File List
+
+- `apps/api/app/modules/content/pipeline/nodes/extract_subprocess.py` (modified)
+- `apps/api/tests/unit/test_extract_page_bounds.py` (new — 28 tests)
+- `apps/api/tests/unit/test_extract_subprocess.py` (modified — superset assertion)

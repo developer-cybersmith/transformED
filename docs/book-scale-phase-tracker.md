@@ -2,7 +2,7 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-04
-**Overall status:** 4 of 9 backend phases verified (1, 2, 3, 3.5). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
+**Overall status:** 5 of 9 backend phases verified (1, 2, 3, 3.5, 4). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
 frontend: two backend phases inserted (3.5, 6.5) and a parallel **Track W** added for Dev 2.
 Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.md`
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
@@ -39,7 +39,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | 2 | Make chapters storable (migration) | ✅ Verified | 2026-08-03 |
 | 3 | Detect and store real chapters at upload | ✅ Verified | 2026-08-04 |
 | **3.5** | **Books and chapters readable + pipeline writers removed** | ✅ Verified | 2026-08-04 |
-| 4 | Extract one chapter's pages | ⬜ Not Started | — |
+| 4 | Extract one chapter's pages | ✅ Verified | 2026-08-04 |
 | 5 | Chapter-scoped generation | ⬜ Not Started | — |
 | 6 | Endpoints (the write endpoint + `tier` relocation) | ⬜ Not Started | — |
 | **6.5** | **`lesson_ready` actually reaches a client** | ⬜ Not Started | — |
@@ -55,7 +55,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | **W3** | Generate from chapter (`tier` moves here) | ⬜ Not Started | SYNC-2 |
 | **W4** | MSW off — the whole UI against the live API | ⬜ Not Started | Phase 6 Verified |
 
-**Totals:** Backend — Not Started 4 · Verified 4. Track W — Not Started 5.
+**Totals:** Backend — Not Started 3 · Verified 5. Track W — Not Started 5.
 
 ### Synchronisation points
 
@@ -613,7 +613,28 @@ Extracting pages 272–306 returns only that chapter and never reads page 0.
 5. Omitting bounds → whole document, unchanged behaviour (backwards compatible)
 
 ### Observed result
-_Not yet run._
+
+**Gated 2026-08-04 against the real 1,151-page book.** Story: `docs/stories/1-12-page-scoped-extraction.md`.
+
+Extracting chapter 9, pages 272-306:
+
+| Check | Result |
+|---|---|
+| First page content | `'7 Convolutional Neural Networks'` — the right chapter |
+| `extracted_page_count` / `page_offset` / `page_count` | **35 / 272 / 1151** |
+| Slice equals `whole[272:307]` **byte for byte** | yes |
+| **Page 0 absent from the output** | yes |
+| Off-by-one guards on both boundaries | yes |
+| Wall-clock | **2.75 s** vs 10.02 s whole-document — **3.6x faster** |
+| Unbounded == explicit full bounds (backwards compatible) | yes |
+| Out-of-range -> exit 1 naming the bad value, **never clamped** | yes |
+
+28 new tests, all running from a clean checkout — the eval PDFs are gitignored, so they now
+generate at import rather than skipping. Verified by deleting every fixture and re-running.
+
+`_extract_font_blocks` is bounded too: 2,830 blocks in 0.5 s for a 5-page range against 31,726 in
+7.3 s whole-document. Left unbounded, a "35-page" extraction would still have parsed all 1,151
+pages and the phase would have achieved nothing.
 
 ### Files
 `apps/api/app/modules/content/pipeline/nodes/extract_subprocess.py`,
