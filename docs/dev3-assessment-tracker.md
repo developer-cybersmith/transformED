@@ -626,9 +626,10 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - EMA: `new = round(retain * old + (1 - retain) * signal, 4)` — `dna_ema_retain` env var (default 0.7)
   - All 9 dimensions computed from quiz/teachback/events data; clamped [0.0, 100.0]
   - Upserts `learner_dna` (9 dims + session_count); never touches badge_labels/profile_text
-  - 29 unit tests pass; 5-agent adversarial review approved; 3 BLOCKERs fixed (AC6 impl, AC17 test, AC18 test)
+  - 30 unit tests pass (29 original + 1 post-impl audit: AC 21 bounds-violation test); 5-agent adversarial review approved; 3 BLOCKERs fixed (AC6 impl, AC17 test, AC18 test)
+  - Post-impl audit (2026-08-04): AC 3 iscoroutinefunction assertion added; AC 20 upsert payload exclusion assertions added; AC 21 bounds-violation test added; scope extensions documented (redis param, record_dna_growth call); validation report at `docs/reports/sprint3-task3-bmad-validation-report.md`
   - Story 3-25 at `docs/stories/3-25-dna-fusion-formula.md` — status: done
-  - Branch: `dev3-sprint3-task3` — pushed to origin, PR pending
+  - Branch: `sprint3-task3-dev3` (post-audit remediation) — merged to `master-sprint3-dev3`
 
 - [x] **GPT-4o-mini profile text generation** — ✓ 2026-07-06
   - Create `LEARNER_DNA_PROFILE_PROMPT` in `prompts.py`
