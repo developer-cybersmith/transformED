@@ -60,6 +60,8 @@ export interface PlayerStore {
   /** Playback rate multiplier; default 1.0. */
   playbackRate: number;
   tutorState: TutorState;
+  /** Most recent ces_update value; null when no score has been received yet. */
+  cesScore: number | null;
   /** segment_id values for segments where quiz has already fired this forward
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
@@ -104,6 +106,8 @@ export interface PlayerStore {
   exitTeachBack: () => void;
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
+  /** Sets/clears (with null) the most recent CES score (S3-04). */
+  setCesScore: (score: number | null) => void;
   setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
   setBuffering: (b: boolean) => void;
   setAudioError: (b: boolean) => void;
@@ -132,6 +136,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   seekRequestMs: null,
   playbackRate: 1.0,
   tutorState: 'IDLE',
+  cesScore: null,
   quizFiredForSegment: new Set<string>(),
   wsSendControl: null,
   isBuffering: false,
@@ -158,6 +163,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       seekRequestMs: null,
       playbackRate: 1.0,
       tutorState: 'IDLE',
+      cesScore: null,
       quizFiredForSegment: new Set<string>(),
       isBuffering: false,
       audioError: false,
@@ -293,6 +299,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   setTutorState: (s) => {
     set({ tutorState: s });
+  },
+
+  setCesScore: (score) => {
+    set({ cesScore: score });
   },
 
   setWsSendControl: (fn) => {

@@ -21,7 +21,7 @@ function latestFake(): FakeWebSocket {
 beforeEach(() => {
   FakeWebSocket.instances = [];
   global.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
-  usePlayerStore.setState({ tutorState: 'IDLE', wsSendControl: null });
+  usePlayerStore.setState({ tutorState: 'IDLE', wsSendControl: null, status: 'IDLE', cesScore: null });
   getSessionMock.mockReset();
   getSessionMock.mockResolvedValue({ data: { session: { access_token: 'fake-token' } } });
 });
@@ -103,7 +103,6 @@ describe('useLessonSocket', () => {
 
   it.each([
     ['tutor_intervene', { session_id: 'sess_1', type: 'distraction', message: 'hi' }],
-    ['ces_update', { session_id: 'sess_1', ces: 0.5, window_index: 1 }],
     ['attention_ack', { session_id: 'sess_1', ces: 0.5 }],
     ['lesson_ready', { session_id: 'sess_1', lesson_id: 'lsn_1', lesson: {} }],
     ['generation_progress', { session_id: 'sess_1', lesson_id: 'lsn_1', node: 'x', progress: 1, message: 'x' }],
@@ -115,6 +114,41 @@ describe('useLessonSocket', () => {
 
     expect(() => act(() => latestFake().simulateMessage({ type, payload }))).not.toThrow();
     expect(usePlayerStore.getState().tutorState).toBe('IDLE');
+  });
+
+  it('dispatches a ces_update message into the player store (S3-04 AC-2)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.62, window_index: 3 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBe(0.62);
+    // AC-2: this path must never touch playback/status.
+    expect(usePlayerStore.getState().status).toBe('IDLE');
+  });
+
+  it('ignores a ces_update for a different session_id (stale message from an abandoned session)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_OTHER', ces: 0.9, window_index: 1 },
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(usePlayerStore.getState().cesScore).toBeNull();
   });
 
   it('degrades gracefully (status closed, no socket) when the Supabase session lookup rejects', async () => {

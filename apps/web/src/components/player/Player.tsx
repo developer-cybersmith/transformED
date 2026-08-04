@@ -15,6 +15,7 @@ import { PlayerControls } from './PlayerControls';
 import { QuizOverlay } from './QuizOverlay';
 import { TeachBackModal } from './TeachBackModal';
 import { CheckingInTransition } from './CheckingInTransition';
+import { CESIndicator } from './CESIndicator';
 
 interface PlayerProps {
   lesson: LessonPackage;
@@ -305,6 +306,9 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
 
         {/* Brief CHECKING_IN transition — layers on top of quiz/teach-back when it shows */}
         <CheckingInTransition />
+
+        {/* CES indicator (S3-04) — subtle, qualitative-only engagement dot; top-3 right-3, distinct from the tier badge (top-3 left-3). */}
+        <CESIndicator />
 
         {/* Avatar intro/static/outro (S1-05) — self-contained, reads lesson +
             store state directly; renders nothing when no avatar fields are

@@ -42,7 +42,11 @@ export function useLessonSocket(sessionId: string | null) {
           // Sprint 3 — TutorInterventionCard consumes this; no-op for now.
           break;
         case 'ces_update':
-          // Not emitted by any live path yet (Dev 3 owns it); no-op.
+          // Same session_id guard as state_change above -- a stale/foreign-session
+          // update must not overwrite the current score.
+          if (msg.payload?.session_id === sid) {
+            usePlayerStore.getState().setCesScore(msg.payload.ces);
+          }
           break;
         case 'attention_ack':
           // Live on the wire, but out of scope until Sprint 3 sends real signals; no-op.

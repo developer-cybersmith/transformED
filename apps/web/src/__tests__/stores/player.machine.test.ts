@@ -80,6 +80,7 @@ beforeEach(() => {
     isBuffering: false,
     audioError: false,
     audioRetryCount: 0,
+    cesScore: null,
   });
   localStorage.clear();
 });
@@ -371,6 +372,29 @@ describe('setTutorState', () => {
   it('mirrors tutor FSM state from WebSocket', () => {
     usePlayerStore.getState().setTutorState('TEACHING');
     expect(usePlayerStore.getState().tutorState).toBe('TEACHING');
+  });
+});
+
+describe('cesScore / setCesScore (S3-04 AC-1)', () => {
+  it('defaults to null', () => {
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it('setCesScore() sets the score', () => {
+    usePlayerStore.getState().setCesScore(0.62);
+    expect(usePlayerStore.getState().cesScore).toBe(0.62);
+  });
+
+  it('setCesScore(null) clears it', () => {
+    usePlayerStore.getState().setCesScore(0.5);
+    usePlayerStore.getState().setCesScore(null);
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it('loadLesson() resets cesScore to null', () => {
+    usePlayerStore.getState().setCesScore(0.8);
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().cesScore).toBeNull();
   });
 });
 

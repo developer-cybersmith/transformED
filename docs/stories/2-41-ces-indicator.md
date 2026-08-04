@@ -4,7 +4,7 @@ baseline_commit: cd776fe
 
 # Story 2.41: CES Indicator Component (S3-04)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -30,19 +30,19 @@ so that I'm not blindsided by an intervention, without the display becoming a di
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1): Add `cesScore`/`setCesScore` to `player.machine.ts`; reset in `loadLesson()`.
-  - [ ] 1.1 RED: test asserting default `null`, action sets the field, `loadLesson()` resets it to `null`.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 2): Wire `useLessonSocket.ts`'s `ces_update` case to dispatch into the store, with the same `session_id` guard as `state_change`.
-  - [ ] 2.1 RED: test that a `ces_update` server message for the current session sets `cesScore`; a message for a different `session_id` is ignored; no playback/status action is ever called from this path.
-  - [ ] 2.2 GREEN: implement.
-- [ ] Task 3 (AC: 3, 4, 5): Build `CESIndicator.tsx` — render-level guard, qualitative label mapping, ≤40px corner placement.
-  - [ ] 3.1 RED: tests for the full visibility/label matrix (null → hidden, `status !== 'PLAYING'` → hidden even with a score, status change away from PLAYING hides immediately, each band's label, boundary values at exactly 0.4 and 0.7).
-  - [ ] 3.2 GREEN: implement.
-- [ ] Task 4 (AC: 6): Mount `<CESIndicator />` in `Player.tsx`.
-  - [ ] 4.1 RED: `Player.test.tsx` assertion that the component is present in the tree and updates on a `cesScore` change.
-  - [ ] 4.2 GREEN: implement.
-- [ ] Task 5 (AC: 7): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1): Add `cesScore`/`setCesScore` to `player.machine.ts`; reset in `loadLesson()`.
+  - [x] 1.1 RED: test asserting default `null`, action sets the field, `loadLesson()` resets it to `null`.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 2): Wire `useLessonSocket.ts`'s `ces_update` case to dispatch into the store, with the same `session_id` guard as `state_change`.
+  - [x] 2.1 RED: test that a `ces_update` server message for the current session sets `cesScore`; a message for a different `session_id` is ignored; no playback/status action is ever called from this path.
+  - [x] 2.2 GREEN: implement.
+- [x] Task 3 (AC: 3, 4, 5): Build `CESIndicator.tsx` — render-level guard, qualitative label mapping, ≤40px corner placement.
+  - [x] 3.1 RED: tests for the full visibility/label matrix (null → hidden, `status !== 'PLAYING'` → hidden even with a score, status change away from PLAYING hides immediately, each band's label, boundary values at exactly 0.4 and 0.7).
+  - [x] 3.2 GREEN: implement.
+- [x] Task 4 (AC: 6): Mount `<CESIndicator />` in `Player.tsx`.
+  - [x] 4.1 RED: `Player.test.tsx` assertion that the component is present in the tree and updates on a `cesScore` change.
+  - [x] 4.2 GREEN: implement.
+- [x] Task 5 (AC: 7): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -74,3 +74,33 @@ Follow `CheckingInTransition.test.tsx`'s pattern (`apps/web/src/__tests__/compon
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-08-04 | Story created per S3-04 in `docs/dev2-sprint-tracker.md`. Branch `sprint3/s3-04-ces-indicator` off `main`. | Dev 2 |
+| 2026-08-04 | Implemented all 5 tasks, TDD (RED confirmed before each GREEN). Full `apps/web` suite: 56 files / 598 tests passing. `tsc --noEmit` clean. `eslint` clean on every touched file (3 pre-existing `useLessonSocket.ts` disable-directive warnings, unrelated, same as Story 2-40). Status → review. | Dev 2 |
+
+## Dev Agent Record
+
+### Implementation Plan
+
+- Read `useLessonSocket.ts`, `player.machine.ts`, and `Player.tsx` fresh from this branch's `main` baseline (deliberately did NOT assume Story 2-40's unmerged `activeIntervention` code existed, per the story's own Branch note) before writing anything.
+- `player.machine.ts`: added `cesScore`/`setCesScore` mirroring the existing `tutorState`/`setTutorState` pair exactly; reset alongside `tutorState` in `loadLesson()`'s state block.
+- `useLessonSocket.ts`: replaced the `ces_update` no-op with a `session_id`-guarded dispatch (`msg.payload?.session_id === sid`), mirroring the `state_change` case's existing guard — a stale/foreign-session update is silently ignored rather than overwriting the current score.
+- `CESIndicator.tsx`: new component, store-driven with a render-level guard (hidden when `cesScore` is `null` OR `status !== 'PLAYING'`, recomputed every render — same pattern as `TutorInterventionCard`'s `TEACH_BACK` guard in Story 2-40). Three-band label mapping (`< 0.4` Low, `0.4-0.7` inclusive Engaged, `> 0.7` Focused) via a small `bandFor()` helper; `data-band` attribute for testability, never the raw float. Positioned `top-3 right-3` to avoid colliding with the tier badge (`top-3 left-3`).
+- `Player.tsx`: mounted `<CESIndicator />` next to `CheckingInTransition`, no props, no other changes.
+- Test for "never renders the raw numeric score" explicitly checks both `textContent` (regex for a decimal pattern) and `innerHTML` (exact string), per the story's own Testing Standards note about not trusting a label-only check.
+
+### Completion Notes
+
+- All 5 tasks complete, all ACs (1-7) satisfied.
+- Full `apps/web` suite: 56 files, 598 tests, all passing (17 new: 4 in `player.machine.test.ts`, 2 in `useLessonSocket.test.ts` — plus 1 pre-existing no-op case removed from an `it.each` since `ces_update` is no longer a no-op — 11 in the new `CESIndicator.test.tsx`, 1 in `Player.test.tsx`).
+- `tsc --noEmit`: clean. `eslint`: clean on every touched file.
+- Verified this story's code does not assume or depend on Story 2-40's unmerged `activeIntervention`/`TutorInterventionCard` changes — built and tested entirely against this branch's actual `main` baseline. Expect a trivial merge into `sprint3-master` alongside 2-40 (different store fields/WS cases, same files, non-overlapping edits).
+
+### File List
+
+- `apps/web/src/stores/player.machine.ts` (MODIFIED — added `cesScore`/`setCesScore`; reset in `loadLesson()`)
+- `apps/web/src/hooks/useLessonSocket.ts` (MODIFIED — `ces_update` case now dispatches into the store instead of no-op'ing, with a `session_id` guard)
+- `apps/web/src/components/player/CESIndicator.tsx` (NEW — the component itself)
+- `apps/web/src/components/player/Player.tsx` (MODIFIED — mounts `<CESIndicator />`)
+- `apps/web/src/__tests__/stores/player.machine.test.ts` (MODIFIED — new `cesScore`/`setCesScore` describe block; fixture reset updated)
+- `apps/web/src/__tests__/hooks/useLessonSocket.test.ts` (MODIFIED — removed `ces_update` from the no-op `it.each`; new dedicated dispatch + foreign-session tests; fixture reset updated)
+- `apps/web/src/__tests__/components/player/CESIndicator.test.tsx` (NEW — full visibility/label/raw-score-never-shown test suite)
+- `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED — new mount-presence test)
