@@ -693,7 +693,14 @@ Gating scope **917 passed, 1 skipped** (was 898); ruff clean; mypy unchanged at 
 
 **Why this is not Verified:** AC10 requires generating a real chapter through all eleven nodes,
 which spends real money on the project's OpenAI key. The repo has a `live_eval` marker for exactly
-this class of run. Awaiting the go-ahead.
+this class of run.
+
+**DECISION 2026-08-04 — D43: pay once, not twice.** Phase 7's acceptance run must generate two
+chapters at two tiers regardless, so AC10 is folded into it rather than billed twice. Phase 6
+proceeds on Phase 5's *implementation*, which it needs whatever AC10 returns. This is a recorded
+exception to the gate rule above, not a lapse: if the Phase 7 run fails, Phase 5 returns to
+🔨 In Progress and Phase 6 is un-Verified along with it. Phase 7's exit criterion names AC10 by
+number so the acceptance run cannot pass without discharging it.
 
 ### Files
 `apps/api/app/modules/content/pipeline/graph.py`
@@ -770,6 +777,11 @@ _Not yet run._
 
 ### Exit criterion
 CI fails if any of this regresses.
+
+**Also discharges Story 1-13 AC10 (D43).** Phase 5 was carried forward as `🧪 Implemented` on the
+understanding that this run — which generates two chapters at two tiers anyway — is where the
+eleven nodes are proven against ~40 pages for real. If that fails, Phase 5 and Phase 6 both
+return to `🔨 In Progress`. This run may not be recorded as passing while AC10 is outstanding.
 
 ### End-to-end test — full acceptance
 1. Upload a real 1,000+ page textbook via the API
