@@ -1,0 +1,126 @@
+{
+  "$comment": "Book-scale read API, v1. Frozen for Dev 2's Track W (SYNC-1). These are REAL responses captured on 2026-08-04 from a live ingest of the 1,151-page Dive into Deep Learning through the running API against real PostgREST \u2014 not hand-written examples (Story 1-11 AC9). The W0 contract CI job compares this against the live FastAPI schema and must fail when they diverge.",
+  "version": "1.0.0",
+  "captured": "2026-08-04",
+  "source": "Story 1-11 (book-scale Phase 3.5)",
+  "base": "/api/content",
+  "endpoints": {
+    "GET /books": {
+      "query": {
+        "limit": "int, default 50, max 200",
+        "offset": "int, default 0"
+      },
+      "returns": "BookResponse[] \u2014 newest first",
+      "notes": "Pagination was not in the story's ACs; added to avoid shipping an unbounded list, mirroring GET /lessons."
+    },
+    "GET /books/{book_id}": {
+      "returns": "BookResponse",
+      "404": {
+        "detail": "Book not found"
+      },
+      "notes": "The body is IDENTICAL for absent / malformed-uuid / another user's book. Never 403 \u2014 403 confirms the id exists. This is what UploadFlow polls instead of GET /lessons/{id}."
+    },
+    "GET /books/{book_id}/chapters": {
+      "returns": "ChapterResponse[] \u2014 ordered by chapter_index ascending",
+      "404": {
+        "detail": "Book not found"
+      }
+    }
+  },
+  "schemas": {
+    "BookResponse": {
+      "book_id": "string (uuid)",
+      "filename": "string",
+      "status": "string \u2014 processing | ready | failed",
+      "page_count": "integer | null \u2014 null while ingesting",
+      "chapter_count": "integer \u2014 0 while ingesting, never null",
+      "created_at": "string (ISO-8601) | null"
+    },
+    "ChapterResponse": {
+      "chapter_id": "string (uuid)",
+      "chapter_index": "integer \u2014 0-based, sequential, gap-free over kept chapters",
+      "title": "string",
+      "page_start": "integer \u2014 0-based PDF page index, inclusive",
+      "page_end": "integer \u2014 0-based PDF page index, inclusive",
+      "boundary_confidence": "string \u2014 toc | contents | heading | font | fallback",
+      "lesson_id": "string (uuid) | null \u2014 ALWAYS null until Phase 6",
+      "has_lesson": "boolean \u2014 derived from lesson_id, ALWAYS false until Phase 6"
+    }
+  },
+  "real_example": {
+    "$comment": "Verbatim API responses. filename/book_id/created_at redacted; every other value is as returned.",
+    "GET /books/{book_id}": {
+      "book_id": "<uuid>",
+      "filename": "d2l.pdf",
+      "status": "ready",
+      "page_count": 1151,
+      "chapter_count": 21,
+      "created_at": "<iso-8601>"
+    },
+    "GET /books/{book_id}/chapters \u2014 first 3 of 21": [
+      {
+        "chapter_id": "<uuid>",
+        "chapter_index": 0,
+        "title": "Introduction",
+        "page_start": 40,
+        "page_end": 68,
+        "boundary_confidence": "toc",
+        "lesson_id": null,
+        "has_lesson": false
+      },
+      {
+        "chapter_id": "<uuid>",
+        "chapter_index": 1,
+        "title": "Preliminaries",
+        "page_start": 69,
+        "page_end": 120,
+        "boundary_confidence": "toc",
+        "lesson_id": null,
+        "has_lesson": false
+      },
+      {
+        "chapter_id": "<uuid>",
+        "chapter_index": 2,
+        "title": "Linear Neural Networks for Regression",
+        "page_start": 121,
+        "page_end": 163,
+        "boundary_confidence": "toc",
+        "lesson_id": null,
+        "has_lesson": false
+      }
+    ],
+    "GET /books/{book_id}/chapters \u2014 last": {
+      "chapter_id": "<uuid>",
+      "chapter_index": 20,
+      "title": "Recommender Systems",
+      "page_start": 932,
+      "page_end": 935,
+      "boundary_confidence": "toc",
+      "lesson_id": null,
+      "has_lesson": false
+    },
+    "verified_against_real_postgrest": {
+      "date": "2026-08-04",
+      "checks_passed": "19/19",
+      "note": "chapters(count) is a PostgREST embedded aggregate; it resolved unambiguously despite books having three inbound FKs, returning 21."
+    },
+    "other_books_observed": {
+      "NCERT XI Physics Part 1": {
+        "page_count": 184,
+        "chapter_count": 7,
+        "boundary_confidence": "heading"
+      },
+      "NCERT XII Physics Part 1": {
+        "page_count": 291,
+        "chapter_count": 8,
+        "boundary_confidence": "contents"
+      }
+    }
+  },
+  "notes_for_dev_2": [
+    "lesson_id and has_lesson are present from day one so the chapter card does not need rebuilding at W3.",
+    "Ingestion status is REST-polled via GET /books/{id}. Do NOT request it over WebSocket \u2014 ws.ts is a frozen contract (CLAUDE.md \u00a716) and adding a book message triggers a 4-developer review.",
+    "No packages/shared change is needed: LessonPackage already requires book_id and chapter_id.",
+    "chapter_count comes from a PostgREST embedded aggregate; it is 0, not null, for a book still ingesting."
+  ]
+}

@@ -33,6 +33,10 @@ from app.core.rate_limit import _get_user_key, limiter
 from app.core.storage import sign_storage_path
 from app.dependencies import ArqRedis, CurrentUser
 
+# Story 1-11: book/chapter read models live in this module, NOT packages/shared
+# (frozen contract, 4-dev review — CLAUDE.md §16).
+from app.modules.content.schemas import BookResponse, ChapterResponse
+
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
 # recorded): single source of truth for the tier default/valid set, shared
 # with the pipeline graph (2026-07-17 review fix, Blind Hunter — a local copy
@@ -117,6 +121,34 @@ _LIST_COLUMNS: str = (
 )
 
 
+# Story 1-11 (book-scale Phase 3.5) — select lists for the book/chapter reads.
+#
+# EVERY name below is a real column, verified against supabase/migrations/:
+#   books    — 20260625000000_chunks_inline_embedding.sql (book_id, user_id,
+#              filename, page_count, status, created_at, updated_at)
+#   chapters — 20260611000000_initial_schema.sql (chapter_id, book_id, lesson_id,
+#              title, page_start, page_end, chapter_index, created_at)
+#              + 20260803000000_chapters_book_scoped.sql (boundary_confidence)
+# Naming a column that does not exist makes PostgREST reject the WHOLE query with
+# `42703` — i.e. the endpoint fails for every user on every request. That is D9,
+# and `_LIST_COLUMNS` above is the cautionary example, not a template.
+# `tests/unit/test_book_endpoints.py` asserts these lists against the migration SQL.
+#
+# `user_id` is selected so ownership can be re-checked on the row exactly as
+# `get_lesson` does, even though the query already filters on it. It is dropped
+# before the response is built — BookResponse has no such field.
+_BOOK_COLUMNS: str = "book_id,user_id,filename,status,page_count,created_at"
+
+# `chapters(count)` is a PostgREST embedded aggregate over the
+# chapters.book_id → books.book_id FK (chapters_book_id_fkey, 20260625000000).
+# It makes chapter_count ONE query for the whole page rather than N+1 per book.
+_BOOK_SELECT: str = f"{_BOOK_COLUMNS},chapters(count)"
+
+_CHAPTER_COLUMNS: str = (
+    "chapter_id,chapter_index,title,page_start,page_end,boundary_confidence,lesson_id"
+)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _STATUS_MAP: dict[str, str] = {
@@ -198,6 +230,100 @@ def _coerce_float(value: Any) -> float | None:  # noqa: ANN401
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _embedded_count(value: Any) -> int:  # noqa: ANN401 — postgrest embed shape varies
+    """Unwrap a PostgREST embedded aggregate into a plain int (Story 1-11).
+
+    `chapters(count)` arrives as `[{"count": 21}]`; an empty relation can arrive
+    as `[]`, and a to-one embed as `{"count": 0}`. A book with zero chapters is
+    the NORMAL state while ingestion runs, so every one of those shapes must
+    yield 0 rather than raising and 500-ing the whole book list.
+    """
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, dict):
+        value = value.get("count")
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _row_to_book_response(book: dict[str, Any]) -> BookResponse:
+    page_count = book.get("page_count")
+    return BookResponse(
+        book_id=str(book["book_id"]),
+        filename=str(book.get("filename") or ""),
+        status=str(book.get("status") or "processing"),
+        page_count=int(page_count) if isinstance(page_count, int | float) else None,
+        chapter_count=_embedded_count(book.get("chapters")),
+        created_at=str(book["created_at"]) if book.get("created_at") else None,
+    )
+
+
+def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
+    # AC4: has_lesson is DERIVED from lesson_id, never stored, so it is already
+    # correct the moment Phase 6 starts writing chapters.lesson_id.
+    lesson_id = chapter.get("lesson_id")
+    return ChapterResponse(
+        chapter_id=str(chapter["chapter_id"]),
+        chapter_index=int(chapter["chapter_index"]),
+        title=str(chapter.get("title") or ""),
+        page_start=int(chapter["page_start"]),
+        page_end=int(chapter["page_end"]),
+        boundary_confidence=str(chapter.get("boundary_confidence") or "fallback"),
+        lesson_id=str(lesson_id) if lesson_id else None,
+        has_lesson=bool(lesson_id),
+    )
+
+
+def _validated_book_id(book_id: str) -> str:
+    """AC6: a malformed book_id is a 404, never a 500.
+
+    Same guard and same convention as `get_lesson` (:429-433) — deliberately
+    identical, because a different shape here would be a different security
+    posture. The detail string carries no metadata (AC5).
+    """
+    try:
+        uuid.UUID(book_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Book not found"
+        ) from None
+    return book_id
+
+
+def _fetch_owned_book(
+    supabase: Any,  # noqa: ANN401 — supabase Client
+    book_id: str,
+    user_id: str,
+    columns: str,
+) -> dict[str, Any]:
+    """Fetch one book the caller owns, or raise 404.
+
+    The Supabase client is SERVICE-ROLE (core/db.py:40-47) so RLS does NOT filter
+    here — the `user_id` predicate is the only thing standing between this and an
+    IDOR, and the post-fetch ownership check is the second line of defence that
+    survives a refactor dropping the predicate.
+
+    404, never 403 (AC5): a 403 confirms the id exists. The detail string is the
+    same for "absent" and "someone else's", and carries no book metadata.
+    """
+    resp = (
+        supabase.table("books")
+        .select(columns)
+        .eq("book_id", book_id)
+        .eq("user_id", user_id)
+        .maybe_single()
+        .execute()
+    )
+    book: dict[str, Any] | None = single_row(resp)
+    if not book or book.get("user_id") != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    return book
 
 
 def _resolve_lesson_content(
@@ -480,3 +606,94 @@ async def list_lessons(
     )
     lesson_rows = rows(resp)
     return [_row_to_status_response(row) for row in lesson_rows]
+
+
+# ── Books & chapters (Story 1-11, book-scale Phase 3.5) ───────────────────────
+#
+# `chapters` had three writes and zero SELECTs before this: Phase 3 wrote 21
+# correct rows for a 1,151-page book and no API could see any of them.
+
+
+@router.get(
+    "/books",
+    response_model=list[BookResponse],
+    summary="List the caller's uploaded books, newest first",
+)
+async def list_books(
+    current_user: CurrentUser,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[BookResponse]:
+    """Return the caller's books, newest first, with a real chapter count.
+
+    `chapter_count` comes from a PostgREST embedded aggregate on the same query
+    (`chapters(count)`) — one round-trip for the whole page, not one per book.
+    """
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+
+    resp = (
+        supabase.table("books")
+        .select(_BOOK_SELECT)
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
+    return [_row_to_book_response(row) for row in rows(resp)]
+
+
+@router.get(
+    "/books/{book_id}",
+    response_model=BookResponse,
+    summary="Get one book (upload progress is polled here)",
+)
+async def get_book(
+    book_id: str,
+    current_user: CurrentUser,
+) -> BookResponse:
+    """Return one book in exactly the same shape as `GET /books`.
+
+    This is what the upload flow polls after `POST /lessons` returns a book_id:
+    `status` goes processing → ready|failed, and `chapter_count` becomes non-zero
+    when `book_ingest_job` has written the chapter rows.
+
+    404 — not 403 — when the book belongs to another user or does not exist.
+    """
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+    book = _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, _BOOK_SELECT)
+    return _row_to_book_response(book)
+
+
+@router.get(
+    "/books/{book_id}/chapters",
+    response_model=list[ChapterResponse],
+    summary="List a book's detected chapters, ordered by chapter_index",
+)
+async def list_book_chapters(
+    book_id: str,
+    current_user: CurrentUser,
+) -> list[ChapterResponse]:
+    """Return the book's chapters ordered by `chapter_index`.
+
+    Ownership is resolved on `books` first: `chapters` has no user_id of its own
+    (its RLS re-roots through books.user_id — 20260803000000 step 5), and with a
+    service-role client there is no RLS to fall back on, so an unchecked
+    `chapters.eq(book_id)` would be a straight IDOR.
+
+    `lesson_id`/`has_lesson` are always null/false until Phase 6 (AC4).
+    """
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+    validated_id = _validated_book_id(book_id)
+    _fetch_owned_book(supabase, validated_id, user_id, "book_id,user_id")
+
+    resp = (
+        supabase.table("chapters")
+        .select(_CHAPTER_COLUMNS)
+        .eq("book_id", validated_id)
+        .order("chapter_index")
+        .execute()
+    )
+    return [_row_to_chapter_response(row) for row in rows(resp)]

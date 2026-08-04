@@ -2,7 +2,7 @@
 
 **Owner:** Dev 1
 **Last updated:** 2026-08-04
-**Overall status:** 3 of 9 backend phases verified (1, 2, 3). Re-planned 2026-08-04 to align the
+**Overall status:** 4 of 9 backend phases verified (1, 2, 3, 3.5). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
 frontend: two backend phases inserted (3.5, 6.5) and a parallel **Track W** added for Dev 2.
 Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.md`
 **Brief:** `docs/bmad/book-scale-implementation-brief.md`
@@ -38,7 +38,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | 1 | Prove chapter detection (spike) | ✅ Verified | 2026-08-03 |
 | 2 | Make chapters storable (migration) | ✅ Verified | 2026-08-03 |
 | 3 | Detect and store real chapters at upload | ✅ Verified | 2026-08-04 |
-| **3.5** | **Books and chapters readable + pipeline writers removed** | ⬜ Not Started | — |
+| **3.5** | **Books and chapters readable + pipeline writers removed** | ✅ Verified | 2026-08-04 |
 | 4 | Extract one chapter's pages | ⬜ Not Started | — |
 | 5 | Chapter-scoped generation | ⬜ Not Started | — |
 | 6 | Endpoints (the write endpoint + `tier` relocation) | ⬜ Not Started | — |
@@ -55,7 +55,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | **W3** | Generate from chapter (`tier` moves here) | ⬜ Not Started | SYNC-2 |
 | **W4** | MSW off — the whole UI against the live API | ⬜ Not Started | Phase 6 Verified |
 
-**Totals:** Backend — Not Started 5 · Verified 3. Track W — Not Started 5.
+**Totals:** Backend — Not Started 4 · Verified 4. Track W — Not Started 5.
 
 ### Synchronisation points
 
@@ -492,8 +492,8 @@ Supabase mock per binding rule 2), `apps/api/app/modules/content/router.py`,
 
 ## Phase 3.5 — Books and chapters readable + pipeline writers removed
 
-**Status:** ⬜ Not Started · **NEW 2026-08-04** · **Owner:** Dev 1
-**Depends on:** Phase 3 ✅ · **Gates:** SYNC-1, and therefore all of Track W from W1
+**Status:** ✅ Verified — 2026-08-04 · **Owner:** Dev 1
+**Depends on:** Phase 3 ✅ · **Gates:** SYNC-1 — **RELEASED**, and therefore all of Track W from W1
 
 ### Why this exists
 
@@ -531,11 +531,61 @@ Phase 3's output is visible over HTTP, and nothing in `pipeline/` can write `boo
 5. Captured real JSON committed to `docs/contracts/` for Dev 2
 
 ### Observed result
-_Not yet run._
+
+**Gated 2026-08-04 against the running API + real PostgREST + the live Supabase project.**
+Story: `docs/stories/1-11-book-chapter-read-endpoints.md`. **19/19 endpoint checks passed.**
+
+Ingested the real 1,151-page book as user A, then:
+
+| Check | Result |
+|---|---|
+| `GET /books` → 200, book listed | ✅ |
+| `chapter_count` via the embedded aggregate | **21** — the real count ✅ |
+| `page_count` written by `book_ingest_job` | **1151** ✅ |
+| `GET /books/{id}` same shape as the list item | ✅ |
+| `GET /books/{id}/chapters` → **21**, ordered by `chapter_index` | ✅ |
+| Real page ranges | `ch0 'Introduction' p40–68` ✅ |
+| `lesson_id` + `has_lesson` present from day one | `null` / `false` ✅ |
+| User B → **404, not 403**, body `{"detail":"Book not found"}` with no metadata | ✅ |
+| User B's own list excludes A's book | 0 books ✅ |
+| Malformed `book_id` → 404 not 500, on both routes | ✅ |
+
+All test data removed; the project is back to 0 books.
+
+**AC10 is closed by a repeatable guard, not by this one run.**
+`tests/integration/test_book_select_lists_against_postgrest.py` runs **every** select list the app
+sends against a real PostgREST — imported from the router rather than re-parsed, so a renamed
+constant is an error rather than a silent skip. **9 passed.** It carries a live-trap premise test
+asserting a bogus column really does raise `42703`, so it cannot pass vacuously.
+
+**This also closes D37**, whose enforcement column had read *"(to add — real-PostgREST integration
+test)"* since 2026-07-30. `_LIST_COLUMNS` — the select list whose `completed_at` reference caused
+the D9 outage — has now been executed against a real database for the first time.
+
+**Two defects found while gating, both mine:**
+
+1. I spent a cycle testing a **stale uvicorn**. An older API process from the Phase 3 gate still
+   held port 8077, my relaunch failed with `[Errno 10048] address in use`, and the log went to a
+   file I did not read. All three routes 404'd and I nearly filed it as a routing bug. The live
+   `/openapi.json` showed 3 content routes against 6 in source, which is what caught it.
+2. The first version of the PostgREST guard read the constants with a **regex** and skipped when it
+   found nothing — two are f-strings and one name was wrong. It reported green while verifying
+   nothing. It now imports them.
+
+**Not done here, deliberately:** deleting `graph.py:609-651`. `chapter_id` from it is consumed at
+`:659` and `chunks.chapter_id` is `NOT NULL`, so removing it leaves `chunk_node` unable to write
+chunks. Moved to Phase 5, where a real `chapter_id` first exists.
+
+**Found by the guard, not by review:** `embed_node` was a **second** `books` writer
+(`graph.py:924-934`, `status='ready'`). Removed — `books.status` changed meaning in Phase 3 from
+"pipeline finished" to "ingestion finished", so that write could resurrect a book the ingest job
+had marked `failed`.
 
 ### Files
 `apps/api/app/modules/content/router.py`, `apps/api/app/modules/content/schemas.py`,
-`apps/api/app/modules/content/pipeline/graph.py`, `docs/contracts/book-api.v1.json`
+`apps/api/app/modules/content/pipeline/graph.py`, `docs/contracts/book-api.v1.json`,
+`apps/api/tests/unit/test_book_endpoints.py`, `tests/unit/test_pipeline_writes_no_books.py`,
+`tests/integration/test_book_select_lists_against_postgrest.py`
 
 ---
 

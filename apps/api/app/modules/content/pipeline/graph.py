@@ -225,7 +225,8 @@ async def extract_node(state: PipelineState) -> PipelineState:
     from app.core.db import get_supabase
 
     lesson_id: str = state["lesson_id"]
-    book_id: str = state.get("book_id", "")
+    # `book_id` is deliberately not read here — extract_node no longer writes to
+    # `books` (Story 1-11 AC7); it stays on PipelineState for downstream nodes.
     source_pdf_path: str = state.get("source_pdf_path", "")
 
     logger.info("[%s] extract_node: starting", lesson_id)
@@ -389,14 +390,13 @@ async def extract_node(state: PipelineState) -> PipelineState:
         if upload_coros:
             await asyncio.gather(*upload_coros)
 
-    # ── Write books.page_count ────────────────────────────────────────────────
-    if book_id:  # P6: don't skip when page_count=0 — that's valid information
-        try:
-            supabase.table("books").update({"page_count": page_count}).eq(
-                "book_id", book_id
-            ).execute()
-        except Exception:  # noqa: BLE001
-            logger.warning("[%s] extract_node: failed to update books.page_count", lesson_id)
+    # ── books.page_count is NOT written here (Story 1-11 / AC7) ──────────────
+    # `book_ingest_job` (app/workers/jobs/book_ingest.py) owns every column on
+    # `books`: it writes page_count in the same update that sets status='ready',
+    # so the row is never half-populated. This node used to write page_count too,
+    # which made two writers for one column with no ordering between them.
+    # The pipeline is now a strict non-writer of `books` — enforced by
+    # tests/unit/test_pipeline_writes_no_books.py.
 
     # ── Write checkpoint to lesson_jobs ───────────────────────────────────────
     extract_cache: dict[str, Any] = {
@@ -721,7 +721,8 @@ async def embed_node(state: PipelineState) -> PipelineState:
     from app.providers.embeddings.openai import OpenAIEmbeddingsProvider
 
     lesson_id: str = state["lesson_id"]
-    book_id: str = state.get("book_id") or ""
+    # `book_id` is deliberately not read here — embed_node no longer writes to
+    # `books` (Story 1-11 AC7/AC8); book_ingest_job owns that row's status.
     logger.info("[%s] embed_node: starting", lesson_id)
 
     supabase = get_supabase()
@@ -921,18 +922,14 @@ async def embed_node(state: PipelineState) -> PipelineState:
             f"for lesson_id={lesson_id} chapter_id={chapter_id} — refusing to checkpoint"
         )
 
-    # ── Mark book as ready ────────────────────────────────────────────────────
-    if book_id:
-        try:
-            supabase.table("books").update({"status": "ready"}).eq("book_id", book_id).execute()
-            logger.info("[%s] embed_node: books.status=ready for book_id=%s", lesson_id, book_id)
-        except Exception as exc:
-            logger.warning(
-                "[%s] embed_node: failed to mark book_id=%s ready: %s",
-                lesson_id,
-                book_id,
-                exc,
-            )
+    # ── books.status is NOT written here (Story 1-11 / AC7-AC8) ──────────────
+    # `book_ingest_job` sets status='ready' (with page_count) when ingestion
+    # succeeds and 'failed' when it does not — it is the single writer of the
+    # `books` row. This node used to re-assert 'ready' at the end of chapter
+    # generation, which is both redundant (the book was already ready before the
+    # pipeline could run) and destructive (it would silently resurrect a book the
+    # ingest job had marked 'failed'). The pipeline is now a strict non-writer of
+    # `books` — enforced by tests/unit/test_pipeline_writes_no_books.py.
 
     # ── Checkpoint ────────────────────────────────────────────────────────────
     embed_cache: dict[str, Any] = {"chunk_count": len(embeddable), "chapter_id": chapter_id}
