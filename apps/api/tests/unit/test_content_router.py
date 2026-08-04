@@ -989,10 +989,25 @@ def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
     PostgREST reject the whole query (42703) — GET /lessons then fails for every
     user, every request. No mock can catch that, so assert the column list
     against the migrations that define the table.
+
+    Story 1-14 (AC17/AC19): `_LIST_COLUMNS` gained `chapter_id` and the embed
+    `chapter:chapters!lessons_chapter_id_fkey(...)`. Two changes here, and
+    NEITHER loosens the membership check:
+
+    1. `chapter_id` was missing from `real_columns` even though it IS a real
+       column (20260803000000_chapters_book_scoped.sql:73). The set was stale,
+       not the loop.
+    2. A naive `split(",")` shreds the embed into `...(chapter_id`, `title`,
+       `chapter_index)` and fails on SYNTAX rather than on a real defect — the
+       exact situation that tempts someone to delete the guard. So the split is
+       now embed-aware: outer names are still checked against `lessons`, and
+       names INSIDE the embed are checked against `chapters`. Strictly more is
+       validated than before, never less.
     """
     from app.modules.content.router import _LIST_COLUMNS
 
-    # Real columns per 20260611000000_initial_schema.sql + later ALTERs.
+    # Real columns per 20260611000000_initial_schema.sql + later ALTERs
+    # (20260625000000 book_id, 20260714020000 tier, 20260803000000 chapter_id).
     real_columns = {
         "lesson_id",
         "user_id",
@@ -1004,15 +1019,76 @@ def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
         "updated_at",
         "book_id",
         "tier",
+        "chapter_id",
     }
-    for spec in _LIST_COLUMNS.split(","):
+    # public.chapters per 20260611000000_initial_schema.sql:128-137
+    # + 20260803000000_chapters_book_scoped.sql (boundary_confidence).
+    real_chapter_columns = {
+        "chapter_id",
+        "book_id",
+        "lesson_id",
+        "title",
+        "page_start",
+        "page_end",
+        "chapter_index",
+        "boundary_confidence",
+        "created_at",
+    }
+
+    for table, spec in _split_select(_LIST_COLUMNS):
+        real = real_columns if table == "lessons" else real_chapter_columns
+        assert spec in real, (
+            f"_LIST_COLUMNS references {spec!r}, which is not a column on "
+            f"public.{table} — PostgREST will 42703 the entire list endpoint"
+        )
+
+
+def _split_select(select: str) -> list[tuple[str, str]]:
+    """Split a PostgREST select list into `(table, column)` pairs.
+
+    Handles the three PostgREST features these lists actually use:
+      * aliases            `alias:expr`
+      * JSON path selectors `content->metadata->>subject`
+      * embeds              `alias:table!constraint(col,col)` — inner names
+                            belong to the EMBEDDED table, not the base table.
+
+    The base table is reported as "lessons"; embedded names are reported under
+    the embedded table's own name so the caller can pick the right column set.
+    """
+    pairs: list[tuple[str, str]] = []
+    depth = 0
+    buf = ""
+    parts: list[str] = []
+    for ch in select:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(buf)
+            buf = ""
+            continue
+        buf += ch
+    if buf:
+        parts.append(buf)
+
+    for part in parts:
+        spec = part.strip()
+        if "(" in spec:
+            head, _, inner = spec.partition("(")
+            inner = inner.rstrip().removesuffix(")")
+            # `alias:table!constraint` → the embedded table is `table`.
+            target = head.split(":", 1)[1] if ":" in head else head
+            embedded = target.split("!", 1)[0].strip()
+            for nested_table, nested_col in _split_select(inner):
+                # Inner names have no embed of their own in these lists; the
+                # recursion reports them under the placeholder base table.
+                pairs.append((embedded if nested_table == "lessons" else nested_table, nested_col))
+            continue
         # `alias:path->>field` — the real column is the head of the path.
         source = spec.split(":", 1)[1] if ":" in spec else spec
-        column = source.split("->", 1)[0].strip()
-        assert column in real_columns, (
-            f"_LIST_COLUMNS references {column!r}, which is not a column on "
-            f"public.lessons — PostgREST will 42703 the entire list endpoint"
-        )
+        pairs.append(("lessons", source.split("->", 1)[0].strip()))
+    return pairs
 
 
 @pytest.mark.unit

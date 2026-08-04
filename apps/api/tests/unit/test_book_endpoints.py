@@ -5,7 +5,10 @@ Covers AC1-AC6:
   AC1  GET /api/content/books                     — caller's books, newest first
   AC2  GET /api/content/books/{book_id}           — one book, same shape
   AC3  GET /api/content/books/{book_id}/chapters  — ordered by chapter_index
-  AC4  lesson_id / has_lesson ship now (null/false until Phase 6)
+  AC4  lesson_id / has_lesson ship now — and, since Story 1-14 (AC14/AC15),
+       are derived from the embedded `lessons` array plus the new
+       lesson_count / latest_lesson fields. `chapters.lesson_id` is a dead
+       column with a live CASCADE and is never read.
   AC5  another user's book → 404 (never 403), with NO metadata in the body
   AC6  malformed (non-UUID) book_id → 404, not 500
 
@@ -52,6 +55,10 @@ BOOK_ROW: dict[str, Any] = {
     "chapters": [{"count": 21}],
 }
 
+# Story 1-14 (AC15): the chapters select no longer names `chapters.lesson_id`.
+# It embeds `lessons!lessons_chapter_id_fkey(...)`, which PostgREST returns as a
+# JSON ARRAY (to-many) — `[]` for the normal zero-lesson chapter. These rows are
+# shaped the way PostgREST really answers, not the way the old scalar column did.
 CHAPTER_ROWS: list[dict[str, Any]] = [
     {
         "chapter_id": FAKE_CHAPTER_ID,
@@ -60,7 +67,7 @@ CHAPTER_ROWS: list[dict[str, Any]] = [
         "page_start": 40,
         "page_end": 68,
         "boundary_confidence": "toc",
-        "lesson_id": None,
+        "lessons": [],
     },
     {
         "chapter_id": "55555555-5555-5555-5555-555555555555",
@@ -69,9 +76,16 @@ CHAPTER_ROWS: list[dict[str, Any]] = [
         "page_start": 69,
         "page_end": 92,
         "boundary_confidence": "toc",
-        "lesson_id": None,
+        "lessons": [],
     },
 ]
+
+
+def _lesson(
+    lesson_id: str, *, tier: str = "T1", status: str = "ready", created_at: str
+) -> dict[str, Any]:
+    """One element of the embedded `lessons` array."""
+    return {"lesson_id": lesson_id, "status": status, "tier": tier, "created_at": created_at}
 
 
 def _resp(data: Any) -> MagicMock:  # noqa: ANN401 — postgrest response payloads vary
@@ -352,6 +366,11 @@ def test_list_chapters_returns_the_documented_shape() -> None:
         "boundary_confidence",
         "lesson_id",
         "has_lesson",
+        # Story 1-14 AC15 — a scalar chapters.lesson_id cannot express one
+        # chapter with lessons at three tiers; these two can. Kept `==`, never
+        # `>=`: an extra key here is a contract change Dev 2 must review.
+        "lesson_count",
+        "latest_lesson",
     }
     assert body[0]["chapter_id"] == FAKE_CHAPTER_ID
     assert body[0]["chapter_index"] == 0
@@ -377,24 +396,106 @@ def test_list_chapters_is_ordered_by_chapter_index() -> None:
 
 @pytest.mark.unit
 def test_list_chapters_lesson_id_and_has_lesson_ship_now() -> None:
-    """AC4: both fields exist today even though Phase 6 has not landed —
-    null/false, not absent."""
+    """AC4 + Story 1-14 AC15: a chapter with no lessons yields (None, False, 0).
+
+    An empty embed is the NORMAL state — every chapter of a freshly ingested
+    book is here. A bare `row["lessons"][0]` would 500 the whole chapter list
+    for that book, so the empty-list unwrap is load-bearing, not defensive
+    decoration.
+    """
     sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=CHAPTER_ROWS)
     body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
     assert body[0]["lesson_id"] is None
     assert body[0]["has_lesson"] is False
+    assert body[0]["lesson_count"] == 0
+    assert body[0]["latest_lesson"] is None
 
 
 @pytest.mark.unit
 def test_list_chapters_has_lesson_is_true_once_a_lesson_exists() -> None:
-    """AC4: has_lesson is derived from lesson_id, so it is already correct when
-    Phase 6 starts writing it."""
-    rows_with_lesson = [{**CHAPTER_ROWS[0], "lesson_id": FAKE_LESSON_ID}, CHAPTER_ROWS[1]]
-    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows_with_lesson)
+    """INVERTED for Story 1-14 AC14/AC15.
+
+    This test used to assert `has_lesson` is derived from a scalar
+    `chapters.lesson_id`, "already correct the moment Phase 6 starts writing
+    it". Phase 6 never writes it: that FK is ON DELETE CASCADE
+    (20260611000000:132), so pointing a chapter at a lesson and later rolling
+    the lesson back deletes the chapter and every chunk under it.
+
+    The new invariant, which is what this now protects: both fields are derived
+    from the EMBEDDED `lessons` array, and `chapters.lesson_id` is never read.
+    The row below carries a stale scalar `lesson_id` alongside an empty embed —
+    exactly what a legacy row looks like — and the response must ignore it.
+    """
+    lesson = _lesson(FAKE_LESSON_ID, created_at="2026-08-03T10:00:00Z")
+    rows = [
+        {**CHAPTER_ROWS[0], "lessons": [lesson]},
+        # Legacy scalar set, no lesson actually linked → must still read false.
+        {**CHAPTER_ROWS[1], "lesson_id": FAKE_LESSON_ID, "lessons": []},
+    ]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
     body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
     assert body[0]["lesson_id"] == FAKE_LESSON_ID
     assert body[0]["has_lesson"] is True
-    assert body[1]["has_lesson"] is False
+    assert body[0]["lesson_count"] == 1
+    assert body[0]["latest_lesson"] == lesson
+
+    assert body[1]["has_lesson"] is False, "chapters.lesson_id is dead and must not be read"
+    assert body[1]["lesson_id"] is None
+    assert body[1]["lesson_count"] == 0
+    assert body[1]["latest_lesson"] is None
+
+
+@pytest.mark.unit
+def test_list_chapters_reports_every_tier_and_the_newest_lesson() -> None:
+    """Story 1-14 AC15: the case a scalar column could never express.
+
+    One chapter, two lessons at different tiers: `lesson_count == 2` and
+    `latest_lesson` is the newer by `created_at`. Order is asserted against a
+    row where the newer lesson arrives SECOND, so "take element 0" fails.
+    """
+    older = _lesson(
+        "33333333-3333-3333-3333-333333333333", tier="T1", created_at="2026-08-01T09:00:00Z"
+    )
+    newer = _lesson(
+        FAKE_LESSON_ID, tier="T3", status="generating", created_at="2026-08-03T18:30:00Z"
+    )
+    rows = [{**CHAPTER_ROWS[0], "lessons": [older, newer]}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lesson_count"] == 2
+    # `newer` is the DB row; the response maps `status` into the client
+    # vocabulary, so compare every other field verbatim and the status mapped.
+    assert body[0]["latest_lesson"] == {**newer, "status": "running"}
+    assert body[0]["lesson_id"] == FAKE_LESSON_ID, "lesson_id now means the NEWEST lesson"
+    assert body[0]["has_lesson"] is True
+    # AC15: status travels with latest_lesson so Dev 2 does not render a
+    # "Watch" button for a chapter whose newest lesson is still generating.
+    #
+    # It is the MAPPED status: `lessons.status` is generating|ready|failed, but
+    # every lesson-facing response in this API is queued|running|ready|failed
+    # (`LessonStatusResponse`). Returning the raw column here would hand Dev 2
+    # 'generating' from the chapter card and 'running' from `GET /lessons` for
+    # the same lesson, so a status switch matching on 'running' would silently
+    # fall through on chapter cards only.
+    assert body[0]["latest_lesson"]["status"] == "running"
+
+
+@pytest.mark.unit
+def test_list_chapters_latest_lesson_is_newest_when_the_newer_arrives_first() -> None:
+    """Same invariant, opposite input order — kills a `[-1]` implementation the
+    test above would let through."""
+    newer = _lesson(FAKE_LESSON_ID, tier="T3", created_at="2026-08-03T18:30:00Z")
+    older = _lesson(
+        "33333333-3333-3333-3333-333333333333", tier="T1", created_at="2026-08-01T09:00:00Z"
+    )
+    rows = [{**CHAPTER_ROWS[0], "lessons": [newer, older]}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lesson_count"] == 2
+    assert body[0]["latest_lesson"] == newer
 
 
 @pytest.mark.unit
@@ -481,27 +582,111 @@ def test_migration_parser_finds_known_columns() -> None:
     } <= chapters
 
 
+def _split_top_level(select: str) -> list[str]:
+    """Split on commas that are NOT inside an embed's parentheses."""
+    parts: list[str] = []
+    depth = 0
+    buf = ""
+    for ch in select:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(buf)
+            buf = ""
+            continue
+        buf += ch
+    if buf.strip():
+        parts.append(buf)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _select_pairs(select: str, base_table: str) -> list[tuple[str, str]]:
+    """Resolve a PostgREST select list into `(table, column)` pairs.
+
+    Story 1-14 (AC19). Both guards below used to `split(",")`, which shreds an
+    embed — `lessons!lessons_chapter_id_fkey(lesson_id,status)` becomes three
+    nonsense fragments — so adding AC15's embed would have made them fail on
+    SYNTAX rather than on a real defect. That is precisely the failure that
+    tempts a reviewer to delete a guard. Teaching them to parse instead means
+    strictly MORE names are validated against `supabase/migrations/` than
+    before: outer names against the base table, and every name inside an embed
+    against the EMBEDDED table.
+
+    PostgREST features handled, all of which already appear in these lists:
+      * alias            `subject:content->metadata->>subject`
+      * JSON path        `content->metadata->>subject` (head of the path is the
+                         real column; `->`/`->>` operands are JSON keys)
+      * embed            `alias:table!constraint(col,col)`
+      * embed aggregate  `chapters(count)` — `count` is a PostgREST aggregate,
+                         not a column, so it is not looked up.
+    """
+    pairs: list[tuple[str, str]] = []
+    for spec in _split_top_level(select):
+        if "(" in spec:
+            head, _, inner = spec.partition("(")
+            inner = inner.rstrip().removesuffix(")")
+            target = head.split(":", 1)[1] if ":" in head else head  # drop `alias:`
+            embedded = target.split("!", 1)[0].strip()  # drop `!constraint`
+            for nested in _split_top_level(inner):
+                if nested == "count":  # PostgREST aggregate, not a column
+                    continue
+                pairs.extend(_select_pairs(nested, embedded))
+            continue
+        source = spec.split(":", 1)[1] if ":" in spec else spec  # drop `alias:`
+        pairs.append((base_table, source.split("->", 1)[0].strip()))  # head of JSON path
+    return pairs
+
+
+@pytest.mark.unit
+def test_select_pair_parser_understands_embeds() -> None:
+    """Premise assertion (binding rule 3): a parser that silently returns [] or
+    that mis-attributes an embedded name would make both guards below pass
+    vacuously — the same class of bug as a scanner that matches nothing."""
+    assert _select_pairs("a,b:c->d->>e", "books") == [("books", "a"), ("books", "c")]
+    assert _select_pairs(
+        "chapter_id,lessons!lessons_chapter_id_fkey(lesson_id,tier)", "chapters"
+    ) == [
+        ("chapters", "chapter_id"),
+        ("lessons", "lesson_id"),
+        ("lessons", "tier"),
+    ]
+    assert _select_pairs("book_id,chapters(count)", "books") == [("books", "book_id")]
+    # aliased embed: `chapter:chapters!...` resolves to the chapters table
+    assert _select_pairs("chapter:chapters!lessons_chapter_id_fkey(title)", "lessons") == [
+        ("chapters", "title")
+    ]
+
+
+def _assert_every_name_is_a_real_column(select: str, base_table: str, const_name: str) -> None:
+    cache: dict[str, set[str]] = {}
+    pairs = _select_pairs(select, base_table)
+    assert pairs, f"{const_name} parsed to nothing — the guard would pass vacuously"
+    for table, column in pairs:
+        real = cache.setdefault(table, _columns_of(table))
+        assert real, f"no CREATE TABLE public.{table} found in supabase/migrations/"
+        assert column in real, (
+            f"{const_name} names {column!r}, which is not a column on public.{table}"
+        )
+
+
 @pytest.mark.unit
 def test_book_select_names_no_column_absent_from_books() -> None:
     """D9/D37: an unknown column name 42703s the whole endpoint for every user."""
     from app.modules.content.router import _BOOK_COLUMNS
 
-    real = _columns_of("books")
-    for column in _BOOK_COLUMNS.split(","):
-        assert column.strip() in real, (
-            f"_BOOK_COLUMNS names {column!r}, which is not a column on public.books"
-        )
+    _assert_every_name_is_a_real_column(_BOOK_COLUMNS, "books", "_BOOK_COLUMNS")
 
 
 @pytest.mark.unit
 def test_chapter_select_names_no_column_absent_from_chapters() -> None:
+    """Story 1-14 AC15: `_CHAPTER_COLUMNS` now embeds `lessons`, so the embedded
+    names are validated against public.lessons — a bogus one there 42703s the
+    chapter list exactly as a bogus chapters column would."""
     from app.modules.content.router import _CHAPTER_COLUMNS
 
-    real = _columns_of("chapters")
-    for column in _CHAPTER_COLUMNS.split(","):
-        assert column.strip() in real, (
-            f"_CHAPTER_COLUMNS names {column!r}, which is not a column on public.chapters"
-        )
+    _assert_every_name_is_a_real_column(_CHAPTER_COLUMNS, "chapters", "_CHAPTER_COLUMNS")
 
 
 @pytest.mark.unit

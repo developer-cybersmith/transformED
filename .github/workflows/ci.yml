@@ -72,17 +72,45 @@ jobs:
       # frozen-contract migrations against a real Postgres catalog.
       #
       # `--no-skip-postgres` is enforced by the -rs check below rather than a flag:
-      # if psql or the Docker daemon is missing on the runner, all of these tests
-      # skip and the step would otherwise pass green while verifying nothing —
-      # binding rule 7's FIXED-UNGUARDED. Asserting a non-zero pass count is what
-      # makes the guard real.
+      # if psql or the Docker daemon is missing on the runner, these tests skip and
+      # the step would otherwise pass green while verifying nothing — binding
+      # rule 7's FIXED-UNGUARDED. Asserting a non-zero pass count is what makes the
+      # guard real.
+      #
+      # D51 (2026-08-04): the original guard was `^[0-9]+ skipped|no tests ran`,
+      # which only ever matched an ALL-skipped run. pytest's summary for a mixed
+      # run reads `9 passed, 12 skipped in 3.20s` — no leading skip count — so a
+      # PARTIAL skip passed green and unreported. That is how the PostgREST half of
+      # this suite (test_book_select_lists_against_postgrest.py) went un-run in CI
+      # while the step reported success: exactly the "something reported success
+      # without being checked" pattern the register's Part 1 is about. Any skip in
+      # this step now fails it. If a test here must legitimately skip, that is a
+      # decision to record, not a default to inherit silently.
       - name: Migration tests (gating, real Postgres)
         run: |
           set -o pipefail
+          # `test_migration_chapters_book_scoped.py` drives a LOCAL psql binary over
+          # TCP (its `_find_psql`/`pg_server` fixture) and skips without one. Under
+          # the D51 guard below, any skip fails this step — so install the client
+          # explicitly rather than relying on whatever `ubuntu-latest` happens to
+          # ship this month. One apt line is cheaper than the assumption.
+          # (The PostgREST harness needs no client: it drives `docker exec psql`
+          # inside the container it provisions.)
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          psql --version
           docker pull pgvector/pgvector:pg16 || docker pull pgvector/pgvector:pg16
+          docker pull postgrest/postgrest || docker pull postgrest/postgrest
           pytest tests/integration -q -m postgres -rs | tee /tmp/pg-tests.log
-          if grep -qE "^[0-9]+ skipped|no tests ran" /tmp/pg-tests.log; then
-            echo "::error::postgres-marked tests skipped — the migration guard did not run"
+          if grep -qE "no tests ran" /tmp/pg-tests.log; then
+            echo "::error::no postgres-marked tests ran — the migration guard did not run"
+            exit 1
+          fi
+          if grep -qE "[0-9]+ skipped" /tmp/pg-tests.log; then
+            echo "::error::postgres-marked tests SKIPPED — a skipped guard guards nothing (D51)"
+            exit 1
+          fi
+          if ! grep -qE "[0-9]+ passed" /tmp/pg-tests.log; then
+            echo "::error::no postgres-marked test passed — the migration guard did not run"
             exit 1
           fi
         env:

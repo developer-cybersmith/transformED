@@ -574,6 +574,65 @@ def test_lessons_chapter_id_set_null_actually_fires(seeded: dict[str, str]) -> N
     ), "lesson did not survive deletion of its chapter with chapter_id nulled"
 
 
+# ── Story 1-14 AC16.2 — the constraint NAMES, not just the constraints ───────
+def test_both_fk_names_between_chapters_and_lessons_exist_verbatim(pg: object) -> None:  # noqa: ARG001
+    """Story 1-14 AC16.2 — binding rule 3: the story asserts a constraint-name
+    hierarchy, so it needs an executable premise assertion.
+
+    Phase 6's select lists embed `lessons!lessons_chapter_id_fkey` from BOTH
+    sides. A PostgREST FK qualifier is a *constraint name*, so these two strings
+    are load-bearing application input, not schema trivia:
+
+      chapters_lesson_id_fkey — chapters.lesson_id → lessons, ON DELETE CASCADE
+                                (the DEAD column of AC14, and the reason a
+                                 rollback that writes it destroys a book)
+      lessons_chapter_id_fkey — lessons.chapter_id → chapters, ON DELETE SET NULL
+                                (the live link Phase 6 writes)
+
+    The delete actions are asserted here too because the names alone would still
+    pass if a future migration recreated either constraint with a different
+    action — and the whole AC10/AC14 hazard IS the difference between CASCADE and
+    SET NULL. `pg_constraint.confdeltype`: 'c' = CASCADE, 'n' = SET NULL,
+    'a' = NO ACTION, 'r' = RESTRICT.
+    """
+    got = scalar(
+        "SELECT string_agg("
+        "  conname||' '||conrelid::regclass::text||'.'||"
+        "  (SELECT attname FROM pg_attribute "
+        "     WHERE attrelid = c.conrelid AND attnum = c.conkey[1])||"
+        "  ' -> '||confrelid::regclass::text||' '||confdeltype::text, "
+        "  ', ' ORDER BY conname) "
+        "FROM pg_constraint c WHERE contype='f' AND ("
+        "  (conrelid='public.chapters'::regclass AND confrelid='public.lessons'::regclass) OR "
+        "  (conrelid='public.lessons'::regclass AND confrelid='public.chapters'::regclass))"
+    )
+    assert got == (
+        "chapters_lesson_id_fkey chapters.lesson_id -> lessons c, "
+        "lessons_chapter_id_fkey lessons.chapter_id -> chapters n"
+    ), (
+        "the two FK names/actions Phase 6's PostgREST embeds depend on are not "
+        f"what the story assumes. Got: {got}"
+    )
+
+
+def test_exactly_two_fks_link_chapters_and_lessons(pg: object) -> None:  # noqa: ARG001
+    """Anti-vacuity for the test above and the premise of AC16.1.
+
+    The unqualified embed `/chapters?select=...,lessons(...)` is a 300/PGRST201
+    *because* there are exactly two candidate relationships. One would make the
+    qualifier unnecessary; three would mean PostgREST's hint no longer matches
+    what the router names.
+    """
+    assert (
+        scalar(
+            "SELECT count(*) FROM pg_constraint WHERE contype='f' AND ("
+            "  (conrelid='public.chapters'::regclass AND confrelid='public.lessons'::regclass) OR "
+            "  (conrelid='public.lessons'::regclass AND confrelid='public.chapters'::regclass))"
+        )
+        == "2"
+    )
+
+
 def test_lessons_chapter_id_is_indexed(pg: object) -> None:  # noqa: ARG001
     """AC7."""
     assert (
