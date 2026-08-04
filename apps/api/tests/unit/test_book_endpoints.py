@@ -115,14 +115,30 @@ def _make_supabase_mock(
     # get_book / ownership probe: .select().eq(...).eq(...).maybe_single().execute()
     eq_user.eq.return_value.maybe_single.return_value.execute.return_value = _resp(book_row)
 
-    chapters_tbl = MagicMock()
-    chapters_tbl.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        _resp(chapter_rows if chapter_rows is not None else [])
+    # `list_book_chapters` filters TWICE — `.eq("book_id", …)` and, since the
+    # 2026-08-04 review, `.eq("lessons.user_id", …)` scoping the embedded lessons
+    # to the caller. A mock that hardcodes one `.eq()` returns a fresh MagicMock
+    # for the second and the endpoint silently sees zero chapters, so the chain is
+    # self-returning and the filters are RECORDED — a test that merely tolerated
+    # the extra call would stop noticing if the scoping were dropped.
+    chapters_filters: list[tuple[str, Any]] = []
+    chapters_chain = MagicMock()
+
+    def _record_eq(key: str, value: Any) -> MagicMock:  # noqa: ANN401
+        chapters_filters.append((key, value))
+        return chapters_chain
+
+    chapters_chain.eq.side_effect = _record_eq
+    chapters_chain.order.return_value.execute.return_value = _resp(
+        chapter_rows if chapter_rows is not None else []
     )
+    chapters_tbl = MagicMock()
+    chapters_tbl.select.return_value = chapters_chain
 
     table_map = {"books": books_tbl, "chapters": chapters_tbl}
     sb = MagicMock()
     sb.table.side_effect = lambda name: table_map.get(name, MagicMock())
+    sb.chapters_filters = chapters_filters
     return sb
 
 
@@ -381,6 +397,25 @@ def test_list_chapters_returns_the_documented_shape() -> None:
 
 
 @pytest.mark.unit
+def test_list_chapters_scopes_the_embedded_lessons_to_the_caller() -> None:
+    """The embed has no RLS behind it (service-role client), so the `user_id`
+    predicate is the only thing keeping another user's lessons out of this book
+    owner's chapter cards. Dropping it is invisible today — `lessons.user_id`
+    always equals the book owner because the generate endpoint is the sole
+    writer — and becomes a cross-tenant leak the moment a second writer exists
+    (admin regenerate, shared book, backfill).
+    """
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=CHAPTER_ROWS)
+    _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters")
+
+    filters = dict(sb.chapters_filters)
+    assert filters.get("book_id") == FAKE_BOOK_ID
+    assert filters.get("lessons.user_id") == FAKE_USER["sub"], (
+        "the embedded lessons must be scoped to the caller, not merely to the book"
+    )
+
+
+@pytest.mark.unit
 def test_list_chapters_is_ordered_by_chapter_index() -> None:
     """AC3: ordered by chapter_index — asserted on the query, since the mock
     cannot sort for us."""
@@ -388,9 +423,12 @@ def test_list_chapters_is_ordered_by_chapter_index() -> None:
     resp = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters")
 
     assert resp.status_code == 200
-    chapters_tbl = sb.table("chapters")
-    chapters_tbl.select.return_value.eq.assert_any_call("book_id", FAKE_BOOK_ID)
-    chapters_tbl.select.return_value.eq.return_value.order.assert_called_once_with("chapter_index")
+    # `.eq()` now returns the SAME chain object (it is called twice — book_id and
+    # the embedded lessons.user_id scoping), so `order` hangs off the chain rather
+    # than off `eq.return_value`.
+    chain = sb.table("chapters").select.return_value
+    assert ("book_id", FAKE_BOOK_ID) in sb.chapters_filters
+    chain.order.assert_called_once_with("chapter_index")
     assert [c["chapter_index"] for c in resp.json()] == [0, 1]
 
 
@@ -562,12 +600,40 @@ def _columns_of(table: str) -> set[str]:
     return columns
 
 
+# Story 1-14 AC6 — the exact key set of the `lessons` INSERT in
+# `generate_chapter_lesson`. It lives HERE, next to the migration parser, and is
+# imported by tests/unit/test_generate_lesson_endpoint.py rather than retyped
+# there, so the payload assertion and the schema assertion can never drift apart.
+# That import is what makes the `# MOCK-CONTRACT:` marker on the payload test
+# name a partner that really exists (binding rule 2).
+LESSONS_INSERT_KEYS: frozenset[str] = frozenset(
+    {
+        "user_id",
+        "book_id",
+        "chapter_id",
+        "tier",
+        "status",
+        "title",
+        "source_file_path",
+    }
+)
+
+
 @pytest.mark.unit
 def test_migration_parser_finds_known_columns() -> None:
     """Premise assertion: the parser above must actually work, otherwise the two
-    guards below pass vacuously."""
+    guards below pass vacuously.
+
+    Story 1-14 extends this to `lessons`, which is the table the generate
+    endpoint INSERTs into. `lessons` gains columns across FOUR migrations
+    (20260611000000 base, 20260625000000 book_id, 20260714020000 tier,
+    20260803000000 chapter_id), so a parser that stopped after the CREATE TABLE
+    would report `tier` and `chapter_id` as non-existent and the AC6 guard below
+    would fail for the wrong reason.
+    """
     books = _columns_of("books")
     chapters = _columns_of("chapters")
+    lessons = _columns_of("lessons")
     assert {"book_id", "user_id", "filename", "page_count", "status", "created_at"} <= books
     assert "completed_at" not in books
     assert {
@@ -580,6 +646,40 @@ def test_migration_parser_finds_known_columns() -> None:
         "chapter_index",
         "boundary_confidence",
     } <= chapters
+    # The four-migration accumulation, named explicitly: `tier` and `chapter_id`
+    # are ALTER-added, so they prove the ALTER branch of the parser runs.
+    assert {"lesson_id", "user_id", "title", "status", "source_file_path"} <= lessons
+    assert {"book_id", "tier", "chapter_id"} <= lessons, (
+        f"the parser did not pick up the ALTER-added lessons columns — got {sorted(lessons)}"
+    )
+    # D9's shape: these read like lesson fields and are NOT columns on `lessons`.
+    # `completed_at` and `error` live on `lesson_jobs`; `subject` is a JSONB
+    # metadata key; `session_id` does not exist anywhere on this table.
+    assert not ({"error", "completed_at", "session_id", "subject"} & lessons)
+
+
+@pytest.mark.unit
+def test_the_generate_endpoints_lessons_insert_names_only_real_columns() -> None:
+    """Story 1-14 AC6, the real-dependency half.
+
+    `tests/unit/test_generate_lesson_endpoint.py` asserts that the INSERT payload
+    has exactly these keys — but it asserts that against a Supabase double it
+    built itself, which has no Postgres catalog and cannot 42703. This test is
+    the partner its `# MOCK-CONTRACT:` marker names: it checks the same key set
+    against the migration SQL that actually defines the table.
+
+    What breaks in production if this fails: PostgREST rejects the WHOLE INSERT
+    with `42703 column lessons.<name> does not exist` — so no student can
+    generate any lesson from any chapter, all at once, and the unit suite stays
+    green because a mock accepts any key. That is the D9 outage shape.
+    """
+    lessons = _columns_of("lessons")
+    assert lessons, "no CREATE TABLE public.lessons found in supabase/migrations/"
+    missing = sorted(LESSONS_INSERT_KEYS - lessons)
+    assert not missing, (
+        f"generate_chapter_lesson's INSERT names {missing}, which are not columns "
+        f"on public.lessons (parsed: {sorted(lessons)})"
+    )
 
 
 def _split_top_level(select: str) -> list[str]:

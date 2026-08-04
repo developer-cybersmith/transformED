@@ -688,6 +688,65 @@ def test_chapters_side_embed_is_an_array_of_every_lesson(
     }
 
 
+def test_the_wrong_qualifier_returns_no_lessons_for_a_chapter_that_has_two(
+    seeded_graph: dict[str, str], service_role_token: str
+) -> None:
+    """The payload half of `test_the_wrong_qualifier_is_accepted_and_returns_the_dead_column`.
+
+    That test asserts only `status == 200` — so it proves the wrong qualifier is
+    ACCEPTED, which is half the hazard, and says nothing about what comes back.
+    It runs as the anon role, where RLS makes every chapter return `[]` anyway,
+    so it could not have asserted the payload even if it wanted to. As a result
+    the sentence its name makes — "returns the dead column" — was unproven.
+
+    Here, as service_role with RLS bypassed and a chapter that really does have
+    two lessons, both qualifiers are asked the same question and the answers are
+    contrasted:
+
+      lessons!lessons_chapter_id_fkey   → the two seeded lessons   (live FK)
+      lessons!chapters_lesson_id_fkey   → nothing                  (dead column)
+
+    What breaks in production if this fails: `chapters_lesson_id_fkey` resolves
+    through `chapters.lesson_id`, which has had no writer since Story 1-13. A
+    router that names it gets HTTP 200, an empty embed, and therefore
+    `has_lesson=false` and `lesson_count=0` on every chapter forever. Green
+    tests, dead feature — the student's "Generate" button never becomes "Watch"
+    for a lesson that finished. The 200 is exactly why nothing else catches it.
+    """
+    chapter = seeded_graph["chapter_with_lessons"]
+
+    right_status, right_body = _service_role_get(
+        f"/chapters?select=chapter_id,lessons!lessons_chapter_id_fkey(lesson_id)"
+        f"&chapter_id=eq.{chapter}",
+        service_role_token,
+    )
+    assert right_status == 200, f"the LIVE qualifier failed: {right_status} {right_body[:400]}"
+    live = json.loads(right_body)[0]["lessons"]
+    assert {row["lesson_id"] for row in live} == {
+        seeded_graph["lesson_t1"],
+        seeded_graph["lesson_t3"],
+    }, f"the live FK did not return the seeded lessons: {live!r}"
+
+    wrong_status, wrong_body = _service_role_get(
+        f"/chapters?select=chapter_id,lessons!chapters_lesson_id_fkey(lesson_id)"
+        f"&chapter_id=eq.{chapter}",
+        service_role_token,
+    )
+    assert wrong_status == 200, (
+        f"the WRONG qualifier was rejected ({wrong_status}) — AC16's premise is that "
+        f"it is silently ACCEPTED, which is what makes it dangerous: {wrong_body[:400]}"
+    )
+    dead = json.loads(wrong_body)[0]["lessons"]
+    assert dead in (None, [], {}), (
+        "the wrong qualifier returned lessons — `chapters.lesson_id` has a writer "
+        f"again, and AC14's 'dead column' reasoning must be re-derived: {dead!r}"
+    )
+    assert dead != live, (
+        "both qualifiers returned the same thing, so this contrast proves nothing "
+        "about which one is load-bearing"
+    )
+
+
 def test_a_chapter_with_no_lessons_embeds_an_empty_list_not_null(
     seeded_graph: dict[str, str], service_role_token: str
 ) -> None:

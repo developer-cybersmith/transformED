@@ -51,10 +51,19 @@ class LatestLesson(BaseModel):
 
     `status` is carried deliberately: `has_lesson=true` on a chapter whose only
     lesson is `failed` would render a "Watch" button that 404s the player.
+
+    The value is the API vocabulary, not the DB column: `router._latest_lesson`
+    runs the raw `lessons.status` through `_map_status` first. The two differ on
+    exactly one value — the DB's `generating` is the API's `running` — and every
+    other lesson-facing route in this API already speaks the API vocabulary. If
+    this field carried the raw column, a client switch matching `running` would
+    silently fall through on chapter cards and nowhere else.
     """
 
     lesson_id: str
-    status: str  # generating | ready | failed (lessons_status_check)
+    # API vocabulary: queued | running | ready | failed.
+    # (DB `lessons.status` is generating | ready | failed — lessons_status_check.)
+    status: str
     tier: str  # T1 | T2 | T3
     created_at: str | None = None
 
@@ -75,7 +84,13 @@ class LessonGenerationResponse(BaseModel):
     lesson_id: str
     chapter_id: str
     tier: str
-    status: str  # "queued" on create; the lesson's own status on the 200 path
+    # API vocabulary on BOTH paths: queued | running | ready | failed.
+    # "queued" on the 202 (the job was just enqueued and no node has run); on the
+    # 200 path the existing lesson's DB status passed through `router._map_status`,
+    # so a DB `generating` is reported as `running` — never the raw column, which
+    # would make one field mean "API acceptance state" on one branch and "DB
+    # lifecycle state" on the other.
+    status: str
     job_id: str | None = None
     truncation_expected: bool = False
 

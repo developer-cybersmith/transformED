@@ -2,37 +2,37 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { UploadCloud, CheckCircle, AlertCircle, Loader2, Play } from "lucide-react";
+import { UploadCloud, CheckCircle, AlertCircle, Loader2, BookOpen } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { uploadService, extractErrorMessage, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
+import type { BookResponse } from "@/services/upload.service";
+import { nextPollInterval } from "@/lib/lessonStatusPoll";
 import { Button } from "@/components/ui/button";
-import { ModeSelection } from "@/components/dashboard/upload/ModeSelection";
-import { LEARNER_TIER_OPTIONS, LEARNER_TIER_TO_BACKEND, type LearnerTier } from "@/types/learnerMode";
 
-const POLL_INTERVAL_MS = 5000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
-// ~20 minutes at one poll per POLL_INTERVAL_MS — chapter generation can take up to
-// ~15 minutes (CLAUDE.md §9), so this is a backstop against a stuck/dead worker,
-// not a realistic ceiling for a healthy pipeline run.
+// Absolute backstop on the number of polls, independent of the wall-clock
+// ceiling that `nextPollInterval` enforces (MAX_POLL_DURATION_MS, ~20 minutes).
+// Belt and braces: the wall-clock cap is the one that fires in practice, this
+// one still terminates the loop if Date.now() never advances.
 const MAX_POLL_ATTEMPTS = 240;
 
+// Ingestion is fast — 90.3 s end-to-end for a 1,151-page book (58.0 s of that
+// the upload itself). It is NOT the "~15 minutes" figure that used to be quoted
+// here: that is chapter GENERATION (CLAUDE.md §9), which now happens later, per
+// chapter, from the book page.
 export function UploadFlow() {
     const [file, setFile] = useState<File | null>(null);
     const [dragActive, setDragActive] = useState(false);
-    const [uploadState, setUploadState] = useState<'idle' | 'selecting-mode' | 'processing' | 'completed' | 'error'>('idle');
+    const [uploadState, setUploadState] = useState<'idle' | 'processing' | 'completed' | 'error'>('idle');
     const [statusMessage, setStatusMessage] = useState<string>('');
     const [errorMessage, setErrorMessage] = useState<string>('');
-    const [lessonId, setLessonId] = useState<string>('');
-    const [selectedTier, setSelectedTier] = useState<LearnerTier | null>(null);
+    const [bookId, setBookId] = useState<string>('');
+    // Latest polled book row — drives the honest progress readout (chapters
+    // actually detected so far) instead of a fabricated percentage.
+    const [book, setBook] = useState<BookResponse | null>(null);
 
     const router = useRouter();
     const inputRef = useRef<HTMLInputElement>(null);
-    // Captures the tier at the moment processing starts, without making it a
-    // reactive dependency of the upload effect below — a later selectedTier
-    // change (e.g. a mis-click followed by a different card, landing during
-    // the exit-animation window) must not re-trigger a second, separately
-    // billed upload call (review fix).
-    const selectedTierAtUploadRef = useRef<LearnerTier | null>(null);
 
     const handleDrag = (e: React.DragEvent) => {
         e.preventDefault();
@@ -60,6 +60,8 @@ export function UploadFlow() {
         }
     };
 
+    // Straight to 'processing' — there is no tier to choose at upload time any
+    // more. A book has no tier; the tier is picked per chapter, later.
     const handleFile = (selectedFile: File) => {
         if (selectedFile.size > MAX_UPLOAD_SIZE_BYTES) {
             setFile(null);
@@ -67,23 +69,21 @@ export function UploadFlow() {
             setUploadState('error');
             return;
         }
+        setBook(null);
+        setBookId('');
         setFile(selectedFile);
-        setUploadState('selecting-mode');
-    };
-
-    const handleTierSelect = (tier: LearnerTier) => {
-        selectedTierAtUploadRef.current = tier;
-        setSelectedTier(tier);
-        setUploadState('processing');
         setStatusMessage('Uploading...');
+        setUploadState('processing');
     };
 
-    const handleCancelModeSelection = () => {
+    // Clears the input's FileList so re-selecting the SAME file through the
+    // native dialog still fires a `change` event.
+    const resetToIdle = () => {
         setFile(null);
-        setSelectedTier(null);
-        // Allows re-selecting the exact same file through the native file
-        // dialog afterwards — browsers don't fire a `change` event if the
-        // input's FileList is unchanged from last time.
+        setBook(null);
+        setBookId('');
+        setErrorMessage('');
+        setStatusMessage('');
         if (inputRef.current) inputRef.current.value = '';
         setUploadState('idle');
     };
@@ -95,13 +95,24 @@ export function UploadFlow() {
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         let consecutiveFailures = 0;
         let attempts = 0;
+        // Owned by this effect run, so a later upload starts a fresh 20-minute
+        // window rather than inheriting an expired one.
+        const pollWindowRef: { current: number | null } = { current: null };
 
         // Self-rescheduling (setTimeout after each poll settles) rather than
         // setInterval — guarantees polls never overlap, so a slow response can
         // never race a faster later one and clobber an already-reached terminal
         // state.
-        const scheduleNextPoll = (id: string) => {
-            timeoutHandle = setTimeout(() => pollStatus(id), POLL_INTERVAL_MS);
+        const scheduleNextPoll = (id: string): boolean => {
+            const delay = nextPollInterval(true, pollWindowRef);
+            if (delay === 0 || attempts >= MAX_POLL_ATTEMPTS) return false;
+            timeoutHandle = setTimeout(() => pollStatus(id), delay);
+            return true;
+        };
+
+        const giveUpSlow = () => {
+            setUploadState('error');
+            setErrorMessage('Processing is taking longer than expected — please try uploading again.');
         };
 
         const pollStatus = async (id: string) => {
@@ -109,56 +120,60 @@ export function UploadFlow() {
             attempts += 1;
 
             try {
-                const status = await uploadService.getLessonStatus(id);
+                // Book vocabulary: processing | ready | failed. Deliberately not
+                // routed through `isLessonProcessing`, which tests queued/running
+                // and would be false for every book, forever.
+                const status = await uploadService.getBookStatus(id);
                 if (cancelled) return;
                 consecutiveFailures = 0;
+                setBook(status);
 
                 if (status.status === 'ready') {
                     setUploadState('completed');
-                    setLessonId(status.lesson_id);
                     return;
                 }
                 if (status.status === 'failed') {
                     setUploadState('error');
-                    setErrorMessage(status.error ?? 'Lesson generation failed — please try again.');
+                    setErrorMessage(
+                        "We couldn't read this PDF — it may be scanned, password-protected or corrupted. Please try a different file."
+                    );
                     return;
                 }
-                if (status.status !== 'queued' && status.status !== 'running') {
-                    console.warn(`Unexpected lesson status: ${status.status}`);
+                if (status.status !== 'processing') {
+                    console.warn(`Unexpected book status: ${status.status}`);
                 }
-                if (attempts >= MAX_POLL_ATTEMPTS) {
-                    setUploadState('error');
-                    setErrorMessage('Lesson generation is taking longer than expected — please try again later.');
-                    return;
-                }
-                setStatusMessage('Processing...');
-                scheduleNextPoll(id);
+                setStatusMessage(
+                    status.chapter_count > 0
+                        ? `${status.chapter_count} chapters found`
+                        : 'Reading your book...'
+                );
+                if (!scheduleNextPoll(id)) giveUpSlow();
             } catch (err) {
                 if (cancelled) return;
                 const httpStatus = (err as { response?: { status?: number } })?.response?.status;
                 const isClientError = typeof httpStatus === 'number' && httpStatus >= 400 && httpStatus < 500;
                 consecutiveFailures += 1;
 
-                if (isClientError || consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES || attempts >= MAX_POLL_ATTEMPTS) {
+                if (isClientError || consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
                     setUploadState('error');
                     setErrorMessage(
                         isClientError
-                            ? 'Lesson not found — please try uploading again.'
-                            : 'Lost connection while checking lesson status — please try again.'
+                            ? 'Book not found — please try uploading again.'
+                            : 'Lost connection while checking your book — please try again.'
                     );
                     return;
                 }
-                scheduleNextPoll(id);
+                if (!scheduleNextPoll(id)) giveUpSlow();
             }
         };
 
-        const tierAtEntry = selectedTierAtUploadRef.current;
         uploadService
-            .uploadLesson(file, tierAtEntry ? LEARNER_TIER_TO_BACKEND[tierAtEntry] : undefined)
+            .uploadLesson(file)
             .then((res) => {
                 if (cancelled) return;
-                setStatusMessage('Processing...');
-                pollStatus(res.lesson_id);
+                setBookId(res.book_id);
+                setStatusMessage('Reading your book...');
+                pollStatus(res.book_id);
             })
             .catch((err) => {
                 if (cancelled) return;
@@ -170,14 +185,7 @@ export function UploadFlow() {
             cancelled = true;
             if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
         };
-        // selectedTier is deliberately NOT a dependency — see selectedTierAtUploadRef above.
     }, [uploadState, file]);
-
-    // Gated on a successful lookup, not just selectedTier being truthy — avoids
-    // ever rendering an empty visible pill if the two ever desync (review fix).
-    const selectedTierOption = selectedTier
-        ? LEARNER_TIER_OPTIONS.find((option) => option.id === selectedTier)
-        : undefined;
 
     return (
         <AnimatePresence mode="wait">
@@ -201,10 +209,10 @@ export function UploadFlow() {
                         <UploadCloud className="w-10 h-10" />
                     </div>
                     <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-2">
-                        Drop your course material here
+                        Drop your textbook here
                     </h3>
                     <p className="text-neutral-500 max-w-sm mb-8">
-                        Upload a PDF document. HIE will automatically structure it, synthesize audio narratives, and generate an interactive journey.
+                        Upload a PDF. HIE splits it into chapters so you can pick one to study — this usually takes a minute or two.
                     </p>
                     <Button
                         variant="primary"
@@ -220,32 +228,6 @@ export function UploadFlow() {
                 </motion.div>
             )}
 
-            {uploadState === 'selecting-mode' && (
-                <motion.div
-                    key="selecting-mode"
-                    initial={{ opacity: 0, y: 20, filter: "blur(10px)" }}
-                    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                    transition={{ duration: 0.6 }}
-                    className="w-full relative z-10 flex flex-col items-center"
-                >
-                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-2 text-center">
-                        How do you want to learn this?
-                    </h3>
-                    <p className="text-neutral-500 max-w-md text-center mb-8">
-                        Choose a pace before HIE builds your lesson.
-                    </p>
-                    <ModeSelection onSelect={handleTierSelect} />
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleCancelModeSelection}
-                        className="mt-8 text-neutral-400 hover:text-neutral-600 hover:bg-transparent"
-                    >
-                        Choose a different file
-                    </Button>
-                </motion.div>
-            )}
-
             {uploadState === 'processing' && (
                 <motion.div
                     key="processing"
@@ -253,12 +235,11 @@ export function UploadFlow() {
                     animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.6 }}
-                    // data-selected-tier is not rendered as visible text — it's a forward-compatible
-                    // hook for the S2-10 tier-badge story, which decides where/how to surface it.
-                    data-selected-tier={selectedTier ?? undefined}
                     className="w-full relative z-10 bg-white/80 backdrop-blur-xl rounded-[2.5rem] p-16 shadow-2xl border border-neutral-100 flex flex-col items-center justify-center min-h-[400px] text-center"
                 >
-                    {/* Pulsing Outer Glow + indeterminate spinner — the backend reports no percentage/stage data */}
+                    {/* Indeterminate spinner: the backend reports no percentage, and
+                        inventing one would be a lie. Real progress is the chapter
+                        count below, which only moves when chapters actually exist. */}
                     <div className="relative w-40 h-40 mb-10 flex items-center justify-center">
                         <div className="absolute inset-0 bg-[var(--accent-primary)]/20 rounded-full blur-2xl animate-pulse" />
                         <Loader2 className="w-16 h-16 text-[var(--accent-primary)] animate-spin relative z-10" />
@@ -269,16 +250,20 @@ export function UploadFlow() {
                         <span className="text-sm font-semibold text-[var(--accent-primary)] uppercase tracking-widest">{statusMessage}</span>
                     </div>
 
-                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-3">Architecting your lesson...</h3>
+                    <h3 className="font-serif text-2xl font-semibold tracking-tight text-neutral-900 mb-3">
+                        Finding the chapters...
+                    </h3>
                     <p className="text-neutral-500 max-w-sm leading-relaxed">
-                        Establishing intelligence matrix, compiling timeline sequences, and synthesizing audio overlays.
+                        {book && book.page_count
+                            ? `Reading ${book.page_count.toLocaleString()} pages and detecting where each chapter starts.`
+                            : 'Reading your PDF and detecting where each chapter starts.'}
                     </p>
-                    {selectedTierOption && (
+                    {book && book.chapter_count > 0 && (
                         <span
-                            data-testid="selected-tier-label"
+                            data-testid="chapter-count-progress"
                             className="mt-5 inline-flex items-center px-3 py-1 rounded-full bg-[var(--accent-secondary)] text-[var(--accent-primary)] text-xs font-semibold uppercase tracking-wide"
                         >
-                            {selectedTierOption.label}
+                            {book.chapter_count} chapters so far
                         </span>
                     )}
                 </motion.div>
@@ -298,23 +283,29 @@ export function UploadFlow() {
                             <CheckCircle className="w-12 h-12" />
                         </div>
                     </div>
-                    <h3 className="font-serif text-3xl font-semibold tracking-tight text-neutral-900 mb-3">Generation Complete</h3>
-                    <p className="text-neutral-500 text-lg mb-10 max-w-md">Your uploaded material has been successfully transformed into a dynamic, interactive lesson.</p>
+                    <h3 className="font-serif text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
+                        {book ? `${book.chapter_count} chapters ready` : 'Your book is ready'}
+                    </h3>
+                    <p className="text-neutral-500 text-lg mb-10 max-w-md">
+                        {book && book.page_count
+                            ? `We read all ${book.page_count.toLocaleString()} pages. Pick a chapter to turn into a lesson — you choose the pace on the chapter itself.`
+                            : 'Pick a chapter to turn into a lesson — you choose the pace on the chapter itself.'}
+                    </p>
                     <Button
                         variant="primary"
                         size="lg"
-                        onClick={() => router.push(`/lesson/${lessonId}`)}
+                        onClick={() => router.push(`/books/${bookId}`)}
                         className="gap-3 rounded-2xl bg-neutral-900 text-white shadow-[0_8px_20px_-8px_rgba(0,0,0,0.3)] hover:-translate-y-1 hover:bg-neutral-800 hover:shadow-[0_12px_24px_-8px_rgba(0,0,0,0.4)]"
                     >
-                        <Play className="w-5 h-5 fill-current" /> Begin Lesson
+                        <BookOpen className="w-5 h-5" /> Choose a chapter
                     </Button>
                     <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setUploadState('idle')}
+                        onClick={resetToIdle}
                         className="mt-6 text-neutral-400 hover:text-neutral-600 hover:bg-transparent"
                     >
-                        Generate Another
+                        Upload another book
                     </Button>
                 </motion.div>
             )}
@@ -329,12 +320,12 @@ export function UploadFlow() {
                     <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-8">
                         <AlertCircle className="w-12 h-12" />
                     </div>
-                    <h3 className="font-serif text-2xl font-semibold text-neutral-900 mb-3">Generation Failed</h3>
+                    <h3 className="font-serif text-2xl font-semibold text-neutral-900 mb-3">Upload Failed</h3>
                     <p className="text-neutral-500 mb-10 max-w-sm">{errorMessage}</p>
                     <Button
                         variant="primary"
                         size="md"
-                        onClick={() => setUploadState('idle')}
+                        onClick={resetToIdle}
                         className="rounded-2xl bg-red-500 text-white shadow-md hover:bg-red-600"
                     >
                         Try Again

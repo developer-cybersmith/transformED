@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import inspect
 import io
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,6 +66,13 @@ MOUNT_PREFIX = "/api/content"
 # Metadata that must never appear in a 404 body (AC5).
 LEAKABLE_TITLE = "Kinematics Of A Particle"
 LEAKABLE_FILENAME = "ncert_xi_part1.pdf"
+
+
+def _fresh_iso(age_s: int = 0) -> str:
+    """An ISO-8601 `created_at` `age_s` seconds in the past (D53)."""
+    from datetime import UTC, datetime, timedelta
+
+    return (datetime.now(UTC) - timedelta(seconds=age_s)).isoformat()
 
 
 def _url(book_id: str = BOOK_ID, chapter_id: str = CHAPTER_ID) -> str:
@@ -330,6 +338,65 @@ def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFu
 
 _TABLE_SELECTORS = frozenset({"table", "from_"})
 _WRITE_METHODS = frozenset({"insert", "update", "upsert", "delete"})
+
+# `{a}/{b}/{c}` and nothing else — the structural signature of the `source-pdfs`
+# key layout, matched by SHAPE rather than by variable names so that renaming the
+# parameters cannot smuggle a second copy past the AC7 scan.
+_FORMAT_LAYOUT_RE = re.compile(r"^\{[^{}]*\}/\{[^{}]*\}/\{[^{}]*\}$")
+_PRINTF_LAYOUT_RE = re.compile(r"^%[sdr]/%[sdr]/%[sdr]$")
+
+
+def _add_operands(node: ast.expr) -> list[ast.expr]:
+    """Flatten a left-nested chain of `+` into its operands."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [*_add_operands(node.left), *_add_operands(node.right)]
+    return [node]
+
+
+def _is_slash_separated_triple(parts: list[ast.expr]) -> bool:
+    """True for `[<expr>, "/", <expr>, "/", <expr>]` — three values, two slashes,
+    no other literal text."""
+    if len(parts) != 5:
+        return False
+    for index, part in enumerate(parts):
+        literal = isinstance(part, ast.Constant) and part.value == "/"
+        if index in (1, 3):
+            if not literal:
+                return False
+        elif literal or (isinstance(part, ast.Constant) and isinstance(part.value, str)):
+            return False
+    return True
+
+
+def _is_three_segment_slash_layout(node: ast.AST) -> bool:
+    """True if *node* expresses `<a>/<b>/<c>` in any of the spellings a developer
+    re-inlining the storage key would plausibly reach for.
+
+    Matching only the f-string would let a `"/".join(...)` or a `+` chain
+    reintroduce the second source of truth AC7 exists to prevent — and the
+    scanner would still report "exactly once".
+    """
+    if isinstance(node, ast.JoinedStr):
+        return _is_slash_separated_triple(list(node.values))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _is_slash_separated_triple(_add_operands(node))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        left = node.left
+        return (
+            isinstance(left, ast.Constant)
+            and isinstance(left.value, str)
+            and bool(_PRINTF_LAYOUT_RE.match(left.value))
+        )
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        target = node.func.value
+        if not (isinstance(target, ast.Constant) and isinstance(target.value, str)):
+            return False
+        if node.func.attr == "join" and target.value == "/":
+            arg = node.args[0] if node.args else None
+            return isinstance(arg, ast.List | ast.Tuple) and len(arg.elts) == 3
+        if node.func.attr == "format":
+            return bool(_FORMAT_LAYOUT_RE.match(target.value))
+    return False
 
 
 def _selected_table(node: ast.expr) -> str | None:
@@ -750,13 +817,17 @@ def test_lessons_insert_payload_has_exactly_the_expected_keys() -> None:
     the D9 outage shape — so every generation fails for every user at once.
 
     # MOCK-CONTRACT: this asserts on a Supabase double built in this file, which
-    # has no Postgres catalog and cannot 42703. The real-dependency test that
-    # proves these column names exist is the migration-parsing guard in
-    # tests/unit/test_book_endpoints.py (`_columns_of` +
-    # test_migration_parser_finds_known_columns), extended to `lessons` for this
-    # story. Neither test is sufficient alone; this one proves the payload, that
-    # one proves the schema.
+    # has no Postgres catalog and cannot 42703. The real-dependency partner is
+    # tests/unit/test_book_endpoints.py::
+    #   test_the_generate_endpoints_lessons_insert_names_only_real_columns,
+    # which checks THIS SAME key set against `supabase/migrations/` via
+    # `_columns_of`. The set is imported from there rather than retyped, so the
+    # marker cannot rot into a pointer at nothing: editing the expectation here
+    # is impossible without moving the schema check too. Neither test is
+    # sufficient alone — this one proves the payload, that one proves the schema.
     """
+    from tests.unit.test_book_endpoints import LESSONS_INSERT_KEYS
+
     resp, sb, _ = _post(_ok_scenario(), body={"tier": _default_tier()})
 
     assert resp.status_code == 202
@@ -764,15 +835,7 @@ def test_lessons_insert_payload_has_exactly_the_expected_keys() -> None:
     assert len(inserts) == 1, f"expected exactly one lessons insert, got {len(inserts)}"
     payload = inserts[0].payload
     assert isinstance(payload, dict)
-    assert set(payload) == {
-        "user_id",
-        "book_id",
-        "chapter_id",
-        "tier",
-        "status",
-        "title",
-        "source_file_path",
-    }
+    assert set(payload) == set(LESSONS_INSERT_KEYS)
 
 
 @pytest.mark.unit
@@ -914,6 +977,162 @@ def test_source_pdf_path_reconstructs_the_real_storage_key(filename: str) -> Non
 
 
 @pytest.mark.unit
+def test_source_pdf_path_produces_the_literal_layout_it_has_always_produced() -> None:
+    """The byte-exactness test above compares `_source_pdf_path` against an
+    upload path that now CALLS `_source_pdf_path` — both sides of that comparison
+    are the same function, so it agrees with itself under any layout. Swapping
+    the first two segments to `{book_id}/{user_id}/{filename}` passes it.
+
+    What breaks in production: `books` has no path column, so every object
+    already sitting in the `source-pdfs` bucket is addressable ONLY by
+    recomputing this string. Change the layout and every PDF uploaded before the
+    change is orphaned — new uploads keep working, so nothing looks broken until
+    a student generates a lesson from a book they uploaded last week and
+    `extract_node` dies on a missing object minutes after a 202.
+
+    The docstring claims the pre-Phase-3 formula was identical and that legacy
+    rows therefore reconstruct. This is the assertion behind that claim: a fixed
+    triple with a hard-coded expected key, which no refactor of the helper can
+    satisfy by accident.
+    """
+    from app.modules.content.router import _source_pdf_path
+
+    assert (
+        _source_pdf_path(
+            "550e8400-e29b-41d4-a716-446655440000",
+            "11111111-1111-1111-1111-111111111111",
+            "ncert_xi_part1.pdf",
+        )
+        == "550e8400-e29b-41d4-a716-446655440000/11111111-1111-1111-1111-111111111111"
+        "/ncert_xi_part1.pdf"
+    )
+    # Ordering pinned independently of the triple above, so a symmetric swap
+    # cannot be hidden by look-alike arguments.
+    assert _source_pdf_path("USER", "BOOK", "FILE") == "USER/BOOK/FILE"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("filename", "expected_stored"),
+    [
+        ("my book (1).pdf", "my_book__1_.pdf"),
+        ("../etc/passwd", "passwd"),
+        ("ünïcode.pdf", "_n_code.pdf"),
+        ("a/b/c.pdf", "c.pdf"),
+    ],
+    ids=["spaces-and-parens", "traversal", "non-ascii", "path-segments"],
+)
+def test_upload_sanitises_the_filename_before_it_reaches_the_storage_key(
+    filename: str, expected_stored: str
+) -> None:
+    """The four names above are advertised as "the ones that survive sanitisation
+    differently", but the byte-exactness test asserts only that two computations
+    agree — it passes unchanged if `upload_lesson`'s `re.sub`/`basename` pair is
+    deleted outright. This test is what notices.
+
+    What breaks in production without the sanitiser: `filename` is attacker-
+    controlled and is interpolated straight into the storage key. `../etc/passwd`
+    becomes the key `{user}/{book}/../etc/passwd`, which normalises OUT of the
+    caller's own prefix — one user writing into another's key space, and a
+    bucket whose object paths no longer correspond to any `books` row. It is
+    stored into `books.filename` as well, so the damage is permanent: the key is
+    reconstructed from that column at generation time forever after.
+    """
+    _, stored_filename, storage_key = _upload_and_capture(filename)
+
+    assert stored_filename == expected_stored, (
+        f"upload stored {stored_filename!r} for {filename!r}; sanitisation changed"
+    )
+    # The structural invariant, independent of the table above: the key has
+    # exactly three segments and the last one cannot escape the prefix.
+    segments = storage_key.split("/")
+    assert len(segments) == 3, f"{storage_key!r} is not a three-segment key"
+    assert ".." not in segments[2]
+    assert "\\" not in storage_key
+
+
+@pytest.mark.unit
+def test_the_storage_key_layout_is_expressed_exactly_once_in_the_app() -> None:
+    """AC7's other half: one helper OWNS the layout. The byte-exactness tests
+    prove `_source_pdf_path` agrees with the upload path; they cannot prove a
+    third site has not grown its own copy, because a second f-string that happens
+    to be correct today agrees with everything.
+
+    What breaks in production: two independent spellings of the key are two
+    sources of truth for a value that has to be byte-exact across a gap of days —
+    the upload writes the object, and generation recomputes the key from
+    `books.filename` because `books` has no path column. When they diverge the
+    `lessons` INSERT still succeeds and the caller still gets a 202; the failure
+    surfaces minutes later inside `extract_node` as a missing object, looking
+    like a PDF-parsing bug, and costs a worker slot per retry.
+
+    Method (the technique in tests/unit/test_node_return_shape.py and
+    test_pipeline_writes_no_books.py): scan the EXECUTABLE source — every module
+    under `app/` parsed with `ast`, docstrings stripped, round-tripped through
+    `ast.unparse` so comments are gone. Prose describing the layout therefore
+    cannot match. That is exactly how the Story 1-10 guard first failed.
+    """
+    app_dir = _router_path().parents[2]
+    assert app_dir.name == "app", f"expected the app package, got {app_dir}"
+
+    sites: list[str] = []
+    for path in sorted(app_dir.rglob("*.py")):
+        try:
+            tree = _executable_tree(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:  # pragma: no cover — a syntax error fails CI elsewhere
+            raise AssertionError(f"could not parse {path}: {exc}") from exc
+        rel = path.relative_to(app_dir).as_posix()
+        for node in ast.walk(tree):
+            if _is_three_segment_slash_layout(node):
+                sites.append(f"{rel}: {ast.unparse(node)}")
+
+    assert len(sites) == 1, (
+        "the `source-pdfs` key layout `{user_id}/{book_id}/{filename}` must be "
+        f"expressed exactly ONCE in app/ (AC7). Found {len(sites)}: {sites}"
+    )
+    # ...and the one site must be the helper, not some other module that merely
+    # happens to be the only one left.
+    owner = _find_function(
+        _executable_tree(_router_path().read_text(encoding="utf-8")), "_source_pdf_path"
+    )
+    assert any(_is_three_segment_slash_layout(n) for n in ast.walk(owner)), (
+        "the single remaining layout site is not inside `_source_pdf_path`"
+    )
+
+
+@pytest.mark.unit
+def test_the_layout_scanner_fires_on_every_spelling_it_claims_to_cover() -> None:
+    """Premise (binding rule 3). A structural scanner that matched nothing would
+    be indistinguishable from a clean codebase — and would report `len(sites) == 1`
+    only by luck. Positive controls for each spelling, and negative controls for
+    the shapes that must NOT count.
+    """
+
+    def hits(source: str) -> int:
+        tree = _executable_tree(source)
+        return sum(1 for n in ast.walk(tree) if _is_three_segment_slash_layout(n))
+
+    # f-string — the real one
+    assert hits('x = f"{user_id}/{book_id}/{filename}"\n') == 1
+    # explicit join
+    assert hits('x = "/".join([user_id, book_id, filename])\n') == 1
+    # `+` concatenation
+    assert hits('x = user_id + "/" + book_id + "/" + filename\n') == 1
+    # printf-style
+    assert hits('x = "%s/%s/%s" % (user_id, book_id, filename)\n') == 1
+    # str.format
+    assert hits('x = "{}/{}/{}".format(user_id, book_id, filename)\n') == 1
+
+    # Negative: two segments is a different key (e.g. `lesson-audio`).
+    assert hits('x = f"{lesson_id}/{segment}.mp3"\n') == 0
+    # Negative: a literal path with no interpolation is not a layout expression.
+    assert hits('x = "a/b/c"\n') == 0
+    # Negative: prose. This is the Story 1-10 failure mode.
+    assert hits('"""The key is f\\"{user_id}/{book_id}/{filename}\\"."""\n') == 0
+    assert hits('x = 1  # f"{user_id}/{book_id}/{filename}"\n') == 0
+
+
+@pytest.mark.unit
 def test_generate_stores_the_source_path_rebuilt_from_the_books_row() -> None:
     """`user_id` and `filename` must come from the FETCHED books row, never from
     the JWT: they agree for the owner today, and the moment an admin or support
@@ -999,6 +1218,9 @@ def test_existing_live_lesson_is_returned_200_with_no_second_pipeline(
                 "lesson_id": EXISTING_LESSON_ID,
                 "status": existing_status,
                 "tier": _default_tier(),
+                # NOT NULL DEFAULT now() in the schema — a row without one exists
+                # only in a fixture, and the D53 staleness check reads it.
+                "created_at": _fresh_iso(),
             }
         ]
     )
@@ -1031,7 +1253,12 @@ def test_the_200_path_still_reports_truncation_expected_from_the_chapter() -> No
     75-page lesson advertised as complete, purely because it asked twice."""
     sc = _ok_scenario(
         existing_lessons=[
-            {"lesson_id": EXISTING_LESSON_ID, "status": "ready", "tier": _default_tier()}
+            {
+                "lesson_id": EXISTING_LESSON_ID,
+                "status": "ready",
+                "tier": _default_tier(),
+                "created_at": _fresh_iso(),
+            }
         ]
     )
     sc.chapter_row = _chapter_row(page_start=100, page_end=174)  # span 75 > 40
@@ -1352,3 +1579,173 @@ def test_generate_route_is_rate_limited_at_three_per_minute() -> None:
     ]
     assert limits, "generate_chapter_lesson carries no @limiter.limit decorator"
     assert any("3/minute" in limit for limit in limits), limits
+
+
+def _limit_decorators(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Call]:
+    return [
+        d
+        for d in fn.decorator_list
+        if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "limit"
+    ]
+
+
+@pytest.mark.unit
+def test_generate_route_also_carries_the_hourly_cap() -> None:
+    """AC13's limit is `3/minute;20/hour` — two numbers, and the hourly one is
+    the load-bearing half. The minute cap alone permits 180 generations an hour
+    from one user; at up to `max_lesson_cost_usd` each that is the difference
+    between a bounded bill and an unbounded one. The test above pins only
+    `3/minute`, so deleting `;20/hour` passes it.
+    """
+    tree = _executable_tree(_router_path().read_text(encoding="utf-8"))
+    fn = _find_function(tree, "generate_chapter_lesson")
+
+    limits = [
+        d.args[0].value
+        for d in _limit_decorators(fn)
+        if d.args and isinstance(d.args[0], ast.Constant) and isinstance(d.args[0].value, str)
+    ]
+    assert any("20/hour" in limit for limit in limits), (
+        f"the hourly cap is missing from generate_chapter_lesson's limits: {limits}"
+    )
+
+
+@pytest.mark.unit
+def test_generate_route_keys_its_bucket_on_the_user_not_the_request_ip() -> None:
+    """The decorator must pass `key_func=_get_user_key` explicitly.
+
+    What breaks if this is dropped: the bucket stops being pinned at the call
+    site and silently inherits whatever `Limiter(...)` in `core/rate_limit.py`
+    happens to default to. Today that default is `_get_user_key` too, so the
+    change is behaviour-neutral RIGHT NOW — which is exactly why nothing notices
+    it. The day someone changes the module default (or adds a second Limiter for
+    an anonymous route), this route silently becomes IP-keyed and every
+    authenticated user behind one egress IP shares a 3/minute bucket on the
+    endpoint that spends money. That is D52, which reached production once
+    already through precisely this kind of implicitness.
+
+    Asserted on the decorator's KEYWORDS: the existing limit test walks
+    `d.args[0]` only and never looks at `d.keywords`, so it passes with the
+    kwarg deleted.
+    """
+    tree = _executable_tree(_router_path().read_text(encoding="utf-8"))
+    fn = _find_function(tree, "generate_chapter_lesson")
+
+    keyed = [kw for d in _limit_decorators(fn) for kw in d.keywords if kw.arg == "key_func"]
+    assert keyed, (
+        "generate_chapter_lesson's @limiter.limit does not pass key_func — the "
+        "bucket key is then whatever the module-level Limiter defaults to"
+    )
+    names = {ast.unparse(kw.value) for kw in keyed}
+    assert names == {"_get_user_key"}, (
+        f"expected key_func=_get_user_key on the generate route, found {names}"
+    )
+
+
+@pytest.mark.unit
+def test_the_fourth_generate_request_in_a_minute_is_really_429() -> None:
+    """The two source scans above prove the decorator SAYS 3/minute. This proves
+    the limiter is actually consulted on this route.
+
+    What breaks in production if this fails: the cap is configured and inert —
+    a caller can hold the generate endpoint open and start pipelines as fast as
+    HTTP allows. Every other test in this file calls `limiter.reset()` on the way
+    in (deliberately, so the cap never colours an unrelated assertion), which
+    means nothing here exercises the limiter end to end. This is the one test
+    that does, and it uses its own JWT `sub` so its bucket cannot be disturbed by
+    — or disturb — anything else.
+
+    The `Retry-After` header is asserted because the client is expected to back
+    off on it rather than spin.
+    """
+    import jwt as pyjwt
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sub = "generate-rate-limit-unique-sub-for-429"
+    token = pyjwt.encode(
+        {"sub": sub, "exp": 9999999999},
+        "test-jwt-secret-that-is-long-enough-32-bytes",
+        algorithm="HS256",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    limiter.reset()
+    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": sub}
+    app.dependency_overrides[get_arq_redis] = lambda: _arq_pool()
+    try:
+        with patch(
+            "app.modules.content.router.get_supabase",
+            # A fresh double per request: the endpoint is otherwise idempotent
+            # and the 2nd call would take the 200 branch off a stale scenario.
+            # `user_id` matches this test's own JWT sub so `_fetch_owned_book`
+            # resolves — the bucket key and the row owner are the same person.
+            side_effect=lambda: _FakeSupabase(
+                _Scenario(book_row=_book_row(user_id=sub), chapter_row=_chapter_row())
+            ),
+        ):
+            client = TestClient(app, raise_server_exceptions=False)
+            statuses = [client.post(_url(), json={}, headers=headers).status_code for _ in range(3)]
+            fourth = client.post(_url(), json={}, headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+        limiter.reset()
+
+    assert statuses == [202, 202, 202], f"the first three requests were not accepted: {statuses}"
+    assert fourth.status_code == 429, "the 4th generate request in a minute was not rate limited"
+    assert "Retry-After" in fourth.headers
+
+
+@pytest.mark.unit
+def test_a_stale_generating_lesson_does_not_block_regeneration() -> None:
+    """D53. Nothing but the worker moves a lesson out of `generating`, so a worker
+    killed mid-run (OOM, deploy, eviction) leaves a row that never clears. Without
+    a staleness bound that chapter+tier can NEVER be generated again — the
+    idempotency check keeps returning 200 with the dead lesson, and `?force=true`
+    (D54) does not exist. The user's only escape would be a support ticket.
+    """
+    from app.config import get_settings
+
+    stale = get_settings().arq_job_timeout_s + 60
+    sc = _ok_scenario(
+        existing_lessons=[
+            {
+                "lesson_id": EXISTING_LESSON_ID,
+                "status": "generating",
+                "tier": _default_tier(),
+                "created_at": _fresh_iso(age_s=stale),
+            }
+        ]
+    )
+    resp, sb, pool = _post(sc, body={"tier": _default_tier()})
+
+    assert resp.status_code == 202, "a stale generating lesson must not block a fresh one"
+    assert resp.json()["lesson_id"] == NEW_LESSON_ID
+    assert pool.enqueue_job.await_count == 1
+
+
+@pytest.mark.unit
+def test_a_stale_ready_lesson_is_still_returned_never_regenerated() -> None:
+    """The staleness bound must apply to `generating` ONLY. A `ready` lesson is
+    idempotent forever — ageing it out would regenerate, and charge for, a lesson
+    the user already has. Age is evidence that a RUN died, not that a finished
+    lesson expired.
+    """
+    ancient = _fresh_iso(age_s=90 * 24 * 3600)
+    sc = _ok_scenario(
+        existing_lessons=[
+            {
+                "lesson_id": EXISTING_LESSON_ID,
+                "status": "ready",
+                "tier": _default_tier(),
+                "created_at": ancient,
+            }
+        ]
+    )
+    resp, sb, pool = _post(sc, body={"tier": _default_tier()})
+
+    assert resp.status_code == 200
+    assert resp.json()["lesson_id"] == EXISTING_LESSON_ID
+    assert pool.enqueue_job.await_count == 0, "a 90-day-old ready lesson must not be regenerated"

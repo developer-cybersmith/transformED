@@ -36,6 +36,7 @@ Run:
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import uuid
 from collections.abc import Iterator
@@ -52,6 +53,169 @@ from tests.integration import test_book_select_lists_against_postgrest as pgrst_
 from tests.integration.test_book_select_lists_against_postgrest import ensure_postgrest_stack
 
 pytestmark = pytest.mark.postgres
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# The rollback under test is the ROUTER'S, not a retyped copy of it
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Review finding this addresses: the SQL below used to be two hand-written
+# DELETEs. That makes the test a statement about SQL, not about the endpoint —
+# the router could grow a third delete, drop one, reverse the order, or start
+# calling `storage.remove(...)`, and every assertion here would still pass while
+# describing code that no longer exists. The FK graph would be exercised
+# faithfully and the wrong program would be exercised.
+#
+# So the statements are DERIVED from `generate_chapter_lesson`'s own exception
+# handler: its deletes are parsed out of the source, their shape is asserted, and
+# the SQL is generated from what was parsed. Adding a `books` delete to the
+# router therefore changes what this file executes, and the blast-radius
+# assertions catch it.
+#
+# The AST helpers are imported from the unit suite rather than re-written; they
+# carry their own premise tests there, and a second copy is a second chance to
+# get `_selected_table` subtly wrong in the file whose whole job is precision.
+
+
+def _generate_handler() -> ast.FunctionDef | ast.AsyncFunctionDef:
+    from tests.unit.test_generate_lesson_endpoint import (
+        _executable_tree,
+        _find_function,
+        _router_path,
+    )
+
+    tree = _executable_tree(_router_path().read_text(encoding="utf-8"))
+    return _find_function(tree, "generate_chapter_lesson")
+
+
+def _handler_names(node: ast.Try) -> list[str | None]:
+    return [h.type.id if isinstance(h.type, ast.Name) else None for h in node.handlers]
+
+
+def _rollback_handler() -> ast.ExceptHandler:
+    """The `except Exception` arm of `generate_chapter_lesson`'s OUTER try — the
+    rollback.
+
+    Identified by the `except HTTPException: raise` arm that sits beside it: that
+    re-raise is what distinguishes the outer create-the-work block (where a
+    gate's 4xx must pass through untouched) from the small inner try/except pairs
+    that isolate each individual delete. Selecting on "the only `except
+    Exception` in the function" was correct until D53 replaced
+    `contextlib.suppress` with logging try/excepts, and would now match three.
+    """
+    tries = [
+        node
+        for node in ast.walk(_generate_handler())
+        if isinstance(node, ast.Try) and {"HTTPException", "Exception"} <= set(_handler_names(node))
+    ]
+    assert len(tries) == 1, (
+        f"expected exactly one outer try with both an HTTPException re-raise and "
+        f"an Exception rollback arm, found {len(tries)}"
+    )
+    handlers = [
+        h for h in tries[0].handlers if isinstance(h.type, ast.Name) and h.type.id == "Exception"
+    ]
+    assert len(handlers) == 1
+    return handlers[0]
+
+
+def _parsed_rollback_deletes() -> list[tuple[str, str]]:
+    """`[(table, filter_column), ...]` in SOURCE ORDER, read off the router."""
+    from tests.unit.test_generate_lesson_endpoint import _selected_table
+
+    found: list[tuple[int, str, str]] = []
+    for node in ast.walk(_rollback_handler()):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "eq":
+            continue
+        inner = node.func.value
+        if not (
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Attribute)
+            and inner.func.attr == "delete"
+        ):
+            continue
+        table = _selected_table(inner.func.value)
+        column = node.args[0] if node.args else None
+        assert table is not None, f"could not resolve the table for {ast.unparse(node)}"
+        assert isinstance(column, ast.Constant) and isinstance(column.value, str), (
+            f"the rollback filters on a non-literal column: {ast.unparse(node)}"
+        )
+        found.append((node.lineno, table, column.value))
+    return [(table, column) for _, table, column in sorted(found)]
+
+
+def test_the_routers_rollback_is_exactly_two_deletes_child_before_parent() -> None:
+    """Binding the SQL in this file to the code it claims to be testing.
+
+    What breaks in production if this fails: the rollback grew — or lost — a
+    statement, and every FK-level assertion in this file went on passing about a
+    program that is no longer running. The specific regressions it catches are
+    the three AC10 forbids by name: deleting the `books` row (destroys the whole
+    book over one failed generation), `storage.remove(...)` on the PDF (the
+    object every future generation of every other chapter reconstructs its key
+    to), and touching `chapters` (the ON DELETE CASCADE this entire file exists
+    to demonstrate). The pre-Phase-3 code did all three, correctly, because
+    upload and generation were one call — so this is a live copy-forward risk,
+    not a hypothetical.
+
+    Order is asserted, not just membership: child before parent.
+    """
+    assert _parsed_rollback_deletes() == [
+        ("lesson_jobs", "lesson_id"),
+        ("lessons", "lesson_id"),
+    ], "the router's rollback is no longer `lesson_jobs` then `lessons` by lesson_id"
+
+    handler = _rollback_handler()
+
+    # Nothing else writes. `_WRITE_METHODS` covers insert/update/upsert/delete.
+    from tests.unit.test_generate_lesson_endpoint import _WRITE_METHODS, _selected_table
+
+    writes = [
+        (_selected_table(node.func.value), node.func.attr)
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _WRITE_METHODS
+    ]
+    assert writes == [("lesson_jobs", "delete"), ("lessons", "delete")], (
+        f"the rollback performs writes beyond the two mandated deletes: {writes}"
+    )
+
+    # ...and never reaches Supabase Storage. This is the AC10 clause that has no
+    # observable counterpart in Postgres at all (see the storage test below).
+    storage_refs = [
+        ast.unparse(node)
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Attribute) and node.attr in {"storage", "remove"}
+    ]
+    assert not storage_refs, (
+        "the rollback touches Supabase Storage — the uploaded PDF belongs to the "
+        f"BOOK, not to this request, and removing it orphans every other chapter: {storage_refs}"
+    )
+
+
+def _rollback_sql(lesson_id: str) -> str:
+    """The router's own rollback, rendered as SQL against the container.
+
+    Every delete must filter on `lesson_id` — the only identifier this request
+    minted. A delete keyed on anything else (`book_id`, `chapter_id`) is by
+    definition reaching outside the request's blast radius, and rendering it with
+    the lesson id would produce a statement that matches no rows and therefore
+    looks harmless: the destructive router would be exercised as a safe one. Fail
+    instead, loudly, rather than test a program that is not the one on disk.
+    """
+    deletes = _parsed_rollback_deletes()
+    assert deletes, "no deletes were parsed out of the router's rollback"
+    foreign = [(table, column) for table, column in deletes if column != "lesson_id"]
+    assert not foreign, (
+        "the router's rollback deletes rows keyed on something other than the "
+        f"lesson id it just created — that is outside this request's blast radius: {foreign}"
+    )
+    return "".join(
+        f"DELETE FROM public.{table} WHERE {column} = '{lesson_id}';" for table, column in deletes
+    )
 
 
 def _psql(statement: str) -> subprocess.CompletedProcess[str]:
@@ -208,8 +372,15 @@ def _counts(ids: dict[str, str]) -> dict[str, int]:
 # AC10 — the mandated rollback destroys nothing it did not create
 # ════════════════════════════════════════════════════════════════════════════
 def test_the_rollback_removes_only_the_lesson_and_its_job(ingested: dict[str, str]) -> None:
-    """AC10, executed. `lesson_jobs` (child) then `lessons` (parent), each under
-    `contextlib.suppress(Exception)` in the router; the SQL below is that pair.
+    """AC10, executed. `lesson_jobs` (child) then `lessons` (parent), each
+    isolated in the router so a transient failure on one does not abandon the
+    other.
+
+    The SQL is GENERATED from the router's own exception handler by
+    `_rollback_sql`, not retyped: a retyped copy makes this a test of SQL rather
+    than of the endpoint, and a divergence between the two would be invisible.
+    `test_the_routers_rollback_is_exactly_two_deletes_child_before_parent` pins
+    the shape being generated.
 
     The row that matters is `chunks`: it is two FK hops from the lesson, so no
     reviewer reading the delete statements sees it, and no mock can show it
@@ -223,10 +394,7 @@ def test_the_rollback_removes_only_the_lesson_and_its_job(ingested: dict[str, st
         "lesson_jobs": 1,
     }, "the fixture did not produce the pre-rollback state"
 
-    rollback = _psql(
-        f"DELETE FROM public.lesson_jobs WHERE lesson_id = '{ingested['lesson']}';"
-        f"DELETE FROM public.lessons     WHERE lesson_id = '{ingested['lesson']}';"
-    )
+    rollback = _psql(_rollback_sql(ingested["lesson"]))
     assert rollback.returncode == 0, f"the rollback itself failed: {rollback.stderr[:400]}"
 
     assert _counts(ingested) == {
@@ -245,11 +413,8 @@ def test_the_rolled_back_book_and_chapter_are_unmodified_not_merely_present(
     contents — `books.status` reset to 'processing', or the chapter's page range
     lost, either of which silently breaks a later regeneration. Assert the values.
 
-    The storage object itself (AC10 also forbids `storage.remove(...)`) is not
-    observable from Postgres; what is observable, and what the worker actually
-    reads, is that `source_file_path` was reconstructible from an untouched
-    `books.filename` — so that is asserted here and the object itself belongs to
-    the AC20 live run.
+    The storage object is covered separately by
+    `test_the_pdfs_storage_key_is_still_reconstructible_after_the_rollback`.
     """
     before = scalar(
         "SELECT b.filename||'|'||b.status||'|'||b.page_count||'|'||c.title||'|'"
@@ -260,13 +425,7 @@ def test_the_rolled_back_book_and_chapter_are_unmodified_not_merely_present(
     )
     assert before == "ac10 rollback.pdf|ready|120|AC10 ch|1|40|fallback|NULL"
 
-    assert (
-        _psql(
-            f"DELETE FROM public.lesson_jobs WHERE lesson_id = '{ingested['lesson']}';"
-            f"DELETE FROM public.lessons     WHERE lesson_id = '{ingested['lesson']}';"
-        ).returncode
-        == 0
-    )
+    assert _psql(_rollback_sql(ingested["lesson"])).returncode == 0
 
     after = scalar(
         "SELECT b.filename||'|'||b.status||'|'||b.page_count||'|'||c.title||'|'"
@@ -283,6 +442,59 @@ def test_the_rolled_back_book_and_chapter_are_unmodified_not_merely_present(
     )
     assert bodies == ["ac10 chunk one", "ac10 chunk two"], (
         f"chunk bodies did not survive the rollback: {bodies}"
+    )
+
+
+def test_the_pdfs_storage_key_is_still_reconstructible_after_the_rollback(
+    ingested: dict[str, str],
+) -> None:
+    """AC10's third prohibition — never `storage.remove(...)` the PDF — asserted
+    rather than deferred.
+
+    WHAT IS AND IS NOT COVERED HERE, plainly:
+
+    * NOT covered: whether an object exists in the Supabase Storage bucket. This
+      container is Postgres + PostgREST; there is no Storage service in it and no
+      `storage.objects` table, so the object's existence is not observable from
+      this harness at all. Only the AC20 live run can observe that, and asserting
+      a stand-in as though it were the object would be worse than saying so.
+
+    * COVERED, and it is the half that can actually regress silently: the object
+      is ADDRESSABLE only by recomputing `{user_id}/{book_id}/{filename}` from the
+      `books` row, because `books` has no path column. The rollback must therefore
+      leave that row's `user_id` and `filename` byte-identical — a rollback that
+      deleted or rewrote them would orphan the object just as surely as removing
+      it, and the symptom would be identical: `extract_node` dying on a missing
+      object minutes after a 202. This asserts the key the lesson was created with
+      is reproducible from the surviving book row, using the production helper.
+
+    * COVERED by its partner, and the reason a source assertion is not optional
+      here: `test_the_routers_rollback_is_exactly_two_deletes_child_before_parent`
+      proves the handler contains no `storage`/`remove` reference on ANY branch.
+      Between the two, "the object survives" is established without a Storage
+      service — one shows no code path can delete it, the other shows the key
+      that finds it still resolves.
+    """
+    from app.modules.content.router import _source_pdf_path
+
+    key_before = scalar(
+        f"SELECT source_file_path FROM public.lessons WHERE lesson_id = '{ingested['lesson']}'"
+    )
+    assert key_before, "the fixture's lesson has no source_file_path to reconstruct"
+
+    assert _psql(_rollback_sql(ingested["lesson"])).returncode == 0
+
+    user_id, filename = scalar(
+        f"SELECT user_id::text||'|'||filename FROM public.books "
+        f"WHERE book_id = '{ingested['book']}'"
+    ).split("|", 1)
+
+    rebuilt = _source_pdf_path(user_id, ingested["book"], filename)
+    assert rebuilt == key_before, (
+        "after the rollback the surviving books row no longer reproduces the "
+        f"storage key the lesson was created with: {rebuilt!r} != {key_before!r} — "
+        "the uploaded PDF is now unreachable for every future generation of every "
+        "chapter in this book"
     )
 
 
@@ -331,8 +543,7 @@ def test_writing_chapters_lesson_id_makes_the_same_rollback_destroy_the_chapter(
         BEGIN;
         UPDATE public.chapters SET lesson_id = '{ingested["lesson"]}'
           WHERE chapter_id = '{ingested["chapter"]}';
-        DELETE FROM public.lesson_jobs WHERE lesson_id = '{ingested["lesson"]}';
-        DELETE FROM public.lessons     WHERE lesson_id = '{ingested["lesson"]}';
+        {_rollback_sql(ingested["lesson"])}
         SELECT (SELECT count(*) FROM public.books    WHERE book_id='{ingested["book"]}')||'|'
              ||(SELECT count(*) FROM public.chapters WHERE chapter_id='{ingested["chapter"]}')||'|'
              ||(SELECT count(*) FROM public.chunks   WHERE chapter_id='{ingested["chapter"]}');
