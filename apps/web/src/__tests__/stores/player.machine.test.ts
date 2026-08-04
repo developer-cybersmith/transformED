@@ -268,6 +268,16 @@ describe('enterQuiz / exitQuiz / enterTeachBack / exitTeachBack', () => {
     usePlayerStore.getState().enterQuiz();
     expect(usePlayerStore.getState().status).toBe('IDLE');
   });
+
+  it('enterQuiz() clears cesScore — a stale score must not reappear when PLAYING resumes after quiz/teach-back (S3-04 review fix)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().setCesScore(0.9);
+
+    usePlayerStore.getState().enterQuiz();
+
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
 });
 
 describe('quizFiredForSegment — double-fire prevention', () => {

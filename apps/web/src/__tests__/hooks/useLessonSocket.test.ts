@@ -151,6 +151,75 @@ describe('useLessonSocket', () => {
     expect(usePlayerStore.getState().cesScore).toBeNull();
   });
 
+  it.each([
+    ['NaN', Number.NaN],
+    ['a string', '0.5'],
+    ['negative', -0.1],
+    ['above 1', 1.1],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('rejects a ces value that is %s (review fix)', async (_label, badValue) => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: badValue, window_index: 1 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it('rejects an out-of-order ces_update (lower window_index than one already applied, review fix)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.5, window_index: 5 },
+      }),
+    );
+    expect(usePlayerStore.getState().cesScore).toBe(0.5);
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.9, window_index: 2 },
+      }),
+    );
+
+    // Stale, lower window_index must not overwrite the newer score.
+    expect(usePlayerStore.getState().cesScore).toBe(0.5);
+  });
+
+  it('accepts a later ces_update with a higher window_index', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.5, window_index: 5 },
+      }),
+    );
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.9, window_index: 6 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBe(0.9);
+  });
+
   it('degrades gracefully (status closed, no socket) when the Supabase session lookup rejects', async () => {
     getSessionMock.mockRejectedValueOnce(new Error('network down'));
 

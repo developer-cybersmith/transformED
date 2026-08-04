@@ -417,7 +417,7 @@ describe('Player — lesson WebSocket (S2-06)', () => {
     });
 
     expect(screen.queryByTestId('ces-indicator')).not.toBeNull();
-    expect(screen.getByText('Focused')).not.toBeNull();
+    expect(screen.getByTestId('ces-indicator').getAttribute('title')).toBe('Focused');
   });
 });
 

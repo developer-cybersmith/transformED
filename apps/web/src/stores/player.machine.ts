@@ -248,7 +248,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!segment) return;
     const next = new Set(quizFiredForSegment);
     next.add(segment.segment_id);
-    set({ status: 'QUIZ', quizFiredForSegment: next });
+    // cesScore cleared here (review fix, S3-04): PLAYING can resume minutes
+    // later after quiz/teach-back, and the old score/band must not reappear
+    // stale before a fresh ces_update arrives.
+    set({ status: 'QUIZ', quizFiredForSegment: next, cesScore: null });
     // Immediate, not throttled — audio is paused for the quiz so no further
     // updateAudioPosition ticks will fire to flush this update; closing the
     // tab here must not lose it (would re-fire an already-answered quiz).

@@ -4,7 +4,7 @@ baseline_commit: cd776fe
 
 # Story 2.41: CES Indicator Component (S3-04)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -44,6 +44,16 @@ so that I'm not blindsided by an intervention, without the display becoming a di
   - [x] 4.2 GREEN: implement.
 - [x] Task 5 (AC: 7): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
+### Review Findings
+
+- [x] [Review][Patch] **Resolved by user decision:** shrink `CESIndicator` to a fixed 40×40px colored badge; the qualitative label moves to a native `title` tooltip (shown on hover/focus) instead of permanently visible text, resolving the AC-5 (≤40px) vs AC-4 (visible label) conflict. Added a real size assertion (`w-10 h-10` class present). [apps/web/src/components/player/CESIndicator.tsx]
+- [x] [Review][Patch] No validation of the `ces` payload value — a malformed/NaN/out-of-range value silently resolves to "Focused" (the most reassuring, worst-case-wrong default) instead of being rejected [apps/web/src/hooks/useLessonSocket.ts:44-50, apps/web/src/components/player/CESIndicator.tsx (bandFor)]
+- [x] [Review][Patch] No `window_index` ordering guard — an out-of-order/delayed `ces_update` for the same session can overwrite a newer score with a stale one [apps/web/src/hooks/useLessonSocket.ts:44-50]
+- [x] [Review][Patch] Stale `cesScore` persists across a PLAYING → QUIZ/TEACH_BACK → PLAYING cycle — the old score/band reappears instantly on return to PLAYING, before any fresh `ces_update` arrives [apps/web/src/stores/player.machine.ts (enterQuiz)]
+- [x] [Review][Patch] No test verifies `data-band` maps to the correct color — a swapped `BAND_COLORS`/`BAND_LABELS` mapping would pass every existing test [apps/web/src/__tests__/components/player/CESIndicator.test.tsx]
+- [x] [Review][Defer] No `cancelled` guard on `handleServerMessage` — a message from an already-torn-down socket instance can still mutate global store state after the hook has moved to a new session [apps/web/src/hooks/useLessonSocket.ts:31-72] — deferred, pre-existing gap shared by every case in this switch (same class as Story 2-40's identical deferred finding), not unique to this diff
+- [x] [Review][Defer] No accessibility affordances (aria-live/role=status, color-only band cues) [apps/web/src/components/player/CESIndicator.tsx] — deferred, tracked separately as a dedicated future accessibility pass (S4-04), same treatment as Story 2-40's identical finding
+
 ## Dev Notes
 
 ### What NOT to do
@@ -75,6 +85,7 @@ Follow `CheckingInTransition.test.tsx`'s pattern (`apps/web/src/__tests__/compon
 |------|--------|--------|
 | 2026-08-04 | Story created per S3-04 in `docs/dev2-sprint-tracker.md`. Branch `sprint3/s3-04-ces-indicator` off `main`. | Dev 2 |
 | 2026-08-04 | Implemented all 5 tasks, TDD (RED confirmed before each GREEN). Full `apps/web` suite: 56 files / 598 tests passing. `tsc --noEmit` clean. `eslint` clean on every touched file (3 pre-existing `useLessonSocket.ts` disable-directive warnings, unrelated, same as Story 2-40). Status → review. | Dev 2 |
+| 2026-08-04 | 3-agent adversarial code review. 1 decision resolved by user (fixed 40×40 badge, title tooltip), 4 patches applied, 2 deferred, 5 dismissed. Full suite 56 files / 610 tests passing, `tsc --noEmit` clean, `eslint` clean. Status → done. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -104,3 +115,17 @@ Follow `CheckingInTransition.test.tsx`'s pattern (`apps/web/src/__tests__/compon
 - `apps/web/src/__tests__/hooks/useLessonSocket.test.ts` (MODIFIED — removed `ces_update` from the no-op `it.each`; new dedicated dispatch + foreign-session tests; fixture reset updated)
 - `apps/web/src/__tests__/components/player/CESIndicator.test.tsx` (NEW — full visibility/label/raw-score-never-shown test suite)
 - `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED — new mount-presence test)
+
+### Review Round (2026-08-04) — 3-agent adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor)
+
+1 decision-needed resolved, 4 patches applied, 2 deferred (see `docs/stories/deferred-work.md`), 5 dismissed as noise (bare-string session_id auth is the existing WS trust model not a new gap, an unverifiable-from-diff-alone comment claim, untested layout-overlap consistent with existing codebase norms, a false test-inconsistency claim — the async-wait pattern in the foreign-session test matches the pre-existing `state_change` test's identical pattern — and out-of-range boundary tests folded into the validation-guard fix instead of standing alone).
+
+**Decision resolved by user:** AC-5 (≤40px in either dimension) directly conflicted with AC-4 (visible qualitative label) — a dot+visible-text pill cannot fit "Engaged" within 40px width. User chose: shrink to a fixed 40×40px badge, move the label to a native `title` tooltip (hover/focus-revealed, also read by screen readers) instead of permanently-visible text.
+
+**Fixes applied:**
+- `useLessonSocket.ts`: `ces_update` now validates `ces` is a finite number in `[0, 1]` before storing (a malformed/NaN/out-of-range value is silently rejected instead of resolving to the falsely-reassuring "Focused" band via `bandFor()`'s comparison semantics), and tracks `window_index` per effect-run to reject an out-of-order/delayed frame for the same session.
+- `CESIndicator.tsx`: redesigned to the fixed-40×40px/title-tooltip shape (see decision above); added a real `w-10 h-10` size assertion.
+- `player.machine.ts`: `enterQuiz()` now also clears `cesScore` — the score/band no longer reappears stale when `PLAYING` resumes after quiz/teach-back.
+- New test: `data-band` ↔ color-class consistency, so a swapped `BAND_COLORS`/`BAND_LABELS` mapping can't silently pass.
+
+Full `apps/web` suite after the review round: **56 files, 610 tests** (598 + 12 net new), all passing. `tsc --noEmit` clean. `eslint` clean on every touched file (same 3 pre-existing, unrelated `useLessonSocket.ts` warnings as Story 2-40).
