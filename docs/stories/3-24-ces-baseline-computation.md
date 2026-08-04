@@ -177,9 +177,12 @@ passing. Full suite has 0 regressions.
   - [x] 3.23 `test_async_all_rows_ended_at_none_returns_none` — IMPROVEMENT (in-progress sessions)
   - [x] 3.24 `test_async_skips_null_ended_at_rows` — AC 7 (ended_at filtering)
   - [x] 3.25 `test_compute_baseline_all_zeros` — edge case (all zeros)
+  - [x] 3.26 `test_positional_args_raise_type_error` — AC 3 iscoroutinefunction assertion added (post-impl audit)
+  - [x] 3.27 `test_config_ces_baseline_window_default_and_constraints` — AC 11 explicit test (post-impl audit)
+  - [x] 3.28 `test_config_ces_baseline_ttl_default_and_constraints` — AC 12 explicit test (post-impl audit)
 
 - [x] Task 4: Run full test suite — AC 19
-  - [x] 4.1 `pytest -m unit tests/test_ces_baseline.py` → 25/25 pass
+  - [x] 4.1 `pytest -m unit tests/test_ces_baseline.py` → 27/27 pass
   - [x] 4.2 Full suite → 0 regressions (459 pass, 18 pre-existing failures in unrelated auth/websocket modules)
 
 ## Dev Notes
@@ -255,20 +258,24 @@ hardcoded literals and no forbidden imports.
 - Added `math.isfinite()` guard: PostgreSQL NUMERIC(5,2) can't store NaN/Inf but guarded for robustness
 
 ### Completion Notes
-All 19 ACs satisfied. 25 unit tests pass (exceeded AC 19 minimum of 15). 5-agent adversarial code review
+All 19 ACs satisfied. 27 unit tests pass (exceeded AC 19 minimum of 15). 5-agent adversarial code review
 completed with 2 BLOCKERs and 5 improvements — all addressed and committed. 459 total unit tests pass
 with 0 regressions introduced. Redis key corrected from sprint tracker's semantically wrong
 `session:{session_id}:ces_baseline` to `user:{user_id}:ces_baseline` (documented in story Background).
+Post-implementation audit (2026-08-04): 3 gaps fixed — AC 3 test strengthened with iscoroutinefunction
+assertion, AC 11 and AC 12 dedicated tests added for Settings field constraints. Coverage header corrected
+(AC 19 label, AC 11/12 entries). 27/27 tests pass with 0 regressions.
 
 ### File List
 - `apps/api/app/modules/assessment/ces_baseline.py` — NEW
 - `apps/api/app/config.py` — MODIFIED (`ces_baseline_window`, `ces_baseline_ttl_seconds` fields added)
-- `apps/api/tests/test_ces_baseline.py` — NEW (25 tests)
+- `apps/api/tests/test_ces_baseline.py` — NEW (27 tests)
 
 ### Change Log
 - 2026-07-03: Story created — Sprint 3 Task 2 CES baseline computation (BMAD story-first gate, commit 41fb90f)
 - 2026-07-03: Implementation complete — config.py + ces_baseline.py + test_ces_baseline.py (21 tests GREEN)
 - 2026-07-03: 5-agent code review complete — 2 BLOCKERs fixed, 5 improvements applied, 25 tests total
+- 2026-08-04: Post-impl audit remediation — AC 3 iscoroutinefunction assertion, AC 11 + AC 12 dedicated tests; coverage header corrected; 27 tests total; audit report at `docs/reports/sprint3-task2-bmad-validation-report.md`
 
 ## Senior Developer Review (AI)
 
@@ -288,3 +295,31 @@ with 0 regressions introduced. Redis key corrected from sprint tracker's semanti
 | 8 | Blind Hunter | NITPICK | Service-role client bypasses RLS; user_id must come from JWT. | Added SECURITY NOTE comment in `compute_and_store_ces_baseline()` |
 
 **Final state:** 25/25 tests pass, 459 total unit tests pass, 0 regressions. All 19 ACs verified.
+
+---
+
+## Post-Implementation Audit (2026-08-04)
+
+**Audit type:** BMAD post-implementation audit remediation
+**Branch:** `sprint3-task2-dev3`
+**Auditor:** Dev 3 / AI adversarial review
+
+### Gaps Found and Fixed
+
+| # | Severity | Finding | Fix Applied |
+|---|----------|---------|-------------|
+| 1 | MEDIUM | AC 3 test verified keyword-only but NOT `iscoroutinefunction` — an accidental `async` removal would pass all tests | Added `assert inspect.iscoroutinefunction(func)` to `test_positional_args_raise_type_error` with explanatory docstring: "Dev 4 awaits this function in the WebSocket handler — sync would deadlock." |
+| 2 | MEDIUM | ACs 11/12 (Settings field constraints `ge=1, le=50`, `ge=60`) had zero dedicated tests — only implicit via `_settings()` construction | Added `test_config_ces_baseline_window_default_and_constraints` and `test_config_ces_baseline_ttl_default_and_constraints`, each exercising both valid bounds and `pydantic.ValidationError` on out-of-range inputs |
+| 3 | LOW | Coverage header: AC 19 entry mislabeled "Redis.set NOT called when baseline is None" (describes AC 8); AC 11/12 entries missing entirely | Corrected AC 19 label to "≥15 @pytest.mark.unit tests all pass; 0 regressions in full suite"; added AC 11 and AC 12 header entries |
+
+### Post-Audit Validation Results
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | PASS — 0 errors |
+| Ruff format | PASS — no changes |
+| Unit tests (`pytest -m unit tests/test_ces_baseline.py`) | **27/27 PASSED in 2.94s** |
+| Full suite regressions | 0 regressions |
+| Production logic changes | None — only test + doc changes |
+
+**All 19 ACs verified. 27/27 tests pass. Implementation 100% complete.**

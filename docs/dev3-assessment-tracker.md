@@ -610,9 +610,10 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - From session 2+: rolling average of last 5 sessions' CES (window configurable via `CES_BASELINE_WINDOW`)
   - Cached in Redis `user:{user_id}:ces_baseline` (TTL-based)
   - `compute_and_store_ces_baseline(user_id, session_id, supabase, redis, settings)` returns `float | None`
-  - 25 unit tests pass; 5-agent adversarial review approved; 2 BLOCKERs fixed
+  - 27 unit tests pass (25 original + 2 post-impl audit: AC 11/12 dedicated tests); 5-agent adversarial review approved; 2 BLOCKERs fixed
+  - Post-impl audit (2026-08-04): AC 3 iscoroutinefunction assertion added; AC 11 + AC 12 explicit tests added; coverage header corrected; validation report at `docs/reports/sprint3-task2-bmad-validation-report.md`
   - Story 3-24 at `docs/stories/3-24-ces-baseline-computation.md` — status: done
-  - Branch: `dev3-sprint3-task2` — merged to main via PR #59
+  - Branch: `sprint3-task2-dev3` (post-audit remediation) — merged to `master-sprint3-dev3`
 
 - [x] **Learner DNA fusion formula live** — ✓ 2026-07-03
   - After each completed session, update `learner_dna` dimensions:
