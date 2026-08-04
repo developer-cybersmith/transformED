@@ -641,7 +641,8 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - **AC:** Profile text describes learning style naturally; spot-check confirms no clinical language
   - Story 3-26 at `docs/stories/3-26-dna-profile-text.md` — status: done
   - 29 unit tests GREEN; 5-agent adversarial review APPROVED; all 3 BLOCKERs + R4-R11 security/test patches resolved
-  - Branch: `dev3-sprint3-task4` — pushed to origin, PR pending
+  - Post-impl audit (2026-08-04): AC 8 iscoroutinefunction assertion added; tasks 3.24–3.29 documented; Dev Notes Option B block corrected; validation report at `docs/reports/sprint3-task4-bmad-validation-report.md`
+  - Branch: `dev3-sprint3-task4` — merged into `main` (commit `54d4ec2` is ancestor of `master-sprint3-dev3`); post-audit remediation on `sprint3-task4-dev3`
 
 - [x] **Growth tracking (delta per dimension per session)** — ✓ 2026-07-07
   - After each `learner_dna` upsert, write a `session_events` row:
