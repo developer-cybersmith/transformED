@@ -1,6 +1,6 @@
 # Story W4: The book-scale UI runs against the live API — and a guard that keeps it that way
 
-Status: ready-for-dev
+Status: review
 
 **Track:** W · **Branch:** `book-scale/track-w`
 **Depends on:** W3. **Gates:** Phase 7.
@@ -86,3 +86,33 @@ the same standing as Phases 5, 6 and 6.5.
 - `dashboard.service.ts`'s `learningPulse` fallback is **correct as written** — it is scoped to
   one field, wrapped, and degrades to `undefined` rather than to fake numbers. Do not widen the
   guard to fail on it.
+
+## Dev Agent Record
+
+### Completion Notes
+
+- **AC1** — `apps/web/src/__tests__/guards/no-mocks-in-book-scale-path.test.ts`, 13 tests, walking
+  the import graph **transitively** from 10 entry points. Mutation-checked: one
+  `import { lessonApi } from '@/mocks/api'` in `books.service.ts` reddens **7** of them, which is
+  what proves the walker follows edges rather than just reading the entry file. It carries a
+  positive control (`reports.service.ts`, a legitimate mock importer outside book-scale, MUST be
+  flagged) so a walker that resolved nothing could not report everything clean.
+- Type-only imports are deliberately allowed and that is asserted, not merely commented —
+  `LearningPulse.tsx`'s `import type … from "@/mocks/data/reports"` is erased at build time.
+- **AC2** — `getLesson`/`updateProgress` **kept and registered as D56**, not deleted.
+  `lesson.service.test.ts:70,76` deliberately pin the delegation with "no real backend yet", so
+  deleting them would remove documented, tested state rather than dead weight.
+- **AC3** — registered as **D57** rather than half-fixed. The client default includes `/api` and
+  `ci.yml:188` omits it; harmless at build time, 404s every call at runtime.
+- **AC4** — `docs/book-scale-phase-7-run-recipe.md`, including the three stale-process incidents
+  that cost the most time in Phase 6 and the correct Windows `netstat` invocation (the one written
+  during Phase 6 could never match).
+- **AC5** — W4 is `🧪 Implemented`. "The whole UI against the live API" is a browser run against a
+  completed generation, and generation costs money. That is Phase 7.
+- **AC6** — `pnpm test` **66 files / 752 tests**, lint and type-check clean.
+
+### File List
+
+- `apps/web/src/__tests__/guards/no-mocks-in-book-scale-path.test.ts` (new)
+- `docs/book-scale-phase-7-run-recipe.md` (new) · `docs/DEFECT-REGISTER.md` (D56, D57)
+- `docs/book-scale-phase-tracker.md`

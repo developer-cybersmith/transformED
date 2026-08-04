@@ -49,13 +49,23 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 
 | Phase | Title | Status | Starts after |
 |:-----:|-------|--------|--------------|
-| **W0** | Contract harness (MSW + real fixtures + CI that can go red) | ⬜ Not Started | now — no backend dependency |
-| **W1** | Upload becomes ingestion (poll the book, not the lesson) | ⬜ Not Started | W0 Verified + SYNC-1 |
-| **W2** | Book library + chapter picker | ⬜ Not Started | W1 Verified |
-| **W3** | Generate from chapter (`tier` moves here) | ⬜ Not Started | SYNC-2 |
-| **W4** | MSW off — the whole UI against the live API | ⬜ Not Started | Phase 6 Verified |
+| **W0** | Contract harness (MSW + real fixtures + CI that can go red) | 🧪 Implemented | — |
+| **W1** | Upload becomes ingestion (poll the book, not the lesson) | 🧪 Implemented | — |
+| **W2** | Book library + chapter picker | 🧪 Implemented | — |
+| **W3** | Generate from chapter (`tier` moves here) — restores Sprint 2 **S2-09** | 🧪 Implemented | — |
+| **W4** | Live API, no mocks + a guard that keeps it that way | 🧪 Implemented | — |
 
-**Totals:** Backend — Not Started 1 · Implemented 3 · Verified 5. Track W — Not Started 5.
+**Totals:** Backend — Not Started 1 · Implemented 3 · Verified 5. Track W — Implemented 5.
+
+> **All five W phases are Implemented; none is Verified.** Suite: **66 files / 752 tests**. Every W
+> exit criterion is *browser-driven* ("upload a real book and watch chapters appear"), and no browser
+> run has happened — that run is Phase 7. Recipe: `docs/book-scale-phase-7-run-recipe.md`.
+>
+> **W4's premise turned out to be wrong, and that was the finding.** It was scoped as "MSW off", but
+> MSW was never in the app path — a devDependency wired only into `vitest.config.ts`. The book-scale
+> path was already mock-free by construction. W4 therefore ships a transitive import guard that makes
+> it a *property* rather than a fact about today: injecting one mock import into `books.service.ts`
+> reddens 7 entry points.
 
 ### Synchronisation points
 
