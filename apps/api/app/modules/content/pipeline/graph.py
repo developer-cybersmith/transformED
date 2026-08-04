@@ -611,10 +611,22 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     chapter_page_start = sections[0].get("page_start", 1) if sections else 1
     chapter_page_end = sections[-1].get("page_end", 1) if sections else 1
 
+    # UPSERT, not INSERT. `20260803000000_chapters_book_scoped.sql` adds
+    # UNIQUE (book_id, chapter_index), and this node's checkpoint is written at the
+    # END of the node — after the chunks upsert below. A failure in that window
+    # leaves node_outputs["chunk"] unset, so the ARQ retry re-enters here and
+    # re-inserts the same (book_id, chapter_index=1). Before the constraint that
+    # produced a duplicate row and the job completed; a plain INSERT afterwards
+    # raises 23505 on every one of max_tries=3 attempts, turning a transient
+    # failure into a permanently stuck lesson.
+    #
+    # Phase 3 deletes this whole block (the hardcoded single chapter is replaced by
+    # real detection in book_ingest_job) — this keeps the existing path recoverable
+    # until then. Guarded by test_chunk_node_chapter_insert_is_retry_safe.
     try:
         chapter_resp = (
             supabase.table("chapters")
-            .insert(
+            .upsert(
                 {
                     "lesson_id": lesson_id,
                     "book_id": book_id,
@@ -622,7 +634,8 @@ async def chunk_node(state: PipelineState) -> PipelineState:
                     "page_start": chapter_page_start,
                     "page_end": chapter_page_end,
                     "chapter_index": 1,
-                }
+                },
+                on_conflict="book_id,chapter_index",
             )
             .execute()
         )

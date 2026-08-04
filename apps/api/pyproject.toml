@@ -125,6 +125,7 @@ markers = [
     "integration: tests requiring external services",
     "slow: tests that take > 2 seconds",
     "live_eval: S2-14 eval harness live run — hits real OpenAI/Sarvam/Azure/Supabase, costs real money, excluded from default runs (opt in with -m live_eval)",
+    "postgres: replays supabase/migrations/ against a real PostgreSQL container and asserts on real SQLSTATEs — requires Docker and a psql client; skips visibly when either is absent",
 ]
 filterwarnings = [
     "error",

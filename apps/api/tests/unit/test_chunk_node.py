@@ -73,6 +73,9 @@ def _make_supabase_mock(
 
     chapter_table = MagicMock()
     chapter_table.insert.return_value.execute.return_value.data = [{"chapter_id": chapter_id}]
+    # chunk_node upserts (not inserts) the chapter row — see
+    # test_chunk_node_chapter_write_is_retry_safe for why.
+    chapter_table.upsert.return_value.execute.return_value.data = [{"chapter_id": chapter_id}]
 
     chunks_table = MagicMock()
 
@@ -175,9 +178,10 @@ async def test_chunk_node_idempotent() -> None:
     # tiktoken must not be called — get_encoding is never invoked on cache hit
     fake_tiktoken.get_encoding.assert_not_called()
 
-    # No chapters.insert or chunks.upsert on cache hit
+    # No chapters write or chunks.upsert on cache hit
     chapters_table = sb.table("chapters")
     chapters_table.insert.assert_not_called()
+    chapters_table.upsert.assert_not_called()
     chunks_table = sb.table("chunks")
     chunks_table.upsert.assert_not_called()
 
@@ -237,8 +241,9 @@ async def test_chunk_node_writes_chapter_row() -> None:
         await chunk_node(state)
 
     chapters_table = sb.table("chapters")
-    chapters_table.insert.assert_called_once()
-    insert_payload = chapters_table.insert.call_args.args[0]
+    # upsert, not insert — see test_chunk_node_chapter_write_is_retry_safe
+    chapters_table.upsert.assert_called_once()
+    insert_payload = chapters_table.upsert.call_args.args[0]
     assert insert_payload["lesson_id"] == FAKE_LESSON_ID
     assert insert_payload["book_id"] == FAKE_BOOK_ID
     assert insert_payload["chapter_index"] == 1
@@ -282,7 +287,7 @@ async def test_chunk_node_writes_chunk_rows() -> None:
 
 @pytest.mark.unit
 async def test_chunk_node_empty_sections() -> None:
-    """Empty sections → empty chunks; chapters.insert still called; chunks.upsert NOT called."""
+    """Empty sections → empty chunks; the chapter row is still written; chunks.upsert NOT called."""
     from app.modules.content.pipeline.graph import chunk_node
 
     state = _base_state(sections=[])
@@ -301,7 +306,7 @@ async def test_chunk_node_empty_sections() -> None:
         result = await chunk_node(state)
 
     assert result["chunks"] == []
-    sb.table("chapters").insert.assert_called_once()
+    sb.table("chapters").upsert.assert_called_once()
     sb.table("chunks").upsert.assert_not_called()
 
 
@@ -517,3 +522,50 @@ def test_chunk_sections_multiple_sections_produce_chunks_for_each() -> None:
     assert len(chunks) >= 10
     section_ids_in_chunks = {c["section_id"] for c in chunks}
     assert section_ids_in_chunks == {f"s{i}" for i in range(10)}
+
+
+@pytest.mark.unit
+async def test_chunk_node_chapter_write_is_retry_safe() -> None:
+    """The chapter write must be an UPSERT keyed on (book_id, chapter_index).
+
+    `20260803000000_chapters_book_scoped.sql` adds UNIQUE (book_id, chapter_index).
+    This node's checkpoint is written at the END of the node, after the chunks
+    upsert — so a failure in that window leaves node_outputs["chunk"] unset and the
+    ARQ retry re-enters here with the same (book_id, chapter_index=1). A plain
+    INSERT would then raise 23505 on all of max_tries=3, turning a transient
+    failure into a permanently stuck lesson. Before the constraint existed the
+    duplicate INSERT simply succeeded, so this regression arrives WITH the
+    migration and must not outlive it.
+
+    # MOCK-CONTRACT: asserts the call shape only. That the constraint actually
+    # accepts this conflict target is proven against real Postgres by
+    # tests/integration/test_migration_chapters_book_scoped.py::
+    # test_unique_constraint_supports_the_pipelines_upsert_conflict_target
+    """
+    from app.modules.content.pipeline.graph import chunk_node
+
+    sb = _make_supabase_mock()
+    _, _fake_tiktoken, tiktoken_patch = _make_tiktoken_mock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch.dict("sys.modules", tiktoken_patch),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        mock_settings.return_value.chunk_target_tokens = 512
+        mock_settings.return_value.chunk_overlap_tokens = 64
+        mock_settings.return_value.embedding_tokenizer = "cl100k_base"
+        await chunk_node(_base_state())
+
+    chapters = sb.table("chapters")
+    assert not chapters.insert.called, (
+        "chunk_node used a plain INSERT for the chapter row; the UNIQUE constraint "
+        "added by 20260803000000 makes that fatal on ARQ retry"
+    )
+    assert chapters.upsert.called, "chunk_node did not write the chapter row at all"
+    _payload, kwargs = chapters.upsert.call_args
+    assert kwargs.get("on_conflict") == "book_id,chapter_index", (
+        f"upsert must target the UNIQUE (book_id, chapter_index) constraint; "
+        f"got on_conflict={kwargs.get('on_conflict')!r}"
+    )

@@ -129,7 +129,10 @@ class _Query:
             if isinstance(self._payload, dict) and "node_outputs" in self._payload:
                 self._fake.node_outputs = self._payload["node_outputs"]
             return SimpleNamespace(data=[{}])
-        if t == "chapters" and op == "insert":
+        # chunk_node upserts the chapter row (retry-safety under the
+        # UNIQUE (book_id, chapter_index) added by 20260803000000); `insert` is
+        # kept so this fake stays honest if some other caller still inserts.
+        if t == "chapters" and op in {"insert", "upsert"}:
             return SimpleNamespace(data=[{"chapter_id": "cccccccc-1111-2222-3333-444444444444"}])
         # chunks: return [] so embed_node no-ops (chunks feed RAG, not generation)
         if t == "chunks":

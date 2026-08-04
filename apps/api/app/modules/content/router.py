@@ -37,8 +37,6 @@ from app.dependencies import ArqRedis, CurrentUser
 # recorded): single source of truth for the tier default/valid set, shared
 # with the pipeline graph (2026-07-17 review fix, Blind Hunter — a local copy
 # here previously duplicated graph.py's, a DRY violation inviting drift).
-from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
-from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 from app.schemas.lesson import LessonPackage
 
 logger = logging.getLogger(__name__)
@@ -51,8 +49,11 @@ MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 # ── Response models ───────────────────────────────────────────────────────────
 
 
-class LessonUploadResponse(BaseModel):
-    lesson_id: str
+class BookUploadResponse(BaseModel):
+    """Book-scale Phase 3: upload ingests a BOOK; lessons are generated per
+    chapter afterwards. There is no lesson_id to return here any more."""
+
+    book_id: str
     job_id: str
     status: str  # "queued"
 
@@ -241,9 +242,9 @@ def _resolve_lesson_content(
 
 @router.post(
     "/lessons",
-    response_model=LessonUploadResponse,
+    response_model=BookUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload a PDF and enqueue the content pipeline",
+    summary="Upload a book PDF and enqueue chapter detection",
 )
 @limiter.limit("5/minute", key_func=_get_user_key)
 async def upload_lesson(
@@ -252,32 +253,47 @@ async def upload_lesson(
     current_user: CurrentUser,
     arq_redis: ArqRedis,
     file: UploadFile = File(..., description="PDF file to process (max 50 MB)"),  # noqa: B008
-    tier: str = Form(  # noqa: B008
-        _DEFAULT_TIER,
+    tier: str | None = Form(  # noqa: B008
+        None,
         description=(
-            "Learner Mode tier: T1 (full depth), T2 (standard, default), "
-            "T3 (critical-topics refresher)"
+            "REMOVED in book-scale Phase 3. Tier is chosen per chapter when a lesson "
+            "is generated, not per upload. Supplying it here returns 422."
         ),
     ),
-) -> LessonUploadResponse:
-    """Accept a PDF upload, store it in Supabase Storage, enqueue ARQ job.
+) -> BookUploadResponse:
+    """Accept a book PDF, store it, and enqueue chapter detection.
 
-    Returns immediately with lesson_id + job_id; client polls GET /lessons/{id}.
+    INGESTION ONLY (book-scale Phase 3, Story 1-10). This creates the `books` row
+    and enqueues `book_ingest_job`; it no longer creates a `lessons` row and no
+    longer enqueues the generation pipeline. A book is uploaded once; lessons are
+    generated per chapter afterwards (CLAUDE.md §9 Phase A / Phase B).
 
-    DB insert order: books → lessons → lesson_jobs (FK constraint order).
-    PDF bytes are stored in Supabase Storage; extraction happens in the
-    ARQ worker's extract_node in an isolated subprocess (CLAUDE.md §18).
+    BREAKING, deliberately (decision D-A): between this change and Phase 6 there is
+    no endpoint that generates a lesson, and clients reading `lesson_id` off this
+    response will break — `apps/web` Story 1-8 does exactly that. Accepted because
+    there are no users yet; tracked in the defect register with the trigger
+    "Phase 6 lands".
+
+    Returns immediately with book_id + job_id. Detection is fast — Phase 1
+    measured <= 15 s for a 1,000-page book — so the client polls the book rather
+    than waiting.
     """
     user_id: str = current_user["sub"]
     supabase = get_supabase()
 
-    # ── S2-LM3: validate tier before any row is created — an invalid value
-    # returns 422, never a silent fallback to the default. Omitting the
-    # field entirely already defaults to T2 via the Form(...) default above.
-    if tier not in _VALID_TIERS:
+    # ── tier is no longer accepted here (decision D-B, Story 1-10) ───────────
+    # Upload creates no lesson, so there is nothing for a tier to apply to. It is
+    # chosen per chapter at generation time instead. Rejecting loudly rather than
+    # ignoring it: a silent drop is how a caller keeps sending T3 and keeps
+    # getting T2, with nothing anywhere to show why.
+    if tier is not None:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid tier {tier!r} — must be one of {sorted(_VALID_TIERS)}",
+            detail=(
+                "tier is no longer accepted on upload — a book has no tier. Choose it "
+                "per chapter when generating a lesson "
+                "(POST /books/{book_id}/chapters/{chapter_id}/lessons)."
+            ),
         )
 
     # ── Size check (fast path before reading body) ────────────────────────────
@@ -314,7 +330,6 @@ async def upload_lesson(
     )
 
     book_id: str | None = None
-    lesson_id: str | None = None
     storage_path: str | None = None
 
     try:
@@ -334,25 +349,7 @@ async def upload_lesson(
             raise RuntimeError("books insert returned no rows")
         book_id = books_rows[0]["book_id"]
 
-        # ── 2. lessons row ────────────────────────────────────────────────────
-        lessons_resp = (
-            supabase.table("lessons")
-            .insert(
-                {
-                    "user_id": user_id,
-                    "book_id": book_id,
-                    "status": "generating",
-                    "tier": tier,
-                }
-            )
-            .execute()
-        )
-        lessons_rows = rows(lessons_resp)
-        if not lessons_rows:
-            raise RuntimeError("lessons insert returned no rows")
-        lesson_id = lessons_rows[0]["lesson_id"]
-
-        # ── 3. Storage upload ─────────────────────────────────────────────────
+        # ── 2. Storage upload ─────────────────────────────────────────────────
         storage_path = f"{user_id}/{book_id}/{safe_filename}"
         supabase.storage.from_("source-pdfs").upload(
             path=storage_path,
@@ -360,33 +357,23 @@ async def upload_lesson(
             file_options={"content-type": "application/pdf"},
         )
 
-        # ── 4. Write storage path back to lessons ─────────────────────────────
-        supabase.table("lessons").update({"source_file_path": storage_path}).eq(
-            "lesson_id", lesson_id
-        ).execute()
-
-        # ── 5. lesson_jobs row ────────────────────────────────────────────────
-        supabase.table("lesson_jobs").insert(
-            {
-                "lesson_id": lesson_id,
-                "status": "pending",
-            }
-        ).execute()
-
-        # ── 6. Enqueue ARQ job ────────────────────────────────────────────────
-        # P5: pass _job_id so ARQ deduplicates by lesson — one pipeline job per lesson
+        # ── 3. Enqueue chapter detection ──────────────────────────────────────
+        # `storage_path` is passed rather than derived in the job: the layout is
+        # this router's business and `books` has no column for it, so rebuilding
+        # it there would be a second source of truth.
+        #
+        # _job_id dedupes per BOOK now, not per lesson. Re-uploading the same
+        # book while its detection is still queued is a duplicate request, not a
+        # second book — and book_ingest_job is idempotent anyway (it upserts on
+        # (book_id, chapter_index)), so a redelivered job is harmless.
         job = await arq_redis.enqueue_job(
-            "content_pipeline_job", lesson_id, _job_id=f"pipeline:{lesson_id}"
+            "book_ingest_job", book_id, storage_path, _job_id=f"book_ingest:{book_id}"
         )
         if job is None:
-            # ARQ deduplicated the key — not a failure, but no job will run.
-            # Clean up all created rows before returning 409. Each delete is isolated
-            # so a transient failure on one doesn't abandon the remaining cleanup.
-            logger.warning("ARQ deduped job for lesson_id=%s", lesson_id)
-            with contextlib.suppress(Exception):
-                supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
-            with contextlib.suppress(Exception):
-                supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+            # ARQ deduplicated the key — no job will run, so nothing would ever
+            # move this book out of 'processing'. Clean up and say so. Each delete
+            # is isolated so a transient failure on one does not abandon the rest.
+            logger.warning("ARQ deduped book_ingest job for book_id=%s", book_id)
             if storage_path:
                 with contextlib.suppress(Exception):
                     supabase.storage.from_("source-pdfs").remove([storage_path])
@@ -394,7 +381,7 @@ async def upload_lesson(
                 supabase.table("books").delete().eq("book_id", book_id).execute()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="A lesson pipeline job is already queued for this ID",
+                detail="This book is already being ingested",
             )
         job_id: str = job.job_id
 
@@ -404,11 +391,6 @@ async def upload_lesson(
         logger.exception("upload_lesson failed for user_id=%s filename=%s", user_id, safe_filename)
         # P4: hard-delete all created rows in FK order so the user gets a clean slate on retry.
         # (marking as "failed" leaves orphaned books rows on subsequent retry attempts)
-        if lesson_id:
-            with contextlib.suppress(Exception):
-                supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
-            with contextlib.suppress(Exception):
-                supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
         if storage_path:
             with contextlib.suppress(Exception):
                 supabase.storage.from_("source-pdfs").remove([storage_path])
@@ -417,10 +399,10 @@ async def upload_lesson(
                 supabase.table("books").delete().eq("book_id", book_id).execute()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create lesson — please retry",
+            detail="Failed to ingest book — please retry",
         ) from exc
 
-    return LessonUploadResponse(lesson_id=lesson_id, job_id=job_id, status="queued")
+    return BookUploadResponse(book_id=book_id, job_id=job_id, status="queued")
 
 
 @router.get(
