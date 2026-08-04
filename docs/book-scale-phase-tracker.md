@@ -42,7 +42,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | 4 | Extract one chapter's pages | ✅ Verified | 2026-08-04 |
 | 5 | Chapter-scoped generation | 🧪 Implemented | — |
 | 6 | Endpoints (the write endpoint + `tier` relocation) | 🧪 Implemented | — |
-| **6.5** | **`lesson_ready` actually reaches a client** | ⬜ Not Started | — |
+| **6.5** | **`lesson_ready` actually reaches a client** | 🧪 Implemented | — |
 | 7 | Prove it end to end + the single merge to `main` | ⬜ Not Started | — |
 
 ### Track W — Dev 2, `apps/web` (parallel)
@@ -55,7 +55,7 @@ Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.m
 | **W3** | Generate from chapter (`tier` moves here) | ⬜ Not Started | SYNC-2 |
 | **W4** | MSW off — the whole UI against the live API | ⬜ Not Started | Phase 6 Verified |
 
-**Totals:** Backend — Not Started 2 · Implemented 2 · Verified 5. Track W — Not Started 5.
+**Totals:** Backend — Not Started 1 · Implemented 3 · Verified 5. Track W — Not Started 5.
 
 ### Synchronisation points
 
@@ -817,8 +817,9 @@ D52) · `tests/integration/test_generate_rollback_postgres.py` (new) ·
 
 ## Phase 6.5 — `lesson_ready` actually reaches a client
 
-**Status:** ⬜ Not Started · **NEW 2026-08-04** · **Owner:** Dev 1 (Dev 4 notified)
-**Depends on:** Phase 6 ✅
+**Status:** 🧪 Implemented — awaiting the Phase 7 run · **NEW 2026-08-04** · **Owner:** Dev 1 (Dev 4 notified)
+**Depends on:** Phase 6 *implemented* (second use of the D43 exception, recorded in the story's
+Gate note — if a third phase needs it, the gate rule needs amending rather than exempting)
 
 ### Why this exists
 `core/pubsub.py` strips the `lesson_ready:` prefix and passes the **lesson_id** into
@@ -835,7 +836,33 @@ A generated lesson pushes `lesson_ready` to a connected client and the client ac
 2. Assert `manager.send` receives an id a client actually connected under (closes D34)
 
 ### Observed result
-_Not yet run._
+
+**🧪 Implemented 2026-08-04.** Story: `docs/stories/1-15-lesson-ready-reaches-a-client.md`. **D34 CLOSED.**
+
+The one-line rename at `pubsub.py:67` bound a **lesson** id to a variable called `session_id` and
+handed it to a manager keyed by **session** id, so `send()` iterated an empty list and returned
+silently — with a reassuring "manager.send called" log naming the wrong id. The same wrong id was
+the `lesson_package:` cache key, which two live consumers read by session id, so both missed on
+every lesson ever generated.
+
+Fixed at the writer. Waiting sessions resolve from `sessions.lesson_id` — NOT NULL, indexed, and
+already the right fact. The `lesson_waiters:{lesson_id}` set the comments describe was
+deliberately **not** built: it does not exist, and it would be a second source of truth beside a
+correct column.
+
+| | |
+|---|---|
+| Gating suite | **1029 passed, 1 skipped** (was 1018 / 1) |
+| Mutation check | reintroduce the defect → **4 tests red**; revert → 7 pass |
+| Guard relocation | root `tests/` (CI **advisory**) → `tests/integration/` (CI **gating**) |
+
+The guard previously *could not fail*: it used **one string for both ids**, so "delivered to the
+right session" and "passed the lesson id straight through" were indistinguishable. It now uses
+distinct ids, asserts the resolved session id, and asserts the sent id is **not** the lesson id.
+
+**Not Verified:** AC10 needs a real WebSocket connected under a real session while a real lesson
+completes — that is the Phase 7 paid run. Residual timing gap registered as **D55**: a session
+started *after* a lesson is already `ready` gets no cache entry (owner Dev 4).
 
 ---
 

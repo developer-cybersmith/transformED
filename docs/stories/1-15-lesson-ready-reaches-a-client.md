@@ -1,6 +1,6 @@
 # Story 1.15: `lesson_ready` actually reaches a client (book-scale Phase 6.5)
 
-Status: ready-for-dev
+Status: review
 
 **Branch:** `book-scale/track-w` (see Gate note) · **Phase:** 6.5 of 9
 **Closes:** D34 · **Owner:** Dev 1, Dev 4 notified (this is Dev 4's `websocket.py` boundary)
@@ -114,10 +114,10 @@ prove the path now; the live observation is Phase 7's, per the Gate note.
 
 ## Tasks / Subtasks
 
-- [ ] **T1** — `pubsub.py`: keep the id's name, resolve sessions, deliver per session (AC1–AC4)
-- [ ] **T2** — cache write per resolved session (AC5)
-- [ ] **T3** — rewrite the test that cannot fail; mutation-check it (AC7, AC8)
-- [ ] **T4** — register the late-session gap (AC6); update tracker + D34 (AC9)
+- [x] **T1** — `pubsub.py`: keep the id's name, resolve sessions, deliver per session (AC1–AC4)
+- [x] **T2** — cache write per resolved session (AC5)
+- [x] **T3** — rewrite the test that cannot fail; mutation-check it (AC7, AC8)
+- [x] **T4** — register the late-session gap (AC6); update tracker + D34 (AC9)
 
 ## Dev Notes
 
@@ -132,3 +132,57 @@ prove the path now; the live observation is Phase 7's, per the Gate note.
   fix the writer.
 - Payload shape is frozen: `{type: "lesson_ready", payload: {lesson_id, lesson}}`, matching
   `packages/shared/types/ws.ts`. This story changes routing, not the message.
+
+## Dev Agent Record
+
+### Agent Model Used
+
+claude-opus-5[1m] — 2026-08-04. Implemented directly, not delegated: the change is one function
+and one test file, and the whole defect was a naming error that a hand-off would likely reproduce.
+
+### Debug Log References
+
+| | |
+|---|---|
+| Gating suite | **1029 passed, 1 skipped** (was 1018 / 1) |
+| Mutation (AC8) | revert `pubsub.py` to sending the lesson id → **4 tests red**; revert back → 7 pass |
+| ruff / mypy | clean repo-wide / 24 errors in 3 files, unchanged |
+
+**AC9 turned up something the AC only asked me to describe.** The guard lived in root `tests/`,
+which is CI's **advisory** step (`ci.yml:148`, `continue-on-error: true` per D24) — so the test
+closing D34 would have reported and never gated. It is now at
+`tests/integration/test_lesson_ready_integration.py`, inside the gating
+`pytest tests/unit tests/integration` step. One path constant inside it (`parents[1]` → `[2]`)
+moved with it. Binding rule 7 is about a guard that *fails*, not one that merely runs.
+
+**Three tests, not one, were asserting through the defect.** Beyond the named
+`test_end_to_end_pubsub_delivery`, both `test_message_shape_forwarded_without_mutation` and
+`test_malformed_json_does_not_kill_subscriber` used a single id for channel and session. Each is
+re-pointed at distinct ids rather than merely stubbed, so a routing regression fails in three
+places instead of one.
+
+**Two tests added** beyond the ACs: every waiting session receives the lesson (two tabs on one
+lesson — delivering only to the first leaves the other spinning on a built lesson), and zero
+waiting sessions is quiet rather than a failure.
+
+### Completion Notes List
+
+- D34 **closed**. Neither consumer (`_seed_learner_tier`, `_segment_intervention_messages`) was
+  touched — their key shape was correct; the writer was wrong.
+- `lesson_waiters:{lesson_id}` was deliberately **not** built. It has no writer, no reader and no
+  key anywhere — only comments in `content_pipeline.py:102,168` describing it as Dev 4's fan-out.
+  `sessions.lesson_id` is the same fact, NOT NULL and indexed.
+- The session lookup **never raises**: it runs inside the subscriber's listen loop, and a Supabase
+  blip must not tear down the only path delivering lesson-ready events. It degrades to "nobody was
+  waiting", which the caller already handles — and logs at `exception` so the degradation is not
+  silent, which is the failure mode this whole story is about.
+- **Not Verified.** AC10 needs a real socket, a real session and a real completed generation —
+  Phase 7. Second use of the D43 exception, recorded in the Gate note rather than assumed.
+- **D55** registered: a session started *after* a lesson is `ready` gets no cache entry. Owner
+  Dev 4; the fix is a read-through in `_seed_learner_tier`, which this story does not own.
+
+### File List
+
+- `apps/api/app/core/pubsub.py` (modified — `_sessions_awaiting`, routing, per-session cache)
+- `apps/api/tests/integration/test_lesson_ready_integration.py` (moved from `tests/`, rewritten)
+- `docs/DEFECT-REGISTER.md` (D34 closed, D55 added) · `docs/book-scale-phase-tracker.md`
