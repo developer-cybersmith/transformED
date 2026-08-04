@@ -660,8 +660,9 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Return descriptive labels not raw scores (e.g., "Persistence: Growing" not "Persistence: 67.5")
   - **AC:** Report response includes Learner DNA section with descriptive labels and deltas
   - Story 3-30 at `docs/stories/3-30-session-report-learner-dna-snapshot.md` — status: done
-  - 42 unit tests GREEN; 5-agent adversarial review APPROVED (2 BLOCKERs patched: maybe_single None guard + isinstance payload guard); additive field `default=None`
-  - Branch: `learner-mode-sprint-dev3-task3` — ready for PR to `master-learner-mode-sprint-dev3`
+  - 56 unit tests GREEN (54 original + 2 post-audit BLOCKER regression tests); 5-agent adversarial review APPROVED (2 BLOCKERs patched: maybe_single None guard + isinstance payload guard); additive field `default=None`
+  - Post-impl audit (2026-08-04): AC 1/9 counts corrected (test baseline 42 not 30; call count 7 not 6); Task 4.16/4.17 names fixed; BLOCKER-1/2 regression tests added; validation report at `docs/reports/sprint3-task6-bmad-validation-report.md`
+  - Branch: `learner-mode-sprint-dev3-task3` — merged into `main` (commit `5ebcbe4`); post-audit remediation on `sprint3-task6-dev3`
 
 - [x] **Re-assessment prompt after 10 sessions logic** — ✓ 2026-07-22
   - Story 3-31: `docs/stories/3-31-reassessment-prompt.md` — status: done ✓
