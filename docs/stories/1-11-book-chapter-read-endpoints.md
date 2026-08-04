@@ -1,6 +1,6 @@
 # Story 1.11: Books and chapters readable over HTTP (book-scale Phase 3.5)
 
-Status: ready-for-dev
+Status: review
 
 **Sprint:** Book-scale ingestion, Phase 3.5 of 9
 **Owner:** Dev 1
@@ -181,10 +181,67 @@ NCERT XII Part 1 yields 8 (`contents`).
 
 ### Agent Model Used
 
-_not yet run_
+claude-opus-5[1m] — 2026-08-04, two parallel agents on disjoint file sets
 
 ### Debug Log References
 
+**The story's premise was factually wrong, and the guard is what caught it.**
+
+AC7 named `graph.py:393-399` as the pipeline's `books` write. There was a **second** one:
+`embed_node` at `graph.py:924-934` wrote `books.status = 'ready'`. AC8's guard, written exactly
+as specified, went red on it on day one — which is the failure mode this story warned about in
+its own text.
+
+It was removed, and the reason is worse than redundancy: **`books.status` changed meaning in
+Phase 3.** It used to mean "the pipeline finished"; it now means "ingestion finished", written
+by `book_ingest_job` (`'ready'` on success, `'failed'` on error). A surviving `embed_node` write
+would silently resurrect a book the ingest job had marked `failed`. Nobody wrote that semantic
+change down when Phase 3 made it.
+
+Removing both writes orphaned `book_id` in `extract_node` and `embed_node` (ruff F841); the
+locals are gone, `book_id` stays on `PipelineState` and is still used by `chunk_node`.
+
+**The chapter-creation block at `graph.py:609-651` was deliberately NOT deleted** — verified that
+`chapter_id` from it is consumed at `:659` and `chunks.chapter_id` is `NOT NULL`. Phase 5.
+
+**Guard mutation-checked independently.** Not taken on the implementing agent's word: a
+`supabase.table("books").update(...)` was reintroduced into `graph.py` and the guard failed with
+`Found: {'graph.py': ["supabase.table('books').update(...)"]}`, then passed again on revert. The
+guard parses `ast.unparse`d source with docstrings stripped, so it detects writes rather than
+mentions — a raw substring scan is how the equivalent test in Story 1-10 failed on its own
+docstring.
+
+**Ownership is enforced twice on purpose.** The Supabase client is service-role
+(`core/db.py:42`), so RLS filters nothing: `_fetch_owned_book()` both filters
+`.eq("user_id", sub)` and re-asserts ownership on the returned row. The chapters route resolves
+ownership on `books` first — `chapters` has no `user_id`, so an unguarded `.eq(book_id)` would
+be a straight IDOR.
+
+**Known gap — AC10 is only partly satisfied.** The endpoint tests are unit tests against a
+Supabase mock, which by construction cannot raise `42703`. Substituted: a guard parsing
+`supabase/migrations/*.sql` asserting every column named in the select lists is real, plus a
+premise assertion that the parser works so it cannot pass vacuously. **Still unverified against
+real PostgREST: the `chapters(count)` embedded aggregate** — its response shape, and that the
+relationship resolves unambiguously given `books` has three inbound FKs. That needs the
+integration test before this phase is Verified.
+
 ### Completion Notes List
 
+- T1–T6 complete. 35 new tests; gating scope **870 passed, 1 skipped** (was 835).
+- `ruff check .` clean; `mypy app` **24 errors in 3 files**, unchanged from `main`.
+- Pagination (`limit`/`offset`, default 50, max 200) added to `GET /books` — **not in the ACs**.
+  Shipping an unbounded list was the alternative. Documented in the contract.
+- Line-number drift found in the story: `get_lesson`'s UUID guard is at `router.py:421-426`
+  (story said 429-433); `_LIST_COLUMNS` at `:113-117` (story said 112-116).
+- **Not yet done:** the real-PostgREST integration test (AC10) and the tracker update. Phase 3.5
+  is **not** Verified until the embed aggregate is confirmed against a live database.
+
 ### File List
+
+- `apps/api/app/modules/content/schemas.py` (new — `BookResponse`, `ChapterResponse`)
+- `apps/api/app/modules/content/router.py` (modified — 3 routes, 2 select-list constants, 5 helpers)
+- `apps/api/app/modules/content/pipeline/graph.py` (modified — both `books` writes removed)
+- `apps/api/tests/unit/test_book_endpoints.py` (new — 32 tests)
+- `apps/api/tests/unit/test_pipeline_writes_no_books.py` (new — the AC8 guard + 2 premise tests)
+- `apps/api/tests/unit/test_extract_node.py`, `test_embed_node.py` (modified — asserted the removed writes)
+- `docs/contracts/book-api.v1.json` (new — frozen read contract for Dev 2's W0)

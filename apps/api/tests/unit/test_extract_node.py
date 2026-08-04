@@ -184,8 +184,12 @@ async def test_extract_node_happy_path() -> None:
 
 
 @pytest.mark.unit
-async def test_extract_node_writes_page_count() -> None:
-    """extract_node must write page_count to the books table."""
+async def test_extract_node_does_not_write_to_books() -> None:
+    """extract_node must NOT touch `books` (Story 1-11 AC7).
+
+    It used to write `books.page_count`. `book_ingest_job` writes that column
+    alongside `status='ready'` and is now the single writer of the row.
+    """
     from app.modules.content.pipeline.graph import extract_node
 
     state = _base_state()
@@ -203,10 +207,11 @@ async def test_extract_node_writes_page_count() -> None:
 
     # books_mock captured via sb.table.side_effect
     books_mock = sb.table("books")
-    books_update_calls = books_mock.update.call_args_list
-    assert books_update_calls, "books.update was not called"
-    payload = books_update_calls[0].args[0]
-    assert payload.get("page_count") == 3
+    assert books_mock.update.call_args_list == [], (
+        f"extract_node must not write to books; got {books_mock.update.call_args_list}"
+    )
+    assert books_mock.insert.call_args_list == []
+    assert books_mock.upsert.call_args_list == []
 
 
 @pytest.mark.unit
