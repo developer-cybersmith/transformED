@@ -36,13 +36,31 @@ def _get_user_key(request: Request) -> str:
                 auth[7:],
                 get_settings().supabase_jwt_secret,
                 algorithms=["HS256"],
-                options={"verify_exp": False},  # expiry already checked by get_current_user
+                options={
+                    # Both verifications are already done by `get_current_user`
+                    # before any handler runs. This decode exists ONLY to read
+                    # `sub` for the bucket key.
+                    "verify_exp": False,
+                    # D52 — load-bearing, do not remove. Every Supabase token
+                    # carries `aud: "authenticated"`, and PyJWT raises
+                    # InvalidAudienceError when a token HAS an `aud` claim and no
+                    # `audience=` is supplied. That exception was swallowed by the
+                    # `except` below, so this function fell through to
+                    # `get_remote_address` for EVERY authenticated request: every
+                    # user shared one IP-keyed bucket, and one caller could
+                    # exhaust the limit for everyone behind the same egress IP.
+                    # Silent, and invisible at anything above DEBUG.
+                    "verify_aud": False,
+                },
             )
             sub: str | None = payload.get("sub")
             if sub:
                 return f"user:{sub}"
+            logger.warning("rate-limit key: token carried no `sub`; falling back to IP")
         except Exception:  # noqa: BLE001
-            logger.debug("rate-limit key JWT decode failed; falling back to IP", exc_info=True)
+            # WARNING, not DEBUG: reaching here means the limit is no longer
+            # per-user, which is a security posture change, not a detail.
+            logger.warning("rate-limit key JWT decode failed; falling back to IP", exc_info=True)
     return get_remote_address(request)
 
 
