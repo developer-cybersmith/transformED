@@ -48,9 +48,9 @@ w_beh_r   = settings.ces_weight_behavioral / remaining   # ≈ 0.2667
 w_head_r  = settings.ces_weight_head_pose  / remaining   # ≈ 0.1600
 w_blink_r = settings.ces_weight_blink      / remaining   # ≈ 0.1067
 raw = qa*w_quiz_r + beh*w_beh_r + hp*w_head_r + bl*w_blink_r
-CES = round(raw * 100, 4)
+CES = min(100.0, round(raw * 100, 4))
 ```
-`qa` uses `quiz_accuracy` clamped (or 0.0 if `quiz_accuracy` is also `None` — see AC 8). This is NOT a penalty: the redistributed weights still sum to 1.0, so a fully-engaged student still scores 100.
+`qa` uses `quiz_accuracy` clamped (or 0.0 if `quiz_accuracy` is also `None` — see AC 8). This is NOT a penalty: the redistributed weights still sum to 1.0, so a fully-engaged student still scores 100. The `min(100.0, …)` cap is required here for the same reason as AC 6: the redistributed weight sum can reach 1.001 (within the ±0.001 `@model_validator` tolerance), which pushes `raw` fractionally above 1.0. Guarded by `test_output_clamped_to_100_when_weights_sum_exceeds_one` in `test_ces.py`.
 
 **AC 8 — `quiz_accuracy=None` handling (quiz not yet submitted):** `quiz_accuracy=None` means no quiz attempt has been recorded in the current window yet — it is a transient "no data" state. It is treated as `0.0` with its full weight retained (NOT redistributed). Redistribution only applies to `teachback_score=None` because a skipped teach-back is permanent for the segment, whereas a missing quiz_accuracy is temporary.
 

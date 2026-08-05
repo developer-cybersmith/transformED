@@ -117,8 +117,12 @@ being returned.
 `reassessment_due == False`. Verified by unit tests mocking Redis.
 
 **AC 12** — Security: `user_id` in the Redis key comes exclusively from `current_user["sub"]`
-(JWT-decoded at router level), never from any request body field. Verified structurally by
-inspecting router.py — the `user_id: str = current_user["sub"]` line precedes the Redis call.
+(JWT-decoded at router level), never from any request body field. Verified by two observable
+regression tests in `test_reassessment_flag.py`:
+- `test_get_learner_dna_router_passes_redis_client`: asserts `captured_call["user_id"] == current_user["sub"]`
+- `test_get_learner_dna_user_id_exclusively_from_jwt`: uses a distinguishable JWT sub value
+  (`"jwt-only-user-a1b2c3"`) and asserts the service call receives exactly that value — no
+  request body can supply an alternative user_id because `get_learner_dna` is a GET endpoint.
 
 **AC 13** — Log-injection prevention: all logger calls that include `user_id` use
 `_safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")`, matching the existing

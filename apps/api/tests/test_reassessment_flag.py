@@ -631,6 +631,10 @@ def test_get_learner_dna_router_passes_redis_client():
     assert captured_call.get("redis") is mock_redis, (
         "router must pass the redis client to get_learner_dna_data, not None"
     )
+    assert captured_call.get("user_id") == current_user["sub"], (
+        "router must source user_id exclusively from current_user['sub'] (JWT), "
+        "never from a request body field"
+    )
 
 
 # ── AC 13: log injection prevention ──────────────────────────────────────────
@@ -795,3 +799,55 @@ def test_submit_onboarding_bypass_does_not_trigger_for_non_one_flag_value():
         "bypass must NOT delete onboarding_done when reassessment_due value is not '1'"
     )
     assert result is dummy_result
+
+
+# ── AC 12: user_id exclusively from JWT ──────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_get_learner_dna_user_id_exclusively_from_jwt():
+    """AC 12: user_id in Redis key and service call comes from JWT current_user['sub'] only.
+
+    Observable regression guard: the handler sets user_id = current_user["sub"] at
+    router.py:194, then passes it to get_learner_dna_data(user_id=user_id, ...).
+    This test uses a distinguishable JWT sub value and asserts the service sees it.
+    A future schema change that adds user_id to the request body cannot override it
+    because get_learner_dna is a GET endpoint (no body) and user_id is never read from
+    any argument other than current_user["sub"].
+    """
+    from app.modules.assessment.router import get_learner_dna
+
+    jwt_user_id = "jwt-only-user-a1b2c3"
+    mock_redis = AsyncMock()
+    mock_dna_result = {
+        "user_id": jwt_user_id,
+        "badge_labels": [],
+        "profile_text": None,
+        "session_count": 3,
+        "reassessment_due": False,
+        "last_updated": None,
+    }
+    current_user = {"sub": jwt_user_id}
+    captured_call: dict = {}
+
+    async def _capture(**kwargs):
+        captured_call.update(kwargs)
+        return mock_dna_result
+
+    with (
+        patch("app.core.redis.get_redis", return_value=mock_redis),
+        patch("app.core.db.get_supabase", return_value=MagicMock()),
+        patch("app.modules.assessment.service.get_learner_dna_data", side_effect=_capture),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch("app.modules.assessment.router.capture_event"),
+    ):
+        asyncio.run(get_learner_dna(current_user=current_user))
+
+    assert captured_call.get("user_id") == jwt_user_id, (
+        f"get_learner_dna_data must receive user_id='{jwt_user_id}' from JWT, "
+        f"got user_id={captured_call.get('user_id')!r}"
+    )

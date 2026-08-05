@@ -139,7 +139,9 @@ from the function parameter (JWT). Consistent with the existing pattern from Sto
 
 ### AC 12 — No LLM calls
 `get_session_report` makes no LLM calls. `OpenAILLMProvider` is not imported or instantiated
-in the function.
+in the function. Verified by `test_get_report_no_llm_calls` in `test_session_report_endpoint.py`
+(patches `app.modules.assessment.service.OpenAILLMProvider` and asserts `mock_llm.assert_not_called()`
+— observable regression guard, not structural inspection).
 
 ### AC 13 — Growth threshold constants at module level in `service.py`
 Two module-level float constants immediately after `_quiz_accuracy_label` (or after
@@ -213,6 +215,7 @@ frozen-contract rules.
 - [x] **4.17** Updated existing asyncio count test → `test_get_report_asyncio_to_thread_called_6_times_when_no_dna` (asserts 6 on no-DNA path — 5 base + 1 Story 3-29 lessons call) — ✓ 2026-07-21
 - [x] **4.18** Add BLOCKER-1 regression test: `test_report_dna_snapshot_none_when_learner_dna_execute_returns_raw_none` — `maybe_single().execute()` returns `None` directly; snapshot must be `None` — ✓ 2026-08-04 (post-audit)
 - [x] **4.19** Add BLOCKER-2 regression test: `test_report_growth_labels_skip_non_dict_payload` — non-dict payloads (string/int/bool/None/list) all skipped; all 9 growth_labels resolve to `None` — ✓ 2026-08-04 (post-audit)
+- [x] **4.20** AC 12 observable regression guard confirmed: `test_get_report_no_llm_calls` (line 585) patches `OpenAILLMProvider` and asserts `assert_not_called()` — any future accidental LLM call inside `get_session_report` will cause this test to fail — ✓ 2026-08-05 (zero-gap audit)
 
 ### Task 5 — Update `test_posthog_events.py`
 - [x] **5.1** Added `learner_dna_snapshot=None` to `mock_report = SessionReport(...)` — ✓ 2026-07-21

@@ -145,9 +145,10 @@ async def fuse_learner_dna(
     session_id: str,
     supabase: Any,
     settings: Settings,
+    redis: Any = None,          # additive — Story 3-31 integration; default=None is backward-compatible
 ) -> dict[str, float] | None
 ```
-Positional calls raise `TypeError`.
+Positional calls raise `TypeError`. The `redis: Any = None` parameter was added as a backward-compatible additive scope extension during Story 3-31 implementation (see Completion Notes). Dev 4's existing callers pass no `redis` argument and continue to work without modification. Covered by `test_fuse_dna_redis_raises_type_error_on_positional_arg` in `test_reassessment_flag.py` (asserts `redis` is `inspect.Parameter.KEYWORD_ONLY`) and by the `iscoroutinefunction` assertion in `test_dna_fusion.py`.
 
 **AC 4** — Private pure helper `_apply_ema(old: float | None, signal: float, retain: float) -> float`:
 - `_apply_ema(None, signal, retain)` treats old as `_NEUTRAL = 50.0`
