@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { isAuthApiError } from "@supabase/supabase-js";
 
 export function SignUpForm() {
     const router = useRouter();
@@ -64,7 +65,12 @@ export function SignUpForm() {
             // On success, redirect to dashboard.
             router.push("/dashboard");
         } catch (err) {
-            console.error("Registration error:", err);
+            // Expected user errors (email already registered, weak password
+            // rejected server-side, etc.) are not bugs -- see SignInForm.tsx
+            // for the reasoning. Only unexpected failures get logged.
+            if (!isAuthApiError(err)) {
+                console.error("Registration error:", err);
+            }
             setError(
                 err instanceof Error && err.message
                     ? err.message

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { isAuthApiError } from "@supabase/supabase-js";
 
 export function SignInForm() {
     const router = useRouter();
@@ -41,7 +42,14 @@ export function SignInForm() {
             router.push("/dashboard");
             router.refresh();
         } catch (err) {
-            console.error("Login map error:", err);
+            // Invalid credentials, unconfirmed email, etc. are expected user
+            // errors, not bugs -- logging them as console.error would show a
+            // scary stack trace for normal traffic and, if error monitoring is
+            // ever wired up, pollute it with false positives. Only genuinely
+            // unexpected failures (network errors, our own bugs) get logged.
+            if (!isAuthApiError(err)) {
+                console.error("Login error:", err);
+            }
             setError(
                 err instanceof Error && err.message
                     ? err.message
