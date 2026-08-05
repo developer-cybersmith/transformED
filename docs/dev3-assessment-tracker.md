@@ -670,9 +670,10 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `get_learner_dna_data()` reads flag with `val == "1"` strict check; `redis=None` → False ✓
   - Router `get_learner_dna`: `get_redis()` guarded in try/except → graceful degradation if Redis unavailable ✓
   - Router `submit_onboarding_diagnostic`: re-assessment bypass before 409 guard; `_safe_uid` in logger ✓
-  - 23 unit tests (15 original + 8 review-mandated); 174 regression tests PASS ✓
+  - 24 unit tests (15 original + 8 review-mandated + 1 G2 bypass regression) ✓
   - 5-agent adversarial review: 4 BLOCKERs + 5 IMPROVEMENTs found and resolved ✓
-  - Branch: `learner-mode-sprint-dev3-task4` — pushed to origin, PR ready to create ✓
+  - Post-impl audit remediation 2026-08-05: G1 vacuous mock assertion replaced with caplog-based regression guard; G2 router bypass tightened to `== "1"` (was `is not None`) + new regression test; G3 stale count corrected ✓
+  - Branch: `sprint3-task7-dev3` — merged into `master-sprint3-dev3` ✓
   - **AC:** Flag is set correctly after sessions 10, 20, 30; `GET /user/dna` returns `reassessment_due: true` ✓
 
 ---
@@ -717,9 +718,10 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `get_learner_dna_data()` reads flag with strict `val == "1"` check; `redis=None` → `reassessment_due: false`
   - Re-assessment bypass in `submit_onboarding_diagnostic`: deletes `onboarding_done` key before SET NX guard so returning users can re-submit
   - 5-agent adversarial review: 4 BLOCKERs + 5 IMPROVEMENTs found and resolved
-  - 23 unit tests (15 original + 8 review-mandated); 174 regression tests PASS
+  - 24 unit tests (15 original + 8 review-mandated + 1 G2 bypass regression)
+  - Post-impl audit remediation 2026-08-05: G1 vacuous mock assertion fixed; G2 router bypass tightened to `== "1"`; stale count corrected
   - Story: `docs/stories/3-31-reassessment-prompt.md` — status: done
-  - Branch: `learner-mode-sprint-dev3-task4` — merged to `master-learner-mode-sprint-dev3`
+  - Branch: `sprint3-task7-dev3` — merged into `master-sprint3-dev3`
 
 ---
 

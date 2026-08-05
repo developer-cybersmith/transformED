@@ -399,16 +399,50 @@ and re-assessment bypass integration test. Total test count: 23.
 
 ---
 
+## Post-Implementation Audit Remediation (2026-08-05)
+
+**Branch:** `sprint3-task7-dev3` → merged into `master-sprint3-dev3`
+
+### Gaps Found and Resolved
+
+| ID | Gap | Fix |
+|----|-----|-----|
+| G1 | AC 8 test `test_get_learner_dna_data_flag_false_when_redis_none` created `mock_redis = AsyncMock()` but passed `redis=None`; `mock_redis.get.assert_not_called()` was vacuous (same B4 anti-pattern) | Replaced with `caplog.at_level(WARNING)` assertion: if `redis is not None` guard were removed, `None.get()` → `AttributeError` → `except` block → WARNING "redis check failed" logged → test fails |
+| G2 | Router `submit_onboarding_diagnostic` (line 243) used `is not None` for bypass; `service.py` used `val == "1"` for display — inconsistent gate allowing any non-None value to bypass idempotency | Changed router to `== "1"` to match service's strict B5 check. Added regression test `test_submit_onboarding_bypass_does_not_trigger_for_non_one_flag_value` |
+| G3 | Tracker/story claimed "174 regression tests PASS" — not independently reproducible | Removed the claim; corrected test count to 24 (added 1 G2 test) |
+
+### Final State After Remediation
+
+- **24 unit tests**, all passing (`pytest tests/test_reassessment_flag.py -p no:warnings`)
+- **0 ruff errors** on modified files
+- Router bypass gate and service display gate both use strict `== "1"` check (consistent)
+
+---
+
 ## Dev Agent Record
 
 ### Completion Notes
 
-*(To be filled by dev agent on task completion.)*
+Story 3-31 fully implemented and BMAD post-implementation audit remediation complete (2026-08-05).
+
+All 15 ACs satisfied. Three audit gaps resolved:
+- **G1**: AC 8 vacuous mock assertion replaced with caplog-based regression guard (B4 pattern)
+- **G2**: Router bypass tightened from `is not None` to `== "1"` for consistency with service strict B5 check; new regression test added
+- **G3**: Stale "174 regression" count removed; corrected to 24 unit tests
 
 ### File List
 
-*(To be filled by dev agent on task completion.)*
+```
+apps/api/app/modules/assessment/dna_fusion.py   — MODIFIED: _REASSESSMENT_INTERVAL constant + Step 7 Redis flag
+apps/api/app/modules/assessment/service.py      — MODIFIED: get_learner_dna_data() redis param + strict == "1" check
+apps/api/app/modules/assessment/router.py       — MODIFIED: get_learner_dna redis wiring + submit_onboarding bypass (== "1")
+apps/api/tests/test_reassessment_flag.py        — NEW: 24 unit tests covering all ACs
+docs/stories/3-31-reassessment-prompt.md        — MODIFIED: post-audit remediation notes
+```
 
 ### Change Log
 
-*(To be filled by dev agent on task completion.)*
+| Date | Change |
+|------|--------|
+| 2026-07-22 | Initial implementation: all 15 ACs, 23 unit tests, 5-agent review resolved 4 BLOCKERs |
+| 2026-08-05 | Post-impl audit remediation: G1 vacuous test fixed, G2 router bypass tightened to `== "1"`, G3 stale count corrected; 24 tests total |

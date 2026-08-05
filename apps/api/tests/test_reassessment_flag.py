@@ -382,17 +382,24 @@ def test_get_learner_dna_data_flag_false_when_key_absent():
 
 
 @pytest.mark.unit
-def test_get_learner_dna_data_flag_false_when_redis_none():
-    """When redis=None, reassessment_due=False without any Redis call."""
+def test_get_learner_dna_data_flag_false_when_redis_none(caplog):
+    """When redis=None, the re-assessment guard is a no-op: returns False, no warning logged.
+
+    Observable regression guard: if the 'if redis is not None' guard were removed, None.get()
+    raises AttributeError → caught by except → WARNING 'redis check failed' logged → caplog
+    assertion below catches the regression.
+    """
+    import logging
+
     from app.modules.assessment.service import get_learner_dna_data
 
     supabase = _build_dna_service_supabase(_DEFAULT_DNA_ROW)
-    mock_redis = AsyncMock()
 
-    body = asyncio.run(get_learner_dna_data(user_id="user-123", supabase=supabase, redis=None))
+    with caplog.at_level(logging.WARNING, logger="app.modules.assessment.service"):
+        body = asyncio.run(get_learner_dna_data(user_id="user-123", supabase=supabase, redis=None))
 
     assert body["reassessment_due"] is False
-    mock_redis.get.assert_not_called()
+    assert "redis check failed" not in caplog.text
 
 
 @pytest.mark.unit
@@ -736,5 +743,55 @@ def test_submit_onboarding_re_assessment_bypasses_idempotency_guard():
     delete_keys = [c.args[0] for c in mock_redis.delete.call_args_list]
     assert "user:user-123:onboarding_done" in delete_keys, (
         "bypass must delete onboarding_done when reassessment_due is set"
+    )
+    assert result is dummy_result
+
+
+# ── B5 validation: bypass requires exact "1" value ────────────────────────────
+
+
+@pytest.mark.unit
+def test_submit_onboarding_bypass_does_not_trigger_for_non_one_flag_value():
+    """Bypass fires only when reassessment_due == '1', not for any other non-None value.
+
+    Regression guard: before G2 fix, router used 'is not None', so a stale key with
+    value '0' would incorrectly delete the idempotency lock. This test ensures the
+    strict '== 1' check is enforced.
+    """
+    from app.modules.assessment.router import submit_onboarding_diagnostic
+    from app.modules.assessment.schemas import OnboardingAnswer, OnboardingDiagnosticSubmission
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value="0")  # non-"1" value — bypass must NOT fire
+    mock_redis.set = AsyncMock(return_value=True)  # SET NX succeeds (no prior lock held)
+    mock_redis.delete = AsyncMock()
+
+    dummy_result = MagicMock()
+    dummy_responses = [
+        OnboardingAnswer(
+            question_id=f"q{i}",
+            dimension="cognitive",
+            selected_index=0,
+            selected_text="Option A",
+        )
+        for i in range(20)
+    ]
+    body = OnboardingDiagnosticSubmission(responses=dummy_responses)
+    current_user = {"sub": "user-456"}
+
+    with (
+        patch("app.core.redis.get_redis", return_value=mock_redis),
+        patch("app.core.db.get_supabase", return_value=MagicMock()),
+        patch(
+            "app.modules.assessment.service.process_onboarding",
+            new_callable=AsyncMock,
+            return_value=dummy_result,
+        ),
+    ):
+        result = asyncio.run(submit_onboarding_diagnostic(body=body, current_user=current_user))
+
+    delete_keys = [c.args[0] for c in mock_redis.delete.call_args_list]
+    assert "user:user-456:onboarding_done" not in delete_keys, (
+        "bypass must NOT delete onboarding_done when reassessment_due value is not '1'"
     )
     assert result is dummy_result
