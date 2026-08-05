@@ -20,6 +20,8 @@ __all__ = [
     "OnboardingAnswer",
     "OnboardingDiagnosticSubmission",
     "OnboardingResult",
+    "ConsentCreate",
+    "ConsentRecord",
 ]
 
 
@@ -127,3 +129,30 @@ class OnboardingResult(BaseModel):
     badge_labels: list[str]
     profile_text: str
     session_count: int
+
+
+# ── DPDP consent schemas (Story 3-32 / D29 fix) ───────────────────────────────
+# user_consents table: INSERT-only, immutable audit trail.
+# consent_type CHECK constraint in DB: ('attention_tracking', 'learner_dna').
+# users.attention_consent is set by the DB trigger — NEVER by this endpoint.
+
+
+class ConsentCreate(BaseModel):
+    """Request body for POST /api/assessment/consent.
+
+    user_id is never accepted here — it comes exclusively from current_user["sub"].
+    Extra fields are silently ignored (Pydantic default).
+    """
+
+    consent_type: Literal["attention_tracking", "learner_dna"]
+    policy_version: str = Field(min_length=1, max_length=50)
+
+
+class ConsentRecord(BaseModel):
+    """Response for POST /api/assessment/consent — mirrors the user_consents row."""
+
+    id: str
+    user_id: str
+    consent_type: str
+    policy_version: str
+    consented_at: str | None = None

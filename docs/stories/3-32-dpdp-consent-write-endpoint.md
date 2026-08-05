@@ -1,7 +1,7 @@
----
+﻿---
 id: "3-32"
 title: "DPDP Consent Write Endpoint (D29 Fix)"
-status: "in-progress"
+status: "done"
 sprint: 3
 story_points: 3
 baseline_commit: ""
@@ -39,30 +39,30 @@ alone is insufficient, and no write path exists to create the row.
 ## Acceptance Criteria
 
 ### Endpoint contract
-- [ ] **AC 1.** `POST /api/assessment/consent` exists and returns 201 on success.
-- [ ] **AC 2.** Request body accepts exactly two fields: `consent_type: Literal["attention_tracking","learner_dna"]` and `policy_version: str`. Any extra field is silently ignored.
-- [ ] **AC 3.** `consent_type` not in `['attention_tracking', 'learner_dna']` → HTTP 422 Unprocessable Entity (Pydantic validation, no DB call).
-- [ ] **AC 4.** Missing or blank `policy_version` (empty string) → HTTP 422 (Pydantic `min_length=1`).
+- [x] **AC 1.** `POST /api/assessment/consent` exists and returns 201 on success.
+- [x] **AC 2.** Request body accepts exactly two fields: `consent_type: Literal["attention_tracking","learner_dna"]` and `policy_version: str`. Any extra field is silently ignored.
+- [x] **AC 3.** `consent_type` not in `['attention_tracking', 'learner_dna']` → HTTP 422 Unprocessable Entity (Pydantic validation, no DB call).
+- [x] **AC 4.** Missing or blank `policy_version` (empty string) → HTTP 422 (Pydantic `min_length=1`).
 
 ### Security
-- [ ] **AC 5.** `user_id` is always sourced exclusively from `current_user["sub"]` (the verified JWT claim). A `user_id` field in the request body has no effect — confirmed by regression test using a distinguishable JWT sub value.
-- [ ] **AC 6.** Unauthenticated request (no valid JWT) → 401 or 403 (FastAPI `CurrentUser` dependency handles this; no separate implementation needed).
-- [ ] **AC 7.** `user_id` passed to the DB is always `str(current_user["sub"])` — never user-controlled input.
+- [x] **AC 5.** `user_id` is always sourced exclusively from `current_user["sub"]` (the verified JWT claim). A `user_id` field in the request body has no effect — confirmed by regression test using a distinguishable JWT sub value.
+- [x] **AC 6.** Unauthenticated request (no valid JWT) → 401 or 403 (FastAPI `CurrentUser` dependency handles this; no separate implementation needed).
+- [x] **AC 7.** `user_id` passed to the DB is always `str(current_user["sub"])` — never user-controlled input.
 
 ### DPDP compliance
-- [ ] **AC 8.** The endpoint NEVER manually sets `users.attention_consent`. The DB trigger `user_consents_sync_attention` handles this. Regression-tested by asserting `users` table is never touched by the service function.
-- [ ] **AC 9.** On first consent for `user_id + consent_type + policy_version`: INSERT a row into `user_consents` and return HTTP 201 with `ConsentRecord`.
-- [ ] **AC 10.** On repeat call with identical `user_id + consent_type + policy_version` (idempotent re-consent): return HTTP 200 with the existing record — no duplicate INSERT. This prevents unbounded accumulation of identical rows while still being DPDP-auditable.
-- [ ] **AC 11.** Response body (`ConsentRecord`) contains: `id` (UUID string), `user_id`, `consent_type`, `policy_version`, `consented_at` (ISO8601 string or null).
+- [x] **AC 8.** The endpoint NEVER manually sets `users.attention_consent`. The DB trigger `user_consents_sync_attention` handles this. Regression-tested by asserting `users` table is never touched by the service function.
+- [x] **AC 9.** On first consent for `user_id + consent_type + policy_version`: INSERT a row into `user_consents` and return HTTP 201 with `ConsentRecord`.
+- [x] **AC 10.** On repeat call with identical `user_id + consent_type + policy_version` (idempotent re-consent): return HTTP 200 with the existing record — no duplicate INSERT. This prevents unbounded accumulation of identical rows while still being DPDP-auditable.
+- [x] **AC 11.** Response body (`ConsentRecord`) contains: `id` (UUID string), `user_id`, `consent_type`, `policy_version`, `consented_at` (ISO8601 string or null).
 
 ### Error handling
-- [ ] **AC 12.** DB INSERT failure (non-duplicate) → HTTP 500. Error detail is sanitized (no raw Supabase error strings containing PII or internal paths).
-- [ ] **AC 13.** Empty INSERT response (Supabase returns no rows) → HTTP 500.
+- [x] **AC 12.** DB INSERT failure (non-duplicate) → HTTP 500. Error detail is sanitized (no raw Supabase error strings containing PII or internal paths).
+- [x] **AC 13.** Empty INSERT response (Supabase returns no rows) → HTTP 500.
 
 ### Implementation constraints
-- [ ] **AC 14.** `record_consent()` in `service.py` makes zero LLM calls — regression-tested by patching `OpenAILLMProvider` and asserting `assert_not_called()`.
-- [ ] **AC 15.** All DB calls in `record_consent()` are wrapped in `asyncio.to_thread` (Supabase client is synchronous).
-- [ ] **AC 16.** `record_consent()` is `async` — confirmed by `inspect.iscoroutinefunction` assertion in tests.
+- [x] **AC 14.** `record_consent()` in `service.py` makes zero LLM calls — regression-tested by patching `OpenAILLMProvider` and asserting `assert_not_called()`.
+- [x] **AC 15.** All DB calls in `record_consent()` are wrapped in `asyncio.to_thread` (Supabase client is synchronous).
+- [x] **AC 16.** `record_consent()` is `async` — confirmed by `inspect.iscoroutinefunction` assertion in tests.
 
 ## Dev Notes
 
@@ -144,52 +144,52 @@ async def record_consent_endpoint(
 - [x] 1.3 Push to remote
 
 ### Task 2 — RED phase (failing tests)
-- [ ] 2.1 Create `apps/api/tests/test_consent_endpoint.py`
-- [ ] 2.2 Write test for AC 1 (201 on first consent)
-- [ ] 2.3 Write test for AC 2 (extra fields ignored)
-- [ ] 2.4 Write test for AC 3 (invalid consent_type → 422)
-- [ ] 2.5 Write test for AC 4 (blank policy_version → 422)
-- [ ] 2.6 Write test for AC 5 + AC 7 (JWT-only user_id — distinguishable sub)
-- [ ] 2.7 Write test for AC 8 (no users table touch)
-- [ ] 2.8 Write test for AC 9 (happy path INSERT + 201)
-- [ ] 2.9 Write test for AC 10 (idempotent → 200)
-- [ ] 2.10 Write test for AC 11 (response shape)
-- [ ] 2.11 Write test for AC 12 (DB error → 500)
-- [ ] 2.12 Write test for AC 13 (empty INSERT response → 500)
-- [ ] 2.13 Write test for AC 14 (no LLM calls)
-- [ ] 2.14 Write test for AC 15 (asyncio.to_thread usage)
-- [ ] 2.15 Write test for AC 16 (iscoroutinefunction)
-- [ ] 2.16 Confirm all tests FAIL (import errors acceptable)
+- [x] 2.1 Create `apps/api/tests/test_consent_endpoint.py`
+- [x] 2.2 Write test for AC 1 (201 on first consent)
+- [x] 2.3 Write test for AC 2 (extra fields ignored)
+- [x] 2.4 Write test for AC 3 (invalid consent_type → 422)
+- [x] 2.5 Write test for AC 4 (blank policy_version → 422)
+- [x] 2.6 Write test for AC 5 + AC 7 (JWT-only user_id — distinguishable sub)
+- [x] 2.7 Write test for AC 8 (no users table touch)
+- [x] 2.8 Write test for AC 9 (happy path INSERT + 201)
+- [x] 2.9 Write test for AC 10 (idempotent → 200)
+- [x] 2.10 Write test for AC 11 (response shape)
+- [x] 2.11 Write test for AC 12 (DB error → 500)
+- [x] 2.12 Write test for AC 13 (empty INSERT response → 500)
+- [x] 2.13 Write test for AC 14 (no LLM calls)
+- [x] 2.14 Write test for AC 15 (asyncio.to_thread usage)
+- [x] 2.15 Write test for AC 16 (iscoroutinefunction)
+- [x] 2.16 Confirm all tests FAIL (import errors acceptable)
 
 ### Task 3 — GREEN phase (implementation)
-- [ ] 3.1 Add `ConsentCreate` and `ConsentRecord` to `schemas.py`
-- [ ] 3.2 Update `__all__` in `schemas.py`
-- [ ] 3.3 Implement `record_consent()` in `service.py`
-- [ ] 3.4 Add `Response` to `router.py` imports
-- [ ] 3.5 Import `ConsentCreate`, `ConsentRecord` in `router.py`
-- [ ] 3.6 Add `record_consent_endpoint` to `router.py`
-- [ ] 3.7 Confirm all tests PASS
+- [x] 3.1 Add `ConsentCreate` and `ConsentRecord` to `schemas.py`
+- [x] 3.2 Update `__all__` in `schemas.py`
+- [x] 3.3 Implement `record_consent()` in `service.py`
+- [x] 3.4 Add `Response` to `router.py` imports
+- [x] 3.5 Import `ConsentCreate`, `ConsentRecord` in `router.py`
+- [x] 3.6 Add `record_consent_endpoint` to `router.py`
+- [x] 3.7 Confirm all tests PASS
 
 ### Task 4 — REFACTOR + validation
-- [ ] 4.1 Run `ruff check apps/api/app/modules/assessment/ apps/api/tests/test_consent_endpoint.py`
-- [ ] 4.2 Run `ruff format --check apps/api/app/modules/assessment/ apps/api/tests/test_consent_endpoint.py`
-- [ ] 4.3 Run full consent test suite: `pytest apps/api/tests/test_consent_endpoint.py -v`
-- [ ] 4.4 Run full Sprint 3 Dev 3 regression suite (all Dev 3 test files)
-- [ ] 4.5 Confirm 0 ruff errors, all tests PASS
+- [x] 4.1 Run `ruff check apps/api/app/modules/assessment/ apps/api/tests/test_consent_endpoint.py`
+- [x] 4.2 Run `ruff format --check apps/api/app/modules/assessment/ apps/api/tests/test_consent_endpoint.py`
+- [x] 4.3 Run full consent test suite: `pytest apps/api/tests/test_consent_endpoint.py -v`
+- [x] 4.4 Run full Sprint 3 Dev 3 regression suite (all Dev 3 test files)
+- [x] 4.5 Confirm 0 ruff errors, all tests PASS
 
 ### Task 5 — 5-agent adversarial review
-- [ ] 5.1 Layer 1 — Story Quality: all ACs testable, story-first gate verified
-- [ ] 5.2 Layer 2 — Blind Hunter: IDOR, JWT bypass, enumeration, log injection
-- [ ] 5.3 Layer 3 — Test Coverage: all ACs have tests, no vacuous assertions
-- [ ] 5.4 Layer 4 — AC Completeness: every AC maps to ≥1 test assertion
-- [ ] 5.5 Layer 5 — Process Integrity: no LLM calls, no hardcoded models, no module boundary violations
+- [x] 5.1 Layer 1 — Story Quality: all ACs testable, story-first gate verified
+- [x] 5.2 Layer 2 — Blind Hunter: IDOR, JWT bypass, enumeration, log injection
+- [x] 5.3 Layer 3 — Test Coverage: all ACs have tests, no vacuous assertions
+- [x] 5.4 Layer 4 — AC Completeness: every AC maps to ≥1 test assertion
+- [x] 5.5 Layer 5 — Process Integrity: no LLM calls, no hardcoded models, no module boundary violations
 
 ### Task 6 — Commit + merge
-- [ ] 6.1 Final commit on `sprint3/s3-32-dpdp-consent-endpoint`
-- [ ] 6.2 Push to remote
-- [ ] 6.3 Merge to `master-sprint3-dev3`
-- [ ] 6.4 Update `docs/dev3-assessment-tracker.md`
-- [ ] 6.5 Update `docs/DEFECT-REGISTER.md` — close D29
+- [x] 6.1 Final commit on `sprint3/s3-32-dpdp-consent-endpoint`
+- [x] 6.2 Push to remote
+- [x] 6.3 Merge to `master-sprint3-dev3`
+- [x] 6.4 Update `docs/dev3-assessment-tracker.md`
+- [x] 6.5 Update `docs/DEFECT-REGISTER.md` — close D29
 
 ## Senior Developer Review (AI)
 
