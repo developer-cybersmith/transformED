@@ -4,13 +4,26 @@ import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { useLessonSocketMock, apiPostMock } = vi.hoisted(() => ({
+const { useLessonSocketMock, apiPostMock, useAttentionConsentMock } = vi.hoisted(() => ({
   useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
   apiPostMock: vi.fn(),
+  // Safe default so every pre-existing test in this file (none of which know
+  // about S3-01) never sees the consent modal unless a test opts in.
+  useAttentionConsentMock: vi.fn().mockReturnValue({
+    consentStatus: 'unknown',
+    isLoading: false,
+    showModal: false,
+    accept: vi.fn(),
+    decline: vi.fn(),
+  }),
 }));
 
 vi.mock('@/hooks/useLessonSocket', () => ({
   useLessonSocket: useLessonSocketMock,
+}));
+
+vi.mock('@/hooks/useAttentionConsent', () => ({
+  useAttentionConsent: useAttentionConsentMock,
 }));
 
 // Player fires two kinds of real api.post calls directly: analytics events
@@ -49,6 +62,14 @@ beforeEach(() => {
   window.HTMLMediaElement.prototype.pause = vi.fn();
   localStorage.clear();
   useLessonSocketMock.mockClear();
+  useAttentionConsentMock.mockReset();
+  useAttentionConsentMock.mockReturnValue({
+    consentStatus: 'unknown',
+    isLoading: false,
+    showModal: false,
+    accept: vi.fn(),
+    decline: vi.fn(),
+  });
   mockOnRefetchLesson.mockClear();
   mockOnRefetchLesson.mockResolvedValue(null);
   apiPostMock.mockReset();
@@ -407,6 +428,20 @@ describe('Player — lesson WebSocket (S2-06)', () => {
     });
 
     expect(screen.queryByText(/checking in/i)).not.toBeNull();
+  });
+
+  it('mounts AttentionConsentModal — it becomes visible when useAttentionConsent reports showModal (S3-01 AC-8)', () => {
+    useAttentionConsentMock.mockReturnValue({
+      consentStatus: 'unknown',
+      isLoading: false,
+      showModal: true,
+      accept: vi.fn(),
+      decline: vi.fn(),
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    expect(screen.queryByTestId('attention-consent-modal')).not.toBeNull();
   });
 });
 
