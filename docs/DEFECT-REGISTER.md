@@ -136,7 +136,7 @@ purpose.
 | ID | Defect | Sev | Decision | Enforcement |
 |----|--------|-----|----------|-------------|
 | ~~D22~~ | **CLOSED 2026-07-29.** D9's class was live at 43 sites; replanting it on `sessions` left the suite green. | High | Guard generalised to every table + column, resolving module-level constants. | `test_schema_column_guard.py` — **mutation-verified**: catches the replant both via a literal AND via `_LIST_COLUMNS` |
-| **D29** | **DPDP `user_consents` audit table has zero writers.** Migration `20260702000000_dpdp_user_consents.sql` genuinely creates the table, RLS, and a trigger syncing `users.attention_consent` — but `process_onboarding()` (`apps/api/app/modules/assessment/service.py:864-976`) never inserts into it. CLAUDE.md §18 names this table an explicit **Sprint 2 priority** precondition before any attention data is collected — schema shipped, the actual consent-write path was never built. Found 2026-07-29 during a cross-team Sprint 2 completion audit (`docs/sprint2-completion-audit-2026-07-29.md`); re-verified 2026-07-30 that no write path landed since. | High (compliance) | **Needs Dev 3.** Write a `user_consents` row (consent_type, policy_version, consented_at) at the point onboarding consent is captured, before Sprint 3's `AttentionMonitor` can legally initialize. | *(none — grep for `user_consents` in `apps/api` only matches a migration-name string in a test assertion)* |
+| ~~D29~~ | **CLOSED 2026-08-05 (Story 3-32, branch `sprint3/s3-32-dpdp-consent-endpoint`).** `POST /api/assessment/consent` now writes `user_consents` rows. INSERT-first idempotency (TOCTOU-safe via UNIQUE constraint in migration `20260805000000_user_consents_unique_constraint.sql`). 24 unit tests; all ACs including body-injection guard and idempotent to_thread coverage. Enforcement: `apps/api/tests/test_consent_endpoint.py`. | High (compliance) | Fixed + guarded. | `apps/api/tests/test_consent_endpoint.py` — 24 tests covering all ACs (AC 8: `test_record_consent_service_never_updates_users_table`; AC 15: `test_record_consent_idempotent_path_both_db_calls_wrapped_in_to_thread`). |
 | ~~D30~~ | **CLOSED 2026-08-03 (commit d0669aa).** See closed section above. | — | — | — |
 
 ### OPEN — found by the 2026-07-30 frontend wiring audit
@@ -265,12 +265,12 @@ is what happens without it: three developers, three green suites, one broken pro
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | **25** |
+| Defects closed (fixed **and** guarded) | **26** |
 | Fixed, awaiting merge | **0** — everything Dev 1 owns is on `main` |
 | **Open** | **25** |
 | Of which **live in production** | **3** — D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
-| Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D30 closed 2026-08-04** |
+| Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D29 closed 2026-08-05, D30 closed 2026-08-04** |
 | Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
 | Open entries with a named owner **and** a trigger | **24 of 25** (D36 still has no owner) |
 | Found by the 2026-07-30 wiring audit | **7** registered (D31–D37), ~40 more in the report |
