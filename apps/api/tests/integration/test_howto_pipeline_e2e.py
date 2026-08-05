@@ -67,6 +67,9 @@ HOWTO_TEXT = "\n\n".join(
 )
 FAKE_LESSON_ID = "aaaaaaaa-1111-2222-3333-444444444444"
 FAKE_BOOK_ID = "bbbbbbbb-1111-2222-3333-444444444444"
+# chunks.chapter_id is NOT NULL and Story 1-13 removed the row chunk_node
+# used to manufacture, so every pipeline run now needs a real chapter.
+FAKE_CHAPTER_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
 
 # ── Stateful Supabase fake ────────────────────────────────────────────────────
@@ -129,7 +132,10 @@ class _Query:
             if isinstance(self._payload, dict) and "node_outputs" in self._payload:
                 self._fake.node_outputs = self._payload["node_outputs"]
             return SimpleNamespace(data=[{}])
-        if t == "chapters" and op == "insert":
+        # chunk_node upserts the chapter row (retry-safety under the
+        # UNIQUE (book_id, chapter_index) added by 20260803000000); `insert` is
+        # kept so this fake stays honest if some other caller still inserts.
+        if t == "chapters" and op in {"insert", "upsert"}:
             return SimpleNamespace(data=[{"chapter_id": "cccccccc-1111-2222-3333-444444444444"}])
         # chunks: return [] so embed_node no-ops (chunks feed RAG, not generation)
         if t == "chunks":
@@ -356,7 +362,9 @@ async def _run_howto(howto: str, lesson_id: str, *, slides_per_segment: int = 1)
         ),
         patch("app.core.redis.get_redis", return_value=redis),
     ):
-        package = await run_pipeline(lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID)
+        package = await run_pipeline(
+            lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID, chapter_id=FAKE_CHAPTER_ID
+        )
     _LAST_RUN_SPIES["synth"] = synth
     return package
 
@@ -403,7 +411,11 @@ async def _run_howto_tier(
         patch("app.core.redis.get_redis", return_value=redis),
     ):
         package = await run_pipeline(
-            lesson_id, chapter_content=howto, book_id=FAKE_BOOK_ID, tier=tier
+            lesson_id,
+            chapter_content=howto,
+            book_id=FAKE_BOOK_ID,
+            chapter_id=FAKE_CHAPTER_ID,
+            tier=tier,
         )
     _LAST_RUN_SPIES["synth"] = synth
     return (package, dict(_LAST_RUN_SPIES)) if want_spies else package

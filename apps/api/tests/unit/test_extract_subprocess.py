@@ -597,7 +597,11 @@ class TestTableDetectionAndContract:
     ) -> None:
         result, _ = _run_extract(monkeypatch, tmp_path, texts=["A" * 100, "B" * 100, "C" * 100])
 
-        assert set(result) == {
+        # SUPERSET, not equality. The test's own name promises additive keys are
+        # allowed; `==` forbade them, so Story 1-12's `extracted_page_count` and
+        # `page_offset` failed a test written to permit exactly that. A consumer
+        # breaks when a key DISAPPEARS or changes meaning — never when one is added.
+        required = {
             "raw_text",
             "page_count",
             "image_files",
@@ -605,6 +609,9 @@ class TestTableDetectionAndContract:
             "tables_detected",
             "docling_pages",
         }
+        assert required <= set(result), (
+            f"missing from the output contract: {required - set(result)}"
+        )
         assert result["page_count"] == 3
         assert result["image_files"] == []
         assert result["font_blocks"] == []

@@ -62,7 +62,7 @@ beforeEach(() => {
 });
 
 describe('middleware — protected route coverage', () => {
-  const PROTECTED_PATHS = ['/dashboard', '/library', '/upload', '/settings', '/onboarding', '/lesson/lsn_123'];
+  const PROTECTED_PATHS = ['/dashboard', '/library', '/upload', '/settings', '/onboarding', '/lesson/lsn_123', '/books', '/books/dfea46ac-1c6e-401a-a936-269eedd3e5d9'];
   const PUBLIC_PATHS = ['/', '/signin', '/signup', '/auth/callback'];
 
   it.each(PROTECTED_PATHS)('redirects %s to /signin when there is no session', async (path) => {
@@ -106,7 +106,9 @@ describe('middleware — protected route coverage', () => {
 });
 
 describe('middleware — onboarding gate (learner_dna)', () => {
-  const GATED_PATHS = ['/lesson/lsn_123', '/upload'];
+  // W2 AC8: /books is onboarding-gated. One entry covers both the list and the
+  // detail route because pathRequiresOnboarding matches on exact segments.
+  const GATED_PATHS = ['/lesson/lsn_123', '/upload', '/books', '/books/dfea46ac-1c6e-401a-a936-269eedd3e5d9'];
   const UNGATED_PATHS = ['/dashboard', '/onboarding', '/library', '/settings'];
 
   it.each(GATED_PATHS)('redirects %s to /onboarding when the user has no learner_dna row', async (path) => {
@@ -170,6 +172,19 @@ describe('middleware — onboarding gate (learner_dna)', () => {
     });
 
     const response = await proxy(makeRequest(path));
+
+    expect(response).toBe(passThrough);
+  });
+
+  it('does not gate a sibling route sharing the /books prefix, e.g. /bookstore', async () => {
+    const passThrough = { headers: new Headers() } as unknown;
+    updateSessionMock.mockResolvedValue({
+      supabaseResponse: passThrough,
+      user: { id: 'u1' },
+      supabase: makeSupabaseStub(null),
+    });
+
+    const response = await proxy(makeRequest('/bookstore'));
 
     expect(response).toBe(passThrough);
   });

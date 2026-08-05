@@ -190,25 +190,93 @@ async def running_listener(manager: MagicMock):
 # -- Scenario 1: end-to-end pub/sub delivery ----------------------------------
 
 
-@pytest.mark.integration
-async def test_end_to_end_pubsub_delivery() -> None:
-    """A correctly-shaped lesson_ready message is delivered to manager.send."""
-    manager = _make_mock_manager()
-    session_id = "test-lesson-abc"
-    message = {
+# D34 / Story 1-15. Two DISTINCT ids, and that is the whole point.
+#
+# This test previously used ONE string for both — `session_id = "test-lesson-abc"`
+# published on `lesson_ready:{session_id}` and then asserted
+# `manager.send.assert_awaited_once_with(session_id, ...)`. With one value there is
+# no difference between "delivered to the right session" and "passed the lesson id
+# straight through", so the test passed against a path that could never reach a
+# client. It encoded the defect as its premise and could not fail.
+LESSON_ID = "11111111-1111-1111-1111-111111111111"
+SESSION_ID = "22222222-2222-2222-2222-222222222222"
+OTHER_SESSION_ID = "33333333-3333-3333-3333-333333333333"
+
+
+def _lesson_ready_message(lesson_id: str = LESSON_ID) -> dict:
+    return {
         "type": "lesson_ready",
         "payload": {
-            "session_id": session_id,
-            "lesson_id": session_id,
+            "lesson_id": lesson_id,
             "lesson": {"slides": [], "quiz_questions": [], "audio_assets": []},
         },
     }
 
-    async with running_listener(manager) as publish:
-        await publish(f"lesson_ready:{session_id}", json.dumps(message))
-        await _wait_for(lambda: manager.send.await_count >= 1)
 
-    manager.send.assert_awaited_once_with(session_id, message)
+@contextlib.contextmanager
+def _sessions_awaiting(*session_ids: str):
+    """Stand in for the `sessions` lookup the subscriber now performs."""
+    with mock.patch(
+        "app.core.pubsub._sessions_awaiting",
+        new=AsyncMock(return_value=list(session_ids)),
+    ) as m:
+        yield m
+
+
+@pytest.mark.integration
+async def test_end_to_end_pubsub_delivery() -> None:
+    """The lesson id on the channel must be RESOLVED to a session id before it
+    reaches `manager.send`.
+
+    `ConnectionManager` keys `_connections` by the `/ws/{session_id}` path param,
+    so a lesson id matches nothing, `send()` iterates an empty list and returns
+    silently. If this asserts on the lesson id, the push path is dead in
+    production and every test still passes — which is exactly what happened.
+    """
+    manager = _make_mock_manager()
+    message = _lesson_ready_message()
+
+    with _sessions_awaiting(SESSION_ID) as resolver:
+        async with running_listener(manager) as publish:
+            await publish(f"lesson_ready:{LESSON_ID}", json.dumps(message))
+            await _wait_for(lambda: manager.send.await_count >= 1)
+
+    resolver.assert_awaited_once_with(LESSON_ID)
+    manager.send.assert_awaited_once_with(SESSION_ID, message)
+    sent_to = manager.send.await_args.args[0]
+    assert sent_to != LESSON_ID, (
+        "the subscriber sent the LESSON id to a manager keyed by SESSION id — D34"
+    )
+
+
+@pytest.mark.integration
+async def test_every_waiting_session_receives_the_lesson() -> None:
+    """Two devices, or two tabs, on the same lesson. Delivering to only the first
+    leaves the other spinning on a lesson that is already built."""
+    manager = _make_mock_manager()
+    message = _lesson_ready_message()
+
+    with _sessions_awaiting(SESSION_ID, OTHER_SESSION_ID):
+        async with running_listener(manager) as publish:
+            await publish(f"lesson_ready:{LESSON_ID}", json.dumps(message))
+            await _wait_for(lambda: manager.send.await_count >= 2)
+
+    assert {c.args[0] for c in manager.send.await_args_list} == {SESSION_ID, OTHER_SESSION_ID}
+
+
+@pytest.mark.integration
+async def test_no_waiting_session_is_quiet_not_a_failure() -> None:
+    """A student who closed the tab mid-generation has no session row. That is a
+    normal outcome — it must not raise, must not send, and must not kill the
+    subscriber, which is the only path delivering every other lesson."""
+    manager = _make_mock_manager()
+
+    with _sessions_awaiting():
+        async with running_listener(manager) as publish:
+            await publish(f"lesson_ready:{LESSON_ID}", json.dumps(_lesson_ready_message()))
+            await asyncio.sleep(0.15)
+
+    assert manager.send.await_count == 0
 
 
 # -- Scenario 2: message shape forwarded without mutation ---------------------
@@ -219,20 +287,23 @@ async def test_message_shape_forwarded_without_mutation() -> None:
     """The subscriber forwards the published dict verbatim — no keys added or
     removed at any level."""
     manager = _make_mock_manager()
-    session_id = "abc"
     message = {
         "type": "lesson_ready",
-        "payload": {"lesson_id": "abc", "lesson": {"slides": []}},
+        "payload": {"lesson_id": LESSON_ID, "lesson": {"slides": []}},
     }
 
-    async with running_listener(manager) as publish:
-        await publish(f"lesson_ready:{session_id}", json.dumps(message))
-        await _wait_for(lambda: manager.send.await_count >= 1)
+    # The session lookup is stubbed because this test is about the PAYLOAD, not
+    # about routing — but it still uses distinct ids, so a regression that
+    # forwards the lesson id shows up here too rather than only next door.
+    with _sessions_awaiting(SESSION_ID):
+        async with running_listener(manager) as publish:
+            await publish(f"lesson_ready:{LESSON_ID}", json.dumps(message))
+            await _wait_for(lambda: manager.send.await_count >= 1)
 
     manager.send.assert_awaited_once()
     sent_session_id, sent_message = manager.send.await_args[0]
 
-    assert sent_session_id == session_id
+    assert sent_session_id == SESSION_ID
     # Exact structural equality — nothing mutated in transit.
     assert sent_message == message
     # Be explicit that no key was added or dropped at either level.
@@ -249,22 +320,23 @@ async def test_malformed_json_does_not_kill_subscriber() -> None:
     """A non-JSON payload is swallowed; a subsequent valid message still
     reaches manager.send (the listener survived the bad message)."""
     manager = _make_mock_manager()
-    good_session = "good-session"
     good_message = {
         "type": "lesson_ready",
-        "payload": {"session_id": good_session, "lesson_id": good_session, "lesson": {}},
+        "payload": {"lesson_id": LESSON_ID, "lesson": {}},
     }
 
-    async with running_listener(manager) as publish:
-        # Bad message first — must not raise out of the subscriber loop.
-        await publish("lesson_ready:bad", b"not-json")
-        await asyncio.sleep(0.05)
-        # Valid message after the crash-bait.
-        await publish(f"lesson_ready:{good_session}", json.dumps(good_message))
-        await _wait_for(lambda: manager.send.await_count >= 1)
+    with _sessions_awaiting(SESSION_ID):
+        async with running_listener(manager) as publish:
+            # Bad message first — must not raise out of the subscriber loop.
+            await publish("lesson_ready:bad", b"not-json")
+            await asyncio.sleep(0.05)
+            # Valid message after the crash-bait.
+            await publish(f"lesson_ready:{LESSON_ID}", json.dumps(good_message))
+            await _wait_for(lambda: manager.send.await_count >= 1)
 
-    # The bad message produced no dispatch; the good one did.
-    manager.send.assert_awaited_once_with(good_session, good_message)
+    # The bad message produced no dispatch; the good one did — and it was routed
+    # to the SESSION id, not the lesson id on the channel (D34).
+    manager.send.assert_awaited_once_with(SESSION_ID, good_message)
 
 
 # -- Scenario 4: non-pmessage events are ignored ------------------------------
@@ -298,8 +370,11 @@ def test_no_manager_import_in_workers() -> None:
     ``manager.send`` there — would couple the ARQ worker to in-process
     WebSocket state it does not own and cannot reach across processes.
     """
+    # parents[2], not parents[1]: this file moved from tests/ to tests/integration/
+    # (Story 1-15) so that its D34 guard sits in CI's GATING step rather than the
+    # advisory one — a guard that only reports is not a guard (binding rule 7).
     job_path = (
-        pathlib.Path(__file__).resolve().parents[1]
+        pathlib.Path(__file__).resolve().parents[2]
         / "app"
         / "workers"
         / "jobs"

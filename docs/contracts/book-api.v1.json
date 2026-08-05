@@ -1,0 +1,248 @@
+{
+  "$comment": "Book-scale API, v1. Frozen for Dev 2's Track W (SYNC-1). The W0 contract CI job compares this against the live FastAPI schema and must fail when they diverge. GET shapes are ADDITIVE ONLY across versions \u2014 W1 and W2 are built against them, so a field may be added but never removed or renamed. See real_example for the provenance and current staleness of the captured payloads.",
+  "version": "1.1.0",
+  "captured": "2026-08-04",
+  "source": "Story 1-11 (book-scale Phase 3.5); extended by Story 1-14 (book-scale Phase 6, AC23)",
+  "base": "/api/content",
+  "changelog": {
+    "1.1.0": "Story 1-14 / Phase 6. ADDED: POST /books/{book_id}/chapters/{chapter_id}/lessons and the LessonGenerationResponse + GenerateLessonRequest schemas. ADDED to ChapterResponse: lesson_count, latest_lesson. CHANGED (annotation only, no shape change): the two 1.0.0 annotations on ChapterResponse.lesson_id and .has_lesson asserting they were permanently null and permanently false until Phase 6 are DELETED \u2014 they were true only while nothing in the system could write a lesson, and are now false statements. Both fields are now derived from the embedded `lessons` relation rather than from the scalar `chapters.lesson_id` column, which is dead (see DEFECT-REGISTER D44). NO GET RESPONSE SHAPE REGRESSED: every 1.0.0 field is still present with the same type.",
+    "1.0.0": "Story 1-11 / Phase 3.5. GET /books, GET /books/{book_id}, GET /books/{book_id}/chapters."
+  },
+  "endpoints": {
+    "GET /books": {
+      "query": {
+        "limit": "int, default 50, max 200",
+        "offset": "int, default 0"
+      },
+      "returns": "BookResponse[] \u2014 newest first",
+      "notes": "Pagination was not in the story's ACs; added to avoid shipping an unbounded list, mirroring GET /lessons."
+    },
+    "GET /books/{book_id}": {
+      "returns": "BookResponse",
+      "404": {
+        "detail": "Book not found"
+      },
+      "notes": "The body is IDENTICAL for absent / malformed-uuid / another user's book. Never 403 \u2014 403 confirms the id exists. This is what UploadFlow polls instead of GET /lessons/{id}."
+    },
+    "GET /books/{book_id}/chapters": {
+      "returns": "ChapterResponse[] \u2014 ordered by chapter_index ascending",
+      "404": {
+        "detail": "Book not found"
+      },
+      "notes": "As of 1.1.0 the lesson fields are sourced from an embedded to-MANY `lessons` relation, so a chapter with lessons at several tiers is represented honestly. A chapter with no lessons yields lesson_id=null, has_lesson=false, lesson_count=0, latest_lesson=null \u2014 that is the NORMAL state, not an error."
+    },
+    "POST /books/{book_id}/chapters/{chapter_id}/lessons": {
+      "added_in": "1.1.0",
+      "summary": "Generate a lesson from one chapter at a chosen difficulty tier.",
+      "request": {
+        "schema": "GenerateLessonRequest",
+        "body": {
+          "tier": "string, optional \u2014 T1 | T2 | T3. Defaults to DEFAULT_TIER (T2). This is the ONLY field the client supplies; book_id and chapter_id come from the path, and the page range, source PDF path and owner are read from rows the caller has already been proven to own. A client-supplied page range would bypass the size gate outright."
+        }
+      },
+      "returns": "LessonGenerationResponse",
+      "responses": {
+        "202": "Created and enqueued. status='queued', job_id is the ARQ job id (non-null).",
+        "200": "Idempotent hit \u2014 a lesson for this (chapter, tier, user) already exists in 'generating' or 'ready'. The SAME lesson_id is returned, no row was created and NOTHING was enqueued. job_id is null on this path: the original ARQ id is not persisted anywhere and inventing one would hand the client a token it could poll forever. A 'failed' lesson does not match \u2014 retrying after a failure generates fresh and returns 202.",
+        "404": {
+          "detail": "Book not found | Chapter not found",
+          "notes": "'Book not found' is byte-identical for a book that does not exist, a malformed book_id, and another user's book. A chapter belonging to a DIFFERENT book of the caller's own returns 'Chapter not found'. Neither body ever contains filename, title, page_start, page_end, chapter_index or a real book_id. A malformed uuid in either path segment 404s without reaching the database."
+        },
+        "409": {
+          "detail": "Book is not ready \u2014 chapter detection has not finished",
+          "notes": "Not a 404: the book exists and the caller owns it, there is simply nothing to generate from yet. 'processing' becomes 'ready' on its own, so this is retryable without user action; 'failed' needs a re-upload."
+        },
+        "422": [
+          {
+            "shape": "FastAPI validation error",
+            "when": "tier is not in {T1,T2,T3}. Raised during request parsing, i.e. before any database call."
+          },
+          {
+            "shape": {
+              "detail": {
+                "code": "chapter_too_large",
+                "page_span": "integer \u2014 page_end - page_start + 1, computed from the DB row",
+                "max_page_span": "integer \u2014 settings.max_chapter_pages, currently 200",
+                "boundary_confidence": "string \u2014 toc | contents | heading | font | fallback"
+              }
+            },
+            "when": "The chapter's page span exceeds max_chapter_pages. No lesson row is created and nothing is enqueued. boundary_confidence is returned so the client can distinguish 'this chapter is genuinely enormous' from 'detection found no signal and made the whole document one chapter' \u2014 it is NOT itself a gate. See DEFECT-REGISTER D47."
+          }
+        ],
+        "429": [
+          {
+            "when": "Per-user concurrency cap \u2014 the caller already has max_concurrent_generations_per_user (3) lessons in status='generating'.",
+            "headers": {
+              "Retry-After": "seconds (60)"
+            },
+            "detail": "Too many lessons are already generating \u2014 wait for one to finish before starting another",
+            "notes": "This, not the rate limit, is the control that bounds spend: it caps concurrent PIPELINES, each of which can cost up to max_lesson_cost_usd."
+          },
+          {
+            "when": "Rate limit \u2014 3/minute and 20/hour, keyed by user. Sized for an endpoint that spends money; the 5/minute used by upload would authorise roughly $900/hour.",
+            "notes": "The limiter's storage defaults to memory://, so the ceiling multiplies by replica count until RATE_LIMIT_STORAGE_URL is set. Registered as DEFECT-REGISTER D49, not fixed here."
+          }
+        ]
+      },
+      "notes": [
+        "This is the single write that reconnects book ingestion to lesson generation: one `lessons` row carrying chapter_id. `content_pipeline_job` already reads chapter_id and threads the chapter's real page range to the isolated PDF subprocess.",
+        "Idempotency is a best-effort pre-check and is TOCTOU-racy \u2014 there is no UNIQUE constraint on (chapter_id, tier) to lean on. Two concurrent identical requests can both create. DEFECT-REGISTER D45.",
+        "The same chapter at a DIFFERENT tier always produces a new lesson. That is deliberate: lessons_chapter_id_idx is non-unique.",
+        "Poll progress with GET /lessons/{lesson_id} as before; this endpoint returns immediately."
+      ]
+    }
+  },
+  "schemas": {
+    "BookResponse": {
+      "$comment": "Byte-for-byte unchanged in 1.1.0.",
+      "book_id": "string (uuid)",
+      "filename": "string",
+      "status": "string \u2014 processing | ready | failed",
+      "page_count": "integer | null \u2014 null while ingesting",
+      "chapter_count": "integer \u2014 0 while ingesting, never null",
+      "created_at": "string (ISO-8601) | null"
+    },
+    "ChapterResponse": {
+      "chapter_id": "string (uuid)",
+      "chapter_index": "integer \u2014 0-based, sequential, gap-free over kept chapters",
+      "title": "string",
+      "page_start": "integer \u2014 0-based PDF page index, inclusive",
+      "page_end": "integer \u2014 0-based PDF page index, inclusive",
+      "boundary_confidence": "string \u2014 toc | contents | heading | font | fallback",
+      "lesson_id": "string (uuid) | null \u2014 the MOST RECENT lesson generated from this chapter, by created_at. Derived from the embedded `lessons` relation, NOT from the chapters.lesson_id column, which is dead (DEFECT-REGISTER D44). null when the chapter has no lessons, which is the normal state.",
+      "has_lesson": "boolean \u2014 true when AT LEAST ONE lesson exists for this chapter in ANY state, including 'failed'. Derived from the same embedded relation. Do NOT use it alone to decide whether to render a Watch button \u2014 read latest_lesson.status, or a chapter whose only lesson failed will link to a player that 404s.",
+      "lesson_count": "integer \u2014 added in 1.1.0. Number of lessons generated from this chapter across all tiers and all states. 0, never null.",
+      "latest_lesson": "LatestLesson | null \u2014 added in 1.1.0. The newest lesson by created_at, or null when lesson_count is 0."
+    },
+    "LatestLesson": {
+      "added_in": "1.1.0",
+      "lesson_id": "string (uuid)",
+      "status": "string \u2014 generating | ready | failed",
+      "tier": "string \u2014 T1 | T2 | T3",
+      "created_at": "string (ISO-8601) | null"
+    },
+    "GenerateLessonRequest": {
+      "added_in": "1.1.0",
+      "tier": "string, optional, default T2 \u2014 must be one of T1 | T2 | T3"
+    },
+    "LessonGenerationResponse": {
+      "added_in": "1.1.0",
+      "lesson_id": "string (uuid)",
+      "chapter_id": "string (uuid)",
+      "tier": "string \u2014 T1 | T2 | T3, echoed back so the client never has to assume the default",
+      "status": "string \u2014 'queued' on the 202 create path; on the 200 idempotent path it is the EXISTING lesson's own status ('generating' or 'ready')",
+      "job_id": "string | null \u2014 the ARQ job id on 202; ALWAYS null on the 200 idempotent path",
+      "truncation_expected": "boolean \u2014 true when the chapter spans more than 40 pages. Above that the LLM-visible window (~90,000 characters) covers only part of the chapter, so the lesson is genuinely built from a fraction of it. This is a QUALITY warning, not a failure: the request was accepted and will run. It is surfaced rather than hidden because the $3.00 cost ceiling cannot catch it \u2014 a truncated lesson is cheap and wrong, not expensive. DEFECT-REGISTER D46."
+    }
+  },
+  "real_example": {
+    "captured_at": "2026-08-04",
+    "captured_at_version": "1.1.0",
+    "source": "Story 1-14 AC20 live gate \u2014 real 1,151-page book (Dive into Deep Learning), real Supabase project, real API. Not hand-written.",
+    "book": "d2l.pdf, 1,151 pages, 21 detected chapters, ingested in 90.3 s",
+    "note": "The chapter shown carries TWO lessons at different tiers on one chapter \u2014 the case the dead scalar `chapters.lesson_id` could never express, and the reason `lesson_count` and `latest_lesson` exist. `latest_lesson.status` is the CLIENT vocabulary (queued|running|ready|failed), mapped from the DB's generating|ready|failed \u2014 gate the Watch button on it, never on `has_lesson`.",
+    "GET /books": [
+      {
+        "book_id": "9c66fab7-817c-4b8e-bd59-d1ded445bf65",
+        "filename": "d2l.pdf",
+        "status": "processing",
+        "page_count": null,
+        "chapter_count": 0,
+        "created_at": "2026-08-04T10:58:58.435893+00:00"
+      },
+      {
+        "book_id": "dfea46ac-1c6e-401a-a936-269eedd3e5d9",
+        "filename": "d2l.pdf",
+        "status": "ready",
+        "page_count": 1151,
+        "chapter_count": 21,
+        "created_at": "2026-08-04T10:55:09.608627+00:00"
+      }
+    ],
+    "GET /books/{book_id}": {
+      "book_id": "dfea46ac-1c6e-401a-a936-269eedd3e5d9",
+      "filename": "d2l.pdf",
+      "status": "ready",
+      "page_count": 1151,
+      "chapter_count": 21,
+      "created_at": "2026-08-04T10:55:09.608627+00:00"
+    },
+    "GET /books/{book_id}/chapters": [
+      {
+        "chapter_id": "2dc0c39d-ed6b-47cc-8879-5232984995e4",
+        "chapter_index": 0,
+        "title": "Introduction",
+        "page_start": 40,
+        "page_end": 68,
+        "boundary_confidence": "toc",
+        "lesson_id": "f02bd2ef-e293-450e-b813-01aa99de34d5",
+        "has_lesson": true,
+        "lesson_count": 3,
+        "latest_lesson": {
+          "lesson_id": "f02bd2ef-e293-450e-b813-01aa99de34d5",
+          "status": "failed",
+          "tier": "T3",
+          "created_at": "2026-08-04T10:56:55.490815+00:00"
+        }
+      },
+      {
+        "chapter_id": "6f9c4b64-eb79-4aa9-bc16-bc5fff610509",
+        "chapter_index": 1,
+        "title": "Preliminaries",
+        "page_start": 69,
+        "page_end": 120,
+        "boundary_confidence": "toc",
+        "lesson_id": "6cbbe233-415f-4523-9541-0bde06d4c567",
+        "has_lesson": true,
+        "lesson_count": 2,
+        "latest_lesson": {
+          "lesson_id": "6cbbe233-415f-4523-9541-0bde06d4c567",
+          "status": "running",
+          "tier": "T3",
+          "created_at": "2026-08-04T11:12:51.946256+00:00"
+        }
+      },
+      {
+        "chapter_id": "645dcb9a-ddde-438a-8fb4-0d609fbf2fa8",
+        "chapter_index": 2,
+        "title": "Linear Neural Networks for Regression",
+        "page_start": 121,
+        "page_end": 163,
+        "boundary_confidence": "toc",
+        "lesson_id": null,
+        "has_lesson": false,
+        "lesson_count": 0,
+        "latest_lesson": null
+      }
+    ],
+    "verified_against_real_postgrest": {
+      "date": "2026-08-04",
+      "checks_passed": "19/19",
+      "note": "chapters(count) is a PostgREST embedded aggregate; it resolved unambiguously despite books having three inbound FKs, returning 21."
+    },
+    "other_books_observed": {
+      "NCERT XI Physics Part 1": {
+        "page_count": 184,
+        "chapter_count": 7,
+        "boundary_confidence": "heading"
+      },
+      "NCERT XII Physics Part 1": {
+        "page_count": 291,
+        "chapter_count": 8,
+        "boundary_confidence": "contents"
+      }
+    }
+  },
+  "notes_for_dev_2": [
+    "lesson_id and has_lesson are present from day one so the chapter card does not need rebuilding at W3. As of 1.1.0 they finally carry real values \u2014 the 1.0.0 annotations saying they were permanently empty until Phase 6 are deleted and must not be re-added.",
+    "Render the Watch button from latest_lesson.status, not from has_lesson. has_lesson is true for a chapter whose only lesson FAILED, and linking to that lesson 404s the player.",
+    "lesson_count > 1 is normal, not an error: one chapter may carry a lesson per tier. latest_lesson is the newest by created_at, which may be at a different tier from the one the user last asked for.",
+    "POST .../lessons returns 202 with status='queued' on create and 200 with the existing lesson on a repeat. Treat BOTH as success and navigate to the same place; distinguish them only if you want to suppress a duplicate 'started' toast. Retrying a 202 is safe.",
+    "truncation_expected=true is a warning to SHOW, not an error to swallow \u2014 the lesson will be built from part of the chapter. It never blocks the request.",
+    "429 has two distinct causes with different bodies: the concurrency cap (carries Retry-After) and the rate limit. Both are retryable; only the first is worth explaining to the user as 'you already have lessons generating'.",
+    "Ingestion status is REST-polled via GET /books/{id}. Do NOT request it over WebSocket \u2014 ws.ts is a frozen contract (CLAUDE.md \u00a716) and adding a book message triggers a 4-developer review.",
+    "No packages/shared change is needed: LessonPackage already requires book_id and chapter_id.",
+    "chapter_count comes from a PostgREST embedded aggregate; it is 0, not null, for a book still ingesting."
+  ],
+  "provenance_note": "`verified_against_real_postgrest` and `other_books_observed` were deleted during the 1.1.0 re-capture and RESTORED 2026-08-04 after the Process Integrity review layer caught it. AC23 authorised removing two now-false annotations and re-capturing `real_example`; it did not authorise deleting the record of what was verified against real PostgREST. Provenance is append-only here: a re-capture replaces the EXAMPLE, never the evidence."
+}

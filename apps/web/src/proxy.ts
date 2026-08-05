@@ -14,9 +14,10 @@ import { updateSession } from "@/lib/supabase/middleware";
 const PUBLIC_PATHS = new Set(["/", "/signin", "/signup", "/auth/callback"]);
 
 // Routes that require a completed Learner DNA onboarding, in addition to a session.
-// Only these two — gating /dashboard or /onboarding itself would strand the user
+// Only these — gating /dashboard or /onboarding itself would strand the user
 // (they'd never be able to reach the onboarding flow, or land anywhere after signin).
-const ONBOARDING_GATED_PREFIXES = ["/lesson", "/upload"];
+// "/books" covers both /books and /books/{id} via the exact-segment match below.
+const ONBOARDING_GATED_PREFIXES = ["/lesson", "/upload", "/books"];
 
 // Exact-segment match — a bare `startsWith` would also sweep in an unrelated
 // future sibling route like `/lessons` or `/lesson-plans`.
