@@ -1,3 +1,13 @@
+# Book-scale — status
+
+> ## ⛔ SUPERSEDED — read `docs/book-scale-phase-tracker.md` first
+>
+> Since this was written (2026-08-04): Phase 6.5 and Track W W3/W4 landed, book-scale **merged
+> to `main`** (`b199537`, revert tag `pre-book-scale-2026-08-05`), and Phase 7's acceptance run
+> was attempted on 2026-08-05 and **blocked at the first paid call — $0.00 spent, OpenAI
+> balance is zero**. The tracker's START HERE block has the resume steps. Everything below is
+> the 2026-08-04 snapshot and is kept for history only.
+
 # Book-scale — status, 2026-08-04
 
 **Owner:** Dev 1 · **Branches:** `book-scale/integration`, `book-scale/phase-6-endpoints`, `book-scale/track-w`
