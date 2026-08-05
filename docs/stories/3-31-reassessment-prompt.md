@@ -135,54 +135,54 @@ and `test_session_report_endpoint.py` tests still pass without modification (add
 
 ## Tasks
 
-- [ ] Task 1: Add `_REASSESSMENT_INTERVAL` constant and `redis=None` param to `dna_fusion.py`
-  - [ ] 1.1 Add `_REASSESSMENT_INTERVAL: int = 10` constant after the other signal constants
-  - [ ] 1.2 Add `redis=None` as a keyword-only parameter to `fuse_learner_dna()` signature
-  - [ ] 1.3 Update the function docstring to document `redis` param
+- [x] Task 1: Add `_REASSESSMENT_INTERVAL` constant and `redis=None` param to `dna_fusion.py`
+  - [x] 1.1 Add `_REASSESSMENT_INTERVAL: int = 10` constant after the other signal constants
+  - [x] 1.2 Add `redis=None` as a keyword-only parameter to `fuse_learner_dna()` signature
+  - [x] 1.3 Update the function docstring to document `redis` param
 
-- [ ] Task 2: Implement Step 7 (reassessment flag) in `fuse_learner_dna()`
-  - [ ] 2.1 After Step 6 (growth tracking) block, add Step 7 comment block
-  - [ ] 2.2 Compute `new_count = old_session_count + 1` (reuse the value already computed for the upsert payload)
-  - [ ] 2.3 Guard: `if new_count % _REASSESSMENT_INTERVAL == 0 and redis is not None:`
-  - [ ] 2.4 Build `_safe_uid` for log injection prevention (AC 13)
-  - [ ] 2.5 `await redis.set(f"user:{user_id}:reassessment_due", "1")` in try block
-  - [ ] 2.6 Log INFO on success; except Exception → WARNING + do not re-raise (AC 3)
-  - [ ] 2.7 Verify: function still returns `new_dims` regardless of Redis outcome (AC 5)
+- [x] Task 2: Implement Step 7 (reassessment flag) in `fuse_learner_dna()`
+  - [x] 2.1 After Step 6 (growth tracking) block, add Step 7 comment block
+  - [x] 2.2 Compute `new_count = old_session_count + 1` (reuse the value already computed for the upsert payload)
+  - [x] 2.3 Guard: `if new_count % _REASSESSMENT_INTERVAL == 0 and redis is not None:`
+  - [x] 2.4 Build `_safe_uid` for log injection prevention (AC 13)
+  - [x] 2.5 `await redis.set(f"user:{user_id}:reassessment_due", "1")` in try block
+  - [x] 2.6 Log INFO on success; except Exception → WARNING + do not re-raise (AC 3)
+  - [x] 2.7 Verify: function still returns `new_dims` regardless of Redis outcome (AC 5)
 
-- [ ] Task 3: Add `redis=None` param to `get_learner_dna_data()` in `service.py`
-  - [ ] 3.1 Add `redis=None` as keyword-only param to `get_learner_dna_data()` signature
-  - [ ] 3.2 After the `row = resp.data` assignment, add the Redis flag check block (AC 7)
-  - [ ] 3.3 Build `safe_uid` for log injection prevention in the Redis check block
-  - [ ] 3.4 Return `"reassessment_due": reassessment_due` (replaces the hardcoded `False`)
-  - [ ] 3.5 Verify: when `redis=None`, `reassessment_due` is `False` without Redis call (AC 8)
+- [x] Task 3: Add `redis=None` param to `get_learner_dna_data()` in `service.py`
+  - [x] 3.1 Add `redis=None` as keyword-only param to `get_learner_dna_data()` signature
+  - [x] 3.2 After the `row = resp.data` assignment, add the Redis flag check block (AC 7)
+  - [x] 3.3 Build `safe_uid` for log injection prevention in the Redis check block
+  - [x] 3.4 Return `"reassessment_due": reassessment_due` (replaces the hardcoded `False`)
+  - [x] 3.5 Verify: when `redis=None`, `reassessment_due` is `False` without Redis call (AC 8)
 
-- [ ] Task 4: Wire `redis=get_redis()` in router endpoints (AC 9, AC 10)
-  - [ ] 4.1 In `get_learner_dna()` handler: add lazy import `from app.core.redis import get_redis`
-  - [ ] 4.2 Pass `redis=get_redis()` to `get_learner_dna_data()` call
-  - [ ] 4.3 In `submit_onboarding_diagnostic()` handler: add non-fatal reassessment flag clear
+- [x] Task 4: Wire `redis=get_redis()` in router endpoints (AC 9, AC 10)
+  - [x] 4.1 In `get_learner_dna()` handler: add lazy import `from app.core.redis import get_redis`
+  - [x] 4.2 Pass `redis=get_redis()` to `get_learner_dna_data()` call
+  - [x] 4.3 In `submit_onboarding_diagnostic()` handler: add non-fatal reassessment flag clear
         after `result = await process_onboarding(...)` succeeds (before `return result`)
 
-- [ ] Task 5: Write `apps/api/tests/test_reassessment_flag.py` (RED → GREEN)
-  - [ ] 5.1 `test_reassessment_interval_constant_is_10` — AC 1
-  - [ ] 5.2 `test_fuse_dna_redis_param_defaults_to_none` — call without redis, confirm no Redis call
-  - [ ] 5.3 `test_fuse_dna_sets_flag_at_session_10` — AC 4 (count=9→10, flag set)
-  - [ ] 5.4 `test_fuse_dna_sets_flag_at_session_20` — AC 4 (count=19→20, flag set)
-  - [ ] 5.5 `test_fuse_dna_sets_flag_at_session_30` — AC 4 (count=29→30, flag set)
-  - [ ] 5.6 `test_fuse_dna_does_not_set_flag_at_session_11` — AC 4 (non-multiple, no set call)
-  - [ ] 5.7 `test_fuse_dna_does_not_set_flag_at_session_1` — AC 4 (count=0→1, no set call)
-  - [ ] 5.8 `test_fuse_dna_redis_failure_is_non_fatal` — AC 3 (Redis.set raises → still returns new_dims)
-  - [ ] 5.9 `test_fuse_dna_redis_none_skips_step7` — AC 5 (redis=None, Redis mock never called)
-  - [ ] 5.10 `test_get_learner_dna_data_flag_true_when_key_exists` — AC 7 (redis.get returns "1" → True)
-  - [ ] 5.11 `test_get_learner_dna_data_flag_false_when_key_absent` — AC 7 (redis.get returns None → False)
-  - [ ] 5.12 `test_get_learner_dna_data_flag_false_when_redis_none` — AC 8 (no redis → False, no call)
-  - [ ] 5.13 `test_get_learner_dna_data_redis_exception_returns_false` — AC 7 (exception → False, non-fatal)
-  - [ ] 5.14 `test_submit_onboarding_clears_reassessment_flag` — AC 10 (redis.delete called after success)
-  - [ ] 5.15 `test_submit_onboarding_flag_clear_failure_is_non_fatal` — AC 10 (delete raises → still returns result)
+- [x] Task 5: Write `apps/api/tests/test_reassessment_flag.py` (RED → GREEN)
+  - [x] 5.1 `test_reassessment_interval_constant_is_10` — AC 1
+  - [x] 5.2 `test_fuse_dna_redis_param_defaults_to_none` — call without redis, confirm no Redis call
+  - [x] 5.3 `test_fuse_dna_sets_flag_at_session_10` — AC 4 (count=9→10, flag set)
+  - [x] 5.4 `test_fuse_dna_sets_flag_at_session_20` — AC 4 (count=19→20, flag set)
+  - [x] 5.5 `test_fuse_dna_sets_flag_at_session_30` — AC 4 (count=29→30, flag set)
+  - [x] 5.6 `test_fuse_dna_does_not_set_flag_at_session_11` — AC 4 (non-multiple, no set call)
+  - [x] 5.7 `test_fuse_dna_does_not_set_flag_at_session_1` — AC 4 (count=0→1, no set call)
+  - [x] 5.8 `test_fuse_dna_redis_failure_is_non_fatal` — AC 3 (Redis.set raises → still returns new_dims)
+  - [x] 5.9 `test_fuse_dna_redis_none_skips_step7` — AC 5 (redis=None, Redis mock never called)
+  - [x] 5.10 `test_get_learner_dna_data_flag_true_when_key_exists` — AC 7 (redis.get returns "1" → True)
+  - [x] 5.11 `test_get_learner_dna_data_flag_false_when_key_absent` — AC 7 (redis.get returns None → False)
+  - [x] 5.12 `test_get_learner_dna_data_flag_false_when_redis_none` — AC 8 (caplog-guarded after G1 audit fix)
+  - [x] 5.13 `test_get_learner_dna_data_redis_exception_returns_false` — AC 7 (exception → False, non-fatal)
+  - [x] 5.14 `test_submit_onboarding_clears_reassessment_flag` — AC 10 (redis.delete called after success)
+  - [x] 5.15 `test_submit_onboarding_flag_clear_failure_is_non_fatal` — AC 10 (delete raises → still returns result)
 
-- [ ] Task 6: Run full test suite — AC 14, AC 15
-  - [ ] 6.1 `pytest -m unit tests/test_reassessment_flag.py` → ≥ 15/15 PASSED
-  - [ ] 6.2 `pytest -m unit tests/test_dna_fusion.py` → all PASSED (0 regressions from redis=None default)
-  - [ ] 6.3 `pytest -m unit` full suite → 0 new failures
+- [x] Task 6: Run full test suite — AC 14, AC 15
+  - [x] 6.1 `pytest -m unit tests/test_reassessment_flag.py` → 24/24 PASSED
+  - [x] 6.2 `pytest -m unit tests/test_dna_fusion.py` → all PASSED (0 regressions from redis=None default)
+  - [x] 6.3 `pytest -m unit` full suite → 0 new failures
 
 ---
 
