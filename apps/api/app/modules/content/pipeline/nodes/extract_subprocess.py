@@ -777,13 +777,20 @@ def extract_text_only(
 
         toc: list[dict[str, Any]] = []
         for item in pdf_doc.get_toc():
-            page_index = item.page_index
+            # PdfBookmark has no `.page_index`/`.title` attributes -- the page
+            # index lives on the PdfDest returned by get_dest(), and the title
+            # is read via get_title(). Both dest and its index can be None (an
+            # unresolvable destination), which is a normal bookmark shape, not
+            # an error (review fix, D58 -- reached only by a real PDF with an
+            # outline; every local fixture has none, so this path was untested).
+            dest = item.get_dest()
+            page_index = dest.get_index() if dest is not None else None
             if page_index is None:
                 continue  # bookmark with an unresolvable destination
             toc.append(
                 {
                     "level": int(item.level),
-                    "title": (item.title or "").strip(),
+                    "title": (item.get_title() or "").strip(),
                     "page_index": int(page_index),
                 }
             )
