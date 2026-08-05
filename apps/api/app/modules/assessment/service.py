@@ -1051,6 +1051,108 @@ async def process_onboarding(
     )
 
 
+async def record_consent(
+    *,
+    user_id: str,
+    consent_type: str,
+    policy_version: str,
+    supabase: Client,
+) -> tuple[dict[str, Any], bool]:
+    """Record a DPDP consent event in the user_consents audit table.
+
+    Returns (record_dict, is_new):
+        is_new=True  → a new row was inserted; caller should return HTTP 201.
+        is_new=False → an identical row already exists; caller should return HTTP 200.
+
+    NEVER updates users.attention_consent — the DB trigger
+    user_consents_sync_attention (migration 20260702000000_dpdp_user_consents.sql)
+    sets that boolean AFTER INSERT when consent_type='attention_tracking'.
+
+    TOCTOU safety: INSERT is attempted first. If the UNIQUE constraint added by
+    migration 20260805000000_user_consents_unique_constraint.sql fires (PostgreSQL
+    error code 23505), we fall back to SELECT. This makes idempotency atomic — a
+    SELECT-then-INSERT pattern would allow two concurrent requests to both pass the
+    SELECT check and both INSERT, producing duplicate rows.
+
+    Args:
+        user_id:        JWT sub — never accepted from request body.
+        consent_type:   'attention_tracking' or 'learner_dna'.
+        policy_version: Non-empty version string (e.g. 'v1').
+        supabase:       Synchronous Supabase client; all calls wrapped in asyncio.to_thread.
+
+    Raises:
+        HTTPException 500: INSERT failed with a non-duplicate error, or returned no rows.
+    """
+    _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+    _safe_type = str(consent_type).replace("\n", " ").replace("\r", " ")
+
+    # Step 1 — Attempt INSERT first (atomically correct under UNIQUE constraint).
+    # user_id comes from JWT; id/consented_at/created_at are DB-generated.
+    # NEVER include users.attention_consent here — the trigger owns that write.
+    insert_payload: dict[str, Any] = {
+        "user_id": user_id,
+        "consent_type": consent_type,
+        "policy_version": policy_version,
+    }
+    insert_resp = await asyncio.to_thread(
+        lambda: supabase.table("user_consents").insert(insert_payload).execute()
+    )
+    insert_error = getattr(insert_resp, "error", None)
+
+    if insert_error:
+        err_str = str(insert_error).lower()
+        # PostgreSQL unique violation: code 23505, message contains "duplicate key"
+        if "duplicate" in err_str or "unique" in err_str or "23505" in err_str:
+            # Idempotent path — row exists; fetch and return it.
+            existing_resp = await asyncio.to_thread(
+                lambda: supabase.table("user_consents")
+                .select("id, user_id, consent_type, policy_version, consented_at")
+                .eq("user_id", user_id)
+                .eq("consent_type", consent_type)
+                .eq("policy_version", policy_version)
+                .limit(1)
+                .execute()
+            )
+            existing_rows: list[dict[str, Any]] = getattr(existing_resp, "data", None) or []
+            if existing_rows:
+                return existing_rows[0], False
+            # Unique constraint fired but the row is gone — should not happen.
+            logger.error(
+                "user_consents unique conflict but row not found: user=%s consent_type=%s",
+                _safe_uid,
+                _safe_type,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to record consent — conflict but row not found.",
+            )
+
+        logger.error(
+            "user_consents insert failed: user=%s consent_type=%s error=%s",
+            _safe_uid,
+            _safe_type,
+            str(insert_error).replace("\n", " ").replace("\r", " "),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record consent.",
+        )
+
+    created_rows: list[dict[str, Any]] = getattr(insert_resp, "data", None) or []
+    if not created_rows:
+        logger.error(
+            "user_consents insert returned no rows: user=%s consent_type=%s",
+            _safe_uid,
+            _safe_type,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record consent — empty response from database.",
+        )
+
+    return created_rows[0], True
+
+
 async def get_learner_dna_data(
     *,
     user_id: str,

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
 from app.core.posthog_client import capture_event
@@ -19,6 +19,8 @@ from app.dependencies import CurrentUser
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
 from app.modules.assessment.schemas import (
+    ConsentCreate,
+    ConsentRecord,
     OnboardingDiagnosticSubmission,
     OnboardingResult,
     QuizAnswer,
@@ -271,3 +273,41 @@ async def submit_onboarding_diagnostic(
         logger.warning("onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc)
 
     return result
+
+
+@router.post(
+    "/consent",
+    response_model=ConsentRecord,
+    status_code=status.HTTP_201_CREATED,
+    summary="Record user consent (DPDP Act 2023 compliance — D29 fix)",
+)
+async def record_consent_endpoint(
+    body: ConsentCreate,
+    current_user: CurrentUser,
+    response: Response,
+) -> ConsentRecord:
+    """Record a DPDP consent event in the user_consents audit table.
+
+    Story 3-32 / D29. This endpoint is the ONLY writer to user_consents.
+    A real row here is required before AttentionMonitor (S3-02) can legally
+    initialize — the migration's dual-condition RLS on attention_events checks
+    both users.attention_consent (boolean) AND a user_consents row.
+
+    Returns 201 on first consent for this user+type+version.
+    Returns 200 if an identical consent record already exists (idempotent).
+
+    user_id is always sourced from the verified JWT — never from the request body.
+    users.attention_consent is updated by the DB trigger, never by this function.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import record_consent
+
+    record, is_new = await record_consent(
+        user_id=current_user["sub"],
+        consent_type=body.consent_type,
+        policy_version=body.policy_version,
+        supabase=get_supabase(),
+    )
+    if not is_new:
+        response.status_code = status.HTTP_200_OK
+    return ConsentRecord(**record)
