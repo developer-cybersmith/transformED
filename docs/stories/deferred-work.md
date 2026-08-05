@@ -83,3 +83,15 @@ Items deferred out of a code review — real issues, not caused by the change un
 - **Cost-ceiling breach: bare unprefixed `RuntimeError`, miscounted as a circuit-breaker failure** — `apps/api/app/providers/llm/openai.py:216-219` raises without the `"cost_ceiling_exceeded: "` prefix CLAUDE.md rule 25 requires, and the raise happens inside the provider's `try` block so it's caught by `except Exception` → `record_failure()`, charging a ceiling breach against the circuit breaker like a real provider outage. Pre-existing in `openai.py` since Story 2-0's hardening pass, not introduced by Story 2-1's diff. Deferred to AC-7 (cost ceiling wiring across all 6 economy nodes) when that work starts.
 - **No pre-batch `check_ceiling()` guard before each economy node's calls** — AC-7 (cost ceiling wiring) is explicitly out of scope for Story 2-1's AC-0/AC-1/AC-2 slice. Tracked as AC-7 in `docs/stories/2-1-phase1-economy-nodes.md`.
 - **Circuit breaker `HALF_OPEN` probe is not exclusive under concurrent dispatch** — `apps/api/app/core/circuit_breaker.py`'s `is_circuit_open()` has no locking/CAS on the `OPEN`→`HALF_OPEN` promotion. Story 2-1's `Send()`-based fan-out means up to `2×N` concurrent calls (summarise_segment + segment_complexity, per section) can now hit this path simultaneously, each independently promoting and flooding a just-recovering provider with N probes instead of the single probe `HALF_OPEN` is meant to admit. Pre-existing bug in `circuit_breaker.py`, not touched by Story 2-1 — newly relevant because of the concurrency this story introduced. Flag for whoever owns `circuit_breaker.py` next.
+
+## Deferred from: code review of story 1-9 (2026-08-03)
+
+- **`tests/integration` leaks state into `tests/test_dna_growth.py`** — 18 tests fail when the
+  integration suite runs first; they pass in isolation. Reproduced identically on `main` via a
+  git worktree, so it predates the book-scale work. CI's `pytest tests -q` job is red on `main`
+  because of it (the job is `continue-on-error: true`, so nobody sees it). Needs a `D-nn` entry.
+- **`mypy app` 24 errors across 3 files, and `ruff format --check` on `tests/test_tutor_service.py`**
+  — both pre-existing on `main`; CI's Mypy step would fail today independent of any branch.
+- **`test_no_existing_applied_migration_was_modified` never checks content** — despite its name it
+  only asserts filenames are present, so editing the body of an applied migration passes. Story
+  1-9's AC1 ("no existing migration file is modified") therefore has no machine guard.

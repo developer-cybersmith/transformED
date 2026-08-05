@@ -1366,7 +1366,7 @@ Per-tier inline warning-style disclaimer shown on the mode selection screen:
 
 ---
 
-### S2-09 — Wire Selected Tier into Lesson Creation — ✓ 2026-07-21 (implemented, pending 5-agent code review)
+### S2-09 — Wire Selected Tier into Lesson Creation — ✓ 2026-07-21 (implemented, pending 5-agent code review) — ⚠️ SUPERSEDED 2026-08-04 by Story W3, see amendment below
 **Priority:** Medium  
 **Status:** ✅ DONE — implementation + tests complete; code review not yet run  
 **Files modified:** `apps/web/src/types/learnerMode.ts` (new `LEARNER_TIER_TO_BACKEND` mapping), `apps/web/src/services/upload.service.ts` (`uploadLesson` gains `tier?` param), `apps/web/src/components/dashboard/upload/UploadFlow.tsx` (call site + visible tier label), plus both files' tests
@@ -1379,6 +1379,39 @@ Unblocked 2026-07-21 once Dev 1's Sprint 2 Phase B backend merge (PR #74) landed
 - [x] No regression to the existing upload flow — tier omitted entirely (not defaulted client-side) when unset, relying on the backend's own `T2` default
 
 **Note:** `GET /lessons/{id}` still doesn't echo `tier` back — this story only wires the send side (upload-time). S2-10 (below) is now unblocked to re-scope, but will still need its own decision on how the player/session report actually gets a tier value (no read-back path exists yet).
+
+> **⚠️ AMENDMENT (2026-08-04) — the AC above is stale; it describes a request that now 422s.**
+> Everything above this line is preserved verbatim as the record of what was actually built on
+> 2026-07-21. It was correct then. It is not correct now, and it was not made wrong by a defect in
+> S2-09 — it was invalidated by a later architecture change.
+>
+> **What changed.** Book-scale **Phase 6** made `POST /api/content/lessons` ingest a *book*, not a
+> lesson. A book has no tier, so that endpoint now rejects the mere presence of a `tier` field with
+> a **422** — unconditionally, before any file handling. S2-09's acceptance criterion
+> (`FormData.append('tier', ...)`) therefore describes a request that fails 100 % of the time. The
+> tier itself did not change meaning: `LEARNER_TIER_TO_BACKEND` (`deep→T1 · balanced→T2 ·
+> refresher→T3`) is unchanged and still the only mapping, `lessons.tier` still drives generation via
+> Dev 1's S2-LM1–LM5, and S2-10's badge still reads `lesson.metadata.tier`. Phase 6 changed **where
+> the student supplies the tier**, not what it does.
+>
+> **Where it lives now.** Story **W3** (`docs/stories/W3-generate-from-chapter.md`, branch
+> `book-scale/track-w`) restores this capability on the chapter card: the tier is chosen per
+> *chapter* at generation time and sent as a **JSON** body `{tier}` to
+> `POST /api/content/books/{book_id}/chapters/{chapter_id}/lessons`. `ModeSelection.tsx` and
+> `types/learnerMode.ts` are reused unchanged — W1 deliberately preserved them when it stripped the
+> upload flow's call sites, precisely so this restoration would not need a rebuild. S2-09's one
+> assertion worth keeping (*the selected tier reaches the request body, mapped correctly*) is
+> re-pointed at the new endpoint and body shape in
+> `apps/web/src/__tests__/services/books.generate.service.test.ts` and
+> `apps/web/src/__tests__/components/dashboard/books/ChapterGenerateControl.test.tsx`.
+>
+> **Review debt, recorded rather than quietly inherited.** S2-09's own status line says *"code review
+> not yet run"* — its 5-agent adversarial review (CLAUDE.md § BMAD Code Review Gate) was never
+> performed. That debt did not disappear when the code path moved: this tier-wiring path still owes
+> one, and W3's review does not retroactively discharge S2-09's.
+>
+> This entry is **amended, not deleted** — same convention the defect register uses: the original
+> record of what was built stays, and the correction sits beside it with a date.
 
 ---
 
