@@ -308,8 +308,13 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
         <CheckingInTransition />
 
         {/* Attention consent modal (S3-01) — self-contained, shown once before
-            any camera code exists to gate (S3-02, not built yet). */}
-        <AttentionConsentModal />
+            any camera code exists to gate (S3-02, not built yet). Suppressed
+            during QUIZ/TEACH_BACK (review fix, same reasoning as audioError
+            above): the consent read is async and can resolve after the
+            player has already advanced past TEACHING, and this overlay must
+            never block those screens. It reappears on the next opportunity
+            since it hasn't been dismissed yet. */}
+        {status !== 'QUIZ' && status !== 'TEACH_BACK' && <AttentionConsentModal />}
 
         {/* Avatar intro/static/outro (S1-05) — self-contained, reads lesson +
             store state directly; renders nothing when no avatar fields are

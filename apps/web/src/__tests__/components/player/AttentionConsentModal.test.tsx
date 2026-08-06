@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -39,20 +42,33 @@ describe('AttentionConsentModal (S3-01 AC-1/AC-4)', () => {
     render(<AttentionConsentModal />);
 
     expect(screen.getByTestId('attention-consent-modal')).not.toBeNull();
-    // AC-1: must explain webcam use, the 5-number-only claim, and never video.
+    // AC-1: must explain webcam use, the 5-number-only claim, and that raw
+    // video specifically never leaves the browser -- not just any sentence
+    // containing "never" somewhere on the page.
     expect(screen.getByText(/webcam/i)).not.toBeNull();
-    expect(screen.getAllByText(/never/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/five aggregate numbers/i)).not.toBeNull();
+    expect(screen.getByText(/raw video never leaves your browser/i)).not.toBeNull();
     expect(screen.getByRole('button', { name: /accept/i })).not.toBeNull();
     expect(screen.getByRole('button', { name: /decline/i })).not.toBeNull();
   });
 
-  it('never references any camera-capture or MediaPipe API anywhere in this test file\'s own assertions or the component source (AC-4 ordering guard)', () => {
-    // This is a static, structural guard, not a runtime one — S3-02
-    // (AttentionMonitor) does not exist yet and must not be reached from here.
-    useAttentionConsentMock.mockReturnValue(baseHookReturn());
-    render(<AttentionConsentModal />);
-    const html = document.body.innerHTML;
-    expect(html).not.toMatch(/getUserMedia|MediaPipe|FaceLandmarker/i);
+  it('never references any camera-capture or MediaPipe API anywhere in the actual source of this component or the hook it depends on (AC-4 ordering guard)', () => {
+    // Source-level scan, not a rendered-DOM check -- a regression that adds
+    // a camera call inside useAttentionConsent's effect (which renders
+    // nothing into this component's markup) would not appear in any DOM
+    // assertion, so the guard must read the real files.
+    const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    // Matches actual usage (a call, an import, instantiation) — not prose
+    // mentions in comments like "makes no camera/MediaPipe call".
+    const forbidden = /getUserMedia\s*\(|from\s+['"]@mediapipe|new\s+FaceLandmarker/i;
+    const sourceFiles = [
+      resolve(SRC, 'components/player/AttentionConsentModal.tsx'),
+      resolve(SRC, 'hooks/useAttentionConsent.ts'),
+    ];
+    for (const file of sourceFiles) {
+      const contents = readFileSync(file, 'utf-8');
+      expect(contents).not.toMatch(forbidden);
+    }
   });
 
   it('calls accept() when Accept is clicked', async () => {
@@ -81,26 +97,34 @@ describe('AttentionConsentModal (S3-01 AC-1/AC-4)', () => {
     const accept = vi.fn().mockRejectedValue(new Error('404'));
     const decline = vi.fn();
     useAttentionConsentMock.mockReturnValue(baseHookReturn({ accept, decline }));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<AttentionConsentModal />);
 
     await userEvent.click(screen.getByRole('button', { name: /accept/i }));
 
-    // Failure surfaced, not swallowed silently.
+    // Failure surfaced, not swallowed silently -- and actually logged (AC-7).
     expect(screen.getByRole('alert')).not.toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalled();
     // A way forward exists — clicking it dismisses without granting consent.
     const continueButton = screen.getByRole('button', { name: /continue/i });
     await userEvent.click(continueButton);
     expect(decline).toHaveBeenCalledTimes(1);
+    consoleErrorSpy.mockRestore();
   });
 
-  it('retrying after a failure calls accept() again', async () => {
+  it('retrying after a failure clears the failure alert once accept() succeeds', async () => {
     const accept = vi.fn().mockRejectedValueOnce(new Error('404')).mockResolvedValueOnce(undefined);
     useAttentionConsentMock.mockReturnValue(baseHookReturn({ accept }));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<AttentionConsentModal />);
 
     await userEvent.click(screen.getByRole('button', { name: /accept/i }));
+    expect(screen.getByRole('alert')).not.toBeNull();
+
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
 
     expect(accept).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+    consoleErrorSpy.mockRestore();
   });
 });

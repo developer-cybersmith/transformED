@@ -9,9 +9,11 @@ import { useAttentionConsent } from '@/hooks/useAttentionConsent';
  * not-yet-started story. This component makes no camera/MediaPipe call of
  * any kind; it only explains the feature and records the student's choice.
  *
- * `PATCH /api/users/consent` (behind accept()) does not exist on the backend
- * yet (D29, owned by Dev 3) -- the failure path below is not hypothetical,
- * it is the expected current behavior, and must never trap the student.
+ * `accept()` writes directly to `public.user_consents` via Supabase (RLS
+ * allows an own-row insert; a trigger syncs `users.attention_consent`), so
+ * this works today without any backend endpoint. The failure path below
+ * still matters for real failures (RLS denial, network error) and must
+ * never trap the student.
  */
 export function AttentionConsentModal() {
   const { showModal, accept, decline } = useAttentionConsent();
@@ -25,10 +27,11 @@ export function AttentionConsentModal() {
     setAcceptFailed(false);
     try {
       await accept();
-    } catch {
-      // Genuinely unexpected today only because D29 is unresolved -- once the
-      // backend writer ships, this becomes a real transient-failure path.
-      // Either way, the student is never blocked behind this modal.
+    } catch (err) {
+      // A genuine, unexpected failure (e.g. RLS denial, network error) --
+      // accept() has already logged the underlying cause. The student is
+      // never blocked behind this modal either way.
+      console.error('AttentionConsentModal: accept failed', err);
       setAcceptFailed(true);
     } finally {
       setIsSubmitting(false);

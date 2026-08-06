@@ -443,6 +443,42 @@ describe('Player — lesson WebSocket (S2-06)', () => {
 
     expect(screen.queryByTestId('attention-consent-modal')).not.toBeNull();
   });
+
+  it('suppresses AttentionConsentModal during QUIZ, even if showModal is true (review fix — must never block the quiz)', () => {
+    useAttentionConsentMock.mockReturnValue({
+      consentStatus: 'unknown',
+      isLoading: false,
+      showModal: true,
+      accept: vi.fn(),
+      decline: vi.fn(),
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'QUIZ' });
+    });
+
+    expect(screen.queryByTestId('attention-consent-modal')).toBeNull();
+  });
+
+  it('suppresses AttentionConsentModal during TEACH_BACK, even if showModal is true (review fix)', () => {
+    useAttentionConsentMock.mockReturnValue({
+      consentStatus: 'unknown',
+      isLoading: false,
+      showModal: true,
+      accept: vi.fn(),
+      decline: vi.fn(),
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'TEACH_BACK' });
+    });
+
+    expect(screen.queryByTestId('attention-consent-modal')).toBeNull();
+  });
 });
 
 describe('Player — tab_switch analytics (Sprint 2 audit gap)', () => {
