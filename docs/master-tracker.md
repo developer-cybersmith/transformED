@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-07-29 (Both systemic Dev 1 pipeline bugs reported 2026-07-27 are now fixed and verified end-to-end — backend fixes PR #100/#101, frontend fix (Story 2-33) closing the visible TTS-fallback symptom. Dev 2's Sprint 2 checklist below also brought current — S2-11 through S2-15, S2-26, S2-33 all shipped. See status notes below.)
+**Last updated:** 2026-08-06 (Dev 2's Sprint 3 checklist below brought current — Consent flow UI, Tutor intervention card, and CES indicator all shipped (S3-01/S3-03/S3-04). D18, D29, D30 all closed. See Dev 2 tracker §12 for full detail.) — previously 2026-07-29 (Both systemic Dev 1 pipeline bugs reported 2026-07-27 are now fixed and verified end-to-end — backend fixes PR #100/#101, frontend fix (Story 2-33) closing the visible TTS-fallback symptom. Dev 2's Sprint 2 checklist below also brought current — S2-11 through S2-15, S2-26, S2-33 all shipped. See status notes below.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -211,13 +211,13 @@
 - [ ] Pipeline cost attribution in Langfuse
 
 ### Dev 2 — Lesson Player + Frontend
-- [ ] MediaPipe Face Landmarker WASM integration
-- [ ] 5-signal aggregation every 5 seconds (client-side)
-- [ ] WebSocket attention payload sending (~200 bytes/5s)
-- [ ] Consent flow UI (camera permission + privacy notice)
-- [ ] Tutor intervention card component (Type A/B/C)
-- [ ] CES indicator in player (subtle, non-intrusive UI)
-- [ ] Session report: attention timeline chart
+- [ ] MediaPipe Face Landmarker WASM integration — unblocked 2026-08-06 (consent gate + D29 both resolved), next up. See Dev 2 tracker §12 S3-02.
+- [ ] 5-signal aggregation every 5 seconds (client-side) — part of S3-02 above
+- [ ] WebSocket attention payload sending (~200 bytes/5s) — part of S3-02 above
+- [x] **Consent flow UI (camera permission + privacy notice)** — ✓ 2026-08-06, `AttentionConsentModal.tsx` + `useAttentionConsent.ts`. Writes via Dev 3's real `POST /api/assessment/consent` (Story 3-32), not the originally-assumed `PATCH /api/users/consent`. See Dev 2 tracker §12 S3-01.
+- [x] **Tutor intervention card component (Type A/B/C)** — ✓ 2026-08-03, `TutorInterventionCard.tsx`. See Dev 2 tracker §12 S3-03.
+- [x] **CES indicator in player (subtle, non-intrusive UI)** — ✓ 2026-08-03, `CESIndicator.tsx`. See Dev 2 tracker §12 S3-04.
+- [ ] Session report: attention timeline chart — blocked on S3-02 shipping real signal data. See Dev 2 tracker §12 S3-05.
 - [ ] Mobile responsive audit
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
