@@ -1,7 +1,58 @@
 # Book-Scale Ingestion — Phase Tracker
 
+> # ⛔ START HERE — BLOCKED, and it is not the code
+>
+> **Phase 7's acceptance run stopped at the first paid call on 2026-08-05. $0.00 was spent.**
+> `429 insufficient_quota / credit_balance_exhausted` — "You have no credits remaining."
+>
+> ### Do these three things first, before any other book-scale work
+>
+> 1. **Add OpenAI credits.** platform.openai.com → Settings → Organization → Billing.
+>    The key in `gate.env` is valid; the balance is zero.
+> 2. **Fix Langfuse.** The same run logged `Failed to export span batch code: 401 Unauthorized`,
+>    so no traces were recorded — and this run is meant to be the calibration baseline.
+>    Fixing it afterwards wastes the run.
+> 3. **Re-run the acceptance test.** Nothing needs cleaning up: the book is ingested, both
+>    target chapters are already chunked, and AC9 regenerates on `failed`, so a retry is clean.
+>
+> ### Commands
+>
+> Full recipe with every env var: **`docs/book-scale-phase-7-run-recipe.md`**.
+>
+> ```
+> docker start transformed-gate-redis
+> python -m uvicorn app.main:app --host 127.0.0.1 --port 8077   # API
+> python -m arq app.workers.main.WorkerSettings                 # FULL worker — SPENDS MONEY
+> python <scratchpad>/p7_acceptance.py                          # the run
+> ```
+>
+> **Check for stale processes first.** Two stale `uvicorn`s and two stale ARQ workers cost more
+> debugging time in this effort than any code did. Note the port precedes `LISTENING` in Windows
+> `netstat` output — the obvious regex never matches:
+> `netstat -ano | grep -E ":8077[[:space:]]" | grep LISTENING`
+>
+> ### What that single run unblocks
+>
+> Story 1-13 AC10, Phase 5, Phase 6, Phase 6.5, and all of Track W. They were carried forward
+> together on the **D43** exception, so they clear together or not at all. Everything reading
+> `🧪 Implemented` below stays that way until it passes.
+>
+> ### State to resume from
+>
+> | | |
+> |---|---|
+> | `main` | `b199537` — book-scale IS merged and live on main |
+> | Revert point | tag `pre-book-scale-2026-08-05` |
+> | Book | `780efa51-67cb-4fea-bf4c-b4d6b4c0cfde` — 1,151 pages, 21 chapters, ingested |
+> | Test user | `3b87c7a7-d6d7-40ee-b5db-ae0a0b590006` |
+> | Failed lessons | `589a24ab…` (T1, ch 0) · `2805fd68…` (T3, ch 4) — regenerate on retry |
+> | Test PDFs | `E:	est-books\` — use `d2l.pdf` (43 MB, 1,151 p) |
+>
+> *(Delete this block once Phase 7 passes.)*
+
+
 **Owner:** Dev 1
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-05
 **Overall status:** 5 of 9 backend phases verified (1, 2, 3, 3.5, 4); 5 and 6 are Implemented, both awaiting the single paid Phase 7 run (D43). **SYNC-1 is released — Dev 2 is unblocked for W1.** Re-planned 2026-08-04 to align the
 frontend: two backend phases inserted (3.5, 6.5) and a parallel **Track W** added for Dev 2.
 Nothing is renumbered. Phase 3 plan: `docs/bmad/phase-3-chapter-detection-plan.md`
@@ -906,7 +957,46 @@ return to `🔨 In Progress`. This run may not be recorded as passing while AC10
 8. Mutation check: change `chapter_index` back to a constant → a test **must** fail
 
 ### Observed result
-_Not yet run._
+
+**⛔ ATTEMPTED 2026-08-05 — BLOCKED at the first paid call. $0.00 spent.**
+
+```
+Error code: 429 — "You have no credits remaining."
+type: insufficient_quota · code: credit_balance_exhausted
+```
+
+Both lessons failed at `embed_node`, the first node that costs money. The OpenAI account on
+`gate.env` has a zero balance; the key itself is valid. **This is an environment blocker, not a
+code defect** — see the START HERE block at the top of this file to resume.
+
+**Build half (AC1–AC3) is done and green.** `tests/integration/test_book_scale_composition.py`,
+9 tests, mutation-checked: lowering `max_chapter_pages` to 50 names 7 real `d2l` chapters by title
+and span. Two of the tracker's work items turned out to be already satisfied, verified by mutation
+rather than assumed — reverting `chapter_index` to a constant reddens a test, and moving the cap
+200 → 2000 reddens four.
+
+**What the blocked run proved anyway:**
+
+| | ch 0 *Introduction* (29 p, T1) | ch 4 *Multilayer Perceptrons* (40 p, T3) |
+|---|---|---|
+| Accepted | 202, `truncation_expected: false` | 202, `truncation_expected: false` |
+| Chunks written | **39** | **53** |
+| Embedded | 0 | 0 |
+| Cost | $0.0000 | $0.0000 |
+
+Different chunk counts per chapter, both ≈1.33 chunks/page, each scoped to its own `chapter_id`.
+That is `extract_node` passing real chapter bounds to the PDF subprocess and `chunk_node` chunking
+only that chapter — through the real worker, on the real book, for the first time. The failure was
+clean: `status=failed`, the real error recorded, `last_node=chunk` checkpointed.
+
+**Unproven:** `embed_node` onward — embeddings, the eleven generation nodes, the assembled package,
+"no truncation warning", the measured cost, and the `lesson_ready` push (Phase 6.5 AC10).
+
+**Secondary finding:** Langfuse returned `401 Unauthorized` on span export throughout. Traces are
+not being recorded, and this run is the intended calibration baseline — fix before re-running.
+
+**Gates at the time of the attempt:** backend 1038 passed / 1 skipped · web 66 files / 752 passed
+· ruff clean · mypy 24 errors in 3 files, unchanged.
 
 ### Files
 `apps/api/tests/integration/`, `apps/api/tests/fixtures/`, `apps/api/tests/evals/`

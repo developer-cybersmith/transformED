@@ -88,6 +88,26 @@ transformED-corp/
 5. **Provider abstraction everywhere** — no direct provider client calls in business logic
 6. **Hierarchical document processing** — process Chapter → Section → Topic. Never full-book single call.
 7. **Observability from commit one** — Langfuse + Sentry + OTel + PostHog wired before feature work
+8. **Scale is a stated constraint, not an assumption** — every unit of work, budget, limit scope, query bound, inherited cap and check-then-act sequence is written down and re-derived, or the story is incomplete. Note that principle 6 above ("Never full-book single call") *is* a scale principle, it was written down first, and it was still violated — `structure_max_sections = 15` × `_get_section_body(max_chars=6000)` capped the LLM-visible window at ~90,000 characters, so a 1,151-page book yielded a lesson covering 4 % of it with nothing erroring. A principle with no machine behind it did not hold. That is why principle 8 ships with enforcement (story template section, sixth review layer, `tests/unit/test_unbounded_queries.py`) and principle 6 did not.
+
+## The Scale Contract
+
+**Full text — with the worked failure behind each question — is `docs/SCALE-CONTRACT.md`. Read it, do not re-derive it.** It is deliberately not duplicated here: two documents both claiming authority drift, and drift is a defect class this repo has already recorded (binding rule 5, and the Dev 1 tracker rule silently dropped by a merge on 2026-07-28).
+
+**Every story carries a `## Scale & Load` section answering all six questions.** A story without it is incomplete and goes back. `"N/A"` is valid **only with a reason**; a bare `"N/A"` is a missing answer.
+
+The six questions (`docs/SCALE-CONTRACT.md` §"The six questions"):
+
+1. **What is ONE unit of work, and what is its range?** — min, typical, largest actually measured, and behaviour beyond it.
+2. **Which budgets are FIXED while the input VARIES — and what happens past them?** — explicit error or explicit surfaced degradation. Silent truncation is never an acceptable answer.
+3. **What is the SCOPE of every limit** — per user, per instance, or per deployment?
+4. **Which reads and writes are UNBOUNDED?**
+5. **Which caps were INHERITED from an earlier design, and have they been re-derived?**
+6. **Is every check-then-act sequence safe under CONCURRENT requests?**
+
+Enforcement, because prose does not hold: required story section → sixth mandatory review layer (**Scale & Load**, see the review gate below) → `tests/unit/test_unbounded_queries.py` in CI → binding rule 8 in `docs/DEFECT-REGISTER.md` for anything shipped knowingly.
+
+Before merging, answer the one-line test: **"What input makes this silently wrong rather than loudly broken?"** The signature failure here was never slowness — it was a $0.00-over-budget lesson that reported success while covering 4 % of the book.
 
 ## Content Generation Pipeline (§9)
 
@@ -192,6 +212,9 @@ Applied and frozen migrations (do not alter):
 - **A LangGraph `thread_id` must be unique per pipeline attempt.** `MemorySaver` is process-local and never evicted; reusing `thread_id=lesson_id` retains accumulated channels across retries and across the worker's lifetime. Resume must be rebuilt from the durable Supabase `node_outputs` checkpoints, **never** from MemorySaver. Note `router.py` pins `_job_id=f"pipeline:{lesson_id}"`, so `job_id` alone is *not* a uniquifier — `job_try` must be part of the token.
 - Never import `fitz` / `pymupdf` / `pymupdf4llm` / `borb` — all AGPL-3.0; PDF extraction uses `pypdfium2` + `pdftext` instead
 - PDF image extraction must render at **300 DPI** minimum (not 150 DPI) — use `page.render(scale=300/72)` in pypdfium2
+- **Silent truncation is never acceptable.** Any fixed budget that meets a variable input — token window, section count, character limit, page count, byte size, timeout, retry count — must past its limit either raise an **explicit error** or emit an **explicit, surfaced degradation** (persisted on the record and visible to the caller/admin, not a `logger.warning` nobody reads). Naming the failure this catches: `structure_max_sections = 15` × `_get_section_body(max_chars=6000)` = ~90,000 characters of LLM-visible window regardless of input, i.e. ~36 pages at ~2,500 chars/page — a 1,151-page book was silently reduced to 3–4 % and reported success. The `$3.00/lesson` ceiling cannot catch this class: the failure is *cheap wrong*, not expensive. See `docs/SCALE-CONTRACT.md` Q2.
+- **Every query is bounded, or carries a written justification.** Every Supabase read reachable from a request path must carry `.limit()` / `.range()`, use `count=` instead of materialising rows, or carry a `# BOUNDED:` comment stating why the row count is naturally bounded. Guarded by `tests/unit/test_unbounded_queries.py` (source scan, fails CI). Same rule for generated volume: **D50** — 300-DPI page rendering and image upload had no count cap at all and sat entirely outside `cost_tracker`. Related unbounded reads: the per-user concurrency gate `select("lesson_id")` over every `generating` row, and the limitless chapters→lessons embed returning 20 rows per chapter after 20 regenerations. See `docs/SCALE-CONTRACT.md` Q4.
+- **Re-derive every inherited cap when the unit of work changes** — the 50 MB upload cap was sized when one upload was one lesson; unrevisited when the unit became a book, it rejects OpenStax Physics (1,671 pages, 251 MB) and Biology (1,475 pages, 382 MB), which are exactly the target textbooks. State the scope of each limit (per user / per instance / per deployment): **D52** — the rate limiter fell back to keying by IP, sharing one bucket across all authenticated users behind an egress IP; **D49** — `RATE_LIMIT_STORAGE_URL` defaults to `memory://`, multiplying every ceiling by replica count. And bound every check-then-act: **D45** — the `(chapter_id, tier)` idempotency pre-check has no UNIQUE constraint behind it, so concurrent duplicates both bill.
 - No raw IQ/EQ/SQ claims — branded as "Learner DNA"
 - No clinical scores shown to students — descriptive profile only
 - Never gate lesson progress on teach-back score in MVP
@@ -241,7 +264,7 @@ Established by evidence on 2026-07-29, not by opinion:
 
 Before writing ANY code for a new story, complete ALL of the following in order — no exceptions:
 
-1. **Create the story file** at `docs/stories/{N}-{M}-{story-slug}.md` with all ACs fully defined
+1. **Create the story file** at `docs/stories/{N}-{M}-{story-slug}.md` with all ACs fully defined **and a `## Scale & Load` section answering the six questions** (`docs/SCALE-CONTRACT.md`). This is stated here, not only in the BMad template, because most stories in `docs/stories/` are hand-written and never open that template — a rule that lives only in a template a process does not use is not a rule.
 2. **Commit ONLY the story file**: `git commit -m "docs(story-first): Story N-M — {title}"`
 3. **Push the story-only commit** to remote: `git push origin <branch-name>`
 4. **Verify** the story commit is the chronologically first commit on the branch
@@ -250,19 +273,21 @@ Before writing ANY code for a new story, complete ALL of the following in order 
 **NEVER** write implementation code in the same commit as the story file.
 **NEVER** merge a PR where story and implementation share a commit.
 
-## BMAD Code Review Gate (5-Agent Requirement)
+## BMAD Code Review Gate (6-Agent Requirement)
 
-Every PR requires a 5-agent adversarial code review via `/bmad-code-review` before merge.
+Every PR requires a 6-agent adversarial code review via `/bmad-code-review` before merge.
 
-The 5 required agent layers are:
+The 6 required agent layers are:
 1. **Story Quality** — all ACs testable, story complete before code
 2. **Blind Hunter (Security)** — IDOR, injection, enumeration, DoS vectors
 3. **Test Coverage** — every AC has a test, edge cases covered, no false confidence
 4. **AC Completeness** — every AC maps to at least one explicit test assertion
 5. **Process Integrity** — no LLM calls in wrong modules, no hardcoded models, no rule violations
+6. **Scale & Load** — the six questions of `docs/SCALE-CONTRACT.the shipped `bmad-code-review` skill defines **4** built-in layers — Blind Hunter, Edge Case Hunter, Acceptance Auditor and Scale & Load Hunter — and their names do NOT map onto the six below: only Blind Hunter and Scale & Load appear in both lists. Story Quality, Test Coverage, AC Completeness and Process Integrity must be supplied by the invoking prompt. Check the skill before assuming a layer ran. The remaining layers are supplied by the invoking prompt. Six layers is the gate; three of them come from the skill, three you must ask for explicitly.)
 
-**REJECT** any PR whose Senior Developer Review section lists fewer than 5 agent layers.
+**REJECT** any PR whose Senior Developer Review section lists fewer than 6 agent layers.
 The Story Quality agent is the most critical — it catches missing ACs before they reach main.
+The Scale & Load agent is the one that would have caught a green-merged Sprint 1, Sprint 2 and Learner Mode, all of which passed the other five while silently assuming a small PDF, one user, one instance.
 
 ## Build Roadmap (10 weeks, §22)
 

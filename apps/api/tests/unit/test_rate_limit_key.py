@@ -121,7 +121,7 @@ def test_unauthenticated_or_forged_tokens_fall_back_to_ip(label: str, token: str
 
 @pytest.mark.unit
 def test_an_es256_token_keys_the_bucket_by_user_not_ip(monkeypatch: pytest.MonkeyPatch) -> None:
-    """D59: the same regression class as D52, one signing scheme later.
+    """D61: the same regression class as D52, one signing scheme later.
 
     Supabase projects that migrated to asymmetric "JWT Signing Keys" issue
     ES256 tokens. `dependencies.get_current_user` branches on `alg` and

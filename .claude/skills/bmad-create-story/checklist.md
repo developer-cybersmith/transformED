@@ -16,6 +16,7 @@ You are an independent quality validator in a **FRESH CONTEXT**. Your mission is
 - **Vague implementations** - Creating unclear, ambiguous implementations
 - **Lying about completion** - Implementing incorrectly or incompletely
 - **Not learning from past work** - Ignoring previous story learnings and patterns
+- **Assuming small scale** - Shipping a story that reports success while being wrong on real input. A `## Scale & Load` section that is missing, or present but answered generically, is an automatic **REJECT** — see §3.6 and `docs/SCALE-CONTRACT.md`
 
 ### **🚨 EXHAUSTIVE ANALYSIS REQUIRED:**
 
@@ -165,6 +166,46 @@ You will systematically re-do the entire story creation process, but with a crit
 - **Scope creep:** Missing boundaries that could cause unnecessary work
 - **Quality failures:** Missing quality requirements that could deliver broken features
 
+#### **3.6 Scale & Load DISASTERS (REJECT-level — check this first)**
+
+**🚨 This subsection is a hard gate, not a gap list. Run it before §3.1–3.5 and REJECT on failure.**
+
+The signature failure of this codebase is not a crash — it is a system that **reports success while
+being wrong**. A 1,000-page textbook uploaded fine, processed fine, produced a lesson covering **4 %
+of the book**, errored on nothing, and never tripped the `$3.00/lesson` ceiling, because the failure
+was *cheap*, not expensive. An entire unplanned sprint (book-scale, Phases 1–7, ~50 commits) existed
+only to retrofit scale into work that had already shipped green. Load `docs/SCALE-CONTRACT.md` and
+validate the story against it.
+
+**REJECT the story outright if:**
+
+- The `## Scale & Load` section is **absent**, or
+- Any of the six questions is left as `[ANSWER REQUIRED]`, blank, or deleted along with its heading, or
+- Any answer is a bare `N/A`. "N/A" is valid **only with a reason on the same line**; a bare "N/A" is
+  a missing answer, not an answer.
+
+**A section can be present and still be a non-answer. These are the concrete tells — each one is a
+REJECT, and for each, name the specific missing number or behaviour in your critical findings:**
+
+| Tell | What a real answer looks like |
+|---|---|
+| **A stated unit of work with no measured range** — "one chapter" with no min / typical / largest-actually-measured | The unit was silently "one PDF" when it should have been "one chapter". Demand four values, and the largest must be one someone actually ran. |
+| **A fixed budget listed with no stated behaviour past it** — "max 15 sections" and nothing else | `structure_max_sections = 15` × `max_chars=6000` = ~90,000 chars ≈ 36 pages of LLM-visible window regardless of input size. Demand an explicit error or an explicit, **surfaced** degradation. **Silent truncation is never an acceptable answer**, and neither is a `logger.warning` nobody reads. |
+| **A limit with no scope** — a number with no "per user / per instance / per deployment" | D52: the rate limiter fell back to keying by **IP**, so every authenticated user shared one bucket. D49: `RATE_LIMIT_STORAGE_URL` defaults to `memory://`, so every ceiling silently multiplies by replica count. Unstated scope is wrong on the second user or second replica. |
+| **A query with no bound and no justification** — no `.limit()` / `.range()` / exact `count=` / `# BOUNDED:` rationale | The concurrency gate `select("lesson_id")`-ed **every** `generating` row to count them; the chapters→lessons embed had no limit, so a chapter regenerated 20 times returned 20 rows per chapter-list request. D50: 300-DPI render + upload had no count cap and sat outside `cost_tracker`. `tests/unit/test_unbounded_queries.py` fails CI on this — a story that ignores it will not merge. |
+| **An inherited cap not re-derived** — an existing constant carried forward with no new arithmetic after the unit of work changed | The 50 MB upload cap was sized when one upload was one lesson. Never revisited when the unit became a book, so OpenStax Physics (1,671 pp, 251 MB) and Biology (1,475 pp, 382 MB) **cannot be ingested at all** — both are exactly the target use case. Demand the arithmetic, not the reassurance. |
+| **A check-then-act with no concurrent-request answer** — "we check X then insert" with no lock, no UNIQUE constraint, no "what if N arrive at once" | The per-user concurrency cap counts `generating` lessons then inserts with nothing in between: three concurrent requests all see the same count and all insert. D45: the `(chapter_id, tier)` idempotency pre-check is the same shape with no UNIQUE constraint to fall back on, so concurrent duplicates both bill. |
+
+**Then apply the one-line test to the story as a whole:** *"What input makes this silently wrong
+rather than loudly broken?"* If the story does not answer that, it is not finished — report it as a
+Category 1 blocker, regardless of how complete the rest of the story looks.
+
+**Do not accept prose as compliance.** This codebase established by evidence that prose guidance does
+not hold: `docs/DEFECT-REGISTER.md` Part 1 records that Dev 1 wrote `DEV1-FIX-PLAN.md` and then
+deviated from it four times in a single day — every deviation caught by review, none by a machine.
+An answer that says "we will be careful about large books" is a non-answer. Numbers, scopes, and
+named failure behaviours only.
+
 ### **Step 4: LLM-Dev-Agent Optimization Analysis**
 
 **CRITICAL STEP: Optimize story context for LLM developer agent consumption**
@@ -195,6 +236,7 @@ You will systematically re-do the entire story creation process, but with a crit
 - Missing previous story context that could cause errors
 - Missing anti-pattern prevention that could lead to duplicate code
 - Missing security or performance requirements
+- Missing or non-answered `## Scale & Load` section (§3.6) — report every failing question by number, never as one summary line
 
 #### **5.2 Enhancement Opportunities (Should Add)**
 

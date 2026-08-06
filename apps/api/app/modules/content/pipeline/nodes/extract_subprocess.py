@@ -781,7 +781,7 @@ def extract_text_only(
             # index lives on the PdfDest returned by get_dest(), and the title
             # is read via get_title(). Both dest and its index can be None (an
             # unresolvable destination), which is a normal bookmark shape, not
-            # an error (review fix, D58 -- reached only by a real PDF with an
+            # an error (review fix, D60 -- reached only by a real PDF with an
             # outline; every local fixture has none, so this path was untested).
             dest = item.get_dest()
             page_index = dest.get_index() if dest is not None else None

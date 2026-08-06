@@ -102,7 +102,7 @@ def _run_extract(
     )
 
 
-# ── extract_text_only: TOC parsing (review fix, D58) ──────────────────────────
+# ── extract_text_only: TOC parsing (review fix, D60) ──────────────────────────
 
 
 class _FakeDest:

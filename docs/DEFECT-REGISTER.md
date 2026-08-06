@@ -1,6 +1,6 @@
 # Defect Register & Binding Decisions
 
-**Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-08-05 · **Status:** ACTIVE
+**Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-08-06 · **Status:** ACTIVE
 
 > **AMENDED 2026-07-30.** The line below previously read *"none is waiting on Dev 1"*. A
 > route-by-route frontend wiring audit run **after** that claim was made found **three Dev 1
@@ -25,6 +25,14 @@
 > **Rule going forward: re-read the highest allocated id from `main` immediately before writing
 > a new entry, and never from a branch.** This register has no id allocator, so concurrent
 > branches will keep colliding until it does.
+>
+> ⚠️ **ID COLLISION, third occurrence, 2026-08-06.** `main` allocated D57 (withdrawn)/D58
+> (eval harness)/D59 (unbounded queries) the same day `sprint3-master` independently allocated
+> its own D57 (later withdrawn as a duplicate of D31)/D58 (PdfBookmark crash)/D59 (rate-limit
+> ES256 regression) — the exact rule stated above, violated a third time from a long-lived
+> branch that hadn't re-synced with `main` before allocating. On the 2026-08-06 merge of `main`
+> into `sprint3-master`: `main`'s D57/D58/D59 kept their numbers (already the trunk's canonical
+> meaning); `sprint3-master`'s D58/D59 were renumbered **D60**/**D61**. No entry was overwritten.
 
 This file exists because `docs/deferred-work.md` did not. That file was created to hold
 deferred findings; it contains **zero items** across a period in which the story files
@@ -136,7 +144,7 @@ purpose.
 | ID | Defect | Sev | Decision | Enforcement |
 |----|--------|-----|----------|-------------|
 | ~~D22~~ | **CLOSED 2026-07-29.** D9's class was live at 43 sites; replanting it on `sessions` left the suite green. | High | Guard generalised to every table + column, resolving module-level constants. | `test_schema_column_guard.py` — **mutation-verified**: catches the replant both via a literal AND via `_LIST_COLUMNS` |
-| **D29** | **DPDP `user_consents` audit table has zero writers.** Migration `20260702000000_dpdp_user_consents.sql` genuinely creates the table, RLS, and a trigger syncing `users.attention_consent` — but `process_onboarding()` (`apps/api/app/modules/assessment/service.py:864-976`) never inserts into it. CLAUDE.md §18 names this table an explicit **Sprint 2 priority** precondition before any attention data is collected — schema shipped, the actual consent-write path was never built. Found 2026-07-29 during a cross-team Sprint 2 completion audit (`docs/sprint2-completion-audit-2026-07-29.md`); re-verified 2026-07-30 that no write path landed since. | High (compliance) | **Needs Dev 3.** Write a `user_consents` row (consent_type, policy_version, consented_at) at the point onboarding consent is captured, before Sprint 3's `AttentionMonitor` can legally initialize. | *(none — grep for `user_consents` in `apps/api` only matches a migration-name string in a test assertion)* |
+| ~~D29~~ | **CLOSED 2026-08-05 (Story 3-32, branch `sprint3/s3-32-dpdp-consent-endpoint`).** `POST /api/assessment/consent` now writes `user_consents` rows. INSERT-first idempotency (TOCTOU-safe via UNIQUE constraint in migration `20260805000000_user_consents_unique_constraint.sql`). 24 unit tests; all ACs including body-injection guard and idempotent to_thread coverage. Enforcement: `apps/api/tests/test_consent_endpoint.py`. | High (compliance) | Fixed + guarded. | `apps/api/tests/test_consent_endpoint.py` — 24 tests covering all ACs (AC 8: `test_record_consent_service_never_updates_users_table`; AC 15: `test_record_consent_idempotent_path_both_db_calls_wrapped_in_to_thread`). |
 | ~~D30~~ | **CLOSED 2026-08-03 (commit d0669aa).** See closed section above. | — | — | — |
 
 ### OPEN — found by the 2026-07-30 frontend wiring audit
@@ -182,9 +190,11 @@ after re-reading the highest in use (D43) per the collision rule at the top of t
 | **D54** | **There is no way to regenerate a lesson.** Story 1-14 AC9 returns the existing lesson for any `generating`/`ready` match on `(chapter_id, tier, user_id)`; only a `failed` match regenerates. A student whose lesson is poor, truncated (D46), or stuck (D53) has no route to a new one. Previously recorded only as a subordinate clause inside D45, whose trigger (a duplicate pair, or a second API replica) has nothing to do with a user needing to regenerate — so it was deferred by adjacency rather than by decision. | Med | Build `?force=true` on the generate endpoint, which must also mark the superseded lesson so `latest_lesson` does not point at it. **Trigger: D53 landing (this is its escape hatch), or the first support request to regenerate a lesson.** Owner: Dev 1. | *(to add — the endpoint test for `?force=true`)* |
 | **D55** | **A session started AFTER a lesson is already `ready` gets no `lesson_package` cache entry.** `pubsub.py` writes `lesson_package:{session_id}` at publish time, for the sessions waiting *then*. A student who opens an already-`ready` lesson creates a session with no entry, so `_seed_learner_tier` (`apps/api/app/core/websocket.py:279`) silently returns and learner tier / `qa_phase` are never seeded, and `_segment_intervention_messages` (`apps/api/app/modules/tutor/service.py:253`) returns `{}` — the Sprint 3 intervention hot path finds nothing. This is the residue of D34: the routing is fixed, the *timing* is not. | Med | The durable fix is a read-through in `_seed_learner_tier` — on a cache miss, load the package from `lessons.content` and populate the key. That is Dev 4's file, and Story 1-15 deliberately did not touch either consumer. **Owner: Dev 4. Trigger: Sprint 3 enabling interventions, or the first replay of an existing lesson.** | *(to add — a test that a session created after `ready` still seeds its tier)* |
 | **D56** | **`lessonService.getLesson` and `updateProgress` are mock-backed and unreachable.** `apps/web/src/services/lesson.service.ts:8,11` delegate to `lessonApi` from the hand-rolled `src/mocks/` layer; a repo-wide search finds **no caller** outside the file and its own tests. They are the only mock imports left on the book-scale service surface (`getLessonPackage`, the player's actual content fetch, is real). Not deleted: `src/__tests__/services/lesson.service.test.ts:70,76` deliberately pin the delegation with the note "no real backend yet", so removing them would delete documented, tested state rather than dead weight. | Low | Delete both methods, their tests and the `lessonApi` import together, **or** implement them against real endpoints — as one deliberate change, not by attrition. **Trigger: the first real caller for either (a dashboard lesson card needing the card-shape read, or progress persistence), or the removal of `src/mocks/`.** Owner: Dev 2. | `apps/web/src/__tests__/guards/no-mocks-in-book-scale-path.test.ts` — the book-scale entry points are guarded transitively, so these two cannot spread into the render path unnoticed |
-| **D57** | **`NEXT_PUBLIC_API_URL` is set without `/api` in CI, while the client default includes it.** `apps/web/src/lib/api.ts:4` defaults to `http://localhost:8000/api` and every service uses relative paths without a leading slash (`content/books`). `.github/workflows/ci.yml:188` sets `NEXT_PUBLIC_API_URL: http://localhost:8000` — **no `/api`**. Harmless today because that value is used only for `pnpm build`, which makes no requests. Any runtime environment configured the same way 404s **every** API call, and the symptom (a UI that renders and silently loads nothing) looks like a backend outage rather than a config typo. Found by W0 and deliberately not fixed there — it is a deploy variable, not a test concern. | Med | Either append `/api` in `ci.yml` and any deploy config, or drop it from the client default and put it in every call site — **one or the other, not half of each**. Check `.github/workflows/deploy.yml` and Railway/Vercel env at the same time. **Trigger: the first `apps/web` deploy, or Phase 7 pointing the UI at a live API.** Owner: Dev 1 (infra). | *(to add — a test asserting the resolved baseURL ends in `/api` exactly once)* |
-| ~~**D58**~~ | **CLOSED 2026-08-05 (fixed + guarded).** `extract_text_only`'s TOC parsing crashed on any real PDF with a bookmark. `apps/api/app/modules/content/pipeline/nodes/extract_subprocess.py:780,786` read `item.page_index`/`item.title` as attributes on a `pypdfium2.PdfBookmark`, but that class exposes neither — the page index lives on the `PdfDest` returned by `get_dest()` (itself possibly `None`), and the title is read via `get_title()`. Every local test fixture (`short.pdf`, the eval corpus) has **zero bookmarks**, so `get_toc()` always returned `[]` and this line never executed in CI or any dev run. Found live: a real 2,000+-page textbook (`d2l.pdf`) uploaded through the UI hit it on the first real book with an outline, and `book_ingest_job` failed every ingestion with `AttributeError: 'PdfBookmark' object has no attribute 'page_index'` — "We couldn't read this PDF" in the UI for a perfectly valid file. | **High** (100% of book_ingest for any PDF with an outline) | **FIXED 2026-08-05** — `item.get_dest()` then `.get_index()` (both `None`-checked) for the page index, `item.get_title()` for the title. `.level` is a real attribute and was already correct. | `tests/unit/test_extract_subprocess.py::TestExtractTextOnlyToc` — 2 tests with a `_FakeBookmark`/`_FakeDest` shaped to the REAL pypdfium2 API (no `.page_index`/`.title` attributes at all), so a regression back to attribute access fails with the same `AttributeError` production raised, rather than silently passing the way a loose `MagicMock` would — which is exactly how this shipped untested the first time |
-| ~~**D59**~~ | **CLOSED 2026-08-05 (fixed + guarded).** The rate limiter's per-user key silently stopped keying by user for any Supabase project using asymmetric "JWT Signing Keys" — the exact D52 bucket-sharing bug, reopened by a later, unrelated change. `dependencies.get_current_user` (`apps/api/app/dependencies.py:83-100`) branches on the token's `alg` header: `HS256` verified against the shared secret, `ES256`/`RS256` verified via JWKS. `_get_user_key` (`apps/api/app/core/rate_limit.py`) kept its own **separate, independent** decode call hardcoded to `algorithms=["HS256"]` only — never updated when the JWKS branch was added — so any ES256 token raised `InvalidAlgorithmError`, was swallowed by the bare `except`, and fell back to `get_remote_address`, sharing one bucket across every authenticated user again. Found live in the same session as D58, via the real worker's log output. | High (same severity class as D52) | **FIXED 2026-08-05** — `_get_user_key` now branches on `alg` exactly like `dependencies.get_current_user`, reusing that module's `_get_jwks_client` rather than a third, independent JWKS client. **Do not let this drift a third time**: the two decoders are duplicated by design (rate_limit.py cannot import from a route-level dependency without circularity) — any future change to `get_current_user`'s algorithm handling must be mirrored here by hand. | `tests/unit/test_rate_limit_key.py::test_an_es256_token_keys_the_bucket_by_user_not_ip` — a real ES256 token signed with a generated EC key, JWKS client mocked at `app.dependencies._get_jwks_client` |
+| ~~**D57**~~ | **WITHDRAWN 2026-08-05 — DUPLICATE of D31.** Registered during the Story W4 pass for `NEXT_PUBLIC_API_URL` omitting `/api`; D31 already covers exactly that, and is marked live-in-production with Dev 1 as owner. The line numbers differ only because `ci.yml` moved (`:126` → `:188`) — same defect, same file, same fix. **This is the ID-collision the banner at the top of this file exists to prevent, committed by the person who had just corrected the same mistake for D52.** The rule is: re-read the highest allocated id from `main` immediately before allocating — and then check whether the defect is already registered under an older one. Use **D31**. | — | See D31 | See D31 |
+| **D58** | **The evaluation harness writes a success-shaped result file when every PDF crashed.** `apps/api/tests/evals/runner.py:277-316`. This is the incident quoted as the justification for the phase tracker's entire GATE RULE (`docs/book-scale-phase-tracker.md:79`) — *"the evaluation harness crashed on all five test PDFs and wrote a success-shaped result file anyway"* — and it has **never had a register ID**, which is precisely the failure binding rule 5 names: a documented limitation without an ID is a defect wearing a decision's clothes. **Directly in Sprint 3's path:** S3-1 is *"Eval harness expanded to 20 PDFs"*, and expanding a harness that reports success on crash multiplies the blast radius by four. | High | Fix the result writer to record per-PDF outcomes and fail loudly on any crash, **before** S3-1 expands the corpus. **Trigger: S3-1 starting.** Owner: Dev 1. | *(to add — a test that a crashing eval run produces a FAILING result file, mutation-checked)* |
+| **D59** | **Two unbounded reads on request paths, enumerated as the `test_unbounded_queries.py` baseline.** (a) `apps/api/app/modules/admin/router.py:191` materialises **every** `lesson_jobs` row joined to `lessons` for the reporting period and groups in Python, because PostgREST has no server-side GROUP BY — fine at 23 lessons, and it is Sprint 3's own S3-4 ("Admin panel: job status, cost tracking") that makes it real. (b) `apps/api/app/modules/analytics/service.py:54` selects every `sessions.session_id` for a user with no bound, growing without limit as a student uses the product. Both are the shape Scale Contract Q4 names: fine in testing, wrong in production. | Med | **Enumerated, not silenced.** `_KNOWN_UNBOUNDED` in `tests/unit/test_unbounded_queries.py` lists exactly these two; the guard fails on anything NOT in that dict, so a new violation is red immediately. **The list may only shrink** — adding an entry needs a register ID and a named owner, which is a conversation rather than a quick unblock. Deliberately NOT the D24 pattern (`continue-on-error`), whose cost the register already records: the number was visible and nothing moved. **Owners: (a) Dev 1, trigger = S3-4 starting. (b) Dev 3, trigger = the first user with >1,000 sessions.** | `tests/unit/test_unbounded_queries.py` — mutation-checked: a new unbounded select in `auth/router.py` is flagged by file and line, and correct split-builder chains carrying `.limit()` are NOT flagged |
+| ~~**D60**~~ | **CLOSED 2026-08-05 (fixed + guarded). Renumbered from D58 on 2026-08-06 merge into `sprint3-master`** — `main` independently allocated D58 (above, eval harness) the same day; per the collision rule at the top of this file, the branch-local id yields and takes the next free number. `extract_text_only`'s TOC parsing crashed on any real PDF with a bookmark. `apps/api/app/modules/content/pipeline/nodes/extract_subprocess.py:780,786` read `item.page_index`/`item.title` as attributes on a `pypdfium2.PdfBookmark`, but that class exposes neither — the page index lives on the `PdfDest` returned by `get_dest()` (itself possibly `None`), and the title is read via `get_title()`. Every local test fixture (`short.pdf`, the eval corpus) has **zero bookmarks**, so `get_toc()` always returned `[]` and this line never executed in CI or any dev run. Found live: a real 2,000+-page textbook (`d2l.pdf`) uploaded through the UI hit it on the first real book with an outline, and `book_ingest_job` failed every ingestion with `AttributeError: 'PdfBookmark' object has no attribute 'page_index'` — "We couldn't read this PDF" in the UI for a perfectly valid file. | **High** (100% of book_ingest for any PDF with an outline) | **FIXED 2026-08-05** — `item.get_dest()` then `.get_index()` (both `None`-checked) for the page index, `item.get_title()` for the title. `.level` is a real attribute and was already correct. | `tests/unit/test_extract_subprocess.py::TestExtractTextOnlyToc` — 2 tests with a `_FakeBookmark`/`_FakeDest` shaped to the REAL pypdfium2 API (no `.page_index`/`.title` attributes at all), so a regression back to attribute access fails with the same `AttributeError` production raised, rather than silently passing the way a loose `MagicMock` would — which is exactly how this shipped untested the first time |
+| ~~**D61**~~ | **CLOSED 2026-08-05 (fixed + guarded). Renumbered from D59 on 2026-08-06 merge into `sprint3-master`** — same collision as D60/D58 above, `main` independently allocated D59 (above, unbounded queries) the same day. The rate limiter's per-user key silently stopped keying by user for any Supabase project using asymmetric "JWT Signing Keys" — the exact D52 bucket-sharing bug, reopened by a later, unrelated change. `dependencies.get_current_user` (`apps/api/app/dependencies.py:83-100`) branches on the token's `alg` header: `HS256` verified against the shared secret, `ES256`/`RS256` verified via JWKS. `_get_user_key` (`apps/api/app/core/rate_limit.py`) kept its own **separate, independent** decode call hardcoded to `algorithms=["HS256"]` only — never updated when the JWKS branch was added — so any ES256 token raised `InvalidAlgorithmError`, was swallowed by the bare `except`, and fell back to `get_remote_address`, sharing one bucket across every authenticated user again. Found live in the same session as D60, via the real worker's log output. | High (same severity class as D52) | **FIXED 2026-08-05** — `_get_user_key` now branches on `alg` exactly like `dependencies.get_current_user`, reusing that module's `_get_jwks_client` rather than a third, independent JWKS client. **Do not let this drift a third time**: the two decoders are duplicated by design (rate_limit.py cannot import from a route-level dependency without circularity) — any future change to `get_current_user`'s algorithm handling must be mirrored here by hand. | `tests/unit/test_rate_limit_key.py::test_an_es256_token_keys_the_bucket_by_user_not_ip` — a real ES256 token signed with a generated EC key, JWKS client mocked at `app.dependencies._get_jwks_client` |
 
 ---
 
@@ -217,6 +227,11 @@ Not "documented limitations". Each carries an explicit condition that reopens it
 ## Part 4 — Binding decisions going forward
 
 These are the rules. Each says how it is enforced.
+
+> **Scale has its own contract: `docs/SCALE-CONTRACT.md`** (established 2026-08-05). It states
+> the six questions every story's `## Scale & Load` section must answer, and its Enforcement
+> table names **this register — BD-9 below** as the mechanism for any scale limitation we ship
+> knowingly. Read it before opening a story; it is binding on every story, PR and review.
 
 **BD-1 — Verification scope must equal CI scope.**
 An AC may not scope a gate to touched files. State the repo-wide number and `main`'s number.
@@ -261,25 +276,100 @@ cross-dev contract needs one real integration test before Sprint 3 real-student 
 is what happens without it: three developers, three green suites, one broken product.
 *Enforcement: BD-3 + a per-contract checklist.*
 
+**BD-9 — Scale is a stated constraint, not an assumption.**
+*(This is the entry that `docs/SCALE-CONTRACT.md`'s Enforcement table and `CLAUDE.md`'s
+Core Architectural Principle 8 both call **"binding rule 8"** — i.e. the eighth rule of
+`CLAUDE.md`'s **### Binding rules** list, which mirrors this file and runs 1–7 today. In this
+file's own sequence it is **BD-9**, because **BD-8 is already the mocking-expiry rule**. Two
+numberings, one rule, stated here so nobody "fixes" the mismatch by renumbering BD-8 — that is
+how D29/D30 and D57 happened.)*
+Every story carries a `## Scale & Load` section answering the contract's six questions. A bare
+`N/A` is a missing answer, not an answer, and **review checks the answers, not the presence of
+the heading** — the section is only worth what the sixth review layer reads in it. Any scale
+limitation shipped knowingly is a register entry with a `D-nn` ID, a **named owner** and a
+**trigger** — exactly the bar BD-5 sets for every other documented limitation, and for the same
+reason: **D58** (the eval harness writes a success-shaped result file when every PDF crashed)
+was quoted verbatim in `docs/book-scale-phase-tracker.md:79` as the justification for the
+tracker's entire GATE RULE and still **had no register ID** until 2026-08-04.
+
+The failure this rule catches does not look like slowness — it looks like success.
+`settings.structure_max_sections = 15` (`apps/api/app/config.py:332`) ×
+`_get_section_body(..., max_chars=6000)` (`graph.py:1942`) is a ~90,000-character LLM-visible
+window **regardless of input size**, so a 1,151-page book produced a lesson built from **4 %**
+of itself: nothing errored, nothing warned above a `logger.warning` nobody reads
+(`graph.py:1952-1960`), and the `$3.00/lesson` ceiling never fired because the failure was
+*cheap*, not expensive (**D46**). Any AC phrased as "the cost ceiling protects us here" is
+false for this whole class.
+
+Six open entries are this rule stated after the fact, and are the evidence for it —
+**do not re-register them under new ids, cite them**: **D45** (check-then-insert on
+`(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
+requests both insert and both bill), **D49** (`RATE_LIMIT_STORAGE_URL` defaults to `memory://`,
+so every ceiling silently multiplies by replica count), **D50** (300-DPI renders and Storage
+uploads bounded on *concurrency, not count*, and outside `cost_tracker`'s view entirely),
+**D52** (limiter keyed by IP because a swallowed `InvalidAudienceError` dropped the `sub`
+lookup — one caller locked out everyone behind the same egress IP), **D53** (nothing ages a
+`generating` row out, so three of them lock a user out of all generation permanently), and
+**D58**. Scope is part of the answer: a limit whose scope — per user, per instance, per
+deployment — is unstated is a limit that is wrong on the second replica (D49) or the second
+user (D52).
+*Enforcement: `## Scale & Load` is a required section of the story template; a sixth mandatory
+review layer (Scale & Load) in the review gate; and `tests/unit/test_unbounded_queries.py` — a
+source scan failing on any request-path `.select()` carrying no `.limit()`, `.range()`,
+`count=` or `# BOUNDED:` justification. **Verified 2026-08-05: that file does not exist under
+`apps/api/tests/` or `tests/`.** Until it is written BD-9 is `DISCIPLINE`, and is counted as
+such in the scorecard — per binding rule 7, a rule without a guard is not enforced, it is
+remembered.*
+
+### DECISION 2026-08-05 — scale becomes an explicit, enforced constraint on all future work
+
+Sprints 1 and 2 and Learner Mode were built, reviewed and merged **green**. Every one of them
+assumed a small PDF, one user, one instance. None of those assumptions was written down, so
+none was ever checked — and the check that would have caught them (BD-3's real-dependency job,
+the `$3.00` ceiling, the 5-agent gate) could not, because nothing was failing.
+
+The cost of not writing them down, paid in full and recorded honestly:
+
+| | |
+|---|---|
+| Unplanned work | The **entire book-scale sprint**, Phases 1–7, whose only purpose was to retrofit scale into shipped, green work |
+| Commits | **~50** |
+| Register entries created | **~14 (D41–D58)** — of which D45, D46, D49, D50, D52, D53 and D58 are scale defects proper |
+| Delivered | A 1,000-page book that works. Nothing a user asked for. |
+| Still open from it | D46 (silent truncation, DISCIPLINE), D50 (uncapped renders, no guard), D53 (High, live in production) |
+
+**The decision.** Scale is now a stated constraint on every story, not a property discovered
+afterwards: `docs/SCALE-CONTRACT.md`'s six questions, BD-9 above, the required `## Scale & Load`
+story section, and the sixth review layer. This is deliberately structural rather than advisory
+— Part 1 of this file establishes by evidence that prose guidance does not hold here (Dev 1
+wrote `DEV1-FIX-PLAN.md` and deviated from it four times in one day; every deviation was caught
+by review, none by a machine), so a paragraph asking people to think about scale would have
+already failed on the day it was written.
+
+**The one-line test, from the contract:** *"What input makes this silently wrong rather than
+loudly broken?"* If a story cannot answer it, the story is not finished. Every defect this
+project has found — without exception — was something that reported success without being
+checked.
+
 ---
 
 ## Scorecard
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | **27** — +2 today (D58, D59), found and closed same-day via a real book-scale upload test |
+| Defects closed (fixed **and** guarded) | **28** — main's 26 plus 2 closed same-day on `sprint3-master` via a real book-scale upload test, renumbered **D60**/**D61** on merge (see ID-collision note below) |
 | Fixed, awaiting merge | **0** — everything Dev 1 owns is on `main` |
 | **Open** | **25** |
 | Of which **live in production** | **3** — D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
-| Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D30 closed 2026-08-04** |
-| Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
+| Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D29 closed 2026-08-05, D30 closed 2026-08-04** |
+| Binding decisions relying on `DISCIPLINE` alone | **6 of 9** — BD-9 (scale) joins them until `tests/unit/test_unbounded_queries.py` is written |
 | Open entries with a named owner **and** a trigger | **24 of 25** (D36 still has no owner) |
 | Found by the 2026-07-30 wiring audit | **7** registered (D31–D37), ~40 more in the report |
 | Found by the 2026-08-03 Story 1-9 five-agent review | **3** registered (D38–D40); **D38 and D39 both closed same day**|
 | Found by the 2026-08-04 book-scale UI re-plan and Phase 3 gate | **2** registered (D41, D42) |
 | Found by the 2026-08-04 Story 1-14 review (Phase 6 endpoints) | **11** registered (D44–D54), plus **D34 amended and re-severitied Med → High**. D52/D53/D54 were added by the five-agent review AFTER the story was written — **D52 was cited by ID in three files, including a load-bearing code comment, before its register row existed**, which is precisely the collision the banner at the top of this file exists to prevent |
 
-That last row is the honest health metric. Five of eight rules currently depend on someone
+That last row is the honest health metric. Six of nine rules currently depend on someone
 remembering. **BD-3 is the one that converts the most of them into machine checks, which is
 why it is first.**
