@@ -9,11 +9,10 @@ import { useAttentionConsent } from '@/hooks/useAttentionConsent';
  * not-yet-started story. This component makes no camera/MediaPipe call of
  * any kind; it only explains the feature and records the student's choice.
  *
- * `accept()` writes directly to `public.user_consents` via Supabase (RLS
- * allows an own-row insert; a trigger syncs `users.attention_consent`), so
- * this works today without any backend endpoint. The failure path below
- * still matters for real failures (RLS denial, network error) and must
- * never trap the student.
+ * `accept()` calls `POST /api/assessment/consent` (Story 3-32 / D29) — the
+ * only writer to `public.user_consents`. The failure path below still
+ * matters for real failures (network error, backend outage) and must never
+ * trap the student.
  */
 export function AttentionConsentModal() {
   const { showModal, accept, decline } = useAttentionConsent();

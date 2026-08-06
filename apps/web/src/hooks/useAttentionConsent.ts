@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
+import { recordConsent } from '@/lib/assessment';
 
 export type AttentionConsentStatus = 'accepted' | 'declined' | 'unknown';
 
@@ -25,7 +26,7 @@ interface UseAttentionConsentResult {
 // Tracks which version of the attention-tracking disclosure copy the
 // student consented to (DPDP Act 2023 audit requirement). Bump this if the
 // disclosure text in AttentionConsentModal changes materially.
-const ATTENTION_CONSENT_POLICY_VERSION = '1.0';
+const ATTENTION_CONSENT_POLICY_VERSION = 'v1';
 
 function dismissalKey(userId: string): string {
     return `hie:attention-consent-dismissed:${userId}`;
@@ -53,14 +54,15 @@ function writeDismissed(userId: string): void {
 /**
  * S3-01. Reads `users.attention_consent` fresh from Supabase on every mount
  * (AC-4 — never trusted from a client-only cache) and derives whether the
- * consent modal should show. `accept()` records the choice by inserting
- * directly into `public.user_consents` (RLS: insert own row) — a trigger on
- * that table syncs `users.attention_consent = true`, so no backend endpoint
- * is required. `decline()` records only a local "already asked" marker
- * (AC-5) purely to avoid re-prompting every lesson; that marker is never
- * itself read as consent, and the schema has no slot for a recorded refusal
- * (`user_consents.consent_type` only allows `'attention_tracking'` /
- * `'learner_dna'`) — accepted as-is per the 2026-08-06 review.
+ * consent modal should show. `accept()` records the choice via
+ * `POST /api/assessment/consent` (Story 3-32 / D29) — the ONLY writer to
+ * `user_consents`; a DB trigger on that table syncs `users.attention_consent
+ * = true` after the insert. `decline()` records only a local "already
+ * asked" marker (AC-5) purely to avoid re-prompting every lesson; that
+ * marker is never itself read as consent, and the schema has no slot for a
+ * recorded refusal (`user_consents.consent_type` only allows
+ * `'attention_tracking'` / `'learner_dna'`) — accepted as-is per the
+ * 2026-08-06 review.
  */
 export function useAttentionConsent(): UseAttentionConsentResult {
     const { user } = useAuth();
@@ -151,19 +153,16 @@ export function useAttentionConsent(): UseAttentionConsentResult {
         if (!userId) return;
         const requestId = ++requestIdRef.current;
         try {
-            const supabase = createClient();
-            const { error } = await supabase.from('user_consents').insert({
-                user_id: userId,
+            await recordConsent({
                 consent_type: 'attention_tracking',
                 policy_version: ATTENTION_CONSENT_POLICY_VERSION,
             });
-            if (error) throw error;
         } catch (err) {
             console.error('useAttentionConsent: failed to record consent', err);
             throw err;
         }
-        // A decline() made while this insert was in flight is the student's
-        // most recent, authoritative choice -- do not overwrite it.
+        // A decline() made while this request was in flight is the
+        // student's most recent, authoritative choice -- do not overwrite it.
         if (requestId !== requestIdRef.current) return;
         setConsentStatus('accepted');
         markDismissed();
