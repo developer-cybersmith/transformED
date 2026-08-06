@@ -490,7 +490,7 @@ def test_upload_tier_422_names_the_path_read_off_the_registered_route() -> None:
     the route must both trace back to the same constant.
     """
     from app.core.rate_limit import limiter
-    from app.dependencies import get_arq_redis, get_current_user
+    from app.dependencies import get_arq_redis, get_current_user, require_approved_user
     from app.main import create_app
 
     app = create_app()
@@ -498,6 +498,9 @@ def test_upload_tier_422_names_the_path_read_off_the_registered_route() -> None:
 
     limiter.reset()
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    # /lessons is gated by require_approved_user (Story: beta-access allowlist) --
+    # this test exercises the 422 tier-removal message, not the approval gate.
+    app.dependency_overrides[require_approved_user] = lambda: FAKE_USER
     app.dependency_overrides[get_arq_redis] = lambda: _arq_pool()
     try:
         with patch("app.modules.content.router.get_supabase", return_value=MagicMock()):
@@ -923,7 +926,7 @@ def _upload_and_capture(filename: str) -> tuple[str, str, str]:
     written to `books.filename`.
     """
     from app.core.rate_limit import limiter
-    from app.dependencies import get_arq_redis, get_current_user
+    from app.dependencies import get_arq_redis, get_current_user, require_approved_user
     from app.main import app
 
     book_id = str(uuid.uuid4())
@@ -936,6 +939,9 @@ def _upload_and_capture(filename: str) -> tuple[str, str, str]:
 
     limiter.reset()
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    # /lessons is gated by require_approved_user (Story: beta-access allowlist) --
+    # this helper exercises storage-key reconstruction, not the approval gate.
+    app.dependency_overrides[require_approved_user] = lambda: FAKE_USER
     app.dependency_overrides[get_arq_redis] = lambda: _arq_pool()
     try:
         with patch("app.modules.content.router.get_supabase", return_value=sb):
