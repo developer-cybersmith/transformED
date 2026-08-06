@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_settings
 from app.modules.assessment.prompts import TeachbackScoreResult
 from app.modules.assessment.router import router
 from app.modules.assessment.schemas import TeachbackResult, TeachbackSubmission
@@ -31,8 +31,17 @@ async def _fake_user() -> dict:
     return {"sub": "user-001", "email": "test@example.com"}
 
 
+def _fake_settings() -> MagicMock:
+    """submit_teachback depends on ApprovedUser (403 unless the JWT email is
+    on the beta-access allowlist) -- approve _fake_user's email."""
+    settings = MagicMock()
+    settings.approved_emails = ["test@example.com"]
+    return settings
+
+
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
+_app.dependency_overrides[get_settings] = _fake_settings
 _app.include_router(router, prefix="/api/assessment")
 _client = TestClient(_app, raise_server_exceptions=False)
 
@@ -822,6 +831,26 @@ def test_unauthenticated_request_returns_403() -> None:
     _unauthed_client = TestClient(_unauthed_app, raise_server_exceptions=False)
     resp = _unauthed_client.post("/api/assessment/teachback", json=_VALID_HTTP_PAYLOAD)
     assert resp.status_code in {401, 403}
+
+
+@pytest.mark.unit
+def test_http_403_when_not_approved(monkeypatch) -> None:
+    """A signed-up user whose email is not on the beta-access allowlist is
+    rejected with 403 before grade_teachback (and its LLM call) ever runs --
+    submit_teachback depends on ApprovedUser, not CurrentUser."""
+
+    async def _must_not_be_called(**_kwargs):
+        raise AssertionError("grade_teachback must not run when unapproved")
+
+    monkeypatch.setattr("app.modules.assessment.service.grade_teachback", _must_not_be_called)
+    _app.dependency_overrides[get_settings] = lambda: MagicMock(approved_emails=[])
+    try:
+        with patch("app.core.db.get_supabase", return_value=MagicMock()):
+            resp = _client.post("/api/assessment/teachback", json=_VALID_HTTP_PAYLOAD)
+    finally:
+        _app.dependency_overrides[get_settings] = _fake_settings
+
+    assert resp.status_code == 403
 
 
 @pytest.mark.unit

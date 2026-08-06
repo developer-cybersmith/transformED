@@ -48,7 +48,7 @@ def _get_user_key(request: Request) -> str:
             # could exhaust the limit for everyone behind the same egress IP.
             # Silent, and invisible at anything above DEBUG.
             #
-            # D61 — branch on `alg` exactly like `dependencies.get_current_user`
+            # D64 — branch on `alg` exactly like `dependencies.get_current_user`
             # (a second, independent HS256-only decode drifted out of sync with
             # that function's dual HS256/JWKS support when Supabase projects
             # migrated to asymmetric "JWT Signing Keys" — every ES256/RS256

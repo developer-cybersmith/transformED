@@ -23,7 +23,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_settings
 from app.modules.assessment.router import router
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -37,8 +37,17 @@ async def _fake_user() -> dict:
     return {"sub": "user-onb-001", "email": "onboarding@example.com"}
 
 
+def _fake_settings() -> MagicMock:
+    """submit_onboarding_diagnostic depends on ApprovedUser (403 unless the
+    JWT email is on the beta-access allowlist) -- approve _fake_user's email."""
+    settings = MagicMock()
+    settings.approved_emails = ["onboarding@example.com"]
+    return settings
+
+
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
+_app.dependency_overrides[get_settings] = _fake_settings
 _app.include_router(router, prefix="/api/assessment")
 _client = TestClient(_app, raise_server_exceptions=False)
 
@@ -964,6 +973,27 @@ def test_http_409_when_onboarding_already_done() -> None:
         f"Expected 409 for already-done onboarding, "
         f"got {response.status_code}: {response.text[:200]}"
     )
+
+
+@pytest.mark.unit
+def test_http_403_when_not_approved() -> None:
+    """A signed-up user whose email is not on the beta-access allowlist is
+    rejected with 403 before process_onboarding (and its LLM call) ever runs
+    -- submit_onboarding_diagnostic depends on ApprovedUser, not CurrentUser."""
+    _app.dependency_overrides[get_settings] = lambda: MagicMock(approved_emails=[])
+    try:
+        with patch(
+            "app.modules.assessment.service.process_onboarding",
+            new=AsyncMock(side_effect=AssertionError("must not be called when unapproved")),
+        ):
+            response = _client.post(
+                "/api/assessment/onboarding/submit",
+                json={"responses": _make_20_responses()},
+            )
+    finally:
+        _app.dependency_overrides[get_settings] = _fake_settings
+
+    assert response.status_code == 403
 
 
 @pytest.mark.unit
