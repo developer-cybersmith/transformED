@@ -67,7 +67,7 @@ taking on ownership of the preference storage infrastructure.
   reads a user ID from a request body or any other mutable input.
 
 ### Defect registration
-- [x] **AC 12.** Defect D58 registered in `docs/DEFECT-REGISTER.md` documenting
+- [x] **AC 12.** Defect D60 registered in `docs/DEFECT-REGISTER.md` documenting
   the missing `PATCH /api/users/notifications` endpoint, missing DB schema,
   and mock-only frontend state with correct owners and trigger.
 
@@ -146,7 +146,7 @@ functions).
 - [x] 4.4 Run full Dev 3 regression suite
 
 ### Task 5 — Defect registration
-- [x] 5.1 Register D58 in `docs/DEFECT-REGISTER.md`
+- [x] 5.1 Register D60 in `docs/DEFECT-REGISTER.md`
 - [x] 5.2 Update `docs/dev3-assessment-tracker.md` Sprint 4 section
 
 ### Task 6 — 5-agent adversarial review
@@ -164,7 +164,28 @@ functions).
 
 ## Senior Developer Review (AI)
 
-*(populated after 5-agent review — Task 6)*
+**Review date:** 2026-08-06
+**Outcome:** APPROVE WITH CHANGES — two findings resolved before final commit.
+
+### Action Items
+
+**Layer 1 — Story Quality**
+- [x] **HIGH** AC 12 referenced D58, which was already allocated to the eval-harness defect. Corrected to D60 (next available ID). D60 registered in `docs/DEFECT-REGISTER.md`. Story-first gate PASS.
+
+**Layer 2 — Blind Hunter (Security)**
+- [x] **LOW/PLAUSIBLE** Log line at `notification_prefs.py:83-86` passes `user_id` and `preference_key` to `%s` without newline sanitization — accepted: `user_id` is a UUID from JWT sub (no newlines), `preference_key` is an internal constant. No change required.
+
+**Layer 3 — Test Coverage**
+- [x] **MED** `test_no_llm_calls` was vacuously true — it patched `app.providers.llm.openai.OpenAILLMProvider`, a symbol the module never imports, so `assert_not_called()` was trivially satisfied. Replaced with source inspection via `inspect.getsource()` asserting no LLM identifier appears in `notification_prefs.py`.
+
+**Layer 4 — AC Completeness**
+- [x] All 11 functional ACs covered by tests after Layer 3 fix. AC 12 verified as D60 registration task.
+
+**Layer 5 — Process Integrity**
+- [x] No hardcoded model strings. No cross-module imports. `__all__` correct. Keyword-only args. No LLM calls.
+
+**Layer 6 — Scale & Load**
+- [x] `.maybe_single()` enforces single-row bound. `notification_prefs.py` is outside `test_unbounded_queries.py` scan scope; no new entries required in `_KNOWN_UNBOUNDED`. All 6 Scale & Load questions answered in story.
 
 ## Dev Agent Record
 
@@ -182,7 +203,7 @@ functions).
 
 ### Completion Notes
 
-*(populated on completion)*
+Implemented `get_notification_preference()` as a fail-open read-helper. D60 registered in `docs/DEFECT-REGISTER.md` documenting the three missing S3-07 pieces with named owners. `test_no_llm_calls` rewritten from a vacuously-true mock-patch to a source-inspection assertion (5-agent review Finding 2). 12/12 tests pass, 0 ruff errors. Story-first gate satisfied: story committed in `cfef29c` before all implementation. Branch: `sprint3/s3-07-dev3-notification-prefs`.
 
 ### File List
 
@@ -194,4 +215,10 @@ functions).
 
 ### Change Log
 
-*(populated on completion)*
+- 2026-08-06: Story file created (story-first commit `cfef29c`)
+- 2026-08-06: RED phase — 12 failing tests in `test_notification_prefs.py`
+- 2026-08-06: GREEN phase — `notification_prefs.py` implemented; 12/12 pass
+- 2026-08-06: REFACTOR — ruff clean, `asyncio.run()` event-loop fix applied
+- 2026-08-06: 5-agent review — Finding 1: D58 ID taken → corrected to D60; Finding 2: vacuous test_no_llm_calls → source inspection
+- 2026-08-06: D60 registered in `docs/DEFECT-REGISTER.md`
+- 2026-08-06: `docs/dev3-assessment-tracker.md` Sprint 4 task added
