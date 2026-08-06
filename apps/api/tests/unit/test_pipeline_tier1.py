@@ -117,10 +117,40 @@ def _make_embed_supabase(
     return sb, jobs, chk
 
 
+def _make_chapters_table(
+    page_start: int = 4,
+    page_end: int = 9,
+    book_id: str = FAKE_BOOK_ID,
+) -> MagicMock:
+    """`chapters` double for extract_node's Story 1-13 page-range lookup.
+
+    extract_node resolves the chapter row with
+    `.select(...).eq("chapter_id", ...).limit(1).execute()` and reads
+    page_start/page_end off it before spawning the subprocess.
+    """
+    t = MagicMock()
+    resp = MagicMock()
+    resp.data = [
+        {
+            "chapter_id": FAKE_CHAPTER_ID,
+            "book_id": book_id,
+            "page_start": page_start,
+            "page_end": page_end,
+        }
+    ]
+    t.select.return_value.eq.return_value.limit.return_value.execute.return_value = resp
+    return t
+
+
 def _make_extract_supabase() -> MagicMock:
     jobs = _make_jobs_table({})
+    chapters = _make_chapters_table()
+
+    def _table(name: str) -> MagicMock:
+        return chapters if name == "chapters" else jobs
+
     sb = MagicMock()
-    sb.table.return_value = jobs
+    sb.table.side_effect = _table
     sb.storage.from_.return_value.download.return_value = FAKE_PDF_BYTES
     return sb
 
@@ -463,6 +493,7 @@ async def test_extract_node_cancellation_reaps_subprocess() -> None:
     state = {
         "lesson_id": FAKE_LESSON_ID,
         "book_id": FAKE_BOOK_ID,
+        "chapter_id": FAKE_CHAPTER_ID,  # Story 1-13: required on the PDF path
         "user_id": FAKE_USER_ID,
         "source_pdf_path": FAKE_PDF_PATH,
         "chapter_content": "",

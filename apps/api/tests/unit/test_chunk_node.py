@@ -60,10 +60,18 @@ def _make_tiktoken_mock() -> tuple[MagicMock, MagicMock, dict[str, Any]]:
 
 def _make_supabase_mock(
     node_outputs: dict[str, Any] | None = None,
-    chapter_id: str = FAKE_CHAPTER_ID,
+    existing_chunks: list[dict[str, Any]] | None = None,
 ) -> MagicMock:
-    """Build a Supabase mock that covers lesson_jobs reads, chapters insert,
-    chunks upsert, and lesson_jobs update (checkpoint write)."""
+    """Build a Supabase mock that covers lesson_jobs reads, the chunk-reuse
+    probe on `chunks`, the chunks upsert, and lesson_jobs update (checkpoint).
+
+    Story 1-13: `chunk_node` no longer writes `chapters` at all — the `chapters`
+    table mock is kept solely so tests can assert that no write reaches it.
+
+    `existing_chunks` seeds the reuse probe
+    (`chunks.select().eq(chapter_id).order().range().execute()`); the default of
+    `[]` means "this chapter has never been chunked", i.e. the fresh path.
+    """
     jobs_data = {"node_outputs": node_outputs or {}}
 
     jobs_table = MagicMock()
@@ -71,10 +79,13 @@ def _make_supabase_mock(
         jobs_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data
     ) = jobs_data
 
+    # chunk_node is a strict non-writer of `chapters` — no return values needed.
     chapter_table = MagicMock()
-    chapter_table.insert.return_value.execute.return_value.data = [{"chapter_id": chapter_id}]
 
     chunks_table = MagicMock()
+    (
+        chunks_table.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value.data
+    ) = list(existing_chunks or [])
 
     def _table_router(name: str) -> MagicMock:
         if name == "lesson_jobs":
@@ -94,6 +105,9 @@ def _base_state(**overrides: Any) -> dict[str, Any]:
     base = {
         "lesson_id": FAKE_LESSON_ID,
         "book_id": FAKE_BOOK_ID,
+        # Story 1-13 AC4/AC5: chapter_id arrives on PipelineState (from
+        # `lessons.chapter_id`). chunk_node no longer manufactures one.
+        "chapter_id": FAKE_CHAPTER_ID,
         "sections": [_SECTION_A, _SECTION_B],
         "progress_pct": 14.0,
         "error": None,
@@ -175,9 +189,10 @@ async def test_chunk_node_idempotent() -> None:
     # tiktoken must not be called — get_encoding is never invoked on cache hit
     fake_tiktoken.get_encoding.assert_not_called()
 
-    # No chapters.insert or chunks.upsert on cache hit
+    # No chapters write or chunks.upsert on cache hit
     chapters_table = sb.table("chapters")
     chapters_table.insert.assert_not_called()
+    chapters_table.upsert.assert_not_called()
     chunks_table = sb.table("chunks")
     chunks_table.upsert.assert_not_called()
 
@@ -217,8 +232,16 @@ async def test_chunk_node_writes_checkpoint() -> None:
 
 
 @pytest.mark.unit
-async def test_chunk_node_writes_chapter_row() -> None:
-    """chunk_node inserts one chapter row with lesson_id, book_id, chapter_index=1."""
+async def test_chunk_node_writes_no_chapter_row_and_uses_state_chapter_id() -> None:
+    """Story 1-13 AC4/AC5 — the INVERSE of the pre-1-13 assertion.
+
+    This test used to assert that chunk_node upserted a hardcoded
+    `chapters` row (`chapter_index=1`) so `chunks.chapter_id` had something to
+    point at. That block is deleted: it was the reason the pipeline could only
+    ever produce "chapter 1 of this upload". The coverage is kept, pointed at
+    the new invariant — the pipeline is a strict NON-writer of `chapters`
+    (AC8), and the chapter_id on the chunk rows is the one from state.
+    """
     from app.modules.content.pipeline.graph import chunk_node
 
     state = _base_state()
@@ -236,12 +259,21 @@ async def test_chunk_node_writes_chapter_row() -> None:
         mock_settings.return_value.embedding_tokenizer = "cl100k_base"
         await chunk_node(state)
 
+    # No write of ANY kind reaches `chapters`.
+    assert "chapters" not in [call.args[0] for call in sb.table.call_args_list], (
+        "chunk_node touched the `chapters` table at all; Story 1-13 AC8 makes "
+        "the pipeline a strict non-writer of `chapters` as well as `books`"
+    )
     chapters_table = sb.table("chapters")
-    chapters_table.insert.assert_called_once()
-    insert_payload = chapters_table.insert.call_args.args[0]
-    assert insert_payload["lesson_id"] == FAKE_LESSON_ID
-    assert insert_payload["book_id"] == FAKE_BOOK_ID
-    assert insert_payload["chapter_index"] == 1
+    chapters_table.insert.assert_not_called()
+    chapters_table.upsert.assert_not_called()
+    chapters_table.update.assert_not_called()
+
+    # …and the chapter_id the chunk rows carry is the one supplied on state,
+    # not one this node invented.
+    rows_written = sb.table("chunks").upsert.call_args.args[0]
+    assert rows_written, "expected chunk rows to be written"
+    assert {row["chapter_id"] for row in rows_written} == {FAKE_CHAPTER_ID}
 
 
 @pytest.mark.unit
@@ -282,7 +314,11 @@ async def test_chunk_node_writes_chunk_rows() -> None:
 
 @pytest.mark.unit
 async def test_chunk_node_empty_sections() -> None:
-    """Empty sections → empty chunks; chapters.insert still called; chunks.upsert NOT called."""
+    """Empty sections → empty chunks; chunks.upsert NOT called.
+
+    Story 1-13: the "…and the chapter row is still written" half of this
+    assertion is inverted, not dropped — there is no chapter row to write.
+    """
     from app.modules.content.pipeline.graph import chunk_node
 
     state = _base_state(sections=[])
@@ -301,7 +337,8 @@ async def test_chunk_node_empty_sections() -> None:
         result = await chunk_node(state)
 
     assert result["chunks"] == []
-    sb.table("chapters").insert.assert_called_once()
+    sb.table("chapters").insert.assert_not_called()
+    sb.table("chapters").upsert.assert_not_called()
     sb.table("chunks").upsert.assert_not_called()
 
 
@@ -517,3 +554,51 @@ def test_chunk_sections_multiple_sections_produce_chunks_for_each() -> None:
     assert len(chunks) >= 10
     section_ids_in_chunks = {c["section_id"] for c in chunks}
     assert section_ids_in_chunks == {f"s{i}" for i in range(10)}
+
+
+@pytest.mark.unit
+async def test_chunk_node_retry_cannot_collide_on_the_chapters_constraint() -> None:
+    """Story 1-13 AC4 — the INVERSE of the pre-1-13 assertion, same concern.
+
+    The original question was: an ARQ retry re-enters chunk_node (its checkpoint
+    is written at the END of the node, so a failure after the chunks upsert
+    leaves node_outputs["chunk"] unset), and `20260803000000_chapters_book_scoped.sql`
+    adds UNIQUE (book_id, chapter_index) — so a plain INSERT of the hardcoded
+    chapter row would 23505 on all of max_tries=3 and permanently stick the
+    lesson. The old answer was "use an upsert with on_conflict".
+
+    The Story 1-13 answer is stronger and is what this test now asserts: there
+    is NO chapter write left to collide. The node re-entered a second time must
+    still touch `chapters` zero times, and must produce the same chunk rows
+    against the same state-supplied chapter_id.
+    """
+    from app.modules.content.pipeline.graph import chunk_node
+
+    sb = _make_supabase_mock()
+    _, _fake_tiktoken, tiktoken_patch = _make_tiktoken_mock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch.dict("sys.modules", tiktoken_patch),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        mock_settings.return_value.chunk_target_tokens = 512
+        mock_settings.return_value.chunk_overlap_tokens = 64
+        mock_settings.return_value.embedding_tokenizer = "cl100k_base"
+        first = await chunk_node(_base_state())
+        # Second entry = the ARQ retry. The reuse probe is still empty (the mock
+        # models the crash-before-commit window), so this takes the same path.
+        second = await chunk_node(_base_state())
+
+    assert "chapters" not in [call.args[0] for call in sb.table.call_args_list], (
+        "chunk_node wrote to `chapters`; after Story 1-13 there must be no "
+        "chapter write for an ARQ retry to collide with"
+    )
+    chapters = sb.table("chapters")
+    assert not chapters.insert.called
+    assert not chapters.upsert.called
+
+    assert first["chunks"] == second["chunks"], "retry must reproduce identical chunks"
+    for call in sb.table("chunks").upsert.call_args_list:
+        assert {row["chapter_id"] for row in call.args[0]} == {FAKE_CHAPTER_ID}

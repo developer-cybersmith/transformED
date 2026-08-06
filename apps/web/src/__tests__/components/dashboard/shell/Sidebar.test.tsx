@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Sidebar } from '@/components/dashboard/shell/Sidebar';
+import { Sidebar, mainNavItems } from '@/components/dashboard/shell/Sidebar';
 
 const { logoutMock } = vi.hoisted(() => ({ logoutMock: vi.fn() }));
 
@@ -15,6 +15,25 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 beforeEach(() => {
   logoutMock.mockReset();
+});
+
+describe('Sidebar — main navigation', () => {
+  it('exposes a /books entry (W2 AC9) alongside the existing destinations', () => {
+    expect(mainNavItems.map((item) => item.href)).toEqual([
+      '/dashboard',
+      '/books',
+      '/library',
+      '/upload',
+      '/reports',
+    ]);
+  });
+
+  it('renders the Books link so the book library is reachable from every dashboard route', () => {
+    render(<Sidebar />);
+
+    const link = screen.getByRole('link', { name: 'My Books' });
+    expect(link.getAttribute('href')).toBe('/books');
+  });
 });
 
 describe('Sidebar — Account menu', () => {

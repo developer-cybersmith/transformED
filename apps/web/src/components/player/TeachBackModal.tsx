@@ -110,7 +110,7 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
             rows={5}
             autoFocus
             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3
-                       text-white text-sm placeholder:text-neutral-600
+                       text-white text-base sm:text-sm placeholder:text-neutral-600
                        focus:outline-none focus:border-[var(--accent-primary)]/50
                        resize-none transition-colors"
           />

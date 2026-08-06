@@ -77,6 +77,26 @@ export async function submitTeachBack(payload: TeachBackSubmitPayload): Promise<
   return data;
 }
 
+// ── Session lifecycle (D18 / Story 2-35 backend, Story 2-39 frontend) ───────
+
+export interface CreateSessionPayload {
+  lesson_id: string;
+}
+
+// Matches apps/api/app/modules/assessment/schemas.py::SessionCreated exactly
+// (verified against PR #119's diff). session_id/started_at are DB-generated --
+// never sent by the client, and a client-invented session_id is exactly D18.
+export interface SessionCreated {
+  session_id: string;
+  lesson_id: string;
+  started_at: string | null;
+}
+
+export async function createSession(payload: CreateSessionPayload): Promise<SessionCreated> {
+  const { data } = await api.post<SessionCreated>('/assessment/sessions', payload);
+  return data;
+}
+
 // ── Session report ──────────────────────────────────────────────────────────
 
 export async function getSessionReport(sessionId: string): Promise<SessionReport> {

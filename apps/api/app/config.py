@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # `NoDecode` disables pydantic-settings' default behavior of trying to
     # JSON-decode any list-typed env value before validation runs — without
     # it, a non-JSON comma-separated string (the documented format below)
-    # raises a SettingsError before _parse_admin_emails ever sees it. With
+    # raises a SettingsError before _parse_email_allowlist ever sees it. With
     # NoDecode, the raw env string always reaches the validator untouched,
     # which then handles both a JSON array and a comma-separated string itself.
     admin_emails: Annotated[list[str], NoDecode] = Field(
@@ -121,9 +121,31 @@ class Settings(BaseSettings):
         ),
     )
 
-    @field_validator("admin_emails", mode="before")
-    @classmethod
-    def _parse_admin_emails(cls, v: object) -> object:
+    # ── Beta access gate ──────────────────────────────────────────────────────
+    # Self-serve signup is open, but /lessons (upload), /onboarding/submit, and
+    # /teachback all trigger real OpenAI spend with no cost gate of their own.
+    # Same minimal-viable allowlist pattern as admin_emails (see above) — no DB
+    # migration required. Note: an empty allowlist means require_approved_user
+    # rejects EVERYONE (fail closed), same as admin_emails/require_admin today
+    # — this is a security boundary, not a UX nicety, so an unset env var must
+    # never silently mean "let everyone through".
+    #
+    # apps/web's proxy.ts checks the SAME env var name directly (its own copy,
+    # not NEXT_PUBLIC_ — never exposed to the browser) since the frontend talks
+    # to Supabase directly and has no dependency on this backend being up.
+    # Keep both copies in sync manually for now — see
+    # docs/DEPLOYMENT-OPS-NOTES.md.
+    approved_emails: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "Comma-separated allowlist of emails approved for dashboard/upload "
+            "access (APPROVED_EMAILS env var). Also accepts a JSON array string. "
+            "Checked against the JWT's `email` claim by require_approved_user()."
+        ),
+    )
+
+    @staticmethod
+    def _parse_email_allowlist(v: object) -> object:
         # v is either a raw env string (comma-separated or a JSON array
         # literal, thanks to NoDecode above) or an already-built list (when
         # Settings() is constructed directly, e.g. in tests). Story 2-25 code
@@ -142,6 +164,16 @@ class Settings(BaseSettings):
             ]
         return v
 
+    @field_validator("admin_emails", mode="before")
+    @classmethod
+    def _parse_admin_emails(cls, v: object) -> object:
+        return cls._parse_email_allowlist(v)
+
+    @field_validator("approved_emails", mode="before")
+    @classmethod
+    def _parse_approved_emails(cls, v: object) -> object:
+        return cls._parse_email_allowlist(v)
+
     # ── Cost limits (PRD §12) ─────────────────────────────────────────────────
     max_lesson_cost_usd: float = Field(
         default=3.00,
@@ -150,6 +182,37 @@ class Settings(BaseSettings):
     max_daily_spend_per_user_usd: float = Field(
         default=10.00,
         description="Daily per-user AI spend cap in USD",
+    )
+
+    # ── Book-scale chapter generation gates (Story 1-14, book-scale Phase 6) ──
+    max_chapter_pages: int = Field(
+        default=200,
+        ge=1,
+        description=(
+            "Refuse to generate a lesson from a chapter spanning more than this "
+            "many pages (page_end - page_start + 1, read from the chapters row, "
+            "never from client input). This is the CATASTROPHE gate, not the "
+            "truncation gate: it must sit above every real chapter, and the "
+            "largest measured across the 8-book Phase 1 corpus is 138 pages "
+            "(D2L Appendix A; medians 10-44). 200 clears that with headroom and "
+            "still refuses a rung-5 whole-document 'chapter' (1,151/1,671 pages), "
+            "which is the failure this effort exists to fix. A lower cap (80) "
+            "would refuse a legitimate chapter and break the project's success "
+            "criterion. Truncation is warned about separately at 40 pages "
+            "(router._TRUNCATION_WARN_PAGES)."
+        ),
+    )
+    max_concurrent_generations_per_user: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Maximum lessons in status='generating' one user may have at once; "
+            "at or above this, POST .../chapters/{id}/lessons returns 429 with "
+            "Retry-After. This — not the rate limit — is the control that "
+            "actually bounds per-user spend: a rate limit caps request RATE, "
+            "while this caps concurrent pipelines, each of which can cost up to "
+            "max_lesson_cost_usd."
+        ),
     )
 
     # ── LLM model names ────────────────────────────────────────────────────────

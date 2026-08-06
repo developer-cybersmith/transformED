@@ -10,20 +10,24 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
 from app.core.posthog_client import capture_event
-from app.dependencies import CurrentUser
+from app.dependencies import ApprovedUser, CurrentUser
 
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
 from app.modules.assessment.schemas import (
+    ConsentCreate,
+    ConsentRecord,
     OnboardingDiagnosticSubmission,
     OnboardingResult,
     QuizAnswer,
     QuizResult,
     QuizSubmission,
+    SessionCreate,
+    SessionCreated,
     TeachbackResult,
     TeachbackSubmission,
 )
@@ -73,6 +77,35 @@ class LearnerDNA(BaseModel):
 
 
 @router.post(
+    "/sessions",
+    response_model=SessionCreated,
+    status_code=status.HTTP_201_CREATED,
+    summary="Start a lesson attempt — mints the session row",
+)
+async def create_session_endpoint(
+    body: SessionCreate,
+    current_user: CurrentUser,
+) -> SessionCreated:
+    """Create the `sessions` row for this lesson attempt and return its id.
+
+    Story 2-35 / D18. Call this ONCE when a lesson starts, not per segment —
+    every call is a new attempt, which is intentional (re-learning must produce a
+    new session for CES history).
+
+    `user_id` is taken from the verified JWT and is never read from the body.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import create_session
+
+    created = await create_session(
+        lesson_id=body.lesson_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
+    return SessionCreated(**created)
+
+
+@router.post(
     "/quiz",
     response_model=QuizResult,
     summary="Submit quiz answers for a session",
@@ -102,7 +135,7 @@ async def submit_quiz(
 )
 async def submit_teachback(
     body: TeachbackSubmission,
-    current_user: CurrentUser,
+    current_user: ApprovedUser,
 ) -> TeachbackResult:
     """Evaluate a student's typed teach-back response using the GPT-4o-mini rubric."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
@@ -186,7 +219,7 @@ async def get_learner_dna(
 )
 async def submit_onboarding_diagnostic(
     body: OnboardingDiagnosticSubmission,
-    current_user: CurrentUser,
+    current_user: ApprovedUser,
 ) -> OnboardingResult:
     """Process 20 onboarding diagnostic answers and generate initial learner DNA profile.
 
@@ -240,3 +273,41 @@ async def submit_onboarding_diagnostic(
         logger.warning("onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc)
 
     return result
+
+
+@router.post(
+    "/consent",
+    response_model=ConsentRecord,
+    status_code=status.HTTP_201_CREATED,
+    summary="Record user consent (DPDP Act 2023 compliance — D29 fix)",
+)
+async def record_consent_endpoint(
+    body: ConsentCreate,
+    current_user: CurrentUser,
+    response: Response,
+) -> ConsentRecord:
+    """Record a DPDP consent event in the user_consents audit table.
+
+    Story 3-32 / D29. This endpoint is the ONLY writer to user_consents.
+    A real row here is required before AttentionMonitor (S3-02) can legally
+    initialize — the migration's dual-condition RLS on attention_events checks
+    both users.attention_consent (boolean) AND a user_consents row.
+
+    Returns 201 on first consent for this user+type+version.
+    Returns 200 if an identical consent record already exists (idempotent).
+
+    user_id is always sourced from the verified JWT — never from the request body.
+    users.attention_consent is updated by the DB trigger, never by this function.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import record_consent
+
+    record, is_new = await record_consent(
+        user_id=current_user["sub"],
+        consent_type=body.consent_type,
+        policy_version=body.policy_version,
+        supabase=get_supabase(),
+    )
+    if not is_new:
+        response.status_code = status.HTTP_200_OK
+    return ConsentRecord(**record)

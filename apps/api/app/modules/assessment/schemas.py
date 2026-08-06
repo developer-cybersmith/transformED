@@ -20,7 +20,45 @@ __all__ = [
     "OnboardingAnswer",
     "OnboardingDiagnosticSubmission",
     "OnboardingResult",
+    "ConsentCreate",
+    "ConsentRecord",
 ]
+
+
+# ── Session lifecycle schemas (Story 2-35 / D18) ───────────────────────────────
+#
+# `sessions` had ZERO writers anywhere in the codebase, so quiz and teach-back
+# 404'd for every student. The schema shows server-side minting was always the
+# intent:
+#
+#     session_id  uuid PRIMARY KEY DEFAULT gen_random_uuid()
+#     user_id     uuid NOT NULL REFERENCES public.users(id)
+#     lesson_id   uuid NOT NULL REFERENCES public.lessons(lesson_id)
+#     started_at  timestamptz NOT NULL DEFAULT now()
+#
+# A client-chosen UUID cannot satisfy those foreign keys or make `started_at`
+# mean anything.
+
+
+class SessionCreate(BaseModel):
+    """Request body for `POST /sessions`.
+
+    `lesson_id` ONLY. `user_id` comes from the verified JWT and `session_id` /
+    `started_at` are database-generated. Pydantic ignores unknown fields by
+    default, so a client sending any of those three is silently ignored rather
+    than trusted — asserted by
+    `test_user_id_comes_from_the_jwt_and_is_never_accepted_from_the_client`.
+    """
+
+    lesson_id: str
+
+
+class SessionCreated(BaseModel):
+    """Response body for `POST /sessions` — all three values come from the DB."""
+
+    session_id: str
+    lesson_id: str
+    started_at: str | None = None
 
 
 class QuizAnswer(BaseModel):
@@ -91,3 +129,30 @@ class OnboardingResult(BaseModel):
     badge_labels: list[str]
     profile_text: str
     session_count: int
+
+
+# ── DPDP consent schemas (Story 3-32 / D29 fix) ───────────────────────────────
+# user_consents table: INSERT-only, immutable audit trail.
+# consent_type CHECK constraint in DB: ('attention_tracking', 'learner_dna').
+# users.attention_consent is set by the DB trigger — NEVER by this endpoint.
+
+
+class ConsentCreate(BaseModel):
+    """Request body for POST /api/assessment/consent.
+
+    user_id is never accepted here — it comes exclusively from current_user["sub"].
+    Extra fields are silently ignored (Pydantic default).
+    """
+
+    consent_type: Literal["attention_tracking", "learner_dna"]
+    policy_version: str = Field(min_length=1, max_length=50)
+
+
+class ConsentRecord(BaseModel):
+    """Response for POST /api/assessment/consent — mirrors the user_consents row."""
+
+    id: str
+    user_id: str
+    consent_type: str
+    policy_version: str
+    consented_at: str | None = None

@@ -1,20 +1,18 @@
 "use client";
 
-import { useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { Check } from "lucide-react";
-import Link from "next/link";
-import confetti from "canvas-confetti";
-import NumberFlow from "@number-flow/react";
-import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
+
+// Pricing is tentatively invite-only while the product is still being
+// finalized -- no figures are shown for any tier (including Free), and every
+// CTA routes to a mailto request instead of self-serve signup. Revisit once
+// real pricing is ready to go public.
+const PRICING_REQUEST_EMAIL = "hello@hieiq.ai";
 
 const plans = [
     {
         name: "Free",
-        price: 0,
-        yearlyPrice: 0,
-        period: "",
         description: "Explore HIE with 3 PDFs a month.",
         features: [
             "3 PDF uploads / month",
@@ -22,15 +20,10 @@ const plans = [
             "Lesson generation",
             "Progress tracking",
         ],
-        cta: "Get started",
-        href: "/signup",
         highlighted: false,
     },
     {
         name: "Pro",
-        price: 12,
-        yearlyPrice: 9,
-        period: "mo",
         description: "Unlimited learning for students who are serious about results.",
         features: [
             "Unlimited PDFs",
@@ -40,15 +33,10 @@ const plans = [
             "Detailed mastery analytics",
             "Priority support",
         ],
-        cta: "Start 7-day free trial",
-        href: "/signup",
         highlighted: true,
     },
     {
         name: "Teams",
-        price: 8,
-        yearlyPrice: 6,
-        period: "seat/mo",
         description: "For study groups, classrooms, or departments.",
         features: [
             "Everything in Pro",
@@ -57,49 +45,17 @@ const plans = [
             "Analytics dashboard",
             "Dedicated onboarding",
         ],
-        cta: "Talk to us",
-        href: "#",
         highlighted: false,
     },
 ];
 
+function mailtoHref(planName: string): string {
+    const subject = encodeURIComponent(`Pricing request — ${planName}`);
+    const body = encodeURIComponent(`Hi HIE team,\n\nI'd like pricing details for the ${planName} plan.\n\n`);
+    return `mailto:${PRICING_REQUEST_EMAIL}?subject=${subject}&body=${body}`;
+}
+
 export default function Pricing() {
-    const [isMonthly, setIsMonthly] = useState(true);
-    const isDesktop = useMediaQuery("(min-width: 768px)");
-    const switchRef = useRef<HTMLButtonElement>(null);
-
-    const handleToggle = () => {
-        const nextVal = !isMonthly;
-        setIsMonthly(nextVal);
-
-        // Only fire confetti when toggling to Annual (isMonthly becomes false in the next state)
-        if (!nextVal && switchRef.current) {
-            const rect = switchRef.current.getBoundingClientRect();
-            const x = rect.left + rect.width / 2;
-            const y = rect.top + rect.height / 2;
-
-            confetti({
-                particleCount: 50,
-                spread: 60,
-                origin: {
-                    x: x / window.innerWidth,
-                    y: y / window.innerHeight,
-                },
-                colors: [
-                    "#07172C", // primary (navy)
-                    "#C6A45C", // accent (gold)
-                    "#040D19", // dark (navy-dark)
-                    "#EDEFF3", // soft wrapper (light navy-tint)
-                ],
-                ticks: 200,
-                gravity: 1.2,
-                decay: 0.94,
-                startVelocity: 30,
-                shapes: ["circle"],
-            });
-        }
-    };
-
     return (
         <section id="pricing" className="py-20 lg:py-28 bg-white overflow-hidden">
             <div className="max-w-5xl mx-auto px-6 lg:px-8">
@@ -115,37 +71,9 @@ export default function Pricing() {
                         <span className="font-semibold">Simple</span> <span className="italic font-normal text-text-secondary">pricing</span>
                     </h2>
                     <p className="text-text-secondary text-[1.05rem]">
-                        Start free. Upgrade when you need more.
+                        Reach out and we&apos;ll set you up with the right plan.
                     </p>
                 </motion.div>
-
-                {/* Toggle Switch */}
-                <div className="flex justify-center items-center mb-14 gap-3 relative z-20">
-                    <span className={cn("text-sm font-medium transition-colors", isMonthly ? "text-foreground" : "text-text-muted")}>
-                        Monthly
-                    </span>
-                    <button
-                        ref={switchRef}
-                        onClick={handleToggle}
-                        className={cn(
-                            "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                            isMonthly ? "bg-[#cbd5e1]" : "bg-primary"
-                        )}
-                        role="switch"
-                        aria-checked={!isMonthly}
-                    >
-                        <span
-                            className={cn(
-                                "pointer-events-none block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform",
-                                isMonthly ? "translate-x-0" : "translate-x-5"
-                            )}
-                        />
-                    </button>
-                    <span className={cn("text-sm font-semibold transition-colors flex items-center gap-1.5", !isMonthly ? "text-foreground" : "text-text-muted")}>
-                        Annually
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-primary bg-primary/10 px-2 py-0.5 rounded-full">Save 20%</span>
-                    </span>
-                </div>
 
                 {/* Cards */}
                 <div className="grid md:grid-cols-3 gap-5 mt-8">
@@ -173,32 +101,9 @@ export default function Pricing() {
                             </p>
 
                             <div className="flex items-baseline gap-1 mb-1 relative min-h-[50px]">
-                                {plan.price === 0 ? (
-                                    <span className={cn("text-4xl font-serif font-semibold tracking-tight", plan.highlighted ? "text-white" : "text-foreground")}>
-                                        Free
-                                    </span>
-                                ) : (
-                                    <NumberFlow
-                                        value={isMonthly ? plan.price : plan.yearlyPrice}
-                                        format={{
-                                            style: "currency",
-                                            currency: "USD",
-                                            minimumFractionDigits: 0,
-                                            maximumFractionDigits: 0,
-                                        }}
-                                        transformTiming={{
-                                            duration: 500,
-                                            easing: "ease-out",
-                                        }}
-                                        willChange
-                                        className={cn("text-4xl font-serif font-semibold tabular-nums tracking-tight", plan.highlighted ? "text-white" : "text-foreground")}
-                                    />
-                                )}
-                                {plan.period && plan.price !== 0 && (
-                                    <span className={cn("text-sm", plan.highlighted ? "text-white/50" : "text-text-muted")}>
-                                        /{plan.period}
-                                    </span>
-                                )}
+                                <span className={cn("text-2xl font-serif font-semibold tracking-tight", plan.highlighted ? "text-white" : "text-foreground")}>
+                                    Pricing on request
+                                </span>
                             </div>
                             <p className={cn("text-sm mb-6 leading-relaxed", plan.highlighted ? "text-white/60" : "text-text-secondary")}>
                                 {plan.description}
@@ -213,7 +118,7 @@ export default function Pricing() {
                                 ))}
                             </ul>
 
-                            <Link href={plan.href} className="mt-auto block w-full">
+                            <a href={mailtoHref(plan.name)} className="mt-auto block w-full">
                                 <motion.div
                                     whileHover={{ y: -2 }}
                                     whileTap={{ y: 1 }}
@@ -225,9 +130,9 @@ export default function Pricing() {
                                             : "bg-white border border-[#e2e8f0] text-foreground shadow-[0_2px_8px_rgba(0,0,0,0.04)]"
                                     )}
                                 >
-                                    {plan.cta}
+                                    Request pricing
                                 </motion.div>
-                            </Link>
+                            </a>
                         </motion.div>
                     ))}
                 </div>

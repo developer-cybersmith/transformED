@@ -30,6 +30,18 @@ FAKE_JOB_ID = "33333333-3333-3333-3333-333333333333"
 MINIMAL_PDF = b"%PDF-1.4 minimal\n%%EOF"
 
 
+def _approved_settings() -> MagicMock:
+    """Settings mock with FAKE_USER's email on the beta-access allowlist.
+
+    upload_lesson depends on ApprovedUser (require_approved_user), which 403s
+    unless the JWT email is in settings.approved_emails — every test here
+    needs this override or it never reaches the actual behavior under test.
+    """
+    settings = MagicMock()
+    settings.approved_emails = [FAKE_USER["email"]]
+    return settings
+
+
 def _make_supabase_mock(
     book_id: str = FAKE_BOOK_ID,
     lesson_id: str = FAKE_LESSON_ID,
@@ -106,7 +118,7 @@ def _make_arq_mock(job_id: str = FAKE_JOB_ID) -> AsyncMock:
 @pytest.fixture()
 def client() -> TestClient:
     """TestClient with all external deps mocked."""
-    from app.dependencies import get_arq_redis, get_current_user
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
     from app.main import app
 
     sb_mock = _make_supabase_mock()
@@ -114,6 +126,7 @@ def client() -> TestClient:
 
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
     app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+    app.dependency_overrides[get_settings] = _approved_settings
 
     with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
         yield TestClient(app, raise_server_exceptions=True)
@@ -121,76 +134,132 @@ def client() -> TestClient:
     app.dependency_overrides.clear()
 
 
+# ── POST /lessons — beta access gate ────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_upload_lesson_403_not_approved() -> None:
+    """A signed-up user whose email is not on the beta-access allowlist is
+    rejected with 403 before any row is created or the file is processed --
+    upload_lesson depends on ApprovedUser, not CurrentUser."""
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    sb_mock = _make_supabase_mock()
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    app.dependency_overrides[get_settings] = lambda: MagicMock(approved_emails=[])
+
+    with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
+        resp = TestClient(app, raise_server_exceptions=True).post(
+            "/api/content/lessons",
+            files={"file": ("chapter1.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+        )
+
+    app.dependency_overrides.clear()
+
+    assert resp.status_code == 403
+    sb_mock.table.assert_not_called()
+
+
 # ── POST /lessons — happy path ─────────────────────────────────────────────────
 
 
 @pytest.mark.unit
 def test_upload_lesson_202_shape(client: TestClient) -> None:
-    """Valid PDF upload returns 202 with lesson_id and job_id."""
+    """Upload is INGESTION-ONLY as of book-scale Phase 3 (Story 1-10).
+
+    It returns book_id, not lesson_id: a book is uploaded once and lessons are
+    generated per chapter afterwards. This is the breaking half of decision D-A —
+    `apps/web` Story 1-8 reads lesson_id off this response and must be updated
+    when the Phase 6 generation endpoint lands.
+    """
     resp = client.post(
         "/api/content/lessons",
         files={"file": ("chapter1.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
     )
     assert resp.status_code == 202
     body = resp.json()
-    assert body["lesson_id"] == FAKE_LESSON_ID
+    assert body["book_id"] == FAKE_BOOK_ID
     assert body["job_id"] == FAKE_JOB_ID
     assert body["status"] == "queued"
+    assert "lesson_id" not in body, "upload must not mint a lesson — that is what Phase 3 removed"
 
 
 @pytest.mark.unit
-def test_upload_lesson_db_insert_order(client: TestClient) -> None:
-    """books row must be created before lessons row (FK order)."""
+def test_upload_creates_a_book_and_no_lesson(client: TestClient) -> None:
+    """AC20 — upload stops creating `lessons` and `lesson_jobs` rows entirely.
+
+    Before Phase 3 the order was books -> lessons -> lesson_jobs. Now it is books
+    alone; a lesson is created later, per chapter.
+    """
+    from app.core.rate_limit import limiter
     from app.dependencies import get_arq_redis, get_current_user
     from app.main import app
 
-    call_order: list[str] = []
-
+    limiter.reset()
+    inserted: list[str] = []
     sb = MagicMock()
 
-    # Track insert calls by table name
     def track_table(name: str) -> MagicMock:
         t = MagicMock()
-        insert_exec = MagicMock()
-        if name == "books":
-            insert_exec.data = [{"book_id": FAKE_BOOK_ID}]
-            t.insert.return_value.execute.side_effect = lambda: (
-                call_order.append("books"),
-                insert_exec,
-            )[1]
-        elif name == "lessons":
-            insert_exec.data = [{"lesson_id": FAKE_LESSON_ID}]
-            t.insert.return_value.execute.side_effect = lambda: (
-                call_order.append("lessons"),
-                insert_exec,
-            )[1]
-            t.update.return_value.eq.return_value.execute.return_value = MagicMock()
-        elif name == "lesson_jobs":
-            t.insert.return_value.execute.side_effect = lambda: (
-                call_order.append("lesson_jobs"),
-                MagicMock(),
-            )[1]
+        resp = MagicMock()
+        resp.data = [{"book_id": FAKE_BOOK_ID}] if name == "books" else []
+        t.insert.return_value.execute.side_effect = lambda: (inserted.append(name), resp)[1]
+        t.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        t.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
         return t
 
     sb.table.side_effect = track_table
-    sb.storage.from_.return_value.upload.return_value = MagicMock()
+    arq = MagicMock()
+    arq.enqueue_job = AsyncMock(return_value=MagicMock(job_id=FAKE_JOB_ID))
 
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
-    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    app.dependency_overrides[get_arq_redis] = lambda: arq
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            resp = client.post(
+                "/api/content/lessons",
+                files={"file": ("c.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+            )
+        assert resp.status_code == 202
+        assert inserted == ["books"], f"expected only a books insert, got {inserted}"
+    finally:
+        app.dependency_overrides.clear()
 
-    with patch("app.modules.content.router.get_supabase", return_value=sb):
-        resp = TestClient(app, raise_server_exceptions=True).post(
-            "/api/content/lessons",
-            files={"file": ("t.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
-        )
 
-    app.dependency_overrides.clear()
+@pytest.mark.unit
+def test_upload_enqueues_book_ingest_not_the_generation_pipeline(client: TestClient) -> None:
+    """AC20 — the 11-node pipeline is no longer triggered by upload. Detection is
+    a separate, cheap job; generation happens per chapter from Phase 6."""
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
 
-    assert resp.status_code == 202
-    assert call_order == ["books", "lessons", "lesson_jobs"], f"Wrong insert order: {call_order}"
+    limiter.reset()
+    sb = MagicMock()
+    sb.table.return_value.insert.return_value.execute.return_value = MagicMock(
+        data=[{"book_id": FAKE_BOOK_ID}]
+    )
+    arq = MagicMock()
+    arq.enqueue_job = AsyncMock(return_value=MagicMock(job_id=FAKE_JOB_ID))
 
-
-# ── POST /lessons — validation errors ─────────────────────────────────────────
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: arq
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            client.post(
+                "/api/content/lessons",
+                files={"file": ("c.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+            )
+        job_name = arq.enqueue_job.call_args.args[0]
+        assert job_name == "book_ingest_job", f"upload enqueued {job_name!r}"
+        # storage_path is passed explicitly, not rebuilt inside the job
+        assert arq.enqueue_job.call_args.args[1] == FAKE_BOOK_ID
+        assert FAKE_BOOK_ID in arq.enqueue_job.call_args.args[2]
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.unit
@@ -700,7 +769,7 @@ def test_upload_lesson_429_rate_limit() -> None:
     """6th upload from the same JWT sub within a minute returns 429 with Retry-After header."""
     import jwt as pyjwt
 
-    from app.dependencies import get_arq_redis, get_current_user
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
     from app.main import app
 
     # Use a unique sub so this test's counter is isolated from other tests
@@ -720,6 +789,7 @@ def test_upload_lesson_429_rate_limit() -> None:
         "sub": "rate-limit-test-unique-sub-for-429",
     }
     app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+    app.dependency_overrides[get_settings] = _approved_settings
 
     with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
         tc = TestClient(app, raise_server_exceptions=False)
@@ -744,156 +814,18 @@ def test_upload_lesson_429_rate_limit() -> None:
 # ── Story S2-LM3: tier param ────────────────────────────────────────────────
 
 
-@pytest.mark.unit
-def test_upload_lesson_accepts_valid_tier_and_persists_it(client: TestClient) -> None:
-    """A valid tier form field is accepted (202) and included in the lessons
-    insert payload."""
-    from app.core.rate_limit import limiter
-    from app.dependencies import get_arq_redis, get_current_user
-    from app.main import app
-
-    limiter.reset()  # isolate from other tests' shared IP-based rate-limit bucket
-    lessons_insert_calls: list[dict] = []
-
-    sb = MagicMock()
-
-    def track_table(name: str) -> MagicMock:
-        t = MagicMock()
-        if name == "books":
-            t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
-        elif name == "lessons":
-
-            def _insert(payload: dict) -> MagicMock:
-                lessons_insert_calls.append(payload)
-                m = MagicMock()
-                m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
-                return m
-
-            t.insert.side_effect = _insert
-            t.update.return_value.eq.return_value.execute.return_value = MagicMock()
-        elif name == "lesson_jobs":
-            t.insert.return_value.execute.return_value = MagicMock()
-        return t
-
-    sb.table.side_effect = track_table
-    sb.storage.from_.return_value.upload.return_value = MagicMock()
-
-    app.dependency_overrides[get_current_user] = lambda: {**FAKE_USER, "sub": "tier-valid-test-sub"}
-    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
-
-    with patch("app.modules.content.router.get_supabase", return_value=sb):
-        resp = TestClient(app, raise_server_exceptions=True).post(
-            "/api/content/lessons",
-            files={"file": ("t.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
-            data={"tier": "T1"},
-        )
-
-    app.dependency_overrides.clear()
-
-    assert resp.status_code == 202
-    assert len(lessons_insert_calls) == 1
-    assert lessons_insert_calls[0]["tier"] == "T1"
-
-
-@pytest.mark.unit
-def test_upload_lesson_omitted_tier_defaults_to_t2(client: TestClient) -> None:
-    """Omitting tier entirely defaults to T2 — existing callers unaffected
-    (AC-1)."""
-    from app.core.rate_limit import limiter
-    from app.dependencies import get_arq_redis, get_current_user
-    from app.main import app
-
-    limiter.reset()  # isolate from other tests' shared IP-based rate-limit bucket
-    lessons_insert_calls: list[dict] = []
-
-    sb = MagicMock()
-
-    def track_table(name: str) -> MagicMock:
-        t = MagicMock()
-        if name == "books":
-            t.insert.return_value.execute.return_value = MagicMock(data=[{"book_id": FAKE_BOOK_ID}])
-        elif name == "lessons":
-
-            def _insert(payload: dict) -> MagicMock:
-                lessons_insert_calls.append(payload)
-                m = MagicMock()
-                m.execute.return_value = MagicMock(data=[{"lesson_id": FAKE_LESSON_ID}])
-                return m
-
-            t.insert.side_effect = _insert
-            t.update.return_value.eq.return_value.execute.return_value = MagicMock()
-        elif name == "lesson_jobs":
-            t.insert.return_value.execute.return_value = MagicMock()
-        return t
-
-    sb.table.side_effect = track_table
-    sb.storage.from_.return_value.upload.return_value = MagicMock()
-
-    app.dependency_overrides[get_current_user] = lambda: {
-        **FAKE_USER,
-        "sub": "tier-default-test-sub",
-    }
-    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
-
-    with patch("app.modules.content.router.get_supabase", return_value=sb):
-        resp = TestClient(app, raise_server_exceptions=True).post(
-            "/api/content/lessons",
-            files={"file": ("t.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
-        )
-
-    app.dependency_overrides.clear()
-
-    assert resp.status_code == 202
-    assert lessons_insert_calls[0]["tier"] == "T2"
-
-
-@pytest.mark.unit
-def test_upload_lesson_invalid_tier_returns_422_before_any_row_created(client: TestClient) -> None:
-    """AC-1: an invalid tier value returns 422 before any DB row (books/
-    lessons/lesson_jobs) or Storage upload is created — never a silent
-    fallback to the default."""
-    from app.core.rate_limit import limiter
-    from app.dependencies import get_arq_redis, get_current_user
-    from app.main import app
-
-    limiter.reset()  # isolate from other tests' shared IP-based rate-limit bucket
-    sb = MagicMock()
-    sb.table.side_effect = lambda name: MagicMock()  # any call here is a bug
-
-    app.dependency_overrides[get_current_user] = lambda: {
-        **FAKE_USER,
-        "sub": "tier-invalid-test-sub",
-    }
-    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
-
-    with patch("app.modules.content.router.get_supabase", return_value=sb):
-        resp = TestClient(app, raise_server_exceptions=True).post(
-            "/api/content/lessons",
-            files={"file": ("t.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
-            data={"tier": "T99-not-real"},
-        )
-
-    app.dependency_overrides.clear()
-
-    assert resp.status_code == 422
-    sb.table.assert_not_called()
-
-
-# ── Story 2-31 AC-4: list endpoint carries subject + estimated_duration_mins ──
-
-
 _LIST_ROW: dict[str, Any] = {
     "lesson_id": FAKE_LESSON_ID,
     "status": "ready",
     "title": "Thermo",
     "created_at": "2026-07-28T00:00:00Z",
-    # NOTE: no "completed_at" — it is a lesson_jobs column, not a lessons one.
+    # NOTE: no "completed_at" â€” it is a lesson_jobs column, not a lessons one.
     # PostgREST `->>` yields TEXT, so the duration arrives as a string.
     "subject": "Physics",
     "estimated_duration_mins": "12.5",
     # Review finding: this fixture originally had NO `content` key, which made
     # test_list_lessons_still_never_attaches_content_or_signs_urls pass for the
-    # wrong reason — a mutation that attached and signed content per row never
+    # wrong reason â€” a mutation that attached and signed content per row never
     # fired, because there was no content to attach. A realistic content dict is
     # what gives that regression guard its teeth.
     "content": _READY_CONTENT_DICT,
@@ -911,6 +843,77 @@ def _make_list_supabase_mock(rows_data: list[dict[str, Any]]) -> MagicMock:
     chain = sb.table.return_value.select.return_value.eq.return_value.order.return_value.range
     chain.return_value.execute.return_value.data = rows_data
     return sb
+
+
+@pytest.mark.unit
+def test_upload_rejects_tier_with_422(client: TestClient) -> None:
+    """AC21 / decision D-B — `tier` is no longer accepted on upload.
+
+    A book has no tier; it is chosen per chapter at generation time. Rejecting
+    loudly rather than ignoring it: a silent drop is how a caller keeps sending T3
+    and keeps getting T2, with nothing anywhere to show why. This replaces the
+    three S2-LM3 tests that asserted tier was persisted onto the lesson upload
+    created — there is no longer a lesson to persist it onto.
+
+    Story 1-14 AC19 bullet 4 adds the second half. The 422 does not merely refuse
+    the caller, it TELLS THEM WHERE TO GO instead, by naming the generate route.
+    If that message names a path that is not the one actually served, a client
+    following the error gets a 404 and has no way to discover the real route —
+    and the only symptom is a support ticket. Asserting `"tier" in detail` alone
+    passes with the path in the message rewritten to anything at all.
+
+    The expected path is read off the app's OWN OpenAPI document, never retyped
+    here: a literal in this test and a literal in the message can be wrong
+    together, which is the entire failure mode. `app.routes` is not usable for
+    this on this FastAPI version — routes added by `include_router` are lazy
+    `_IncludedRouter` branches with no `.path`, so a walk of it finds none of the
+    content routes and would report a correctly mounted endpoint as missing.
+    """
+    from app.core.rate_limit import limiter
+
+    limiter.reset()
+    resp = client.post(
+        "/api/content/lessons",
+        files={"file": ("c.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+        data={"tier": "T3"},
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "tier" in detail.lower()
+
+    served = _served_post_path(client.app, "generate_chapter_lesson")
+    assert served, "the generate route is not registered — the 422 points at nothing"
+    assert served.removeprefix("/api/content") in detail, (
+        f"upload's tier-422 must name the registered generate path {served!r}; "
+        f"the message says: {detail!r}"
+    )
+
+
+def _served_post_path(app: Any, endpoint_name: str) -> str:
+    """The mounted path a POST to *endpoint_name* is served at, read out of the
+    OpenAPI document (FastAPI derives each operationId from the handler name)."""
+    matches = [
+        path
+        for path, item in app.openapi()["paths"].items()
+        for method, op in item.items()
+        if method == "post" and str(op.get("operationId", "")).startswith(endpoint_name)
+    ]
+    assert len(matches) == 1, f"expected exactly one POST for {endpoint_name}, got {matches}"
+    return matches[0]
+
+
+@pytest.mark.unit
+def test_upload_without_tier_is_accepted(client: TestClient) -> None:
+    """The rejection must be triggered by SUPPLYING tier, not by its absence —
+    otherwise every upload 422s."""
+    from app.core.rate_limit import limiter
+
+    limiter.reset()
+    resp = client.post(
+        "/api/content/lessons",
+        files={"file": ("c.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+    )
+    assert resp.status_code == 202
 
 
 @pytest.mark.unit
@@ -961,6 +964,170 @@ def test_list_lessons_returns_subject_and_duration() -> None:
     body = resp.json()
     assert body[0]["subject"] == "Physics"
     assert body[0]["estimated_duration_mins"] == 12.5, "text must be coerced to float"
+
+
+# ── Story 1-14 AC17 — GET /lessons learns its chapter ────────────────────────
+#
+# `_LIST_COLUMNS` gained `chapter_id` and a to-ONE embed back to `chapters`, and
+# `LessonStatusResponse` gained `chapter_id`, `chapter_title`, `chapter_index`.
+# Nothing asserted that any of the three ever reaches the client: hardcoding all
+# three to None in `_row_to_status_response` passed the whole suite, and
+# `grep -rn "chapter_title" tests/` returned nothing at all. These four tests
+# cover the embed's four real shapes.
+
+FAKE_CHAPTER_ID = "44444444-4444-4444-4444-444444444444"
+
+
+def _list_row_with_chapter(chapter: Any) -> dict[str, Any]:
+    row = copy.deepcopy(_LIST_ROW)
+    row["chapter_id"] = FAKE_CHAPTER_ID
+    row["chapter"] = chapter
+    return row
+
+
+def _get_lessons(rows_data: list[dict[str, Any]]) -> Any:
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sb = _make_list_supabase_mock(rows_data)
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            return TestClient(app).get("/api/content/lessons")
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.unit
+def test_list_lessons_returns_the_chapter_id_title_and_index_from_the_embed() -> None:
+    """AC17's entire client-visible payoff.
+
+    What breaks in production if this fails: Dev 2's dashboard lists every lesson
+    a student has, and after book-scale a student has many lessons from the SAME
+    book. Without the chapter's title and index they are an undifferentiated list
+    of rows all named after the book — the student cannot tell which lesson is
+    which, and the "which chapter am I resuming?" question has no answer in the
+    payload. The endpoint returns 200 the whole time.
+    """
+    resp = _get_lessons(
+        [
+            _list_row_with_chapter(
+                {
+                    "chapter_id": FAKE_CHAPTER_ID,
+                    "title": "Kinematics Of A Particle",
+                    "chapter_index": 3,
+                }
+            )
+        ]
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()[0]
+    assert body["chapter_id"] == FAKE_CHAPTER_ID
+    assert body["chapter_title"] == "Kinematics Of A Particle"
+    assert body["chapter_index"] == 3
+
+
+@pytest.mark.unit
+def test_list_lessons_handles_a_legacy_lesson_whose_chapter_embed_is_null() -> None:
+    """Every lesson created before Phase 6 has `chapter_id IS NULL`, so PostgREST
+    sends `chapter: null` for it. That is the NORMAL state for most rows in the
+    table on the day this ships, not an edge case.
+
+    What breaks in production if this fails: `GET /lessons` 500s for any student
+    with even one pre-Phase-6 lesson — i.e. the dashboard is dead for exactly the
+    existing users, while every new account looks fine.
+    """
+    row = copy.deepcopy(_LIST_ROW)
+    row["chapter_id"] = None
+    row["chapter"] = None
+
+    resp = _get_lessons([row])
+
+    assert resp.status_code == 200
+    body = resp.json()[0]
+    assert body["chapter_id"] is None
+    assert body["chapter_title"] is None
+    assert body["chapter_index"] is None
+
+
+@pytest.mark.unit
+def test_list_lessons_unwraps_a_list_shaped_chapter_embed() -> None:
+    """`lessons_chapter_id_fkey` is to-ONE from this side and to-MANY from the
+    chapters side — the SAME constraint, two JSON shapes. Confusing them is the
+    single most likely mistake in this area, and PostgREST has historically
+    returned a one-element array for a to-one embed depending on how the
+    relationship is resolved.
+
+    What breaks in production if the unwrap is dropped: `chapter_title` becomes
+    `None` for every lesson (a dict was expected, a list arrived) or the response
+    model raises and the whole list endpoint 500s — decided by a shape the API
+    does not control.
+    """
+    resp = _get_lessons(
+        [
+            _list_row_with_chapter(
+                [{"chapter_id": FAKE_CHAPTER_ID, "title": "Work And Energy", "chapter_index": 7}]
+            )
+        ]
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()[0]
+    assert body["chapter_title"] == "Work And Energy"
+    assert body["chapter_index"] == 7
+
+    # ...and the empty relation is not an error either.
+    empty = _get_lessons([_list_row_with_chapter([])])
+    assert empty.status_code == 200
+    assert empty.json()[0]["chapter_title"] is None
+
+
+@pytest.mark.unit
+def test_get_lesson_reports_chapter_id_but_not_title_or_index() -> None:
+    """`get_lesson` selects `*` and carries no embed — deliberately, so a single
+    lesson fetch does not cost a second round-trip. So `chapter_id` (a flat
+    column) is populated and title/index are None BY DESIGN.
+
+    Asserting it stops two opposite regressions: someone "fixing" the nulls by
+    adding an embed to a hot single-row path, and someone concluding the flat
+    `chapter_id` is unused and dropping it from the response — the player reads
+    it to know which chapter it is showing.
+    """
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    lesson_row = {
+        "lesson_id": FAKE_LESSON_ID,
+        "user_id": FAKE_USER["sub"],
+        "status": "generating",
+        "title": "Thermo",
+        "created_at": "2026-07-28T00:00:00Z",
+        # A flat column on `lessons`, present on the `select("*")` path; there
+        # is deliberately no `chapter` embed here.
+        "chapter_id": FAKE_CHAPTER_ID,
+    }
+    sb = MagicMock()
+    sb.table(
+        "lessons"
+    ).select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+        lesson_row
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            resp = TestClient(app).get(f"/api/content/lessons/{FAKE_LESSON_ID}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["chapter_id"] == FAKE_CHAPTER_ID
+    assert body["chapter_title"] is None, "get_lesson carries no embed — title must stay None"
+    assert body["chapter_index"] is None
 
 
 @pytest.mark.unit
@@ -1064,11 +1231,45 @@ def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
     PostgREST reject the whole query (42703) — GET /lessons then fails for every
     user, every request. No mock can catch that, so assert the column list
     against the migrations that define the table.
+
+    Story 1-14 (AC17/AC19): `_LIST_COLUMNS` gained `chapter_id` and the embed
+    `chapter:chapters!lessons_chapter_id_fkey(...)`. Two changes here, and
+    NEITHER loosens the membership check:
+
+    1. `chapter_id` was missing from `real_columns` even though it IS a real
+       column (20260803000000_chapters_book_scoped.sql:73). The set was stale,
+       not the loop.
+    2. A naive `split(",")` shreds the embed into `...(chapter_id`, `title`,
+       `chapter_index)` and fails on SYNTAX rather than on a real defect — the
+       exact situation that tempts someone to delete the guard. So the split is
+       now embed-aware: outer names are still checked against `lessons`, and
+       names INSIDE the embed are checked against `chapters`. Strictly more is
+       validated than before, never less.
+
+    Review follow-up (binding rule 4): both sets below used to be hand-typed. A
+    hand-typed set is a second copy of the schema — it can go stale in the safe
+    direction (missing a real column, as `chapter_id` was) or in the fatal one
+    (listing a column that was dropped, which makes this guard bless a select
+    list that 42703s). They are now PARSED from `supabase/migrations/` by the
+    same `_columns_of` used next door in test_book_endpoints.py, and the
+    hand-typed sets are kept as an equality assertion against the parse — so the
+    guard is authoritative AND a schema change that silently alters either table
+    fails here rather than in production.
     """
     from app.modules.content.router import _LIST_COLUMNS
+    from tests.unit.test_book_endpoints import _columns_of
 
-    # Real columns per 20260611000000_initial_schema.sql + later ALTERs.
-    real_columns = {
+    # Real columns per 20260611000000_initial_schema.sql + later ALTERs
+    # (20260625000000 book_id, 20260714020000 tier, 20260803000000 chapter_id).
+    real_columns = _columns_of("lessons")
+    # public.chapters per 20260611000000_initial_schema.sql:128-137
+    # + 20260803000000_chapters_book_scoped.sql (boundary_confidence).
+    real_chapter_columns = _columns_of("chapters")
+
+    # The sets the review reasoned about, pinned. If the migrations ever stop
+    # agreeing with these, the membership loop below is checking against
+    # something nobody reviewed — fail here, loudly, instead.
+    assert real_columns == {
         "lesson_id",
         "user_id",
         "title",
@@ -1079,15 +1280,110 @@ def test_list_columns_names_no_column_absent_from_the_lessons_table() -> None:
         "updated_at",
         "book_id",
         "tier",
-    }
-    for spec in _LIST_COLUMNS.split(","):
+        "chapter_id",
+    }, f"public.lessons is no longer the reviewed set: {sorted(real_columns)}"
+    assert real_chapter_columns == {
+        "chapter_id",
+        "book_id",
+        "lesson_id",
+        "title",
+        "page_start",
+        "page_end",
+        "chapter_index",
+        "boundary_confidence",
+        "created_at",
+    }, f"public.chapters is no longer the reviewed set: {sorted(real_chapter_columns)}"
+
+    pairs = _split_select(_LIST_COLUMNS)
+    assert pairs, "_LIST_COLUMNS parsed to nothing — this guard would pass vacuously"
+    for table, spec in pairs:
+        real = real_columns if table == "lessons" else real_chapter_columns
+        assert spec in real, (
+            f"_LIST_COLUMNS references {spec!r}, which is not a column on "
+            f"public.{table} — PostgREST will 42703 the entire list endpoint"
+        )
+
+
+@pytest.mark.unit
+def test_split_select_attributes_embedded_names_to_the_embedded_table() -> None:
+    """Premise assertion (binding rule 3) for `_split_select`.
+
+    The guard above is a `for` loop over this function's output. If it returned
+    `[]` — or dropped the embed, or reported the embedded names under `lessons` —
+    the loop body would never run, or would check `chapters` columns against the
+    `lessons` set, and the guard would pass while proving nothing. Its sibling in
+    test_book_endpoints.py protects against exactly this with `assert pairs`;
+    this side had no such premise at all.
+
+    What breaks in production if the attribution is wrong: a name that exists on
+    `lessons` but not on `chapters` (or vice versa) sails through the guard and
+    PostgREST 42703s the whole of `GET /lessons` for every user on every request
+    — D9's shape, and the reason `_LIST_COLUMNS` is asserted against SQL at all.
+    """
+    assert _split_select("lesson_id,status") == [("lessons", "lesson_id"), ("lessons", "status")]
+    # alias + JSONB path: the real column is the head of the path
+    assert _split_select("subject:content->metadata->>subject") == [("lessons", "content")]
+    # the embed: inner names belong to `chapters`, outer ones still to `lessons`
+    assert _split_select("chapter_id,chapter:chapters!lessons_chapter_id_fkey(title,page_end)") == [
+        ("lessons", "chapter_id"),
+        ("chapters", "title"),
+        ("chapters", "page_end"),
+    ]
+    # and the real constant is neither empty nor collapsed into one table
+    from app.modules.content.router import _LIST_COLUMNS
+
+    tables = {table for table, _ in _split_select(_LIST_COLUMNS)}
+    assert tables == {"lessons", "chapters"}, (
+        f"_LIST_COLUMNS should resolve names on both tables, got {tables}"
+    )
+
+
+def _split_select(select: str) -> list[tuple[str, str]]:
+    """Split a PostgREST select list into `(table, column)` pairs.
+
+    Handles the three PostgREST features these lists actually use:
+      * aliases            `alias:expr`
+      * JSON path selectors `content->metadata->>subject`
+      * embeds              `alias:table!constraint(col,col)` — inner names
+                            belong to the EMBEDDED table, not the base table.
+
+    The base table is reported as "lessons"; embedded names are reported under
+    the embedded table's own name so the caller can pick the right column set.
+    """
+    pairs: list[tuple[str, str]] = []
+    depth = 0
+    buf = ""
+    parts: list[str] = []
+    for ch in select:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(buf)
+            buf = ""
+            continue
+        buf += ch
+    if buf:
+        parts.append(buf)
+
+    for part in parts:
+        spec = part.strip()
+        if "(" in spec:
+            head, _, inner = spec.partition("(")
+            inner = inner.rstrip().removesuffix(")")
+            # `alias:table!constraint` → the embedded table is `table`.
+            target = head.split(":", 1)[1] if ":" in head else head
+            embedded = target.split("!", 1)[0].strip()
+            for nested_table, nested_col in _split_select(inner):
+                # Inner names have no embed of their own in these lists; the
+                # recursion reports them under the placeholder base table.
+                pairs.append((embedded if nested_table == "lessons" else nested_table, nested_col))
+            continue
         # `alias:path->>field` — the real column is the head of the path.
         source = spec.split(":", 1)[1] if ":" in spec else spec
-        column = source.split("->", 1)[0].strip()
-        assert column in real_columns, (
-            f"_LIST_COLUMNS references {column!r}, which is not a column on "
-            f"public.lessons — PostgREST will 42703 the entire list endpoint"
-        )
+        pairs.append(("lessons", source.split("->", 1)[0].strip()))
+    return pairs
 
 
 @pytest.mark.unit

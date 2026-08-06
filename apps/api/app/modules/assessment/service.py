@@ -124,6 +124,82 @@ def _delta_to_growth_label(delta: float | None) -> str | None:
     return "Stable"
 
 
+async def create_session(
+    *,
+    lesson_id: str,
+    user_id: str,
+    supabase: Client,
+) -> dict[str, Any]:
+    """Mint a `sessions` row for *user_id* on *lesson_id* (Story 2-35 / D18).
+
+    **This is the only writer of `sessions` in the codebase.** Before this, all 7
+    `table("sessions")` references were `.select(...)`, `apps/web` never inserted
+    one either, and the frontend invented `crypto.randomUUID()`. So the ownership
+    check in `grade_quiz` correctly rejected an id that had never existed, and
+    quiz and teach-back 404'd for every student.
+
+    `session_id` and `started_at` are deliberately NOT sent — they are
+    `DEFAULT gen_random_uuid()` and `DEFAULT now()`. A client-chosen id would
+    reintroduce D18; a client-chosen `started_at` would make session duration and
+    Dev 3's CES-final logic meaningless.
+
+    Called once per lesson attempt. Re-learning the same lesson creates a NEW
+    session on purpose — sessions are attempt-scoped, and `analytics` and the CES
+    history depend on that. Do not add a unique constraint on
+    `(user_id, lesson_id)` or a reuse-if-exists shortcut.
+
+    Raises:
+        HTTPException 404: the lesson does not exist **or** belongs to someone
+            else. Deliberately the SAME response for both — a distinct 403 would
+            turn this endpoint into an existence oracle for lesson ids. Matches
+            `content/router.py:get_lesson` and `media/router.py:get_signed_url`.
+        HTTPException 500: the insert returned no row.
+    """
+    lesson_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("lessons")
+            .select("lesson_id, user_id")
+            .eq("lesson_id", lesson_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    lesson_row = single_row(lesson_resp)
+    if lesson_row is None or str(lesson_row.get("user_id", "")) != str(user_id):
+        # ONE response for both cases — see the docstring. Do not split this into
+        # a 404 and a 403 "for clarity"; the difference is the leak.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lesson not found",
+        )
+
+    insert_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .insert({"user_id": str(user_id), "lesson_id": str(lesson_id)})
+            .execute()
+        )
+    )
+    created = rows(insert_resp)
+    if not created:
+        logger.error(
+            "create_session: sessions insert returned no row for lesson=%s",
+            lesson_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not create session.",
+        )
+
+    row = created[0]
+    started_at = row.get("started_at")
+    return {
+        "session_id": str(row["session_id"]),
+        "lesson_id": str(row.get("lesson_id") or lesson_id),
+        "started_at": str(started_at) if started_at is not None else None,
+    }
+
+
 async def grade_quiz(
     *,
     session_id: str,
@@ -973,6 +1049,108 @@ async def process_onboarding(
         profile_text=profile_text,
         session_count=0,
     )
+
+
+async def record_consent(
+    *,
+    user_id: str,
+    consent_type: str,
+    policy_version: str,
+    supabase: Client,
+) -> tuple[dict[str, Any], bool]:
+    """Record a DPDP consent event in the user_consents audit table.
+
+    Returns (record_dict, is_new):
+        is_new=True  → a new row was inserted; caller should return HTTP 201.
+        is_new=False → an identical row already exists; caller should return HTTP 200.
+
+    NEVER updates users.attention_consent — the DB trigger
+    user_consents_sync_attention (migration 20260702000000_dpdp_user_consents.sql)
+    sets that boolean AFTER INSERT when consent_type='attention_tracking'.
+
+    TOCTOU safety: INSERT is attempted first. If the UNIQUE constraint added by
+    migration 20260805000000_user_consents_unique_constraint.sql fires (PostgreSQL
+    error code 23505), we fall back to SELECT. This makes idempotency atomic — a
+    SELECT-then-INSERT pattern would allow two concurrent requests to both pass the
+    SELECT check and both INSERT, producing duplicate rows.
+
+    Args:
+        user_id:        JWT sub — never accepted from request body.
+        consent_type:   'attention_tracking' or 'learner_dna'.
+        policy_version: Non-empty version string (e.g. 'v1').
+        supabase:       Synchronous Supabase client; all calls wrapped in asyncio.to_thread.
+
+    Raises:
+        HTTPException 500: INSERT failed with a non-duplicate error, or returned no rows.
+    """
+    _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+    _safe_type = str(consent_type).replace("\n", " ").replace("\r", " ")
+
+    # Step 1 — Attempt INSERT first (atomically correct under UNIQUE constraint).
+    # user_id comes from JWT; id/consented_at/created_at are DB-generated.
+    # NEVER include users.attention_consent here — the trigger owns that write.
+    insert_payload: dict[str, Any] = {
+        "user_id": user_id,
+        "consent_type": consent_type,
+        "policy_version": policy_version,
+    }
+    insert_resp = await asyncio.to_thread(
+        lambda: supabase.table("user_consents").insert(insert_payload).execute()
+    )
+    insert_error = getattr(insert_resp, "error", None)
+
+    if insert_error:
+        err_str = str(insert_error).lower()
+        # PostgreSQL unique violation: code 23505, message contains "duplicate key"
+        if "duplicate" in err_str or "unique" in err_str or "23505" in err_str:
+            # Idempotent path — row exists; fetch and return it.
+            existing_resp = await asyncio.to_thread(
+                lambda: supabase.table("user_consents")
+                .select("id, user_id, consent_type, policy_version, consented_at")
+                .eq("user_id", user_id)
+                .eq("consent_type", consent_type)
+                .eq("policy_version", policy_version)
+                .limit(1)
+                .execute()
+            )
+            existing_rows: list[dict[str, Any]] = getattr(existing_resp, "data", None) or []
+            if existing_rows:
+                return existing_rows[0], False
+            # Unique constraint fired but the row is gone — should not happen.
+            logger.error(
+                "user_consents unique conflict but row not found: user=%s consent_type=%s",
+                _safe_uid,
+                _safe_type,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to record consent — conflict but row not found.",
+            )
+
+        logger.error(
+            "user_consents insert failed: user=%s consent_type=%s error=%s",
+            _safe_uid,
+            _safe_type,
+            str(insert_error).replace("\n", " ").replace("\r", " "),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record consent.",
+        )
+
+    created_rows: list[dict[str, Any]] = getattr(insert_resp, "data", None) or []
+    if not created_rows:
+        logger.error(
+            "user_consents insert returned no rows: user=%s consent_type=%s",
+            _safe_uid,
+            _safe_type,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record consent — empty response from database.",
+        )
+
+    return created_rows[0], True
 
 
 async def get_learner_dna_data(

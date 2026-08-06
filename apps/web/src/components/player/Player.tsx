@@ -6,6 +6,7 @@ import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { trackEvent } from '@/lib/analytics';
+import { createSession } from '@/lib/assessment';
 import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
@@ -38,6 +39,13 @@ const TIER_LABELS: Record<Exclude<LessonPackage['metadata']['tier'], undefined>,
 // instead of silently letting the student hammer an identical failing request
 // forever (review fix — no cap existed before this).
 const REPEATED_FAILURE_RETRY_THRESHOLD = 3;
+
+// Session creation (D18/Story 2-39) is a critical call — CLAUDE.md §14's
+// failure-mode policy mandates 3 attempts for critical calls (2 for
+// optional ones), with wait = 2^attempt + random(0,1) between them
+// (review fix — a single transient network blip previously disabled quiz/
+// teach-back for the entire session with no recovery).
+const MAX_SESSION_CREATE_ATTEMPTS = 3;
 
 // Default export required by next/dynamic
 export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
@@ -121,6 +129,55 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
     // populated before restoreProgress validates the saved segmentIndex
     // against this lesson's actual bounds.
     usePlayerStore.getState().restoreProgress(lesson.lesson_id);
+
+    // Mints the real backend session (D18/Story 2-39) -- previously
+    // loadLesson() invented sessionId: crypto.randomUUID() locally, which the
+    // backend's ownership check correctly rejected (404 on every quiz/
+    // teach-back submission, for every student, always). Fired once per
+    // lesson mount under the same loadedLessonIdRef guard as loadLesson()
+    // above -- every call mints a new attempt row server-side, which is
+    // intentional (re-learning must produce a new session for CES history),
+    // but calling it more than once per mount would mint extra, orphaned rows.
+    //
+    // `cancelled` guards against a stale response overwriting the (global,
+    // shared) store's sessionId once this Player has unmounted (review fix,
+    // matching useLessonSocket.ts's own pattern) -- PlayerLoader remounts a
+    // fresh Player keyed on lesson_id, so a genuine lesson change unmounts
+    // this instance entirely; without this guard, a slow response for a
+    // lesson the student already navigated away from could resolve after
+    // the new lesson's own (successful) session was set, silently
+    // misattributing that lesson's quiz/teach-back submissions.
+    let cancelled = false;
+    let retryTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    async function mintSession(attempt: number) {
+      try {
+        const { session_id } = await createSession({ lesson_id: lesson.lesson_id });
+        if (cancelled) return;
+        usePlayerStore.getState().setSessionId(session_id);
+      } catch (err) {
+        if (cancelled) return;
+        if (attempt < MAX_SESSION_CREATE_ATTEMPTS) {
+          const delayMs = (2 ** attempt + Math.random()) * 1000;
+          retryTimeoutId = setTimeout(() => mintSession(attempt + 1), delayMs);
+          return;
+        }
+        // Non-fatal: sessionId stays '' and playback is unaffected. Quiz/
+        // teach-back submission will fail (existing catch blocks in
+        // QuizOverlay/TeachBackModal already degrade gracefully), but a
+        // failed session mint must not crash or block the player.
+        console.error(
+          `[Player] failed to create session after ${MAX_SESSION_CREATE_ATTEMPTS} attempts -- quiz/teach-back submission will fail:`,
+          err
+        );
+      }
+    }
+    mintSession(1);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(retryTimeoutId);
+    };
   }, [lesson, loadLesson]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;

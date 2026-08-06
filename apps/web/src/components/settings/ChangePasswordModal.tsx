@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -24,13 +24,13 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
     const [success, setSuccess] = useState(false);
     const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Portal target isn't available during SSR — flip to true post-hydration.
+    // Portal target isn't available during SSR â€” flip to true post-hydration.
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setIsMounted(true);
     }, []);
 
-    // Clears the post-success auto-close timer on unmount — otherwise a stale
+    // Clears the post-success auto-close timer on unmount â€” otherwise a stale
     // timer from a session the user already manually closed could fire
     // handleClose() against a since-reopened modal (review fix).
     useEffect(() => {
@@ -59,7 +59,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
-        // Reentrancy guard — a fast double-submit (double click / double Enter)
+        // Reentrancy guard â€” a fast double-submit (double click / double Enter)
         // before React commits isSubmitting could otherwise fire two concurrent
         // signInWithPassword + updateUser sequences (review fix).
         if (isSubmitting) return;
@@ -89,7 +89,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
 
             // Supabase's updateUser() alone would accept a new password on the
             // strength of the existing session JWT, with no proof the caller
-            // still knows the current one — anyone with an unlocked/hijacked
+            // still knows the current one â€” anyone with an unlocked/hijacked
             // session could lock the real owner out. Re-authenticating first
             // forces a fresh credential check against Supabase's auth server
             // (never done locally) before the update is allowed to proceed.
@@ -99,10 +99,10 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
             });
             if (reauthError) {
                 // Distinguish actual wrong-password from network/rate-limit/server
-                // failures — collapsing all of these into "incorrect password" is
+                // failures â€” collapsing all of these into "incorrect password" is
                 // misleading and gives the user the wrong next action (review fix).
                 if (reauthError.status === 429) {
-                    setError("Too many attempts — please wait a moment and try again.");
+                    setError("Too many attempts â€” please wait a moment and try again.");
                 } else if (reauthError.status && reauthError.status >= 500) {
                     setError("Something went wrong on our end. Please try again.");
                 } else {
@@ -127,7 +127,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
     }
 
     // Rendered inline, this would sit inside <main>'s "relative z-10" stacking
-    // context (apps/web/src/app/(dashboard)/settings/layout.tsx) — a child can
+    // context (apps/web/src/app/(dashboard)/settings/layout.tsx) â€” a child can
     // never out-stack a sibling of its ancestor no matter its own z-index, so
     // the fixed overlay would paint *under* the sidebar (also z-50, but outside
     // that context) instead of over it. Portaling to document.body escapes
@@ -186,7 +186,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
                                         autoComplete="current-password"
                                         value={currentPassword}
                                         onChange={(e) => setCurrentPassword(e.target.value)}
-                                        className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
+                                        className="rounded-xl border border-neutral-200 px-4 py-2.5 text-base sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
                                     />
                                 </label>
                                 <label className="flex flex-col gap-1.5 text-sm">
@@ -198,7 +198,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
                                         autoComplete="new-password"
                                         value={newPassword}
                                         onChange={(e) => setNewPassword(e.target.value)}
-                                        className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
+                                        className="rounded-xl border border-neutral-200 px-4 py-2.5 text-base sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
                                     />
                                 </label>
                                 <label className="flex flex-col gap-1.5 text-sm">
@@ -210,7 +210,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
                                         autoComplete="new-password"
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}
-                                        className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
+                                        className="rounded-xl border border-neutral-200 px-4 py-2.5 text-base sm:text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/20 focus:border-[var(--accent-primary)]/50 transition-colors"
                                     />
                                 </label>
 
@@ -235,3 +235,4 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
         document.body
     );
 }
+

@@ -4,14 +4,14 @@
 **Owner:** Dev 2 (Frontend, Lesson Player, Product Experience, WebSocket Client)
 **Report date:** 2026-07-30 (Sprint 2 work completed 2026-07-29; this report and its independent verification pass were done 2026-07-30)
 **Sources:** `docs/master-tracker.md` (cross-team plan of record — task list below is taken from here) and `docs/dev2-sprint-tracker.md` (personal tracker — used for dates, PR numbers, and the additional stories that grew beyond the original plan)
+**Note:** Learner Mode (the parallel feature-sprint added 2026-07-14) is reported separately in `docs/dev2-learner-mode-report-2026-07-29.md`. This file covers Sprint 2's base scope only.
 
 ---
 
 ## 1. What Sprint 2 was supposed to do
 
-Per the master tracker's original Sprint 2 plan for Dev 2, seven tasks plus four Learner Mode tasks added mid-sprint (2026-07-14) when Learner Mode became a parallel feature-sprint:
+Per the master tracker's original Sprint 2 plan for Dev 2 — seven tasks:
 
-**Original Sprint 2 scope:**
 1. Quiz popup integration (Dev 3 API)
 2. Teach-back modal integration (Dev 3 API)
 3. Segment-end detection → CHECKING_IN state
@@ -20,13 +20,7 @@ Per the master tracker's original Sprint 2 plan for Dev 2, seven tasks plus four
 6. Onboarding assessment UI (20-question flow)
 7. Learner DNA profile display component
 
-**Learner Mode tasks (added 2026-07-14):**
-8. Mode selection screen after upload (3 cards: T1 Deep / T2 Balanced / T3 Refresher)
-9. Tier disclaimers (T2 time-deficit, T3 refresher-only; T1 none)
-10. Wire selected tier into `POST /lessons`; show chosen tier on the generating screen
-11. Tier badge on lesson player + session report (e.g. "Deep · 45 min")
-
-That's the full plan of record — 11 tasks. Nothing else was scoped for Dev 2 in Sprint 2 at planning time.
+That's the full plan of record for Sprint 2's base scope. Nothing else was scoped for Dev 2 in Sprint 2 at planning time (Learner Mode was added afterward as its own parallel feature-sprint — see the separate report).
 
 ---
 
@@ -41,18 +35,14 @@ That's the full plan of record — 11 tasks. Nothing else was scoped for Dev 2 i
 | 5 | Session report page v1 | ✅ Done | **Done.** `src/app/reports/[sessionId]/page.tsx`, merged 2026-07-04 (PR #63), 5-agent reviewed. |
 | 6 | Onboarding assessment UI | ✅ Done | **Done.** `OnboardingFlow.tsx`, merged 2026-07-04 (PR #62). Caught a real process gap same day: the reviewed code had sat unmerged on a branch while marked done — rebased and actually merged the same session. |
 | 7 | Learner DNA profile display | ✅ Done | **Done.** `DNAResultCard.tsx`, shipped as part of the same onboarding merge. |
-| 8 | Mode selection screen | ✅ Done | **Done**, 2026-07-14. |
-| 9 | Tier disclaimers | ✅ Done | **Done**, 2026-07-14. |
-| 10 | Wire tier into lesson creation | ✅ Done | **Done**, 2026-07-21. |
-| 11 | Tier badge (player + report) | ❌ Shown unchecked, "decision pending" | **Done, but the master tracker line is stale.** Blocked on Dev 3 adding a `tier` field to `SessionReport` — Dev 3 shipped it (Stories 3-29/3-30). Independently re-verified 2026-07-29: `Player.tsx:25-30,115,121` has `TIER_LABELS` and renders the badge from `lesson.metadata.tier`; `SessionReport.tsx:131` renders `report.tier_label`. |
 
-**All 11 originally planned tasks are done.** Two of the master tracker's own checkboxes (#3, #11) were never updated after the underlying blockers cleared — corrected in this report; not fixed silently in the master tracker itself since that file wasn't the immediate ask here.
+**All 7 originally planned Sprint 2 tasks are done.** One of the master tracker's own checkboxes (#3) was never updated after the underlying blocker cleared — corrected in this report; not fixed silently in the master tracker itself since that file wasn't the immediate ask here.
 
 ---
 
 ## 3. Work delivered beyond the original scope
 
-Sprint 2 grew substantially past its original 11 tasks as real end-to-end integration testing (first live backend, first real Supabase, first real PDF through the pipeline) surfaced gaps nobody could see from a mocked frontend alone. All of the following are additional stories, each with its own story file, tests, and code review, tracked in `docs/dev2-sprint-tracker.md` §11 (not in the master tracker's original plan):
+Sprint 2 grew substantially past its original 7 tasks as real end-to-end integration testing (first live backend, first real Supabase, first real PDF through the pipeline) surfaced gaps nobody could see from a mocked frontend alone. All of the following are additional stories, each with its own story file, tests, and code review, tracked in `docs/dev2-sprint-tracker.md` §11 (not in the master tracker's original plan):
 
 | Story | What it fixed | Date |
 |---|---|---|
@@ -72,15 +62,16 @@ Every item above was merged to `main`, tested, and (where the story format calls
 
 ## 4. Independent verification (2026-07-29, re-checked 2026-07-30)
 
-Rather than take any tracker's word for it, a full cross-team audit was run: every frontend page in `apps/web` and every backend endpoint it can reach were read in full and cross-checked against each other and against all 4 devs' tracker claims (full detail: `docs/sprint2-completion-audit-2026-07-29.md`). Findings specific to Dev 2:
+Rather than take any tracker's word for it, a full cross-team audit was run: every frontend page in `apps/web` and every backend endpoint it can reach were read in full and cross-checked against each other and against all 4 devs' tracker claims (full detail: `docs/sprint2-completion-audit-2026-07-29.md`). Findings specific to Sprint 2's base scope:
 
-- **10 of 14 verified line items CONFIRMED** with direct code evidence.
-- **3 marked PARTIAL** (Quiz, Teach-back, Session Report) — **not because the frontend code is wrong.** All three depend on a backend gap (**D18**: no code anywhere creates a `sessions` row) that sits entirely outside Dev 2's code. The frontend calls the correct endpoints with the correct payloads; there is simply nothing on the other end to read/write yet. This is a cross-team blocker needing a Dev 2 + Dev 3 + Dev 4 decision — tracked in `docs/DEFECT-REGISTER.md`.
-- **0 DISPUTED** — nothing claimed as done was found to be false.
+- **Quiz, Teach-back, and Session Report were each marked PARTIAL** — **not because the frontend code is wrong.** All three depend on a backend gap (**D18**: no code anywhere creates a `sessions` row) that sits entirely outside Dev 2's code. The frontend calls the correct endpoints with the correct payloads; there is simply nothing on the other end to read/write yet. This is a cross-team blocker needing a Dev 2 + Dev 3 + Dev 4 decision — tracked in `docs/DEFECT-REGISTER.md`.
+- **Segment-end detection (CHECKING_IN)** — CONFIRMED, including the real backend fix Dev 4 shipped after escalation.
+- **Onboarding assessment flow** — CONFIRMED, cross-checked against the actual submit/DNA endpoints.
+- **0 DISPUTED** across Sprint 2's base scope — nothing claimed as done was found to be false.
 - Two small gaps *were* found in Dev 2's domain during that audit (a dead "Reports" link on the dashboard, and Dev 3's analytics-events endpoint never being called from the frontend) — **both fixed and merged the same day**, with 7 new tests.
 
 ---
 
 ## 5. Bottom line
 
-**Dev 2's Sprint 2 scope is 100% complete** — all 11 originally planned tasks, plus 9 additional stories that emerged from real integration testing, all merged to `main`, all tested, all reviewed. The only reason a real student can't yet complete a full quiz/teach-back/report cycle is a backend gap (D18) outside Dev 2's code — the frontend is fully built and correctly wired to work the moment that lands.
+**Dev 2's Sprint 2 base scope is 100% complete** — all 7 originally planned tasks, plus 9 additional stories that emerged from real integration testing, all merged to `main`, all tested, all reviewed. The only reason a real student can't yet complete a full quiz/teach-back/report cycle is a backend gap (D18) outside Dev 2's code — the frontend is fully built and correctly wired to work the moment that lands.

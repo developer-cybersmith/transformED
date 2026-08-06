@@ -34,6 +34,16 @@ def _make_settings(monkeypatch, **overrides: str) -> Settings:
     """Create a Settings instance with required env vars set via monkeypatch."""
     for key, val in _REQUIRED.items():
         monkeypatch.setenv(key, val)
+    # Explicitly isolate from whatever a developer's own local .env file
+    # happens to contain -- docs/DEPLOYMENT-OPS-NOTES.md tells every
+    # teammate to add APPROVED_EMAILS (and ADMIN_EMAILS is just as easy to
+    # have set locally) to their own apps/api/.env, and pydantic-settings
+    # reads that file as a lower-priority source than real env vars but a
+    # higher-priority one than the field default. Without this, any test
+    # that doesn't explicitly override these two would silently pass or
+    # fail depending on what's in the runner's own .env, not the code.
+    monkeypatch.setenv("ADMIN_EMAILS", "")
+    monkeypatch.setenv("APPROVED_EMAILS", "")
     for key, val in overrides.items():
         monkeypatch.setenv(key.upper(), val)
     return Settings()
@@ -163,3 +173,40 @@ def test_admin_emails_accepts_json_array_and_lowercases(monkeypatch) -> None:
     silently locking out any admin whose JWT email casing differed."""
     s = _make_settings(monkeypatch, admin_emails='["Admin@Foo.com", "Other@Bar.com"]')
     assert s.admin_emails == ["admin@foo.com", "other@bar.com"]
+
+
+# ── approved_emails / _parse_approved_emails (beta access gate) ─────────────────
+
+
+@pytest.mark.unit
+def test_approved_emails_default_is_empty(monkeypatch) -> None:
+    """Empty by default -- require_approved_user must fail closed, not open,
+    when this is unset, so an empty allowlist is the correct/safe default."""
+    s = _make_settings(monkeypatch)
+    assert s.approved_emails == []
+
+
+@pytest.mark.unit
+def test_approved_emails_parses_comma_separated_string_and_lowercases(monkeypatch) -> None:
+    s = _make_settings(monkeypatch, approved_emails="Student@Foo.com, Other@Bar.com ,")
+    assert s.approved_emails == ["student@foo.com", "other@bar.com"]
+
+
+@pytest.mark.unit
+def test_approved_emails_accepts_json_array_and_lowercases(monkeypatch) -> None:
+    s = _make_settings(monkeypatch, approved_emails='["Student@Foo.com", "Other@Bar.com"]')
+    assert s.approved_emails == ["student@foo.com", "other@bar.com"]
+
+
+@pytest.mark.unit
+def test_admin_emails_and_approved_emails_are_independent(monkeypatch) -> None:
+    """The two allowlists share a parser (_parse_email_allowlist) but must
+    remain fully independent fields -- setting one must never leak into
+    the other."""
+    s = _make_settings(
+        monkeypatch,
+        admin_emails="admin@foo.com",
+        approved_emails="student@foo.com",
+    )
+    assert s.admin_emails == ["admin@foo.com"]
+    assert s.approved_emails == ["student@foo.com"]

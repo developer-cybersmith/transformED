@@ -215,9 +215,10 @@ async def test_embed_node_happy_path() -> None:
         "embedding_metadata",
     }
 
-    # books.update called with status=ready, keyed on book_id
-    bks.update.assert_called_once_with({"status": "ready"})
-    bks.update.return_value.eq.assert_called_once_with("book_id", FAKE_BOOK_ID)
+    # Story 1-11 AC7/AC8: embed_node must NOT touch `books`. `book_ingest_job`
+    # is the single writer of that row (it sets status + page_count together);
+    # re-asserting 'ready' here could resurrect a book marked 'failed'.
+    bks.update.assert_not_called()
 
     # lesson_jobs.update called (checkpoint)
     jobs.update.assert_called_once()
@@ -258,7 +259,7 @@ async def test_embed_node_idempotent_cache_hit() -> None:
 @pytest.mark.asyncio
 async def test_embed_node_no_unembedded_chunks() -> None:
     """All chunks already embedded (IS NULL returns empty) — no API call,
-    but checkpoint and books.status=ready still written."""
+    but the checkpoint is still written."""
     from app.modules.content.pipeline.graph import embed_node
 
     sb, jobs, chk, bks = _make_supabase(chunks=[])
@@ -276,8 +277,8 @@ async def test_embed_node_no_unembedded_chunks() -> None:
     assert result["embeddings_stored"] is True
     provider.embed_texts.assert_not_awaited()
 
-    # books should still be marked ready
-    bks.update.assert_called_once_with({"status": "ready"})
+    # Story 1-11 AC7/AC8: `books` is written only by book_ingest_job
+    bks.update.assert_not_called()
 
     # checkpoint written with chunk_count=0
     jobs.update.assert_called_once()

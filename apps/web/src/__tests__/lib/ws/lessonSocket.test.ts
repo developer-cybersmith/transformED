@@ -4,7 +4,15 @@ import { FakeWebSocket } from '../../testUtils/fakeWebSocket';
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
-  global.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  // `vi.stubGlobal`, not `global.WebSocket = ...`. MSW 2.x's WebSocket
+  // interceptor (installed by `server.listen()` in src/test/setup.ts) redefines
+  // `globalThis.WebSocket` as a getter-only property. A bare assignment then
+  // throws "Cannot assign to read only property 'WebSocket'" — and because
+  // vitest shares workers across files, whether it throws depends on which
+  // file ran first in that worker, so it fails INTERMITTENTLY in the parallel
+  // run and passes in isolation. `stubGlobal` uses defineProperty and works
+  // regardless of the existing descriptor.
+  vi.stubGlobal('WebSocket', FakeWebSocket);
 });
 
 afterEach(() => {

@@ -19,8 +19,13 @@ import pytest
 
 FAKE_LESSON_ID = "22222222-2222-2222-2222-222222222222"
 FAKE_BOOK_ID = "11111111-1111-1111-1111-111111111111"
+FAKE_CHAPTER_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 FAKE_USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 FAKE_PDF_PATH = f"{FAKE_USER_ID}/{FAKE_BOOK_ID}/chapter1.pdf"
+# The chapter's page range, as `chapters.page_start`/`page_end` store it:
+# 0-based and INCLUSIVE, passed straight through as subprocess argv 4/5.
+FAKE_PAGE_START = 4
+FAKE_PAGE_END = 9
 FAKE_PDF_BYTES = b"%PDF-1.4 minimal\n%%EOF"
 
 SUBPROCESS_STDOUT = json.dumps(
@@ -46,11 +51,29 @@ def _make_supabase_mock(node_outputs: dict | None = None) -> MagicMock:
 
     books_mock = MagicMock()
 
+    # Story 1-13: extract_node resolves the chapter's page range before it
+    # downloads anything — `.select(...).eq("chapter_id", ...).limit(1)`.
+    chapters_mock = MagicMock()
+    chapters_resp = MagicMock()
+    chapters_resp.data = [
+        {
+            "chapter_id": FAKE_CHAPTER_ID,
+            "book_id": FAKE_BOOK_ID,
+            "page_start": FAKE_PAGE_START,
+            "page_end": FAKE_PAGE_END,
+        }
+    ]
+    (
+        chapters_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value
+    ) = chapters_resp
+
     def _table(name: str) -> MagicMock:
         if name == "lesson_jobs":
             return jobs_mock
         if name == "books":
             return books_mock
+        if name == "chapters":
+            return chapters_mock
         return MagicMock()
 
     sb = MagicMock()
@@ -75,6 +98,7 @@ def _base_state() -> dict[str, Any]:
     return {
         "lesson_id": FAKE_LESSON_ID,
         "book_id": FAKE_BOOK_ID,
+        "chapter_id": FAKE_CHAPTER_ID,  # Story 1-13: required on the PDF path
         "user_id": FAKE_USER_ID,
         "source_pdf_path": FAKE_PDF_PATH,
         "chapter_content": "",
@@ -182,10 +206,20 @@ async def test_extract_node_happy_path() -> None:
     assert isinstance(result.get("font_blocks"), list)
     assert result["progress_pct"] == 7.0
 
+    # Story 1-13: the chapter row's 0-based inclusive bounds are argv 4/5,
+    # passed through unconverted. A whole-document spawn here is the exact
+    # defect this phase removes, and it would otherwise look identical.
+    argv = exec_mock.await_args.args
+    assert argv[-2:] == (str(FAKE_PAGE_START), str(FAKE_PAGE_END)), argv
+
 
 @pytest.mark.unit
-async def test_extract_node_writes_page_count() -> None:
-    """extract_node must write page_count to the books table."""
+async def test_extract_node_does_not_write_to_books() -> None:
+    """extract_node must NOT touch `books` (Story 1-11 AC7).
+
+    It used to write `books.page_count`. `book_ingest_job` writes that column
+    alongside `status='ready'` and is now the single writer of the row.
+    """
     from app.modules.content.pipeline.graph import extract_node
 
     state = _base_state()
@@ -203,10 +237,11 @@ async def test_extract_node_writes_page_count() -> None:
 
     # books_mock captured via sb.table.side_effect
     books_mock = sb.table("books")
-    books_update_calls = books_mock.update.call_args_list
-    assert books_update_calls, "books.update was not called"
-    payload = books_update_calls[0].args[0]
-    assert payload.get("page_count") == 3
+    assert books_mock.update.call_args_list == [], (
+        f"extract_node must not write to books; got {books_mock.update.call_args_list}"
+    )
+    assert books_mock.insert.call_args_list == []
+    assert books_mock.upsert.call_args_list == []
 
 
 @pytest.mark.unit
