@@ -1,6 +1,6 @@
 # Defect Register & Binding Decisions
 
-**Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-08-04 · **Status:** ACTIVE
+**Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-08-05 · **Status:** ACTIVE
 
 > **AMENDED 2026-07-30.** The line below previously read *"none is waiting on Dev 1"*. A
 > route-by-route frontend wiring audit run **after** that claim was made found **three Dev 1
@@ -184,6 +184,7 @@ after re-reading the highest in use (D43) per the collision rule at the top of t
 | **D56** | **`lessonService.getLesson` and `updateProgress` are mock-backed and unreachable.** `apps/web/src/services/lesson.service.ts:8,11` delegate to `lessonApi` from the hand-rolled `src/mocks/` layer; a repo-wide search finds **no caller** outside the file and its own tests. They are the only mock imports left on the book-scale service surface (`getLessonPackage`, the player's actual content fetch, is real). Not deleted: `src/__tests__/services/lesson.service.test.ts:70,76` deliberately pin the delegation with the note "no real backend yet", so removing them would delete documented, tested state rather than dead weight. | Low | Delete both methods, their tests and the `lessonApi` import together, **or** implement them against real endpoints — as one deliberate change, not by attrition. **Trigger: the first real caller for either (a dashboard lesson card needing the card-shape read, or progress persistence), or the removal of `src/mocks/`.** Owner: Dev 2. | `apps/web/src/__tests__/guards/no-mocks-in-book-scale-path.test.ts` — the book-scale entry points are guarded transitively, so these two cannot spread into the render path unnoticed |
 | ~~**D57**~~ | **WITHDRAWN 2026-08-05 — DUPLICATE of D31.** Registered during the Story W4 pass for `NEXT_PUBLIC_API_URL` omitting `/api`; D31 already covers exactly that, and is marked live-in-production with Dev 1 as owner. The line numbers differ only because `ci.yml` moved (`:126` → `:188`) — same defect, same file, same fix. **This is the ID-collision the banner at the top of this file exists to prevent, committed by the person who had just corrected the same mistake for D52.** The rule is: re-read the highest allocated id from `main` immediately before allocating — and then check whether the defect is already registered under an older one. Use **D31**. | — | See D31 | See D31 |
 | **D58** | **The evaluation harness writes a success-shaped result file when every PDF crashed.** `apps/api/tests/evals/runner.py:277-316`. This is the incident quoted as the justification for the phase tracker's entire GATE RULE (`docs/book-scale-phase-tracker.md:79`) — *"the evaluation harness crashed on all five test PDFs and wrote a success-shaped result file anyway"* — and it has **never had a register ID**, which is precisely the failure binding rule 5 names: a documented limitation without an ID is a defect wearing a decision's clothes. **Directly in Sprint 3's path:** S3-1 is *"Eval harness expanded to 20 PDFs"*, and expanding a harness that reports success on crash multiplies the blast radius by four. | High | Fix the result writer to record per-PDF outcomes and fail loudly on any crash, **before** S3-1 expands the corpus. **Trigger: S3-1 starting.** Owner: Dev 1. | *(to add — a test that a crashing eval run produces a FAILING result file, mutation-checked)* |
+| **D59** | **Two unbounded reads on request paths, enumerated as the `test_unbounded_queries.py` baseline.** (a) `apps/api/app/modules/admin/router.py:191` materialises **every** `lesson_jobs` row joined to `lessons` for the reporting period and groups in Python, because PostgREST has no server-side GROUP BY — fine at 23 lessons, and it is Sprint 3's own S3-4 ("Admin panel: job status, cost tracking") that makes it real. (b) `apps/api/app/modules/analytics/service.py:54` selects every `sessions.session_id` for a user with no bound, growing without limit as a student uses the product. Both are the shape Scale Contract Q4 names: fine in testing, wrong in production. | Med | **Enumerated, not silenced.** `_KNOWN_UNBOUNDED` in `tests/unit/test_unbounded_queries.py` lists exactly these two; the guard fails on anything NOT in that dict, so a new violation is red immediately. **The list may only shrink** — adding an entry needs a register ID and a named owner, which is a conversation rather than a quick unblock. Deliberately NOT the D24 pattern (`continue-on-error`), whose cost the register already records: the number was visible and nothing moved. **Owners: (a) Dev 1, trigger = S3-4 starting. (b) Dev 3, trigger = the first user with >1,000 sessions.** | `tests/unit/test_unbounded_queries.py` — mutation-checked: a new unbounded select in `auth/router.py` is flagged by file and line, and correct split-builder chains carrying `.limit()` are NOT flagged |
 
 ---
 
@@ -216,6 +217,11 @@ Not "documented limitations". Each carries an explicit condition that reopens it
 ## Part 4 — Binding decisions going forward
 
 These are the rules. Each says how it is enforced.
+
+> **Scale has its own contract: `docs/SCALE-CONTRACT.md`** (established 2026-08-05). It states
+> the six questions every story's `## Scale & Load` section must answer, and its Enforcement
+> table names **this register — BD-9 below** as the mechanism for any scale limitation we ship
+> knowingly. Read it before opening a story; it is binding on every story, PR and review.
 
 **BD-1 — Verification scope must equal CI scope.**
 An AC may not scope a gate to touched files. State the repo-wide number and `main`'s number.
@@ -260,6 +266,81 @@ cross-dev contract needs one real integration test before Sprint 3 real-student 
 is what happens without it: three developers, three green suites, one broken product.
 *Enforcement: BD-3 + a per-contract checklist.*
 
+**BD-9 — Scale is a stated constraint, not an assumption.**
+*(This is the entry that `docs/SCALE-CONTRACT.md`'s Enforcement table and `CLAUDE.md`'s
+Core Architectural Principle 8 both call **"binding rule 8"** — i.e. the eighth rule of
+`CLAUDE.md`'s **### Binding rules** list, which mirrors this file and runs 1–7 today. In this
+file's own sequence it is **BD-9**, because **BD-8 is already the mocking-expiry rule**. Two
+numberings, one rule, stated here so nobody "fixes" the mismatch by renumbering BD-8 — that is
+how D29/D30 and D57 happened.)*
+Every story carries a `## Scale & Load` section answering the contract's six questions. A bare
+`N/A` is a missing answer, not an answer, and **review checks the answers, not the presence of
+the heading** — the section is only worth what the sixth review layer reads in it. Any scale
+limitation shipped knowingly is a register entry with a `D-nn` ID, a **named owner** and a
+**trigger** — exactly the bar BD-5 sets for every other documented limitation, and for the same
+reason: **D58** (the eval harness writes a success-shaped result file when every PDF crashed)
+was quoted verbatim in `docs/book-scale-phase-tracker.md:79` as the justification for the
+tracker's entire GATE RULE and still **had no register ID** until 2026-08-04.
+
+The failure this rule catches does not look like slowness — it looks like success.
+`settings.structure_max_sections = 15` (`apps/api/app/config.py:332`) ×
+`_get_section_body(..., max_chars=6000)` (`graph.py:1942`) is a ~90,000-character LLM-visible
+window **regardless of input size**, so a 1,151-page book produced a lesson built from **4 %**
+of itself: nothing errored, nothing warned above a `logger.warning` nobody reads
+(`graph.py:1952-1960`), and the `$3.00/lesson` ceiling never fired because the failure was
+*cheap*, not expensive (**D46**). Any AC phrased as "the cost ceiling protects us here" is
+false for this whole class.
+
+Six open entries are this rule stated after the fact, and are the evidence for it —
+**do not re-register them under new ids, cite them**: **D45** (check-then-insert on
+`(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
+requests both insert and both bill), **D49** (`RATE_LIMIT_STORAGE_URL` defaults to `memory://`,
+so every ceiling silently multiplies by replica count), **D50** (300-DPI renders and Storage
+uploads bounded on *concurrency, not count*, and outside `cost_tracker`'s view entirely),
+**D52** (limiter keyed by IP because a swallowed `InvalidAudienceError` dropped the `sub`
+lookup — one caller locked out everyone behind the same egress IP), **D53** (nothing ages a
+`generating` row out, so three of them lock a user out of all generation permanently), and
+**D58**. Scope is part of the answer: a limit whose scope — per user, per instance, per
+deployment — is unstated is a limit that is wrong on the second replica (D49) or the second
+user (D52).
+*Enforcement: `## Scale & Load` is a required section of the story template; a sixth mandatory
+review layer (Scale & Load) in the review gate; and `tests/unit/test_unbounded_queries.py` — a
+source scan failing on any request-path `.select()` carrying no `.limit()`, `.range()`,
+`count=` or `# BOUNDED:` justification. **Verified 2026-08-05: that file does not exist under
+`apps/api/tests/` or `tests/`.** Until it is written BD-9 is `DISCIPLINE`, and is counted as
+such in the scorecard — per binding rule 7, a rule without a guard is not enforced, it is
+remembered.*
+
+### DECISION 2026-08-05 — scale becomes an explicit, enforced constraint on all future work
+
+Sprints 1 and 2 and Learner Mode were built, reviewed and merged **green**. Every one of them
+assumed a small PDF, one user, one instance. None of those assumptions was written down, so
+none was ever checked — and the check that would have caught them (BD-3's real-dependency job,
+the `$3.00` ceiling, the 5-agent gate) could not, because nothing was failing.
+
+The cost of not writing them down, paid in full and recorded honestly:
+
+| | |
+|---|---|
+| Unplanned work | The **entire book-scale sprint**, Phases 1–7, whose only purpose was to retrofit scale into shipped, green work |
+| Commits | **~50** |
+| Register entries created | **~14 (D41–D58)** — of which D45, D46, D49, D50, D52, D53 and D58 are scale defects proper |
+| Delivered | A 1,000-page book that works. Nothing a user asked for. |
+| Still open from it | D46 (silent truncation, DISCIPLINE), D50 (uncapped renders, no guard), D53 (High, live in production) |
+
+**The decision.** Scale is now a stated constraint on every story, not a property discovered
+afterwards: `docs/SCALE-CONTRACT.md`'s six questions, BD-9 above, the required `## Scale & Load`
+story section, and the sixth review layer. This is deliberately structural rather than advisory
+— Part 1 of this file establishes by evidence that prose guidance does not hold here (Dev 1
+wrote `DEV1-FIX-PLAN.md` and deviated from it four times in one day; every deviation was caught
+by review, none by a machine), so a paragraph asking people to think about scale would have
+already failed on the day it was written.
+
+**The one-line test, from the contract:** *"What input makes this silently wrong rather than
+loudly broken?"* If a story cannot answer it, the story is not finished. Every defect this
+project has found — without exception — was something that reported success without being
+checked.
+
 ---
 
 ## Scorecard
@@ -272,13 +353,13 @@ is what happens without it: three developers, three green suites, one broken pro
 | Of which **live in production** | **3** — D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D29 closed 2026-08-05, D30 closed 2026-08-04** |
-| Binding decisions relying on `DISCIPLINE` alone | **5 of 8** |
+| Binding decisions relying on `DISCIPLINE` alone | **6 of 9** — BD-9 (scale) joins them until `tests/unit/test_unbounded_queries.py` is written |
 | Open entries with a named owner **and** a trigger | **24 of 25** (D36 still has no owner) |
 | Found by the 2026-07-30 wiring audit | **7** registered (D31–D37), ~40 more in the report |
 | Found by the 2026-08-03 Story 1-9 five-agent review | **3** registered (D38–D40); **D38 and D39 both closed same day**|
 | Found by the 2026-08-04 book-scale UI re-plan and Phase 3 gate | **2** registered (D41, D42) |
 | Found by the 2026-08-04 Story 1-14 review (Phase 6 endpoints) | **11** registered (D44–D54), plus **D34 amended and re-severitied Med → High**. D52/D53/D54 were added by the five-agent review AFTER the story was written — **D52 was cited by ID in three files, including a load-bearing code comment, before its register row existed**, which is precisely the collision the banner at the top of this file exists to prevent |
 
-That last row is the honest health metric. Five of eight rules currently depend on someone
+That last row is the honest health metric. Six of nine rules currently depend on someone
 remembering. **BD-3 is the one that converts the most of them into machine checks, which is
 why it is first.**

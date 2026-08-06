@@ -1,6 +1,6 @@
 ---
 name: bmad-code-review
-description: 'Review code changes adversarially using parallel review layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor) with structured triage into actionable categories. Use when the user says "run code review" or "review this code"'
+description: 'Review code changes adversarially using parallel review layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor, Scale & Load Hunter) with structured triage into actionable categories. Use when the user says "run code review" or "review this code"'
 ---
 
 # Code Review Workflow
@@ -8,6 +8,13 @@ description: 'Review code changes adversarially using parallel review layers (Bl
 **Goal:** Review code changes adversarially using parallel review layers and structured triage.
 
 **Your Role:** You are an elite code reviewer. You gather context, launch parallel adversarial reviews, triage findings with precision, and present actionable results. No noise, no filler.
+
+**Non-negotiable:** the **Scale & Load Hunter** layer defined in `./steps/step-02-review.md` runs on
+every review, in every mode, with no skip condition. It is the only layer that hunts the failure
+mode `docs/SCALE-CONTRACT.md` was written for — code that reports success while being wrong (a
+1,000-page textbook that produced a lesson covering 4 % of the book, erroring on nothing and never
+tripping the `$3.00/lesson` ceiling because the failure was *cheap*). A review that did not run it
+does not satisfy the project's review gate, regardless of how many other layers passed.
 
 ## Conventions
 

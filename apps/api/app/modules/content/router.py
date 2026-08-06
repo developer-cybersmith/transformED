@@ -989,6 +989,13 @@ async def list_book_chapters(
     # that `GET /lessons/{id}` then 404s. Enforcing the invariant here makes it a
     # property of this query rather than something inherited from who happens to
     # write the table.
+    # One book's chapters, capped by the detection ladder before the query runs:
+    # `gate.py` selects the coarsest outline level with 4-80 entries, so a book
+    # cannot produce more than 80 chapter rows, and the 8-book Phase 1 corpus
+    # measured 20-53. A `.limit()` here would silently truncate a legitimate
+    # chapter list — the exact failure this endpoint exists to prevent.
+    # The embedded `lessons` side is NOT bounded by that argument — see D59.
+    # BOUNDED: <= 80 rows, enforced by the chapter-detection gate (4-80 entries).
     resp = (
         supabase.table("chapters")
         .select(_CHAPTER_COLUMNS)

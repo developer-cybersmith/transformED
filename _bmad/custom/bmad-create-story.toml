@@ -1,0 +1,13 @@
+# Team override for the `bmad-create-story` skill. Committed — applies to every developer.
+#
+# This file exists because the equivalent edit was first made in
+# `.claude/skills/bmad-create-story/customize.toml`, whose line 1 reads
+# "DO NOT EDIT -- overwritten on every update". The next BMad installer run would
+# have silently reverted it. A scale contract that quietly stops loading is the
+# exact failure class the contract itself is about, so it lives in the override
+# layer the resolver is designed for.
+#
+# Arrays append over the base, so the built-in project-context default survives.
+
+[workflow]
+persistent_facts = ["file:{project-root}/docs/SCALE-CONTRACT.md"]
