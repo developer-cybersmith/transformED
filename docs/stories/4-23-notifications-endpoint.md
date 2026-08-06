@@ -1,10 +1,10 @@
 ---
 id: "4-23"
 title: "PATCH /api/auth/notifications — notification preference write endpoint"
-status: "in-progress"
+status: "done"
 sprint: 3
 story_points: 3
-baseline_commit: ""
+baseline_commit: "dca9872f9cc60f2ff63f0d7502d762768da769df"
 owner: Dev4
 priority: P2
 blocker_ref: D60
@@ -207,44 +207,44 @@ The upsert is a write, not a select; the scanner only checks reads.
 - [x] 1.3 Push to remote
 
 ### Task 2 — RED phase (failing tests)
-- [ ] 2.1 Create `apps/api/tests/test_notifications_endpoint.py`
-- [ ] 2.2 Test AC 1 (endpoint registered, reachable)
-- [ ] 2.3 Test AC 2 (no JWT → 401/403)
-- [ ] 2.4 Test AC 3 (expired/invalid JWT → 401)
-- [ ] 2.5 Test AC 4 (valid JWT + fields → 200 with full response)
-- [ ] 2.6 Test AC 5 (user_id from JWT only; body `user_id` ignored)
-- [ ] 2.7 Test AC 6 (partial update preserves omitted fields)
-- [ ] 2.8 Test AC 7 (empty body → 422)
-- [ ] 2.9 Test AC 8 (updated_at refreshed)
-- [ ] 2.10 Test AC 9 (asyncio.to_thread wraps DB calls — source inspection)
-- [ ] 2.11 Test AC 10 (no LLM call — source inspection)
-- [ ] 2.12 Test AC 11 (DB upsert failure → 500)
-- [ ] 2.13 Confirm all tests FAIL before implementation
+- [x] 2.1 Create `apps/api/tests/test_notifications_endpoint.py`
+- [x] 2.2 Test AC 1 (endpoint registered, reachable)
+- [x] 2.3 Test AC 2 (no JWT → 401/403)
+- [x] 2.4 Test AC 3 (expired/invalid JWT → 401)
+- [x] 2.5 Test AC 4 (valid JWT + fields → 200 with full response)
+- [x] 2.6 Test AC 5 (user_id from JWT only; body `user_id` ignored)
+- [x] 2.7 Test AC 6 (partial update preserves omitted fields)
+- [x] 2.8 Test AC 7 (empty body → 422)
+- [x] 2.9 Test AC 8 (updated_at refreshed)
+- [x] 2.10 Test AC 9 (asyncio.to_thread wraps DB calls — source inspection)
+- [x] 2.11 Test AC 10 (no LLM call — source inspection)
+- [x] 2.12 Test AC 11 (DB upsert failure → 500)
+- [x] 2.13 Confirm all tests FAIL before implementation
 
 ### Task 3 — GREEN phase (implementation)
-- [ ] 3.1 Add `NotificationPatchRequest` Pydantic model with 4 optional bool fields + empty-body validator
-- [ ] 3.2 Add `NotificationPreferencesResponse` Pydantic model (6 fields)
-- [ ] 3.3 Implement `patch_notifications()` handler in `auth/router.py`
+- [x] 3.1 Add `NotificationPatchRequest` Pydantic model with 4 optional bool fields + empty-body validator
+- [x] 3.2 Add `NotificationPreferencesResponse` Pydantic model (6 fields)
+- [x] 3.3 Implement `patch_notifications()` handler in `auth/router.py`
      — `CurrentUser` dependency, lazy `get_supabase()` import, read-merge-upsert pattern
-- [ ] 3.4 Confirm all 13 tests PASS
+- [x] 3.4 Confirm all 13 tests PASS
 
 ### Task 4 — REFACTOR + validation
-- [ ] 4.1 `ruff check apps/api/app/modules/auth/router.py apps/api/tests/test_notifications_endpoint.py`
-- [ ] 4.2 `ruff format --check` on the same files
-- [ ] 4.3 Confirm all tests still pass after ruff fixes
-- [ ] 4.4 Run full Dev 4 regression suite (`pytest apps/api/tests/ -q --ignore=apps/api/tests/integration`)
+- [x] 4.1 `ruff check apps/api/app/modules/auth/router.py apps/api/tests/test_notifications_endpoint.py`
+- [x] 4.2 `ruff format --check` on the same files
+- [x] 4.3 Confirm all tests still pass after ruff fixes
+- [x] 4.4 Run full Dev 4 regression suite (`pytest apps/api/tests/ -q --ignore=apps/api/tests/integration`)
 
 ### Task 5 — D60 progress note
-- [ ] 5.1 Add a note to `docs/DEFECT-REGISTER.md` D60 entry: Dev 4 scope complete (this story),
+- [x] 5.1 Add a note to `docs/DEFECT-REGISTER.md` D60 entry: Dev 4 scope complete (this story),
          remaining: Dev 2 frontend wiring
 
 ### Task 6 — 6-layer adversarial review
-- [ ] 6.1 Layer 1 — Story Quality
-- [ ] 6.2 Layer 2 — Blind Hunter (Security)
-- [ ] 6.3 Layer 3 — Test Coverage
-- [ ] 6.4 Layer 4 — AC Completeness
-- [ ] 6.5 Layer 5 — Process Integrity
-- [ ] 6.6 Layer 6 — Scale & Load
+- [x] 6.1 Layer 1 — Story Quality
+- [x] 6.2 Layer 2 — Blind Hunter (Security)
+- [x] 6.3 Layer 3 — Test Coverage
+- [x] 6.4 Layer 4 — AC Completeness
+- [x] 6.5 Layer 5 — Process Integrity
+- [x] 6.6 Layer 6 — Scale & Load
 
 ### Task 7 — Commit + handoff
 - [ ] 7.1 Final commit on `sprint3/s3-07-notifications-endpoint`
@@ -255,7 +255,32 @@ The upsert is a write, not a select; the scanner only checks reads.
 
 ## Senior Developer Review (AI)
 
-*(populated after Task 6)*
+**Date:** 2026-08-06  
+**Outcome:** Changes Requested → Applied → ✅ Approved  
+**Review layers run:** Blind Hunter, Edge Case Hunter, Acceptance Auditor, Scale & Load Hunter, Story Quality, Process Integrity
+
+### Action Items (all resolved)
+
+- [x] **[HIGH] AC 5 — Missing `ConfigDict(extra='forbid')`**  
+  `NotificationPatchRequest` silently ignored extra fields (Pydantic default). AC 5 specifies "extra fields rejected by Pydantic." Fixed: `model_config = ConfigDict(extra='forbid')` added. New test: `test_patch_notifications_extra_body_fields_returns_422`.
+
+- [x] **[HIGH] Read failure silently corrupts stored preferences**  
+  The `except Exception` block fell back to `_NOTIF_DEFAULTS` and continued to upsert. A transient read failure would overwrite stored non-default values (e.g. `weekly_progress_email: False`) with `True`. Fixed: read failure now raises HTTP 503 so the caller retries; upsert is never called on a failed read. Test renamed to `test_patch_notifications_read_failure_raises_503`; asserts upsert not called.
+
+- [x] **[HIGH] Unguarded `upsert_resp.data[0]`**  
+  `IndexError` on empty list (Supabase `Prefer: return=minimal`) was caught and surfaced as "Failed to update notification preferences" even when the write succeeded. Fixed: `try/except` now wraps only the network call; empty-data check is a separate explicit guard with a distinct error message. New test: `test_patch_notifications_upsert_empty_response_raises_500`.
+
+- [x] **[HIGH] AC 12 test mislabeled — wrong behavior tested**  
+  Test labeled "AC 12" was testing the (now-removed) fail-open behavior, not `.maybe_single()` boundedness. Fixed: old test replaced with `test_patch_notifications_read_failure_raises_503`; new `test_patch_notifications_read_uses_maybe_single` uses source inspection to guard AC 12.
+
+- [x] **[MED] AC 8 — test asserted upsert payload, not `result.updated_at`**  
+  CLAUDE.md binding rule 2: "No test may assert only on a mock it constructed." Test checked the timestamp sent *to* the mock but never checked `result.updated_at`. Fixed: test now saves result and asserts `result.updated_at == new_ts`.
+
+- [x] **[LOW] `str(row["updated_at"])` produces non-ISO 8601 format**  
+  `supabase-py` returns `timestamptz` as a Python `datetime` object; `str()` gives `"2026-08-06 12:00:00+00:00"` (space-separated). Fixed: `updated_at_raw.isoformat()` used when the value has an `.isoformat()` method, falling back to `str()` otherwise.
+
+### Final test count: 16 (was 13) — all pass.  
+### Ruff: clean. Format: clean. Regression suite (106 auth-domain tests): all pass.
 
 ---
 
@@ -291,3 +316,4 @@ The upsert is a write, not a select; the scanner only checks reads.
 ### Change Log
 
 - 2026-08-06: Story file created (story-first commit)
+- 2026-08-06: Implementation complete — 16 tests, all AC covered, 6-layer review applied, all review findings resolved
