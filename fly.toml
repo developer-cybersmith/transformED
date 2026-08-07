@@ -1,0 +1,46 @@
+# Fly.io configuration for the HIE API + worker.
+# Decision: docs/decisions/ADR-001-india-region-migration-topology.md
+#
+# ONE Fly app, TWO process groups sharing apps/api/Dockerfile (same model as
+# railway.toml's two Railway services from one image). Do NOT split this into
+# two Fly apps -- see ADR-001 §3 for why (duplicated deploy/secrets/image push
+# for zero benefit; the Dockerfile's CMD is already the API command, and the
+# worker already runs by overriding the start command).
+app = "hie-api"
+primary_region = "bom"          # Mumbai -- matches Supabase's ap-south-1
+
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+[processes]
+  api    = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  worker = "python -m arq app.workers.main.WorkerSettings"
+
+[http_service]
+  internal_port = 8000
+  processes = ["api"]           # worker exposes no HTTP port -- never route to it
+  # NEVER true for the worker group (see [[vm]] below, same reasoning applies
+  # to this whole http_service block being api-only): Fly's scale-to-zero is
+  # request-driven and would stop a machine mid-ARQ-job, discarding up to 30
+  # minutes / $3.00 of already-paid-for generation (ADR-001 §5.1).
+  auto_stop_machines  = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  processes = ["api"]
+  size = "shared-cpu-2x"        # 2 GB -- API is I/O-light, no extraction happens here
+
+[[vm]]
+  processes = ["worker"]
+  size = "performance-2x"       # 4 GB -- headroom over the 1.95 GB measured extraction peak
+                                 # (Sprint 1, live-measured). Re-measure before treating
+                                 # full-book ingestion as a product path, not a proof
+                                 # (ADR-001 §5.4).
+
+[checks.api]
+  type = "http"
+  path = "/health"              # apps/api/app/main.py:178 -- already implemented,
+  interval = "30s"               # already used by railway.toml today
+  timeout = "10s"
+  processes = ["api"]           # worker has no HTTP port to check
