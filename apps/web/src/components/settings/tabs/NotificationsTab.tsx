@@ -62,9 +62,7 @@ export function NotificationsTab() {
                         </div>
                         <Toggle
                             enabled={preferences[key]}
-                            onChange={(value) => {
-                                void updatePreference(key, value);
-                            }}
+                            onChange={(value) => updatePreference(key, value)}
                         />
                     </div>
                 ))}

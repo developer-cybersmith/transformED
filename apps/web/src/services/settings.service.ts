@@ -11,7 +11,23 @@ export interface NotificationPreferences {
     streak_reminders: boolean;
 }
 
-export type NotificationPreferencesPatch = Partial<NotificationPreferences>;
+// A union of single-key objects, not Partial<T> -- Partial<T> permits `{}`,
+// which the backend 422s on (AC-7: "at least one field required"). This
+// makes an empty or multi-field patch a compile error, not just a
+// call-site convention to remember.
+type AtLeastOneKey<T> = { [K in keyof T]: Pick<T, K> }[keyof T];
+export type NotificationPreferencesPatch = AtLeastOneKey<NotificationPreferences>;
+
+// The only way to construct a NotificationPreferencesPatch -- a computed-key
+// object literal (`{ [key]: value }`) can't be proven single-field by the
+// compiler, so the one cast needed lives here, justified by this function's
+// own signature, instead of being repeated at every call site.
+export function singleFieldPatch<K extends keyof NotificationPreferences>(
+    key: K,
+    value: NotificationPreferences[K]
+): NotificationPreferencesPatch {
+    return { [key]: value } as NotificationPreferencesPatch;
+}
 
 export interface NotificationPreferencesRecord extends NotificationPreferences {
     user_id: string;
