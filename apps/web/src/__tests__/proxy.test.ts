@@ -263,7 +263,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
     const passThrough = { headers: new Headers() } as unknown;
     updateSessionMock.mockResolvedValue({
       supabaseResponse: passThrough,
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseStub(null),
     });
 

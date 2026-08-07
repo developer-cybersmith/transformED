@@ -4,7 +4,7 @@ baseline_commit: 1884f2b
 
 # Story 2.43: Notifications UI — Wire to Real Backend (S3-07)
 
-Status: draft
+Status: review
 
 ## Story
 
@@ -62,19 +62,19 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions, per the BMAD Pre-Implementat
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 2, 9): Build `useNotificationPreferences()` hook — Supabase read of `user_notification_preferences`, defaults-on-no-row, degrade-with-log on error.
-  - [ ] 1.1 RED: tests for the three read-state cases (row with mixed values / no row → defaults, no log / read error → defaults, WITH log).
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 3, 5, 6, 7): Add `updateNotifications()` to `settings.service.ts` (real `PATCH auth/notifications` call); wire the hook's update function with the per-field request-generation race guard.
-  - [ ] 2.1 RED: tests that a single-field PATCH fires with no `user_id`, that a stale response can't overwrite a newer one (AC-5), and that the body is never empty.
-  - [ ] 2.2 GREEN: implement.
-- [ ] Task 3 (AC: 1, 4): Rewrite `NotificationsTab.tsx` — 4 toggles (add Session Report), optimistic update + rollback + console.error on failure, using the new hook instead of local `useState`/`useEffect` boilerplate.
-  - [ ] 3.1 RED: tests that all 4 toggles render with real values, a toggle click calls the real service with the correct single-field payload, and a failure rolls back and logs.
-  - [ ] 3.2 GREEN: implement.
-- [ ] Task 4 (AC: 8): Delete the in-memory mock plumbing entirely.
-  - [ ] 4.1 RED: a guard assertion (or manual `git grep`) proving no remaining reference to the deleted exports outside this story's own removed lines.
-  - [ ] 4.2 GREEN: delete `mocks/api/settings.ts`'s two functions, `mocks/data/users.ts`'s `NotificationSettings` type + `MockUser.notifications` field, `settings.service.ts`'s old mock-delegating methods, and the now-obsolete old test file content.
-- [ ] Task 5 (AC: 9): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 2, 9): Build `useNotificationPreferences()` hook — Supabase read of `user_notification_preferences`, defaults-on-no-row, degrade-with-log on error.
+  - [x] 1.1 RED: tests for the three read-state cases (row with mixed values / no row → defaults, no log / read error → defaults, WITH log).
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 3, 5, 6, 7): Add `updateNotifications()` to `settings.service.ts` (real `PATCH auth/notifications` call); wire the hook's update function with the per-field request-generation race guard.
+  - [x] 2.1 RED: tests that a single-field PATCH fires with no `user_id`, that a stale response can't overwrite a newer one (AC-5), and that the body is never empty.
+  - [x] 2.2 GREEN: implement.
+- [x] Task 3 (AC: 1, 4): Rewrite `NotificationsTab.tsx` — 4 toggles (add Session Report), optimistic update + rollback + console.error on failure, using the new hook instead of local `useState`/`useEffect` boilerplate.
+  - [x] 3.1 RED: tests that all 4 toggles render with real values, a toggle click calls the real service with the correct single-field payload, and a failure rolls back and logs.
+  - [x] 3.2 GREEN: implement.
+- [x] Task 4 (AC: 8): Delete the in-memory mock plumbing entirely.
+  - [x] 4.1 RED: a guard assertion (or manual `git grep`) proving no remaining reference to the deleted exports outside this story's own removed lines.
+  - [x] 4.2 GREEN: delete `mocks/api/settings.ts`'s two functions, `mocks/data/users.ts`'s `NotificationSettings` type + `MockUser.notifications` field, `settings.service.ts`'s old mock-delegating methods, and the now-obsolete old test file content.
+- [x] Task 5 (AC: 9): Full suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -103,17 +103,34 @@ Mock the Supabase client the same way `useAttentionConsent.test.ts` does (module
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-08-06 | Story created per S3-07 in `docs/dev2-sprint-tracker.md` / D60. Branch `sprint3/s3-07-notifications-ui` off `main` at `1884f2b`. Verified the real `PATCH /api/auth/notifications` contract directly against `apps/api/app/modules/auth/router.py` before writing any AC. | Dev 2 |
+| 2026-08-06 | Implemented all 5 tasks, TDD (RED confirmed before each GREEN). All optimistic-update/rollback/race-guard logic ended up living entirely in `useNotificationPreferences` rather than split between hook and component (cleaner than Story 2-42's split, since there's no retry-affordance UI requirement here) — `NotificationsTab.tsx` is a thin renderer. Also fixed a pre-existing bug found while running the full suite: `proxy.test.ts`'s "bookstore" test was missing `email` on its mock user (the same D65 regression already fixed on `sprint3-master`, inherited here since this branch forked from `main` before that fix existed) — same one-line fix applied. Full `apps/web` suite: 67 files / 770 tests passing. `tsc --noEmit` clean. `eslint` clean on every touched file. Status → review. | Dev 2 |
 
 ## Dev Agent Record
 
 ### Implementation Plan
 
-_(filled in during dev-story)_
+- Read `useAttentionConsent.ts`, `onboarding.service.ts`, `auth/router.py`, the migration, and the current `NotificationsTab.tsx`/`Toggle.tsx`/mocks fully before writing anything, per the story's own References.
+- `settings.service.ts`: kept the file (still the real home for `getProfile`/`getPreferences`/`getPrivacy`, unchanged, out of scope), added `NotificationPreferences`/`NotificationPreferencesPatch`/`NotificationPreferencesRecord` types matching the backend schema field-for-field, and a real `updateNotifications()` using `api.patch`. Removed the old mock-delegating `getNotifications`/`updateNotifications`.
+- `useNotificationPreferences.ts`: Supabase read on mount (own-row, `.maybeSingle()`), degrading to `DEFAULT_PREFERENCES` (all `true`, matching the backend's `_NOTIF_DEFAULTS` exactly) on both "no row" and "read error" — the two cases only differ in whether `console.error` fires. `updatePreference` does the optimistic set + real PATCH + rollback-on-failure + logging, all in one place, guarded by a per-field `requestGenerationRef` counter so a stale failure's rollback can never stomp a more recent request's result (AC-5) — proved with a genuine 3-click race test, not a 2-click one, since 2 clicks can coincidentally "pass" by luck of the boolean values involved.
+- `NotificationsTab.tsx`: rewritten as a thin renderer driven entirely by the hook — a `TOGGLES` array of `{key, label, description}` maps directly over the backend's 4 real field names, so adding a field in the future is a one-line array entry, not a new JSX block. No local `useState`/`useEffect`/rollback logic left in the component at all.
+- Mock removal (AC-8): deleted `NotificationSettings` interface + `MockUser.notifications` field from `mocks/data/users.ts`, and `getNotificationSettings`/`updateNotificationSettings` from `mocks/api/settings.ts`. Verified via `git grep` (not just trusting the diff) that no reference to any of the three remains anywhere in `apps/web/src`.
 
 ### Completion Notes
 
-_(filled in during dev-story)_
+- All 5 tasks complete, all ACs (1-9) satisfied.
+- Full `apps/web` suite: 67 files, 770 tests, all passing (13 new: 8 in `useNotificationPreferences.test.ts`, 5 in `NotificationsTab.test.tsx`; the old 5-test `NotificationsTab.test.tsx` was fully replaced, not appended to, since none of its assertions matched the new real contract).
+- `tsc --noEmit`: clean. `eslint`: clean on every touched file (one non-issue: an `eslint-disable-next-line react-hooks/set-state-in-effect` comment on the `!userId` branch's `setIsLoading(true)` turned out unnecessary once written — same false-positive-avoidance shape already seen in `useAttentionConsent.ts`; removed rather than left as a silencing no-op).
+- Confirmed AC-6 (no `user_id` in the request body) and AC-7 (body never empty) directly in the hook test by inspecting `updateNotificationsMock.mock.calls[0]`'s actual keys, not just that the mock was called (`docs/DEFECT-REGISTER.md` binding rule 2).
+- Found and fixed a pre-existing, unrelated bug while verifying the full suite: `proxy.test.ts`'s bookstore-sibling-route test was missing `email` on its mocked user (D65, previously fixed on `sprint3-master` but not on `main` directly — this branch forked from `main` before that fix existed). Same one-line fix applied here; worth applying to `main` directly too in a follow-up since it's unrelated to this story.
+- This story is entirely real end-to-end today — no placeholder/mock-backed piece remains for notifications, unlike Story 2-42's consent flow at the time it shipped.
 
 ### File List
 
-_(filled in during dev-story)_
+- `apps/web/src/hooks/useNotificationPreferences.ts` (NEW)
+- `apps/web/src/services/settings.service.ts` (MODIFIED — real `updateNotifications`, new types, removed `getNotifications`)
+- `apps/web/src/components/settings/tabs/NotificationsTab.tsx` (REWRITTEN — 4 real toggles, thin renderer over the new hook)
+- `apps/web/src/mocks/api/settings.ts` (MODIFIED — removed `getNotificationSettings`/`updateNotificationSettings`)
+- `apps/web/src/mocks/data/users.ts` (MODIFIED — removed `NotificationSettings` type + `MockUser.notifications` field)
+- `apps/web/src/__tests__/hooks/useNotificationPreferences.test.ts` (NEW)
+- `apps/web/src/__tests__/components/settings/tabs/NotificationsTab.test.tsx` (REWRITTEN)
+- `apps/web/src/__tests__/proxy.test.ts` (MODIFIED — unrelated D65 fix, same one-line bug as `sprint3-master`, inherited from `main`)
