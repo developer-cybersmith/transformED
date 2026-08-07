@@ -13,12 +13,6 @@ export interface LearningPreferences {
     learningStyle: 'visual' | 'auditory' | 'kinesthetic' | 'reading';
 }
 
-export interface NotificationSettings {
-    lessonReady: boolean;
-    weeklyProgress: boolean;
-    streakReminders: boolean;
-}
-
 // UI-only mock preferences. NOT the DPDP attention-tracking consent record —
 // that is tracked separately via the real `user_consents` table (see
 // supabase/migrations/20260702000000_dpdp_user_consents.sql and CLAUDE.md
@@ -33,7 +27,6 @@ export interface PrivacySettings {
 export interface MockUser {
     profile: UserProfile;
     preferences: LearningPreferences;
-    notifications: NotificationSettings;
     privacy: PrivacySettings;
 }
 
@@ -50,11 +43,6 @@ export const mockUser: MockUser = {
         interventionFrequency: "medium",
         explanationStyle: "socratic",
         learningStyle: "visual"
-    },
-    notifications: {
-        lessonReady: true,
-        weeklyProgress: true,
-        streakReminders: false
     },
     privacy: {
         focusDetection: true,
