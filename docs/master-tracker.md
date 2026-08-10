@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-08-06 (Dev 2's Sprint 3 checklist below brought current — Consent flow UI, Tutor intervention card, and CES indicator all shipped (S3-01/S3-03/S3-04). D18, D29, D30 all closed. See Dev 2 tracker §12 for full detail.) — previously 2026-07-29 (Both systemic Dev 1 pipeline bugs reported 2026-07-27 are now fixed and verified end-to-end — backend fixes PR #100/#101, frontend fix (Story 2-33) closing the visible TTS-fallback symptom. Dev 2's Sprint 2 checklist below also brought current — S2-11 through S2-15, S2-26, S2-33 all shipped. See status notes below.)
+**Last updated:** 2026-08-10 (Cross-team reconciliation against each dev's own online tracker. Dev 2: S3-02 AttentionMonitor shipped + S3-07 Notifications UI found already done but never checked off — Sprint 3 now 5/8 for Dev 2. Dev 1/3/4 Sprint 0-2 sections updated from their online tracker (several items marked "per their own tracker, unverified by Dev 2" where this doc previously had stronger caveats, e.g. Dev 4's Sprint 2 "pending integration test" notes and Dev 3's Sprint 2 7-item jump from all-not-started to all-done). Dev 3 and Dev 4's Sprint 3 backend claims (CES formula, DNA fusion, attention ingestion, intervention triggers, cooldowns, caps) were independently verified against real code on `origin/main` with file:line citations — all 10 + 2 confirmed, and 2 of Dev 4's own "Not Started" lines turned out to already be done in the actual repo.) — previously 2026-08-06 (Dev 2's Sprint 3 checklist below brought current — Consent flow UI, Tutor intervention card, and CES indicator all shipped (S3-01/S3-03/S3-04). D18, D29, D30 all closed. See Dev 2 tracker §12 for full detail.) — previously 2026-07-29 (Both systemic Dev 1 pipeline bugs reported 2026-07-27 are now fixed and verified end-to-end — backend fixes PR #100/#101, frontend fix (Story 2-33) closing the visible TTS-fallback symptom. Dev 2's Sprint 2 checklist below also brought current — S2-11 through S2-15, S2-26, S2-33 all shipped. See status notes below.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -54,11 +54,11 @@
 - [x] DB tables: quiz_attempts, teachback_attempts, learner_dna
 - [x] DB tables: onboarding_responses, session_events — subscription table schema also added
 - [x] Foreign key between tables and subscription table *(added sprint 0)*
-- [ ] Payment gateway integration for subscription — 🔵 IN PROGRESS (architecture done, integration in progress) *(added sprint 0)*
+- [x] Payment gateway integration for subscription — ✓ per Dev 3's own tracker (2026-08-10), architecture + integration both complete. Not independently re-verified against code by Dev 2. *(added sprint 0)*
 - [x] 20-question onboarding content written + reviewed — drives Learner DNA scoring
 - [x] GPT-4o-mini provider wired for scoring
 - [x] Teach-back scoring prompt v1 written + tested in isolation
-- [ ] OpenAPI spec published for all 5 assessment endpoints — 🔵 IN PROGRESS (Google SSO client secret added to Supabase; SSO integration in progress)
+- [x] OpenAPI spec published for all 5 assessment endpoints — ✓ per Dev 3's own tracker (2026-08-10). Not independently re-verified against code by Dev 2.
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
 - [x] FastAPI WebSocket handler scaffold
@@ -113,7 +113,7 @@
 - [x] POST /api/assessment/teachback — ✓ LIVE. Accepts {session_id, lesson_id, segment_id, response_text}. Returns {session_id, rubric_scores:{accuracy,completeness,clarity}, overall_score, ces_contribution, feedback}.
 - [x] GPT-4o-mini rubric scoring (accuracy/completeness/clarity) — ✓ done
 - [x] Praise + correction feedback response format — ✓ done (praise only if ≥90, praise+correction if <90)
-- [ ] quiz_attempts + teachback_attempts DB writes working — status unknown
+- [x] quiz_attempts + teachback_attempts DB writes working — ✓ per Dev 3's own tracker (2026-08-10), resolving this section's prior "status unknown." Not independently re-verified against code by Dev 2.
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
 - [x] JWT middleware live and tested on all routes — merge conflicts resolved
@@ -181,20 +181,26 @@
 - [x] **Virtual playback clock + retry re-fetch on media error** (S2-33, added 2026-07-29) — ✓ merged to `main` via PR #106 — this is the frontend half that closes the TTS-fallback bug above. See Dev 2 tracker §11 S2-33.
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
-- [ ] Onboarding assessment scoring logic complete
-- [ ] learner_dna table initial writes (9 sub-dimensions)
-- [ ] Session report generation API live
-- [ ] Jargon hover usage event tracking
-- [ ] Session events instrumentation (tab_switch, retry_after_fail, etc.)
-- [ ] Basic analytics module (per-session aggregations)
-- [ ] PostHog events for all assessment actions
+
+> **2026-08-10:** all 7 lines below flip from not-started to done per Dev 3's own online tracker in one update — a large, one-shot jump this section had no prior visibility into. **None of the 7 have been independently re-verified against code by Dev 2** (unlike the Sprint 2 Dev 1 pipeline audit above, which read every node directly before checking anything off). Flagging rather than silently absorbing, given this exact domain (assessment/session reporting) is where D18 was found — a case where Dev 3's own "live and implemented" claim for session creation was contradicted by a direct grep finding zero `.insert()` calls against `sessions` anywhere in `apps/api`.
+
+- [x] Onboarding assessment scoring logic complete — per Dev 3's own tracker, unverified by Dev 2
+- [x] learner_dna table initial writes (9 sub-dimensions) — per Dev 3's own tracker, unverified by Dev 2
+- [x] Session report generation API live — per Dev 3's own tracker, unverified by Dev 2
+- [x] Jargon hover usage event tracking — per Dev 3's own tracker, unverified by Dev 2
+- [x] Session events instrumentation (tab_switch, retry_after_fail, etc.) — per Dev 3's own tracker, unverified by Dev 2
+- [x] Basic analytics module (per-session aggregations) — per Dev 3's own tracker, unverified by Dev 2
+- [x] PostHog events for all assessment actions — per Dev 3's own tracker, unverified by Dev 2
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
-- [ ] Full 7-state LangGraph StateGraph with real logic — 🔵 code merged + unit tested (mock Redis); pending integration test against live Redis
-- [ ] All 14 transitions wired and tested — 🔵 code merged + 884-line unit test suite; pending integration test
-- [ ] CHECKING IN → QUIZZING → TEACH-BACK → TEACHING flow — 🔵 code merged; pending integration test
-- [ ] Session state restore on reconnect tested — 🔵 code merged; pending live-network test
-- [ ] Intervention message selection from lesson package — 🔵 code merged; pending integration test
+
+> **2026-08-10:** Dev 4's own online tracker now shows all 5 lines below as "Done," upgraded from this section's prior "code merged, pending integration/live-network test" caveats. Retaining those caveats alongside the new claim rather than deleting them — a spreadsheet checkbox doesn't itself confirm the live-Redis/live-network integration test happened; unverified by Dev 2.
+
+- [x] Full 7-state LangGraph StateGraph with real logic — per Dev 4's own tracker (2026-08-10); previously "code merged + unit tested (mock Redis), pending integration test against live Redis" — that live-Redis test has not been independently re-confirmed by Dev 2
+- [x] All 14 transitions wired and tested — per Dev 4's own tracker (2026-08-10); previously "code merged + 884-line unit test suite, pending integration test" — not independently re-confirmed by Dev 2
+- [x] CHECKING IN → QUIZZING → TEACH-BACK → TEACHING flow — per Dev 4's own tracker (2026-08-10); previously "code merged, pending integration test" — not independently re-confirmed by Dev 2
+- [x] Session state restore on reconnect tested — per Dev 4's own tracker (2026-08-10); previously "code merged, pending live-network test" — not independently re-confirmed by Dev 2
+- [x] Intervention message selection from lesson package — per Dev 4's own tracker (2026-08-10); previously "code merged, pending integration test" — not independently re-confirmed by Dev 2
 - [x] WebSocket message types finalized and published — ✓ docs/ws-message-contract.md published. **Needs Dev 2 sign-off.**
 
 ---
@@ -206,7 +212,7 @@
 ### Dev 1 — Infrastructure + Content Pipeline
 - [ ] Eval harness expanded to 20 PDFs
 - [ ] Prompt iteration from eval results (slides + quiz quality)
-- [ ] Circuit breaker implementation (Redis state, 5 failures/2min)
+- [ ] Circuit breaker implementation (Redis state, 5 failures/2min) — 🔵 IN PROGRESS per Dev 1's own tracker (2026-08-10)
 - [ ] Admin panel: job status, cost tracking, failed jobs
 - [ ] Pipeline cost attribution in Langfuse
 
@@ -222,23 +228,29 @@
 - [ ] Mobile responsive audit
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
-- [ ] CES v1 formula implementation (5 weights as env vars)
-- [ ] Per-learner baseline computation
-- [ ] Learner DNA fusion formula live
-- [ ] GPT-4o-mini profile text generation
+
+> **2026-08-10:** the 4 lines below were independently verified against real code on `origin/main` (not just Dev 3's own tracker claim) after the user flagged suspicion that Sprint 3 backend claims might not be on `main` yet. All 4 confirmed with file:line citations — this is a higher confidence level than the "per their own tracker, unverified" items elsewhere in this doc.
+
+- [x] CES v1 formula implementation (5 weights as env vars) — ✓ CONFIRMED, `apps/api/app/modules/assessment/ces.py:19-87`, exact match to CLAUDE.md §11 including the teachback-`None` redistribution. Weights are real `pydantic-settings` fields in `app/config.py:251-255` (`ces_weight_quiz=0.35`, `ces_weight_teachback=0.25`, `ces_weight_behavioral=0.20`, `ces_weight_head_pose=0.12`, `ces_weight_blink=0.08`), env-var overridable.
+- [x] Per-learner baseline computation — ✓ CONFIRMED, `apps/api/app/modules/assessment/ces_baseline.py:50+`, `compute_and_store_ces_baseline()` reads last-N session `ces_final` rows, rolling average, cached at `user:{id}:ces_baseline`.
+- [x] Learner DNA fusion formula live — ✓ CONFIRMED, `apps/api/app/modules/assessment/dna_fusion.py:1-50`, real EMA blend (`new = retain*old + (1-retain)*signal`) across all 9 documented dimensions.
+- [x] GPT-4o-mini profile text generation — ✓ CONFIRMED, `apps/api/app/modules/assessment/dna_profile.py:4-94`, `generate_dna_profile_text` calls `settings.llm_mini` (no hardcoded model string, per CLAUDE.md's rule).
 - [ ] Growth tracking (delta per dimension per session)
 - [ ] Session report: Learner DNA section
 - [ ] Re-assessment prompt after 10 sessions logic
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
-- [ ] Attention signal ingestion from WebSocket live — 🔵 code merged; pending integration test against live Redis
-- [ ] Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s — 🔵 code merged; pending integration test
-- [ ] CES computation in-process (~3–5ms total) — 🔵 code merged; pending integration test
-- [ ] Intervention trigger: 2 consecutive windows below threshold — 🔵 code merged; pending integration test
-- [ ] 2-minute cooldown enforcement (Redis TTL key) — 🔵 code merged; pending integration test
-- [ ] Max 3 distraction interventions per session cap — 🔵 code merged; pending integration test
-- [ ] Fatigue intervention: once per session flag — 🔵 code merged; pending integration test
-- [ ] Type A/B/C intervention routing to correct message — 🔵 code merged; pending integration test
+
+> **2026-08-10:** all 8 lines below independently verified against real code on `origin/main` (not just Dev 4's own tracker claim), after the user flagged suspicion that Sprint 3 backend claims might not be on `main` yet. All 8 confirmed with file:line citations. **Notably, the last 2 lines were marked "Not Started" in Dev 4's own pasted online tracker — the actual repo is ahead of what that tracker shows, the opposite direction from the usual staleness pattern in this doc.**
+
+- [x] Attention signal ingestion from WebSocket live — ✓ CONFIRMED, `apps/api/app/core/websocket.py:162-163` routes `attention_signal` → `_handle_attention_signal` → `app/modules/tutor/service.py::process_attention_signal` — not accepted-and-dropped.
+- [x] Redis CES buffer (LPUSH/LTRIM/LRANGE) computing every 5s — ✓ CONFIRMED, `service.py:306-312`, real `lpush`/`ltrim`/`lrange` on `session:{id}:ces_history`.
+- [x] CES computation in-process (~3–5ms total) — ✓ CONFIRMED, `service.py:296`, `compute_ces(normalized)` called in-process, no external round-trip.
+- [x] Intervention trigger: 2 consecutive windows below threshold — ✓ CONFIRMED, `service.py:321-332` — genuinely checks the last 2 buffered values (`recent = history_raw[:2]`, `all(v < settings.ces_threshold for v in recent)`), not just 1.
+- [x] 2-minute cooldown enforcement (Redis TTL key) — ✓ CONFIRMED, `state_machine/graph.py:187-189`, `redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds)`.
+- [x] Max 3 distraction interventions per session cap — ✓ CONFIRMED, `graph.py:106-126`, `_can_intervene_distraction()` checks a real Redis counter against `settings.max_distraction_per_session`.
+- [x] Fatigue intervention: once per session flag — ✓ CONFIRMED (contradicts the online tracker's own "Not Started"), `graph.py:129-134`, `tutor_fatigue_fired` Redis key.
+- [x] Type A/B/C intervention routing to correct message — ✓ CONFIRMED (contradicts the online tracker's own "Not Started"), `graph.py:61-65,170-195`, real `distraction | confusion | fatigue` message-selection routing.
 
 ---
 
