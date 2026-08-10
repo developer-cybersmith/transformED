@@ -32,6 +32,7 @@ beforeEach(() => {
   usePlayerStore.setState({
     tutorState: 'IDLE',
     wsSendControl: null,
+    wsSendAttentionSignal: null,
     status: 'IDLE',
     activeIntervention: null,
     cesScore: null,
@@ -345,5 +346,60 @@ describe('useLessonSocket', () => {
 
     expect(usePlayerStore.getState().wsSendControl).toBe(secondSendControl);
     expect(usePlayerStore.getState().wsSendControl).not.toBeNull();
+  });
+
+  it('registers wsSendAttentionSignal into the player store once the socket connects, and it forwards to the real socket (S3-02)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull());
+
+    const msg = {
+      type: 'attention_signal' as const,
+      payload: {
+        session_id: 'sess_1',
+        quiz_accuracy: null,
+        teachback_score: null,
+        behavioral_score: 0.8,
+        head_pose_score: 0.9,
+        blink_rate: 14,
+      },
+    };
+    act(() => usePlayerStore.getState().wsSendAttentionSignal!(msg));
+
+    expect(latestFake().sentMessages).toContain(JSON.stringify(msg));
+  });
+
+  it('clears wsSendAttentionSignal in the player store on unmount (S3-02)', async () => {
+    const { unmount } = renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull());
+
+    unmount();
+
+    expect(usePlayerStore.getState().wsSendAttentionSignal).toBeNull();
+  });
+
+  it('a stale instance unmounting after a fresher instance has taken over does not clobber wsSendAttentionSignal (S3-02)', async () => {
+    const first = renderHook(() => useLessonSocket('sess_1'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull());
+    const firstSend = usePlayerStore.getState().wsSendAttentionSignal;
+
+    renderHook(() => useLessonSocket('sess_2'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    act(() => FakeWebSocket.instances[1].simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBe(firstSend));
+    const secondSend = usePlayerStore.getState().wsSendAttentionSignal;
+
+    first.unmount();
+
+    expect(usePlayerStore.getState().wsSendAttentionSignal).toBe(secondSend);
+    expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull();
   });
 });

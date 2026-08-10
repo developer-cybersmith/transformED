@@ -17,6 +17,10 @@ export function useLessonSocket(sessionId: string | null) {
   const socketRef = useRef<LessonSocket | null>(null);
   const [status, setStatus] = useState<LessonSocketStatus>('closed');
 
+  const sendAttentionSignal = useCallback((msg: AttentionSignalMessage) => {
+    socketRef.current?.send(msg);
+  }, []);
+
   useEffect(() => {
     if (!sessionId) return;
     const sid = sessionId; // stable, non-null alias for use inside the nested async init()
@@ -114,6 +118,7 @@ export function useLessonSocket(sessionId: string | null) {
         socketRef.current = socket;
         socket.connect(sid, token);
         usePlayerStore.getState().setWsSendControl(sendControl);
+        usePlayerStore.getState().setWsSendAttentionSignal(sendAttentionSignal);
       } catch (err) {
         // Supabase session lookup failed (network/auth error) — degrade gracefully
         // per AC8 rather than leaving an unhandled rejection and a silently-stuck hook.
@@ -132,13 +137,12 @@ export function useLessonSocket(sessionId: string | null) {
       if (usePlayerStore.getState().wsSendControl === sendControl) {
         usePlayerStore.getState().setWsSendControl(null);
       }
+      if (usePlayerStore.getState().wsSendAttentionSignal === sendAttentionSignal) {
+        usePlayerStore.getState().setWsSendAttentionSignal(null);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, setTutorState]);
-
-  const sendAttentionSignal = useCallback((msg: AttentionSignalMessage) => {
-    socketRef.current?.send(msg);
-  }, []);
+  }, [sessionId, setTutorState, sendAttentionSignal]);
 
   return { status, sendAttentionSignal };
 }

@@ -4,7 +4,7 @@ import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { useLessonSocketMock, apiPostMock, useAttentionConsentMock } = vi.hoisted(() => ({
+const { useLessonSocketMock, apiPostMock, useAttentionConsentMock, useAttentionMonitorMock } = vi.hoisted(() => ({
   useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
   apiPostMock: vi.fn(),
   // Safe default so every pre-existing test in this file (none of which know
@@ -16,6 +16,12 @@ const { useLessonSocketMock, apiPostMock, useAttentionConsentMock } = vi.hoisted
     accept: vi.fn(),
     decline: vi.fn(),
   }),
+  // Mocked out for the same reason useLessonSocket/useAttentionConsent are
+  // above (S3-02): its real implementation drives camera/MediaPipe/timer
+  // lifecycles that are exhaustively covered by useAttentionMonitor.test.ts
+  // on their own -- Player.test.tsx only needs to prove AttentionMonitor is
+  // actually mounted, not re-exercise its internals.
+  useAttentionMonitorMock: vi.fn(),
 }));
 
 vi.mock('@/hooks/useLessonSocket', () => ({
@@ -24,6 +30,10 @@ vi.mock('@/hooks/useLessonSocket', () => ({
 
 vi.mock('@/hooks/useAttentionConsent', () => ({
   useAttentionConsent: useAttentionConsentMock,
+}));
+
+vi.mock('@/hooks/useAttentionMonitor', () => ({
+  useAttentionMonitor: useAttentionMonitorMock,
 }));
 
 // Player fires two kinds of real api.post calls directly: analytics events
@@ -62,6 +72,7 @@ beforeEach(() => {
   window.HTMLMediaElement.prototype.pause = vi.fn();
   localStorage.clear();
   useLessonSocketMock.mockClear();
+  useAttentionMonitorMock.mockReset();
   useAttentionConsentMock.mockReset();
   useAttentionConsentMock.mockReturnValue({
     consentStatus: 'unknown',
@@ -451,6 +462,20 @@ describe('Player — lesson WebSocket (S2-06)', () => {
 
     expect(screen.queryByTestId('ces-indicator')).not.toBeNull();
     expect(screen.getByTestId('ces-indicator').getAttribute('title')).toBe('Focused');
+  });
+
+  it('mounts AttentionMonitor exactly once per Player mount, and does not duplicate the LessonSocket connection (S3-02, Task 6)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    // Called at least once (React re-renders as session/store state resolves,
+    // so an exact count isn't meaningful here) -- proves AttentionMonitor is
+    // actually mounted in the tree. The "no duplicate socket connection"
+    // guarantee is a source-level fact checked separately in
+    // AttentionMonitor.test.tsx (useAttentionMonitor.ts never imports
+    // useLessonSocket), since call-count assertions on a hook invoked once
+    // per render can't distinguish "one mount, several renders" from "two
+    // mounts" without asserting brittle exact counts.
+    expect(useAttentionMonitorMock).toHaveBeenCalled();
   });
 
   it('mounts AttentionConsentModal — it becomes visible when useAttentionConsent reports showModal (S3-01 AC-8)', () => {

@@ -18,6 +18,7 @@ import { CheckingInTransition } from './CheckingInTransition';
 import { TutorInterventionCard } from './TutorInterventionCard';
 import { CESIndicator } from './CESIndicator';
 import { AttentionConsentModal } from './AttentionConsentModal';
+import { AttentionMonitor } from './AttentionMonitor';
 
 interface PlayerProps {
   lesson: LessonPackage;
@@ -324,6 +325,10 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             never block those screens. It reappears on the next opportunity
             since it hasn't been dismissed yet. */}
         {status !== 'QUIZ' && status !== 'TEACH_BACK' && <AttentionConsentModal />}
+
+        {/* Attention monitor (S3-02) — renders nothing visible; self-contained,
+            all consent/tutorState gating lives inside useAttentionMonitor. */}
+        <AttentionMonitor />
 
         {/* Avatar intro/static/outro (S1-05) — self-contained, reads lesson +
             store state directly; renders nothing when no avatar fields are

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { LessonPackage } from '@hie/shared/types/lesson';
-import type { TutorState, TutorInterveneMessage } from '@hie/shared/types/ws';
+import type { TutorState, TutorInterveneMessage, AttentionSignalMessage } from '@hie/shared/types/ws';
 import type { LocalControlOut } from '@/lib/ws/wireTypes';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 
@@ -73,6 +73,12 @@ export interface PlayerStore {
    *  Lets non-component code (AudioTimeline's plain functions) send a
    *  LocalControlOut without holding a direct reference to the socket. */
   wsSendControl: ((msg: LocalControlOut) => void) | null;
+  /** Registered by useLessonSocket once connected; null while disconnected.
+   *  Lets AttentionMonitor (S3-02) send an AttentionSignalMessage over the
+   *  single shared LessonSocket without useLessonSocket being called a
+   *  second time (which would open a second WebSocket connection) — same
+   *  reasoning as wsSendControl above. */
+  wsSendAttentionSignal: ((msg: AttentionSignalMessage) => void) | null;
   /** True while the current segment's <audio> element is stalled/buffering. */
   isBuffering: boolean;
   /** True after the current segment's <audio> element fires a load/decode error. */
@@ -114,6 +120,7 @@ export interface PlayerStore {
   /** Sets/clears (with null) the most recent CES score (S3-04). */
   setCesScore: (score: number | null) => void;
   setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
+  setWsSendAttentionSignal: (fn: ((msg: AttentionSignalMessage) => void) | null) => void;
   setBuffering: (b: boolean) => void;
   setAudioError: (b: boolean) => void;
   /** Clears audioError and increments audioRetryCount to force AudioTimeline's <audio> to remount. */
@@ -145,6 +152,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   cesScore: null,
   quizFiredForSegment: new Set<string>(),
   wsSendControl: null,
+  wsSendAttentionSignal: null,
   isBuffering: false,
   audioError: false,
   audioRetryCount: 0,
@@ -324,6 +332,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   setWsSendControl: (fn) => {
     set({ wsSendControl: fn });
+  },
+
+  setWsSendAttentionSignal: (fn) => {
+    set({ wsSendAttentionSignal: fn });
   },
 
   setBuffering: (b) => {
