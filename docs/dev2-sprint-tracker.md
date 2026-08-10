@@ -9,8 +9,8 @@
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
 | **Last Updated** | 2026-08-06 (**S3-01 Attention Consent Modal shipped** — Story 2-42, 3-agent review passed, all 3 decision-needed + 12 patch findings resolved; switched to the real `POST /api/assessment/consent` endpoint (Story 3-32) after it landed on `main` mid-review, closing **D29**. **S3-04 CES Indicator confirmed shipped** — Story 2-41 (this file had drifted; it was done alongside S3-03 but never updated below). `sprint3-master` synced with `main` (also picked up **D18**/**D30** closures) and pushed. Sprint 3 is now 3/10 done — see §12.) — previously 2026-08-03 (S3-03 TutorInterventionCard shipped — Story 2-40, 3-agent review passed, 9 patches applied. See §12.) — previously 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
-| **Active Sprint** | Sprint 3 — Weeks 6–7 (3/10 done — S3-01, S3-03, S3-04) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is now end-to-end functional; D18/D29/D30 all closed 2026-08-04/05** · Sprint 3 IN PROGRESS (3/10 — S3-01, S3-03, S3-04 done; S3-02 unblocked, next up) |
+| **Active Sprint** | Sprint 3 — Weeks 6–7 (5/8 done — S3-01, S3-02, S3-03, S3-04, S3-07; **note:** this row's "Total Tasks" in §1 has read 10 since before this correction, but only 8 S3-numbered items (S3-01–S3-08) exist anywhere in this file — a pre-existing count discrepancy, not introduced by this correction, left flagged rather than silently resolved) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is now end-to-end functional; D18/D29/D30 all closed 2026-08-04/05** · Sprint 3 IN PROGRESS (5/8 — S3-01, S3-02, S3-03, S3-04, S3-07 done; S3-05/S3-06 unblocked now that S3-02 shipped; S3-08 not started) — **corrected 2026-08-10: S3-02 (AttentionMonitor) shipped same day, and S3-07 (Notifications UI) was found already done (Story 2-43, merged 2026-08-06/07) but its own entry below had never been updated off "NOT STARTED — backend-blocked" since before that backend work landed** |
 
 ---
 
@@ -53,7 +53,7 @@
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **14** | 0 | **0** |
 | Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
-| Sprint 3 | Weeks 6–7 | 10 | **3** | 0 | **7** |
+| Sprint 3 | Weeks 6–7 | 10 (only 8 accounted for — see header note) | **5** | 0 | **3** |
 | Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
 | **Total** | **10 weeks** | **55** | **32** | **0** | **23** |
@@ -508,7 +508,7 @@ Public routes (no auth check):
 **Responsibility:** Single-session report for a completed lesson session: quiz accuracy, teach-back outcome (as a label, never a raw score), CES (as a label), engagement summary, "Study Again" link. Note: the static `/reports` (no session id) — a separate, unbuilt, cross-session "learning progression" page already referenced by Sidebar/QuickActions nav — is NOT this page and remains out of scope/unbuilt.
 
 ### `/settings` — User Settings
-**Status:** ✓ Tabs exist (Profile, Account, Learning, Privacy, Notifications), Sprint 3: notifications real data  
+**Status:** ✓ Tabs exist (Profile, Account, Learning, Privacy, Notifications) — Notifications now wired to real data (S3-07, ✅ done); Profile/Learning/Privacy tabs remain mock-backed, not yet scoped to a story.  
 **Responsibility:** Profile management, notification preferences, privacy settings (attention consent toggle), account deletion.
 
 ### `/pricing` — Pricing Page
@@ -565,7 +565,7 @@ Public routes (no auth check):
 | Tutor intervention card | `components/player/TutorInterventionCard.tsx` | ✅ DONE 2026-08-03 |
 | CES indicator | `components/player/CESIndicator.tsx` | ✅ DONE 2026-08-03 |
 | Attention consent modal | `components/player/AttentionConsentModal.tsx` | ✅ DONE 2026-08-06 |
-| Attention monitor | `components/player/AttentionMonitor.tsx` | ✗ Sprint 3 — next up, unblocked |
+| Attention monitor | `components/player/AttentionMonitor.tsx` | ✅ DONE 2026-08-10 |
 
 ### Onboarding (Sprint 2)
 | Component | File | Status |
@@ -1633,7 +1633,7 @@ Shows as qualitative label: `ces < 0.4 → "Low"`, `0.4–0.7 → "Engaged"`, `>
 
 ### S3-05 — Session Report: Attention Timeline Chart
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED — real CES/attention time-series data only exists once S3-02 is shipping live signals through a real session. Buildable against a mocked shape now (same "build against contract" pattern as S3-01/03/04), but not real-data-testable until S3-02 lands.  
+**Status:** 🔲 NOT STARTED — **unblocked 2026-08-10**, S3-02 shipped and is merged into `sprint3-master`. Real signals only flow once a session actually reaches `TEACHING` with consent granted; live end-to-end signal data hasn't been verified against a real browser/camera yet (blocked separately on the OpenAI account credit issue preventing a fresh lesson from being generated to test against — see chat history 2026-08-10).  
 **Files to create:** `src/components/reports/AttentionChart.tsx`
 
 Area chart of CES over session time. X-axis: minutes. Y-axis: 0–1 (but shown as Low/Med/High labels). Marks interventions as vertical lines.
@@ -1650,19 +1650,19 @@ Use a lightweight chart library (recharts or a canvas-based solution) — no D3 
 
 ### S3-06 — Reports Page
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED — same S3-02 data dependency as S3-05 above.  
+**Status:** 🔲 NOT STARTED — **unblocked 2026-08-10**, same as S3-05 above.  
 **Files:** `src/app/reports/[sessionId]/page.tsx`, `src/components/reports/SessionReport.tsx` (route corrected 2026-07-04 during S2-04 — expand v1 from Sprint 2, not `src/app/reports/page.tsx`)
 
 Add: Attention timeline chart (once MediaPipe/attention data exists), teach-back summary detail. Note: "quiz accuracy by segment" is not buildable as scoped — the real backend's `GET /api/assessment/session/{id}/report` only returns one session-level `quiz_score`, no per-segment breakdown (see S2-04 Dev Notes) — would need a new/extended Dev 3 endpoint first.
 
 ---
 
-### S3-07 — Notifications UI
+### S3-07 — Notifications UI — ✓ DONE 2026-08-06/07
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED — **genuinely backend-blocked, confirmed 2026-08-06.** Checked directly: no `notifications` endpoint of any kind exists anywhere in `apps/api`. Unlike S3-01's consent endpoint, there is no hidden real path here — this needs Dev 1/Dev 3 to build `PATCH /api/users/notifications` first.  
-**Files:** `src/components/settings/tabs/NotificationsTab.tsx` (extend existing)
+**Status:** ✅ DONE — **correcting a stale entry.** This was genuinely backend-blocked when the note above was written (2026-08-06), but Dev 4 shipped `PATCH /api/auth/notifications` (Story 4-23) the same day, and it was wired up here as Story `2-43-notifications-ui.md`, branch `sprint3/s3-07-notifications-ui`, 4-layer adversarial review passed (9 patches applied), merged into `sprint3-master`. This entry was simply never updated afterward. See `docs/DEFECT-REGISTER.md` D60 for the full four-piece cross-team history (Dev 3/Dev 1/Dev 4/Dev 2).  
+**Files:** `src/hooks/useNotificationPreferences.ts` (new), `src/services/settings.service.ts`, `src/components/settings/tabs/NotificationsTab.tsx` (rewritten, 4 toggles incl. new Session Report), removed obsolete mock plumbing.
 
-Wire notification preferences to `PATCH /api/users/notifications`. Toggle: lesson ready email, session report email.
+Wired to the real `PATCH /api/auth/notifications` (not `/api/users/notifications` as originally scoped — corrected against the real endpoint before implementation). Toggles: session report email, lesson ready email, weekly progress email, streak reminders. **Still email preference storage only** — no email-sending pipeline exists yet; that's separately tracked as Sprint 4's "Email notifications (lesson ready, session report)" item.
 
 ---
 

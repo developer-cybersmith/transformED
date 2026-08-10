@@ -211,13 +211,14 @@
 - [ ] Pipeline cost attribution in Langfuse
 
 ### Dev 2 — Lesson Player + Frontend
-- [ ] MediaPipe Face Landmarker WASM integration — unblocked 2026-08-06 (consent gate + D29 both resolved), next up. See Dev 2 tracker §12 S3-02.
-- [ ] 5-signal aggregation every 5 seconds (client-side) — part of S3-02 above
-- [ ] WebSocket attention payload sending (~200 bytes/5s) — part of S3-02 above
+- [x] **MediaPipe Face Landmarker WASM integration** — ✓ 2026-08-10, `AttentionMonitor.tsx` + `useAttentionMonitor.ts`. Story 2-44, 8-layer adversarial review (1 decision resolved: added a CPU delegate fallback; 21 patch findings applied, incl. a real head-pose axis-extraction bug and an AC-1 gating gap, both confirmed via mutation-tested regression tests). Merged into `sprint3-master`. Not yet verified against a real browser/camera end-to-end — blocked on an OpenAI account credit issue preventing a fresh lesson from being generated to test against. See Dev 2 tracker §12 S3-02.
+- [x] 5-signal aggregation every 5 seconds (client-side) — part of S3-02 above
+- [x] WebSocket attention payload sending (~200 bytes/5s) — part of S3-02 above
 - [x] **Consent flow UI (camera permission + privacy notice)** — ✓ 2026-08-06, `AttentionConsentModal.tsx` + `useAttentionConsent.ts`. Writes via Dev 3's real `POST /api/assessment/consent` (Story 3-32), not the originally-assumed `PATCH /api/users/consent`. See Dev 2 tracker §12 S3-01.
 - [x] **Tutor intervention card component (Type A/B/C)** — ✓ 2026-08-03, `TutorInterventionCard.tsx`. See Dev 2 tracker §12 S3-03.
 - [x] **CES indicator in player (subtle, non-intrusive UI)** — ✓ 2026-08-03, `CESIndicator.tsx`. See Dev 2 tracker §12 S3-04.
-- [ ] Session report: attention timeline chart — blocked on S3-02 shipping real signal data. See Dev 2 tracker §12 S3-05.
+- [x] **Notifications UI wired to real backend** — ✓ 2026-08-06/07, `useNotificationPreferences.ts` + `settings.service.ts` + `NotificationsTab.tsx`. Wired to Dev 4's real `PATCH /api/auth/notifications` (Story 4-23) — this line item didn't previously exist in this tracker; added now that it's found done. Storage only, no email-sending pipeline yet (Sprint 4 scope). See Dev 2 tracker §12 S3-07, `docs/DEFECT-REGISTER.md` D60.
+- [ ] Session report: attention timeline chart — unblocked 2026-08-10 now that S3-02 shipped. See Dev 2 tracker §12 S3-05.
 - [ ] Mobile responsive audit
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
