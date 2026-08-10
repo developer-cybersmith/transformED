@@ -358,6 +358,127 @@ _Not yet run._
 
 ---
 
+## Per-developer handoffs
+
+Each dev has one doc with their deviations, their alignment work, what they owe and what they wait
+on. Written to be opened cold and started from.
+
+| Dev | Doc | Owns |
+|---|---|---|
+| Dev 1 | `docs/handoffs/lesson-delivery-dev1.md` | L1 acceptance run · L2 narration cap, timing, truncation |
+| Dev 2 | `docs/handoffs/lesson-delivery-dev2.md` | L3 player verification · L6 MediaPipe + consent UI |
+| Dev 3 | `docs/handoffs/lesson-delivery-dev3.md` | L4 quiz/teach-back on a real package · L5 CES reconciliation |
+| Dev 4 | `docs/handoffs/lesson-delivery-dev4.md` | L5 CES contract · L7 INTERVENING fix + `behavioral_score` |
+
+---
+
+## Interdependency map
+
+```
+        ┌─────────────────────────────────────────────┐
+  USER  │ L0  credits + Langfuse 401 (check D62 first) │
+        └───────────────────┬─────────────────────────┘
+                            │ blocks everything
+                            ▼
+  DEV 1   L2 narration cap ──► L1 acceptance run ──► a REAL lesson_id
+          (start NOW,           (needs L0)               │
+           no credits)                                   │
+                            ┌────────────────────────────┼────────────────┐
+                            ▼                            ▼                ▼
+  DEV 2                   L3 play it            DEV 3  L4 quiz +    DEV 4  observe
+                          measure drift                teach-back          lesson_ready
+                            │                            │                │
+                            │        ┌───────────────────┴────────────────┤
+                            │        ▼                                    ▼
+                            │   SYNC-A: which CES implementation survives (D3 + D4)
+                            │        │
+                            │        ▼
+                            │   SYNC-B: attention wire scale + behavioral_score (D2+D3+D4)
+                            │        │
+                            ▼        ▼
+  DEV 2                   L6 MediaPipe + consent  ◄── BLOCKED until SYNC-B
+                            │
+                            ▼
+  DEV 4                   L7 interventions fire AND recover
+                            │        ▲
+                            │        └── the INTERVENING fix must land BEFORE L6 ships
+                            ▼
+  ALL                     L8  one student, one complete lesson
+```
+
+**The one ordering rule that is not obvious:** Dev 4's `INTERVENING` fix must land **before** Dev 2's
+MediaPipe work. Today the trap is unreachable because no attention signal exists. The moment L6
+ships, the first distraction puts a session in INTERVENING permanently and silently disables the
+tutor for the rest of that lesson.
+
+---
+
+## Integration strategy
+
+**Branching.** One story, one branch off `main`, PR into `main`. **No integration branch this
+time.** Book-scale used one and it hid a real problem — CI triggered only on PRs to `main`, so six
+phases merged with zero checks. The trigger now includes `book-scale/**` and `dev`, but the simplest
+fix is to stop needing it.
+
+**Story-first gate applies** (CLAUDE.md): story file committed alone, pushed, chronologically first
+on the branch, and it carries a `## Scale & Load` section answering the six questions
+(`docs/SCALE-CONTRACT.md`). A story without it goes back.
+
+**Contract freeze points.** These are the only places two devs can break each other silently:
+
+| Sync | What is frozen | Who signs | Blocks |
+|---|---|---|---|
+| **SYNC-A** | Which CES implementation survives, and the `quiz_accuracy is None` behaviour | Dev 3 + Dev 4 | L5, and any CES number anyone quotes |
+| **SYNC-B** | The `attention_signal` wire: field scale (0–1 vs 0–100), `behavioral_score`'s definition, whether partial signals are valid | Dev 2 + Dev 3 + Dev 4 | L6 — Dev 2 cannot emit a frame without it |
+| **SYNC-C** | A real `lesson_id` with working signed URLs exists | Dev 1 announces | L3, L4, and Dev 4's `lesson_ready` observation |
+
+**SYNC-B is the dangerous one.** `packages/shared/types/ws.ts:90-100` declares every field as bare
+`number` and **specifies no range at all**. A contract that is silent is worse than one that
+disagrees — three devs can each be internally consistent and still not interoperate. Freeze it in
+`ws.ts` with explicit ranges, not in a conversation.
+
+**Review gate.** Every PR takes the 6-layer `/bmad-code-review` (CLAUDE.md), including the **Scale &
+Load** layer. Cross-boundary changes — anything touching `ws.ts`, the CES formula, or
+`package_builder` output — additionally need the other affected dev on the PR.
+
+**Verification standard.** Inherited from the gate rule: a phase is done when it is **observed
+working**, with the numbers written into this file. Specific to this sprint, because the failure
+mode is well documented here: **a mock-only assertion does not close a phase.** `test_tts_node.py`
+asserts `mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])` — `b"AUDIO_BYTES"` is not
+audio, and that test passes if every MP3 is corrupt.
+
+---
+
+## Success criteria for this sprint
+
+**The sprint succeeds when one person does this once, unassisted, and the numbers are recorded
+here:**
+
+1. Upload a real textbook → chapters appear
+2. Pick a chapter and a tier → generation starts
+3. Watch the whole lesson: **narration audible, slides in sync**
+4. Answer the quiz at **every** segment boundary
+5. Submit one teach-back
+6. Have attention measured with consent recorded
+7. Receive at least one intervention — **and the session returns to TEACHING afterwards**
+8. Reach a session report
+
+**Measurable exit numbers — none of these exist yet, and all must be recorded:**
+
+| Metric | Target | Status |
+|---|---|---|
+| Cost per lesson | ≤ $3.00 (PRD §12 ceiling) | **never measured** |
+| Generation wall-clock | 5–15 min | never measured end to end |
+| Audio/slide drift | state it in seconds; agree a ceiling once known | **never measured** |
+| Narration length | ≤ 10,000 chars/lesson (`decisionupdate.md` §8) | **cap not implemented** |
+| Truncation warnings | zero, for chapters under ~40 pages | never verified live |
+| CES agreement | one implementation, one number | **two implementations, 1.875× apart** |
+
+**What "done" is not:** green unit tests, a passing MSW suite, or a phase marked Implemented. Every
+defect this project has found was something that reported success without being checked.
+
+---
+
 ## Cross-team asks
 
 | Teammate | What Dev 1 cannot unblock | The ask |
