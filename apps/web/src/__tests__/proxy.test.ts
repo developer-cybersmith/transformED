@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 const { updateSessionMock } = vi.hoisted(() => ({
@@ -59,6 +59,89 @@ function makeSupabaseThrowingStub() {
 
 beforeEach(() => {
   updateSessionMock.mockReset();
+  // Every existing test below predates the beta-access gate and expects a
+  // logged-in user to pass through to the onboarding-gate/protected-route
+  // logic under test -- stub the allowlist to include the standard test
+  // user so those assertions aren't incidentally testing the new gate too.
+  // Tests for the gate itself override this per-test.
+  vi.stubEnv('APPROVED_EMAILS', 'u1@example.com');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe('proxy — beta access gate (APPROVED_EMAILS)', () => {
+  const PROTECTED_PATHS = ['/dashboard', '/library', '/upload', '/settings', '/onboarding', '/lesson/lsn_123'];
+
+  it.each(PROTECTED_PATHS)('redirects %s to /pending-approval when the email is not on the allowlist', async (path) => {
+    vi.stubEnv('APPROVED_EMAILS', 'someone-else@example.com');
+    updateSessionMock.mockResolvedValue({
+      supabaseResponse: { headers: new Headers() },
+      user: { id: 'u1', email: 'u1@example.com' },
+      supabase: makeSupabaseStub({ user_id: 'u1' }),
+    });
+
+    const response = await proxy(makeRequest(path));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('http://localhost:3000/pending-approval');
+  });
+
+  it('fails CLOSED (redirects), not open, when APPROVED_EMAILS is unset entirely', async () => {
+    vi.stubEnv('APPROVED_EMAILS', '');
+    updateSessionMock.mockResolvedValue({
+      supabaseResponse: { headers: new Headers() },
+      user: { id: 'u1', email: 'u1@example.com' },
+      supabase: makeSupabaseStub({ user_id: 'u1' }),
+    });
+
+    const response = await proxy(makeRequest('/dashboard'));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('http://localhost:3000/pending-approval');
+  });
+
+  it('matches case-insensitively against the JWT email claim', async () => {
+    vi.stubEnv('APPROVED_EMAILS', 'U1@Example.com');
+    const passThrough = { headers: new Headers() } as unknown;
+    updateSessionMock.mockResolvedValue({
+      supabaseResponse: passThrough,
+      user: { id: 'u1', email: 'u1@example.com' },
+      supabase: makeSupabaseStub({ user_id: 'u1' }),
+    });
+
+    const response = await proxy(makeRequest('/dashboard'));
+
+    expect(response).toBe(passThrough);
+  });
+
+  it('never redirects /pending-approval itself, even when not approved (would otherwise loop)', async () => {
+    vi.stubEnv('APPROVED_EMAILS', 'someone-else@example.com');
+    const passThrough = { headers: new Headers() } as unknown;
+    updateSessionMock.mockResolvedValue({
+      supabaseResponse: passThrough,
+      user: { id: 'u1', email: 'u1@example.com' },
+      supabase: makeSupabaseStub(null),
+    });
+
+    const response = await proxy(makeRequest('/pending-approval'));
+
+    expect(response).toBe(passThrough);
+  });
+
+  it('does not redirect an unauthenticated request to /pending-approval — /signin takes priority', async () => {
+    vi.stubEnv('APPROVED_EMAILS', '');
+    updateSessionMock.mockResolvedValue({
+      supabaseResponse: 'pass-through',
+      user: null,
+      supabase: makeSupabaseStub(null),
+    });
+
+    const response = await proxy(makeRequest('/dashboard'));
+
+    expect(response.headers.get('location')).toBe('http://localhost:3000/signin');
+  });
 });
 
 describe('middleware — protected route coverage', () => {
@@ -82,7 +165,7 @@ describe('middleware — protected route coverage', () => {
     const passThrough = { headers: new Headers() } as unknown;
     updateSessionMock.mockResolvedValue({
       supabaseResponse: passThrough,
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseStub({ user_id: 'u1' }),
     });
 
@@ -114,7 +197,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
   it.each(GATED_PATHS)('redirects %s to /onboarding when the user has no learner_dna row', async (path) => {
     updateSessionMock.mockResolvedValue({
       supabaseResponse: { headers: new Headers() },
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseStub(null),
     });
 
@@ -128,7 +211,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
     const passThrough = { headers: new Headers() } as unknown;
     updateSessionMock.mockResolvedValue({
       supabaseResponse: passThrough,
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseStub({ user_id: 'u1' }),
     });
 
@@ -141,7 +224,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
     const passThrough = { headers: new Headers() } as unknown;
     updateSessionMock.mockResolvedValue({
       supabaseResponse: passThrough,
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseStub(null),
     });
 
@@ -154,7 +237,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
     const passThrough = { headers: new Headers() } as unknown;
     updateSessionMock.mockResolvedValue({
       supabaseResponse: passThrough,
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseErrorStub(),
     });
 
@@ -167,7 +250,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
     const passThrough = { headers: new Headers() } as unknown;
     updateSessionMock.mockResolvedValue({
       supabaseResponse: passThrough,
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseThrowingStub(),
     });
 
@@ -193,7 +276,7 @@ describe('middleware — onboarding gate (learner_dna)', () => {
     const passThrough = { headers: new Headers() } as unknown;
     updateSessionMock.mockResolvedValue({
       supabaseResponse: passThrough,
-      user: { id: 'u1' },
+      user: { id: 'u1', email: 'u1@example.com' },
       supabase: makeSupabaseStub(null),
     });
 

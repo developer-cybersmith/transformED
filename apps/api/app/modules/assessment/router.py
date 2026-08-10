@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
 from app.core.posthog_client import capture_event
-from app.dependencies import CurrentUser
+from app.dependencies import ApprovedUser, CurrentUser
 
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
@@ -135,7 +135,7 @@ async def submit_quiz(
 )
 async def submit_teachback(
     body: TeachbackSubmission,
-    current_user: CurrentUser,
+    current_user: ApprovedUser,
 ) -> TeachbackResult:
     """Evaluate a student's typed teach-back response using the GPT-4o-mini rubric."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
@@ -219,7 +219,7 @@ async def get_learner_dna(
 )
 async def submit_onboarding_diagnostic(
     body: OnboardingDiagnosticSubmission,
-    current_user: CurrentUser,
+    current_user: ApprovedUser,
 ) -> OnboardingResult:
     """Process 20 onboarding diagnostic answers and generate initial learner DNA profile.
 

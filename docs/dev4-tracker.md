@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-07-24 (Story 4-19 learner-tier-runtime all 6 ACs done; Learner Mode sprint complete 3/3; PR #90 for 4-dev contract sign-off on optional tier field)
-**Overall status:** 31/39 Completed · 6 Partial · 2 Not Started
+**Last updated:** 2026-08-06 (Story 4-23 notifications endpoint complete; D60 Dev 4 scope closed)
+**Overall status:** 32/40 Completed · 6 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -19,11 +19,11 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
+| Sprint 3 | Weeks 6–7 | 9 | 9 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 6 | 0 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **39** | **31** | **6** | **2** |
+| **Total** | | **40** | **32** | **6** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -512,6 +512,20 @@ MAX_DISTRACTION_PER_SESSION=3
     with the s2-1 full_state_machine fatigue tests but never reconciled). Verified sound (hand-traced — `r2 ==
     TEACHING` proves the guard blocked it, not a false-green); a redundant duplicate was discarded. No code change.
   - **AC MET:** once-per-session guard verified end-to-end.
+
+<!-- CHECK:notifications_endpoint -->
+- [Completed] **PATCH /api/auth/notifications — notification preference write endpoint** ✅ 2026-08-06 (Story 4-23, D60 Dev 4 scope; 6-layer adversarial review passed; 16 tests green)
+  - File: `apps/api/app/modules/auth/router.py` + `apps/api/tests/test_notifications_endpoint.py`
+  - `PATCH /api/auth/notifications` — read-merge-upsert: SELECT existing row → merge provided fields → UPSERT full row
+  - `NotificationPatchRequest` with `ConfigDict(extra='forbid')` + empty-body validator
+  - `NotificationPreferencesResponse` returns all 4 prefs + user_id + updated_at (ISO 8601)
+  - JWT enforcement via `CurrentUser` dependency; `user_id` always from `jwt.sub`, never from body
+  - All Supabase calls wrapped in `asyncio.to_thread` (supabase-py v2 is synchronous)
+  - Read failure → HTTP 503 (fail-open would corrupt stored non-default prefs); upsert failure → HTTP 500
+  - Empty upsert response guarded (prevents IndexError from `data[0]`)
+  - 16 tests covering all 12 ACs + upsert-empty-data + extra-body-fields + read-failure-503 guards
+  - **Unblocks:** Dev 2 frontend wiring (D60 final piece)
+  - **AC MET:** all 12 story ACs verified; ruff clean; 106 auth-domain regression tests pass ✅
 
 <!-- CHECK:intervention_routing -->
 - [Completed] **Type A/B/C intervention routing to correct message** — ✓ 2026-06-30
