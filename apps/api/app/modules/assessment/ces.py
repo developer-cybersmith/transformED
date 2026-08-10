@@ -1,12 +1,22 @@
-"""CES v1 formula — Cognitive Engagement Score computation.
+"""CES v2 — Canonical Cognitive Engagement Score computation (Story 3-34).
 
-Pure synchronous computation module. No DB, no LLM, no network, no async.
-Dev 4 imports compute_ces() and calls it on every AttentionSignalMessage
-(every 5 seconds per session) from the WebSocket handler.
+Single authoritative implementation. ``tutor/service.py::compute_ces`` delegates
+to this function. No other module in the codebase computes a CES independently.
 
-Scale contract: returns a float on the 0-100 POINT scale.
-Dev 4 compares the result against settings.ces_threshold (default 50.0)
-to decide whether to trigger an intervention.
+Generalized redistribution (AC 2, Story 3-34):
+    Any signal whose value is ``None`` is excluded from the weighted sum. Its
+    weight is redistributed proportionally across the *present* signals:
+        effective_weight_i = w_i / Σ(w_j for all present j)
+
+    This generalises the §11 teachback-``None`` rule uniformly: when only
+    teachback is ``None`` the present weights sum to 0.75, so each is divided by
+    0.75, reproducing the §11 numbers exactly.
+
+Defects fixed in this story:
+    D61 — ``quiz_accuracy=None`` was treated as 0.0 (weight retained), not
+          redistributed. Now handled identically to teachback=None.
+    D62 — ``tutor/service.py::compute_ces`` was a duplicate implementation with
+          no unit tests. Now it delegates here.
 """
 
 from __future__ import annotations
@@ -20,68 +30,54 @@ def compute_ces(
     *,
     quiz_accuracy: float | None,
     teachback_score: float | None,
-    behavioral: float,
-    head_pose: float,
-    blink: float,
+    behavioral: float | None,
+    head_pose: float | None,
+    blink: float | None,
     settings: Settings,
 ) -> float:
-    """Compute the Cognitive Engagement Score (CES) from 5 normalised signals.
+    """Compute the Cognitive Engagement Score (CES) from up to 5 normalised signals.
 
-    All inputs must be normalised to [0, 1] by the caller; out-of-range values
-    are clamped silently. Returns a float on the 0-100 POINT scale.
+    All present values must be normalised to [0, 1] by the caller; out-of-range
+    values are clamped silently. Returns a float on the 0-100 POINT scale,
+    rounded to 4 decimal places.
 
-    When teachback_score is None (student skipped teach-back), the teachback
-    weight is redistributed proportionally across the remaining 4 signals so
-    that a fully-engaged student can still achieve CES = 100.
-
-    When quiz_accuracy is None (no quiz submitted yet in this window), it is
-    treated as 0.0 with its full weight retained — this is a transient "no
-    data yet" state, not a permanent skip, so no redistribution occurs.
+    Any signal whose value is ``None`` is excluded from the weighted sum and its
+    weight is redistributed proportionally across the remaining non-``None``
+    signals so that a fully-engaged student can always achieve CES = 100.
 
     Args:
-        quiz_accuracy:  Fraction of quiz questions answered correctly (0-1),
-                        or None if no quiz submitted yet (treated as 0.0).
-        teachback_score: Normalised teach-back score (0-1), or None if the
-                         student skipped teach-back for this segment.
-        behavioral:     Normalised on-screen behavioural engagement (0-1).
-        head_pose:      Normalised head-pose attention score from MediaPipe (0-1).
-        blink:          Normalised blink-rate score (0-1; higher = more alert).
-        settings:       App settings carrying CES_WEIGHT_* env vars.
+        quiz_accuracy:   Fraction correct [0-1], or None if no quiz submitted yet.
+        teachback_score: Normalised teach-back score [0-1], or None if skipped.
+        behavioral:      Normalised on-screen behavioural engagement [0-1], or
+                         None when MediaPipe tracking unavailable (Story S3-40).
+        head_pose:       Normalised head-pose attention score [0-1], or None when
+                         MediaPipe face detector is limited (Story S3-40).
+        blink:           Normalised blink-rate score [0-1], or None when MediaPipe
+                         face detector is limited (Story S3-40).
+        settings:        App settings carrying CES_WEIGHT_* env vars.
 
     Returns:
         CES as a float in [0.0, 100.0] on the POINT scale, rounded to 4 d.p.
+        Returns 0.0 when all five signals are None.
     """
-    # Clamp all signals to [0, 1]
-    qa = min(1.0, max(0.0, quiz_accuracy if quiz_accuracy is not None else 0.0))
-    beh = min(1.0, max(0.0, behavioral))
-    hp = min(1.0, max(0.0, head_pose))
-    bl = min(1.0, max(0.0, blink))
+    # Build (value, weight) pairs for all signals; drop None entries.
+    raw_pairs: list[tuple[float | None, float]] = [
+        (quiz_accuracy, settings.ces_weight_quiz),
+        (teachback_score, settings.ces_weight_teachback),
+        (behavioral, settings.ces_weight_behavioral),
+        (head_pose, settings.ces_weight_head_pose),
+        (blink, settings.ces_weight_blink),
+    ]
 
-    if teachback_score is None:
-        # Redistribute teachback weight proportionally across the 4 remaining signals.
-        # remaining is derived from settings so tuning CES_WEIGHT_TEACHBACK automatically
-        # adjusts the redistribution without any code change.
-        remaining = 1.0 - settings.ces_weight_teachback
-        if remaining <= 0.0:
-            # Degenerate config guard: ces_weight_teachback == 1.0 means all other
-            # weights are 0 — division is undefined, safe return is 0.0.
-            return 0.0
-        raw = (
-            qa * (settings.ces_weight_quiz / remaining)
-            + beh * (settings.ces_weight_behavioral / remaining)
-            + hp * (settings.ces_weight_head_pose / remaining)
-            + bl * (settings.ces_weight_blink / remaining)
-        )
-    else:
-        tb = min(1.0, max(0.0, teachback_score))
-        raw = (
-            qa * settings.ces_weight_quiz
-            + tb * settings.ces_weight_teachback
-            + beh * settings.ces_weight_behavioral
-            + hp * settings.ces_weight_head_pose
-            + bl * settings.ces_weight_blink
-        )
+    # Keep only present (non-None) signals; clamp values to [0, 1].
+    present: list[tuple[float, float]] = [
+        (min(1.0, max(0.0, v)), w) for (v, w) in raw_pairs if v is not None
+    ]
 
-    # Guard: weights may sum to up to 1.001 (within ±0.001 model_validator tolerance),
-    # which can push raw slightly above 1.0 in the redistribution branch.
-    return min(100.0, round(raw * 100, 4))
+    weight_sum = sum(w for _, w in present)
+    if weight_sum <= 0.0:
+        # All signals None, or degenerate config where present weights sum to 0.
+        return 0.0
+
+    ces = sum(v * (w / weight_sum) for v, w in present) * 100.0
+    return min(100.0, round(ces, 4))
