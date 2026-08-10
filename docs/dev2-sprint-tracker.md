@@ -1543,10 +1543,10 @@ if (consentStatus !== 'accepted' && !dismissed) {
 
 ---
 
-### S3-02 — AttentionMonitor Component (MediaPipe)
+### S3-02 — AttentionMonitor Component (MediaPipe) — ✓ DONE 2026-08-10
 **Priority:** P0  
-**Status:** 🔲 NOT STARTED — **unblocked as of 2026-08-06.** Its only real dependencies were the consent gate existing (S3-01, ✅ done) and D29 (✅ closed via Story 3-32). The WS client (`useLessonSocket`) already exists to send `attention_signal`; the real gate this component must use is `useAttentionConsent`'s Supabase read (never `localStorage`), per S3-01's CRITICAL SECURITY CONSTRAINT above.  
-**Files to create:** `src/components/player/AttentionMonitor.tsx`, `src/hooks/useAttentionMonitor.ts`
+**Status:** ✅ DONE 2026-08-10 — Story `2-44-attention-monitor.md`, branch `sprint3/s3-02-attention-monitor` (cut from `sprint3-master`, not `main` — hard dependency on Story 2-42's consent hook). 8-layer adversarial review passed (1 decision resolved, 21 patches applied — most consequential: AC-1's `tutorState` gate was never actually implemented, and a head-pose yaw/pitch axis extraction bug, both confirmed by multiple independent reviewers and fixed). Full `apps/web` suite: 906 tests passing.  
+**Files created:** `src/components/player/AttentionMonitor.tsx`, `src/hooks/useAttentionMonitor.ts`, `src/lib/attention/signalMath.ts`
 
 ```
 MediaPipe Face Landmarker WASM → 30fps local processing (never sent)

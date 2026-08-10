@@ -41,6 +41,36 @@ describe('signalMath', () => {
       expect(computeHeadPoseScore(m)).toBeLessThanOrEqual(0.01);
     });
 
+    // Review finding (2026-08-10): the previous formula put a real Y-axis
+    // head-turn (real yaw) entirely into the "pitch" slot and let Z-axis
+    // rotation (roll/head-tilt) leak into the "yaw" slot -- both existing
+    // tests above only exercise pure Y-axis rotations, so neither could
+    // catch it. These two regression tests exercise the other two axes
+    // independently to prove the fix actually separates them.
+    it('a pure X-axis rotation (real head pitch/nod) is measured, and does not leak into the yaw axis', () => {
+      const rad = (30 * Math.PI) / 180;
+      const c = Math.cos(rad);
+      const s = Math.sin(rad);
+      // Column-major 4x4 rotation about X axis by `rad`.
+      const m = [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
+      // A pure 30-degree pitch alone must clamp the score to 0 via the
+      // (tighter) PITCH_THRESHOLD_DEG=20 axis, same as the yaw test above
+      // clamps via YAW_THRESHOLD_DEG=30 -- if pitch were still inert (the
+      // bug), this would incorrectly score 1 (dead-center).
+      expect(computeHeadPoseScore(m)).toBeLessThanOrEqual(0.01);
+    });
+
+    it('a pure Z-axis rotation (roll/head-tilt) does not affect the score at all -- roll is explicitly out of spec', () => {
+      const rad = (30 * Math.PI) / 180;
+      const c = Math.cos(rad);
+      const s = Math.sin(rad);
+      // Column-major 4x4 rotation about Z axis by `rad`.
+      const m = [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      // If roll were still leaking into the yaw axis (the bug), a 30-degree
+      // roll alone would clamp this to 0 instead of leaving it at 1.
+      expect(computeHeadPoseScore(m)).toBe(1);
+    });
+
     it('scores a small deviation (5 degrees) close to but below 1', () => {
       const rad = (5 * Math.PI) / 180;
       const c = Math.cos(rad);

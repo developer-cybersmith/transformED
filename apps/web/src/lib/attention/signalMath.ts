@@ -48,19 +48,31 @@ export function getBlendshapeScore(categories: BlendshapeCategory[], name: strin
 
 /**
  * Extracts yaw/pitch (degrees) from a MediaPipe facialTransformationMatrix --
- * a column-major 4x4 matrix (16 floats). Standard yaw-pitch-roll
- * decomposition of the rotation submatrix; roll is unused (not part of the
- * story's spec).
+ * a column-major 4x4 matrix (16 floats), in MediaPipe's Y-up head-pose axis
+ * convention (Y = vertical/yaw axis, X = horizontal/pitch axis, Z = depth/
+ * roll axis). Uses the Y-X-Z Tait-Bryan decomposition (R = Ry(yaw) *
+ * Rx(pitch) * Rz(roll)) that matches this convention -- NOT the aerospace
+ * Z-Y-X ("first-extracted-angle-is-about-Z") convention, which is a
+ * different axis order and gives yaw/pitch/roll different meanings. Roll is
+ * unused (not part of the story's spec).
+ *
+ * Review finding (2026-08-10): an earlier version used the aerospace Z-Y-X
+ * formulas here, which put a real head-turn (rotation about Y) entirely into
+ * the "pitch" slot and let roll (head-tilt) leak into the "yaw" slot --
+ * verified independently by two reviewers via matrix algebra. Fixed by
+ * switching to the Y-X-Z decomposition and adding regression tests for pure
+ * X-axis (real pitch) and pure Z-axis (roll, must not leak into yaw) inputs,
+ * which the previous tests (pure Y-axis only) could not have caught.
  */
 function extractYawPitchDegrees(matrixData: ArrayLike<number>): { yawDeg: number; pitchDeg: number } {
-  const r00 = matrixData[0];
-  const r10 = matrixData[1];
+  const r01 = matrixData[4];
+  const r11 = matrixData[5];
   const r20 = matrixData[2];
   const r21 = matrixData[6];
   const r22 = matrixData[10];
 
-  const yawRad = Math.atan2(r10, r00);
-  const pitchRad = Math.atan2(-r20, Math.sqrt(r21 * r21 + r22 * r22));
+  const yawRad = Math.atan2(-r20, r22);
+  const pitchRad = Math.atan2(-r21, Math.sqrt(r01 * r01 + r11 * r11));
 
   return { yawDeg: (yawRad * 180) / Math.PI, pitchDeg: (pitchRad * 180) / Math.PI };
 }
