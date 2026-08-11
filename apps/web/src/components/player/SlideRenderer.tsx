@@ -19,9 +19,10 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
   const [failed, setFailed] = useState(false);
   // Story 2-45 AC3/AC4: at most one automatic re-sign attempt for the
   // primary imageUrl, ever, before falling back to fallbackUrl/placeholder.
-  // A plain ref (not a Set) is enough — one SlideImage instance is mounted
-  // per slide for its whole lifetime (SlideRenderer toggles opacity, not
-  // mount/unmount), so there is exactly one primary URL to guard here.
+  // A plain ref (not a Set) is enough — the parent keys this component by
+  // imageUrl (review fix), so a genuinely new asset always gets a fresh
+  // mount and a fresh ref, and one instance is only ever responsible for
+  // exactly one primary URL for its whole lifetime.
   const attemptedResignRef = useRef(false);
 
   // No URLs at all — render nothing rather than a blank space-eating placeholder
@@ -89,6 +90,14 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
       aria-hidden={isActive ? undefined : true}
     >
       <SlideImage
+        // Story 2-45 review fix: keyed on imageUrl so a content refresh that
+        // swaps this slide's image (same slide_id, different image_url --
+        // SlideRenderer's own key at its call site wouldn't catch this)
+        // fully remounts SlideImage, resetting its src/failed state AND its
+        // one-attempt re-sign guard for the genuinely new asset. Falls back
+        // to fallbackUrl for the key when imageUrl is null, so a null-image
+        // slide still has a stable key across re-renders.
+        key={slide.image_url ?? slide.fallback_image_url ?? 'none'}
         imageUrl={slide.image_url}
         fallbackUrl={slide.fallback_image_url}
         title={slide.title}
