@@ -2,7 +2,7 @@
 
 **Sprint:** Sprint 3 (CES v2 hardening)
 **Dev:** Dev 3
-**Status:** In Progress
+**Status:** in-progress
 **Branch:** `sprint3/s3-34-canonical-ces-formula`
 **Depends on:** Story 3-23 (CES v1), Story 3-27 (tutor service)
 
@@ -67,7 +67,7 @@ The AST scan `test_no_hardcoded_weight_literals_in_ces_py` continues to pass. No
 `ruff check apps/api/app/modules/assessment/ces.py apps/api/app/modules/tutor/service.py apps/api/tests/test_ces.py` reports 0 errors.
 
 ### AC 11 — All existing passing tests still pass
-All 20 tests in `test_ces.py` pass under the new implementation. The two tests that described the (now-fixed) bug behavior are updated to assert the correct new behavior.
+All 33 tests in `test_ces.py` pass under the new implementation (27 from Story 3-34, plus 6 patches from the post-review cycle). The two tests that described the (now-fixed) bug behavior are updated to assert the correct new behavior.
 
 ---
 
@@ -80,6 +80,22 @@ All 20 tests in `test_ces.py` pass under the new implementation. The two tests t
 - [ ] **T5** Run `ruff check` and `pytest -m unit` — all pass
 - [ ] **T6** 6-agent code review
 - [ ] **T7** Merge
+
+### Review Findings
+
+- [x] [Review][Decision] NaN signal input has no explicit guard in canonical ces.py — `v is not None` passes NaN, which CPython's `max(0.0, nan)` silently converts to 0.0 (zero engagement instead of absent signal). Options: (a) add `if v is not None and math.isfinite(v)` to the `present` list-comp, (b) raise `ValueError` on non-finite input, (c) document caller must pre-validate. Service-layer already validates for WebSocket path; direct-API callers are unguarded. **RESOLVED: Option (b) — ValueError. P-A applied 2026-08-11.**
+- [x] [Review][Decision] Out-of-range signal clamping is silent — AC5 explicitly accepts this, but CLAUDE.md binding rule "silent truncation is never acceptable" requires either (a) `logger.warning(...)` emitted when `v` is outside [0,1], or (b) a D-nn register entry explicitly accepting clamping as a known, bounded exception with a trigger. **RESOLVED: Option (a) — logger.warning. P-B applied 2026-08-11.**
+- [x] [Review][Patch] weight_sum NaN-blindness: `NaN <= 0.0` is False in IEEE 754, so a NaN weight bypasses the guard, propagates through division, and `min(100.0, NaN)` returns 100.0 — spurious maximum engagement [apps/api/app/modules/assessment/ces.py:78] **APPLIED P1 2026-08-11.**
+- [x] [Review][Patch] Missing `max(0.0, ...)` output lower-bound guard — old service.py had `max(0.0, min(100.0, ces))` but the canonical has only `min(100.0, ...)` [apps/api/app/modules/assessment/ces.py:83] **APPLIED P2 2026-08-11.**
+- [x] [Review][Patch] Add asymmetric redistribution test for quiz_accuracy=None — all current quiz=None tests use all-1.0 for other signals, which cannot catch a weight-swap bug [apps/api/tests/test_ces.py] **APPLIED P3 2026-08-11: `test_quiz_accuracy_none_asymmetric_redistribution`.**
+- [x] [Review][Patch] Add combined test for quiz=None + teachback=0.0 — catches accidental `if not v` instead of `if v is None` treatment [apps/api/tests/test_ces.py] **APPLIED P4 2026-08-11: `test_quiz_none_and_quiz_zero_are_different`.**
+- [x] [Review][Patch] 4dp rounding not discriminatingly tested — add test with a 1/3 value that distinguishes rounded from unrounded output [apps/api/tests/test_ces.py] **APPLIED P5 2026-08-11: `test_output_rounded_to_4dp`.**
+- [x] [Review][Patch] D61 + D62 not entered in docs/DEFECT-REGISTER.md — story references them in its own table but they have no register entries; CLAUDE.md binding rules 5 and 7 require register IDs for all known defects [docs/DEFECT-REGISTER.md] **APPLIED P6 2026-08-11: D61 CLOSED, D62 CLOSED, D63 OPEN/deferred registered.**
+- [x] [Review][Patch] Story inaccuracies: AC11 says "20 tests" (actual: 27), Q6 uses "goroutines" (Python, not Go), Status field still "In Progress" [docs/stories/3-34-canonical-ces-formula.md] **APPLIED P7 2026-08-11: AC11 updated to 33 tests, Q6 fixed to "concurrent async tasks", Status to "in-progress".**
+- [x] [Review][Patch] Add clamping+redistribution combined test (e.g., behavioral=1.5 + teachback=None) to prove clamping occurs before redistribution [apps/api/tests/test_ces.py] **APPLIED P8 2026-08-11: `test_clamping_with_redistribution_combined`.**
+- [x] [Review][Defer] Dead-code paths: behavioral/hp/blink=None redistribution unreachable through production NormalizedSignal wrapper (typed float, not Optional) — S3-40 responsibility, already noted in Dev Notes [apps/api/app/modules/tutor/service.py:107-123] — deferred, pre-existing by design
+- [x] [Review][Defer] No AST scan enforcing CES-uniqueness across repo (AC1 enforcement) — D62 documents the defect; a CI guard would be a separate story [new test file needed] — deferred, separate story scope
+- [x] [Review][Defer] Degenerate weight config (Scale Q5): settings where behavioral+hp+blink weights all = 0.0 AND academic signals None → weight_sum=0 → CES=0 silently with no error — pre-existing, register as D63 [apps/api/app/modules/assessment/ces.py:77-80] — deferred, pre-existing, needs D63 in register
 
 ---
 
@@ -101,7 +117,7 @@ None. Pure function; no I/O.
 The previous implementation treated `behavioral`, `head_pose`, `blink` as required (non-None). This was an inherited assumption from CES v1 before MediaPipe failure handling was considered. Re-derived for S3-40 (MediaPipe failure): all five must be Optional to allow head_pose=None and blink=None when the camera fails. Making them Optional now is forward-compatible and removes a hidden constraint.
 
 **Q6 — Check-then-act under concurrency:**
-No state mutation. Fully concurrent-safe. Multiple goroutines (or async tasks) calling `compute_ces` simultaneously is safe — no shared mutable state.
+No state mutation. Fully concurrent-safe. Multiple concurrent async tasks calling `compute_ces` simultaneously is safe — no shared mutable state, no I/O, pure computation.
 
 ---
 

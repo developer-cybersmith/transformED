@@ -1,15 +1,15 @@
-"""Unit tests for CES v1 formula (Story 3-23).
+"""Unit tests for CES formula (Story 3-23, extended in Story 3-34).
 
-Test count: 20
+Test count: 33
 Coverage:
 - AC 1:  ces.py importable (implicit — import failure cascades to all tests)
 - AC 2:  __all__ contains only "compute_ces"
 - AC 3:  keyword-only signature (positional args raise TypeError)
 - AC 4:  no hardcoded weight literals in ces.py
-- AC 5:  all 5 inputs clamped to [0,1], silent (quiz, teachback, behavioral, head_pose, blink)
+- AC 5:  all 5 inputs clamped to [0,1], with logger.warning (P-B)
 - AC 6:  full 5-signal weighted sum formula
 - AC 7:  teachback_score=None redistributes weights proportionally (per-weight verified)
-- AC 8:  quiz_accuracy=None treated as 0.0, weight retained; teachback=0.0 uses full formula
+- AC 8:  quiz_accuracy=None redistributes weight (D61 fix) — NOT treated as 0.0
 - AC 9:  division-by-zero guard returns 0.0
 - AC 10: all-zeros → 0.0
 - AC 11: all-ones → 100.0 (full formula)
@@ -20,6 +20,12 @@ Coverage:
 - AC 16: custom non-default weights produce correct result
 - AC 17: no forbidden imports in ces.py
 - Output clamp: CES never exceeds 100.0 even when weights sum to 1.001 (±tolerance)
+- P-A:   Non-finite (NaN/±inf) signals raise ValueError (5 parametrized cases)
+- P-B:   Out-of-range values emit logger.warning before clamping
+- P3:    quiz=None asymmetric redistribution with non-trivial values
+- P4:    quiz=None vs quiz=0.0 produce different CES (D61 distinction)
+- P5:    Output rounded to exactly 4 decimal places (1/3 signal)
+- P8:    Clamping and redistribution compose correctly in the same call
 
 All tests are @pytest.mark.unit — no DB, no LLM, no network.
 """
@@ -641,3 +647,180 @@ def test_output_clamped_to_100_when_weights_sum_exceeds_one():
     )
     assert result <= 100.0, f"CES exceeded 100.0: {result}"
     assert result == pytest.approx(100.0, abs=0.001)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Review patches (6-agent review, 2026-08-11) — P-A, P-B, P3, P4, P5, P8
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── P-A: Non-finite signals raise ValueError ──────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "signal_name,override",
+    [
+        ("quiz_accuracy", {"quiz_accuracy": float("nan")}),
+        ("teachback_score", {"teachback_score": float("inf")}),
+        ("behavioral", {"behavioral": float("-inf")}),
+        ("head_pose", {"head_pose": float("nan")}),
+        ("blink", {"blink": float("nan")}),
+    ],
+)
+def test_non_finite_signal_raises_value_error(signal_name: str, override: dict) -> None:
+    """P-A: Non-finite values (NaN, ±inf) raise ValueError — NaN ≠ None.
+
+    NaN means the signal arrived but is numerically corrupt.
+    None means the signal is absent. The function must reject NaN at the
+    contract boundary so upstream corruption is surfaced immediately.
+    """
+    compute_ces = _import_compute_ces()
+    kwargs = dict(
+        quiz_accuracy=0.5,
+        teachback_score=0.5,
+        behavioral=0.5,
+        head_pose=0.5,
+        blink=0.5,
+        settings=_settings(),
+    )
+    kwargs.update(override)
+    with pytest.raises(ValueError, match=signal_name):
+        compute_ces(**kwargs)
+
+
+# ── P-B: Out-of-range values emit logger.warning ─────────────────────────────
+
+
+@pytest.mark.unit
+def test_out_of_range_emits_logger_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """P-B: Values outside [0, 1] emit logger.warning before clamping.
+
+    The warning makes miscalibrated upstream sources detectable in logs
+    without breaking CES computation — clamping still occurs and the
+    result is numerically correct.
+    """
+    import logging
+
+    compute_ces = _import_compute_ces()
+    with caplog.at_level(logging.WARNING, logger="app.modules.assessment.ces"):
+        result = compute_ces(
+            quiz_accuracy=1.5,  # > 1.0 — should warn and clamp to 1.0
+            teachback_score=0.5,
+            behavioral=0.5,
+            head_pose=0.5,
+            blink=0.5,
+            settings=_settings(),
+        )
+    matching = [r for r in caplog.records if "quiz_accuracy" in r.message]
+    assert matching, "Expected a WARNING mentioning 'quiz_accuracy' for out-of-range value 1.5"
+    assert 0.0 < result <= 100.0, "Clamping must still produce a valid CES after the warning"
+
+
+# ── P3: Asymmetric redistribution with non-trivial values ────────────────────
+
+
+@pytest.mark.unit
+def test_quiz_accuracy_none_asymmetric_redistribution() -> None:
+    """P3: quiz=None with non-trivial, non-uniform other values → exact proportional result.
+
+    Distinct values per signal detect weight-swap bugs that all-ones tests would miss.
+    """
+    compute_ces = _import_compute_ces()
+    s = _settings()  # quiz=0.35, tb=0.25, beh=0.20, hp=0.12, blink=0.08
+    result = compute_ces(
+        quiz_accuracy=None,
+        teachback_score=0.8,
+        behavioral=0.6,
+        head_pose=0.4,
+        blink=0.2,
+        settings=s,
+    )
+    remaining = (
+        s.ces_weight_teachback + s.ces_weight_behavioral + s.ces_weight_head_pose + s.ces_weight_blink
+    )
+    expected = (
+        0.8 * s.ces_weight_teachback / remaining
+        + 0.6 * s.ces_weight_behavioral / remaining
+        + 0.4 * s.ces_weight_head_pose / remaining
+        + 0.2 * s.ces_weight_blink / remaining
+    ) * 100.0
+    assert result == pytest.approx(expected, abs=0.001)
+
+
+# ── P4: quiz=None and quiz=0.0 produce different CES (D61 fix) ───────────────
+
+
+@pytest.mark.unit
+def test_quiz_none_and_quiz_zero_are_different() -> None:
+    """P4: quiz_accuracy=None and quiz_accuracy=0.0 must diverge (D61 fix).
+
+    Before D61: quiz=None was treated as 0.0, so both paths gave identical CES.
+    After D61: quiz=None redistributes its 0.35 weight; quiz=0.0 keeps it (contributing 0).
+    """
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    shared = dict(teachback_score=1.0, behavioral=1.0, head_pose=1.0, blink=1.0, settings=s)
+    result_none = compute_ces(quiz_accuracy=None, **shared)
+    result_zero = compute_ces(quiz_accuracy=0.0, **shared)
+    # quiz=None: all 4 others=1.0, remaining=0.65 → CES = 100.0
+    # quiz=0.0: full 5-signal, 0×0.35 + 1×0.65 = 0.65 → CES = 65.0
+    assert result_none == pytest.approx(100.0, abs=0.001)
+    assert result_zero == pytest.approx(65.0, abs=0.001)
+    assert result_none != result_zero
+
+
+# ── P5: Output rounded to exactly 4 decimal places ───────────────────────────
+
+
+@pytest.mark.unit
+def test_output_rounded_to_4dp() -> None:
+    """P5: CES output is rounded to exactly 4 decimal places.
+
+    Uses quiz=1/3 as the sole present signal so the raw value is 33.333...
+    (a non-terminating repeating decimal). round(33.333..., 4) = 33.3333.
+    This distinguishes 4dp rounding from truncation (33.3333) or 2dp rounding (33.33).
+    """
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    result = compute_ces(
+        quiz_accuracy=1 / 3,
+        teachback_score=None,
+        behavioral=None,
+        head_pose=None,
+        blink=None,
+        settings=s,
+    )
+    expected_4dp = round(100.0 / 3.0, 4)  # 33.3333
+    assert result == pytest.approx(expected_4dp, abs=1e-6)
+
+
+# ── P8: Clamping + redistribution compose correctly ──────────────────────────
+
+
+@pytest.mark.unit
+def test_clamping_with_redistribution_combined() -> None:
+    """P8: Out-of-range clamping and None redistribution operate correctly in combination.
+
+    behavioral=1.5 is clamped to 1.0 BEFORE entering the weighted sum.
+    teachback=None triggers weight redistribution across the remaining 4 signals.
+    Both transformations must compose without interfering with each other.
+    """
+    compute_ces = _import_compute_ces()
+    s = _settings()  # quiz=0.35, tb=0.25, beh=0.20, hp=0.12, blink=0.08
+    result = compute_ces(
+        quiz_accuracy=0.8,
+        teachback_score=None,  # redistribute tb weight (0.25) across remaining 0.75
+        behavioral=1.5,  # clamped to 1.0 before contributing
+        head_pose=0.6,
+        blink=0.4,
+        settings=s,
+    )
+    remaining = 1.0 - s.ces_weight_teachback  # 0.75
+    expected = (
+        0.8 * s.ces_weight_quiz / remaining
+        + 1.0 * s.ces_weight_behavioral / remaining  # clamped from 1.5
+        + 0.6 * s.ces_weight_head_pose / remaining
+        + 0.4 * s.ces_weight_blink / remaining
+    ) * 100.0
+    assert result == pytest.approx(expected, abs=0.001)
