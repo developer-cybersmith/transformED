@@ -175,13 +175,14 @@ class Settings(BaseSettings):
         return cls._parse_email_allowlist(v)
 
     # ── Cost limits (PRD §12) ─────────────────────────────────────────────────
+    # A daily per-user spend cap (`max_daily_spend_per_user_usd`) was documented
+    # here but never had an enforcing reader anywhere in the codebase (D48) --
+    # removed rather than left looking like a real control. The per-lesson
+    # ceiling below and `max_concurrent_generations_per_user` are the only
+    # spend controls that actually run.
     max_lesson_cost_usd: float = Field(
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
-    )
-    max_daily_spend_per_user_usd: float = Field(
-        default=10.00,
-        description="Daily per-user AI spend cap in USD",
     )
 
     # ── Book-scale chapter generation gates (Story 1-14, book-scale Phase 6) ──

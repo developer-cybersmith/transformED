@@ -15,7 +15,10 @@ Queries Langfuse API and the `lesson_jobs` table to report:
 
 ## Cost limits (from .env / PRD §14)
 - `MAX_LESSON_COST_USD` = $3.00 hard ceiling per lesson
-- `MAX_DAILY_SPEND_PER_USER_USD` = $10.00 per user per day
+- Daily per-user spend is **not enforced** today — `MAX_DAILY_SPEND_PER_USER_USD` was
+  removed (D48: it had zero enforcing readers and looked like a real control while
+  doing nothing). The only other real spend control is the per-user generation-
+  concurrency cap (`max_concurrent_generations_per_user`).
 
 ## Reference — expected costs (PRD §20)
 | Item | Target |

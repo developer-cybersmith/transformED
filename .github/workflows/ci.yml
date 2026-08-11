@@ -203,17 +203,11 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
           NEXT_PUBLIC_SUPABASE_ANON_KEY: test
-          # ⚠️ FLAGGED, deliberately NOT fixed here (Story W0 Dev Notes).
-          # This is missing the `/api` suffix that `src/lib/api.ts`'s default
-          # carries (`http://localhost:8000/api`). It is harmless today because
-          # this is a BUILD-only variable and nothing calls the API during
-          # `next build` — but any RUNTIME environment that sets
-          # NEXT_PUBLIC_API_URL this way 404s every single request, silently,
-          # because axios would resolve `content/lessons` against the origin
-          # instead of the `/api` mount. Changing a deploy variable is not this
-          # story's business; owner: Dev 1, trigger: first Railway/Fly deploy of
-          # apps/web.
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+          # Fixed here (D31, Story 3-35) — previously missing the `/api` suffix
+          # that `src/lib/api.ts`'s default carries. Story W0 flagged this as a
+          # known trap but deliberately deferred the fix to its named owner
+          # (Dev 1); this is that fix landing.
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api
 
   # ── Contract job (Story W0 AC7) ─────────────────────────────────────────────
   # `apps/web` builds its MSW fixtures from docs/contracts/book-api.v1.json. That
