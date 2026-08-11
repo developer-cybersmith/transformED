@@ -47,7 +47,7 @@ import operator
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, NamedTuple, TypedDict, cast
 from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -149,6 +149,19 @@ class PipelineState(TypedDict, total=False):
     narration_scripts: Annotated[
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, script, narration_style, word_count}]
+
+    # Story 3-39: surfaces _get_section_body's truncation signal, previously
+    # only a logger.warning nobody reads (CLAUDE.md's own headline example of
+    # the banned "silent truncation" pattern). Populated by all 6 Phase 1
+    # economy nodes (same fan-out as segment_summaries etc. above) — each
+    # dispatch appends AT MOST the one entry IT produced (or an empty list),
+    # never re-emits accumulated state, so this channel is additive-safe
+    # under the same operator.add reducer. Consumed by package_builder_node,
+    # which writes it verbatim into lesson_jobs.node_outputs for admin
+    # visibility (mirrors package_builder_degraded's existing pattern).
+    section_truncations: Annotated[
+        list[dict[str, Any]], operator.add
+    ]  # [{segment_id, node, original_chars, capped_chars}]
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
@@ -1938,26 +1951,90 @@ _UNTRUSTED_CONTENT_GUARD = (
 )
 
 
+class _SectionBodyResult(NamedTuple):
+    """Return shape for `_get_section_body` (Story 3-39).
+
+    Was a bare `str` before this story — silently dropping whether truncation
+    happened, other than a `logger.warning` nobody reads. This is CLAUDE.md's
+    own headline example of the banned "silent truncation" pattern (the
+    1,151-page-book-to-4%-of-itself defect). `was_truncated` plus the exact
+    before/after character counts are now available to every one of the 6
+    Phase 1 call sites, so each node can persist the degradation in its OWN
+    `section_truncations` return (see PipelineState) instead of only logging
+    it.
+    """
+
+    body: str
+    was_truncated: bool
+    original_chars: int
+    capped_chars: int
+
+
 def _get_section_body(
-    section: dict[str, Any], *, lesson_id: str, section_id: str, max_chars: int = 6000
-) -> str:
+    section: dict[str, Any], *, lesson_id: str, section_id: str, max_chars: int | None = None
+) -> _SectionBodyResult:
     """Return the section body, capped to *max_chars* for the LLM prompt.
+
+    `max_chars` defaults to `settings.section_body_max_chars` (Story 3-39 —
+    was a hardcoded `= 6000` default before this story, moved to Settings so
+    a future re-tuning is a config change, not an edit to all 6 call sites).
+    The cap VALUE itself is unrevisited-inherited (SCALE-CONTRACT Q5) and out
+    of this story's scope to re-derive — see Settings.section_body_max_chars.
 
     Logs when truncation happens — previously silent, unlike `_cap_words`'s
     logged truncation of the LLM's *output* (Story 2-1 review finding: the
     asymmetry meant a long section's summary/score could be based on only its
-    first ~6000 characters with zero trace of that happening).
+    first ~6000 characters with zero trace of that happening). As of Story
+    3-39, the truncation signal is ALSO returned (not just logged) so callers
+    can persist it, not just print it.
     """
+    if max_chars is None:
+        from app.config import get_settings
+
+        max_chars = get_settings().section_body_max_chars
     body: str = section.get("body", "")
-    if len(body) > max_chars:
+    original_chars = len(body)
+    was_truncated = original_chars > max_chars
+    if was_truncated:
         logger.warning(
             "[%s] section %s body truncated to %d chars (was %d) before LLM call",
             lesson_id,
             section_id,
             max_chars,
-            len(body),
+            original_chars,
         )
-    return body[:max_chars]
+    return _SectionBodyResult(
+        body=body[:max_chars],
+        was_truncated=was_truncated,
+        original_chars=original_chars,
+        capped_chars=max_chars,
+    )
+
+
+def _section_truncation_entries(
+    *, node: str, section_id: str, result: _SectionBodyResult
+) -> list[dict[str, Any]]:
+    """Build this node's `section_truncations` contribution from a
+    `_get_section_body` result (Story 3-39).
+
+    Always returns a list — EMPTY when nothing truncated, never a missing
+    key — matching this codebase's existing convention for always-present-
+    possibly-empty aggregate fields (e.g. `package_builder_degraded`'s
+    `segment_ids`). The caller includes this list in the SAME return dict
+    the node already uses for its own owned channel(s) — never a separate
+    `{**state, ...}` spread (CLAUDE.md's binding rule; see the 16x
+    duplication defect this rule exists to prevent).
+    """
+    if not result.was_truncated:
+        return []
+    return [
+        {
+            "section_id": section_id,
+            "node": node,
+            "original_chars": result.original_chars,
+            "capped_chars": result.capped_chars,
+        }
+    ]
 
 
 # All 6 economy nodes are checkpointed/progress-instrumented as of Story 2-1
@@ -2144,7 +2221,11 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="summarise_segment", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2164,14 +2245,14 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"segment_summaries": []}
+        return {"segment_summaries": [], "section_truncations": section_truncations}
     summary_text = _cap_words(response.summary, 100)
 
     result = {"segment_id": section_id, "summary": summary_text}
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"segment_summaries": [result]}
+    return {"segment_summaries": [result], "section_truncations": section_truncations}
 
 
 class _QuizQuestionLLM(BaseModel):
@@ -2421,7 +2502,11 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="quiz_generator", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2446,10 +2531,10 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         """
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         if salvageable is None:
-            return {"quiz_questions": []}
+            return {"quiz_questions": [], "section_truncations": section_truncations}
         rescued = list(salvageable["questions"])[:n_max]
         if not rescued:
-            return {"quiz_questions": []}
+            return {"quiz_questions": [], "section_truncations": section_truncations}
         logger.warning(
             "[%s] quiz_generator_node: %s — %s; salvaging %d question(s) from the "
             "rejected cache rather than shipping an empty quiz, and re-stamping "
@@ -2465,7 +2550,7 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             checkpoint_key,
             {"segment_id": section_id, "questions": rescued, "tier": tier},
         )
-        return {"quiz_questions": rescued}
+        return {"quiz_questions": rescued, "section_truncations": section_truncations}
 
     # AC-15: single LLM call per segment using _QuizBatchLLM structured output.
     response = await provider.complete_structured(messages, settings.llm_mini, _QuizBatchLLM)
@@ -2596,7 +2681,7 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, batch_checkpoint)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"quiz_questions": valid_results}
+    return {"quiz_questions": valid_results, "section_truncations": section_truncations}
 
 
 def _clamp(value: float, lo: float, hi: float, *, label: str) -> float:
@@ -2681,7 +2766,11 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="segment_complexity", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2705,7 +2794,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"complexity_scores": []}
+        return {"complexity_scores": [], "section_truncations": section_truncations}
 
     score: dict[str, Any] = {
         "segment_id": section_id,
@@ -2723,7 +2812,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, score)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"complexity_scores": [score]}
+    return {"complexity_scores": [score], "section_truncations": section_truncations}
 
 
 class _JargonEntryLLM(BaseModel):
@@ -2793,7 +2882,11 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="jargon_extractor", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2814,7 +2907,7 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"glossary": []}
+        return {"glossary": [], "section_truncations": section_truncations}
 
     # Output shape is nested (`{"segment_id": ..., "data": {"term", "definition"}}`)
     # — 2026-07-14 review finding, same reasoning as `quiz_generator_node`'s
@@ -2841,7 +2934,7 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, {"terms": entries})
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"glossary": entries}
+    return {"glossary": entries, "section_truncations": section_truncations}
 
 
 class _SegmentInterventionsLLM(BaseModel):
@@ -2966,7 +3059,11 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="intervention_messages", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -3030,7 +3127,7 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
         await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"intervention_prompts": [result]}
+    return {"intervention_prompts": [result], "section_truncations": section_truncations}
 
 
 class _NarrationScriptLLM(BaseModel):
@@ -3122,7 +3219,11 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="narration_generator", section_id=section_id, result=section_body
+    )
     if known_narration_style:
         style_instruction = (
             f"This section's narration_style has already been determined as "
@@ -3168,7 +3269,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"narration_scripts": []}
+        return {"narration_scripts": [], "section_truncations": section_truncations}
 
     script = response.script.strip()
     # 2026-07-14 review finding (Edge Case Hunter): unlike quiz_generator_node
@@ -3180,7 +3281,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             "[%s] narration_generator_node: %s — blank script, rejecting", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"narration_scripts": []}
+        return {"narration_scripts": [], "section_truncations": section_truncations}
     word_count = len(script.split())
     # Known complexity's narration_style wins over the LLM's own guess when
     # available (AC-6) — the LLM was only asked to honor it in tone, its own
@@ -3234,7 +3335,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             await _increment_phase1_progress(
                 lesson_id, checkpoint_key, state.get("_total_sections")
             )
-            return {"narration_scripts": []}
+            return {"narration_scripts": [], "section_truncations": section_truncations}
     else:
         logger.info(
             "[%s] narration_generator_node: %s — no target_duration_sec or page range "
@@ -3255,7 +3356,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"narration_scripts": [result]}
+    return {"narration_scripts": [result], "section_truncations": section_truncations}
 
 
 # Rough per-character cost estimates — neither vendor's exact billing API is
@@ -4348,6 +4449,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                     "segment_ids": degraded_segment_ids,
                     "total_segments": len(segments_out),
                 },
+                # Story 3-39: admin-visible record of every section whose body
+                # was truncated to settings.section_body_max_chars before a
+                # Phase 1 LLM call — sibling to package_builder_degraded above.
+                # Always written (empty list = none), never a missing key.
+                "section_truncations": state.get("section_truncations", []),
             },
         }
     ).eq("lesson_id", lesson_id).execute()
