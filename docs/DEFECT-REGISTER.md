@@ -191,6 +191,14 @@ after re-reading the highest in use (D43) per the collision rule at the top of t
 
 ---
 
+### OPEN — found by Dev 3's 2026-08-05 lesson-delivery-dev4 handoff
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| **D63** | **`INTERVENING` is a one-way trap — its only exit event, `intervention_complete`, is dispatched by nothing.** `route_from_intervening` (`apps/api/app/modules/tutor/state_machine/graph.py:337-339`) leaves INTERVENING only on `intervention_complete`. That event is absent from `_CLIENT_DRIVABLE_EVENTS` (`service.py`), absent from `_TUTOR_CLIENT_EVENTS` (`websocket.py`), absent from `wireTypes.ts`, and absent from every server path — and there is no timeout. CES monitoring is TEACHING-gated (CLAUDE.md §10), so the first intervention that ever fires puts the session in INTERVENING permanently and silently disables the tutor for the rest of the lesson; `segment_complete` no-ops in that state, and nothing logs a failure. **Unreachable today only because L6 (MediaPipe attention capture) does not exist yet** — surfaced in Dev 3's 2026-08-05 `docs/handoffs/lesson-delivery-dev4.md`, independently reverified against live code 2026-08-11 (still true, unchanged). Found by review, not by an incident, precisely because no real attention signal has ever driven a real intervention. | High (latent; total and silent once triggered) | **Fix in progress, Dev 4 (this branch):** two independent exits, not one — (a) `intervention_complete` made reachable: client dismisses the intervention overlay → WS event → added to `_CLIENT_DRIVABLE_EVENTS`/`_TUTOR_CLIENT_EVENTS`/`wireTypes.ts`, dispatched; (b) a Redis-TTL timeout independently returns the session to TEACHING if no dismissal ever arrives, so a dropped WS message or a client bug cannot trap a session forever. **Pre-empts the tracker's explicit ordering rule** (`docs/LESSON-DELIVERY-TRACKER.md` §Interdependency map): must land before Dev 2 ships L6. | *(to add — a test forcing INTERVENING and asserting return-to-TEACHING via the event path AND, separately, via the timeout path with no event sent)* |
+
+---
+
 ### OPEN — accepted, with a named trigger
 
 Not "documented limitations". Each carries an explicit condition that reopens it.
