@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Slide, JargonEntry } from '@hie/shared/types/lesson';
 import { JargonHover } from './JargonHover';
+import { refreshSignedUrl } from '@/lib/media/refreshSignedUrl';
 
 // ── SlideImage ────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,12 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
   // Start from primary; fall back to fallback if primary is null
   const [src, setSrc] = useState<string | null>(imageUrl ?? fallbackUrl);
   const [failed, setFailed] = useState(false);
+  // Story 2-45 AC3/AC4: at most one automatic re-sign attempt for the
+  // primary imageUrl, ever, before falling back to fallbackUrl/placeholder.
+  // A plain ref (not a Set) is enough — one SlideImage instance is mounted
+  // per slide for its whole lifetime (SlideRenderer toggles opacity, not
+  // mount/unmount), so there is exactly one primary URL to guard here.
+  const attemptedResignRef = useRef(false);
 
   // No URLs at all — render nothing rather than a blank space-eating placeholder
   if (!imageUrl && !fallbackUrl) return null;
@@ -31,20 +38,32 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
     );
   }
 
-  return (
-    <img
-      data-testid="slide-image"
-      src={src}
-      alt={title}
-      className="w-full aspect-video object-cover rounded-xl"
-      onError={() => {
-        if (fallbackUrl && src !== fallbackUrl) {
+  function handleImageError() {
+    // Most failures here are a signed URL that expired while the student
+    // was away, not a genuinely dead object — try one automatic re-sign of
+    // the primary before falling through to the existing fallback chain.
+    if (imageUrl && src === imageUrl && !attemptedResignRef.current) {
+      attemptedResignRef.current = true;
+      void refreshSignedUrl(imageUrl).then((fresh) => {
+        if (fresh) {
+          setSrc(fresh);
+        } else if (fallbackUrl && fallbackUrl !== imageUrl) {
           setSrc(fallbackUrl);
         } else {
           setFailed(true);
         }
-      }}
-    />
+      });
+      return;
+    }
+    if (fallbackUrl && src !== fallbackUrl) {
+      setSrc(fallbackUrl);
+    } else {
+      setFailed(true);
+    }
+  }
+
+  return (
+    <img data-testid="slide-image" src={src} alt={title} className="w-full aspect-video object-cover rounded-xl" onError={handleImageError} />
   );
 }
 

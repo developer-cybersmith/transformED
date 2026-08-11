@@ -1,8 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, act } from '@testing-library/react';
+import { render, fireEvent, act, waitFor } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/server';
+import { API_BASE } from '@/test/handlers';
 import { AudioTimeline } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
+
+const SIGNED_AUDIO_URL =
+  'https://project.supabase.co/storage/v1/object/sign/lesson-audio/lesson-1/seg-0.mp3?token=expired-token';
+
+function loadLessonWithSignedAudioUrl() {
+  const lesson = structuredClone(mockLessonPackage);
+  lesson.segments[0].narration.audio_url = SIGNED_AUDIO_URL;
+  usePlayerStore.getState().loadLesson(lesson);
+}
 
 let playMock: ReturnType<typeof vi.fn>;
 let pauseMock: ReturnType<typeof vi.fn>;
@@ -405,13 +417,15 @@ describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
     expect(usePlayerStore.getState().isBuffering).toBe(false);
   });
 
-  it('sets audioError(true) on the "error" event', () => {
+  it('sets audioError(true) on the "error" event once the automatic re-sign attempt fails (Story 2-45 -- the attempt is async, so this no longer happens synchronously)', async () => {
     usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
     const { container } = render(<AudioTimeline />);
 
     fireEvent.error(container.querySelector('audio')!);
 
-    expect(usePlayerStore.getState().audioError).toBe(true);
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
   });
 
   it('does not attach an error-triggering src at all for a hasAudio === false segment (degrade path unaffected)', () => {
@@ -457,6 +471,79 @@ describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
     rerender(<AudioTimeline />);
 
     expect(playMock).toHaveBeenCalled();
+  });
+});
+
+describe('AudioTimeline — automatic per-asset re-sign (Story 2-45)', () => {
+  it('swaps in the fresh signed URL and never sets audioError, when the automatic re-sign succeeds', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () =>
+        HttpResponse.json({ signed_url: 'https://project.supabase.co/fresh-signed-mp3', expires_in: 3600 }),
+      ),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(container.querySelector('audio')!.getAttribute('src')).toContain('fresh-signed-mp3');
+    });
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
+  it('attempts the automatic re-sign at most once per segment — a later error on the same segment goes straight to audioError without a second network call', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(1);
+
+    // Simulate the error firing again on the same (still-failing) segment,
+    // independent of the manual Retry button, e.g. a second decode error.
+    act(() => {
+      usePlayerStore.getState().setAudioError(false);
+    });
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(1);
+  });
+
+  it('does not attempt a re-sign for a segment whose audio_url is not a Supabase signed-url shape', async () => {
+    // mockLessonPackage's default audio_url ('/What-Is-SQL-Injection.mp3') does
+    // not match the signed-url shape parseSignedUrl expects.
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ signed_url: 'https://project.supabase.co/fresh', expires_in: 3600 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(0);
   });
 });
 
