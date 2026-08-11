@@ -5,6 +5,10 @@
 - **DEFER-001** — UUID `distinct_id` sent to PostHog with no erasure pathway for DPDP right-to-erasure. PostHog builds a persistent person profile keyed on the user's internal UUID; no code path calls PostHog's person-delete API when an account is deleted. Addressable in a dedicated DPDP compliance story before real-student launch.
 - **DEFER-002** — Synchronous `posthog.capture()` called from async route handlers and service functions (no `asyncio.to_thread` guard). Current PostHog Python SDK v3 queues internally and returns in microseconds — no measurable event-loop impact today. Add `asyncio.to_thread` wrapper if SDK v4 changes flush semantics.
 
+## Deferred from: S3-02 AttentionMonitor (Story 2-44, 2026-08-10)
+
+- **DEFER-012 / D63** — `apps/web/src/hooks/useAttentionMonitor.ts`'s `MODEL_ASSET_URL` points at a floating `float16/latest/face_landmarker.task` tag rather than a pinned MediaPipe model version. Now carries a real register ID — see `docs/DEFECT-REGISTER.md` **D63** for owner, severity, and trigger (Story 2-45 closed the missing-ID gap; the underlying floating-tag risk itself is still open).
+
 ## Deferred from: code review of 2-42-attention-consent-modal (2026-08-06)
 
 - **DEFER-003** — `useAttentionConsent`'s exported `consentStatus`/localStorage dismissal key are easy for a future dev to mistake for the real security-initialize gate, and the hook only re-reads Supabase on mount/user-change, not "every check" as AC-4's wording implies (`apps/web/src/hooks/useAttentionConsent.ts`). Applies to code (`AttentionMonitor`, S3-02) that doesn't exist yet — flag explicitly in that story's Dev Notes rather than fixing here.
