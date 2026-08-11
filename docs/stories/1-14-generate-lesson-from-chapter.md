@@ -350,8 +350,11 @@ Add to `docs/DEFECT-REGISTER.md`:
   (`graph.py:1953-1959`). Trigger: Phase 7's "no truncation warning" assertion firing.
 - **A rung-5 whole-document book cannot be generated from at all** — its single chapter exceeds
   AC11 by design. 0 of 8 corpus books reached rung 5. Trigger: the first one that does.
-- **`max_daily_spend_per_user_usd` (`config.py:150`) has zero call sites** — dead config that reads
-  like a control.
+- ~~**`max_daily_spend_per_user_usd` (`config.py:150`) has zero call sites** — dead config that
+  reads like a control.~~ **CLOSED 2026-08-11 (D48, Story 3-35).** Field removed from
+  `config.py` rather than implemented; the `config.py:150` line reference above is now
+  dead. Kept struck through, not deleted, so this AC22 gap-enumeration list still shows
+  where D48 originated.
 - **`RATE_LIMIT_STORAGE_URL` unset ⇒ `memory://`** ⇒ the limit is per-replica.
 - **300-DPI page rendering and image upload have no count cap** (`extract_subprocess.py:411,473`;
   `graph.py:423,471-479`) — outside `cost_tracker`'s view entirely.

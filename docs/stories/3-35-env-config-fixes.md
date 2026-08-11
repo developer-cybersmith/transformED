@@ -62,16 +62,21 @@ like a safety control while doing nothing.
   back to. (D31)
 - [x] **AC 3.** `.github/workflows/ci.yml`'s `NEXT_PUBLIC_API_URL` build-env value also
   includes `/api`. (D31)
-- [x] **AC 4.** A repo-wide grep for `NEXT_PUBLIC_API_URL.*localhost:8000` with no trailing
-  `/api` returns zero matches in any tracked file under `docs/`, `.env.example`, or
-  `.github/`. (D31 — closes the "six places disagree" problem at the root rather than
-  patching individual sites one at a time.) **Verified:** the only two live-instruction
-  matches were `.env.example:10` and `ci.yml:216` (both fixed); the remaining historical
-  hits (`docs/handoffs/dev2-handoff-2026-07-29.md:159`, `docs/stories/W0-contract-harness.md:88`
-  pre-fix) are dated incident/audit records quoting the bug as evidence, not live setup
-  instructions — deliberately not rewritten, per this repo's own convention of annotating
-  closure rather than erasing history (see `docs/DEFECT-REGISTER.md`'s `~~D18~~` pattern).
-  W0's note was annotated as fixed rather than left stale.
+- [x] **AC 4 — CORRECTED after adversarial review.** Original wording ("returns zero
+  matches") was an overclaim, caught by the Acceptance Auditor layer: the pattern
+  `NEXT_PUBLIC_API_URL.*localhost:8000(?!/api)` run against `git grep -nP` on
+  `docs/`, `.env.example`, `.github/` genuinely returns matches even post-fix —
+  `docs/DEFECT-REGISTER.md`'s own D31 row (quotes the pre-fix value as evidence),
+  `docs/handoffs/dev2-handoff-2026-07-29.md:159` (a dated, preserved incident record),
+  `docs/stories/W0-contract-harness.md:88` (pre-annotation), and this AC's own text
+  (which quotes the pattern). **The corrected claim:** only two matches were **live
+  instruction sites** — `.env.example:10` and `.github/workflows/ci.yml:216` — and both
+  are fixed. Every other match is a dated record *quoting* the bug as evidence, which
+  this repo's convention deliberately preserves rather than rewrites (annotate closure,
+  don't erase history — see `docs/DEFECT-REGISTER.md`'s `~~D18~~` pattern).
+  `docs/stories/W0-contract-harness.md`'s note was annotated as resolved rather than
+  left stale. The AC's original "zero matches" phrasing is left here, struck through in
+  spirit by this correction, as a record of the overclaim rather than a silent rewrite.
 - [x] **AC 5.** `max_daily_spend_per_user_usd` is removed from `apps/api/app/config.py`,
   and every doc reference to it (`.env.example`, `docs/dev1-tracker.md`,
   `.claude/commands/check-costs.md`, and any other hit from a repo-wide grep) is either
@@ -89,11 +94,21 @@ like a safety control while doing nothing.
   regardless of which key drifts next. `apps/api/tests/test_env_example_consistency.py::
   test_env_example_matches_settings_defaults_or_is_a_documented_exception` — RED confirmed
   (failed on `LANGFUSE_HOST` only, no other field), GREEN confirmed after the fix.
-- [x] **AC 7.** A new test resolves the frontend API base URL construction (the same join
-  `apps/web/src/lib/api.ts` performs) against the **documented** `NEXT_PUBLIC_API_URL` value
-  and asserts the result, for a known route (e.g. `content/lessons`), ends in
-  `/api/content/lessons` — not `/content/lessons`. This is the executable settlement the
-  register asked for after three reviewer agents disagreed by eyeballing it.
+- [x] **AC 7 — STRENGTHENED after adversarial review.** A new test resolves the
+  frontend API base URL against the **documented** `NEXT_PUBLIC_API_URL` value for a
+  known route (`content/lessons`) and asserts the result is `/api/content/lessons` —
+  not `/content/lessons`. This is the executable settlement the register asked for
+  after three reviewer agents disagreed by eyeballing it. **Original version
+  reimplemented axios's baseURL-join logic by hand** — the Blind Hunter layer
+  correctly identified this as proving the test author's *model* of axios's behavior,
+  not that the real `apps/web/src/lib/api.ts` module resolves correctly; if `api.ts`
+  ever changed how it builds a request URL, the old test could stay green while the
+  real app 404'd. **Rewritten to import the real `api` instance and call its own
+  `getUri()`** — axios's own URL-resolution utility — instead of reimplementing it. A
+  second test proves the guard is live by asserting it *fails* to match
+  `/api/...` when fed the pre-fix bare-host value (mutation-testing the guard itself,
+  per the standing project lesson that a guard must be shown to discriminate, not just
+  asserted to).
   `apps/web/src/__tests__/lib/api.test.ts` — RED confirmed, GREEN confirmed after the fix.
 - [x] **AC 8.** A grep-based test (or extending `test_unbounded_queries.py`-style source
   scan) asserts `max_daily_spend_per_user_usd` — or whatever name a future daily-spend
@@ -162,7 +177,12 @@ without a test catching it.
 ### Task 3 — D48: dead spend-cap config
 - [x] 3.1 Remove `max_daily_spend_per_user_usd` from `config.py`
 - [x] 3.2 Remove/rewrite every doc reference (`.env.example`, `dev1-tracker.md`,
-  `check-costs.md` — confirmed via repo-wide grep these were the only 3 non-register hits)
+  `check-costs.md`). **CORRECTED after adversarial review:** the original claim
+  ("confirmed via repo-wide grep these were the only 3 non-register hits") was itself
+  wrong — the Acceptance Auditor's independent `git grep -ni "max_daily_spend"` found a
+  4th: `docs/stories/1-14-generate-lesson-from-chapter.md:353`, an AC22
+  gap-enumeration bullet citing the now-dead `config.py:150`. Annotated as closed
+  (struck through, not deleted — same convention as everywhere else in this story).
 - [x] 3.3 Write AC 8's dead-config guard test
 - [x] 3.4 Re-run `max_lesson_cost_usd` and concurrency-cap test suites unmodified, confirm
   still green (AC 9) — `test_config_settings.py` 15/15, `test_generate_lesson_endpoint.py`
@@ -170,8 +190,17 @@ without a test catching it.
 
 ### Task 4 — Defect register + tracker updates
 - [x] 4.1 Close D62, D31, D48 in `docs/DEFECT-REGISTER.md` with commit reference
-- [x] 4.2 Update `docs/dev1-tracker.md` checkbox + Quick Status Dashboard + Last Updated date
-  (per CLAUDE.md's Dev 1 tracker auto-update rule — same response as marking complete)
+- [x] 4.2 — **CORRECTED after adversarial review.** Original wording claimed
+  "checkbox + Quick Status Dashboard + Last Updated date" were all updated; the
+  Acceptance Auditor checked and only the header date + a narrative log entry were
+  actually changed. Correct, precise statement: `docs/dev1-tracker.md`'s header date
+  was updated, and a dated narrative entry (matching this file's own established
+  "gap-fix" convention, e.g. Story 2-31/2-32) was appended. The **Quick Status
+  Dashboard was deliberately not touched** — this bundled defect-fix story isn't one
+  of the tracker's 60 pre-enumerated sprint tasks, so there's no existing checkbox to
+  flip and no dashboard count that should move for it. CLAUDE.md's auto-update rule
+  applies to marking an *existing* tracked task complete; it doesn't require
+  inflating the dashboard for work that was never one of its enumerated rows.
 
 ### Task 5 — 6-layer adversarial review
 - [x] 5.1 Story Quality
@@ -248,6 +277,79 @@ before finalization, two acknowledged-and-accepted scope boundaries recorded bel
   this story introduced no new unbounded read/write and didn't touch that guard's
   scope. **No findings.**
 
+---
+
+## Senior Developer Review — Round 2 (real `/bmad-code-review`, 4 parallel agents)
+
+**Review date:** 2026-08-11
+**Outcome:** APPROVE WITH CHANGES — all applied before merge.
+
+The review above (Round 1) was Dev 1 self-reviewing inline against the 6-layer checklist — real
+diligence, but not independent. The user asked for the actual `/bmad-code-review` skill to run,
+via 4 genuinely independent parallel agents (Blind Hunter — diff only, no project access; Edge
+Case Hunter — diff + project read access; Acceptance Auditor — diff + this story file;
+Scale & Load Hunter — diff + project read access + `docs/SCALE-CONTRACT.md`, mandatory, never
+skipped). Findings below are consolidated across all 4; independent convergence (the same finding
+surfacing from two agents with no shared context) is called out explicitly, since it's the
+strongest signal a finding is real.
+
+### Scale & Load Hunter — clean
+Returned the literal `[]` — a genuine clean result, not a failure or timeout (the distinction
+that matters per the skill's scale gate: a failed/empty/timed-out result would have required a
+re-run before this review could be called complete). Confirmed the diff touches zero runtime
+request paths, no fixed-budget-vs-variable-input caps, no unbounded reads reachable from a
+request path (the new `.py` filesystem scan is test-time only, not request-time — verified), no
+inherited-cap re-derivation needed, no check-then-act sequences, and that D48's removal is
+correctly out of this diff's blast radius (it deletes a control that was already inert; the
+underlying "no daily-spend cap exists" gap is pre-existing and already separately registered).
+
+### Findings — fixed
+
+| # | Finding | Source | Fix |
+|---|---|---|---|
+| 1 | Frontend test reimplemented axios's baseURL-join logic by hand instead of testing the real `apps/web/src/lib/api.ts` module — proves the test author's *model* of axios, not that the real code resolves correctly | Blind Hunter | Rewrote to import the real `api` instance and call its own `getUri()`. Added a second test that mutation-proves the guard is live (fails to match `/api/...` when fed the pre-fix bare-host value). |
+| 2 | `Settings` fields using `default_factory` (`admin_emails`, `approved_emails`) have `.default is PydanticUndefined`, not `None` — would fall through to a false-positive string-mismatch if either key were ever added to `.env.example` | **Blind Hunter AND Edge Case Hunter, independently** | Added an explicit `field.default_factory is not None` skip before the comparison logic. |
+| 3 | Dead-config-reader guard was a bare `identifier in source` substring check — a comment or docstring merely *mentioning* the name would count as "a real reader," exactly the false-green D48's shape needs the guard to refuse | **Blind Hunter AND Edge Case Hunter, independently** | Replaced with `_references_identifier()`: AST-based `Name`/`Attribute` node matching. Comments aren't in the AST at all; a docstring is an `ast.Constant`, not a `Name`/`Attribute`. Added `test_references_identifier_ignores_comments_and_docstrings` proving the discrimination directly (comment/docstring → `False`; real attribute/name reference → `True`). |
+| 4 | AC 4's "returns zero matches" claim is literally false — `git grep -nP 'NEXT_PUBLIC_API_URL.*localhost:8000(?!/api)'` against `docs/`, `.env.example`, `.github/` returns 4 matches (the register's own historical quote, a dated incident record, a pre-annotation W0 note, and the AC text itself) | Acceptance Auditor, independently re-ran the exact grep | Corrected AC 4's wording to the precise claim: only 2 matches were *live instruction sites*, both fixed; the rest are dated records this repo's convention preserves rather than rewrites. |
+| 5 | A 4th doc reference to the deleted field was missed: `docs/stories/1-14-generate-lesson-from-chapter.md:353`, an AC22 gap-enumeration bullet citing the now-dead `config.py:150` — Task 3.2's claim of "only 3 non-register hits" was itself wrong | Acceptance Auditor, independently re-ran the grep | Annotated the bullet closed (struck through, D48/Story 3-35 reference added) rather than deleted, matching this story's own established convention. Task 3.2's text corrected to record the miss and the fix. |
+| 6 | Task 4.2 overclaimed "checkbox + Quick Status Dashboard + Last Updated date" when only the header date and a narrative log entry were actually changed | Acceptance Auditor | Task 4.2 text corrected to the precise claim, with the reasoning for why the dashboard wasn't touched (this story isn't one of the tracker's 60 enumerated tasks). |
+
+### Findings — accepted, not fixed (reasoning recorded, not silently dropped)
+
+- **TS parser's original `line.split('=')[1]` (splits on every `=`, not just the first) and
+  missing comment-stripping** (Blind Hunter). Moot after fixing finding #1 — the rewritten test
+  no longer hand-parses and joins; it reads the documented value once (now via `indexOf('=')`,
+  fixed as part of the rewrite) and hands resolution to the real axios instance.
+- **Non-Python config surfaces weren't scanned for `MAX_DAILY_SPEND` before deleting the field**
+  (Blind Hunter). Independently verified: `grep -rln "MAX_DAILY_SPEND" --include="*.toml"
+  --include="*.sh" --include="*.yml" --include="*.yaml" --include="Dockerfile*" .` returns
+  nothing repo-wide. No live gap today; noted rather than building a broader multi-extension
+  scanner for a surface nothing currently uses.
+- **Self-reported verification claims ("RED-confirmed," "GREEN confirmed") are narrative embedded
+  in the same PR, not independently-attached CI evidence** (Blind Hunter). True of any PR's own
+  commit messages. Mitigated here by the Acceptance Auditor independently re-running both new
+  test files itself and getting the same pass counts — that independent confirmation is what
+  makes the claim trustworthy, not the narrative's own confidence.
+- **`.env.example` key → `Settings` field mapping via bare `.lower()` would miss a field using a
+  custom `alias`** (Blind Hunter). No current `Settings` field uses `alias`/`validation_alias`
+  outside the `NoDecode` list fields already handled separately — verified by reading
+  `config.py` in full. Recorded as a known limitation of the general scanner rather than built
+  out further, since there's nothing live to catch today.
+- **CI comment removal on `ci.yml`'s `NEXT_PUBLIC_API_URL` line dropped the previous caveat
+  explaining why the *wrong* value was tolerable (build-only, no live API calls during `next
+  build`)** (Blind Hunter). The caveat's purpose was justifying tolerance of a since-fixed bug;
+  judged not worth restoring in comment form now that the value is simply correct. Recorded here
+  so the reasoning isn't lost even though the comment text is shorter.
+
+### Re-verification after fixes
+
+All fixes re-run for real after applying them, not assumed:
+- `apps/api/tests/test_env_example_consistency.py` — 3/3 pass (added
+  `test_references_identifier_ignores_comments_and_docstrings`)
+- `apps/web/src/__tests__/lib/api.test.ts` — 2/2 pass (added the mutation-proof test)
+- `ruff check` / `ruff format --check` on the modified backend test file — clean
+- `eslint` on the modified frontend test file — clean
+
 ## Dev Agent Record
 
 ### Implementation Plan
@@ -303,6 +405,8 @@ All 9 ACs implemented and verified green by actually running the suites, not ass
 - `apps/api/tests/test_env_example_consistency.py` — NEW (AC 6, AC 8)
 - `apps/web/src/__tests__/lib/api.test.ts` — NEW (AC 7)
 - `docs/DEFECT-REGISTER.md` — MODIFIED (closed D62, D31, D48)
+- `docs/stories/1-14-generate-lesson-from-chapter.md` — MODIFIED (round 2 — annotated the
+  4th missed D48 doc reference as closed)
 - `docs/stories/3-35-env-config-fixes.md` — MODIFIED (this file)
 
 ### Change Log
@@ -314,3 +418,12 @@ All 9 ACs implemented and verified green by actually running the suites, not ass
   suites (96 tests total) re-run unmodified and green
 - 2026-08-11: Docs updated (`check-costs.md`, `dev1-tracker.md`, `W0-contract-harness.md`);
   `docs/DEFECT-REGISTER.md` D62/D31/D48 closed
+- 2026-08-11: Round 1 self-review (inline, 6 layers) — implementation commit `9d19813`
+- 2026-08-11: Round 2 — real `/bmad-code-review`, 4 independent parallel agents. 6 findings
+  fixed (2 independently confirmed by both Blind Hunter and Edge Case Hunter), 4 accepted
+  with recorded reasoning, Scale & Load Hunter clean (`[]`). Frontend test rewritten to
+  exercise the real `api.ts` module via `getUri()` instead of reimplementing axios's join
+  logic; backend dead-config guard rewritten from a substring check to AST-based
+  `Name`/`Attribute` matching; `default_factory` false-positive guarded; AC 4 and Task 3.2's
+  overclaims corrected; a 4th missed doc reference (`docs/stories/1-14-...md:353`) found
+  and closed; Task 4.2's overclaim corrected. All fixes re-verified green by execution.

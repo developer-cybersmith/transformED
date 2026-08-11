@@ -11,6 +11,7 @@ before the fix lands, they are not testing the real defect.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -48,6 +49,30 @@ def _parse_env_example() -> dict[str, str]:
     return pairs
 
 
+def _references_identifier(source: str, identifier: str) -> bool:
+    """True if `identifier` is a real `Name`/`Attribute` reference in `source`'s AST --
+    not merely present inside a comment, docstring, or unrelated string literal.
+
+    A bare `identifier in source` substring check (the original version of this guard)
+    would count a stray comment or docstring mention as "a real reader," which is
+    exactly the false-green D48's shape needs this guard to refuse. Comments are never
+    part of the AST at all, and a docstring is an `ast.Constant` (a string value), not
+    a `Name`/`Attribute` node -- so neither can satisfy this check by text alone.
+    (Review finding, confirmed independently by two reviewers on Story 3-35's own
+    adversarial review round.)
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == identifier:
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == identifier:
+            return True
+    return False
+
+
 @pytest.mark.unit
 def test_env_example_matches_settings_defaults_or_is_a_documented_exception() -> None:
     """D62's general-purpose guard.
@@ -72,6 +97,13 @@ def test_env_example_matches_settings_defaults_or_is_a_documented_exception() ->
             continue  # not a backend Settings field (e.g. frontend NEXT_PUBLIC_* vars)
         if field.is_required():
             continue  # a real secret -- .env.example is expected to leave it blank/placeholder
+        if field.default_factory is not None:
+            # e.g. admin_emails/approved_emails (default_factory=list): `.default` is
+            # PydanticUndefined, not a comparable scalar. Neither key is in
+            # .env.example today, but a future addition must not silently compare
+            # against the literal string "PydanticUndefined" (review finding,
+            # confirmed independently by two reviewers on Story 3-35's own review).
+            continue
         default = field.default
         if default is None:
             continue  # optional field with no meaningful default to compare
@@ -100,6 +132,22 @@ def test_env_example_matches_settings_defaults_or_is_a_documented_exception() ->
 
 
 @pytest.mark.unit
+def test_references_identifier_ignores_comments_and_docstrings() -> None:
+    """Mutation-proof for `_references_identifier`: a comment or docstring mention must
+    NOT count as a real reference, or the dead-config guard below would be satisfied by
+    exactly the kind of stray mention it exists to refuse."""
+    comment_only = "# uses max_daily_spend_per_user_usd for pricing, see config.py\nx = 1\n"
+    docstring_only = '"""Docs mention max_daily_spend_per_user_usd here."""\nx = 1\n'
+    real_attribute_access = "value = settings.max_daily_spend_per_user_usd\n"
+    real_name_reference = "max_daily_spend_per_user_usd = 10.0\n"
+
+    assert _references_identifier(comment_only, "max_daily_spend_per_user_usd") is False
+    assert _references_identifier(docstring_only, "max_daily_spend_per_user_usd") is False
+    assert _references_identifier(real_attribute_access, "max_daily_spend_per_user_usd") is True
+    assert _references_identifier(real_name_reference, "max_daily_spend_per_user_usd") is True
+
+
+@pytest.mark.unit
 def test_max_daily_spend_per_user_usd_has_a_real_reader_or_does_not_exist() -> None:
     """D48's dead-config guard.
 
@@ -118,7 +166,9 @@ def test_max_daily_spend_per_user_usd_has_a_real_reader_or_does_not_exist() -> N
         str(py_file.relative_to(REPO_ROOT))
         for py_file in APP_DIR.rglob("*.py")
         if py_file != CONFIG_PY
-        and "max_daily_spend_per_user_usd" in py_file.read_text(encoding="utf-8")
+        and _references_identifier(
+            py_file.read_text(encoding="utf-8"), "max_daily_spend_per_user_usd"
+        )
     ]
 
     assert readers, (
