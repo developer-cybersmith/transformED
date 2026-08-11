@@ -3332,6 +3332,84 @@ async def _synthesize_with_fallback(
     return None, "browser", 0.0
 
 
+def _apply_narration_char_cap(
+    narration_scripts: list[dict[str, Any]], max_chars: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Story 3-37 / decisionupdate.md §8: enforce a LESSON-WIDE hard cap of
+    `max_chars` narration characters across ALL segments combined, in list
+    order, before any TTS spend is incurred.
+
+    This cannot live inside narration_generator_node — that node is
+    Send()-dispatched once per section with no visibility into any other
+    section's output (see that node's own docstring). tts_node is the first
+    point all segments' scripts are available together, and it runs
+    immediately before the actual (dominant, 67-73% of lesson cost) TTS
+    spend, so the cap is enforced here instead.
+
+    Once the running total would exceed `max_chars`, the segment that
+    crosses the boundary is truncated to a character-level slice that
+    exactly fills the remaining budget (matching `_get_section_body`'s
+    existing `[:max_chars]` convention) and every segment after it has its
+    script zeroed — treated as empty, which the caller degrades through the
+    same browser-fallback shape already used for a malformed/missing script,
+    never a new shape.
+
+    Always returns a (possibly-unmodified) copy of `narration_scripts` and an
+    explicit degradation record — CLAUDE.md: silent truncation is never
+    acceptable, so the record is written even when `capped` is False, and the
+    caller persists it unconditionally rather than only on the degraded path.
+    """
+    original_total = sum(len(entry.get("script") or "") for entry in narration_scripts)
+
+    if original_total <= max_chars:
+        return narration_scripts, {
+            "capped": False,
+            "original_total_chars": original_total,
+            "capped_total_chars": original_total,
+            "affected_segment_ids": [],
+        }
+
+    capped_scripts: list[dict[str, Any]] = []
+    affected_segment_ids: list[str] = []
+    running_total = 0
+    for entry in narration_scripts:
+        script = entry.get("script") or ""
+        remaining_budget = max_chars - running_total
+        if remaining_budget <= 0:
+            # Cap already fully spent by an earlier segment — zero this one
+            # out. Only record it as "affected" if it actually had content
+            # to lose (an entry that was already blank isn't a new casualty).
+            if script:
+                affected_segment_ids.append(entry.get("segment_id", "<unknown>"))
+            capped_scripts.append({**entry, "script": ""})
+            continue
+        if len(script) > remaining_budget:
+            # The segment that crosses the boundary — truncate to exactly
+            # fill what's left of the budget, character-level slice.
+            capped_scripts.append({**entry, "script": script[:remaining_budget]})
+            affected_segment_ids.append(entry.get("segment_id", "<unknown>"))
+            running_total = max_chars
+        else:
+            capped_scripts.append(entry)
+            running_total += len(script)
+
+    capped_total = sum(len(e.get("script") or "") for e in capped_scripts)
+    logger.warning(
+        "narration_cap: lesson-wide narration exceeded %d chars (total %d) — "
+        "truncated/zeroed %d segment(s): %s",
+        max_chars,
+        original_total,
+        len(affected_segment_ids),
+        affected_segment_ids,
+    )
+    return capped_scripts, {
+        "capped": True,
+        "original_total_chars": original_total,
+        "capped_total_chars": capped_total,
+        "affected_segment_ids": affected_segment_ids,
+    }
+
+
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
     Sarvam -> Azure -> Browser Speech fallback chain.
@@ -3347,6 +3425,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
     `Narration.timestamps` always ships `[]` — Story 2-8's explicit scope
     decision (word-to-slide timestamp mapping deferred to a follow-up story).
     """
+    from app.config import get_settings
     from app.core.db import get_supabase
     from app.schemas.lesson import Narration
 
@@ -3384,6 +3463,17 @@ async def tts_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 86.0, "tts_node")
         return {"audio_assets": cached, "progress_pct": 86.0}
 
+    # Story 3-37 / decisionupdate.md §8: enforce the lesson-wide narration
+    # character cap BEFORE any TTS spend — see _apply_narration_char_cap's
+    # docstring for why this must live here and not in
+    # narration_generator_node. Always applied (a no-op when under budget)
+    # so narration_cap_applied is always available to write below, on
+    # whichever of the two branches actually runs.
+    settings = get_settings()
+    narration_scripts, narration_cap_record = _apply_narration_char_cap(
+        narration_scripts, settings.max_narration_chars_per_lesson
+    )
+
     if not narration_scripts:
         logger.warning(
             "[%s] tts_node: zero narration_scripts — producing empty audio_assets "
@@ -3397,7 +3487,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
         supabase.table("lesson_jobs").update(
             {
                 "last_node": "tts_node",
-                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+                "node_outputs": {
+                    **node_outputs,
+                    "tts_node": audio_assets_out,
+                    "narration_cap_applied": narration_cap_record,
+                },
             }
         ).eq("lesson_id", lesson_id).execute()
     else:
@@ -3426,11 +3520,19 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 if not _SAFE_SEGMENT_ID_RE.match(segment_id):
                     raise ValueError(f"unsafe segment_id for storage path: {segment_id!r}")
 
+                # Story 3-37: a script zeroed by _apply_narration_char_cap
+                # (lesson-wide narration cap already exceeded by an earlier
+                # segment) needs no synthesis call at all — degrade straight
+                # to the browser-fallback shape without spending a network
+                # round-trip on empty text. Checked before the cost-ceiling
+                # pre-check below since there's nothing to synthesize either way.
+                if not script:
+                    audio_bytes, audio_provider, cost = None, "browser", 0.0
                 # Story 2-13/S2-13 AC-3: proactive per-segment cost-ceiling
                 # pre-check, mirroring image_generator_node's existing
                 # pattern (Story 2-9 AC-3) — skip straight to the free
                 # browser fallback rather than attempting Sarvam/Azure.
-                if await check_ceiling(lesson_id):
+                elif await check_ceiling(lesson_id):
                     logger.warning(
                         "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
                         "for segment %s (browser fallback)",
@@ -3501,7 +3603,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
         supabase.table("lesson_jobs").update(
             {
                 "last_node": "tts_node",
-                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+                "node_outputs": {
+                    **node_outputs,
+                    "tts_node": audio_assets_out,
+                    "narration_cap_applied": narration_cap_record,
+                },
             }
         ).eq("lesson_id", lesson_id).execute()
 

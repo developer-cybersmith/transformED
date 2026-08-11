@@ -470,3 +470,168 @@ async def test_azure_empty_audio_bytes_falls_back_to_browser() -> None:
     assert asset["audio_url"] == ""  # no 0-byte upload
     sb.storage.from_.return_value.upload.assert_not_called()
     mock_accumulate.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Story 3-37: Node 8 narration hard cap (decisionupdate.md §8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lesson_wide_narration_cap_truncates_and_zeroes_over_budget_segments() -> None:
+    """Story 3-37 AC 3/4/5/6: 4 segments of 4,000 chars each (16,000 total)
+    exceed the 10,000-char lesson-wide cap. The 3rd segment (crosses the
+    boundary at 8,000 + 4,000 > 10,000) must be truncated to exactly the
+    remaining 2,000-char budget and STILL synthesized; the 4th segment must
+    be treated as empty — zero chars ever reach a TTS provider for it, and
+    it degrades through the existing browser-fallback shape. The sum of
+    characters actually sent to any provider must never exceed the cap, and
+    an explicit, always-present degradation record must be persisted.
+
+    RED (pre-fix): nothing today caps the lesson-wide total — all 16,000
+    chars reach `_synthesize_with_fallback` unmodified, and
+    `node_outputs["narration_cap_applied"]` does not exist at all (KeyError
+    on the assertion below).
+    """
+    from app.modules.content.pipeline.graph import tts_node
+
+    scripts = [
+        {"segment_id": "sec_0", "script": "A" * 4000, "narration_style": "x", "word_count": 1},
+        {"segment_id": "sec_1", "script": "B" * 4000, "narration_style": "x", "word_count": 1},
+        {"segment_id": "sec_2", "script": "C" * 4000, "narration_style": "x", "word_count": 1},
+        {"segment_id": "sec_3", "script": "D" * 4000, "narration_style": "x", "word_count": 1},
+    ]
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=scripts))
+
+    # AC 5: total characters actually sent to the TTS provider never exceeds
+    # the cap — sum every text argument Sarvam was actually invoked with.
+    chars_sent = sum(len(call.args[0]) for call in mock_sarvam.synthesize.call_args_list)
+    assert chars_sent <= 10000, (
+        f"{chars_sent} chars reached the TTS provider — the lesson-wide cap was not enforced"
+    )
+
+    # AC 3: the crossing segment (sec_2) was truncated to the exact remainder.
+    assets = result["audio_assets"]
+    by_id = {a["segment_id"]: a["data"] for a in assets}
+    assert by_id["sec_0"]["script"] == "A" * 4000
+    assert by_id["sec_1"]["script"] == "B" * 4000
+    assert by_id["sec_2"]["script"] == "C" * 2000
+
+    # AC 4: the subsequent segment (sec_3) was zeroed and degraded through
+    # the existing browser-fallback shape — no provider call for it at all.
+    assert by_id["sec_3"]["script"] == ""
+    assert by_id["sec_3"]["audio_provider"] == "browser"
+    assert by_id["sec_3"]["audio_url"] == ""
+    sec_3_calls = [c for c in mock_sarvam.synthesize.call_args_list if c.args[0] == "D" * 4000]
+    assert sec_3_calls == [], "sec_3's full script must never reach a TTS provider"
+
+    # AC 6: explicit, always-present degradation record on the SAME write.
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    assert len(checkpoint_calls) == 1
+    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
+    assert cap_record == {
+        "capped": True,
+        "original_total_chars": 16000,
+        "capped_total_chars": 10000,
+        "affected_segment_ids": ["sec_2", "sec_3"],
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_lesson_wide_narration_under_cap_is_completely_unaffected() -> None:
+    """Story 3-37 AC 2/9: a lesson whose combined narration is well under the
+    10,000-char cap must be completely unaffected — every script byte-for-
+    byte unchanged, no segment skipped, and the degradation record reports
+    capped=False with the two totals equal and an empty affected list."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state())  # 2 short segments, well under 10,000 chars
+
+    assets = result["audio_assets"]
+    by_id = {a["segment_id"]: a["data"] for a in assets}
+    assert by_id["sec_0"]["script"] == "Welcome to the lesson."
+    assert by_id["sec_1"]["script"] == "Here is how it works."
+    total_chars = len("Welcome to the lesson.") + len("Here is how it works.")
+
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    assert len(checkpoint_calls) == 1
+    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
+    assert cap_record == {
+        "capped": False,
+        "original_total_chars": total_chars,
+        "capped_total_chars": total_chars,
+        "affected_segment_ids": [],
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_cap_exact_boundary_fit_is_not_truncated() -> None:
+    """Story 3-37 round-1 self-review edge case: a segment whose length
+    exactly exhausts the remaining budget (running_total + len(script) ==
+    max_chars) must NOT be treated as truncated — only a segment that
+    exceeds the remaining budget counts as affected. Only the segment
+    AFTER the exact-fit one should be zeroed."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    scripts = [
+        {"segment_id": "sec_0", "script": "A" * 10000, "narration_style": "x", "word_count": 1},
+        {"segment_id": "sec_1", "script": "B" * 100, "narration_style": "x", "word_count": 1},
+    ]
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=scripts))
+
+    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
+    assert by_id["sec_0"]["script"] == "A" * 10000  # exact fit, unmodified
+    assert by_id["sec_1"]["script"] == ""  # zeroed, budget already exhausted
+
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
+    assert cap_record == {
+        "capped": True,
+        "original_total_chars": 10100,
+        "capped_total_chars": 10000,
+        "affected_segment_ids": ["sec_1"],
+    }
