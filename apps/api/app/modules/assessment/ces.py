@@ -81,7 +81,7 @@ def compute_ces(
     # P-A: Reject non-finite values — NaN ≠ None (corrupt signal ≠ absent signal).
     # The WebSocket boundary (_parse_signal) validates this for the production path;
     # this check is a defence-in-depth backstop for direct API callers.
-    for name, v in zip(_SIGNAL_NAMES, raw_values):
+    for name, v in zip(_SIGNAL_NAMES, raw_values, strict=True):
         if v is not None and not math.isfinite(v):
             raise ValueError(
                 f"CES signal {name!r} must be finite or None; got {v!r}. "
@@ -100,7 +100,7 @@ def compute_ces(
     # P-B: Warn on out-of-range values before clamping — indicates miscalibrated
     # upstream source (bad MediaPipe calibration, scoring bug). Clamping is still
     # applied silently per AC 5, but the warning makes the anomaly visible in logs.
-    for name, (v, _) in zip(_SIGNAL_NAMES, raw_pairs):
+    for name, (v, _) in zip(_SIGNAL_NAMES, raw_pairs, strict=True):
         if v is not None and not (0.0 <= v <= 1.0):
             logger.warning(
                 "CES signal %r is out of range [0, 1]: %.4f — clamping. "

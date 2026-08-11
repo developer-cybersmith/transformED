@@ -676,14 +676,14 @@ def test_non_finite_signal_raises_value_error(signal_name: str, override: dict) 
     contract boundary so upstream corruption is surfaced immediately.
     """
     compute_ces = _import_compute_ces()
-    kwargs = dict(
-        quiz_accuracy=0.5,
-        teachback_score=0.5,
-        behavioral=0.5,
-        head_pose=0.5,
-        blink=0.5,
-        settings=_settings(),
-    )
+    kwargs: dict = {
+        "quiz_accuracy": 0.5,
+        "teachback_score": 0.5,
+        "behavioral": 0.5,
+        "head_pose": 0.5,
+        "blink": 0.5,
+        "settings": _settings(),
+    }
     kwargs.update(override)
     with pytest.raises(ValueError, match=signal_name):
         compute_ces(**kwargs)
@@ -737,7 +737,10 @@ def test_quiz_accuracy_none_asymmetric_redistribution() -> None:
         settings=s,
     )
     remaining = (
-        s.ces_weight_teachback + s.ces_weight_behavioral + s.ces_weight_head_pose + s.ces_weight_blink
+        s.ces_weight_teachback
+        + s.ces_weight_behavioral
+        + s.ces_weight_head_pose
+        + s.ces_weight_blink
     )
     expected = (
         0.8 * s.ces_weight_teachback / remaining
@@ -760,7 +763,13 @@ def test_quiz_none_and_quiz_zero_are_different() -> None:
     """
     compute_ces = _import_compute_ces()
     s = _settings()
-    shared = dict(teachback_score=1.0, behavioral=1.0, head_pose=1.0, blink=1.0, settings=s)
+    shared = {
+        "teachback_score": 1.0,
+        "behavioral": 1.0,
+        "head_pose": 1.0,
+        "blink": 1.0,
+        "settings": s,
+    }
     result_none = compute_ces(quiz_accuracy=None, **shared)
     result_zero = compute_ces(quiz_accuracy=0.0, **shared)
     # quiz=None: all 4 others=1.0, remaining=0.65 → CES = 100.0
