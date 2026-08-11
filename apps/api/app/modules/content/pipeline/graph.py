@@ -4051,9 +4051,25 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     ) -> dict[str, list[dict[str, Any]]]:
         """Same defensive-skip philosophy as `_index_by_segment_id`, but for
         the one-to-many groupings (slides/quiz/jargon can have multiple
-        entries per segment_id)."""
+        entries per segment_id).
+
+        D32: this docstring's claim was false until this fix — a non-dict
+        item, or an item missing/mis-typed "data", raised AttributeError/
+        KeyError/TypeError and crashed package_builder_node after 100% of
+        the lesson's spend (site 2 of the defect Story 2-31 closed at
+        `_index_by_segment_id`, site 1 — binding rule 6: wrong at site 2
+        means the pattern, not the instance, needed fixing)."""
         result: dict[str, list[dict[str, Any]]] = {}
         for item in items:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "[%s] package_builder_node: malformed %s entry is %s, not a dict — skipped: %r",
+                    lesson_id,
+                    label,
+                    type(item).__name__,
+                    item,
+                )
+                continue
             segment_id = item.get("segment_id")
             if segment_id is None:
                 logger.warning(
@@ -4064,7 +4080,18 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                     item,
                 )
                 continue
-            result.setdefault(segment_id, []).append(item["data"])
+            data = item.get("data")
+            if not isinstance(data, dict):
+                logger.warning(
+                    "[%s] package_builder_node: %s entry for %r has a "
+                    "non-dict or missing 'data' value (%s) — skipped",
+                    lesson_id,
+                    label,
+                    segment_id,
+                    type(data).__name__,
+                )
+                continue
+            result.setdefault(segment_id, []).append(data)
         return result
 
     slides_by_segment = _group_by_segment_id(state.get("slides", []), label="slides")

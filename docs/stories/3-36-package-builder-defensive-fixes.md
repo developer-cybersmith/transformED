@@ -73,31 +73,41 @@ after every LLM/TTS/image call in the lesson has already been billed.
 
 ### Functional
 
-- [ ] **AC 1.** `_group_by_segment_id` checks `isinstance(item, dict)` before calling `.get()`,
+- [x] **AC 1.** `_group_by_segment_id` checks `isinstance(item, dict)` before calling `.get()`,
   mirroring `_index_by_segment_id`'s existing check (`graph.py:3977-3985`). A non-dict item
   (e.g. a bare string) is logged and skipped, not a crash. (D32)
-- [ ] **AC 2.** `_group_by_segment_id` reads `item.get("data")` instead of the raw `item["data"]`
+- [x] **AC 2.** `_group_by_segment_id` reads `item.get("data")` instead of the raw `item["data"]`
   subscript. A dict item missing the `"data"` key is logged and skipped, not a `KeyError`. (D32)
-- [ ] **AC 3.** A `"data"` value that is present but not itself a dict (e.g. a string) is logged
+- [x] **AC 3.** A `"data"` value that is present but not itself a dict (e.g. a string) is logged
   and skipped, mirroring `_index_by_segment_id`'s value-type check (`graph.py:4015-4027`). (D32)
-- [ ] **AC 4.** All three of `_group_by_segment_id`'s callers (`slides_by_segment`,
+- [x] **AC 4.** All three of `_group_by_segment_id`'s callers (`slides_by_segment`,
   `quiz_by_segment`, `jargon_by_segment`) inherit the fix with zero changes to their own call
-  sites — the fix is entirely inside the shared helper.
-- [ ] **AC 5.** `docs/DEFECT-REGISTER.md`'s D33 entry is closed, referencing commit `1c4360b1`
+  sites — the fix is entirely inside the shared helper. Verified by diff: `graph.py:4070-4072`
+  (the three call sites) are byte-for-byte unchanged.
+- [x] **AC 5.** `docs/DEFECT-REGISTER.md`'s D33 entry is closed, referencing commit `1c4360b1`
   and the three existing tests that already prove it, with an explicit note that the fix
   predates this story and this entry corrects a register/reality mismatch, not new work.
 
 ### Non-functional / regression-guard
 
-- [ ] **AC 6.** New tests in `apps/api/tests/unit/test_package_builder_node.py` reproduce all
+- [x] **AC 6.** New tests in `apps/api/tests/unit/test_package_builder_node.py` reproduce all
   three D32 failure modes (non-dict item, missing `"data"` key, non-dict `"data"` value) against
-  `slides` — RED-confirmed against pre-fix code (each must actually crash the node with a real
-  `AttributeError` or `KeyError` before the fix lands), GREEN after.
-- [ ] **AC 7.** No behavior change to any currently-passing test in
+  `slides` — RED-confirmed against pre-fix code, each with the exact predicted crash type
+  (`AttributeError: 'str' object has no attribute 'get'`, `KeyError: 'data'`,
+  `TypeError: 'str' object is not a mapping`), GREEN after.
+- [x] **AC 7.** No behavior change to any currently-passing test in
   `test_package_builder_node.py` — re-run the full file unmodified, confirm still green,
   including `test_segment_with_zero_slides_is_skipped` (a segment whose only slide gets
   skipped by the new defensive check must still be dropped from the final package the same way
   a segment with zero slides already is — same downstream behavior, new upstream cause).
+  **Verified:** full file re-run, 42/42 pass (39 pre-existing + 3 new). Broader
+  `tests/unit/` re-run for additional confidence: 989 passed, 6 skipped, 0 new failures
+  (20 pre-existing PDF-extraction test failures are an environment gap in this sandbox's
+  minimal venv — `docling`/`pypdfium2` weren't installed to avoid Story 3-35's torch/platform
+  issue — and are unrelated to this change; confirmed by their names, all in
+  `test_extract_page_bounds.py`/`test_extract_text_only_mode.py`, nothing touching
+  `package_builder_node`). `ruff check`/`ruff format --check`/`mypy` all clean on both
+  modified files.
 
 ## Scale & Load
 
@@ -131,21 +141,21 @@ lesson after full spend).
 ## Tasks
 
 ### Task 1 — D32: harden `_group_by_segment_id`
-- [ ] 1.1 Add `isinstance(item, dict)` check (AC 1)
-- [ ] 1.2 Replace `item["data"]` with `.get("data")` (AC 2)
-- [ ] 1.3 Add non-dict `"data"` value check (AC 3)
-- [ ] 1.4 Write RED tests for all three failure modes (AC 6)
-- [ ] 1.5 Re-run full `test_package_builder_node.py`, confirm unmodified tests still green
+- [x] 1.1 Add `isinstance(item, dict)` check (AC 1)
+- [x] 1.2 Replace `item["data"]` with `.get("data")` (AC 2)
+- [x] 1.3 Add non-dict `"data"` value check (AC 3)
+- [x] 1.4 Write RED tests for all three failure modes (AC 6)
+- [x] 1.5 Re-run full `test_package_builder_node.py`, confirm unmodified tests still green
   (AC 7)
 
 ### Task 2 — D33: register correction (no new code)
-- [ ] 2.1 Verify via `git blame` that D33's fix and tests already exist (done in story prep,
+- [x] 2.1 Verify via `git blame` that D33's fix and tests already exist (done in story prep,
   recorded above)
-- [ ] 2.2 Close D33 in `docs/DEFECT-REGISTER.md`, pointing at commit `1c4360b1` and the 3
+- [x] 2.2 Close D33 in `docs/DEFECT-REGISTER.md`, pointing at commit `1c4360b1` and the 3
   existing tests (AC 5)
 
 ### Task 3 — Tracker + dashboard
-- [ ] 3.1 Update `docs/dev1-tracker.md` (header date + narrative entry, matching the
+- [x] 3.1 Update `docs/dev1-tracker.md` (header date + narrative entry, matching the
   established Story 2-31/2-32/3-35 convention — this bundled story isn't one of the tracker's
   60 enumerated tasks, so the Quick Status Dashboard is not touched, same reasoning as 3-35)
 
@@ -156,16 +166,110 @@ lesson after full spend).
 - [ ] 5.1 Final commit on `sprint3/s3-36-package-builder-defensive-fixes`
 - [ ] 5.2 Push to remote
 
+## Senior Developer Review (AI) — Round 1, inline self-review
+
+**Review date:** 2026-08-11
+**Outcome:** APPROVE — no blocking findings.
+
+### Layer 1 — Story Quality
+All 7 ACs concrete and independently verified by execution. Story committed alone (branch
+created *before* the story file existed, story file committed *before* any code — verified by
+commit order) before any implementation. Scope boundary explicit, including the D33
+correction's own scope (register-only, no new code). **No findings.**
+
+### Layer 2 — Blind Hunter (Security)
+No new endpoint, no new user-input surface — this is an in-memory defensive-coding fix inside
+one pipeline node's helper function, operating on already-fetched LangGraph state. The new
+`logger.warning(..., item)` calls log pipeline-internal content (slide/quiz/glossary data),
+the same class of content `_index_by_segment_id`'s existing warnings already log one function
+up — not a new logging-sensitivity surface. **No findings.**
+
+### Layer 3 — Test Coverage
+3 new tests, each reproducing a distinct real exception type (`AttributeError`, `KeyError`,
+`TypeError`) against the real `package_builder_node`, asserting on the real assembled package
+— not a mock's call log. **Scope decision, not a gap:** tests exercise the fix via `slides`
+only, not `quiz_questions`/`glossary` too — reasonable, since all three callers share the exact
+same `_group_by_segment_id` function body; testing the same fixed code path through a second
+caller would add no new information, matching this codebase's own stated preference for narrow,
+high-signal tests over redundant ones (`test_unbounded_queries.py`'s scoping rationale). **No
+findings.**
+
+### Layer 4 — AC Completeness
+AC 1–3 map to the three specific hardening changes; AC 4 confirmed by diff (zero changes to the
+three call sites); AC 5 confirmed by the register edit; AC 6/7 confirmed by actual test
+execution (RED then GREEN, plus the full-file and broader-suite re-runs). **No gaps.**
+
+### Layer 5 — Process Integrity
+No hardcoded model strings, no cross-module table access, no LLM calls touched, branch created
+before any file edit (Sprint Task Branch Rule). **Discipline carried forward from Story 3-35's
+own self-caught slip:** D33's "already fixed" claim was verified via `git blame` *before*
+writing any AC that assumed otherwise — the inverse mistake (claiming done before it's true)
+that 3-35 caught in itself didn't recur here in the other direction (assuming something's still
+broken when it's actually already fixed and just needs the register corrected). **No findings.**
+
+### Layer 6 — Scale & Load
+All 6 questions answered, 5 N/A with stated reasons (pure in-memory fix, no request path, no
+new caps/limits/concurrency). Confirmed `test_unbounded_queries.py` is unaffected — this fix
+is inside `app/modules/content/pipeline/**`, which that guard's own docstring explicitly
+exempts (pipeline nodes process a whole chapter by design; that's the unit of work, not a
+`.limit()` question). **No findings.**
+
 ## Dev Agent Record
 
 ### Implementation Plan
-*(populated during implementation)*
+
+1. Verify D33's real status via `git blame` before writing any AC assuming it's still open
+   (found already fixed — commit `1c4360b1`).
+2. Write RED tests reproducing D32's three failure modes against the current, unfixed
+   `_group_by_segment_id`.
+3. Harden `_group_by_segment_id` to match `_index_by_segment_id`'s existing defensive-skip
+   pattern exactly.
+4. Re-run the full `test_package_builder_node.py` file, then the broader `tests/unit/` suite,
+   for regression confidence.
+5. Close D32 and D33 in `docs/DEFECT-REGISTER.md`; update `docs/dev1-tracker.md`.
 
 ### Debug Log
-*(populated during implementation)*
+
+- Reused the minimal venv built for Story 3-35 (`/tmp/story335-venv`) — `graph.py` imports
+  cleanly with the deps already installed there (fastapi/supabase/redis/arq/langgraph/openai/
+  anthropic/langfuse/etc.), no need for `docling`/`pypdfium2` (and therefore no repeat of 3-35's
+  torch/platform issue) since this fix never touches the PDF-extraction subprocess code.
+- Installed `fpdf2` to unlock previously-skipped eval-fixture tests for the broader
+  `tests/unit/` regression pass; this incidentally revealed 20 pre-existing failures in
+  `test_extract_page_bounds.py`/`test_extract_text_only_mode.py` — verified unrelated (PDF
+  extraction, not `package_builder_node`) and caused by this venv still lacking
+  `docling`/`pypdfium2`, not by this story's change.
 
 ### Completion Notes
-*(populated during implementation)*
+
+D32 fixed for real: `_group_by_segment_id` now checks `isinstance(item, dict)`, uses
+`.get("data")` instead of a raw subscript, and validates the `data` value is itself a dict —
+exactly matching `_index_by_segment_id`'s Story 2-31 pattern. 3 new tests, each reproducing a
+distinct real crash type, RED-confirmed then GREEN. D33 found already fixed (commit `1c4360b1`,
+a week before this story), register corrected rather than re-implemented. Full test file
+(42/42), broader suite (989 passed, 20 pre-existing/unrelated environment failures), ruff,
+mypy all clean. Story-first gate honored: branch created before any file edit, story committed
+alone before implementation.
+
+### File List
+
+- `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED (D32 — hardened
+  `_group_by_segment_id`)
+- `apps/api/tests/unit/test_package_builder_node.py` — MODIFIED (3 new RED/GREEN tests)
+- `docs/DEFECT-REGISTER.md` — MODIFIED (closed D32, D33)
+- `docs/dev1-tracker.md` — MODIFIED (header date + narrative entry)
+- `docs/stories/3-36-package-builder-defensive-fixes.md` — MODIFIED (this file)
+
+### Change Log
+
+- 2026-08-11: Story file created (story-first commit `0fc3ca4`, branch
+  `sprint3/s3-36-package-builder-defensive-fixes`). D33 verified already fixed during prep.
+- 2026-08-11: RED phase — 3 failing tests confirmed by execution, each with the exact predicted
+  exception type
+- 2026-08-11: GREEN phase — `_group_by_segment_id` hardened; all 3 new tests pass; full
+  42-test file + broader `tests/unit/` suite re-run, zero regressions
+- 2026-08-11: `docs/DEFECT-REGISTER.md` D32/D33 closed; `docs/dev1-tracker.md` updated
+- 2026-08-11: Round 1 self-review (inline, 6 layers) — no blocking findings
 
 ### File List
 *(populated during implementation)*
