@@ -64,13 +64,13 @@ D80 status updated to `FIXED` with story reference `S3-43` and the guard (`test_
 
 ## BMAD Process Gate
 
-- [ ] Story file committed first
-- [ ] Story commit pushed to `sprint3/s3-43-ws-jwt-hs256-pin` before any implementation
-- [ ] RED tests written and failing
-- [ ] GREEN implementation passes
-- [ ] REFACTOR (no logic changes)
-- [ ] DEFECT-REGISTER.md D80 updated to FIXED + guard name
+- [x] Story file committed first
+- [x] Story commit pushed to `sprint3/s3-43-ws-jwt-hs256-pin` before any implementation
+- [x] RED tests written and failing (7 of 12 failed before implementation)
+- [x] GREEN implementation passes (12/12 pass)
+- [x] REFACTOR (no logic changes — ruff auto-fix only: I001/F401 in test file)
+- [x] DEFECT-REGISTER.md D80 updated to FIXED + guard name
 
 ## Status
 
-Draft
+Done

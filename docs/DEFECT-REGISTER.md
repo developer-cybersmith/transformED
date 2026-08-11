@@ -202,6 +202,19 @@ Not "documented limitations". Each carries an explicit condition that reopens it
 
 ---
 
+### CLOSED — Sprint 3 CES security audit (2026-08-12)
+
+> **ID gap note:** D61–D79 were allocated concurrently on `implemented/ces-fallback` during the
+> Sprint 3 CES production-readiness audit. D80 is the first ID in that range to be fixed on its
+> own branch (`sprint3/s3-43-ws-jwt-hs256-pin`). D61–D79 will be visible after that branch
+> merges to `main`.
+
+| ID | Defect | Class | Decision | Enforcement |
+|----|--------|-------|----------|-------------|
+| ~~D80~~ | **CLOSED 2026-08-12 (Story S3-43, branch `sprint3/s3-43-ws-jwt-hs256-pin`). `dependencies.py:get_current_user` read `jwt.get_unverified_header(token).get("alg")` to branch between HS256 local verification and JWKS remote verification.** Because `alg` is in the unverified header, an attacker could forge `alg=RS256` to trigger a JWKS fetch (DoS amplification) or attempt algorithm confusion. CLAUDE.md §18 states *"JWT verified locally (PyJWT + SUPABASE_JWT_SECRET) — never remote call per request"* — the old code violated this for any token with a forged non-HS256 alg. | EXT (security) | Pin to HS256 by default (`settings.ws_allow_jwks_fallback = False`, env `WS_ALLOW_JWKS_FALLBACK`). When flag is False, `get_current_user` skips `get_unverified_header` entirely and calls `jwt.decode(..., algorithms=["HS256"])` directly — a non-HS256 token raises `InvalidAlgorithmError` and returns 401 before any JWKS fetch. JWKS branch preserved behind the flag for future asymmetric key adoption. | `tests/test_s3_43_jwt_hs256_pin.py::test_jwt_hs256_pin_rejects_non_hs256_by_default` — source-inspection guard verifying `ws_allow_jwks_fallback` appears in `get_current_user`; plus `test_default_path_does_not_call_get_unverified_header` asserting `jwt.get_unverified_header` is never called when flag=False. |
+
+---
+
 ## Part 3 — Process defects
 
 | ID | Defect | Decision | Enforcement |

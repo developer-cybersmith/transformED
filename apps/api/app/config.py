@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = Field(
         ..., description="JWT secret from Supabase dashboard — used for local verification"
     )
+    ws_allow_jwks_fallback: bool = Field(
+        default=False,
+        description=(
+            "When False (default), JWT verification pins to HS256 and never reads the unverified "
+            "alg header — a forged alg cannot trigger a JWKS fetch or algorithm-confusion attack "
+            "(D80 fix). Set to True only if the Supabase project has migrated to asymmetric JWKS "
+            "signing keys (ES256/RS256). (env: WS_ALLOW_JWKS_FALLBACK)"
+        ),
+    )
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     redis_url: str = Field(default="redis://localhost:6379/0", description="Redis connection URL")

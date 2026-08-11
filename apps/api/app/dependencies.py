@@ -53,15 +53,13 @@ async def get_current_user(
 ) -> dict[str, Any]:
     """Verify a Supabase JWT locally — never makes a remote auth call per request.
 
-    Supabase projects sign access tokens one of two ways depending on whether
-    the project has migrated to asymmetric "JWT Signing Keys":
-    - Legacy projects: HS256, verified against the static SUPABASE_JWT_SECRET.
-    - Migrated projects (this one, confirmed via its JWKS endpoint returning an
-      ES256 key): asymmetric, verified against Supabase's published public key
-      set, fetched once and cached by PyJWKClient (not a per-request remote call).
+    Default path (ws_allow_jwks_fallback=False): pins to HS256, never reads the
+    unverified alg header. A forged alg field cannot trigger a JWKS fetch or an
+    algorithm-confusion attack (D80 fix, S3-43).
 
-    Branches on the token's own (unverified) `alg` header so both key types work
-    without needing to know in advance which one a given project uses.
+    JWKS fallback path (ws_allow_jwks_fallback=True): reads the unverified alg
+    header to branch between HS256 (local secret) and ES256/RS256 (JWKS). Enable
+    only if the Supabase project has migrated to asymmetric JWT signing keys.
 
     Raises HTTP 401 on any validation failure.
     Returns the decoded JWT payload (includes sub, email, role, app_metadata, etc.).
@@ -75,12 +73,7 @@ async def get_current_user(
     )
 
     try:
-        unverified_header = jwt.get_unverified_header(token)
-    except jwt.InvalidTokenError:
-        raise credentials_exception from None
-
-    try:
-        if unverified_header.get("alg") == "HS256":
+        if not settings.ws_allow_jwks_fallback:
             payload: dict[str, Any] = jwt.decode(
                 token,
                 settings.supabase_jwt_secret,
@@ -89,15 +82,29 @@ async def get_current_user(
                 options={"require": ["sub", "exp", "iat"]},
             )
         else:
-            jwks_client = _get_jwks_client(settings)
-            signing_key = jwks_client.get_signing_key_from_jwt(token)
-            payload = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["ES256", "RS256"],
-                audience="authenticated",
-                options={"require": ["sub", "exp", "iat"]},
-            )
+            try:
+                unverified_header = jwt.get_unverified_header(token)
+            except jwt.InvalidTokenError:
+                raise credentials_exception from None
+
+            if unverified_header.get("alg") == "HS256":
+                payload = jwt.decode(
+                    token,
+                    settings.supabase_jwt_secret,
+                    algorithms=["HS256"],
+                    audience="authenticated",
+                    options={"require": ["sub", "exp", "iat"]},
+                )
+            else:
+                jwks_client = _get_jwks_client(settings)
+                signing_key = jwks_client.get_signing_key_from_jwt(token)
+                payload = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["ES256", "RS256"],
+                    audience="authenticated",
+                    options={"require": ["sub", "exp", "iat"]},
+                )
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
