@@ -93,21 +93,39 @@ after every LLM/TTS/image call in the lesson has already been billed.
 - [x] **AC 6.** New tests in `apps/api/tests/unit/test_package_builder_node.py` reproduce all
   three D32 failure modes (non-dict item, missing `"data"` key, non-dict `"data"` value) against
   `slides` — RED-confirmed against pre-fix code, each with the exact predicted crash type
-  (`AttributeError: 'str' object has no attribute 'get'`, `KeyError: 'data'`,
-  `TypeError: 'str' object is not a mapping`), GREEN after.
-- [x] **AC 7.** No behavior change to any currently-passing test in
-  `test_package_builder_node.py` — re-run the full file unmodified, confirm still green,
-  including `test_segment_with_zero_slides_is_skipped` (a segment whose only slide gets
-  skipped by the new defensive check must still be dropped from the final package the same way
-  a segment with zero slides already is — same downstream behavior, new upstream cause).
-  **Verified:** full file re-run, 42/42 pass (39 pre-existing + 3 new). Broader
-  `tests/unit/` re-run for additional confidence: 989 passed, 6 skipped, 0 new failures
-  (20 pre-existing PDF-extraction test failures are an environment gap in this sandbox's
-  minimal venv — `docling`/`pypdfium2` weren't installed to avoid Story 3-35's torch/platform
-  issue — and are unrelated to this change; confirmed by their names, all in
-  `test_extract_page_bounds.py`/`test_extract_text_only_mode.py`, nothing touching
-  `package_builder_node`). `ruff check`/`ruff format --check`/`mypy` all clean on both
-  modified files.
+  (`AttributeError: 'str' object has no attribute 'get'` at `item.get("segment_id")`;
+  `KeyError: 'data'` at `item["data"]`; `TypeError: 'str' object is not a mapping` at the
+  downstream slide-image-correlation spread, `graph.py:4210` at the time of the fix — cited
+  explicitly here because the Blind Hunter review layer correctly flagged this claim as
+  unverifiable from the diff alone; the Acceptance Auditor independently reproduced it by
+  reverting `graph.py` and confirmed the exact line), GREEN after.
+- [x] **AC 7 — count corrected after adversarial review.** No behavior change to any
+  currently-passing test in `test_package_builder_node.py` — re-run the full file unmodified,
+  confirm still green, including `test_segment_with_zero_slides_is_skipped`. **Verified:** full
+  file re-run, 42/42 pass (round 1) → 45/45 (round 2, +3 D63 tests). Broader `tests/unit/`
+  re-run for additional confidence: the Acceptance Auditor independently re-ran it and got
+  **1007 passed, 20 failed, 6 skipped (1033 collected)** — my own self-reported "989 passed"
+  was wrong by 18 with no explanation, caught by the Auditor's independent execution rather
+  than trusted from my own claim. The *set* of 20 failures matches exactly (all in
+  `test_extract_page_bounds.py`/`test_extract_text_only_mode.py`, all
+  `ModuleNotFoundError: pypdfium2`/`pdfplumber` — an environment gap in this sandbox's minimal
+  venv, unrelated to this change, nothing touching `package_builder_node`), so the "0 new
+  failures" conclusion holds even though the passed-count didn't. `ruff check`/
+  `ruff format --check`/`mypy` all clean on both modified files.
+- [x] **AC 8 (new, D63).** `metadata.total_segments` always equals the real, just-built
+  `len(segments_out)`, never the stale `lesson_plan["total_segments"]` planning-time value.
+  **Verified:** `test_segment_with_only_slide_malformed_drops_segment_and_total_segments_matches_shipped`
+  — RED-confirmed by reverting `graph.py` alone (real `assert 2 == 1` failure reproduced),
+  GREEN after.
+- [x] **AC 9 (new, D63).** A segment whose quiz or jargon entries were all dropped by the
+  defensive filtering is added to `degraded_segment_ids` (same visibility as a missing
+  complexity/narration/interventions entry), and a segment dropped ENTIRELY because its only
+  slide entry was malformed is recorded in a new `package_builder_degraded.dropped_segment_ids`
+  field, distinct from `segment_ids` (degraded-but-shipped) so the two failure shapes stay
+  distinguishable to whoever reads the admin record. **Verified:**
+  `test_all_quiz_entries_for_a_segment_malformed_is_degraded_not_silently_empty` and
+  `test_all_jargon_entries_for_a_segment_malformed_is_degraded_not_silently_empty`,
+  RED-confirmed then GREEN.
 
 ## Scale & Load
 
@@ -160,11 +178,24 @@ lesson after full spend).
   60 enumerated tasks, so the Quick Status Dashboard is not touched, same reasoning as 3-35)
 
 ### Task 4 — Review
-- [ ] 4.1 6-layer adversarial review
+- [x] 4.1 6-layer adversarial review — round 1 (inline self-review)
+- [x] 4.2 Real `/bmad-code-review` — round 2 (4 independent parallel agents)
 
 ### Task 5 — Commit + push
-- [ ] 5.1 Final commit on `sprint3/s3-36-package-builder-defensive-fixes`
-- [ ] 5.2 Push to remote
+- [x] 5.1 Final commit on `sprint3/s3-36-package-builder-defensive-fixes` (round 1: `de08bbb`)
+- [x] 5.2 Push to remote (round 1 pushed; round 2 fixes committed + pushed after this task
+  list was corrected — checkboxes were stale here at the time Acceptance Auditor reviewed,
+  which it correctly flagged; fixed now that the work they describe has actually happened)
+
+### Task 6 — D63 fixes (found during round 2 review, same story)
+- [x] 6.1 Fix `metadata.total_segments` to always read `len(segments_out)` (AC 8)
+- [x] 6.2 Add quiz/jargon-all-dropped to `degraded_segment_ids` (AC 9)
+- [x] 6.3 Add `dropped_segment_ids` to `package_builder_degraded` for entirely-dropped segments
+  (AC 9)
+- [x] 6.4 Write 3 new RED/GREEN tests, RED-confirmed by reverting `graph.py` alone
+- [x] 6.5 Register D63 in `docs/DEFECT-REGISTER.md`, closed same-round
+- [x] 6.6 Correct the register's "Fixed, awaiting merge: 2 (but names 5 IDs)" inconsistency
+  the review caught
 
 ## Senior Developer Review (AI) — Round 1, inline self-review
 
@@ -214,6 +245,82 @@ is inside `app/modules/content/pipeline/**`, which that guard's own docstring ex
 exempts (pipeline nodes process a whole chapter by design; that's the unit of work, not a
 `.limit()` question). **No findings.**
 
+**Retrospective note (added after Round 2): this round's own Layer 6 assessment was
+incomplete.** It correctly found no *new* runtime request path, cap, or concurrency issue — but
+missed the one Scale Contract question that mattered most for this specific diff: **Q2's
+own crux, "does a fixed value survive a variable input,"** applied not to a numeric cap but to
+`metadata.total_segments` silently disagreeing with the real segment count once this diff made
+a new drop path reachable. Self-review checked the six questions' letter, not the one-line test
+("what input makes this silently wrong rather than loudly broken?") that outranks all six. The
+real `/bmad-code-review`'s Scale & Load Hunter caught exactly this — see Round 2 below.
+
+---
+
+## Senior Developer Review (AI) — Round 2 (real `/bmad-code-review`, 4 parallel agents)
+
+**Review date:** 2026-08-11
+**Outcome:** APPROVE WITH CHANGES — all applied before merge, including one defect (D63) more
+severe than anything Round 1 found.
+
+Round 1 was Dev 1 self-reviewing inline — real diligence, but not independent, and its own
+Layer 6 retrospective above shows what that cost. This round ran the actual `/bmad-code-review`
+skill: 4 genuinely independent parallel agents (Blind Hunter — diff only, no project access;
+Edge Case Hunter — diff + project read access; Acceptance Auditor — diff + this story file;
+Scale & Load Hunter — diff + project read access + `docs/SCALE-CONTRACT.md`, mandatory, never
+skipped).
+
+### Scale & Load Hunter — the most severe finding of the review, CONFIRMED and fixed as D63
+Found that `metadata.total_segments` read `lesson_plan.get("total_segments", len(segments_out))`
+— and `lesson_plan` almost always has that key (frozen at planning time, before any segment can
+be dropped), so the real-count fallback essentially never fired. This diff's own fix makes a
+new trigger reachable: a segment whose only slide entry is malformed now silently drops via the
+pre-existing zero-slides path, and the shipped package could claim more segments than it
+contained — **the same "reports success while being wrong" shape as the book-scale
+4%-of-the-book defect this whole project's Scale Contract exists because of, at segment
+granularity.** Independently, the same pass also confirmed this fix's `_group_by_segment_id`
+loop is test-time/in-memory only (not reachable from a request path) and correctly identified
+D48-shaped removal (from a *different* story) as out of scope here.
+
+### Findings — fixed
+
+| # | Finding | Source | Fix |
+|---|---|---|---|
+| 1 | `metadata.total_segments` stale-count bug — the severe one, see above | Scale & Load Hunter | `total_segments` now always reads `len(segments_out)`, never the planning-time value. Registered as **D63**. |
+| 2 | Quiz/jargon content silently lost to malformed-entry skipping was never fed into `degraded_segment_ids` — a segment with all-malformed quiz/jargon is indistinguishable from one that legitimately has none | **Edge Case Hunter AND Blind Hunter, independently; Scale & Load Hunter's own analysis converged on the same gap** | `_group_by_segment_id` now returns `(grouped, fully_dropped_segment_ids)`; callers add `"quiz"`/`"jargon"` to the `degraded` list when a segment's entries were all dropped. Folded into D63 (same causal root: D32's fix made a silent-loss path reachable without a visibility mechanism). |
+| 3 | No test covers "ALL entries for a segment malformed" (only "one bad entry among good ones" was tested) — the case that actually triggers findings 1 and 2 | Edge Case Hunter, and implicitly by the fact Round 1's 3 tests didn't catch findings 1/2 | 3 new tests added, each RED-confirmed by temporarily reverting `graph.py` alone (not assumed) and re-running against the pre-round-2 code. |
+| 4 | The TypeError claim for AC 6's third test case is real but wasn't demonstrated by the diff Blind Hunter had — the crash fires downstream (`graph.py:4210`, the slide-image spread), not inside the changed function itself | Blind Hunter (flagged as unverifiable from diff alone); **independently resolved** when the Acceptance Auditor reverted `graph.py` and reproduced the exact line | AC 6 now cites the exact downstream line and notes both the original skepticism and its independent resolution, so a future diff-only reader isn't left doubting a true claim. |
+| 5 | AC 7's "989 passed" broader-suite count doesn't reproduce — Auditor got 1007 | Acceptance Auditor, independent re-execution | AC 7 corrected to the verified number; the "0 new failures, unrelated environment gap" conclusion still holds since the *set* of 20 failures matched exactly. |
+| 6 | `docs/DEFECT-REGISTER.md`'s "Fixed, awaiting merge" row said "2" while naming 5 defect IDs | Blind Hunter AND Acceptance Auditor, independently | Row reworded to state both branches' counts unambiguously. |
+| 7 | Task 4.1/5.1/5.2 left unchecked while the review section and Change Log below them claimed the work was already done | Blind Hunter AND Acceptance Auditor, independently | Checkboxes corrected to match reality (all had genuinely happened — commit `de08bbb` pushed — the checklist just hadn't been updated). |
+| 8 | Duplicate, half-empty template sections (`### File List`/`### Change Log` each appeared twice) | Blind Hunter | Removed; consolidated into one authoritative File List/Change Log. |
+| 9 | Asymmetric log detail — the "non-dict/missing data value" warning didn't include the item's `%r` repr, unlike the "non-dict item" warning | Blind Hunter | Added `item` to that log call's arguments. |
+
+### Findings — accepted, not fixed (reasoning recorded)
+
+- **`isinstance(item, dict)`/`isinstance(data, dict)` might reject a duck-typed mapping from an
+  upstream node that isn't a literal `dict`** (Blind Hunter). Checked, not assumed: read all
+  three producers (`slide_generator_node`, `quiz_generator_node`, `jargon_extractor_node`) —
+  each explicitly builds a plain dict literal with `.model_dump(mode="json")` before appending.
+  LangGraph state is also checkpointed as JSON, so even a hypothetical duck-typed mapping
+  couldn't survive a checkpoint round-trip as anything but a plain dict. No live risk today.
+- **Unbounded `%r` logging of arbitrary upstream content in the new warnings** (Blind Hunter).
+  Matches `_index_by_segment_id`'s existing (already-merged, Story 2-31) logging pattern
+  exactly — not something this diff introduces uniquely. A pre-existing, low-severity hygiene
+  question across both sibling functions, out of this story's narrow scope.
+- **D32/D33/D63 marked closed in the register while their branch is unmerged** (Blind Hunter).
+  Consistent with this repo's established practice — Story 3-35 closed D31/D48/D62 the same
+  way on its own unmerged branch. Not unique to this story; not changed.
+- **Self-review "APPROVE" grading its own homework** (Blind Hunter, re: Round 1). This is
+  exactly why Round 2 (this real, independent review) was run — self-resolving.
+
+### Re-verification after fixes
+
+- `test_package_builder_node.py` — 45/45 pass (39 pre-existing + 3 D32 round-1 + 3 D63 round-2)
+- 3 new D63 tests RED-confirmed by reverting `graph.py` alone via `git stash`, re-running
+  against pre-round-2 code (all 3 failed with the predicted assertions), then restored and
+  reconfirmed GREEN
+- `ruff check` / `ruff format --check` / `mypy` — all clean on both modified files
+
 ## Dev Agent Record
 
 ### Implementation Plan
@@ -254,9 +361,12 @@ alone before implementation.
 ### File List
 
 - `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED (D32 — hardened
-  `_group_by_segment_id`)
-- `apps/api/tests/unit/test_package_builder_node.py` — MODIFIED (3 new RED/GREEN tests)
-- `docs/DEFECT-REGISTER.md` — MODIFIED (closed D32, D33)
+  `_group_by_segment_id`; D63, round 2 — `total_segments` fix + slides/quiz/jargon
+  degradation tracking)
+- `apps/api/tests/unit/test_package_builder_node.py` — MODIFIED (6 new tests total: 3 for
+  D32 round 1, 3 for D63 round 2)
+- `docs/DEFECT-REGISTER.md` — MODIFIED (closed D32, D33, D63; corrected a "2 vs 5 IDs"
+  count inconsistency the review round caught in the same document)
 - `docs/dev1-tracker.md` — MODIFIED (header date + narrative entry)
 - `docs/stories/3-36-package-builder-defensive-fixes.md` — MODIFIED (this file)
 
@@ -270,12 +380,22 @@ alone before implementation.
   42-test file + broader `tests/unit/` suite re-run, zero regressions
 - 2026-08-11: `docs/DEFECT-REGISTER.md` D32/D33 closed; `docs/dev1-tracker.md` updated
 - 2026-08-11: Round 1 self-review (inline, 6 layers) — no blocking findings
-
-### File List
-*(populated during implementation)*
-
-### Change Log
-
-- 2026-08-11: Story file created (story-first commit, branch
-  `sprint3/s3-36-package-builder-defensive-fixes`). D33 scope corrected during prep — verified
-  already fixed (commit `1c4360b1`) before writing any AC assuming otherwise.
+- 2026-08-11: Commit `de08bbb`, pushed to `sprint3/s3-36-package-builder-defensive-fixes`
+- 2026-08-11: Round 2 — real `/bmad-code-review`, 4 independent parallel agents. Scale &
+  Load Hunter found the most severe issue of the whole review: `metadata.total_segments`
+  read a stale planning-time count instead of the real shipped count, reachable via this
+  story's own fix whenever a segment's only slide entry was malformed — registered and
+  fixed as **D63**. Edge Case Hunter and Blind Hunter independently converged on the
+  adjacent gap: quiz/jargon content silently lost to malformed-entry skipping was never
+  fed into the existing degradation-tracking aggregate. Acceptance Auditor independently
+  re-ran everything (reverted `graph.py` to confirm the pre-fix crash types, `git blame`'d
+  D33's real fix commit, re-ran the full and broader suites) and caught one self-report
+  inaccuracy (AC7's broad-suite count) plus two stale-checkbox/duplicate-template issues in
+  this file. All fixed in the same round: `_group_by_segment_id` now returns fully-dropped
+  segment sets; `total_segments` always reads the real count; quiz/jargon losses feed
+  `degraded_segment_ids`; a new `dropped_segment_ids` field distinguishes dropped-entirely
+  from shipped-degraded in the admin record. 3 new tests, RED-confirmed by temporarily
+  reverting `graph.py` alone (not assumed), GREEN after. Full file: 45/45. Verified the
+  `isinstance(dict)` strictness concern against all 3 real upstream producers (all emit
+  plain dict literals via `.model_dump(mode="json")`) — not a live risk, recorded as
+  checked rather than fixed.

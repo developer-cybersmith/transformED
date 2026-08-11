@@ -86,7 +86,14 @@ reproduce all three pre-fix crash types (`AttributeError`/`KeyError`/`TypeError`
 then GREEN; full 42-test file re-run, zero regressions. **D33: found already fixed** — `git
 blame` traces the real fix to commit `1c4360b1` (2026-08-04, Story 1-13), a full week before
 this story started, already covered by 3 named tests. The register was simply never updated to
-close it — corrected rather than re-implemented. Full story:
+close it — corrected rather than re-implemented. **Round 2 (real `/bmad-code-review`, 4
+independent agents) found a more severe issue than round 1's own inline review caught:**
+`metadata.total_segments` read the stale planning-time count instead of the real shipped
+count — this story's own D32 fix made that reachable via a new trigger (a segment's only
+slide entry malformed → silently dropped → package claims more segments than it shipped, the
+book-scale 4%-defect shape at segment granularity). Registered and fixed as **D63** in the
+same commit; quiz/jargon content losses also now feed the existing degradation-tracking
+aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full story:
 `docs/stories/3-36-package-builder-defensive-fixes.md`.
 
 ---
