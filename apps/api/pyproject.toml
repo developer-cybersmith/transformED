@@ -36,6 +36,7 @@ dependencies = [
     "email-validator>=2.0.0",      # required by pydantic EmailStr (auth router)
     "slowapi>=0.1.9",
     "tiktoken>=0.7.0",             # BPE tokenizer for cl100k_base (text-embedding-3-small)
+    "mutagen>=1.47.0",             # MIT — audio-metadata only (no ffmpeg binary); measures REAL MP3 duration in tts_node (Story S3-38), not a video/transcoding dependency
 ]
 
 [project.optional-dependencies]
