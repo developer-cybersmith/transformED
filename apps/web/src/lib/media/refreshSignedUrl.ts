@@ -10,6 +10,13 @@ import { api } from '@/lib/api';
  */
 const SIGNED_URL_SHAPE = /\/storage\/v1\/object\/sign\/([^/]+)\/([^?]+)/;
 
+// Mirrors apps/api/app/modules/content/router.py's `_EMBEDDED_MEDIA_EXPIRY_S`
+// (8h). Passed explicitly on every re-sign -- omitting it would silently
+// fall back to the backend's 1-hour Query default, an 8x-shorter re-signed
+// lifetime than the window this whole feature exists to restore (review
+// finding, Scale & Load Hunter).
+const RESIGN_EXPIRY_S = 8 * 60 * 60;
+
 export interface ParsedSignedUrl {
   bucket: string;
   path: string;
@@ -17,12 +24,27 @@ export interface ParsedSignedUrl {
 
 /**
  * Extracts {bucket, path} from a Supabase signed URL. Returns null for any
- * URL that doesn't match the expected shape, or whose path segment is not
- * valid percent-encoding -- callers must never throw on a malformed/foreign
- * URL, only decline to re-sign it.
+ * URL that doesn't match the expected shape, whose origin isn't the
+ * configured Supabase project (review finding -- the path-shape regex alone
+ * would accept a same-shaped URL from any host), or whose path segment is
+ * not valid percent-encoding -- callers must never throw on a malformed/
+ * foreign URL, only decline to re-sign it.
  */
 export function parseSignedUrl(url: string): ParsedSignedUrl | null {
-  const match = SIGNED_URL_SHAPE.exec(url);
+  const configuredOrigin = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!configuredOrigin) return null;
+
+  let parsedUrl: URL;
+  let expectedOrigin: string;
+  try {
+    parsedUrl = new URL(url);
+    expectedOrigin = new URL(configuredOrigin).origin;
+  } catch {
+    return null;
+  }
+  if (parsedUrl.origin !== expectedOrigin) return null;
+
+  const match = SIGNED_URL_SHAPE.exec(parsedUrl.pathname);
   if (!match) return null;
   const [, bucket, encodedPath] = match;
   try {
@@ -50,9 +72,9 @@ export async function refreshSignedUrl(expiredUrl: string): Promise<string | nul
 
   try {
     const { data } = await api.get<SignedUrlResponse>('media/signed-url', {
-      params: { bucket: parsed.bucket, path: parsed.path },
+      params: { bucket: parsed.bucket, path: parsed.path, expires_in: RESIGN_EXPIRY_S },
     });
-    return data.signed_url ?? null;
+    return data.signed_url || null;
   } catch {
     return null;
   }
