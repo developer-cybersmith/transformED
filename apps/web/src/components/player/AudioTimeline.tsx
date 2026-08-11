@@ -137,7 +137,33 @@ export function AudioTimeline() {
     // advance/quiz logic handleEnded uses immediately instead of leaving the
     // lesson stuck here forever.
     if (status === 'PLAYING') handleEnded();
-  }, [status, currentSegmentIndex, hasAudio, hasScript, audioRetryCount]);
+    // resignedAudio's url (Story 2-45, review fix): a successful automatic
+    // re-sign changes effectiveAudioUrl/hasAudio for a segment that was
+    // already `hasAudio === true` before AND after (an expired URL is still
+    // non-empty, so is a fresh one) -- neither of those already-covered
+    // deps changes, so without this the remounted <audio> element would sit
+    // loaded-and-paused forever with no .play() call, exactly the class of
+    // bug this effect's own comment already documents for the retry case.
+  }, [status, currentSegmentIndex, hasAudio, hasScript, audioRetryCount, resignedAudio?.url]);
+
+  // Story 2-45 AC4 (review fix): a manual retry (Player.tsx's
+  // handleRetryAudio, which always refetches the whole lesson -- fresh
+  // signed URLs for every asset -- before calling retryAudio()) delivers a
+  // genuinely new asset for the CURRENT segment_id. Clear that segment's
+  // attempt-guard and any now-stale local override so, if this new asset
+  // later expires too, it gets its own automatic re-sign attempt instead of
+  // skipping straight to setAudioError because the old segment_id was
+  // already marked "attempted" before the retry ever happened. Runs on
+  // mount too (audioRetryCount starts at 0) -- harmless no-op there.
+  useEffect(() => {
+    if (!segment) return;
+    attemptedResignRef.current.delete(segment.segment_id);
+    setResignedAudio((prev) => (prev && prev.segmentId === segment.segment_id ? null : prev));
+    // segment_id is the intended identity here, not the whole segment
+    // object or effectiveAudioUrl -- this must run exactly once per manual
+    // retry, not on every render that happens to recompute those.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioRetryCount]);
 
   // Virtual playback clock (S2-33): a segment with a recovered narration script
   // but no playable audio (Story 2-31's degrade path) still needs *something*
@@ -389,11 +415,25 @@ export function AudioTimeline() {
       attemptedResignRef.current.add(seg.segment_id);
       void refreshSignedUrl(expiredUrl).then((fresh) => {
         if (fresh) {
+          // Currency is enforced downstream by effectiveAudioUrl's own
+          // segmentId comparison -- a resign that resolves after the
+          // student has moved on is simply never read.
           setResignedAudio({ segmentId: seg.segment_id, url: fresh });
-        } else {
-          // Re-sign itself failed (network/404/malformed) -- fall through to
-          // the existing, already-surfaced manual-recovery path unchanged.
-          usePlayerStore.getState().setAudioError(true);
+          return;
+        }
+        // Re-sign itself failed (network/404/malformed) -- fall through to
+        // the existing, already-surfaced manual-recovery path, but ONLY if
+        // `seg` is still the current segment (review fix). Without this
+        // check, a resign that started for segment N and resolves late --
+        // after the student has advanced past N, manually retried N (a
+        // fresh attempt is now in flight for N under a clean slate), or a
+        // different lesson has loaded entirely -- would flip audioError to
+        // true for whatever segment/lesson is current NOW, even though it
+        // has nothing wrong with it.
+        const current = usePlayerStore.getState();
+        const stillCurrent = current.lesson?.segments[current.currentSegmentIndex]?.segment_id === seg.segment_id;
+        if (stillCurrent) {
+          current.setAudioError(true);
         }
       });
       return;

@@ -7,8 +7,10 @@ import { AudioTimeline } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
+// Origin must match test/setup.ts's NEXT_PUBLIC_SUPABASE_URL for
+// parseSignedUrl's origin check (review finding) to accept this fixture.
 const SIGNED_AUDIO_URL =
-  'https://project.supabase.co/storage/v1/object/sign/lesson-audio/lesson-1/seg-0.mp3?token=expired-token';
+  'http://localhost:54321/storage/v1/object/sign/lesson-audio/lesson-1/seg-0.mp3?token=expired-token';
 
 function loadLessonWithSignedAudioUrl() {
   const lesson = structuredClone(mockLessonPackage);
@@ -475,7 +477,7 @@ describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
 });
 
 describe('AudioTimeline — automatic per-asset re-sign (Story 2-45)', () => {
-  it('swaps in the fresh signed URL and never sets audioError, when the automatic re-sign succeeds', async () => {
+  it('swaps in the fresh signed URL, never sets audioError, and resumes playback (calls .play() again), when the automatic re-sign succeeds', async () => {
     loadLessonWithSignedAudioUrl();
     usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
     server.use(
@@ -485,11 +487,56 @@ describe('AudioTimeline — automatic per-asset re-sign (Story 2-45)', () => {
     );
 
     const { container } = render(<AudioTimeline />);
+    playMock.mockClear(); // drop the initial-mount play() call
     fireEvent.error(container.querySelector('audio')!);
 
     await waitFor(() => {
       expect(container.querySelector('audio')!.getAttribute('src')).toContain('fresh-signed-mp3');
     });
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    // Review fix: the remounted <audio> element must actually be told to
+    // play, not just receive the fresh src -- the play/pause effect's own
+    // deps didn't previously include the resign, so this call never fired.
+    expect(playMock).toHaveBeenCalled();
+  });
+
+  it('does not flip audioError for the new segment when a stale failed re-sign for an already-departed segment resolves late (race, review fix)', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+    let resolveSignedUrl: (() => void) | null = null;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, async () => {
+        await new Promise<void>((resolve) => {
+          resolveSignedUrl = resolve;
+        });
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    // Wait for the re-sign request to actually be in flight.
+    await waitFor(() => {
+      expect(resolveSignedUrl).not.toBeNull();
+    });
+
+    // Student advances to segment 1 while segment 0's re-sign is still pending.
+    // advanceSegment() resets audioError -- the healthy new segment starts clean.
+    act(() => {
+      usePlayerStore.getState().advanceSegment();
+    });
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+
+    // Now let the stale re-sign for the abandoned segment 0 resolve with failure.
+    await act(async () => {
+      resolveSignedUrl?.();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // Segment 1 has nothing wrong with it -- audioError must stay false.
     expect(usePlayerStore.getState().audioError).toBe(false);
   });
 
@@ -544,6 +591,54 @@ describe('AudioTimeline — automatic per-asset re-sign (Story 2-45)', () => {
       expect(usePlayerStore.getState().audioError).toBe(true);
     });
     expect(signedUrlCallCount).toBe(0);
+  });
+
+  it('resets the attempt-guard on a manual retry, so a genuinely new asset for the same segment gets its own automatic attempt (AC4, review fix)', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(1);
+
+    // Manual retry (Player.tsx's handleRetryAudio): a full-lesson refetch
+    // delivers a fresh signed URL for the same segment_id, then retryAudio()
+    // is called. Simulate the refetch by updating the store directly.
+    act(() => {
+      usePlayerStore.setState((state) => ({
+        lesson: state.lesson
+          ? {
+              ...state.lesson,
+              segments: state.lesson.segments.map((s, i) =>
+                i === 0 ? { ...s, narration: { ...s.narration, audio_url: SIGNED_AUDIO_URL } } : s,
+              ),
+            }
+          : state.lesson,
+      }));
+      usePlayerStore.getState().retryAudio();
+    });
+    expect(usePlayerStore.getState().audioError).toBe(false);
+
+    // The "new" asset expires too -- without the fix, the guard would still
+    // remember segment_id "seg-0" as already-attempted from before the
+    // retry, and this would skip straight to audioError with no 2nd call.
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(2);
   });
 });
 
