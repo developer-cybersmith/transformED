@@ -50,6 +50,7 @@ from __future__ import annotations
 import logging
 from enum import StrEnum
 from typing import Any, TypedDict, cast
+from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -487,7 +488,10 @@ async def dispatch_event(
     # recursion_limit is a regression tripwire: with terminal nodes a dispatch is
     # entry-router → one node → END (1 step). Any future self-loop fails fast here
     # with GraphRecursionError instead of hanging.
-    config = {"configurable": {"thread_id": session_id}, "recursion_limit": 5}
+    # Unique thread_id per dispatch: MemorySaver is never evicted; reusing session_id
+    # accumulates checkpoints indefinitely. State is rebuilt from Redis (_read_state)
+    # on every call — no cross-dispatch resume via MemorySaver needed. (D66, S3-44)
+    config = {"configurable": {"thread_id": f"{session_id}:{uuid4()}"}, "recursion_limit": 5}
     result: TutorMachineState = await graph.ainvoke(input_state, config=config)
     try:
         _trace_dispatch(session_id, event, result)

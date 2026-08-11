@@ -202,6 +202,14 @@ Not "documented limitations". Each carries an explicit condition that reopens it
 
 ---
 
+## CLOSED — Sprint 3 (2026-08-12)
+
+| ID | Defect | Class | Decision | Enforcement |
+|----|--------|-------|----------|-------------|
+| ~~D66~~ | **CLOSED 2026-08-12 (S3-44, branch `sprint3/s3-44-langgraph-thread-id`).** `graph.py:dispatch_event` used `"thread_id": session_id` for every LangGraph call. `MemorySaver` is process-local and never evicted; reusing the same `thread_id` added a checkpoint entry on every dispatch, never cleared, growing without bound across the worker's lifetime. CLAUDE.md binding rule: *"A LangGraph `thread_id` must be unique per pipeline attempt."* State between dispatches is fully persisted in Redis by `_persist_state` and read back by `_read_state` — MemorySaver resume was never needed between dispatches. | BW | `"thread_id": f"{session_id}:{uuid4()}"` in `dispatch_event` — each dispatch gets a fresh UUID suffix; prior thread orphaned and never re-read. `from uuid import uuid4` added (stdlib). No other call site in `graph.py` changed. | `tests/test_s3_44_langgraph_thread_id.py::test_dispatch_event_uses_uuid4_in_thread_id` + `::test_dispatch_event_does_not_use_bare_session_id_as_thread_id` — source-inspection CI guard |
+
+---
+
 ## Part 3 — Process defects
 
 | ID | Defect | Decision | Enforcement |
