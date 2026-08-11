@@ -158,6 +158,13 @@ export function AudioTimeline() {
   useEffect(() => {
     if (!segment) return;
     attemptedResignRef.current.delete(segment.segment_id);
+    // Deliberately synchronous -- this clears a stale one-off override in
+    // response to a manual-retry EVENT (audioRetryCount changing), not on
+    // every render; it is a no-op (bails via Object.is) on every render
+    // where resignedAudio doesn't already belong to the current segment,
+    // so the "cascading renders" concern the rule generally guards against
+    // does not apply here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setResignedAudio((prev) => (prev && prev.segmentId === segment.segment_id ? null : prev));
     // segment_id is the intended identity here, not the whole segment
     // object or effectiveAudioUrl -- this must run exactly once per manual
