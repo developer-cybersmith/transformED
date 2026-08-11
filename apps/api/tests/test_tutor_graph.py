@@ -57,11 +57,12 @@ def _keyed_redis(sid: str, *, state: str, count: str | None = None, exists: int 
     return redis
 
 
-def _patch_settings(mocker, *, max_distraction: int = 3) -> None:
+def _patch_settings(mocker, *, max_distraction: int = 3, intervention_timeout: int = 45) -> None:
     """Patch get_settings — required by any test whose path reaches a guard or intervening_node."""
     settings = MagicMock()
     settings.max_distraction_per_session = max_distraction
     settings.intervention_cooldown_seconds = 120
+    settings.intervention_timeout_seconds = intervention_timeout  # D63 safety net
     mocker.patch("app.config.get_settings", return_value=settings)
 
 
@@ -191,6 +192,56 @@ async def test_intervening_complete_returns_to_teaching(mocker) -> None:
     result = await dispatch_event("s-interv", "intervention_complete")
 
     assert result["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
+async def test_intervening_node_writes_intervention_deadline(mocker) -> None:
+    """D63 AC2: entering INTERVENING writes intervention_deadline_at using
+    settings.intervention_timeout_seconds, with the same 24h TTL as every other tutor key."""
+    _patch_settings(mocker, intervention_timeout=45)
+    redis = _keyed_redis("s-deadline", state="TEACHING", count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-deadline", "distraction_detected")
+
+    assert result["current_state"] == TutorState.INTERVENING
+    deadline_calls = [
+        c for c in redis.set.call_args_list if c.args[0] == "session:s-deadline:intervention_deadline_at"
+    ]
+    assert len(deadline_calls) == 1, "expected exactly one intervention_deadline_at write"
+    assert deadline_calls[0].kwargs.get("ex") == _STATE_TTL
+
+
+@pytest.mark.unit
+async def test_intervening_node_returns_only_owned_keys(mocker) -> None:
+    """D63 AC6: intervening_node must not spread `{**state, ...}` — only current_state and
+    intervention_message are its own keys. Direct-call regression pin, complementing the
+    AST-scan guard in test_node_return_shape.py."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-owned", state="TEACHING", count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import intervening_node
+
+    state = {
+        "session_id": "s-owned",
+        "event": "distraction_detected",
+        "event_payload": {},
+        "intervention_type": "distraction",
+        # Planted extra state keys — if the node ever re-spreads `**state`, these come back
+        # out in the return value.
+        "user_id": "u-1",
+        "lesson_id": "l-1",
+        "ces_score": 42.0,
+    }
+    result = await intervening_node(state)  # type: ignore[arg-type]
+
+    assert set(result) == {"current_state", "intervention_message"}, (
+        f"intervening_node returned {sorted(result)} — extra keys mean state is being "
+        "spread back out"
+    )
 
 
 @pytest.mark.unit

@@ -14,7 +14,9 @@
 import type { ClientMessage } from '@hie/shared/types/ws';
 
 /** Client → server flow events that drive the tutor FSM (see _TUTOR_CLIENT_EVENTS
- *  in apps/api/app/core/websocket.py). Flat `{type}` frames, no payload. */
+ *  in apps/api/app/core/websocket.py). Flat `{type}` frames, no payload.
+ *  D63: `intervention_complete` is sent when the student dismisses an intervention overlay —
+ *  the FSM's only way out of INTERVENING besides the server-side timeout safety net. */
 type FlowEvent =
   | 'segment_complete'
   | 'checkin_complete'
@@ -24,7 +26,8 @@ type FlowEvent =
   | 'quiz_failed'
   | 'teachback_complete'
   | 'teachback_failed'
-  | 'lesson_complete';
+  | 'lesson_complete'
+  | 'intervention_complete';
 
 /** Flat control frames the client may send that aren't in the frozen ClientMessage union. */
 export type LocalControlOut =

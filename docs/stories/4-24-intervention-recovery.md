@@ -4,7 +4,7 @@ baseline_commit: "1884f2b"
 
 # Story 4-24: INTERVENING recovery — event path + timeout safety net
 
-**Status:** in-progress
+**Status:** done
 
 ---
 
@@ -121,22 +121,23 @@ the frontend"). Flagged as an ask to Dev 2 in Dev Notes, not built here.
 
 ## Tasks / Subtasks
 
-- [ ] 1.1 `config.py`: add `intervention_timeout_seconds` (default 45, same style as
+- [x] 1.1 `config.py`: add `intervention_timeout_seconds` (default 45, same style as
       `intervention_cooldown_seconds`).
-- [ ] 1.2 `service.py`: add `intervention_complete` to `_CLIENT_DRIVABLE_EVENTS`.
-- [ ] 1.3 `websocket.py`: add `intervention_complete` to `_TUTOR_CLIENT_EVENTS`.
-- [ ] 1.4 `wireTypes.ts`: add `'intervention_complete'` to the `FlowEvent` union.
-- [ ] 1.5 `graph.py` `intervening_node`: write `intervention_deadline_at`; drop `{**state, ...}`.
-- [ ] 1.6 `graph.py`: drop `{**state, ...}` from the remaining 6 nodes (return owned keys only).
-- [ ] 1.7 `service.py`: add `_intervention_deadline_expired` (mirrors `_quiz_deadline_expired`).
-- [ ] 1.8 `service.py` `process_attention_signal`: check + self-dispatch, delete-before-dispatch guard.
-- [ ] 1.9 `service.py` `advance_tutor_state`: same check before processing the client's own event.
-- [ ] 1.10 `tests/unit/test_node_return_shape.py`: widen scan to `tutor/state_machine`; add a test
+- [x] 1.2 `service.py`: add `intervention_complete` to `_CLIENT_DRIVABLE_EVENTS`.
+- [x] 1.3 `websocket.py`: add `intervention_complete` to `_TUTOR_CLIENT_EVENTS`.
+- [x] 1.4 `wireTypes.ts`: add `'intervention_complete'` to the `FlowEvent` union.
+- [x] 1.5 `graph.py` `intervening_node`: write `intervention_deadline_at`; drop `{**state, ...}`.
+- [x] 1.6 `graph.py`: drop `{**state, ...}` from the remaining 6 nodes (return owned keys only).
+- [x] 1.7 `service.py`: add `_intervention_deadline_expired` (mirrors `_quiz_deadline_expired`).
+- [x] 1.8 `service.py` `process_attention_signal`: check + self-dispatch, delete-before-dispatch guard.
+- [x] 1.9 `service.py` `advance_tutor_state`: same check before processing the client's own event.
+- [x] 1.10 `tests/unit/test_node_return_shape.py`: widen scan to `tutor/state_machine`; add a test
       that the widened scan actually walks files there.
-- [ ] 1.11 `test_tutor_graph.py` / `test_tutor_service.py`: AC 1, 3, 4, 5 tests.
-- [ ] 1.12 Update D63 in `docs/DEFECT-REGISTER.md` to CLOSED with real test names.
-- [ ] 1.13 Update `docs/dev4-tracker.md` dashboard + add the task entry.
-- [ ] 1.14 Full regression run.
+- [x] 1.11 `test_tutor_graph.py` / `test_tutor_service.py`: AC 1, 3, 4, 5 tests.
+- [x] 1.12 Update D63 in `docs/DEFECT-REGISTER.md` to CLOSED with real test names.
+- [x] 1.13 Update `docs/dev4-tracker.md` dashboard + add the task entry.
+- [x] 1.14 Full regression run — 176/176 green in affected suites; only pre-existing,
+      unrelated environment gaps (`python-multipart`, `fpdf`) fail elsewhere.
 
 ---
 

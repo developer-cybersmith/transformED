@@ -180,6 +180,25 @@ async def _quiz_deadline_expired(session_id: str, redis: Redis) -> bool:
         return False
 
 
+async def _intervention_deadline_expired(session_id: str, redis: Redis) -> bool:
+    """D63 safety net: return True if the INTERVENING timeout has elapsed for this session.
+
+    Mirrors ``_quiz_deadline_expired`` exactly, including the fail-safe: any error returns
+    False so a Redis blip degrades to "stay put", never to an unwanted auto-transition. Key
+    absence (no intervention has ever fired, or intervention_complete already cleared it) also
+    returns False.
+    """
+    import time as _time  # noqa: PLC0415
+
+    try:
+        raw = await redis.get(f"session:{session_id}:intervention_deadline_at")
+        if not raw:
+            return False
+        return _time.time() > float(raw)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def start_session(session_id: str) -> None:
     """Drive the IDLE → TEACHING transition for a newly started session.
 
@@ -194,6 +213,9 @@ async def start_session(session_id: str) -> None:
 # Lifecycle events a CLIENT may drive via WebSocket. distraction_detected / fatigue_detected are
 # excluded on purpose — those come from the server-side CES engine, not the client; session_reset is
 # admin-only; session_start has its own handler.
+# D63: intervention_complete added — the client dismissing an intervention overlay must be able to
+# drive INTERVENING → TEACHING. Previously omitted (not deliberately excluded like the events
+# above), which made route_from_intervening's only exit event undispatchable by anything.
 _CLIENT_DRIVABLE_EVENTS = frozenset(
     {
         "segment_complete",
@@ -205,6 +227,7 @@ _CLIENT_DRIVABLE_EVENTS = frozenset(
         "teachback_complete",
         "teachback_failed",
         "lesson_complete",
+        "intervention_complete",
     }
 )
 
@@ -232,6 +255,18 @@ async def advance_tutor_state(session_id: str, event: str) -> None:
         if deleted:
             logger.info("[tutor:%s] Q&A deadline expired — auto quiz_complete", session_id)
             await dispatch_event(session_id, "quiz_complete")
+        return
+
+    # D63 safety net: self-heal a session stuck in INTERVENING past its timeout, regardless of
+    # which event the client actually sent (it may never send intervention_complete at all).
+    # Same delete-before-dispatch double-fire guard as the QUIZZING check above.
+    if state_raw == "INTERVENING" and await _intervention_deadline_expired(session_id, redis):
+        deleted = await redis.delete(f"session:{session_id}:intervention_deadline_at")
+        if deleted:
+            logger.info(
+                "[tutor:%s] INTERVENING timeout expired — auto intervention_complete", session_id
+            )
+            await dispatch_event(session_id, "intervention_complete")
         return
 
     # Completing a segment advances the student's position (used to pick the right segment's
@@ -378,6 +413,20 @@ async def process_attention_signal(
                 session_id,
             )
             await dispatch_event(session_id, "quiz_complete")
+
+    # D63 safety net: attention frames keep arriving from the client during INTERVENING (nothing
+    # stops MediaPipe/the heartbeat when an overlay is shown), so this recurring ~5s hook is what
+    # actually enforces the timeout when the client never sends intervention_complete at all.
+    # Delete-before-dispatch guard prevents double-fire from concurrent signal windows.
+    if state_raw == "INTERVENING" and await _intervention_deadline_expired(session_id, redis):
+        deleted = await redis.delete(f"session:{session_id}:intervention_deadline_at")
+        if deleted:
+            logger.info(
+                "[tutor:%s] INTERVENING timeout expired via attention signal — "
+                "auto intervention_complete",
+                session_id,
+            )
+            await dispatch_event(session_id, "intervention_complete")
 
     logger.debug(
         "[tutor:%s] ces=%.4f intervention_dispatched=%s",

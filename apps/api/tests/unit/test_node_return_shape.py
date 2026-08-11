@@ -18,6 +18,11 @@ The AST scan below is the standing guard. It walks the whole pipeline package
 rather than being pinned to `graph.py`, because `pipeline/nodes/` already
 exists and CLAUDE.md mandates future node extraction into it — a
 filename-pinned guard would silently stop guarding the day a node moves.
+
+D63 (2026-08-11): widened to also scan `tutor/state_machine` — that graph's 7 nodes all
+returned `{**state, ...}` too, found harmless only because `TutorMachineState` declares no
+`operator.add` channel (unlike `PipelineState`). Harmless today is not guarded; CLAUDE.md bans
+the pattern repo-wide, "applies to every StateGraph in the repo, not just the content pipeline."
 """
 
 from __future__ import annotations
@@ -29,7 +34,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-_PIPELINE_DIR = Path(__file__).resolve().parents[2] / "app" / "modules" / "content" / "pipeline"
+_APP_DIR = Path(__file__).resolve().parents[2] / "app"
+_PIPELINE_DIR = _APP_DIR / "modules" / "content" / "pipeline"
+_TUTOR_GRAPH_DIR = _APP_DIR / "modules" / "tutor" / "state_machine"
+_SCAN_DIRS = (_PIPELINE_DIR, _TUTOR_GRAPH_DIR)
 
 
 def _returns_spreading_state(tree: ast.AST) -> list[tuple[str, int]]:
@@ -130,28 +138,51 @@ def _spreads_any(node: ast.Dict, names: set[str]) -> bool:
 
 @pytest.mark.unit
 def test_no_pipeline_node_returns_spread_of_state() -> None:
-    """AC-2: no function in the pipeline package returns `{**state, ...}`."""
-    assert _PIPELINE_DIR.is_dir(), f"pipeline dir not found: {_PIPELINE_DIR}"
+    """AC-2 (Story 2-28) / AC-6+7 (Story 4-24, D63): no function in EITHER scanned StateGraph
+    package returns `{**state, ...}` — the content pipeline AND the tutor state machine.
 
+    CLAUDE.md: "Applies to every StateGraph in the repo, not just the content pipeline."
+    """
     all_offenders: list[str] = []
     scanned = 0
-    for py_file in sorted(_PIPELINE_DIR.rglob("*.py")):
-        if "__pycache__" in py_file.parts:
-            continue
-        scanned += 1
-        # utf-8-sig: graph.py carries a UTF-8 BOM. Python's own import machinery
-        # strips it, but ast.parse() on an already-decoded str sees a literal
-        # U+FEFF and raises SyntaxError. Same convention as test_lesson_schema.py.
-        tree = ast.parse(py_file.read_text(encoding="utf-8-sig"), filename=str(py_file))
-        for func_name, lineno in _returns_spreading_state(tree):
-            rel = py_file.relative_to(_PIPELINE_DIR.parents[3])
-            all_offenders.append(f"{rel}:{lineno} in {func_name}()")
+    per_dir_scanned: dict[Path, int] = {d: 0 for d in _SCAN_DIRS}
+
+    for scan_dir in _SCAN_DIRS:
+        assert scan_dir.is_dir(), f"scan dir not found: {scan_dir}"
+        for py_file in sorted(scan_dir.rglob("*.py")):
+            if "__pycache__" in py_file.parts:
+                continue
+            scanned += 1
+            per_dir_scanned[scan_dir] += 1
+            # utf-8-sig: graph.py carries a UTF-8 BOM. Python's own import machinery
+            # strips it, but ast.parse() on an already-decoded str sees a literal
+            # U+FEFF and raises SyntaxError. Same convention as test_lesson_schema.py.
+            tree = ast.parse(py_file.read_text(encoding="utf-8-sig"), filename=str(py_file))
+            for func_name, lineno in _returns_spreading_state(tree):
+                rel = py_file.relative_to(_APP_DIR.parent)
+                all_offenders.append(f"{rel}:{lineno} in {func_name}()")
 
     assert scanned > 0, "guard scanned no files — path is wrong, test is vacuous"
+    for scan_dir, count in per_dir_scanned.items():
+        assert count > 0, f"guard scanned 0 files in {scan_dir} — widened path is wrong"
     assert not all_offenders, (
         "LangGraph nodes must return ONLY the keys they own. A `return "
-        "{**state, ...}` re-appends every operator.add channel (Story 2-28).\n"
+        "{**state, ...}` re-appends every operator.add channel (Story 2-28) and is banned "
+        "repo-wide regardless of whether the channel is currently a reducer (D63).\n"
         + "\n".join(f"  - {o}" for o in all_offenders)
+    )
+
+
+@pytest.mark.unit
+def test_guard_scans_the_tutor_state_machine_directory_for_real() -> None:
+    """AC-7 (D63): the widened scan must actually walk `tutor/state_machine`'s files, not
+    merely have the path configured. Proves the widen isn't vacuous."""
+    py_files = [
+        f for f in sorted(_TUTOR_GRAPH_DIR.rglob("*.py")) if "__pycache__" not in f.parts
+    ]
+    assert py_files, f"no .py files found under {_TUTOR_GRAPH_DIR} — guard would scan nothing"
+    assert any(f.name == "graph.py" for f in py_files), (
+        "graph.py (the file with the 7 FSM nodes) is not in the widened scan set"
     )
 
 

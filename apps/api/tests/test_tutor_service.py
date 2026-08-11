@@ -857,3 +857,257 @@ async def test_process_attention_quizzing_expired_with_low_ces_only_quiz_complet
     # Only quiz_complete — distraction_detected must NOT fire from QUIZZING state
     mock_dispatch.assert_called_once_with(sid, "quiz_complete")
     assert result.intervention_dispatched is False
+
+
+# ── Story 4-24 / D63: INTERVENING recovery — event path + timeout safety net ──
+
+
+@pytest.mark.unit
+def test_intervention_complete_is_client_drivable() -> None:
+    """AC1: intervention_complete is allow-listed — previously it was dispatched by nothing."""
+    from app.modules.tutor.service import _CLIENT_DRIVABLE_EVENTS
+
+    assert "intervention_complete" in _CLIENT_DRIVABLE_EVENTS
+
+
+@pytest.mark.unit
+async def test_intervention_deadline_expired_true_when_past() -> None:
+    """_intervention_deadline_expired returns True when the stored timestamp is in the past."""
+    import time as _time
+
+    from app.modules.tutor.service import _intervention_deadline_expired
+
+    past = str(int(_time.time()) - 10)
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=past)
+
+    assert await _intervention_deadline_expired("s", redis) is True
+
+
+@pytest.mark.unit
+async def test_intervention_deadline_expired_false_when_future() -> None:
+    """AC4: still within the timeout window → not expired."""
+    import time as _time
+
+    from app.modules.tutor.service import _intervention_deadline_expired
+
+    future = str(int(_time.time()) + 3600)
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=future)
+
+    assert await _intervention_deadline_expired("s", redis) is False
+
+
+@pytest.mark.unit
+async def test_intervention_deadline_expired_false_when_key_missing() -> None:
+    """No intervention has ever fired (or it already cleared) → safe default False."""
+    from app.modules.tutor.service import _intervention_deadline_expired
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+
+    assert await _intervention_deadline_expired("s", redis) is False
+
+
+@pytest.mark.unit
+async def test_intervention_deadline_expired_false_on_redis_error() -> None:
+    """Never crashes the hot path — a Redis blip degrades to False (stay put)."""
+    from app.modules.tutor.service import _intervention_deadline_expired
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=RuntimeError("redis down"))
+
+    assert await _intervention_deadline_expired("s", redis) is False
+
+
+@pytest.mark.unit
+async def test_intervention_deadline_expired_false_on_corrupt_redis_value() -> None:
+    """Non-numeric stored value degrades safely to False, not a crash."""
+    from app.modules.tutor.service import _intervention_deadline_expired
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="CORRUPT_NOT_A_TIMESTAMP")
+
+    assert await _intervention_deadline_expired("s", redis) is False
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_intervening_expired_dispatches_intervention_complete(
+    mocker,
+) -> None:
+    """AC3: INTERVENING + expired deadline → advance_tutor_state self-heals to TEACHING
+    WITHOUT any client-sent intervention_complete — the client sent segment_complete instead,
+    proving the self-heal fires regardless of which event actually arrived."""
+    import time as _time
+
+    sid = "s-interv-exp"
+    expired = str(int(_time.time()) - 60)
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return "INTERVENING"
+        if key == f"session:{sid}:intervention_deadline_at":
+            return expired
+        return None
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=_get)
+    redis.delete = AsyncMock(return_value=1)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "segment_complete")  # client sent something else entirely
+
+    mock_dispatch.assert_called_once_with(sid, "intervention_complete")
+    redis.delete.assert_awaited_once_with(f"session:{sid}:intervention_deadline_at")
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_intervening_double_fire_guard(mocker) -> None:
+    """AC5: redis.delete returns 0 (key already gone, a concurrent call won the race) →
+    the second caller must NOT also dispatch intervention_complete."""
+    import time as _time
+
+    sid = "s-interv-dfg"
+    expired = str(int(_time.time()) - 60)
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return "INTERVENING"
+        if key == f"session:{sid}:intervention_deadline_at":
+            return expired
+        return None
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=_get)
+    redis.delete = AsyncMock(return_value=0)  # already deleted by a concurrent signal
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "intervention_complete")
+
+    mock_dispatch.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_advance_tutor_state_intervening_not_expired_dispatches_original_event(
+    mocker,
+) -> None:
+    """AC4: INTERVENING but still within the timeout window → the client's real event
+    (intervention_complete, the normal dismiss path) is dispatched as-is, untouched by the
+    safety net."""
+    import time as _time
+
+    sid = "s-interv-live"
+    future = str(int(_time.time()) + 3600)
+
+    async def _get(key: str):
+        if key == f"tutor_state:{sid}":
+            return "INTERVENING"
+        if key == f"session:{sid}:intervention_deadline_at":
+            return future
+        return None
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=_get)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state(sid, "intervention_complete")
+
+    mock_dispatch.assert_called_once_with(sid, "intervention_complete")
+
+
+def _interv_attention_deadline_setup(mocker, *, expired: bool, has_deadline: bool = True):
+    """Setup for process_attention_signal INTERVENING-deadline tests. History has only 1 value
+    so the distraction trigger (len >= 2) is never reached — deadline path isolated."""
+    import time as _time
+
+    if has_deadline:
+        deadline = str(int(_time.time()) - 60) if expired else str(int(_time.time()) + 3600)
+    else:
+        deadline = None
+
+    async def _get(key: str):
+        if "tutor_state" in key:
+            return "INTERVENING"
+        if "intervention_deadline_at" in key:
+            return deadline
+        return None  # lesson_package, segment_index — empty
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(side_effect=_get)
+    mock_redis.lrange = AsyncMock(return_value=["0.9"])  # 1 value → no distraction trigger
+    mock_redis.exists = AsyncMock(return_value=0)
+    mock_redis.delete = AsyncMock(return_value=1 if (has_deadline and expired) else 0)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    mock_settings = MagicMock()
+    mock_settings.ces_threshold = 50
+    mock_settings.ces_weight_quiz = 0.35
+    mock_settings.ces_weight_teachback = 0.25
+    mock_settings.ces_weight_behavioral = 0.20
+    mock_settings.ces_weight_head_pose = 0.12
+    mock_settings.ces_weight_blink = 0.08
+    mocker.patch("app.config.get_settings", return_value=mock_settings)
+
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    return mock_redis, mock_dispatch
+
+
+@pytest.mark.unit
+async def test_process_attention_intervening_expired_dispatches_intervention_complete(
+    mocker,
+) -> None:
+    """AC3: a session stuck in INTERVENING past the deadline self-heals on the very next
+    attention signal — no client event required at all. This is the core D63 guarantee."""
+    mock_redis, mock_dispatch = _interv_attention_deadline_setup(mocker, expired=True)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_dispatch.assert_called_once_with("sess-1", "intervention_complete")
+    mock_redis.delete.assert_awaited_once_with("session:sess-1:intervention_deadline_at")
+    assert isinstance(result, CesResult)
+
+
+@pytest.mark.unit
+async def test_process_attention_intervening_not_expired_no_dispatch(mocker) -> None:
+    """AC4: still within the timeout window → no auto-dispatch, session stays INTERVENING."""
+    mock_redis, mock_dispatch = _interv_attention_deadline_setup(mocker, expired=False)
+
+    from app.modules.tutor.service import process_attention_signal
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_dispatch.assert_not_called()
+    mock_redis.delete.assert_not_awaited()
+
+
+@pytest.mark.unit
+async def test_process_attention_intervening_double_fire_guard(mocker) -> None:
+    """AC5: two concurrent expired-deadline checks on the same session must not both dispatch —
+    redis.delete returning 0 (a concurrent caller already won) suppresses this one."""
+    mock_redis, mock_dispatch = _interv_attention_deadline_setup(mocker, expired=True)
+    mock_redis.delete = AsyncMock(return_value=0)  # simulate the race already lost
+
+    from app.modules.tutor.service import process_attention_signal
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    mock_dispatch.assert_not_called()
