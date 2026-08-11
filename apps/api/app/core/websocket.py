@@ -21,6 +21,7 @@ Message types (outbound from server)
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -29,6 +30,8 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
+
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -147,9 +150,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         return
     await manager.connect(websocket, session_id)
 
+    _settings = get_settings()
     try:
         while True:
-            raw = await websocket.receive_text()
+            raw = await asyncio.wait_for(
+                websocket.receive_text(),
+                timeout=_settings.ws_signal_gap_seconds,
+            )
 
             try:
                 payload: dict[str, Any] = json.loads(raw)
@@ -176,6 +183,18 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 logger.debug("Unknown WS message type '%s' from session %s", msg_type, session_id)
                 await websocket.send_json({"error": f"unknown message type '{msg_type}'"})
 
+    except TimeoutError:
+        logger.info(
+            "WS signal-gap timeout (%.0fs) for session %s — finalising session",
+            _settings.ws_signal_gap_seconds,
+            session_id,
+        )
+        await _finalize_session_best_effort(session_id, flags={"signal_gap": True})
+        manager.disconnect(websocket, session_id)
+        try:
+            await websocket.close(1001)
+        except Exception:  # noqa: BLE001, S110
+            logger.debug("WS close(1001) failed for %s — socket already gone", session_id)
     except WebSocketDisconnect:
         manager.disconnect(websocket, session_id)
     except Exception:
@@ -379,6 +398,26 @@ async def _handle_tutor_event(session_id: str, event: str) -> None:
         logger.info("[tutor:%s] client event dispatched: %s", session_id, event)
     except Exception:
         logger.exception("tutor event %s failed for %s", event, session_id)
+
+
+async def _finalize_session_best_effort(
+    session_id: str,
+    *,
+    flags: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort session finalization — never raises.
+
+    Called when the WebSocket loop exits (timeout, disconnect, or error).
+    Passes *flags* to the assessment service so the reason for termination
+    is recorded (e.g. ``{"signal_gap": True}``, ``{"abandoned": True}``).
+    """
+    try:
+        from app.modules.assessment.service import finalize_session  # noqa: PLC0415
+
+        await finalize_session(session_id, flags=flags or {})
+        logger.info("Best-effort finalization completed for session %s", session_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("Best-effort finalization failed for session %s", session_id)
 
 
 async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> None:

@@ -268,6 +268,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── WebSocket tuning ──────────────────────────────────────────────────────
+    ws_signal_gap_seconds: float = Field(
+        default=60.0,
+        gt=0.0,
+        description=(
+            "Maximum seconds to wait for a WebSocket message before treating "
+            "the gap as a signal-gap and finalising the session (env: WS_SIGNAL_GAP_SECONDS). "
+            "Default 60s — long enough for students to read a complex slide without disconnecting."
+        ),
+    )
+
     # ── Intervention tuning ───────────────────────────────────────────────────
     intervention_cooldown_seconds: int = Field(
         default=120,
