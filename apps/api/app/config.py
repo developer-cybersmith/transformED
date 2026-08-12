@@ -309,6 +309,24 @@ class Settings(BaseSettings):
         default=3,
         description="Maximum number of distraction interventions per session before escalating",
     )
+    intervention_timeout_seconds: int = Field(
+        default=45,
+        ge=1,
+        le=3600,
+        description=(
+            "D63 safety net: max seconds a session may stay in INTERVENING before the FSM "
+            "self-heals back to TEACHING even if the client never sends intervention_complete. "
+            "Independent of intervention_cooldown_seconds (that governs time BETWEEN "
+            "interventions; this governs time WITHIN one). Placeholder pending Dev 2 UX "
+            "confirmation of actual overlay dismiss time. Bounds (review finding, PR #129): "
+            "ge=1 — a value <=0 makes the intervention self-heal before the overlay can ever "
+            "display, silently defeating the feature; le=3600 — a value >= _STATE_TTL (86400s, "
+            "graph.py) would let the Redis key holding the deadline expire before the deadline "
+            "itself is ever reached, permanently defeating the safety net (the exact one-way-trap "
+            "shape D63 exists to close, via a different route). 3600 leaves a wide margin below "
+            "that ceiling."
+        ),
+    )
 
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
     learner_tier_t1_qa_seconds: int = Field(

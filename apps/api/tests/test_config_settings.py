@@ -150,6 +150,30 @@ def test_intervention_cooldown_default_is_two_minutes(monkeypatch) -> None:
     assert s.intervention_cooldown_seconds == 120
 
 
+@pytest.mark.unit
+def test_intervention_timeout_default_is_45_seconds(monkeypatch) -> None:
+    """D63 safety net default. Review finding (2026-08-11, PR #129 six-layer review, Test
+    Coverage layer): every prior test of this field used a hand-built MagicMock — none
+    instantiated the real Settings class, so a misnamed/misbound field would have gone
+    unnoticed. This test exercises the real class, mirroring
+    test_intervention_cooldown_default_is_two_minutes above for its sibling field."""
+    s = _make_settings(monkeypatch)
+    assert s.intervention_timeout_seconds == 45
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_value", ["0", "-1", "3601", "86400"])
+def test_intervention_timeout_rejects_out_of_bounds_values(monkeypatch, bad_value: str) -> None:
+    """Review Patch #2 (2026-08-11): ge=1/le=3600 bounds. A value <= 0 would self-heal an
+    intervention before the overlay could ever display; a value >= _STATE_TTL (86400s) would
+    let the Redis key holding the deadline expire before the deadline is ever reached,
+    permanently defeating the safety net — the same one-way-trap shape D63 exists to close."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _make_settings(monkeypatch, intervention_timeout_seconds=bad_value)
+
+
 # ── admin_emails / _parse_admin_emails (Story 2-25) ─────────────────────────────
 
 

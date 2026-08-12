@@ -153,7 +153,7 @@ async def idle_node(state: TutorMachineState) -> TutorMachineState:
     """IDLE state: session not yet started."""
     logger.debug("[tutor:%s] → IDLE", state.get("session_id"))
     await _persist_state(state.get("session_id", ""), TutorState.IDLE)
-    return {**state, "current_state": TutorState.IDLE}
+    return {"current_state": TutorState.IDLE}
 
 
 async def teaching_node(state: TutorMachineState) -> TutorMachineState:
@@ -161,7 +161,7 @@ async def teaching_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.debug("[tutor:%s] → TEACHING", session_id)
     await _persist_state(session_id, TutorState.TEACHING)
-    return {**state, "current_state": TutorState.TEACHING, "in_teachback": False}
+    return {"current_state": TutorState.TEACHING, "in_teachback": False}
 
 
 async def intervening_node(state: TutorMachineState) -> TutorMachineState:
@@ -169,6 +169,8 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     intervention_type = state.get("intervention_type", "distraction")
     logger.info("[tutor:%s] → INTERVENING (type=%s)", session_id, intervention_type)
+
+    import time as _time  # noqa: PLC0415
 
     from app.config import get_settings
     from app.core.redis import get_redis
@@ -188,6 +190,15 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     cooldown_key = f"tutor_cooldown:{session_id}"
     await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds)
 
+    # D63 safety net: independent timeout so a session cannot be trapped in INTERVENING forever
+    # if intervention_complete is never dispatched (dropped WS message, or the client not yet
+    # implementing dismiss). Read by _intervention_deadline_expired (service.py) from
+    # process_attention_signal / advance_tutor_state — same shape as the QUIZZING
+    # quiz_deadline_at pattern. Independent of the cooldown key above (that governs time BETWEEN
+    # interventions; this governs time WITHIN one).
+    deadline = int(_time.time()) + settings.intervention_timeout_seconds
+    await redis.set(f"session:{session_id}:intervention_deadline_at", str(deadline), ex=_STATE_TTL)
+
     # Select the pre-generated intervention message for this type from the segment's
     # intervention_messages (supplied via the event payload). The DB/Redis LessonPackage fetch and
     # WS delivery to the client are the intervention_selection task; here we just pick the message.
@@ -197,7 +208,6 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
 
     await _persist_state(session_id, TutorState.INTERVENING)
     return {
-        **state,
         "current_state": TutorState.INTERVENING,
         "intervention_message": intervention_message,
     }
@@ -208,7 +218,7 @@ async def checking_in_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.debug("[tutor:%s] → CHECKING_IN", session_id)
     await _persist_state(session_id, TutorState.CHECKING_IN)
-    return {**state, "current_state": TutorState.CHECKING_IN}
+    return {"current_state": TutorState.CHECKING_IN}
 
 
 async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
@@ -237,7 +247,7 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
             "[tutor:%s] quiz_deadline_at write failed — proceeding without deadline", session_id
         )
 
-    return {**state, "current_state": TutorState.QUIZZING}
+    return {"current_state": TutorState.QUIZZING}
 
 
 async def teach_back_node(state: TutorMachineState) -> TutorMachineState:
@@ -245,7 +255,7 @@ async def teach_back_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.debug("[tutor:%s] → TEACH_BACK", session_id)
     await _persist_state(session_id, TutorState.TEACH_BACK)
-    return {**state, "current_state": TutorState.TEACH_BACK, "in_teachback": True}
+    return {"current_state": TutorState.TEACH_BACK, "in_teachback": True}
 
 
 async def session_end_node(state: TutorMachineState) -> TutorMachineState:
@@ -253,7 +263,7 @@ async def session_end_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.info("[tutor:%s] → SESSION_END", session_id)
     await _persist_state(session_id, TutorState.SESSION_END)
-    return {**state, "current_state": TutorState.SESSION_END}
+    return {"current_state": TutorState.SESSION_END}
 
 
 # ── Routing (conditional edges) ───────────────────────────────────────────────
