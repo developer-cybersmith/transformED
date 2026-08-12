@@ -24,7 +24,8 @@ type FlowEvent =
   | 'quiz_failed'
   | 'teachback_complete'
   | 'teachback_failed'
-  | 'lesson_complete';
+  | 'lesson_complete'
+  | 'intervention_complete';
 
 /** Flat control frames the client may send that aren't in the frozen ClientMessage union. */
 export type LocalControlOut =

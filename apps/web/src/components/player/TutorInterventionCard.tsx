@@ -28,8 +28,23 @@ export function TutorInterventionCard() {
   const activeIntervention = usePlayerStore((s) => s.activeIntervention);
   const status = usePlayerStore((s) => s.status);
   const setActiveIntervention = usePlayerStore((s) => s.setActiveIntervention);
+  const wsSendControl = usePlayerStore((s) => s.wsSendControl);
 
   const visible = activeIntervention !== null && status !== 'TEACH_BACK';
+
+  // Bug fix (found live, 2026-08-12): dismissing only ever cleared local
+  // React state -- it never told the server. The FSM's INTERVENING ->
+  // TEACHING transition exists and is tested (state_machine/graph.py's
+  // route_from_intervening) but had no caller anywhere, so a session's FIRST
+  // intervention permanently stuck the tutor state in INTERVENING --
+  // useAttentionMonitor.ts stops sending attention signals outside TEACHING,
+  // so CES monitoring silently died for the rest of the session no matter
+  // how long the student refocused. Fires on BOTH dismiss paths (auto and
+  // manual) since either one means the student is done with this card.
+  function dismiss() {
+    setActiveIntervention(null);
+    wsSendControl?.({ type: 'intervention_complete' });
+  }
 
   // Derived purely from the payload's own content (not just `message`) so a
   // replacement with a different `type` but identical message text still
@@ -48,9 +63,12 @@ export function TutorInterventionCard() {
     const timer = setTimeout(() => {
       // Guard against a stale timer firing after a newer intervention has
       // already replaced this one (same category of bug as
-      // CheckingInTransition's stale-timer review fix).
+      // CheckingInTransition's stale-timer review fix). Reads wsSendControl
+      // fresh from the store rather than closing over the render-time value,
+      // matching the activeIntervention freshness check right above it.
       if (usePlayerStore.getState().activeIntervention === current) {
         setActiveIntervention(null);
+        usePlayerStore.getState().wsSendControl?.({ type: 'intervention_complete' });
       }
     }, AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
@@ -72,7 +90,7 @@ export function TutorInterventionCard() {
         <p className="text-sm font-medium leading-snug">{activeIntervention.message}</p>
         <button
           type="button"
-          onClick={() => setActiveIntervention(null)}
+          onClick={dismiss}
           aria-label="Dismiss"
           className="text-current/60 hover:text-current shrink-0 -mt-0.5 -mr-0.5 text-lg leading-none"
         >

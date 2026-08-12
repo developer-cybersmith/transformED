@@ -51,6 +51,7 @@ _TUTOR_CLIENT_EVENTS = frozenset(
         "teachback_complete",
         "teachback_failed",
         "lesson_complete",
+        "intervention_complete",
     }
 )
 

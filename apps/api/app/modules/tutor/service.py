@@ -194,6 +194,16 @@ async def start_session(session_id: str) -> None:
 # Lifecycle events a CLIENT may drive via WebSocket. distraction_detected / fatigue_detected are
 # excluded on purpose — those come from the server-side CES engine, not the client; session_reset is
 # admin-only; session_start has its own handler.
+#
+# intervention_complete was missing here entirely (bug found live, 2026-08-12): the FSM defines
+# INTERVENING -> TEACHING on this event (state_machine/graph.py's route_from_intervening) and has
+# tests exercising it directly, but nothing anywhere ever sent it -- TutorInterventionCard.tsx's
+# dismiss (both the 30s auto-dismiss and the manual x) only cleared local React state, never told
+# the server. So every session's FIRST intervention permanently stuck the FSM in INTERVENING:
+# useAttentionMonitor.ts's flushWindow gates on `tutorStateRef.current === 'TEACHING'` before
+# sending anything, so CES monitoring silently died for the rest of the session -- the indicator
+# would never move again no matter how long the student refocused. This is the client-driven half
+# of that fix; TutorInterventionCard.tsx sends it on dismiss.
 _CLIENT_DRIVABLE_EVENTS = frozenset(
     {
         "segment_complete",
@@ -205,6 +215,7 @@ _CLIENT_DRIVABLE_EVENTS = frozenset(
         "teachback_complete",
         "teachback_failed",
         "lesson_complete",
+        "intervention_complete",
     }
 )
 

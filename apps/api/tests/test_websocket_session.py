@@ -208,6 +208,25 @@ async def test_e1_flow_event_dispatches_to_fsm(mocker):
 
 
 @pytest.mark.unit
+async def test_e1b_intervention_complete_dispatches_to_fsm(mocker):
+    """Bug fix (found live, 2026-08-12): intervention_complete had no caller anywhere --
+    TutorInterventionCard.tsx's dismiss only cleared local state, so the FSM stayed
+    stuck in INTERVENING forever after a session's first intervention. Now client-drivable,
+    same as any other flow event."""
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+
+    from app.core.websocket import _handle_tutor_event
+
+    await _handle_tutor_event("sess-iv", "intervention_complete")
+
+    mock_dispatch.assert_called_once_with("sess-iv", "intervention_complete")
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("event", ["distraction_detected", "fatigue_detected", "session_reset"])
 async def test_e2_server_only_event_rejected_by_service(event):
     """Server/engine/admin-only events must NOT be client-drivable — advance_tutor_state
