@@ -307,6 +307,46 @@ async def process_attention_signal(
     await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
     await redis.expire(history_key, _CES_WINDOW_TTL)
 
+    # Bug fix: nothing anywhere ever sent the frozen `ces_update` message
+    # (packages/shared/types/ws.ts) -- the frontend's CESIndicator has always
+    # had complete, correct handling for it (useLessonSocket.ts's 'ces_update'
+    # case), but this function only ever emitted `attention_ack` (no score,
+    # deliberately, per PRD Sec18) and `tutor_intervene` (only when an
+    # intervention actually fires). The qualitative-only CESIndicator dot
+    # (never the raw number, just a low/engaged/focused colour -- see that
+    # component's own docstring) was never a §18 violation to begin with, so
+    # there was never a reason to withhold this. `compute_ces` returns the
+    # 0-100 scale (PRD Sec11, matching Dev 3's ces_contribution) but
+    # useLessonSocket.ts's ces_update handler validates `ces in [0,1]` and
+    # silently drops anything outside that range -- scaled by /100 here to
+    # match what the frontend actually expects (this is the same 0-1-vs-0-100
+    # scale question already open for the other attention_signal fields;
+    # flagging it here rather than silently assuming it resolves the same way).
+    # window_index must be monotonically increasing per session (the frontend
+    # rejects an out-of-order frame) -- a dedicated counter, not history
+    # length, since history is capped at _CES_HISTORY_MAX and would not
+    # keep increasing past that.
+    try:
+        from app.core.websocket import manager
+
+        window_index = await cast(
+            "Awaitable[int]", redis.incr(f"session:{session_id}:ces_window_index")
+        )
+        await redis.expire(f"session:{session_id}:ces_window_index", _CES_WINDOW_TTL)
+        await manager.send(
+            session_id,
+            {
+                "type": "ces_update",
+                "payload": {
+                    "session_id": session_id,
+                    "ces": ces / 100.0,
+                    "window_index": window_index,
+                },
+            },
+        )
+    except Exception:
+        logger.exception("ces_update delivery failed for %s", session_id)
+
     # Read history to evaluate the intervention trigger
     history_raw: list[str] = await cast(
         "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
