@@ -8,7 +8,7 @@ learner DNA retrieval, and onboarding diagnostic submission.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
@@ -59,6 +59,9 @@ class SessionReport(BaseModel):
     quiz_accuracy_label: str | None
     # Story 3-30 — Learner DNA snapshot (descriptive labels + growth direction)
     learner_dna_snapshot: dict[str, Any] | None = None
+    # S3-47 (D17) — CES formula disclosure: which variant was applied + how many signals
+    formula_applied: Literal["full_5_signal", "teachback_redistributed_4_signal"]
+    signal_coverage: int
 
 
 class LearnerDNA(BaseModel):

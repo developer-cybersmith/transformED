@@ -859,6 +859,12 @@ async def get_session_report(
         avg_teachback = 0.0
         teachback_score = None
 
+    # D17 (S3-47): formula disclosure — determined by teachback presence
+    formula_applied = (
+        "teachback_redistributed_4_signal" if teachback_score is None else "full_5_signal"
+    )
+    signal_coverage = 4 if teachback_score is None else 5
+
     # Step 4 — Interventions count from session_events
     events_resp = await asyncio.to_thread(
         lambda: (
@@ -980,6 +986,9 @@ async def get_session_report(
         quiz_accuracy_label=_quiz_accuracy_label(quiz_accuracy, total_quiz),
         # Story 3-30 Learner DNA snapshot
         learner_dna_snapshot=_dna_snapshot,
+        # S3-47 formula disclosure
+        formula_applied=formula_applied,
+        signal_coverage=signal_coverage,
     )
 
 
