@@ -10,11 +10,11 @@ Architecture
 
 Message types (inbound from client)
 -------------------------------------
-``attention_signal``   Computer-vision attention data → forwarded to tutor service.
+``attention_signal``   Computer-vision attention data -> forwarded to tutor service.
 
 Message types (outbound from server)
 --------------------------------------
-``lesson_ready``       Content pipeline finished — lesson is ready to play.
+``lesson_ready``       Content pipeline finished -- lesson is ready to play.
 ``intervention``       Tutor engine triggers an intervention overlay.
 ``ping``               Keepalive.
 """
@@ -31,17 +31,19 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
-from app.config import get_settings
-
 logger = logging.getLogger(__name__)
+
+# D9: per-receive-call timeout. Two consecutive misses (2 x 30 s = 60 s total silence) trigger
+# session finalization. D77 (downstream) replaces this literal with settings.ws_signal_gap_seconds.
+_WS_RECEIVE_TIMEOUT_SECONDS: float = 30.0
 
 # Session IDs must be standard UUIDs (lowercase hex + hyphens). Validated at the route
 # boundary to prevent Redis key-namespace traversal via crafted session_id values.
 _SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 # Client-drivable tutor lifecycle events accepted as inbound WS control messages (same category as
-# "ping" / "session_start" — flat control messages, not the ws.ts payload union). Server/engine-only
-# events (distraction_detected, fatigue_detected) and admin events (session_reset) are NOT
+# "ping" / "session_start" -- flat control messages, not the ws.ts payload union).
+# Server/engine-only events (distraction_detected, fatigue_detected) and admin events are NOT
 # here, so a client cannot drive them. Mirrors service._CLIENT_DRIVABLE_EVENTS.
 _TUTOR_CLIENT_EVENTS = frozenset(
     {
@@ -62,7 +64,7 @@ class ConnectionManager:
     """Thread-safe (asyncio) multi-connection WebSocket manager."""
 
     def __init__(self) -> None:
-        # session_id → list of active WebSocket connections
+        # session_id -> list of active WebSocket connections
         self._connections: dict[str, list[WebSocket]] = defaultdict(list)
 
     async def connect(self, websocket: WebSocket, session_id: str) -> None:
@@ -76,8 +78,8 @@ class ConnectionManager:
         restored = await _restore_or_init_session(session_id)
         if restored is not None:
             # Sync the reconnecting client to the live state. Reuse the FROZEN ws.ts `state_change`
-            # message (no transition → from == to); ws.ts has no `state_sync`, and inventing an
-            # outbound type the client can't narrow would violate the §16 contract freeze.
+            # message (no transition -> from == to); ws.ts has no `state_sync`, and inventing an
+            # outbound type the client can't narrow would violate the s16 contract freeze.
             # Guarded: a dead socket must never break the handshake or leak a registry entry.
             try:
                 await websocket.send_json(
@@ -92,7 +94,7 @@ class ConnectionManager:
                 )
             except Exception:
                 logger.warning(
-                    "reconnect state sync send failed for %s — dropping socket", session_id
+                    "reconnect state sync send failed for %s -- dropping socket", session_id
                 )
                 self.disconnect(websocket, session_id)
         logger.info(
@@ -118,7 +120,7 @@ class ConnectionManager:
                 if ws.client_state == WebSocketState.CONNECTED:
                     await ws.send_json(message)
             except Exception:  # noqa: BLE001
-                logger.warning("Failed to send to ws in session %s — marking dead", session_id)
+                logger.warning("Failed to send to ws in session %s -- marking dead", session_id)
                 dead.append(ws)
 
         for ws in dead:
@@ -133,7 +135,7 @@ class ConnectionManager:
 # Module-level singleton
 manager = ConnectionManager()
 
-# ── Router ─────────────────────────────────────────────────────────────────────
+# -- Router ---------------------------------------------------------------------
 ws_router = APIRouter()
 
 
@@ -144,19 +146,45 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     Clients connect here for:
     - Sending attention / computer-vision signals to the tutor engine.
     - Receiving lesson_ready, intervention, and ping events from the server.
+
+    Signal-gap timeout (D9):
+    Each receive_text() is wrapped in asyncio.wait_for(_WS_RECEIVE_TIMEOUT_SECONDS).
+    missed_windows is coroutine-local (not Redis) and increments on each TimeoutError.
+    When missed_windows reaches 2 (60 s of consecutive silence), the session is
+    finalized and the WebSocket is closed with code 1001.
     """
     if not _SESSION_ID_RE.match(session_id):
         await websocket.close(code=4003)
         return
     await manager.connect(websocket, session_id)
 
-    _settings = get_settings()
+    # D9: coroutine-local counter -- NOT shared via Redis; resets on every successful receive;
+    # reaches 2 only after 2 CONSECUTIVE 30 s windows of silence (= 60 s total).
+    missed_windows: int = 0
     try:
         while True:
-            raw = await asyncio.wait_for(
-                websocket.receive_text(),
-                timeout=_settings.ws_signal_gap_seconds,
-            )
+            try:
+                raw = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=_WS_RECEIVE_TIMEOUT_SECONDS,
+                )
+                missed_windows = 0  # any successful receive resets the gap counter
+            except TimeoutError:
+                missed_windows += 1
+                logger.warning(
+                    "WS signal gap: session=%s missed_windows=%d",
+                    session_id,
+                    missed_windows,
+                )
+                if missed_windows >= 2:
+                    # 60 s of silence (2 consecutive 30 s windows) -- finalize and close.
+                    await _finalize_session_best_effort(session_id, flags={"signal_gap": True})
+                    try:
+                        await websocket.close(1001)
+                    except Exception:  # noqa: BLE001, S110
+                        logger.debug("WS close(1001) failed for %s -- gone", session_id)
+                    break
+                continue
 
             try:
                 payload: dict[str, Any] = json.loads(raw)
@@ -170,7 +198,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 await _handle_attention_signal(session_id, payload)
 
             elif msg_type == "session_start":
-                # payload is the already-decoded json.loads(raw) dict — no re-parse needed.
+                # payload is the already-decoded json.loads(raw) dict -- no re-parse needed.
                 await _handle_session_start(session_id, payload=payload)
 
             elif msg_type in _TUTOR_CLIENT_EVENTS:
@@ -183,18 +211,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 logger.debug("Unknown WS message type '%s' from session %s", msg_type, session_id)
                 await websocket.send_json({"error": f"unknown message type '{msg_type}'"})
 
-    except TimeoutError:
-        logger.info(
-            "WS signal-gap timeout (%.0fs) for session %s — finalising session",
-            _settings.ws_signal_gap_seconds,
-            session_id,
-        )
-        await _finalize_session_best_effort(session_id, flags={"signal_gap": True})
-        manager.disconnect(websocket, session_id)
-        try:
-            await websocket.close(1001)
-        except Exception:  # noqa: BLE001, S110
-            logger.debug("WS close(1001) failed for %s — socket already gone", session_id)
     except WebSocketDisconnect:
         manager.disconnect(websocket, session_id)
     except Exception:
@@ -202,20 +218,20 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         manager.disconnect(websocket, session_id)
 
 
-# ── Session lifecycle ────────────────────────────────────────────────────────
+# -- Session lifecycle ----------------------------------------------------------
 
 
 async def _restore_or_init_session(session_id: str) -> str | None:
     """Reconnect-aware session bootstrap.
 
-    If a ``tutor_state:{session_id}`` already exists, this is a reconnect — return the stored
+    If a ``tutor_state:{session_id}`` already exists, this is a reconnect -- return the stored
     state so the caller can push ``state_sync`` to the client; the session is NOT reset.
     Otherwise initialise a fresh session and return ``None``.
 
     Tier seeding runs on BOTH paths so that a session which connected before the lesson package was
     cached can pick up its learner tier on the first reconnect after generation completes.
 
-    Never raises — the WebSocket handshake must not fail on a Redis blip (degrade to fresh init).
+    Never raises -- the WebSocket handshake must not fail on a Redis blip (degrade to fresh init).
     """
     try:
         from app.core.redis import get_redis
@@ -227,7 +243,7 @@ async def _restore_or_init_session(session_id: str) -> str | None:
             await _seed_learner_tier(session_id)
             return state
     except Exception:
-        logger.warning("reconnect-state read failed for %s — initialising fresh", session_id)
+        logger.warning("reconnect-state read failed for %s -- initialising fresh", session_id)
 
     await _init_session_state(session_id)
     return None
@@ -240,8 +256,8 @@ async def _init_session_state(session_id: str) -> None:
     and clears any stale cooldown / fatigue flags left over from a previous
     session that reused this ``session_id``.  State/counter carry a 24 h TTL.
 
-    ``get_redis`` is imported lazily inside the function — no module-level
-    imports in this file (avoids the core ↔ tutor circular import).
+    ``get_redis`` is imported lazily inside the function -- no module-level
+    imports in this file (avoids the core <-> tutor circular import).
 
     Error contract: a Redis failure must never crash the WebSocket
     ``accept()`` handshake, so every block is best-effort and never re-raises.
@@ -286,7 +302,7 @@ async def _seed_learner_tier(session_id: str) -> None:
     branch of ``_restore_or_init_session`` so that a session which connected
     before lesson generation completed can pick up its tier on reconnect.
 
-    Never raises — a failure must not affect the WebSocket handshake.
+    Never raises -- a failure must not affect the WebSocket handshake.
     """
     try:
         import json as _json  # noqa: PLC0415
@@ -312,32 +328,32 @@ async def _seed_learner_tier(session_id: str) -> None:
         await pipe.execute()
         logger.info("WS session learner tier=%s qa_phase=%ss for %s", tier, qa_secs, session_id)
     except Exception:  # noqa: BLE001
-        logger.warning("learner tier seeding failed for %s — continuing without tier", session_id)
+        logger.warning("learner tier seeding failed for %s -- continuing without tier", session_id)
 
 
-# ── Dispatch helpers ───────────────────────────────────────────────────────────
+# -- Dispatch helpers -----------------------------------------------------------
 
 
 async def _handle_session_start(session_id: str, payload: dict[str, Any] | None = None) -> None:
-    """Dispatch a ``session_start`` event → IDLE → TEACHING transition, optionally
+    """Dispatch a ``session_start`` event -> IDLE -> TEACHING transition, optionally
     seeding the learner tier from the WebSocket payload first.
 
-    Learner tier (Story 4-21 — WS override path)
+    Learner tier (Story 4-21 -- WS override path)
     --------------------------------------------
     If the client sends a valid ``learner_tier`` (``T1``/``T2``/``T3``) in the
     ``session_start`` payload, it is written to ``session:{sid}:learner_tier`` and
-    ``session:{sid}:qa_phase_seconds`` (24 h TTL — same keys as Story 4-19).
+    ``session:{sid}:qa_phase_seconds`` (24 h TTL -- same keys as Story 4-19).
 
     Precedence: Story 4-19 seeds the tier from the cached lesson package during
     ``connect()``; this handler runs later (``session_start`` arrives *after* the
     connection is established), so a WS-payload tier overwrites the lesson-package
-    value — the client holds the fresher student profile. An absent / ``None`` /
+    value -- the client holds the fresher student profile. An absent / ``None`` /
     unrecognised tier makes **no** write, so 4-19's value (if any) is preserved.
 
     Caveat (multi-connection, last-writer-wins): the "WS tier wins" ordering is
     guaranteed only *per connection*. ``ConnectionManager`` allows multiple
     connections per ``session_id`` (desktop + mobile), and 4-19 re-seeds on every
-    connect / reconnect — so a second connection's 4-19 seed can land *after* this
+    connect / reconnect -- so a second connection's 4-19 seed can land *after* this
     override and revert it to the lesson-package tier. This is accepted as
     last-writer-wins: the tier only tunes the Q&A-phase duration (no data/access
     impact) and any drift self-heals on the next ``session_start``. Coordinating
@@ -358,7 +374,7 @@ async def _handle_session_start(session_id: str, payload: dict[str, Any] | None 
             redis = get_redis()
             qa_secs = _qa(tier)
             # Write both keys atomically via a pipeline so a partial failure can never leave a
-            # half-seeded (fresh tier + stale duration) pair — mirrors Story 4-19's
+            # half-seeded (fresh tier + stale duration) pair -- mirrors Story 4-19's
             # _seed_learner_tier invariant for these same keys.
             pipe = redis.pipeline(transaction=False)
             pipe.set(f"session:{session_id}:learner_tier", tier, ex=86400)
@@ -371,16 +387,16 @@ async def _handle_session_start(session_id: str, payload: dict[str, Any] | None 
                 qa_secs,
             )
         except Exception:  # noqa: BLE001
-            logger.warning("learner tier WS seeding failed for %s — continuing", session_id)
+            logger.warning("learner tier WS seeding failed for %s -- continuing", session_id)
 
     try:
-        # Lazy import — tutor module depends on core, not the other way round.
+        # Lazy import -- tutor module depends on core, not the other way round.
         # Go through the service layer (mirrors _handle_attention_signal); start_session
-        # calls dispatch_event(session_id, "session_start") → IDLE → TEACHING.
+        # calls dispatch_event(session_id, "session_start") -> IDLE -> TEACHING.
         from app.modules.tutor.service import start_session
 
         await start_session(session_id)
-        logger.info("[tutor:%s] session_start dispatched → TEACHING", session_id)
+        logger.info("[tutor:%s] session_start dispatched -> TEACHING", session_id)
     except Exception:
         logger.exception("session_start dispatch failed for %s", session_id)
 
@@ -400,16 +416,46 @@ async def _handle_tutor_event(session_id: str, event: str) -> None:
         logger.exception("tutor event %s failed for %s", event, session_id)
 
 
+async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> None:
+    """Forward an attention signal to the tutor state machine and ack the result.
+
+    Imported lazily to avoid circular imports between core and modules.
+    """
+    try:
+        # Lazy import -- tutor module depends on core, not the other way round
+        from app.modules.tutor.service import process_attention_signal
+
+        await process_attention_signal(session_id=session_id, signal=payload)
+        await manager.send(
+            session_id,
+            # PRD s18: never expose raw clinical/CES scores to the student client -- ack only.
+            {"type": "attention_ack", "payload": {"session_id": session_id, "status": "ok"}},
+        )
+    except ImportError:
+        # Tutor service not yet implemented -- log and skip gracefully
+        logger.debug(
+            "Tutor service not available yet -- attention signal dropped for session %s", session_id
+        )
+    except Exception:
+        logger.exception("Error processing attention signal for session %s", session_id)
+
+
+# -- Signal-gap finalization ----------------------------------------------------
+
+
 async def _finalize_session_best_effort(
     session_id: str,
     *,
     flags: dict[str, Any] | None = None,
 ) -> None:
-    """Best-effort session finalization — never raises.
+    """Best-effort session finalization -- never raises.
 
-    Called when the WebSocket loop exits (timeout, disconnect, or error).
-    Passes *flags* to the assessment service so the reason for termination
-    is recorded (e.g. ``{"signal_gap": True}``, ``{"abandoned": True}``).
+    Called when the WebSocket receive loop exits due to a 60 s signal gap
+    (2 consecutive 30 s windows of silence, D9).  Passes *flags* to the
+    assessment service so the reason is recorded
+    (e.g. ``{"signal_gap": True}``, ``{"abandoned": True}``).
+
+    D11: assessment.service.finalize_session writes ces_final + ended_at.
     """
     try:
         from app.modules.assessment.service import finalize_session  # noqa: PLC0415
@@ -418,27 +464,3 @@ async def _finalize_session_best_effort(
         logger.info("Best-effort finalization completed for session %s", session_id)
     except Exception:  # noqa: BLE001
         logger.warning("Best-effort finalization failed for session %s", session_id)
-
-
-async def _handle_attention_signal(session_id: str, payload: dict[str, Any]) -> None:
-    """Forward an attention signal to the tutor state machine and ack the result.
-
-    Imported lazily to avoid circular imports between core and modules.
-    """
-    try:
-        # Lazy import — tutor module depends on core, not the other way round
-        from app.modules.tutor.service import process_attention_signal
-
-        await process_attention_signal(session_id=session_id, signal=payload)
-        await manager.send(
-            session_id,
-            # PRD §18: never expose raw clinical/CES scores to the student client — ack only.
-            {"type": "attention_ack", "payload": {"session_id": session_id, "status": "ok"}},
-        )
-    except ImportError:
-        # Tutor service not yet implemented — log and skip gracefully
-        logger.debug(
-            "Tutor service not available yet — attention signal dropped for session %s", session_id
-        )
-    except Exception:
-        logger.exception("Error processing attention signal for session %s", session_id)
