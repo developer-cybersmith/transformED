@@ -207,9 +207,8 @@ async def test_intervening_node_writes_intervention_deadline(mocker) -> None:
     result = await dispatch_event("s-deadline", "distraction_detected")
 
     assert result["current_state"] == TutorState.INTERVENING
-    deadline_calls = [
-        c for c in redis.set.call_args_list if c.args[0] == "session:s-deadline:intervention_deadline_at"
-    ]
+    deadline_key = "session:s-deadline:intervention_deadline_at"
+    deadline_calls = [c for c in redis.set.call_args_list if c.args[0] == deadline_key]
     assert len(deadline_calls) == 1, "expected exactly one intervention_deadline_at write"
     assert deadline_calls[0].kwargs.get("ex") == _STATE_TTL
 

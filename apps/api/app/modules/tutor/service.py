@@ -260,7 +260,9 @@ async def _delete_intervention_deadline_if_expired(session_id: str, redis: Redis
         return bool(result)
     except Exception:  # noqa: BLE001
         logger.warning(
-            "[tutor:%s] intervention_deadline_at compare-and-delete failed", session_id, exc_info=True
+            "[tutor:%s] intervention_deadline_at compare-and-delete failed",
+            session_id,
+            exc_info=True,
         )
         return False
 

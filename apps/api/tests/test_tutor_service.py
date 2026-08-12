@@ -68,6 +68,7 @@ def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float 
     mock_redis = AsyncMock()
     mock_redis.lrange = AsyncMock(return_value=lrange_vals)
     mock_redis.exists = AsyncMock(return_value=exists)
+
     # Key-aware get: tutor_state must be TEACHING for the CES intervention guard to fire
     # (CLAUDE.md §10 — CES interventions only active in TEACHING). All other keys default to None:
     # no cached lesson_package → selection degrades to {} (cache-miss), no QUIZZING deadline set.

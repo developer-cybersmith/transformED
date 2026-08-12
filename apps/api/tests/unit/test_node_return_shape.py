@@ -145,7 +145,7 @@ def test_no_pipeline_node_returns_spread_of_state() -> None:
     """
     all_offenders: list[str] = []
     scanned = 0
-    per_dir_scanned: dict[Path, int] = {d: 0 for d in _SCAN_DIRS}
+    per_dir_scanned: dict[Path, int] = dict.fromkeys(_SCAN_DIRS, 0)
 
     for scan_dir in _SCAN_DIRS:
         assert scan_dir.is_dir(), f"scan dir not found: {scan_dir}"
@@ -177,9 +177,7 @@ def test_no_pipeline_node_returns_spread_of_state() -> None:
 def test_guard_scans_the_tutor_state_machine_directory_for_real() -> None:
     """AC-7 (D63): the widened scan must actually walk `tutor/state_machine`'s files, not
     merely have the path configured. Proves the widen isn't vacuous."""
-    py_files = [
-        f for f in sorted(_TUTOR_GRAPH_DIR.rglob("*.py")) if "__pycache__" not in f.parts
-    ]
+    py_files = [f for f in sorted(_TUTOR_GRAPH_DIR.rglob("*.py")) if "__pycache__" not in f.parts]
     assert py_files, f"no .py files found under {_TUTOR_GRAPH_DIR} — guard would scan nothing"
     assert any(f.name == "graph.py" for f in py_files), (
         "graph.py (the file with the 7 FSM nodes) is not in the widened scan set"
