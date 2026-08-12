@@ -72,6 +72,9 @@ async def test_per_signal_histories_written_in_teaching_state():
             ces_threshold=50.0,
             ces_cadence_seconds=5,
             max_distraction_interventions=3,
+            ces_fatigue_min_session_seconds=900,
+            ces_fatigue_blink_threshold=0.3,
+            ces_fatigue_head_pose_threshold=0.3,
         )),
     ):
         await process_attention_signal("ses-42", _attention_payload())
@@ -112,6 +115,9 @@ async def test_per_signal_histories_not_written_outside_teaching():
             ces_threshold=50.0,
             ces_cadence_seconds=5,
             max_distraction_interventions=3,
+            ces_fatigue_min_session_seconds=900,
+            ces_fatigue_blink_threshold=0.3,
+            ces_fatigue_head_pose_threshold=0.3,
         )),
     ):
         await process_attention_signal("ses-42b", _attention_payload())
@@ -149,6 +155,9 @@ async def test_none_behavioral_signal_skips_history_write():
             ces_threshold=50.0,
             ces_cadence_seconds=5,
             max_distraction_interventions=3,
+            ces_fatigue_min_session_seconds=900,
+            ces_fatigue_blink_threshold=0.3,
+            ces_fatigue_head_pose_threshold=0.3,
         )),
     ):
         await process_attention_signal(
@@ -185,6 +194,9 @@ async def test_none_head_pose_signal_skips_history_write():
             ces_threshold=50.0,
             ces_cadence_seconds=5,
             max_distraction_interventions=3,
+            ces_fatigue_min_session_seconds=900,
+            ces_fatigue_blink_threshold=0.3,
+            ces_fatigue_head_pose_threshold=0.3,
         )),
     ):
         await process_attention_signal(

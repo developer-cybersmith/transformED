@@ -410,6 +410,89 @@ async def process_attention_signal(
                                 "tutor_intervene delivery failed for %s", session_id
                             )
 
+    # ── Fatigue trigger (D7, S3-45) ──────────────────────────────────────────
+    # Only evaluate when TEACHING and no intervention already dispatched this signal.
+    # Primary: blink+head_pose both below thresholds for 2 consecutive windows AND
+    #   session duration >= ces_fatigue_min_session_seconds.
+    # Exhaustion fallback: all three MediaPipe signals None AND duration floor met.
+    # Once-per-session: _can_intervene_fatigue checks tutor_fatigue_fired:{session_id}.
+    if state_raw == "TEACHING" and not intervention_dispatched:
+        # _time is imported at module level; no local re-import needed
+        session_start_ts_raw = await redis.get(f"session:{session_id}:session_start_ts")
+        if session_start_ts_raw is not None:
+            try:
+                duration_s = _time.time() - float(session_start_ts_raw)
+            except (TypeError, ValueError):
+                duration_s = 0.0
+            if duration_s >= settings.ces_fatigue_min_session_seconds:
+                # BOUNDED: end=1 → at most 2 entries (CLAUDE.md unbounded-query rule)
+                blink_hist = await cast(
+                    "Awaitable[list[Any]]",
+                    redis.lrange(f"session:{session_id}:blink_history", 0, 1),
+                )
+                hp_hist = await cast(
+                    "Awaitable[list[Any]]",
+                    redis.lrange(f"session:{session_id}:head_pose_history", 0, 1),
+                )
+                primary_trigger = (
+                    len(blink_hist) >= 2
+                    and all(
+                        float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist
+                    )
+                    and len(hp_hist) >= 2
+                    and all(
+                        float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist
+                    )
+                )
+                exhaustion_fallback = (
+                    normalized.blink_rate is None
+                    and normalized.head_pose_score is None
+                    and normalized.behavioral_score is None
+                )
+                if primary_trigger or exhaustion_fallback:
+                    from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
+                        _can_intervene_fatigue,
+                    )
+
+                    if await _can_intervene_fatigue(session_id):
+                        logger.info(
+                            "[tutor:%s] fatigue trigger (primary=%s exhaustion=%s)"
+                            " — dispatching fatigue_detected",
+                            session_id,
+                            primary_trigger,
+                            exhaustion_fallback,
+                        )
+                        seg_msgs = await _segment_intervention_messages(session_id, redis)
+                        fatigue_result = await dispatch_event(
+                            session_id,
+                            "fatigue_detected",
+                            payload={"intervention_messages": seg_msgs},
+                        )
+                        intervention_dispatched = True
+                        fatigue_msg = fatigue_result.get("intervention_message")
+                        if (
+                            fatigue_result.get("current_state") == "INTERVENING" and fatigue_msg
+                        ):
+                            try:
+                                from app.core.websocket import manager  # noqa: PLC0415
+
+                                await manager.send(
+                                    session_id,
+                                    {
+                                        "type": "tutor_intervene",
+                                        "payload": {
+                                            "session_id": session_id,
+                                            "type": "fatigue",
+                                            "message": fatigue_msg,
+                                        },
+                                    },
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "tutor_intervene (fatigue) delivery failed for %s",
+                                    session_id,
+                                )
+
     # Learner Mode: auto-advance a QUIZZING session when the Q&A time limit elapses.
     # This attention-signal path (fires every ~5 s) is the primary deadline enforcer.
     # Delete-before-dispatch guard prevents double-fire from concurrent signals.
