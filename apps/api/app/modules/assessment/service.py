@@ -5,7 +5,9 @@ Assessment service layer — quiz grading, teach-back scoring, and session repor
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import statistics
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -670,6 +672,41 @@ async def grade_teachback(
         ces_contribution=ces_contribution,
         feedback=feedback,
     )
+
+
+async def compute_ces_from_session_aggregates(
+    session_id: str,
+    redis: Any,  # noqa: ANN401
+    settings: Any,  # noqa: ANN401
+) -> float | None:
+    """Return the mean CES over the stored ces_history windows for *session_id*.
+
+    D4 (S3-49): entries are JSON ``{"v": float, "t": int}``.  Pre-D4 bare-float strings
+    are accepted via a backward-compat fallback so existing sessions survive deployment.
+    Fully corrupt entries (neither JSON nor float) are skipped silently.
+
+    Returns ``None`` when fewer than 5 valid windows exist (insufficient data).
+    BOUNDED: lrange reads at most 10 entries (``ltrim`` cap from S3-34).
+    """
+    history_key = f"session:{session_id}:ces_history"
+    # BOUNDED: _CES_HISTORY_MAX=10 ltrim enforced at write time in tutor/service.py
+    raw_entries: list[str] = await redis.lrange(history_key, 0, -1)
+
+    windows: list[float] = []
+    for entry in raw_entries:
+        try:
+            parsed = json.loads(entry)
+            v = float(parsed["v"])
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+            try:
+                v = float(entry)  # backward compat: legacy bare float
+            except (ValueError, TypeError):
+                continue  # skip fully corrupt entry
+        windows.append(v)
+
+    if len(windows) < 5:
+        return None
+    return round(statistics.mean(windows), 2)
 
 
 async def get_session_report(

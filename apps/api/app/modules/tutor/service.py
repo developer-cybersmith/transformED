@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time as _time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -302,12 +303,16 @@ async def process_attention_signal(
     await redis.set(window_key, ces, ex=_CES_WINDOW_TTL)
     await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)  # ces_computation (s3-3)
 
-    # Prepend to history and trim to keep only the last _CES_HISTORY_MAX values
-    await cast("Awaitable[int]", redis.lpush(history_key, ces))
+    # Prepend to history (D4: JSON format {"v": CES float, "t": Unix seconds int}) and trim to
+    # keep only the last _CES_HISTORY_MAX values.
+    # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
+    _entry = json.dumps({"v": ces, "t": int(_time.time())})
+    await cast("Awaitable[int]", redis.lpush(history_key, _entry))
     await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
     await redis.expire(history_key, _CES_WINDOW_TTL)
 
-    # Read history to evaluate the intervention trigger
+    # Read history to evaluate the intervention trigger.
+    # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
     history_raw: list[str] = await cast(
         "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
     )
@@ -319,13 +324,34 @@ async def process_attention_signal(
     state_raw = await redis.get(f"tutor_state:{session_id}")
 
     if len(history_raw) >= 2:
-        # Index 0 is most recent (LPUSH prepends)
-        recent = [float(v) for v in history_raw[:2]]
+        # D4: parse JSON entries {"v": float, "t": int}.  Backward-compat fallback: a legacy
+        # bare-float string gets t=0 so the gap check always fails for that pair — no false
+        # intervention on a mixed old/new history (abs(now - 0) >> 2*cadence).
+        def _parse_history_entry(raw: str) -> tuple[float, int]:
+            try:
+                parsed = json.loads(raw)
+                return float(parsed["v"]), int(parsed["t"])
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                try:
+                    return float(raw), 0  # legacy bare float — timestamp unknown
+                except (ValueError, TypeError):
+                    return 0.0, 0  # fully corrupt — safe sentinel
+
+        v0, t0 = _parse_history_entry(history_raw[0])  # most recent (LPUSH prepends)
+        v1, t1 = _parse_history_entry(history_raw[1])  # second most recent
+
+        # D4 gap check: reject stale history from signal gaps / MediaPipe restarts.
+        gap_ok = abs(t0 - t1) <= 2 * settings.ces_cadence_seconds
 
         # CLAUDE.md §10: CES interventions only fire in TEACHING state.
         # D6: _can_intervene_distraction uses a Lua script to atomically check cooldown +
         # distraction cap and increment the count — no separate EXISTS+GET two-step.
-        if state_raw == "TEACHING" and all(v < settings.ces_threshold for v in recent):
+        if (
+            gap_ok
+            and state_raw == "TEACHING"
+            and v0 < settings.ces_threshold
+            and v1 < settings.ces_threshold
+        ):
             from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
                 _can_intervene_distraction,
             )
@@ -336,8 +362,8 @@ async def process_attention_signal(
                     "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching"
                     " distraction_detected",
                     session_id,
-                    recent[0],
-                    recent[1],
+                    v0,
+                    v1,
                 )
                 # Pass the current segment's pre-generated messages so the FSM can select one
                 # (Redis reads only — no DB/LLM on this hot path).

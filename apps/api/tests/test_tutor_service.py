@@ -52,9 +52,11 @@ def _settings_mock(threshold: float = 0.5) -> MagicMock:
     compute_ces() reads settings.ces_weight_* at call time; without these a bare
     MagicMock leaks into weight_sum and raises TypeError. Matching config defaults
     makes compute_ces() on the mock equal the module-level _EXPECTED_CES.
+    D4 (S3-49): ces_cadence_seconds must also be set — gap check compares int <= int.
     """
     s = MagicMock()
     s.ces_threshold = threshold
+    s.ces_cadence_seconds = 5  # D4: gap tolerance = 2 * 5 = 10 s
     s.ces_weight_quiz = 0.35
     s.ces_weight_teachback = 0.25
     s.ces_weight_behavioral = 0.20
@@ -195,14 +197,26 @@ async def test_ces_window_written_with_ttl(mocker) -> None:
 
 @pytest.mark.unit
 async def test_history_lpush_ltrim_expire_called(mocker) -> None:
-    """AC5: history is built via lpush → ltrim(key,0,9) → expire(key,86400), in that order."""
+    """AC5: history is built via lpush → ltrim(key,0,9) → expire(key,86400), in that order.
+
+    D4 (S3-49): lpush value is a JSON string {"v": float, "t": int}, not a bare float.
+    """
     mock_redis, _ = _setup(mocker, lrange_vals=["0.5"])
 
     from app.modules.tutor.service import process_attention_signal
 
     await process_attention_signal("sess-1", _VALID_PAYLOAD)
 
-    mock_redis.lpush.assert_any_call(_HISTORY_KEY, _EXPECTED_CES)
+    # D4: the pushed value is a JSON string — find the call by key and validate the format.
+    import json as _json  # noqa: PLC0415
+
+    history_calls = [c for c in mock_redis.lpush.call_args_list if c.args[0] == _HISTORY_KEY]
+    assert history_calls, "lpush must be called with the ces_history key"
+    pushed = _json.loads(history_calls[0].args[1])
+    assert isinstance(pushed.get("v"), float)
+    assert isinstance(pushed.get("t"), int)
+    assert abs(pushed["v"] - _EXPECTED_CES) < 0.001
+
     mock_redis.ltrim.assert_any_call(_HISTORY_KEY, 0, 9)
     mock_redis.expire.assert_any_call(_HISTORY_KEY, 86400)
 
@@ -875,6 +889,7 @@ async def test_process_attention_quizzing_expired_with_low_ces_only_quiz_complet
 
     mock_settings = MagicMock()
     mock_settings.ces_threshold = 50
+    mock_settings.ces_cadence_seconds = 5  # D4 (S3-49): gap check requires int attribute
     mock_settings.ces_weight_quiz = 0.35
     mock_settings.ces_weight_teachback = 0.25
     mock_settings.ces_weight_behavioral = 0.20

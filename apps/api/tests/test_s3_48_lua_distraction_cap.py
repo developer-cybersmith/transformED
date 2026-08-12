@@ -236,6 +236,7 @@ async def test_process_attention_signal_no_dispatch_when_guard_returns_false():
     ):
         s = MagicMock()
         s.ces_threshold = 50.0
+        s.ces_cadence_seconds = 5  # D4 (S3-49): gap check requires int attribute
         s.ces_weight_quiz = 0.35
         s.ces_weight_teachback = 0.25
         s.ces_weight_behavioral = 0.20
