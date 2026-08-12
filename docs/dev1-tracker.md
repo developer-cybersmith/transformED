@@ -107,10 +107,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 7 | 3 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 10 | 6 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **61** | **46** | **1** | **14** |
+| **Totals** | | **64** | **49** | **1** | **14** |
 
 ---
 
@@ -782,6 +782,25 @@ Every node must:
 - [x] **S3-6 Media signed-URL layer** — ✓ 2026-07-23 — added from 2026-07-22 audit (HIGH #3)
   - `apps/api/app/modules/media/router.py` — finish `GET /api/media/signed-url` (was a 501 stub)
   - **AC:** ownership-verified signing (IDOR-safe) for `lesson-audio`/`lesson-images` paths; malformed/unowned paths 404, not 500; backend-only (no frontend player changes — see `docs/stories/3-6-media-signed-url-layer.md`) ✅
+
+- [x] **S3-37 Node 8 narration hard cap — 10,000 chars/lesson** — ✓ 2026-08-12 (branch `sprint3/s3-37-narration-char-cap`, PR not yet opened)
+  - `docs/decisionupdate.md` §8: TTS synthesis cost is 67–73% of total lesson generation cost — the dominant line item against the $3.00/lesson ceiling — and no lesson-wide narration character cap existed anywhere. Cannot live in `narration_generator_node` (Send()-dispatched per-section, no cross-section visibility); enforced in `tts_node` instead, the first point all segments' scripts are available together and immediately before the TTS spend.
+  - `apps/api/app/config.py` *(`settings.max_narration_chars_per_lesson`, default 10,000)*, `apps/api/app/modules/content/pipeline/graph.py` *(`tts_node` computes a running total, truncates the boundary-crossing segment, degrades every later segment through the existing browser-fallback shape — no new shape invented, no paid TTS call for a segment contributing zero narration)*, `apps/api/app/modules/admin/router.py` *(surfaces the cap event)*
+  - **AC:** cap enforced lesson-wide across all segments ✅; boundary segment truncated character-exact, later segments degrade via the existing fallback shape ✅; `node_outputs["narration_cap_applied"]` always written (present even when nothing capped) — no silent truncation ✅; 34 new tests (`test_tts_node.py`, `test_admin_router.py`) ✅ — see `docs/stories/3-37-narration-char-cap.md`
+  - **Verified this session:** full suite 43 failed/1795 passed/85 skipped vs. `main`'s 44 failed/1780 passed/85 skipped (same baseline failures, zero regressions, +15 new passing); ruff/mypy parity with `main`
+
+- [x] **S3-38 tts_node measures REAL audio duration** — ✓ 2026-08-12 (branch `sprint3/s3-38-real-audio-duration`, PR not yet opened)
+  - `package_builder` was guessing slide timing instead of using the actual synthesized audio's real duration. Round 2 review caught a real license defect in the first implementation: it used `mutagen`, mislabeled MIT in this story's own ACs/pyproject comment, but actually GPL-2.0-or-later (verified via `pip show mutagen`, not asserted) — swapped to `tinytag` (genuinely MIT), matching this repo's zero-tolerance stance on license mistakes (same category as the PyMuPDF/AGPL-3.0 ban).
+  - `apps/api/app/modules/content/pipeline/graph.py` *(`tts_node` parses real duration via `tinytag.TinyTag`, `duration_ms` is `None` on the browser-fallback path or when `tinytag` can't parse)*, `apps/api/pyproject.toml` *(`tinytag>=2.3.0,<3.0.0` added)*
+  - **AC:** real synthesized-audio duration replaces estimated slide timing ✅; parse failure degrades explicitly (`duration_ms=None`), never silently wrong ✅; license of the new dependency verified, not assumed ✅; 18 new tests (`test_audio_duration_s3_38.py`) ✅ — see `docs/stories/3-38-real-audio-duration.md`
+  - **Verified this session:** 43 failed/1798 passed/85 skipped vs. `main` baseline, zero regressions; ruff/mypy parity with `main` (after installing the new `tinytag` dependency into the test environment)
+
+- [x] **S3-39 Surface `_get_section_body`'s silent truncation (D46)** — ✓ 2026-08-12 (branch `sprint3/s3-39-surface-section-truncation`, PR not yet opened)
+  - Closes D46. `_get_section_body(max_chars=...)` silently sliced oversized section text with no record anywhere that truncation happened — a smaller-scale instance of the same "reports success while covering a fraction of the input" failure class as the book-scale 4%-of-the-book defect this register exists to name.
+  - `apps/api/app/config.py`, `apps/api/app/modules/content/pipeline/graph.py` *(every truncation now recorded into a `section_truncations` list, persisted and admin-visible — no silent degradation)*
+  - **AC:** every truncation explicitly recorded (section id, original length, kept length) ✅; nothing truncated without a visible trail ✅; 73+49 new/updated tests across `test_phase1_economy_nodes.py`, `test_phase1_checkpoint_idempotency.py`, `test_package_builder_node.py` ✅ — see `docs/stories/3-39-surface-section-truncation.md`
+  - **Verified this session:** 43 failed/1789 passed/85 skipped vs. `main` baseline, zero regressions; ruff/mypy parity with `main`
+  - **D46 stays OPEN** — only the "nothing surfaces it" half is fixed here (now guarded two ways: `truncation_expected` at chapter level, `section_truncations` at per-section level). The root cause (the ~90,000-char LLM-visible window itself) is unchanged and remains open, per D46's own addendum in `docs/DEFECT-REGISTER.md` (already written by this branch's own commits) — do not report D46 as closed
 
 - [x] **S3-40 Langfuse instrumentation audit (env, session semantics, naming)** — ✓ 2026-08-12
   - Installed `github.com/langfuse/skills`, used it to audit tracing across all providers + the tutor FSM against best-practices.md/sessions.md/environments.md fetched fresh, and against the pinned SDK's real signatures (4.14.3) — not from memory
