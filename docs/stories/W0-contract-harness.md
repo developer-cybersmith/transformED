@@ -85,9 +85,10 @@ decision with an owner and a trigger. Do not leave it implicit.
 - `apps/web/src/lib/api.ts` is axios with `baseURL = NEXT_PUBLIC_API_URL || "http://localhost:8000/api"`.
   Services use relative paths without a leading slash (`'content/lessons'`). MSW handlers must
   match the resolved absolute URL.
-- ⚠️ `ci.yml:188` sets `NEXT_PUBLIC_API_URL: http://localhost:8000` — **without** `/api`. Build-only
-  today, so harmless, but any runtime env set that way 404s every call. Flag it; do not silently
-  "fix" a deploy variable as part of this story.
+- ~~⚠️ `ci.yml:188` sets `NEXT_PUBLIC_API_URL: http://localhost:8000` — **without** `/api`.~~
+  **FIXED 2026-08-11** (D31, Story 3-35) — `ci.yml` and `.env.example` both now carry
+  the `/api` suffix. This note is kept for context on why the trap existed, not because
+  it still does.
 - Tests live in `apps/web/src/__tests__/`, mirroring `src/`. Idiom is `vi.hoisted()` + `vi.mock()`.
   MSW replaces the *module* mock for network-level tests — do not do both for the same test.
 - `UploadFlow.test.tsx:261-278` genuinely sleeps ~10 s because fake timers break framer-motion's

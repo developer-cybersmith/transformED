@@ -46,12 +46,20 @@ export function formatTimeAgo(iso: string): string {
 // CES is never shown as a raw number to students (PRD: descriptive label only).
 // NaN/out-of-range input is surfaced as "Unknown" rather than silently banded
 // as the lowest score — a malformed response shouldn't read as "fully disengaged".
-export function formatCesLabel(cesScore: number): string {
+export function formatCesLabel(cesScore: number | null): string {
+    if (cesScore === null) return "Not measured";
     if (!Number.isFinite(cesScore) || cesScore < 0 || cesScore > 100) return "Unknown";
     if (cesScore >= 80) return "Highly Engaged";
     if (cesScore >= 60) return "Well Focused";
     if (cesScore >= 40) return "Getting There";
     return "Room to Grow";
+}
+
+export function cesScoreColor(cesScore: number | null): string {
+    if (cesScore === null || !Number.isFinite(cesScore)) return "text-neutral-400";
+    if (cesScore >= 70) return "text-emerald-600 dark:text-emerald-400";
+    if (cesScore >= 50) return "text-amber-600 dark:text-amber-400";
+    return "text-rose-600 dark:text-rose-400";
 }
 
 // Teach-back score is never shown as a raw number to students (PRD: no rubric

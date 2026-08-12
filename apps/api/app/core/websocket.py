@@ -40,6 +40,7 @@ _SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 # "ping" / "session_start" — flat control messages, not the ws.ts payload union). Server/engine-only
 # events (distraction_detected, fatigue_detected) and admin events (session_reset) are NOT
 # here, so a client cannot drive them. Mirrors service._CLIENT_DRIVABLE_EVENTS.
+# D63: intervention_complete added — dismissing an intervention overlay must reach the FSM.
 _TUTOR_CLIENT_EVENTS = frozenset(
     {
         "segment_complete",
@@ -51,6 +52,7 @@ _TUTOR_CLIENT_EVENTS = frozenset(
         "teachback_complete",
         "teachback_failed",
         "lesson_complete",
+        "intervention_complete",
     }
 )
 
@@ -228,6 +230,8 @@ async def _init_session_state(session_id: str) -> None:
     ``accept()`` handshake, so every block is best-effort and never re-raises.
     """
     try:
+        import time as _time  # noqa: PLC0415
+
         from app.core.redis import get_redis
 
         redis = get_redis()
@@ -238,7 +242,36 @@ async def _init_session_state(session_id: str) -> None:
         await redis.delete(
             f"session:{session_id}:segment_index"
         )  # reset segment pointer for a reused id
-        logger.info("WS session initialised: session=%s", session_id)
+        # S3-40 (D15): record session start for fatigue duration gate.
+        # nx=True: first-connect wins — reconnects do not reset the clock.
+        # D61: retry up to 3 times so a single Redis blip does not permanently
+        # disable fatigue for the session. Backoff: 0.1 s, 0.2 s, give up.
+        import asyncio as _asyncio  # noqa: PLC0415
+
+        _ts_key = f"session:{session_id}:session_start_ts"
+        _ts_written = False
+        for _attempt in range(3):
+            try:
+                await redis.set(
+                    _ts_key,
+                    str(int(_time.time())),
+                    ex=86400,
+                    nx=True,
+                )
+                _ts_written = True
+                break
+            except Exception as _ts_exc:  # noqa: BLE001
+                if _attempt < 2:
+                    await _asyncio.sleep(0.1 * (2**_attempt))
+                else:
+                    logger.warning(
+                        "Failed to write session_start_ts after 3 attempts "
+                        "for session=%s — fatigue detection disabled: %s",
+                        session_id,
+                        _ts_exc,
+                    )
+        if _ts_written:
+            logger.info("WS session initialised: session=%s", session_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to init session state for %s: %s", session_id, e)
 

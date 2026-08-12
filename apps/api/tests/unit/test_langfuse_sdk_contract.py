@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import re
 import sys
 from unittest.mock import MagicMock
 
 import langfuse
 import pytest
-from langfuse import Langfuse, LangfuseGeneration
+from langfuse import Langfuse, LangfuseGeneration, propagate_attributes
 
 
 def _ensure_openai_submodule_stubs() -> None:
@@ -137,33 +138,102 @@ def test_start_observation_returns_generation_type_for_generation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Provider modules import cleanly against the real SDK
+# Event-observation surface (Story 3-40 -- tutor FSM dispatch tracing)
+# ---------------------------------------------------------------------------
+#
+# Not `start_observation(as_type="event")` -- this pinned SDK version's
+# real Literal does not include "event" (confirmed below), even though
+# the live Langfuse docs describe it as a capability of a newer version.
+# The tutor FSM uses `create_event()` instead -- the dedicated method this
+# version actually exposes for a discrete, instantaneous observation.
+
+
+@pytest.mark.unit
+def test_start_observation_as_type_does_not_accept_event_on_this_pinned_version() -> None:
+    """Documents WHY create_event() is used instead of start_observation(as_type="event"):
+    this pinned SDK's real overload does not include "event" as a valid as_type literal.
+    If this ever starts failing, the SDK has gained "event" support and
+    modules/tutor/state_machine/graph.py's _trace_dispatch could be simplified
+    back to start_observation -- re-verify before doing so, don't assume."""
+    params = inspect.signature(Langfuse.start_observation).parameters
+    assert "event" not in str(params["as_type"].annotation)
+
+
+@pytest.mark.unit
+def test_client_has_create_event_with_provider_kwargs() -> None:
+    """The tutor FSM's _trace_dispatch calls
+    client.create_event(name=, input=, output=, metadata=, trace_context=)."""
+    assert hasattr(Langfuse, "create_event")
+    params = inspect.signature(Langfuse.create_event).parameters
+    for kwarg in ("name", "input", "output", "metadata", "trace_context"):
+        assert kwarg in params, f"Langfuse.create_event lost kwarg '{kwarg}'"
+
+
+@pytest.mark.unit
+def test_create_event_docstring_example_does_not_call_end() -> None:
+    """create_event's returned LangfuseEvent DOES inherit an end() method (it's
+    shared across all observation-wrapper types), but the SDK's own docstring
+    example never calls it -- `event = langfuse.create_event(name=...)`, full
+    stop. That's why _trace_dispatch has no `finally: observation.end()`, unlike
+    every provider's generation-tracing code. This test pins the SDK's own
+    documented usage pattern, not the type's attribute shape (which does have
+    `.end`, contrary to an earlier, incorrect version of this test)."""
+    doc = Langfuse.create_event.__doc__ or ""
+    assert ".end(" not in doc, (
+        "create_event's own docstring now shows an .end() call in its example -- "
+        "re-check whether _trace_dispatch needs one too"
+    )
+
+
+# ---------------------------------------------------------------------------
+# propagate_attributes() -- session_id grouping (Story 3-40 -- tutor FSM)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "module_path",
-    [
-        "app.providers.embeddings.openai",
-        "app.providers.llm.openai",
-    ],
-)
+def test_propagate_attributes_is_a_top_level_import() -> None:
+    """The tutor FSM imports `from langfuse import propagate_attributes` (a
+    module-level function, not a Langfuse client method) -- confirmed importable."""
+    assert callable(propagate_attributes)
+
+
+@pytest.mark.unit
+def test_propagate_attributes_accepts_session_id() -> None:
+    """This is the ONLY documented mechanism for setting the first-class
+    session_id trace attribute -- neither start_observation nor create_event
+    take session_id directly. If this kwarg disappears, _trace_dispatch's
+    session-grouping breaks silently (every dispatch would still trace, just
+    ungrouped)."""
+    params = inspect.signature(propagate_attributes).parameters
+    assert "session_id" in params, "propagate_attributes lost kwarg 'session_id'"
+
+
+# ---------------------------------------------------------------------------
+# Provider modules import cleanly against the real SDK
+# ---------------------------------------------------------------------------
+
+
+_TRACED_PROVIDER_MODULES = [
+    "app.providers.embeddings.openai",
+    "app.providers.llm.openai",
+    "app.providers.tts.sarvam",
+    "app.providers.tts.azure",
+    "app.providers.image.openai_image",
+    "app.providers.image.imagen",
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("module_path", _TRACED_PROVIDER_MODULES)
 def test_provider_module_imports_cleanly(module_path: str) -> None:
-    """Both providers must import with no AttributeError at import time."""
+    """Every traced provider must import with no AttributeError at import time."""
     _ensure_openai_submodule_stubs()
     module = importlib.import_module(module_path)
     assert module is not None
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "module_path",
-    [
-        "app.providers.embeddings.openai",
-        "app.providers.llm.openai",
-    ],
-)
+@pytest.mark.parametrize("module_path", _TRACED_PROVIDER_MODULES)
 def test_provider_source_has_no_v2_calls(module_path: str) -> None:
     """Zero calls to removed v2 methods (.trace(...) / .generation(...)) in providers."""
     _ensure_openai_submodule_stubs()
@@ -172,3 +242,44 @@ def test_provider_source_has_no_v2_calls(module_path: str) -> None:
     assert ".trace(" not in source, f"{module_path} still calls the dead v2 .trace() API"
     assert ".generation(" not in source, f"{module_path} still calls the dead v2 .generation() API"
     assert "start_observation(" in source, f"{module_path} does not use v4 start_observation"
+
+
+@pytest.mark.unit
+def test_tutor_state_machine_module_imports_cleanly() -> None:
+    """The tutor FSM's tracing (create_event/propagate_attributes) must import
+    with no AttributeError at import time -- separate from the provider list
+    above since it isn't an ImageProvider/TTSProvider/LLMProvider."""
+    module = importlib.import_module("app.modules.tutor.state_machine.graph")
+    assert module is not None
+
+
+@pytest.mark.unit
+def test_tutor_state_machine_source_has_no_v2_calls_and_uses_create_event() -> None:
+    """D64: this module called the dead v2 .trace() method for every dispatch,
+    silently no-op since the 4.x upgrade, swallowed at DEBUG level. Guards
+    against exactly that regression -- zero *executable* `.trace(` calls
+    (the docstring's own historical explanation legitimately quotes
+    "`.trace()` method" in prose, so this strips docstrings/comments before
+    scanning rather than a bare substring check, which would false-positive
+    on that exact sentence), and the create_event/propagate_attributes
+    replacement is actually present in real code."""
+    module = importlib.import_module("app.modules.tutor.state_machine.graph")
+    source = inspect.getsource(module)
+
+    # Strip triple-quoted docstrings and '#'-comments before scanning for a
+    # real call -- a naive substring check on the raw source false-positives
+    # on this module's own docstring, which explains the D64 bug in prose.
+    code_only = re.sub(r'"""(?:[^"]|"(?!""))*"""', "", source, flags=re.DOTALL)
+    code_only = re.sub(r"#.*", "", code_only)
+
+    assert ".trace(" not in code_only, (
+        "tutor state machine calls the dead v2 .trace() API outside a docstring/comment"
+    )
+    assert "create_event(" in code_only, (
+        "tutor state machine no longer calls create_event() -- D64's fix may have "
+        "regressed back to a silently-broken tracing call"
+    )
+    assert "propagate_attributes(" in code_only, (
+        "tutor state machine no longer calls propagate_attributes() -- session_id "
+        "grouping for tutor dispatches may have silently regressed"
+    )

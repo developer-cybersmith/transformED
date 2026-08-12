@@ -8,7 +8,7 @@ learner DNA retrieval, and onboarding diagnostic submission.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
@@ -44,7 +44,7 @@ class SessionReport(BaseModel):
     session_id: str
     user_id: str
     lesson_id: str
-    ces_score: float
+    ces_score: float | None = None  # None when session ended before finalization
     ces_breakdown: dict[str, float]
     interventions_count: int
     quiz_score: float | None
@@ -59,6 +59,18 @@ class SessionReport(BaseModel):
     quiz_accuracy_label: str | None
     # Story 3-30 — Learner DNA snapshot (descriptive labels + growth direction)
     learner_dna_snapshot: dict[str, Any] | None = None
+    # S3-47 (D17) — CES formula disclosure: which variant was applied + how many signals
+    formula_applied: Literal["full_5_signal", "teachback_redistributed_4_signal"]
+    signal_coverage: int
+    # S3-50 (D18) — CES history summary: compact engagement trend (min/max/mean/window_count)
+    ces_history_summary: dict[str, Any] | None = None
+    # S3-51 (D19) — Intervention trigger count for this session.
+    # SEMANTIC NOTE (S3-53): counts `intervention_triggered` events in the `session_events`
+    # DB table — measures trigger events, NOT WebSocket delivery confirmations.
+    # A WS delivery failure that still runs intervening_node creates a DB event but sends
+    # nothing to the client. Rename to intervention_events_count in a future non-frozen-
+    # contract release (requires 4-dev PR review per CLAUDE.md §16).
+    intervention_messages_used: int = 0
 
 
 class LearnerDNA(BaseModel):
@@ -162,6 +174,7 @@ async def get_session_report_endpoint(
 ) -> SessionReport:
     """Return the final CES breakdown and scores for a completed session."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.core.redis import get_redis  # noqa: PLC0415 — S3-42 (D9): per-signal histories
     from app.modules.assessment.service import get_analytics_consent, get_session_report
 
     supabase = get_supabase()
@@ -169,6 +182,7 @@ async def get_session_report_endpoint(
         session_id=session_id,
         user_id=current_user["sub"],
         supabase=supabase,
+        redis=get_redis(),  # S3-42 (D9): enables real per-signal breakdown averages
     )
     consent = await get_analytics_consent(user_id=current_user["sub"], supabase=supabase)
     capture_event(

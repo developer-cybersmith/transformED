@@ -18,8 +18,10 @@ import logging
 from typing import Any
 
 import httpx
+from langfuse import Langfuse
 
 from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
+from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace
 from app.core.retry import with_retry
 from app.providers.base import TTSProvider
 
@@ -27,16 +29,31 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER_KEY = "azure_tts"
 
+# Azure Cognitive Services TTS pricing (USD per character) — same figure
+# tts_node's own cost-tracking uses; see sarvam.py's COST_PER_CHAR for why
+# this lives here rather than as a private duplicate in graph.py.
+COST_PER_CHAR = 0.000016
+
 
 class AzureTTSProvider(TTSProvider):
     """Fallback TTS provider — Azure Cognitive Services Speech."""
 
-    def __init__(self) -> None:
+    def __init__(self, lesson_id: str | None = None) -> None:
         from app.config import get_settings
 
         settings = get_settings()
         self._api_key = settings.azure_tts_key
         self._region = settings.azure_tts_region
+        self._lesson_id = lesson_id
+        self._langfuse: Langfuse | None
+        try:
+            self._langfuse = get_langfuse()
+        except Exception:
+            logger.warning(
+                "Langfuse init failed — tracing disabled for AzureTTSProvider",
+                exc_info=True,
+            )
+            self._langfuse = None
 
     async def synthesize(
         self,
@@ -91,20 +108,57 @@ class AzureTTSProvider(TTSProvider):
         # so this is types-only — the same header value is sent at runtime.
         api_key = self._api_key or ""
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"https://{self._region}.tts.speech.microsoft.com/cognitiveservices/v1",
-                headers={
-                    "Ocp-Apim-Subscription-Key": api_key,
-                    "Content-Type": "application/ssml+xml",
-                    "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
-                },
-                content=ssml.encode("utf-8"),
+        generation = None
+        langfuse = self._langfuse
+        if langfuse is not None:
+            generation = safe_trace(
+                lambda: langfuse.start_observation(
+                    # Same name as sarvam.py's primary observation — see
+                    # that file's comment for why.
+                    name="synthesize-speech",
+                    as_type="generation",
+                    model="azure-neural-tts",
+                    input=f"{len(text)} chars, voice={voice_id}",
+                    metadata={"voice_id": voice_id, "lesson_id": self._lesson_id},
+                    trace_context=deterministic_trace_context(langfuse, self._lesson_id),
+                )
             )
-            response.raise_for_status()
-            audio_bytes = response.content
 
-        return audio_bytes, []
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"https://{self._region}.tts.speech.microsoft.com/cognitiveservices/v1",
+                    headers={
+                        "Ocp-Apim-Subscription-Key": api_key,
+                        "Content-Type": "application/ssml+xml",
+                        "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+                    },
+                    content=ssml.encode("utf-8"),
+                )
+                response.raise_for_status()
+                audio_bytes = response.content
+
+            if generation is not None:
+                cost = len(text) * COST_PER_CHAR
+                safe_trace(
+                    lambda: generation.update(
+                        output=f"{len(audio_bytes)} bytes audio",
+                        usage_details={"characters": len(text)},
+                        cost_details={"input": cost},
+                    )
+                )
+
+            return audio_bytes, []
+
+        except Exception as exc:
+            if generation is not None:
+                error_message = str(exc)
+                safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
+            raise
+
+        finally:
+            if generation is not None:
+                safe_trace(generation.end)
 
 
 def _escape_ssml(text: str) -> str:

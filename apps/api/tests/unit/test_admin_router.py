@@ -198,6 +198,105 @@ def test_get_job_404_malformed_uuid_never_hits_db(client_factory: ClientFactory)
     sb.table.assert_not_called()
 
 
+# ── narration_capped (Story 3-37 Round-2 review, Scale & Load Hunter) ──────────
+
+
+@pytest.mark.unit
+def test_list_jobs_surfaces_narration_capped_true(client_factory: ClientFactory) -> None:
+    """Before this field existed, node_outputs['narration_cap_applied'] was
+    fetched (select("*")) but always discarded — no admin response ever
+    distinguished a lesson with silently-zeroed trailing narration segments
+    from a fully-narrated one. Must now surface as narration_capped=True."""
+    sb = MagicMock()
+    row = {
+        "job_id": "job-1",
+        "lesson_id": "lesson-1",
+        "status": "completed",
+        "created_at": "2026-07-27T00:00:00Z",
+        "started_at": "2026-07-27T00:00:01Z",
+        "completed_at": "2026-07-27T00:05:00Z",
+        "error": None,
+        "cost_usd": 1.23,
+        "lessons": {"user_id": "user-1"},
+        "node_outputs": {
+            "narration_cap_applied": {
+                "capped": True,
+                "original_total_chars": 16000,
+                "capped_total_chars": 10000,
+                "affected_segment_ids": ["section_2_x", "section_3_y"],
+            }
+        },
+    }
+    chain = sb.table.return_value.select.return_value.order.return_value.range.return_value
+    chain.execute.return_value.data = [row]
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/jobs")
+    assert resp.status_code == 200
+    assert resp.json()[0]["narration_capped"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "node_outputs",
+    [
+        None,
+        {},
+        {"narration_cap_applied": {"capped": False, "affected_segment_ids": []}},
+        {"narration_cap_applied": "not-a-dict"},
+        {"tts_node": []},  # job never reached the cap-writing code at all
+    ],
+)
+def test_list_jobs_narration_capped_false_when_absent_or_not_capped(
+    client_factory: ClientFactory, node_outputs: dict[str, Any] | None
+) -> None:
+    sb = MagicMock()
+    row = {
+        "job_id": "job-1",
+        "lesson_id": "lesson-1",
+        "status": "completed",
+        "created_at": "2026-07-27T00:00:00Z",
+        "started_at": None,
+        "completed_at": None,
+        "error": None,
+        "cost_usd": None,
+        "lessons": {"user_id": "user-1"},
+        "node_outputs": node_outputs,
+    }
+    chain = sb.table.return_value.select.return_value.order.return_value.range.return_value
+    chain.execute.return_value.data = [row]
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/jobs")
+    assert resp.status_code == 200
+    assert resp.json()[0]["narration_capped"] is False
+
+
+@pytest.mark.unit
+def test_get_job_surfaces_narration_capped(client_factory: ClientFactory) -> None:
+    job_id = "11111111-1111-1111-1111-111111111111"
+    sb = MagicMock()
+    row = {
+        "job_id": job_id,
+        "lesson_id": "lesson-1",
+        "status": "completed",
+        "created_at": "2026-07-27T00:00:00Z",
+        "started_at": "2026-07-27T00:00:01Z",
+        "completed_at": "2026-07-27T00:05:00Z",
+        "error": None,
+        "cost_usd": 0.5,
+        "lessons": {"user_id": "user-1"},
+        "node_outputs": {"narration_cap_applied": {"capped": True}},
+    }
+    chain = sb.table.return_value.select.return_value.eq.return_value.maybe_single.return_value
+    chain.execute.return_value.data = row
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get(f"/api/admin/jobs/{job_id}")
+    assert resp.status_code == 200
+    assert resp.json()["narration_capped"] is True
+
+
 # ── GET /costs ─────────────────────────────────────────────────────────────────
 
 

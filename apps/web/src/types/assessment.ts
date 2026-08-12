@@ -90,7 +90,7 @@ export interface SessionReport {
   session_id: string;
   user_id: string;
   lesson_id: string;
-  ces_score: number;
+  ces_score: number | null; // null when session ended before _finalize_session ran
   // Exactly 5 keys, matching the frozen backend contract verbatim
   // (apps/api/app/modules/assessment/router.py SessionReport, story 3-19 AC 7).
   // behavioral/head_pose/blink are always 0.0 in Sprint 2 (Phase 3 concern).
