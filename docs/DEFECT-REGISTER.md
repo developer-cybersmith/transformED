@@ -198,6 +198,23 @@ after re-reading the highest in use (D43) per the collision rule at the top of t
 |----|--------|-----|----------|-------------|
 | **D64** | **Confusion-type interventions (fired via `teachback_failed`) have no cap at all.** `intervening_node` (`apps/api/app/modules/tutor/state_machine/graph.py`) only tracks two of the three intervention types: `distraction` increments `tutor_distraction_count` (capped by `max_distraction_per_session`) and `fatigue` sets a once-only flag (`tutor_fatigue_fired`) — the `confusion` branch (reached via `teachback_failed`) has neither a counter nor a once-only guard. A student who fails teach-back repeatedly in one session can be routed into `INTERVENING` with `intervention_type="confusion"` an unbounded number of times. Named only in prose in Story 4-24's own Scale & Load §1 ("unbounded by count today — pre-existing, not introduced here") with no register ID — exactly the shape binding rule 5 forbids. Found by the Acceptance Auditor layer of the Story 4-24 / D63 six-layer review (2026-08-11), not by an incident. | Low–Med (pre-existing; not introduced by D63) | **Deferred, not fixed.** Distraction and fatigue are capped because CLAUDE.md §10 states those caps explicitly; §10 says nothing about a confusion/teach-back-failure cap, so this may be intentional (teach-back is explicitly never-gating per CLAUDE.md's "never gate lesson progress on teach-back score" rule) rather than an oversight — needs a product decision, not just a code fix. **Owner: Dev 4. Trigger: the first session observed with repeated teach-back failures in quick succession, or Sprint 4 hardening — whichever comes first.** | *(to add — a test proving `intervention_type="confusion"` fires unboundedly within one session, once the cap decision is made)* |
 
+---
+
+### Found by the L1 pre-flight check (Story 3-41, 2026-08-12)
+
+**Note (merge-time, 2026-08-12): id allocated as D67, not D64** — Dev4's Story 4-24 (PR #129)
+independently claimed D64 on `main` for a different, unrelated defect (confusion-type
+intervention cap, above) between when this branch forked and when it merged. D67 was chosen
+looking ahead to D63 (Story 3-36) and D64–D66 (Story 3-40), both still on unmerged branches at
+merge time and both of which will need their OWN renumbering against `main`'s real D64 when
+they merge — see the collision note this file's banner already predicts.
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| ~~D67~~ | **CLOSED same-round 2026-08-12 (Story 3-41).** `settings.sarvam_voice_id` defaulted to `"meera"` (`config.py:67-69`, set in Story 2-8), which is **not a valid Sarvam Bulbul v2 speaker** — confirmed via a real, live call to `api.sarvam.ai/text-to-speech`: `400 invalid_request_error`, `"Speaker 'meera' is not recognized. Available speakers are: anushka, abhilash, manisha, vidya, arya, karun, hitesh, aditya, ritu, priya, neha, rahul, pooja, rohan, simran, kavya, amit, dev, ishita, shreya, ratan, varun, manan, sumit, roopa, kabir, aayan, shubh, ashutosh, advait, anand, tanya, tarun, sunny, mani, gokul, vijay, shruti, suhani, mohit, kavitha, rehan, soham, rupali"`. Every real TTS call through the primary provider would 400 on the first attempt, fall through the full retry budget (non-retryable per Sarvam's own `invalid_request_error` classification — this is a config defect, not a transient failure, so retrying it burns nothing but wall-clock), then degrade to the Azure fallback on every single lesson — silently paying Azure's rate for 100% of narration instead of Sarvam's, and never actually exercising the primary provider this project chose. Found during L1 (`docs/LESSON-DELIVERY-TRACKER.md`) pre-flight, where it would otherwise have first surfaced as a confusing "why is every lesson using the fallback TTS provider" during the sprint's real-money acceptance run. | High (silent, 100% of narration cost misrouted, first-real-run blocker) | Default changed to `"anushka"` — verified via a second live call (not assumed): `200 OK`, real audio returned (122,940 base64 chars, non-empty). Chosen for parity with the existing Azure fallback default (`azure_tts_voice = "en-IN-NeerjaNeural"`, an Indian-English voice) — `anushka` is one of Sarvam's Indian-English-appropriate speakers, matching this product's target market. **2026-08-12 L1 run decision: Azure TTS credentials remain unconfigured (`AZURE_TTS_KEY`/`AZURE_TTS_REGION` both empty) — proceeding Sarvam-only + browser-last-resort for this acceptance run, explicit product decision, not a silent gap. See L1's Observed result in `docs/LESSON-DELIVERY-TRACKER.md` for the real-world evidence (this morning's pre-fix run: 100% of segments fell through to `browser`, zero real audio, confirming this defect's real-world impact).** | `tests/unit/test_config_settings.py::test_sarvam_voice_id_default_is_a_documented_valid_speaker` — pins the default against the literal speaker list from Sarvam's own `400` response body, so a future Sarvam API change that drops `anushka` fails CI instead of silently degrading every lesson to the fallback provider again |
+
+---
+
 ### OPEN — accepted, with a named trigger
 
 Not "documented limitations". Each carries an explicit condition that reopens it.
@@ -357,9 +374,9 @@ checked.
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | **28** — D63 (INTERVENING one-way trap, Dev 4) closed 2026-08-11 in two rounds, same session: first-round fix, then a six-layer review of PR #129 caught a re-arming regression IN that fix before merge, fixed same session |
-| Fixed, awaiting merge | **1** — D63 (both rounds), on `sprint4/s4-6-intervention-recovery`, not yet on `main` |
-| **Open** | **27** — includes **D64** (confusion-type interventions uncapped), deferred from the same review |
+| Defects closed (fixed **and** guarded) | **29** — D63 (INTERVENING one-way trap, Dev 4) closed 2026-08-11 in two rounds on `sprint4/s4-6-intervention-recovery`; D67 (invalid `sarvam_voice_id` default, Dev 1) closed 2026-08-12, merged here via `sprint3/s3-41-fix-sarvam-voice-default`. **Note:** D32/D33 (Story 3-36) and D64–D66 (Story 3-40, Dev1's OWN numbering — will collide with `main`'s real D64 above and need renumbering at that merge, same as D67 did here) are also closed but still sit on separate unmerged branches. |
+| Fixed, awaiting merge | **0 on this integration branch** (D63 is fixed but lives on the separate `sprint4/s4-6-intervention-recovery` branch, not yet merged here) |
+| **Open** | **27** — includes `main`'s real **D64** (confusion-type interventions uncapped, Dev 4, deferred) |
 | Of which **live in production** | **3** — D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D29 closed 2026-08-05, D30 closed 2026-08-04** |

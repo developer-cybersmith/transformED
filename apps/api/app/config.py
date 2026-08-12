@@ -64,7 +64,16 @@ class Settings(BaseSettings):
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
     sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
     sarvam_voice_id: str = Field(
-        default="meera", description="Sarvam Bulbul v2 speaker name for narration synthesis"
+        # D67: "meera" is not a valid Bulbul v2 speaker -- confirmed via a
+        # real, live call to api.sarvam.ai (400 invalid_request_error,
+        # listing the valid speakers). Every real TTS call through the
+        # primary provider was 400ing and silently degrading to the Azure
+        # fallback on 100% of narration. "anushka" verified via a second
+        # live call (200 OK, real audio) -- chosen for parity with the
+        # existing Azure fallback default (en-IN-NeerjaNeural, Indian
+        # English), matching this product's target market.
+        default="anushka",
+        description="Sarvam Bulbul v2 speaker name for narration synthesis",
     )
     azure_tts_key: str | None = Field(
         default=None, description="Azure Cognitive Services TTS key — fallback"
