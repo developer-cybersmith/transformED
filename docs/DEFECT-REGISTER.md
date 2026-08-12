@@ -191,6 +191,12 @@ after re-reading the highest in use (D43) per the collision rule at the top of t
 
 ---
 
+### OPEN — found by the 2026-08-11 six-layer review of PR #129 (Story 4-24 / D63)
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| **D64** | **Confusion-type interventions (fired via `teachback_failed`) have no cap at all.** `intervening_node` (`apps/api/app/modules/tutor/state_machine/graph.py`) only tracks two of the three intervention types: `distraction` increments `tutor_distraction_count` (capped by `max_distraction_per_session`) and `fatigue` sets a once-only flag (`tutor_fatigue_fired`) — the `confusion` branch (reached via `teachback_failed`) has neither a counter nor a once-only guard. A student who fails teach-back repeatedly in one session can be routed into `INTERVENING` with `intervention_type="confusion"` an unbounded number of times. Named only in prose in Story 4-24's own Scale & Load §1 ("unbounded by count today — pre-existing, not introduced here") with no register ID — exactly the shape binding rule 5 forbids. Found by the Acceptance Auditor layer of the Story 4-24 / D63 six-layer review (2026-08-11), not by an incident. | Low–Med (pre-existing; not introduced by D63) | **Deferred, not fixed.** Distraction and fatigue are capped because CLAUDE.md §10 states those caps explicitly; §10 says nothing about a confusion/teach-back-failure cap, so this may be intentional (teach-back is explicitly never-gating per CLAUDE.md's "never gate lesson progress on teach-back score" rule) rather than an oversight — needs a product decision, not just a code fix. **Owner: Dev 4. Trigger: the first session observed with repeated teach-back failures in quick succession, or Sprint 4 hardening — whichever comes first.** | *(to add — a test proving `intervention_type="confusion"` fires unboundedly within one session, once the cap decision is made)* |
+
 ### OPEN — found by Dev 3's 2026-08-05 lesson-delivery-dev4 handoff
 
 | ID | Defect | Sev | Decision | Enforcement |
@@ -359,8 +365,8 @@ checked.
 | | Count |
 |---|---|
 | Defects closed (fixed **and** guarded) | **28** — D63 (INTERVENING one-way trap, Dev 4) closed 2026-08-11, same session it was registered in |
-| Fixed, awaiting merge | **1** — D63, on `sprint4/s4-6-intervention-recovery`, not yet on `main` |
-| **Open** | **26** |
+| Fixed, awaiting merge | **1** — D63, on `sprint4/s4-6-intervention-recovery`, not yet on `main`. **Also on that branch, unmerged and not yet fixed: a re-arming bug in D63's own fix, found by the six-layer review of PR #129 — see the story's Review Findings.** |
+| **Open** | **27** — includes **D64** (confusion-type interventions uncapped), deferred from the same review |
 | Of which **live in production** | **3** — D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D29 closed 2026-08-05, D30 closed 2026-08-04** |
