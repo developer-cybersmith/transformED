@@ -3258,13 +3258,6 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     return {"narration_scripts": [result]}
 
 
-# Rough per-character cost estimates — neither vendor's exact billing API is
-# reachable from this environment to verify against; conservative flat
-# per-character rates, documented here so a future story can replace them
-# with real invoiced numbers once available (Story 2-8 Dev Notes).
-_SARVAM_COST_PER_CHAR = 0.00002
-_AZURE_TTS_COST_PER_CHAR = 0.000016
-
 # 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
 # Supabase Storage path (f"{lesson_id}/{segment_id}.mp3") — restrict it to
 # safe path-component characters so a malformed/adversarial segment_id can
@@ -3285,12 +3278,15 @@ async def _synthesize_with_fallback(
     None for the browser-fallback case (no server-side audio produced).
     """
     from app.config import get_settings
+    from app.providers.tts.sarvam import COST_PER_CHAR as _SARVAM_COST_PER_CHAR
     from app.providers.tts.sarvam import SarvamTTSProvider
 
     settings = get_settings()
 
     try:
-        audio_bytes, _ = await SarvamTTSProvider().synthesize(text, settings.sarvam_voice_id)
+        audio_bytes, _ = await SarvamTTSProvider(lesson_id).synthesize(
+            text, settings.sarvam_voice_id
+        )
         # 2026-07-15 review finding (Edge Case Hunter): `is not None` alone
         # accepted an empty/falsy-but-present return as a full success —
         # check truthiness so an empty/malformed body falls through instead.
@@ -3309,10 +3305,13 @@ async def _synthesize_with_fallback(
             exc_info=True,
         )
 
+    from app.providers.tts.azure import COST_PER_CHAR as _AZURE_TTS_COST_PER_CHAR
     from app.providers.tts.azure import AzureTTSProvider
 
     try:
-        audio_bytes, _ = await AzureTTSProvider().synthesize(text, settings.azure_tts_voice)
+        audio_bytes, _ = await AzureTTSProvider(lesson_id).synthesize(
+            text, settings.azure_tts_voice
+        )
         if audio_bytes:
             return audio_bytes, "azure", len(text) * _AZURE_TTS_COST_PER_CHAR
         logger.warning(

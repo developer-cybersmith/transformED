@@ -7,6 +7,7 @@ Call get_settings() everywhere — never instantiate Settings() directly.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from typing import Annotated
 
@@ -87,6 +88,32 @@ class Settings(BaseSettings):
     langfuse_host: str = Field(
         default="https://cloud.langfuse.com", description="Langfuse host URL"
     )
+    # Langfuse-skill self-audit finding: environments.md fetched fresh — with
+    # no environment set, ALL traces (local dev runs, this session's manual
+    # self-audit call, staging, and real production lessons) land under
+    # Langfuse's default "default" environment, indistinguishable from each
+    # other in every dashboard/filter. Explicit constructor param (not just
+    # LANGFUSE_TRACING_ENVIRONMENT) so it's typed and validated like every
+    # other setting in this file rather than a bare ambient env var.
+    langfuse_environment: str = Field(
+        default="development",
+        description="Langfuse environment label (production/staging/development) — "
+        "keeps real-lesson traces separate from dev/test traces in the Langfuse UI",
+    )
+
+    @field_validator("langfuse_environment")
+    @classmethod
+    def _validate_langfuse_environment(cls, v: str) -> str:
+        # Langfuse's own constraint (environments.md): lowercase/digits/hyphen/
+        # underscore only, cannot start with "langfuse", max 40 chars. A value
+        # outside this is silently dropped by the SDK — surfaced here instead
+        # as a loud startup failure, not a trace that quietly loses its label.
+        if not re.fullmatch(r"(?!langfuse)[a-z0-9-_]+", v) or len(v) > 40:
+            raise ValueError(
+                f"LANGFUSE_ENVIRONMENT={v!r} is invalid — must match "
+                r"^(?!langfuse)[a-z0-9-_]+$ and be <= 40 chars (Langfuse SDK constraint)"
+            )
+        return v
 
     # ── PostHog ───────────────────────────────────────────────────────────────
     posthog_api_key: str = Field(

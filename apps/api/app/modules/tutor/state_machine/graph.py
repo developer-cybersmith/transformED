@@ -515,21 +515,68 @@ async def dispatch_event(
 
 def _trace_dispatch(session_id: str, event: str, result: TutorMachineState | None) -> None:
     """Best-effort Langfuse trace of one dispatch. Observability must NEVER break the FSM, so any
-    Langfuse/config failure is swallowed."""
-    try:
-        from app.core.langfuse import get_langfuse
+    Langfuse/config failure is swallowed.
 
-        # langfuse 4.x removed the client-level `.trace()` method (attr-defined);
-        # this whole block is best-effort and any AttributeError is swallowed by
-        # the surrounding except, so behavior is unchanged. Types-only suppression.
-        get_langfuse().trace(  # type: ignore[attr-defined]
-            name="tutor.dispatch_event",
-            session_id=session_id,
-            input={"event": event},
-            output={"current_state": str(result.get("current_state")) if result else None},
-        )
+    Langfuse-skill review round: this previously called the client-level
+    `.trace()` method, which Langfuse 4.x removed — every single dispatch has
+    been silently untraced since the 4.x upgrade, and the only visible trace
+    of that was a DEBUG-level log line nobody reads in production (this
+    project's own convention elsewhere is WARNING for a swallowed
+    observability failure, precisely so it stays visible). Fixed to this
+    pinned SDK version's (4.14.3) real API: `create_event(...)` — a single
+    FSM dispatch is a discrete, instantaneous event, not a duration-spanning
+    `span` and not a cost-bearing `generation`; `start_observation` has no
+    `as_type="event"` overload in this version (confirmed against the
+    installed SDK's actual type stubs, not assumed from docs — the docs
+    describe a capability this pinned version doesn't have; `create_event`
+    is the dedicated method it exposes instead, and takes input/output
+    directly since an event has no separate start/end to update between).
+
+    Langfuse-skill self-audit round (fetched best-practices.md +
+    sessions.md fresh): the FIRST fix reused `deterministic_trace_context`
+    keyed on `session_id`, copying the pipeline's `lesson_id` pattern — that
+    was wrong for this call site. A tutor session can run for an hour-plus
+    with dozens of dispatches (state checks, interventions, quiz turns);
+    forcing every one of them into a single ever-growing trace_id is exactly
+    what best-practices.md warns against ("If multiple [units of work] happen
+    in sequence... that's where sessions come in. Each step is its own
+    trace, and the session ties them together... the per-turn model keeps
+    traces small and easy to navigate"). A lesson-generation pipeline run
+    IS "one self-contained unit of work" (the doc's own example — "one
+    pipeline execution"), so `lesson_id`-seeded `deterministic_trace_context`
+    stays correct there; a tutor dispatch is a turn within an ongoing
+    session, not a self-contained unit on its own.
+
+    Fixed: each dispatch is now its own trace (no `trace_context` — a fresh
+    random trace_id, matching "one trace per turn"), grouped into one
+    Langfuse Session via `propagate_attributes(session_id=...)` — the SDK's
+    only documented mechanism for setting the first-class `session_id`
+    trace attribute (verified against the real reference signatures:
+    `start_observation`/`create_event` take no `session_id` kwarg directly;
+    `propagate_attributes` is a context manager that sets it via contextvars
+    for every observation created within the `with` block, not only ones
+    parented through `start_as_current_observation`).
+    """
+    try:
+        from langfuse import propagate_attributes
+
+        from app.core.langfuse import get_langfuse, safe_trace
+
+        langfuse = get_langfuse()
+        with propagate_attributes(session_id=session_id):
+            safe_trace(
+                lambda: langfuse.create_event(
+                    name="dispatch-tutor-event",
+                    input={"event": event},
+                    output={"current_state": str(result.get("current_state")) if result else None},
+                    metadata={"session_id": session_id},
+                )
+            )
     except Exception:  # noqa: BLE001 — tracing is best-effort
-        logger.debug("langfuse trace skipped for %s/%s", session_id, event, exc_info=True)
+        # WARNING, not DEBUG (matches every other provider's swallow pattern)
+        # — an observability outage must stay visible in prod logs even
+        # though it never breaks the FSM.
+        logger.warning("langfuse trace skipped for %s/%s", session_id, event, exc_info=True)
 
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────
