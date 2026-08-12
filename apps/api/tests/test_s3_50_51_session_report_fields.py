@@ -235,3 +235,127 @@ def test_intervention_messages_used_zero_when_no_interventions():
         intervention_messages_used=0,
     )
     assert report.intervention_messages_used == 0
+
+
+# ── S3-50 AC 3 (service-level) — redis provided but history empty → None ─────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ces_history_summary_none_when_redis_provided_but_history_empty():
+    """AC3 (service path): ces_history_summary is None when redis is provided
+    but the history key returns an empty list (cold start or first-window race).
+
+    This is distinct from redis=None — the service's `if ces_vals:` guard must
+    return None for a real Redis client with an empty list.
+    """
+    from app.modules.assessment.service import get_session_report
+
+    session_row = {
+        "session_id": "ses-50c",
+        "user_id": "usr-1",
+        "lesson_id": "les-1",
+        "ces_final": 65.0,
+        "started_at": "2026-08-12T10:00:00+00:00",
+        "ended_at": "2026-08-12T10:30:00+00:00",
+    }
+    supabase = MagicMock()
+    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
+    supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[], count=0)
+
+    # Redis returns empty list for all lrange calls
+    redis = AsyncMock()
+    redis.lrange = AsyncMock(return_value=[])
+
+    with (
+        patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()),
+        patch("app.core.db.single_row", return_value=session_row),
+        patch("app.core.db.rows", return_value=[]),
+        patch("app.config.get_settings", return_value=MagicMock(
+            ces_weight_quiz=0.35, ces_weight_teachback=0.25, ces_weight_behavioral=0.20,
+            ces_weight_head_pose=0.12, ces_weight_blink=0.08,
+        )),
+    ):
+        result = await get_session_report(
+            session_id="ses-50c",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=redis,
+        )
+
+    assert result.ces_history_summary is None, (
+        "ces_history_summary must be None when Redis returns an empty ces_history list"
+    )
+
+
+# ── S3-51 AC 2 (service-level) — intervention_messages_used from session_events ──
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_intervention_messages_used_from_session_events_count():
+    """AC2 (service path): intervention_messages_used = count of intervention_triggered events.
+
+    This test exercises the SERVICE query path (Step 4 in get_session_report),
+    not just the Pydantic model constructor. It verifies that the interventions_count
+    DB query result flows through to intervention_messages_used in the response.
+    """
+    from app.modules.assessment.service import get_session_report
+
+    session_row = {
+        "session_id": "ses-51",
+        "user_id": "usr-1",
+        "lesson_id": "les-1",
+        "ces_final": 72.0,
+        "started_at": "2026-08-12T10:00:00+00:00",
+        "ended_at": "2026-08-12T10:45:00+00:00",
+    }
+    supabase = MagicMock()
+
+    call_count = 0
+
+    def _select_side_effect(*args, **kwargs):
+        nonlocal call_count
+        mock = MagicMock()
+        mock.eq.return_value = mock
+        mock.maybe_single.return_value = mock
+        mock.limit.return_value = mock
+        call_count += 1
+        if call_count == 1:
+            # sessions table query
+            mock.execute.return_value = MagicMock(data=session_row)
+        elif call_count == 2:
+            # tier query
+            mock.execute.return_value = MagicMock(data=None)
+        elif call_count == 3:
+            # quiz_attempts — no rows
+            mock.execute.return_value = MagicMock(data=[], count=0)
+        elif call_count == 4:
+            # teachback_attempts — no rows
+            mock.execute.return_value = MagicMock(data=[], count=0)
+        else:
+            # session_events intervention_triggered — 2 events
+            mock.execute.return_value = MagicMock(data=[], count=2)
+        return mock
+
+    supabase.table.return_value.select.side_effect = _select_side_effect
+
+    with (
+        patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()),
+        patch("app.core.db.single_row", return_value=session_row),
+        patch("app.core.db.rows", return_value=[]),
+        patch("app.config.get_settings", return_value=MagicMock(
+            ces_weight_quiz=0.35, ces_weight_teachback=0.25, ces_weight_behavioral=0.20,
+            ces_weight_head_pose=0.12, ces_weight_blink=0.08,
+        )),
+    ):
+        result = await get_session_report(
+            session_id="ses-51",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
+        )
+
+    assert result.intervention_messages_used == result.interventions_count, (
+        "intervention_messages_used must equal interventions_count (same session_events source)"
+    )

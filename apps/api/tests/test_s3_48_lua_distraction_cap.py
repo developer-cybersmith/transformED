@@ -285,17 +285,37 @@ def test_intervening_node_source_uses_nx_for_cooldown():
     assert src.count("nx=True") >= 1
 
 
-# ── AC 9: intervening_node uses nx=True for fatigue key (count >= 2) ─────────
+# ── AC 9: fatigue SET-NX is atomic in _can_intervene_fatigue (service.py) ────
+# After the Sprint 3 atomicity fix, the fatigue flag is written by
+# _can_intervene_fatigue via SET-NX before dispatch_event is called.
+# intervening_node must NOT re-write it (that would be a double-SET).
+# Both the guard (service.py) and the comment in intervening_node confirm this.
 
 
 def test_intervening_node_source_uses_nx_for_fatigue():
+    """AC 9 (atomicity fix): _can_intervene_fatigue in service.py uses SET-NX for
+    tutor_fatigue_fired; intervening_node does NOT re-write it (it's already set)."""
     from app.modules.tutor.state_machine.graph import intervening_node
 
-    src = inspect.getsource(intervening_node)
-    assert "tutor_fatigue_fired" in src, "intervening_node must write the fatigue_fired key"
-    # Both the fatigue and cooldown writes must use nx=True → at least 2 occurrences
-    assert src.count("nx=True") >= 2, (
-        "intervening_node must have nx=True for BOTH fatigue_fired and cooldown writes"
+    # _can_intervene_fatigue in graph.py must own the SET-NX for tutor_fatigue_fired
+    import app.modules.tutor.state_machine.graph as _graph  # noqa: PLC0415
+    guard_src = inspect.getsource(_graph._can_intervene_fatigue)  # noqa: SLF001
+    assert "tutor_fatigue_fired" in guard_src, (
+        "_can_intervene_fatigue must reference tutor_fatigue_fired key"
+    )
+    assert "nx=True" in guard_src, (
+        "_can_intervene_fatigue must use nx=True for the SET (atomic once-per-session gate)"
+    )
+
+    # intervening_node must NOT re-write the fatigue key — it's already set atomically
+    node_src = inspect.getsource(intervening_node)
+    assert "tutor_fatigue_fired" not in node_src, (
+        "intervening_node must NOT re-write tutor_fatigue_fired — "
+        "_can_intervene_fatigue already set it atomically before dispatch"
+    )
+    # Cooldown write in intervening_node still uses nx=True (1 occurrence is correct)
+    assert node_src.count("nx=True") >= 1, (
+        "intervening_node must still use nx=True for the cooldown key"
     )
 
 

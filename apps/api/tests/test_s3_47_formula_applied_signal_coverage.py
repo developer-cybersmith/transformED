@@ -44,15 +44,21 @@ def _build_supabase(*, tb_rows: list, quiz_rows: list | None = None) -> MagicMoc
         elif n == 2:
             _ms.return_value.data = tier_row
         elif n == 3:
+            # quiz_attempts: .select(...).eq(...).limit(500).execute()
             _s.return_value.data = quiz_rows
+            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = quiz_rows
         elif n == 4:
+            # teachback_attempts: .select(...).eq(...).limit(50).execute()
             _s.return_value.data = tb_rows
+            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = tb_rows
         elif n == 5:
             _s2.return_value.count = 0
         elif n == 6:
             _ms.return_value.data = None
         elif n == 7:
+            # session_events/dna_update: .select(...).eq(...).eq(...).limit(20).execute()
             _s2.return_value.data = []
+            m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         return m
 
     mock.table.side_effect = _table

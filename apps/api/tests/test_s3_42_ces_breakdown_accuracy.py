@@ -389,3 +389,109 @@ async def test_ces_breakdown_behavioral_nonzero_with_history_data():
     )
     assert breakdown["head_pose"] == pytest.approx(0.65 * 0.12 * 100, abs=0.01)
     assert breakdown["blink"] == pytest.approx(0.55 * 0.08 * 100, abs=0.01)
+
+
+# ── AC 2 (third branch) — blink_rate=None does NOT write blink_history ────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_none_blink_rate_signal_skips_history_write():
+    """AC2 (blink branch): blink_rate=None → no blink_history lpush.
+
+    This is the third of the three None-skip branches (behavioral and head_pose
+    are tested above). A future refactor removing the guard on line 334 of
+    tutor/service.py would cause this test to fail.
+    """
+    from app.modules.tutor.service import process_attention_signal
+
+    redis = _make_redis("TEACHING")
+
+    with (
+        patch("app.core.redis.get_redis", return_value=redis),
+        patch(
+            "app.modules.tutor.state_machine.graph.dispatch_event",
+            new_callable=AsyncMock,
+            return_value={"current_state": "TEACHING"},
+        ),
+        patch("app.config.get_settings", return_value=MagicMock(
+            ces_weight_quiz=0.35,
+            ces_weight_teachback=0.25,
+            ces_weight_behavioral=0.20,
+            ces_weight_head_pose=0.12,
+            ces_weight_blink=0.08,
+            ces_threshold=50.0,
+            ces_cadence_seconds=5,
+            max_distraction_interventions=3,
+            ces_fatigue_min_session_seconds=900,
+            ces_fatigue_blink_threshold=0.3,
+            ces_fatigue_head_pose_threshold=0.3,
+        )),
+    ):
+        await process_attention_signal(
+            "ses-42f", _attention_payload(blink=None)
+        )
+
+    lpush_keys = [str(c.args[0]) for c in redis.lpush.call_args_list]
+    assert not any("blink_history" in k for k in lpush_keys), (
+        "blink_history must NOT be written when blink_rate=None"
+    )
+
+
+# ── AC 1 + Scale Contract Q4 — ltrim cap enforced at 10 ─────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ltrim_cap_applied_to_per_signal_histories():
+    """Scale Contract Q4: ltrim(key, 0, _CES_HISTORY_MAX-1) called for each signal history.
+
+    The ltrim cap is the ONLY enforcement against unbounded growth of per-signal
+    history lists. This test ensures removing the ltrim call would fail CI.
+    """
+    from app.modules.tutor.service import _CES_HISTORY_MAX, process_attention_signal
+
+    redis = _make_redis("TEACHING")
+
+    with (
+        patch("app.core.redis.get_redis", return_value=redis),
+        patch(
+            "app.modules.tutor.state_machine.graph.dispatch_event",
+            new_callable=AsyncMock,
+            return_value={"current_state": "TEACHING"},
+        ),
+        patch("app.config.get_settings", return_value=MagicMock(
+            ces_weight_quiz=0.35,
+            ces_weight_teachback=0.25,
+            ces_weight_behavioral=0.20,
+            ces_weight_head_pose=0.12,
+            ces_weight_blink=0.08,
+            ces_threshold=50.0,
+            ces_cadence_seconds=5,
+            max_distraction_interventions=3,
+            ces_fatigue_min_session_seconds=900,
+            ces_fatigue_blink_threshold=0.3,
+            ces_fatigue_head_pose_threshold=0.3,
+        )),
+    ):
+        await process_attention_signal("ses-42g", _attention_payload())
+
+    ltrim_calls = [(str(c.args[0]), c.args[1], c.args[2]) for c in redis.ltrim.call_args_list]
+    # Expect ltrim for behavioral_history, head_pose_history, blink_history (+ ces_history)
+    history_ltrim_keys = {k for k, start, stop in ltrim_calls if "_history" in k}
+    assert "session:ses-42g:behavioral_history" in history_ltrim_keys, (
+        "ltrim must be called for behavioral_history (Scale Contract Q4)"
+    )
+    assert "session:ses-42g:head_pose_history" in history_ltrim_keys, (
+        "ltrim must be called for head_pose_history (Scale Contract Q4)"
+    )
+    assert "session:ses-42g:blink_history" in history_ltrim_keys, (
+        "ltrim must be called for blink_history (Scale Contract Q4)"
+    )
+    # Verify the cap value is exactly _CES_HISTORY_MAX - 1
+    for k, start, stop in ltrim_calls:
+        if "_history" in k and "ces_history" not in k:
+            assert start == 0, f"ltrim start must be 0, got {start} for {k}"
+            assert stop == _CES_HISTORY_MAX - 1, (
+                f"ltrim stop must be {_CES_HISTORY_MAX - 1} for {k}, got {stop}"
+            )

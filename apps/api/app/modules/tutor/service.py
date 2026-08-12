@@ -419,6 +419,14 @@ async def process_attention_signal(
     if state_raw == "TEACHING" and not intervention_dispatched:
         # _time is imported at module level; no local re-import needed
         session_start_ts_raw = await redis.get(f"session:{session_id}:session_start_ts")
+        if session_start_ts_raw is None:
+            # D-nn: key missing (Redis was unavailable at WS connect time, or session init
+            # was bypassed). Fatigue detection is silently disabled for the entire session.
+            # Surfaced here as a warning so ops can detect the gap without crashing the path.
+            logger.warning(
+                "[tutor:%s] session_start_ts missing — fatigue detection disabled for session",
+                session_id,
+            )
         if session_start_ts_raw is not None:
             try:
                 duration_s = _time.time() - float(session_start_ts_raw)

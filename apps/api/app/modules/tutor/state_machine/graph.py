@@ -157,13 +157,23 @@ async def _can_intervene_distraction(  # noqa: ANN401
 
 
 async def _can_intervene_fatigue(session_id: str) -> bool:
-    """Guard: fatigue fires at most once per session."""
+    """Atomic once-per-session gate for fatigue — SET-NX wins the race.
+
+    Returns True only for the caller that atomically sets the flag.  Concurrent
+    callers (two attention signals arriving within the same 5-second window) both
+    check here; only the one whose SET-NX succeeds returns True.  This mirrors the
+    Lua-script pattern used by ``_can_intervene_distraction`` (D6).
+
+    NOTE: callers MUST NOT separately write ``tutor_fatigue_fired:{session_id}``
+    after this returns True — the flag is already set here.
+    """
     from app.core.redis import get_redis
 
     redis = get_redis()
     fatigue_key = f"tutor_fatigue_fired:{session_id}"
-    already_fired = await redis.exists(fatigue_key)
-    return not bool(already_fired)
+    # SET NX: returns the set value on success, None if key already existed.
+    was_set = await redis.set(fatigue_key, "1", ex=_STATE_TTL, nx=True)
+    return was_set is not None
 
 
 async def _is_in_teachback(session_id: str) -> bool:
@@ -209,10 +219,9 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     # Record the intervention.
     # Distraction: count was already incremented atomically by the Lua guard in
     # _can_intervene_distraction (D6). No second INCR here — that would double-count.
-    if intervention_type == "fatigue":
-        # nx=True: atomic SET NX prevents a race where two concurrent fatigue signals
-        # both pass _can_intervene_fatigue (EXISTS check) before either has written the flag.
-        await redis.set(f"tutor_fatigue_fired:{session_id}", "1", ex=_STATE_TTL, nx=True)
+    # For fatigue, the flag was already set atomically by _can_intervene_fatigue
+    # in service.py (SET NX returned True → we won the race and entered here).
+    # Do NOT re-write it: the SET-NX in _can_intervene_fatigue IS the guard.
 
     # Start cooldown window.
     # nx=True: prevent a concurrent intervention from resetting an already-running cooldown
@@ -340,10 +349,9 @@ async def route_from_teaching(state: TutorMachineState) -> str:
         return "intervening"
 
     if event == "fatigue_detected":
-        if await _can_intervene_fatigue(session_id):
-            return "intervening"
-        logger.debug("[tutor:%s] fatigue_detected but already fired this session", session_id)
-        return "teaching"
+        # _can_intervene_fatigue already fired atomically in service.py (SET-NX) before
+        # dispatch_event was called — routing here means the race was already won.
+        return "intervening"
 
     if event == "segment_complete":
         return "checking_in"

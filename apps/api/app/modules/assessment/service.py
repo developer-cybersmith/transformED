@@ -689,8 +689,11 @@ async def compute_ces_from_session_aggregates(
     BOUNDED: lrange reads at most 10 entries (``ltrim`` cap from S3-34).
     """
     history_key = f"session:{session_id}:ces_history"
-    # BOUNDED: _CES_HISTORY_MAX=10 ltrim enforced at write time in tutor/service.py
-    raw_entries: list[str] = await redis.lrange(history_key, 0, -1)
+    # BOUNDED: explicit read cap matches the ltrim cap enforced at write time.
+    # Use _CES_HISTORY_MAX-1 as the stop index so this is self-enforced, not
+    # dependent solely on the write-side invariant from tutor/service.py.
+    from app.modules.tutor.service import _CES_HISTORY_MAX  # noqa: PLC0415
+    raw_entries: list[str] = await redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
 
     windows: list[float] = []
     for entry in raw_entries:
@@ -825,11 +828,14 @@ async def get_session_report(
     tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
+    # BOUNDED: at most 15 segments × 10 questions × 3 retries = 450 rows per session.
+    # .limit(500) is a safety ceiling above the natural bound; no quiz session reaches it.
     quiz_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("quiz_attempts")
             .select("is_correct")
             .eq("session_id", session_id)
+            .limit(500)
             .execute()
         )
     )
@@ -842,11 +848,14 @@ async def get_session_report(
     quiz_accuracy: float = (correct_count / total_quiz) if total_quiz > 0 else 0.0
 
     # Step 3 — Teachback stats from teachback_attempts
+    # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
+    # .limit(50) is a safety ceiling above the natural bound.
     tb_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
             .select("score")
             .eq("session_id", session_id)
+            .limit(50)
             .execute()
         )
     )
@@ -954,12 +963,15 @@ async def get_session_report(
         }
 
         # Step 9 — session growth events (dna_update) for delta-based growth labels
+        # BOUNDED: one dna_update per segment → at most ~15 rows per session.
+        # .limit(20) is a safety ceiling above the natural bound.
         _events_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("session_events")
                 .select("payload")
                 .eq("session_id", session_id)
                 .eq("event_type", "dna_update")
+                .limit(20)
                 .execute()
             )
         )
