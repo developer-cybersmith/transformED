@@ -225,6 +225,15 @@ class Settings(BaseSettings):
         default=50.0,
         description="CES score below this triggers an intervention",
     )
+    ces_cadence_seconds: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Expected interval between consecutive CES windows in seconds. "
+            "Used by the D4 gap-check: abs(t0-t1) must be <= 2*cadence before the "
+            "distraction trigger fires (default 10 s tolerance at 5 s cadence)."
+        ),
+    )
 
     @model_validator(mode="after")
     def _ces_weights_must_sum_to_one(self) -> Settings:
