@@ -21,12 +21,14 @@ Message types (outbound from server)
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from collections import defaultdict
 from typing import Any
 
+import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
@@ -53,6 +55,82 @@ _TUTOR_CLIENT_EVENTS = frozenset(
         "lesson_complete",
     }
 )
+
+
+# ── WebSocket auth (Story S3-43, D80) ─────────────────────────────────────────
+
+
+class _WsAuthError(Exception):
+    """Raised by _verify_ws_token on any JWT validation failure.
+
+    Distinguishes auth failures from programming errors — the endpoint catches
+    this and closes with 4001 without logging the full token or unverified claims.
+    """
+
+
+def _verify_ws_token(token: str) -> dict[str, Any]:
+    """Verify a WebSocket token using HS256 algorithm pin (D80 fix).
+
+    Never reads the unverified alg header to select the verification path.
+    Never consults JWKS — only HS256 against settings.supabase_jwt_secret.
+
+    Returns the decoded payload on success.
+    Raises _WsAuthError on any failure (absent, malformed, expired, wrong alg,
+    bad aud, missing claim, wrong secret).
+
+    AC7: algorithms=["HS256"] is a hard-coded literal — never read from the
+    token header, never sourced from settings or a variable.
+    """
+    if not token:
+        raise _WsAuthError("no token")
+
+    # Lazy import — avoids circular import and defers Settings construction.
+    from app.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    try:
+        return jwt.decode(
+            token,
+            settings.supabase_jwt_secret,
+            algorithms=["HS256"],  # AC7: hard-coded literal — NEVER read from token header
+            audience="authenticated",  # AC14: require aud=authenticated
+            options={"require": ["sub", "exp", "iat"]},  # AC5: all three claims required
+        )
+    except jwt.ExpiredSignatureError:
+        raise _WsAuthError("expired") from None
+    except jwt.InvalidTokenError:
+        raise _WsAuthError("invalid") from None
+
+
+async def _get_session_owner(session_id: str) -> str | None:
+    """Return sessions.user_id for session_id, or None if not found.
+
+    AC10: SELECT user_id FROM sessions WHERE session_id = <uuid>
+    # BOUNDED: PK lookup — sessions.session_id is the primary key; returns at most 1 row.
+
+    Fail-closed: any exception returns None so the connection is rejected (4003).
+    Never raises — a DB error must not crash the WS handshake.
+    """
+    try:
+        from app.core.db import get_supabase  # noqa: PLC0415
+
+        result = await asyncio.to_thread(
+            lambda: get_supabase()
+            .table("sessions")
+            .select("user_id")  # BOUNDED: PK lookup — returns at most 1 row
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+        if result is None or result.data is None:
+            return None
+        return result.data.get("user_id")  # type: ignore[no-any-return]
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "WS session owner lookup failed for %.8s — rejecting (fail-closed)",
+            session_id,
+        )
+        return None
 
 
 class ConnectionManager:
@@ -141,10 +219,46 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     Clients connect here for:
     - Sending attention / computer-vision signals to the tutor engine.
     - Receiving lesson_ready, intervention, and ping events from the server.
+
+    Auth gate (pre-accept — all checks run before websocket.accept()):
+    1. UUID format check — malformed UUID → close(4003), no token decode, no DB read.
+    2. JWT presence + HS256 verify — absent/malformed/expired/wrong-alg/bad-aud → close(4001).
+    3. Session ownership — sessions.user_id must equal jwt_payload["sub"] → close(4003).
+    Only a connection clearing all three gates reaches websocket.accept() (via manager.connect).
     """
+    # ── Gate 1: UUID format (AC12) ─────────────────────────────────────────────
+    # Must run FIRST — before token decode or DB read (prevents Redis key-namespace traversal).
     if not _SESSION_ID_RE.match(session_id):
+        logger.warning("WS rejected: malformed session_id %.8s", session_id[:8])
         await websocket.close(code=4003)
         return
+
+    # ── Gate 2: JWT presence and HS256 verification (AC1–AC6, AC14) ────────────
+    token: str = websocket.query_params.get("token", "") or ""
+    try:
+        payload = _verify_ws_token(token)
+    except _WsAuthError as exc:
+        logger.warning(
+            "WS rejected: token auth failed for session %.8s — %s",
+            session_id[:8],
+            exc,
+        )
+        await websocket.close(code=4001)
+        return
+
+    # ── Gate 3: Session ownership (AC8, AC9) ───────────────────────────────────
+    # jwt payload["sub"] is now verified — safe to use for the ownership check.
+    user_id: str = payload["sub"]
+    owner_id = await _get_session_owner(session_id)
+    if owner_id is None or owner_id != user_id:
+        logger.warning(
+            "WS rejected: ownership check failed for session %.8s",
+            session_id[:8],
+        )
+        await websocket.close(code=4003)
+        return
+
+    # ── Gate cleared: accept and bootstrap (AC11) ──────────────────────────────
     await manager.connect(websocket, session_id)
 
     try:
