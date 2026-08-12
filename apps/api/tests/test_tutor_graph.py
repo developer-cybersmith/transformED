@@ -245,6 +245,22 @@ async def test_intervening_node_returns_only_owned_keys(mocker) -> None:
 
 
 @pytest.mark.unit
+async def test_intervention_complete_from_non_intervening_state_is_safe_noop(mocker) -> None:
+    """Review finding (2026-08-11, PR #129 six-layer review, Edge Case Hunter layer): no test
+    previously pinned that a client spamming intervention_complete from a state OTHER than
+    INTERVENING is a safe no-op. Every routing function except route_from_intervening ignores
+    events it doesn't recognize and defaults to staying put — this proves it holds for
+    intervention_complete specifically, not just for a generic unrecognized event."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-interv-from-teaching", "intervention_complete")
+
+    assert result["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
 async def test_segment_complete_routes_to_checking_in(mocker) -> None:
     """TEACHING + segment_complete → CHECKING_IN (simple transition under the new entry routing)."""
     mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))

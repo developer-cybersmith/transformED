@@ -570,10 +570,25 @@ MAX_DISTRACTION_PER_SESSION=3
     (CLAUDE.md-banned repo-wide, was `FIXED-UNGUARDED` here); `test_node_return_shape.py`'s AST
     scan widened to cover `tutor/state_machine`, not just the content pipeline.
   - **Tests:** 176/176 green across `test_tutor_graph.py`, `test_tutor_service.py`,
-    `test_websocket_session.py`, `test_node_return_shape.py` (new: 4 `_intervention_deadline_expired`
-    cases, 3 `advance_tutor_state` cases, 3 `process_attention_signal` cases, 1 node-return-shape
-    regression pin, 1 widened-scan proof). Full regression confirmed the only failures anywhere are
-    two pre-existing missing-dependency environment gaps, unrelated to this change.
+    `test_websocket_session.py`, `test_node_return_shape.py` in isolation.
+    **Correction (2026-08-11, six-layer review of PR #129, Acceptance Auditor layer):** the
+    earlier claim here of "full regression confirmed the only failures anywhere are two
+    pre-existing gaps" **overstated verification scope** — an actual `pytest tests -q` full-suite
+    run is **174 failed, 1592 passed, 113 skipped, 45 errors**, from 4 known pre-existing causes
+    (missing `python-multipart`; missing `fpdf`; `test_dna_growth.py`'s cross-test pollution,
+    already registered as **D40**; a live-network-dependent LLM smoke test) — none touching this
+    diff's files. This is exactly binding rule 1's failure mode ("verification scope = CI scope").
+    The 176/176-in-isolation claim for the 4 directly-affected files remains accurate.
+  - **Round 2 (same review, before merge):** the review's Scale & Load Hunter found a re-arming
+    bug in this fix's own `advance_tutor_state` guard (any client event other than
+    `intervention_complete` arriving while INTERVENING and not yet expired fell through to
+    `dispatch_event`, which re-entered `intervening_node` and re-armed the timeout — reopening the
+    exact trap D63 closes). Fixed same session, along with a cross-generation race in the
+    delete-before-dispatch guard (now an atomic Lua compare-and-delete,
+    `_delete_intervention_deadline_if_expired`), a dropped-client-event bug on the expired path
+    (now replayed after the self-heal), and missing `ge=1,le=3600` bounds on
+    `intervention_timeout_seconds`. Full findings: `docs/stories/4-24-intervention-recovery.md`
+    Review Findings section.
   - **Still owed to Dev 2:** the dismiss-button UI that actually sends `intervention_complete` —
     flagged in the story's Dev Notes, not built here (matches the D60 Dev4-builds/Dev2-wires split).
   - **AC MET:** INTERVENING → TEACHING via the event path (pre-existing test, still green) AND via

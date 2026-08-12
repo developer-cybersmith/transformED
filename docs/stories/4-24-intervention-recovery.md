@@ -152,32 +152,28 @@ allegedly dropped from `intervening_node`'s return) was verified FALSE by direct
 of LangGraph's channel semantics and dismissed; the "full regression, only two gaps" claim in
 task 1.14 above was independently re-run and confirmed to understate scope (see Patch #6).
 
-**Decision-needed (2) — must be resolved before patches are applied:**
+**Decision-needed (2) — resolved by the user 2026-08-11, both now patches (see Patch list below):**
 
-- [ ] [Review][Decision] Cross-generation race on the delete-before-dispatch guard —
+- [x] [Review][Decision] Cross-generation race on the delete-before-dispatch guard —
       `redis.delete()` in both `advance_tutor_state` and `process_attention_signal` deletes
       `intervention_deadline_at` by key name only, with no value/version check. Two concurrent
       WebSocket connections on the same `session_id` (an explicitly supported topology per
       `websocket.py`'s own docstring) can let a stale expiry-check's delete terminate a
       freshly-started intervention episode within milliseconds of it starting — the delete
-      doesn't know which "generation" of the key it's deleting. Options: (a) compare-and-delete
-      via a Lua script or WATCH/MULTI checking the value before deleting; (b) store a
-      generation/episode id alongside the deadline and check it matches before dispatching;
-      (c) accept as a bounded, pre-existing-shape risk (the story's own Scale & Load §6 already
-      scopes "two tabs on one session" as out-of-scope) and register it with a `D-nn`, owner,
-      and trigger rather than leaving it as undocumented prose. [scale+edge]
-- [ ] [Review][Decision] When the INTERVENING deadline has expired AND the client's real event
+      doesn't know which "generation" of the key it's deleting. **RESOLVED: fix now, via
+      compare-and-delete** (Lua script checking the value matches before deleting) — see Patch
+      #10 below. [scale+edge]
+- [x] [Review][Decision] When the INTERVENING deadline has expired AND the client's real event
       is something other than `intervention_complete` (e.g. `segment_complete`),
       `advance_tutor_state` fires the synthetic self-heal and returns unconditionally — the
       client's real event, and its side effects (`segment_complete`'s `redis.incr(segment_index)`
       never runs), are silently dropped rather than replayed after the transition to TEACHING.
-      Options: (a) replay the original event through `dispatch_event` after the self-heal
-      completes, now that state is TEACHING; (b) accept the drop — `segment_index` drift is
-      bounded and self-corrects on the next real `segment_complete`. [blind+edge]
+      **RESOLVED: replay the original event through `dispatch_event` after the self-heal
+      completes** — see Patch #11 below. [blind+edge]
 
-**Patch (9) — unambiguous fixes:**
+**Patch (11) — unambiguous fixes:**
 
-- [ ] [Review][Patch] **CRITICAL — reopens the exact trap D63 exists to close.**
+- [x] [Review][Patch] **CRITICAL — reopens the exact trap D63 exists to close.**
       `advance_tutor_state`'s INTERVENING guard only handles the *expired* case; any other
       client-drivable event arriving while INTERVENING and NOT yet expired falls through to
       `dispatch_event(session_id, event)`. `route_from_intervening` routes anything but
@@ -190,20 +186,20 @@ task 1.14 above was independently re-run and confirmed to understate scope (see 
       reviewing agent's word). Fix: no-op (return) when `state_raw == "INTERVENING"`, not yet
       expired, and `event != "intervention_complete"`.
       [`apps/api/app/modules/tutor/service.py:advance_tutor_state`] [scale — independently verified]
-- [ ] [Review][Patch] `intervention_timeout_seconds` has no bounds validation. A value ≥
+- [x] [Review][Patch] `intervention_timeout_seconds` has no bounds validation. A value ≥
       `_STATE_TTL` (86400s) causes the Redis key to expire before the stored deadline is reached,
       permanently defeating the safety net (same one-way-trap shape, different route). A value
       ≤ 0 causes immediate self-heal, defeating the intervention feature entirely (the overlay
       never has a chance to display). Fix: add `ge=`/`le=` `Field` bounds in `config.py`, matching
       the sibling `qa_secs` runtime-clamp pattern already used in this file.
       [`apps/api/app/config.py`] [blind+edge+scale — 3 independent sources]
-- [ ] [Review][Patch] `test_guard_scans_the_tutor_state_machine_directory_for_real` only proves
+- [x] [Review][Patch] `test_guard_scans_the_tutor_state_machine_directory_for_real` only proves
       files exist under `_TUTOR_GRAPH_DIR` — it never asserts that constant is actually a member
       of `_SCAN_DIRS` (the variable the real scan iterates). A revert to `_SCAN_DIRS =
       (_PIPELINE_DIR,)` — exactly the D63 regression this task exists to guard against — would
       pass every test in the file undetected. Fix: add `assert _TUTOR_GRAPH_DIR in _SCAN_DIRS`.
       [`apps/api/tests/unit/test_node_return_shape.py`] [test_coverage — independently verified]
-- [ ] [Review][Patch] `test_advance_tutor_state_intervening_not_expired_dispatches_original_event`
+- [x] [Review][Patch] `test_advance_tutor_state_intervening_not_expired_dispatches_original_event`
       is a false-confidence test: both the "guard correctly skipped" and "guard incorrectly
       fired the self-heal" paths dispatch the identical `"intervention_complete"` string in this
       test's scenario, so it cannot distinguish them. Its QUIZZING sibling
@@ -214,7 +210,7 @@ task 1.14 above was independently re-run and confirmed to understate scope (see 
       and a cheap test that `intervention_complete` sent from a non-INTERVENING state is a safe
       no-op (very likely already true by construction, but unpinned).
       [`apps/api/tests/test_tutor_service.py`] [test_coverage — independently verified]
-- [ ] [Review][Patch] `_intervention_deadline_expired`'s Redis-error fallback has zero logging on
+- [x] [Review][Patch] `_intervention_deadline_expired`'s Redis-error fallback has zero logging on
       the exception path — inherited verbatim from `_quiz_deadline_expired`, but CLAUDE.md
       explicitly names "timeout" as a covered budget type requiring an explicit, surfaced
       degradation, and binding rule 6 rejects "matches an existing accepted pattern" as
@@ -222,7 +218,7 @@ task 1.14 above was independently re-run and confirmed to understate scope (see 
       call inside the `except Exception:` block with session context. (The `_quiz_deadline_expired`
       sibling has the same gap; out of this diff's scope to fix, but worth a follow-up note.)
       [`apps/api/app/modules/tutor/service.py:_intervention_deadline_expired`] [process_integrity+edge]
-- [ ] [Review][Patch] Task 1.14 above and the D63 register entry both claim "full regression run
+- [x] [Review][Patch] Task 1.14 above and the D63 register entry both claim "full regression run
       confirmed the only failures anywhere are two pre-existing missing-dependency environment
       gaps" — independently re-run (`pytest tests -q`, full suite, not scoped to the 4
       directly-affected files) and this overstates verification scope: **174 failed, 1592 passed,
@@ -234,24 +230,36 @@ task 1.14 above was independently re-run and confirmed to understate scope (see 
       176/176 in the 4 directly-affected files, full-suite failures pre-existing and enumerated by
       cause, none touching this diff's files.
       [`docs/DEFECT-REGISTER.md`, `docs/dev4-tracker.md`] [acceptance_auditor — independently verified]
-- [ ] [Review][Patch] `wireTypes.ts`'s `FlowEvent` union addition has zero test coverage — the
+- [x] [Review][Patch] `wireTypes.ts`'s `FlowEvent` union addition has zero test coverage — the
       Python-side allow-lists are cross-checked against each other
       (`test_e4_client_event_allowlists_match`), but nothing checks `wireTypes.ts` stays in sync
       with either. FIXED-UNGUARDED per binding rule 7. Fix: add a small TS-side test (or a
       literal-membership check) asserting `'intervention_complete'` is in `FlowEvent`.
       [`apps/web/src/lib/ws/wireTypes.ts`] [acceptance_auditor+test_coverage+ac_completeness — 3 sources]
-- [ ] [Review][Patch] `intervention_timeout_seconds` is only ever exercised via hand-built
+- [x] [Review][Patch] `intervention_timeout_seconds` is only ever exercised via hand-built
       `MagicMock` settings — no test instantiates the real `Settings` class to confirm the field
       is correctly named, defaulted, or env-bound (contrast with the sibling
       `test_intervention_cooldown_default_is_two_minutes`, which does exactly this for
       `intervention_cooldown_seconds`). Fix: add the equivalent real-`Settings` test.
       [`apps/api/tests/test_config_settings.py`] [test_coverage]
-- [ ] [Review][Patch] D63's register row is textually marked CLOSED but sits under the
+- [x] [Review][Patch] D63's register row is textually marked CLOSED but sits under the
       "OPEN — found by Dev 3's 2026-08-05 lesson-delivery-dev4 handoff" section heading rather
       than "Closed — fixed AND guarded" — a reader scanning section headers only would count it
       as still open. Fix: move the row to the Closed section, matching how other same-day-closed
       defects (e.g. D30) are organized.
       [`docs/DEFECT-REGISTER.md`] [blind+story_quality — 2 sources]
+- [x] [Review][Patch] (resolved from Decision #1) Cross-generation race on the delete-before-dispatch
+      guard — `redis.delete()` deletes `intervention_deadline_at` by key name only, with no
+      value/version check. Fix: compare-and-delete via a Lua script (`EVAL` with a `GET`+compare+`DEL`
+      atomic body) that only deletes when the stored value still matches what was just read as
+      expired — applied to both call sites (`advance_tutor_state` and `process_attention_signal`).
+      [`apps/api/app/modules/tutor/service.py`] [scale+edge, resolved by user 2026-08-11]
+- [x] [Review][Patch] (resolved from Decision #2) When the INTERVENING deadline has expired and the
+      client's real event isn't `intervention_complete`, that event is currently dropped. Fix: after
+      the self-heal's `dispatch_event(session_id, "intervention_complete")` completes (transitioning
+      to TEACHING), also dispatch the client's original `event` through `dispatch_event` — do not
+      `return` unconditionally after the self-heal in either call site.
+      [`apps/api/app/modules/tutor/service.py`] [blind+edge, resolved by user 2026-08-11]
 
 **Deferred (1):**
 

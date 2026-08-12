@@ -187,6 +187,22 @@ def test_guard_scans_the_tutor_state_machine_directory_for_real() -> None:
 
 
 @pytest.mark.unit
+def test_scan_dirs_actually_includes_the_tutor_graph_dir() -> None:
+    """Review finding (2026-08-11, PR #129 six-layer review, Test Coverage layer): the previous
+    two tests above only prove files exist under `_TUTOR_GRAPH_DIR` and derive their per-dir
+    counts FROM `_SCAN_DIRS` itself — neither can detect `_SCAN_DIRS` being reverted to
+    `(_PIPELINE_DIR,)` only, which is EXACTLY the D63 regression this file exists to guard
+    against. This is the one assertion that actually pins the tuple's membership."""
+    assert _TUTOR_GRAPH_DIR in _SCAN_DIRS, (
+        "_TUTOR_GRAPH_DIR must be a member of _SCAN_DIRS — if it isn't, the guard has silently "
+        "reverted to scanning only the content pipeline, and every other test in this file would "
+        "still pass because they all derive their expectations from _SCAN_DIRS rather than an "
+        "independent source of truth."
+    )
+    assert _PIPELINE_DIR in _SCAN_DIRS, "the original Story 2-28 guard must not be dropped either"
+
+
+@pytest.mark.unit
 def test_guard_detects_a_planted_violation() -> None:
     """The guard must actually fire — a scan that can never fail is worthless."""
     planted = ast.parse(
