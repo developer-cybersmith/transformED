@@ -5,14 +5,16 @@ Assessment service layer — quiz grading, teach-back scoring, and session repor
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import statistics
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, status
 from supabase import Client
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.core.db import rows, single_row
 from app.core.posthog_client import capture_event
 from app.modules.assessment.onboarding_questions import (
@@ -672,11 +674,94 @@ async def grade_teachback(
     )
 
 
+async def compute_ces_from_session_aggregates(
+    session_id: str,
+    redis: Any,  # noqa: ANN401
+    settings: Any,  # noqa: ANN401
+) -> float | None:
+    """Return the mean CES over the stored ces_history windows for *session_id*.
+
+    D4 (S3-49): entries are JSON ``{"v": float, "t": int}``.  Pre-D4 bare-float strings
+    are accepted via a backward-compat fallback so existing sessions survive deployment.
+    Fully corrupt entries (neither JSON nor float) are skipped silently.
+
+    Returns ``None`` when fewer than 5 valid windows exist (insufficient data).
+    BOUNDED: lrange reads at most 10 entries (``ltrim`` cap from S3-34).
+    """
+    history_key = f"session:{session_id}:ces_history"
+    # BOUNDED: explicit read cap matches the ltrim cap enforced at write time.
+    # Use _CES_HISTORY_MAX-1 as the stop index so this is self-enforced, not
+    # dependent solely on the write-side invariant from tutor/service.py.
+    from app.modules.tutor.service import _CES_HISTORY_MAX  # noqa: PLC0415
+    raw_entries: list[str] = await redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+
+    windows: list[float] = []
+    for entry in raw_entries:
+        try:
+            parsed = json.loads(entry)
+            v = float(parsed["v"])
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+            try:
+                v = float(entry)  # backward compat: legacy bare float
+            except (ValueError, TypeError):
+                continue  # skip fully corrupt entry
+        windows.append(v)
+
+    if len(windows) < 5:
+        return None
+    return round(statistics.mean(windows), 2)
+
+
+def _build_ces_breakdown(
+    *,
+    quiz_accuracy: float,
+    teachback_normalised: float | None,
+    behavioral_avg: float,
+    head_pose_avg: float,
+    blink_avg: float,
+    settings: Settings,
+) -> dict[str, float]:
+    """Compute the per-signal CES contribution breakdown (D2, S3-46).
+
+    Nominal path (teachback_normalised is not None): each signal multiplied by
+    its nominal weight × 100.
+
+    Redistributed path (teachback_normalised is None): the teachback weight is
+    spread proportionally across the four remaining signals using
+    ``remaining = 1.0 - ces_weight_teachback``.  Each other signal's effective
+    weight becomes ``nominal / remaining``.  If ``remaining <= 0`` an all-zeros
+    dict is returned to avoid divide-by-zero.
+
+    All values are rounded to 4 decimal places.
+    """
+    if teachback_normalised is not None:
+        return {
+            "quiz": round(quiz_accuracy * settings.ces_weight_quiz * 100, 4),
+            "teachback": round(teachback_normalised * settings.ces_weight_teachback * 100, 4),
+            "behavioral": round(behavioral_avg * settings.ces_weight_behavioral * 100, 4),
+            "head_pose": round(head_pose_avg * settings.ces_weight_head_pose * 100, 4),
+            "blink": round(blink_avg * settings.ces_weight_blink * 100, 4),
+        }
+
+    remaining = 1.0 - settings.ces_weight_teachback
+    if remaining <= 0.0:
+        return {"quiz": 0.0, "teachback": 0.0, "behavioral": 0.0, "head_pose": 0.0, "blink": 0.0}
+
+    return {
+        "quiz": round(quiz_accuracy * (settings.ces_weight_quiz / remaining) * 100, 4),
+        "teachback": 0.0,
+        "behavioral": round(behavioral_avg * (settings.ces_weight_behavioral / remaining) * 100, 4),
+        "head_pose": round(head_pose_avg * (settings.ces_weight_head_pose / remaining) * 100, 4),
+        "blink": round(blink_avg * (settings.ces_weight_blink / remaining) * 100, 4),
+    }
+
+
 async def get_session_report(
     *,
     session_id: str,
     user_id: str,
     supabase: Client,
+    redis: Any = None,  # noqa: ANN401  — S3-42 (D9): optional; enables per-signal breakdowns
 ) -> SessionReport:
     """Aggregate a completed session's assessment data into a SessionReport.
 
@@ -743,11 +828,14 @@ async def get_session_report(
     tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
+    # BOUNDED: at most 15 segments × 10 questions × 3 retries = 450 rows per session.
+    # .limit(500) is a safety ceiling above the natural bound; no quiz session reaches it.
     quiz_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("quiz_attempts")
             .select("is_correct")
             .eq("session_id", session_id)
+            .limit(500)
             .execute()
         )
     )
@@ -760,11 +848,14 @@ async def get_session_report(
     quiz_accuracy: float = (correct_count / total_quiz) if total_quiz > 0 else 0.0
 
     # Step 3 — Teachback stats from teachback_attempts
+    # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
+    # .limit(50) is a safety ceiling above the natural bound.
     tb_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
             .select("score")
             .eq("session_id", session_id)
+            .limit(50)
             .execute()
         )
     )
@@ -778,6 +869,12 @@ async def get_session_report(
         avg_teachback = 0.0
         teachback_score = None
 
+    # D17 (S3-47): formula disclosure — determined by teachback presence
+    formula_applied = (
+        "teachback_redistributed_4_signal" if teachback_score is None else "full_5_signal"
+    )
+    signal_coverage = 4 if teachback_score is None else 5
+
     # Step 4 — Interventions count from session_events
     events_resp = await asyncio.to_thread(
         lambda: (
@@ -790,18 +887,34 @@ async def get_session_report(
     )
     interventions_count: int = events_resp.count or 0
 
-    # Step 5 — CES breakdown arithmetic
+    # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
-    quiz_contribution = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
-    teachback_contribution = round((avg_teachback / 100.0) * settings.ces_weight_teachback * 100, 4)
-    ces_breakdown: dict[str, float] = {
-        "quiz": quiz_contribution,
-        "teachback": teachback_contribution,
-        # Sprint 2: behavioral/head_pose/blink contributions deferred to Phase 3
-        "behavioral": 0.0,
-        "head_pose": 0.0,
-        "blink": 0.0,
-    }
+    teachback_normalised = (avg_teachback / 100.0) if teachback_count > 0 else None
+
+    # S3-42 (D9): read per-signal histories from Redis to populate real averages.
+    # Graceful fallback to 0.0 when redis is None, key missing, or history empty.
+    async def _signal_avg(key: str) -> float:
+        if redis is None:
+            return 0.0
+        try:
+            raw_vals: list[str] = await redis.lrange(key, 0, 9)  # BOUNDED: at most 10 entries
+            floats = [float(v) for v in raw_vals if v is not None]
+            return round(sum(floats) / len(floats), 4) if floats else 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    behavioral_avg = await _signal_avg(f"session:{session_id}:behavioral_history")
+    head_pose_avg = await _signal_avg(f"session:{session_id}:head_pose_history")
+    blink_avg = await _signal_avg(f"session:{session_id}:blink_history")
+
+    ces_breakdown: dict[str, float] = _build_ces_breakdown(
+        quiz_accuracy=quiz_accuracy,
+        teachback_normalised=teachback_normalised,
+        behavioral_avg=behavioral_avg,
+        head_pose_avg=head_pose_avg,
+        blink_avg=blink_avg,
+        settings=settings,
+    )
 
     # Step 6 — Duration and completion timestamp from session timestamps
     raw_started = row.get("started_at")
@@ -827,9 +940,12 @@ async def get_session_report(
         duration_minutes = 0.0
         completed_at = None
 
-    # Step 7 — ces_score from sessions.ces_final (Dev 4 owns this write)
+    # Step 7 — ces_score from sessions.ces_final (Dev 4 owns this write).
+    # None means the session ended before _finalize_session ran (e.g. WebSocket
+    # disconnect before lesson_complete was sent); the frontend renders "Not measured"
+    # rather than showing 0.0 as "Room to Grow" for a genuinely unfinished session.
     ces_final = row.get("ces_final")
-    ces_score: float = float(ces_final) if ces_final is not None else 0.0
+    ces_score: float | None = float(ces_final) if ces_final is not None else None
 
     # Step 8 — Learner DNA snapshot (descriptive labels + session growth labels)
     _dna_snapshot: dict[str, Any] | None = None
@@ -850,12 +966,15 @@ async def get_session_report(
         }
 
         # Step 9 — session growth events (dna_update) for delta-based growth labels
+        # BOUNDED: one dna_update per segment → at most ~15 rows per session.
+        # .limit(20) is a safety ceiling above the natural bound.
         _events_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("session_events")
                 .select("payload")
                 .eq("session_id", session_id)
                 .eq("event_type", "dna_update")
+                .limit(20)
                 .execute()
             )
         )
@@ -872,6 +991,34 @@ async def get_session_report(
             dim: _delta_to_growth_label(_delta_map.get(dim)) for dim in ALL_NINE_DIMENSIONS
         }
         _dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}
+
+    # S3-50 (D18): ces_history_summary — compact engagement trend from Redis ces_history.
+    # BOUNDED: lrange reads at most 10 entries (ltrim cap at write time).
+    ces_history_summary: dict[str, Any] | None = None
+    if redis is not None:
+        try:
+            raw_history: list[str] = await redis.lrange(
+                f"session:{session_id}:ces_history", 0, 9
+            )
+            ces_vals: list[float] = []
+            for raw in raw_history:
+                try:
+                    parsed = json.loads(raw)
+                    ces_vals.append(float(parsed["v"]))
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                    try:
+                        ces_vals.append(float(raw))
+                    except (ValueError, TypeError):
+                        pass
+            if ces_vals:
+                ces_history_summary = {
+                    "mean": round(sum(ces_vals) / len(ces_vals), 2),
+                    "min": round(min(ces_vals), 2),
+                    "max": round(max(ces_vals), 2),
+                    "window_count": len(ces_vals),
+                }
+        except Exception:  # noqa: BLE001
+            ces_history_summary = None
 
     logger.info(
         "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
@@ -900,6 +1047,13 @@ async def get_session_report(
         quiz_accuracy_label=_quiz_accuracy_label(quiz_accuracy, total_quiz),
         # Story 3-30 Learner DNA snapshot
         learner_dna_snapshot=_dna_snapshot,
+        # S3-47 formula disclosure
+        formula_applied=formula_applied,
+        signal_coverage=signal_coverage,
+        # S3-50 CES history summary
+        ces_history_summary=ces_history_summary,
+        # S3-51 intervention messages delivered count
+        intervention_messages_used=interventions_count,
     )
 
 
@@ -1214,3 +1368,53 @@ async def get_learner_dna_data(
         "reassessment_due": reassessment_due,
         "last_updated": row.get("last_updated"),
     }
+
+
+# ── S3-36 (D12) — Intervention event persistence ──────────────────────────────
+
+
+async def write_intervention_event(
+    session_id: str,
+    *,
+    intervention_type: str,
+    window_index: int,
+    ces_at_trigger: float,
+    message_key: str | None,
+    supabase: Any,  # noqa: ANN401
+) -> None:
+    """Write an intervention_triggered event to session_events (fire-and-forget).
+
+    Called via asyncio.create_task from the tutor intervening_node (D12).
+    DB failures are logged at ERROR and captured to Sentry — never re-raised,
+    so a DB outage cannot block the intervention dispatch path.
+    """
+    try:
+        row = {
+            "session_id": session_id,
+            "event_type": "intervention_triggered",
+            "payload": {
+                "intervention_type": intervention_type,
+                "window_index": window_index,
+                "ces_at_trigger": ces_at_trigger,
+                "message_key": message_key,
+            },
+        }
+        await asyncio.to_thread(
+            lambda: supabase.table("session_events").insert(row).execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        _safe_sid = str(session_id).replace("\n", " ").replace("\r", " ")
+        logger.error(
+            "write_intervention_event failed session=%s type=%s: %s",
+            _safe_sid,
+            intervention_type,
+            exc,
+        )
+        import sentry_sdk  # noqa: PLC0415
+
+        sentry_sdk.capture_exception(exc)
+
+
+# D63 (S3-53): _get_distraction_count was removed — it was dead code.
+# frustration_tolerance in dna_fusion.py correctly reads intervention counts
+# from event_counts["intervention_triggered"] (session_events DB) at session end.

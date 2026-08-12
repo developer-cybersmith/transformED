@@ -238,17 +238,22 @@ def test_redistribution_weights_are_proportional():
     assert result == pytest.approx(expected, abs=0.01)
 
 
-# ── AC 8: quiz_accuracy=None treated as 0.0, weight retained ─────────────────
+# ── AC 8 (S3-53 D1/D62): quiz_accuracy=None redistributes weight ─────────────
 
 
 @pytest.mark.unit
-def test_quiz_accuracy_none_treated_as_zero():
-    """AC 8: quiz_accuracy=None → contribution is 0 but weight is NOT redistributed."""
+def test_quiz_accuracy_none_redistributes_weight():
+    """AC 8 (updated S3-53): quiz_accuracy=None → quiz dropped, weight redistributed to remaining 4.
+
+    Old behaviour (D62): None treated as 0.0, weight retained → CES=65.0.
+    Correct behaviour  : quiz dropped; remaining weights (0.65) normalize to 1.0.
+    With all remaining signals=1.0 → CES = 100.0.
+    """
     compute_ces = _import_compute_ces()
     s = _settings()
-    # With quiz=None (treated as 0.0), all others=1.0, teachback=1.0:
-    # CES = (0×0.35 + 1×0.25 + 1×0.20 + 1×0.12 + 1×0.08) × 100
-    #     = (0 + 0.25 + 0.20 + 0.12 + 0.08) × 100 = 0.65 × 100 = 65.0
+    # quiz dropped; teachback=1.0, behavioral=1.0, head_pose=1.0, blink=1.0
+    # weight_sum = 0.25 + 0.20 + 0.12 + 0.08 = 0.65
+    # CES = sum(v * w/0.65) * 100 = (0.65/0.65) * 100 = 100.0
     result = compute_ces(
         quiz_accuracy=None,
         teachback_score=1.0,
@@ -257,21 +262,25 @@ def test_quiz_accuracy_none_treated_as_zero():
         blink=1.0,
         settings=s,
     )
-    expected = (0.0 * 0.35 + 1.0 * 0.25 + 1.0 * 0.20 + 1.0 * 0.12 + 1.0 * 0.08) * 100
-    assert result == pytest.approx(expected, abs=0.001)
+    assert result == pytest.approx(100.0, abs=0.001)
 
 
-# ── AC 8b: quiz_accuracy=None AND teachback_score=None ───────────────────────
+# ── AC 8b (S3-53): quiz_accuracy=None AND teachback_score=None ───────────────
 
 
 @pytest.mark.unit
-def test_both_none_quiz_accuracy_treated_as_zero_in_redistribution():
-    """AC 8+7: quiz_accuracy=None + teachback=None → qa=0.0 in redistribution."""
+def test_both_none_quiz_and_teachback_redistributed():
+    """AC 8+7 (updated S3-53): quiz=None + teachback=None → both dropped, remaining 3 normalize.
+
+    Old behaviour (D62): quiz treated as 0 inside redistribution → CES≈53.3.
+    Correct behaviour  : both dropped; remaining signals (0.40 total weight) normalize.
+    With behavioral=head_pose=blink=1.0 → CES = 100.0.
+    """
     compute_ces = _import_compute_ces()
     s = _settings()
-    # teachback=None → redistribute; quiz=None → 0.0 within redistribution
-    # CES = (0×0.35/0.75 + 1×0.20/0.75 + 1×0.12/0.75 + 1×0.08/0.75) × 100
-    #     = (0 + 0.2667 + 0.1600 + 0.1067) × 100 ≈ 53.33
+    # quiz and teachback both dropped
+    # remaining: behavioral=1.0 (w=0.20), head_pose=1.0 (w=0.12), blink=1.0 (w=0.08)
+    # weight_sum = 0.40; CES = (0.40/0.40) * 100 = 100.0
     result = compute_ces(
         quiz_accuracy=None,
         teachback_score=None,
@@ -280,14 +289,7 @@ def test_both_none_quiz_accuracy_treated_as_zero_in_redistribution():
         blink=1.0,
         settings=s,
     )
-    remaining = 1.0 - 0.25
-    expected = (
-        0.0 * (0.35 / remaining)
-        + 1.0 * (0.20 / remaining)
-        + 1.0 * (0.12 / remaining)
-        + 1.0 * (0.08 / remaining)
-    ) * 100
-    assert result == pytest.approx(expected, abs=0.1)
+    assert result == pytest.approx(100.0, abs=0.1)
 
 
 # ── AC 9: division-by-zero guard ─────────────────────────────────────────────

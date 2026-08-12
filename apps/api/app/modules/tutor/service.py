@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time as _time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,9 +35,9 @@ class NormalizedSignal:
     session_id: str
     quiz_accuracy: float | None  # None when quiz not yet attempted
     teachback_score: float | None  # None when teach-back skipped
-    behavioral_score: float
-    head_pose_score: float
-    blink_rate: float
+    behavioral_score: float | None  # None on MediaPipe frame drop (S3-38 D13)
+    head_pose_score: float | None  # None on MediaPipe frame drop (S3-38 D13)
+    blink_rate: float | None  # None on MediaPipe frame drop (S3-38 D13)
 
 
 @dataclass
@@ -94,9 +95,9 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
         session_id=str(session_id),
         quiz_accuracy=_optional_float("quiz_accuracy"),
         teachback_score=_optional_float("teachback_score"),
-        behavioral_score=_require_float("behavioral_score"),
-        head_pose_score=_require_float("head_pose_score"),
-        blink_rate=_require_float("blink_rate"),
+        behavioral_score=_optional_float("behavioral_score"),  # S3-38 D13: MediaPipe may drop
+        head_pose_score=_optional_float("head_pose_score"),  # S3-38 D13: MediaPipe may drop
+        blink_rate=_optional_float("blink_rate"),  # S3-38 D13: MediaPipe may drop
     )
 
 
@@ -104,36 +105,23 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
 
 
 def compute_ces(signal: NormalizedSignal) -> float:
-    """Weighted Cognitive Engagement Score on the 0–100 scale (PRD §11).
+    """NormalizedSignal wrapper for the canonical CES formula in assessment/ces.py.
 
-    ``CES = (Σ signalᵢ × weightᵢ) × 100`` using the frozen ``settings.ces_weight_*``
-    weights, matching Dev 3's ``ces_contribution`` scale contract
-    (assessment/service.py) so ``ces_threshold = 50`` is correct.
-
-    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None``
-    (not yet attempted / skipped). The weight of any ``None`` signal is redistributed
-    proportionally across the present signals (each present weight ÷
-    sum-of-present-weights). This generalises the §11 teachback-``None`` rule — when
-    only teachback is ``None`` the present weights sum to 0.75, so each is divided by
-    0.75, reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
+    Formula arithmetic lives exclusively in ``assessment.ces.compute_ces`` (D1).
+    This wrapper preserves the ``NormalizedSignal``-based API used internally by
+    ``process_attention_signal`` without duplicating the weighted-sum logic.
     """
-    from app.config import get_settings
+    from app.config import get_settings  # noqa: PLC0415
+    from app.modules.assessment.ces import compute_ces as _canonical  # noqa: PLC0415
 
-    s = get_settings()
-    # (value, weight) for every signal, dropping the None ones.
-    pairs = [
-        (signal.quiz_accuracy, s.ces_weight_quiz),
-        (signal.teachback_score, s.ces_weight_teachback),
-        (signal.behavioral_score, s.ces_weight_behavioral),
-        (signal.head_pose_score, s.ces_weight_head_pose),
-        (signal.blink_rate, s.ces_weight_blink),
-    ]
-    present = [(v, w) for (v, w) in pairs if v is not None]
-    weight_sum = sum(w for _, w in present)
-    if weight_sum <= 0:
-        return 0.0
-    ces = sum(v * (w / weight_sum) for v, w in present) * 100.0
-    return max(0.0, min(100.0, ces))
+    return _canonical(
+        quiz_accuracy=signal.quiz_accuracy,
+        teachback_score=signal.teachback_score,
+        behavioral=signal.behavioral_score,
+        head_pose=signal.head_pose_score,
+        blink=signal.blink_rate,
+        settings=get_settings(),
+    )
 
 
 # ── Learner Mode helpers ──────────────────────────────────────────────────────
@@ -402,15 +390,10 @@ async def process_attention_signal(
 
     Steps
     -----
-    1. Parse and validate the payload → NormalizedSignal.
-    2. Compute the weighted CES (PRD §11, 0–100 scale).
-    3. Persist latest CES to ``session:{session_id}:ces_window`` and
-       ``tutor_ces:{session_id}`` (24 h TTL).
-    4. Prepend CES to ``session:{session_id}:ces_history`` (keep last 10).
-    5. Read history; if the two most-recent values are both below
-       ``settings.ces_threshold`` and tutor cooldown is absent, dispatch
-       ``distraction_detected`` to the tutor state machine.
-    6. Return CesResult.
+    1. Read tutor state (CLAUDE.md §10, D14): CES monitoring ONLY active in TEACHING.
+    2. If TEACHING: parse signal → compute CES → update Redis window/history → check trigger.
+    3. If QUIZZING: check Q&A deadline (separate concern, not CES-related).
+    4. Return CesResult.
     """
     from app.config import get_settings
     from app.core.redis import get_redis
@@ -419,84 +402,225 @@ async def process_attention_signal(
     settings = get_settings()
     redis = get_redis()
 
-    normalized = _parse_signal(signal)
-    ces = compute_ces(normalized)
-
-    window_key = f"session:{session_id}:ces_window"
-    history_key = f"session:{session_id}:ces_history"
-
-    # Latest window
-    await redis.set(window_key, ces, ex=_CES_WINDOW_TTL)
-    await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)  # ces_computation (s3-3)
-
-    # Prepend to history and trim to keep only the last _CES_HISTORY_MAX values
-    await cast("Awaitable[int]", redis.lpush(history_key, ces))
-    await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
-    await redis.expire(history_key, _CES_WINDOW_TTL)
-
-    # Read history to evaluate the intervention trigger
-    history_raw: list[str] = await cast(
-        "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
-    )
-
-    intervention_dispatched = False
-
-    # Read tutor state once — used by both the CES intervention guard and the deadline check below.
-    # CLAUDE.md §10: CES monitoring ONLY active in TEACHING state.
+    # D14 (S3-39): read tutor state FIRST — compute_ces and history writes run ONLY in TEACHING.
+    # History accumulated in non-TEACHING states (QUIZZING, INTERVENING, TEACH_BACK) would
+    # create false low-CES pairs and trigger spurious interventions when TEACHING resumes.
     state_raw = await redis.get(f"tutor_state:{session_id}")
 
-    if len(history_raw) >= 2:
-        # Index 0 is most recent (LPUSH prepends)
-        recent = [float(v) for v in history_raw[:2]]
-        cooldown_key = f"tutor_cooldown:{session_id}"
-        in_cooldown = await redis.exists(cooldown_key)
+    ces: float = 0.0
+    intervention_dispatched = False
 
-        # Enforce CLAUDE.md §10: CES interventions only fire in TEACHING state.
-        if (
-            state_raw == "TEACHING"
-            and all(v < settings.ces_threshold for v in recent)
-            and not in_cooldown
-        ):
-            logger.info(
-                "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching distraction_detected",
-                session_id,
-                recent[0],
-                recent[1],
-            )
-            # Pass the current segment's pre-generated messages so the FSM can select one
-            # (Redis reads only — no DB/LLM on this hot path).
-            seg_msgs = await _segment_intervention_messages(session_id, redis)
-            result = await dispatch_event(
-                session_id, "distraction_detected", payload={"intervention_messages": seg_msgs}
-            )
-            intervention_dispatched = True
+    if state_raw == "TEACHING":
+        normalized = _parse_signal(signal)
+        ces = compute_ces(normalized)
 
-            # Deliver the selected message to the client (in-process WS hub). Best-effort: a
-            # delivery failure must never break signal processing.
-            msg = result.get("intervention_message")
-            if result.get("current_state") == "INTERVENING" and msg:
+        window_key = f"session:{session_id}:ces_window"
+        history_key = f"session:{session_id}:ces_history"
+
+        # Latest window
+        await redis.set(window_key, ces, ex=_CES_WINDOW_TTL)
+        await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)
+
+        # Prepend to history (D4: JSON {"v": CES float, "t": Unix seconds int}).
+        # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
+        _entry = json.dumps({"v": ces, "t": int(_time.time())})
+        await cast("Awaitable[int]", redis.lpush(history_key, _entry))
+        await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
+        await redis.expire(history_key, _CES_WINDOW_TTL)
+
+        # S3-42 (D9): per-signal histories for get_session_report accuracy.
+        # Only written when the signal is not None (MediaPipe may drop frames — S3-38 D13).
+        # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
+        if normalized.behavioral_score is not None:
+            await redis.lpush(
+                f"session:{session_id}:behavioral_history", normalized.behavioral_score
+            )
+            await redis.ltrim(
+                f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1
+            )
+            await redis.expire(f"session:{session_id}:behavioral_history", _CES_WINDOW_TTL)  # D64
+        if normalized.head_pose_score is not None:
+            await redis.lpush(
+                f"session:{session_id}:head_pose_history", normalized.head_pose_score
+            )
+            await redis.ltrim(
+                f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1
+            )
+            await redis.expire(f"session:{session_id}:head_pose_history", _CES_WINDOW_TTL)  # D64
+        if normalized.blink_rate is not None:
+            await redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate)
+            await redis.ltrim(f"session:{session_id}:blink_history", 0, _CES_HISTORY_MAX - 1)
+            await redis.expire(f"session:{session_id}:blink_history", _CES_WINDOW_TTL)  # D64
+
+        # Read history to evaluate the intervention trigger.
+        # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
+        history_raw: list[str] = await cast(
+            "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+        )
+
+        if len(history_raw) >= 2:
+            # D4: parse JSON entries {"v": float, "t": int}.  Backward-compat fallback: a legacy
+            # bare-float string gets t=0 so the gap check always fails for that pair — no false
+            # intervention on a mixed old/new history (abs(now - 0) >> 2*cadence).
+            def _parse_history_entry(raw: str) -> tuple[float, int]:
                 try:
-                    from app.core.websocket import manager
+                    parsed = json.loads(raw)
+                    return float(parsed["v"]), int(parsed["t"])
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                    try:
+                        return float(raw), 0  # legacy bare float — timestamp unknown
+                    except (ValueError, TypeError):
+                        return 0.0, 0  # fully corrupt — safe sentinel
 
-                    await manager.send(
+            v0, t0 = _parse_history_entry(history_raw[0])  # most recent (LPUSH prepends)
+            v1, t1 = _parse_history_entry(history_raw[1])  # second most recent
+
+            # D4 gap check: reject stale history from signal gaps / MediaPipe restarts.
+            gap_ok = abs(t0 - t1) <= 2 * settings.ces_cadence_seconds
+
+            # D6: _can_intervene_distraction uses a Lua script to atomically check cooldown +
+            # distraction cap and increment the count — no separate EXISTS+GET two-step.
+            if gap_ok and v0 < settings.ces_threshold and v1 < settings.ces_threshold:
+                from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
+                    _can_intervene_distraction,
+                )
+
+                can_dispatch = await _can_intervene_distraction(session_id, redis, settings)
+                if can_dispatch:
+                    logger.info(
+                        "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching"
+                        " distraction_detected",
                         session_id,
-                        {
-                            "type": "tutor_intervene",
-                            "payload": {
-                                "session_id": session_id,
-                                "type": result.get("intervention_type") or "distraction",
-                                "message": msg,
-                            },
-                        },
+                        v0,
+                        v1,
                     )
-                except Exception:
-                    logger.exception("tutor_intervene delivery failed for %s", session_id)
+                    # Pass the current segment's pre-generated messages so the FSM can select one
+                    # (Redis reads only — no DB/LLM on this hot path).
+                    seg_msgs = await _segment_intervention_messages(session_id, redis)
+                    result = await dispatch_event(
+                        session_id,
+                        "distraction_detected",
+                        payload={"intervention_messages": seg_msgs},
+                    )
+                    intervention_dispatched = True
+
+                    # Deliver the selected message to the client (in-process WS hub).
+                    # Best-effort: a delivery failure must never break signal processing.
+                    msg = result.get("intervention_message")
+                    if result.get("current_state") == "INTERVENING" and msg:
+                        try:
+                            from app.core.websocket import manager  # noqa: PLC0415
+
+                            await manager.send(
+                                session_id,
+                                {
+                                    "type": "tutor_intervene",
+                                    "payload": {
+                                        "session_id": session_id,
+                                        "type": result.get("intervention_type") or "distraction",
+                                        "message": msg,
+                                    },
+                                },
+                            )
+                        except Exception:
+                            logger.exception(
+                                "tutor_intervene delivery failed for %s", session_id
+                            )
+
+    # ── Fatigue trigger (D7, S3-45) ──────────────────────────────────────────
+    # Only evaluate when TEACHING and no intervention already dispatched this signal.
+    # Primary: blink+head_pose both below thresholds for 2 consecutive windows AND
+    #   session duration >= ces_fatigue_min_session_seconds.
+    # Exhaustion fallback: all three MediaPipe signals None AND duration floor met.
+    # Once-per-session: _can_intervene_fatigue checks tutor_fatigue_fired:{session_id}.
+    if state_raw == "TEACHING" and not intervention_dispatched:
+        # _time is imported at module level; no local re-import needed
+        session_start_ts_raw = await redis.get(f"session:{session_id}:session_start_ts")
+        if session_start_ts_raw is None:
+            # D-nn: key missing (Redis was unavailable at WS connect time, or session init
+            # was bypassed). Fatigue detection is silently disabled for the entire session.
+            # Surfaced here as a warning so ops can detect the gap without crashing the path.
+            logger.warning(
+                "[tutor:%s] session_start_ts missing — fatigue detection disabled for session",
+                session_id,
+            )
+        if session_start_ts_raw is not None:
+            try:
+                duration_s = _time.time() - float(session_start_ts_raw)
+            except (TypeError, ValueError):
+                duration_s = 0.0
+            if duration_s >= settings.ces_fatigue_min_session_seconds:
+                # BOUNDED: end=1 → at most 2 entries (CLAUDE.md unbounded-query rule)
+                blink_hist = await cast(
+                    "Awaitable[list[Any]]",
+                    redis.lrange(f"session:{session_id}:blink_history", 0, 1),
+                )
+                hp_hist = await cast(
+                    "Awaitable[list[Any]]",
+                    redis.lrange(f"session:{session_id}:head_pose_history", 0, 1),
+                )
+                primary_trigger = (
+                    len(blink_hist) >= 2
+                    and all(
+                        float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist
+                    )
+                    and len(hp_hist) >= 2
+                    and all(
+                        float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist
+                    )
+                )
+                exhaustion_fallback = (
+                    normalized.blink_rate is None
+                    and normalized.head_pose_score is None
+                    and normalized.behavioral_score is None
+                )
+                if primary_trigger or exhaustion_fallback:
+                    from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
+                        _can_intervene_fatigue,
+                    )
+
+                    if await _can_intervene_fatigue(session_id):
+                        logger.info(
+                            "[tutor:%s] fatigue trigger (primary=%s exhaustion=%s)"
+                            " — dispatching fatigue_detected",
+                            session_id,
+                            primary_trigger,
+                            exhaustion_fallback,
+                        )
+                        seg_msgs = await _segment_intervention_messages(session_id, redis)
+                        fatigue_result = await dispatch_event(
+                            session_id,
+                            "fatigue_detected",
+                            payload={"intervention_messages": seg_msgs},
+                        )
+                        intervention_dispatched = True
+                        fatigue_msg = fatigue_result.get("intervention_message")
+                        if (
+                            fatigue_result.get("current_state") == "INTERVENING" and fatigue_msg
+                        ):
+                            try:
+                                from app.core.websocket import manager  # noqa: PLC0415
+
+                                await manager.send(
+                                    session_id,
+                                    {
+                                        "type": "tutor_intervene",
+                                        "payload": {
+                                            "session_id": session_id,
+                                            "type": "fatigue",
+                                            "message": fatigue_msg,
+                                        },
+                                    },
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "tutor_intervene (fatigue) delivery failed for %s",
+                                    session_id,
+                                )
 
     # Learner Mode: auto-advance a QUIZZING session when the Q&A time limit elapses.
-    # This attention-signal path (fires every ~5 s) is the primary deadline enforcer
-    # when the student is not actively submitting client events.
+    # This attention-signal path (fires every ~5 s) is the primary deadline enforcer.
     # Delete-before-dispatch guard prevents double-fire from concurrent signals.
-    # state_raw is already populated above (used for CES guard too).
     if state_raw == "QUIZZING" and await _quiz_deadline_expired(session_id, redis):
         deleted = await redis.delete(f"session:{session_id}:quiz_deadline_at")
         if deleted:

@@ -52,9 +52,11 @@ def _settings_mock(threshold: float = 0.5) -> MagicMock:
     compute_ces() reads settings.ces_weight_* at call time; without these a bare
     MagicMock leaks into weight_sum and raises TypeError. Matching config defaults
     makes compute_ces() on the mock equal the module-level _EXPECTED_CES.
+    D4 (S3-49): ces_cadence_seconds must also be set — gap check compares int <= int.
     """
     s = MagicMock()
     s.ces_threshold = threshold
+    s.ces_cadence_seconds = 5  # D4: gap tolerance = 2 * 5 = 10 s
     s.ces_weight_quiz = 0.35
     s.ces_weight_teachback = 0.25
     s.ces_weight_behavioral = 0.20
@@ -63,8 +65,19 @@ def _settings_mock(threshold: float = 0.5) -> MagicMock:
     return s
 
 
-def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float = 0.5):
-    """Patch the three lazy-imported dependencies and return (mock_redis, mock_dispatch)."""
+def _setup(
+    mocker,
+    *,
+    lrange_vals: list[str],
+    exists: int = 0,
+    threshold: float = 0.5,
+    can_dispatch: bool = True,
+):
+    """Patch the lazy-imported dependencies and return (mock_redis, mock_dispatch).
+
+    can_dispatch controls the return value of the Lua-backed _can_intervene_distraction
+    guard (D6). Set False to simulate cooldown / max-reached without a real Redis.
+    """
     mock_redis = AsyncMock()
     mock_redis.lrange = AsyncMock(return_value=lrange_vals)
     mock_redis.exists = AsyncMock(return_value=exists)
@@ -82,6 +95,15 @@ def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float 
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     mocker.patch("app.config.get_settings", return_value=_settings_mock(threshold))
+
+    # D6 — _can_intervene_distraction is now a Lua-backed atomic guard. Patch it so
+    # tests stay unit-level (no real Redis eval). The source-level behaviour (eval called
+    # with correct keys/args, fail-closed, etc.) is covered in test_s3_48_lua_distraction_cap.py.
+    mock_guard = mocker.patch(
+        "app.modules.tutor.state_machine.graph._can_intervene_distraction",
+        new_callable=AsyncMock,
+    )
+    mock_guard.return_value = can_dispatch
 
     # dispatch_event returns the FSM result dict. Default to INTERVENING with no message so a fired
     # trigger doesn't spuriously enter the 4-8 delivery path — result.get("intervention_message")
@@ -121,11 +143,17 @@ def test_parse_missing_session_id_raises() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("field", ["behavioral_score", "head_pose_score", "blink_rate"])
-def test_parse_missing_required_float_raises(field: str) -> None:
-    """AC2: missing ANY required float → ValueError (covers all three _require_float branches)."""
+def test_parse_missing_behavioral_signal_returns_none(field: str) -> None:
+    """S3-38 D13 (MediaPipe frame drop): behavioral/head_pose/blink absent or null → None.
+
+    These signals are optional because MediaPipe can drop frames. The old test
+    expected ValueError (required-field), but the field is now _optional_float.
+    """
     payload = {k: v for k, v in _VALID_PAYLOAD.items() if k != field}
-    with pytest.raises(ValueError):
-        _parse_signal(payload)
+    parsed = _parse_signal(payload)
+    assert getattr(parsed, field) is None, (
+        f"_parse_signal must return None for missing {field!r}, not raise"
+    )
 
 
 @pytest.mark.unit
@@ -176,14 +204,26 @@ async def test_ces_window_written_with_ttl(mocker) -> None:
 
 @pytest.mark.unit
 async def test_history_lpush_ltrim_expire_called(mocker) -> None:
-    """AC5: history is built via lpush → ltrim(key,0,9) → expire(key,86400), in that order."""
+    """AC5: history is built via lpush → ltrim(key,0,9) → expire(key,86400), in that order.
+
+    D4 (S3-49): lpush value is a JSON string {"v": float, "t": int}, not a bare float.
+    """
     mock_redis, _ = _setup(mocker, lrange_vals=["0.5"])
 
     from app.modules.tutor.service import process_attention_signal
 
     await process_attention_signal("sess-1", _VALID_PAYLOAD)
 
-    mock_redis.lpush.assert_any_call(_HISTORY_KEY, _EXPECTED_CES)
+    # D4: the pushed value is a JSON string — find the call by key and validate the format.
+    import json as _json  # noqa: PLC0415
+
+    history_calls = [c for c in mock_redis.lpush.call_args_list if c.args[0] == _HISTORY_KEY]
+    assert history_calls, "lpush must be called with the ces_history key"
+    pushed = _json.loads(history_calls[0].args[1])
+    assert isinstance(pushed.get("v"), float)
+    assert isinstance(pushed.get("t"), int)
+    assert abs(pushed["v"] - _EXPECTED_CES) < 0.001
+
     mock_redis.ltrim.assert_any_call(_HISTORY_KEY, 0, 9)
     mock_redis.expire.assert_any_call(_HISTORY_KEY, 86400)
 
@@ -239,17 +279,20 @@ async def test_one_below_one_above_no_dispatch(mocker) -> None:
 
 @pytest.mark.unit
 async def test_cooldown_blocks_dispatch(mocker) -> None:
-    """AC9: both below threshold BUT cooldown active → no dispatch."""
-    mock_redis, mock_dispatch = _setup(mocker, lrange_vals=["0.1", "0.2"], exists=1, threshold=0.5)
+    """AC9: both below threshold BUT Lua guard returns False (cooldown/cap) → no dispatch.
+
+    D6: the guard is now _can_intervene_distraction (Lua) — no separate redis.exists call.
+    We simulate the guard returning False (as it would when in cooldown or at the cap).
+    """
+    _, mock_dispatch = _setup(
+        mocker, lrange_vals=["0.1", "0.2"], threshold=0.5, can_dispatch=False
+    )
 
     from app.modules.tutor.service import process_attention_signal
 
     result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
 
     mock_dispatch.assert_not_called()
-    # The cooldown guard must actually be consulted — distinguishes "blocked by cooldown"
-    # from "trigger never ran at all".
-    mock_redis.exists.assert_called_once_with("tutor_cooldown:sess-1")
     assert result.intervention_dispatched is False
 
 
@@ -390,6 +433,12 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
     }
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
     mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
+    # D6: Lua guard — mock returning True so the dispatch path is exercised.
+    _guard = mocker.patch(
+        "app.modules.tutor.state_machine.graph._can_intervene_distraction",
+        new_callable=AsyncMock,
+    )
+    _guard.return_value = True
     mock_dispatch = _patch_dispatch(mocker, "focus up")
 
     mock_manager = MagicMock()
@@ -422,6 +471,12 @@ async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
         "app.core.redis.get_redis", return_value=_intervention_redis(None)
     )  # no cached package
     mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
+    # D6: Lua guard — mock returning True; dispatch fires but message is None.
+    _guard = mocker.patch(
+        "app.modules.tutor.state_machine.graph._can_intervene_distraction",
+        new_callable=AsyncMock,
+    )
+    _guard.return_value = True
     _patch_dispatch(mocker, None)  # FSM returns no message when no package supplied
 
     mock_manager = MagicMock()
@@ -841,6 +896,7 @@ async def test_process_attention_quizzing_expired_with_low_ces_only_quiz_complet
 
     mock_settings = MagicMock()
     mock_settings.ces_threshold = 50
+    mock_settings.ces_cadence_seconds = 5  # D4 (S3-49): gap check requires int attribute
     mock_settings.ces_weight_quiz = 0.35
     mock_settings.ces_weight_teachback = 0.25
     mock_settings.ces_weight_behavioral = 0.20

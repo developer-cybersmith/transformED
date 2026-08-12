@@ -306,6 +306,43 @@ class Settings(BaseSettings):
         default=50.0,
         description="CES score below this triggers an intervention",
     )
+    ces_fatigue_blink_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Blink rate (0-1) below which the signal indicates fatigue. "
+            "Default 0.3 per Schleicher et al. 2008. "
+            "Env: CES_FATIGUE_BLINK_THRESHOLD"
+        ),
+    )
+    ces_fatigue_head_pose_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Head pose score (0-1) below which the signal indicates fatigue. "
+            "Default 0.3 per Bosch et al. 2015. "
+            "Env: CES_FATIGUE_HEAD_POSE_THRESHOLD"
+        ),
+    )
+    ces_fatigue_min_session_seconds: int = Field(
+        default=900,
+        ge=60,
+        description=(
+            "Minimum session duration in seconds before fatigue trigger is eligible. "
+            "Default 900 s (15 min). Env: CES_FATIGUE_MIN_SESSION_SECONDS"
+        ),
+    )
+    ces_cadence_seconds: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Expected interval between consecutive CES windows in seconds. "
+            "Used by the D4 gap-check: abs(t0-t1) must be <= 2*cadence before the "
+            "distraction trigger fires (default 10 s tolerance at 5 s cadence)."
+        ),
+    )
 
     @model_validator(mode="after")
     def _ces_weights_must_sum_to_one(self) -> Settings:

@@ -6,13 +6,60 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/api/assessment/sessions": {
+      "post": {
+        "tags": [
+          "assessment"
+        ],
+        "summary": "Start a lesson attempt — mints the session row",
+        "description": "Create the `sessions` row for this lesson attempt and return its id.\n\nStory 2-35 / D18. Call this ONCE when a lesson starts, not per segment —\nevery call is a new attempt, which is intentional (re-learning must produce a\nnew session for CES history).\n\n`user_id` is taken from the verified JWT and is never read from the body.",
+        "operationId": "create_session_endpoint_api_assessment_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/assessment/quiz": {
       "post": {
         "tags": [
           "assessment"
         ],
         "summary": "Submit quiz answers for a session",
-        "description": "Grade a quiz submission and update the session's CES score.\n\nTODO (Sprint 1): Delegate to assessment service.",
+        "description": "Grade a quiz submission and update the session's CES score.",
         "operationId": "submit_quiz_api_assessment_quiz_post",
         "requestBody": {
           "content": {
@@ -59,7 +106,7 @@
           "assessment"
         ],
         "summary": "Submit a typed teach-back response for LLM evaluation",
-        "description": "Evaluate a student's typed teach-back response using the LLM rubric.\n\nTODO (Sprint 1): Delegate to assessment service.",
+        "description": "Evaluate a student's typed teach-back response using the GPT-4o-mini rubric.",
         "operationId": "submit_teachback_api_assessment_teachback_post",
         "requestBody": {
           "content": {
@@ -106,8 +153,8 @@
           "assessment"
         ],
         "summary": "Get the complete assessment report for a session",
-        "description": "Return the final CES breakdown and scores for a completed session.\n\nTODO (Sprint 2): Query session_reports table.",
-        "operationId": "get_session_report_api_assessment_session__session_id__report_get",
+        "description": "Return the final CES breakdown and scores for a completed session.",
+        "operationId": "get_session_report_endpoint_api_assessment_session__session_id__report_get",
         "security": [
           {
             "HTTPBearer": []
@@ -154,7 +201,7 @@
           "assessment"
         ],
         "summary": "Get the learner DNA profile for the current user",
-        "description": "Return aggregated learning patterns for the authenticated user.\n\nTODO (Sprint 2): Aggregate from session_reports.",
+        "description": "Return the learner DNA profile for the authenticated user.",
         "operationId": "get_learner_dna_api_assessment_user_dna_get",
         "responses": {
           "200": {
@@ -180,8 +227,8 @@
         "tags": [
           "assessment"
         ],
-        "summary": "Submit onboarding diagnostic answers",
-        "description": "Process onboarding diagnostic and generate initial learner DNA.\n\nTODO (Sprint 1): Delegate to assessment service.",
+        "summary": "Submit onboarding diagnostic answers and generate learner DNA",
+        "description": "Process 20 onboarding diagnostic answers and generate initial learner DNA profile.\n\nIdempotency: returns 409 if the Redis key user:{id}:onboarding_done is already set.\nOn success, sets the Redis key and returns OnboardingResult with badge_labels,\nprofile_text (with DPDP Act 2023 disclaimer), and session_count=0.",
         "operationId": "submit_onboarding_diagnostic_api_assessment_onboarding_submit_post",
         "requestBody": {
           "content": {
@@ -194,16 +241,59 @@
           "required": true
         },
         "responses": {
-          "202": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object",
-                  "title": "Response Submit Onboarding Diagnostic Api Assessment Onboarding Submit Post"
+                  "$ref": "#/components/schemas/OnboardingResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/assessment/consent": {
+      "post": {
+        "tags": [
+          "assessment"
+        ],
+        "summary": "Record user consent (DPDP Act 2023 compliance — D29 fix)",
+        "description": "Record a DPDP consent event in the user_consents audit table.\n\nStory 3-32 / D29. This endpoint is the ONLY writer to user_consents.\nA real row here is required before AttentionMonitor (S3-02) can legally\ninitialize — the migration's dual-condition RLS on attention_events checks\nboth users.attention_consent (boolean) AND a user_consents row.\n\nReturns 201 on first consent for this user+type+version.\nReturns 200 if an identical consent record already exists (idempotent).\n\nuser_id is always sourced from the verified JWT — never from the request body.\nusers.attention_consent is updated by the DB trigger, never by this function.",
+        "operationId": "record_consent_endpoint_api_assessment_consent_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentRecord"
                 }
               }
             }
@@ -229,6 +319,71 @@
   },
   "components": {
     "schemas": {
+      "ConsentCreate": {
+        "properties": {
+          "consent_type": {
+            "type": "string",
+            "enum": [
+              "attention_tracking",
+              "learner_dna"
+            ],
+            "title": "Consent Type"
+          },
+          "policy_version": {
+            "type": "string",
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Policy Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "consent_type",
+          "policy_version"
+        ],
+        "title": "ConsentCreate",
+        "description": "Request body for POST /api/assessment/consent.\n\nuser_id is never accepted here — it comes exclusively from current_user[\"sub\"].\nExtra fields are silently ignored (Pydantic default)."
+      },
+      "ConsentRecord": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "consent_type": {
+            "type": "string",
+            "title": "Consent Type"
+          },
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "consented_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consented At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "consent_type",
+          "policy_version"
+        ],
+        "title": "ConsentRecord",
+        "description": "Response for POST /api/assessment/consent — mirrors the user_consents row."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -305,15 +460,34 @@
           },
           "dimension": {
             "type": "string",
+            "enum": [
+              "cognitive",
+              "emotional",
+              "self_direction"
+            ],
             "title": "Dimension"
           },
           "selected_index": {
             "type": "integer",
+            "maximum": 3.0,
+            "minimum": 0.0,
             "title": "Selected Index"
           },
           "selected_text": {
             "type": "string",
             "title": "Selected Text"
+          },
+          "response_time_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Time Ms"
           }
         },
         "type": "object",
@@ -332,6 +506,8 @@
               "$ref": "#/components/schemas/OnboardingAnswer"
             },
             "type": "array",
+            "maxItems": 20,
+            "minItems": 20,
             "title": "Responses"
           }
         },
@@ -341,6 +517,32 @@
         ],
         "title": "OnboardingDiagnosticSubmission"
       },
+      "OnboardingResult": {
+        "properties": {
+          "badge_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Badge Labels"
+          },
+          "profile_text": {
+            "type": "string",
+            "title": "Profile Text"
+          },
+          "session_count": {
+            "type": "integer",
+            "title": "Session Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "badge_labels",
+          "profile_text",
+          "session_count"
+        ],
+        "title": "OnboardingResult"
+      },
       "QuizAnswer": {
         "properties": {
           "question_id": {
@@ -349,10 +551,12 @@
           },
           "response_index": {
             "type": "integer",
+            "minimum": 0.0,
             "title": "Response Index"
           },
           "response_time_ms": {
             "type": "integer",
+            "minimum": 0.0,
             "title": "Response Time Ms",
             "default": 0
           }
@@ -425,6 +629,8 @@
               "$ref": "#/components/schemas/QuizAnswer"
             },
             "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
             "title": "Answers"
           }
         },
@@ -436,6 +642,50 @@
           "answers"
         ],
         "title": "QuizSubmission"
+      },
+      "SessionCreate": {
+        "properties": {
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lesson_id"
+        ],
+        "title": "SessionCreate",
+        "description": "Request body for `POST /sessions`.\n\n`lesson_id` ONLY. `user_id` comes from the verified JWT and `session_id` /\n`started_at` are database-generated. Pydantic ignores unknown fields by\ndefault, so a client sending any of those three is silently ignored rather\nthan trusted — asserted by\n`test_user_id_comes_from_the_jwt_and_is_never_accepted_from_the_client`."
+      },
+      "SessionCreated": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "lesson_id": {
+            "type": "string",
+            "title": "Lesson Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "lesson_id"
+        ],
+        "title": "SessionCreated",
+        "description": "Response body for `POST /sessions` — all three values come from the DB."
       },
       "SessionReport": {
         "properties": {
@@ -502,6 +752,57 @@
               }
             ],
             "title": "Completed At"
+          },
+          "tier": {
+            "type": "string",
+            "title": "Tier"
+          },
+          "tier_label": {
+            "type": "string",
+            "title": "Tier Label"
+          },
+          "quiz_total_questions": {
+            "type": "integer",
+            "title": "Quiz Total Questions"
+          },
+          "quiz_correct_count": {
+            "type": "integer",
+            "title": "Quiz Correct Count"
+          },
+          "quiz_accuracy_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiz Accuracy Label"
+          },
+          "learner_dna_snapshot": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learner Dna Snapshot"
+          },
+          "formula_applied": {
+            "type": "string",
+            "enum": [
+              "full_5_signal",
+              "teachback_redistributed_4_signal"
+            ],
+            "title": "Formula Applied"
+          },
+          "signal_coverage": {
+            "type": "integer",
+            "title": "Signal Coverage"
           }
         },
         "type": "object",
@@ -515,7 +816,14 @@
           "quiz_score",
           "teachback_score",
           "duration_minutes",
-          "completed_at"
+          "completed_at",
+          "tier",
+          "tier_label",
+          "quiz_total_questions",
+          "quiz_correct_count",
+          "quiz_accuracy_label",
+          "formula_applied",
+          "signal_coverage"
         ],
         "title": "SessionReport"
       },
@@ -527,7 +835,7 @@
           },
           "rubric_scores": {
             "additionalProperties": {
-              "type": "number"
+              "type": "string"
             },
             "type": "object",
             "title": "Rubric Scores"
@@ -571,6 +879,8 @@
           },
           "response_text": {
             "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
             "title": "Response Text",
             "description": "Student's typed teach-back response"
           }

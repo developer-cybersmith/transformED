@@ -47,6 +47,7 @@ tutor_cooldown:{session_id}           "1"   present (with TTL) during cooldown w
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from enum import StrEnum
 from typing import Any, TypedDict, cast
@@ -57,6 +58,24 @@ from langgraph.graph import END, StateGraph
 logger = logging.getLogger(__name__)
 
 _STATE_TTL = 86_400  # 24 h
+
+# ── Lua script for atomic distraction cap check+increment (D6) ───────────────
+# Redis Lua scripts execute atomically in Redis's single-threaded Lua VM, so
+# concurrent requests cannot race between the EXISTS/GET read and the INCR write.
+#
+# KEYS[1] = tutor_cooldown:{session_id}
+# KEYS[2] = tutor_distraction_count:{session_id}
+# ARGV[1] = max_distraction_per_session (string representation)
+# ARGV[2] = TTL for count key in seconds (string representation, matches _STATE_TTL)
+_DISTRACTION_GUARD_LUA = """
+local in_cooldown = redis.call('EXISTS', KEYS[1])
+if in_cooldown == 1 then return 'cooldown' end
+local count = tonumber(redis.call('GET', KEYS[2])) or 0
+if count >= tonumber(ARGV[1]) then return 'max_reached' end
+redis.call('INCR', KEYS[2])
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))
+return 'ok'
+"""
 
 # Maps an intervention-triggering event to the intervention_type it records / selects a message for.
 # Used by dispatch_event so the FSM records the RIGHT intervention (the fatigue path previously left
@@ -103,37 +122,78 @@ class TutorMachineState(TypedDict, total=False):
 # ── Guard functions ───────────────────────────────────────────────────────────
 
 
-async def _can_intervene_distraction(session_id: str) -> bool:
-    """Guard: distraction intervention allowed only if:
-    - Currently in cooldown? → No
-    - Distraction count < max? → Yes
+async def _can_intervene_distraction(  # noqa: ANN401
+    session_id: str,
+    redis: Any,  # noqa: ANN401
+    settings: Any,  # noqa: ANN401
+) -> bool:
+    """Guard: atomically check-and-increment the distraction cap via Lua (D6).
+
+    Replaces the non-atomic EXISTS + GET two-step with a single redis.eval call.
+    Redis executes Lua scripts atomically in its single-threaded VM, so concurrent
+    requests cannot race between the read and the increment.
+
+    Returns True only when the Lua script returns 'ok' (meaning: not in cooldown,
+    not at cap, and the count was incremented as part of this atomic check).
+    Returns False (fail-closed) on any Redis error.
     """
-    from app.config import get_settings
-    from app.core.redis import get_redis
-
-    settings = get_settings()
-    redis = get_redis()
-
     cooldown_key = f"tutor_cooldown:{session_id}"
     count_key = f"tutor_distraction_count:{session_id}"
-
-    in_cooldown = await redis.exists(cooldown_key)
-    if in_cooldown:
+    try:
+        result = await redis.eval(
+            _DISTRACTION_GUARD_LUA,
+            2,
+            cooldown_key,
+            count_key,
+            str(settings.max_distraction_per_session),
+            str(_STATE_TTL),
+        )
+        return result in (b"ok", "ok")
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[tutor:%s] _can_intervene_distraction redis.eval failed — fail-closed", session_id
+        )
         return False
 
-    count_raw = await redis.get(count_key)
-    count = int(count_raw) if count_raw else 0
-    return count < settings.max_distraction_per_session
 
+async def _can_intervene_fatigue(session_id: str, redis: Any = None) -> bool:
+    """Gate for fatigue — checks cooldown THEN sets the once-per-session flag atomically.
 
-async def _can_intervene_fatigue(session_id: str) -> bool:
-    """Guard: fatigue fires at most once per session."""
-    from app.core.redis import get_redis
+    PRD §10: a 2-minute cooldown applies after ANY intervention (distraction or fatigue).
+    This function checks ``tutor_cooldown:{session_id}`` FIRST (fast-fail) before
+    attempting SET-NX on ``tutor_fatigue_fired:{session_id}``, so fatigue cannot fire
+    within the 2-minute window of a preceding distraction intervention.
 
-    redis = get_redis()
+    Sequence:
+      1. EXISTS tutor_cooldown:{session_id}  → if True, return False (cooldown active)
+      2. SET NX tutor_fatigue_fired:{session_id}  → returns True only for the winning caller
+
+    NOTE: callers MUST NOT separately write ``tutor_fatigue_fired:{session_id}``
+    after this returns True — the flag is already set here.
+
+    The EXISTS → SET-NX pair is NOT fully atomic (two Redis round-trips).  In the
+    extremely narrow race window where a concurrent intervening_node sets the cooldown
+    key between step 1 and step 2, fatigue and a new intervention could both start.
+    This is accepted and documented in S3-52 Scale & Load §6: the window is < 1 ms,
+    fatigue fires once per session anyway (SET-NX is atomic), and intervening_node
+    immediately starts a new cooldown TTL.  If this race is unacceptable in future,
+    replace with a single Lua script (EXISTS + SET NX in one eval call).
+    """
+    if redis is None:
+        from app.core.redis import get_redis  # noqa: PLC0415
+
+        redis = get_redis()
+
+    cooldown_key = f"tutor_cooldown:{session_id}"
     fatigue_key = f"tutor_fatigue_fired:{session_id}"
-    already_fired = await redis.exists(fatigue_key)
-    return not bool(already_fired)
+
+    # Step 1: PRD §10 cooldown check — fast-fail if any intervention is still in window.
+    if await redis.exists(cooldown_key):
+        return False
+
+    # Step 2: once-per-session atomic gate — only one concurrent caller can win.
+    was_set = await redis.set(fatigue_key, "1", ex=_STATE_TTL, nx=True)
+    return was_set is not None
 
 
 async def _is_in_teachback(session_id: str) -> bool:
@@ -178,17 +238,18 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     settings = get_settings()
     redis = get_redis()
 
-    # Record the intervention
-    if intervention_type == "distraction":
-        await redis.incr(f"tutor_distraction_count:{session_id}")
-        await redis.expire(f"tutor_distraction_count:{session_id}", _STATE_TTL)
+    # Record the intervention.
+    # Distraction: count was already incremented atomically by the Lua guard in
+    # _can_intervene_distraction (D6). No second INCR here — that would double-count.
+    # For fatigue, the flag was already set atomically by _can_intervene_fatigue
+    # in service.py (SET NX returned True → we won the race and entered here).
+    # Do NOT re-write it: the SET-NX in _can_intervene_fatigue IS the guard.
 
-    elif intervention_type == "fatigue":
-        await redis.set(f"tutor_fatigue_fired:{session_id}", "1", ex=_STATE_TTL)
-
-    # Start cooldown window
+    # Start cooldown window.
+    # nx=True: prevent a concurrent intervention from resetting an already-running cooldown
+    # (last-writer-wins would shorten the window; NX keeps the first writer's TTL).
     cooldown_key = f"tutor_cooldown:{session_id}"
-    await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds)
+    await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds, nx=True)
 
     # D63 safety net: independent timeout so a session cannot be trapped in INTERVENING forever
     # if intervention_complete is never dispatched (dropped WS message, or the client not yet
@@ -205,6 +266,29 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     messages = (state.get("event_payload") or {}).get("intervention_messages") or {}
     chosen = messages.get(intervention_type) or []
     intervention_message = chosen[0] if chosen else None
+    message_key = chosen[0] if chosen else None  # same value; named for write_intervention_event
+
+    # S3-37 (D12): fire-and-forget DB event write — never blocks the Redis path.
+    # Wrapped in try/except so get_supabase() failures (e.g. DB unavailable on startup)
+    # are logged and swallowed rather than crashing the FSM transition.
+    try:
+        import asyncio  # noqa: PLC0415
+
+        from app.core.db import get_supabase  # noqa: PLC0415
+        from app.modules.assessment.service import write_intervention_event  # noqa: PLC0415
+
+        asyncio.create_task(
+            write_intervention_event(
+                session_id,
+                intervention_type=intervention_type,
+                window_index=int(state.get("window_index") or 0),
+                ces_at_trigger=float(state.get("last_ces") or 0.0),
+                message_key=message_key,
+                supabase=get_supabase(),
+            )
+        )
+    except Exception:
+        logger.exception("[tutor:%s] write_intervention_event create_task failed", session_id)
 
     await _persist_state(session_id, TutorState.INTERVENING)
     return {
@@ -260,9 +344,23 @@ async def teach_back_node(state: TutorMachineState) -> TutorMachineState:
 
 async def session_end_node(state: TutorMachineState) -> TutorMachineState:
     """SESSION_END state: cleanup and final scoring."""
+    import asyncio  # noqa: PLC0415
+
     session_id = state.get("session_id", "")
     logger.info("[tutor:%s] → SESSION_END", session_id)
     await _persist_state(session_id, TutorState.SESSION_END)
+
+    # S3-35 (D3): fire-and-forget ces_final + ended_at write — never blocks FSM transition.
+    try:
+        from app.core.db import get_supabase  # noqa: PLC0415
+        from app.core.redis import get_redis  # noqa: PLC0415
+
+        asyncio.create_task(
+            _finalize_session(session_id, redis=get_redis(), supabase=get_supabase())
+        )
+    except Exception:
+        logger.exception("[tutor:%s] _finalize_session create_task failed", session_id)
+
     return {"current_state": TutorState.SESSION_END}
 
 
@@ -275,17 +373,15 @@ async def route_from_teaching(state: TutorMachineState) -> str:
     event = state.get("event", "")
 
     if event == "distraction_detected":
-        # Guard: cooldown and max-distraction check
-        if await _can_intervene_distraction(session_id):
-            return "intervening"
-        logger.debug("[tutor:%s] distraction_detected but guard blocked intervention", session_id)
-        return "teaching"  # Stay in TEACHING — cooldown or max reached
+        # Guard already enforced atomically in service.py via _can_intervene_distraction
+        # (Lua script checked cooldown + cap and incremented the count before dispatch).
+        # route_from_teaching is only reached when the guard passed.
+        return "intervening"
 
     if event == "fatigue_detected":
-        if await _can_intervene_fatigue(session_id):
-            return "intervening"
-        logger.debug("[tutor:%s] fatigue_detected but already fired this session", session_id)
-        return "teaching"
+        # _can_intervene_fatigue already fired atomically in service.py (SET-NX) before
+        # dispatch_event was called — routing here means the race was already won.
+        return "intervening"
 
     if event == "segment_complete":
         return "checking_in"
@@ -613,3 +709,65 @@ async def _read_state(session_id: str) -> str | None:
     except Exception:  # noqa: BLE001
         logger.warning("Failed to read tutor state for session %s", session_id)
         return None
+
+
+# ── S3-35 (D3) — Session finalization ────────────────────────────────────────
+
+
+async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> None:
+    """Write ces_final and ended_at to the sessions table at SESSION_END.
+
+    Called via asyncio.create_task from session_end_node — fire-and-forget.
+    DB failures are logged at ERROR and captured to Sentry — never re-raised.
+
+    ces_final = average of the Redis ces_history values (rounded to 2 dp).
+    If history is empty, ces_final = None (distinguishable from zero engagement).
+    BOUNDED: lrange 0..9 reads at most _CES_HISTORY_MAX=10 entries.
+    """
+    import json  # noqa: PLC0415
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    try:
+        history_raw: list[str] = await redis.lrange(
+            f"session:{session_id}:ces_history", 0, 9
+        )
+        values: list[float] = []
+        for raw in history_raw:
+            try:
+                parsed = json.loads(raw)
+                values.append(float(parsed["v"]))
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                try:
+                    values.append(float(raw))
+                except (ValueError, TypeError):
+                    pass
+
+        # Empty history → None (distinguishable from zero engagement).
+        # numeric(5,2) column accepts NULL; 0.0 would incorrectly signal "student scored zero".
+        ces_final: float | None = round(sum(values) / len(values), 2) if values else None
+        ended_at = datetime.now(tz=timezone.utc).isoformat()
+
+        await asyncio.to_thread(
+            lambda: (
+                supabase.table("sessions")
+                .update({"ces_final": ces_final, "ended_at": ended_at})
+                .eq("session_id", session_id)
+                .execute()
+            )
+        )
+        logger.info(
+            "[tutor:%s] session finalized: ces_final=%s ended_at=%s",
+            session_id,
+            ces_final,
+            ended_at,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[tutor:%s] _finalize_session DB write failed: %s", session_id, exc
+        )
+        try:
+            import sentry_sdk  # noqa: PLC0415
+
+            sentry_sdk.capture_exception(exc)
+        except Exception:  # noqa: BLE001
+            pass

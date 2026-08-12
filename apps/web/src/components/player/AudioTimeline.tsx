@@ -382,6 +382,7 @@ export function AudioTimeline() {
         wsSendControl?.({ type: 'segment_complete' });
         enterQuiz(); // audio ended before quiz fired (very short audio or tight timing)
       } else {
+        wsSendControl?.({ type: 'lesson_complete' });
         endLesson();
       }
     } else {

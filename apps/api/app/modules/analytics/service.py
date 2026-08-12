@@ -19,6 +19,7 @@ KNOWN_EVENT_TYPES: frozenset[str] = frozenset(
         "quiz_skip",
         "teachback_skip",
         "intervention_acknowledged",
+        "intervention_triggered",  # S3-36 (D12) — written by write_intervention_event
         "segment_complete",
         "session_start",
         "session_end",

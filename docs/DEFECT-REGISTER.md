@@ -339,6 +339,97 @@ of itself: nothing errored, nothing warned above a `logger.warning` nobody reads
 *cheap*, not expensive (**D46**). Any AC phrased as "the cost ceiling protects us here" is
 false for this whole class.
 
+---
+
+## D61 — `session_start_ts` missing silently disables fatigue for entire session
+
+**Status:** OPEN · **Owner:** Dev 4 · **Detected:** 2026-08-12 (Sprint 3 CES v2 audit)
+
+If Redis is unavailable when `_init_session_state` runs (WS connect), the
+`session:{id}:session_start_ts` key is never written. `process_attention_signal` checks
+`if session_start_ts_raw is not None` — a missing key silently skips the entire fatigue
+detection block for the rest of the session. No error is raised; CES reports look normal.
+
+**Fixed partially:** A `logger.warning` is now emitted when the key is absent during
+TEACHING-state processing (`tutor/service.py`). Full fix requires falling back to
+`sessions.started_at` from the DB when the Redis key is absent.
+
+**Enforcement:** `logger.warning` output is not machine-checked — DISCIPLINE.
+Register **D-nn** when the DB-fallback is implemented and tested.
+
+---
+
+## D62 — `compute_ces_from_session_aggregates` is dead code; `_finalize_session` has divergent inline implementation
+
+**Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-08-12 (Sprint 3 CES v2 audit)
+
+`assessment/service.py:compute_ces_from_session_aggregates` is defined (story S3-49) but
+never called in production. `_finalize_session` in `graph.py` has its own inline
+averaging that uses `lrange(0, 9)` and returns `0.0` for empty history (instead of `None`
+for fewer than 5 windows). A student who ends their session with fewer than 5 CES windows
+gets `ces_final = 0.0` — indistinguishable from zero engagement with no diagnostic signal.
+
+**Fix:** Either wire `_finalize_session` to call `compute_ces_from_session_aggregates`
+(handling the `None` → `0.0` mapping explicitly with a warning), or delete the dead
+function and document the `0.0` artifact in the session report schema.
+
+**Enforcement:** DISCIPLINE (no CI guard prevents the divergence from widening).
+
+---
+
+## D63 — `_get_distraction_count` is dead code; `dna_fusion.py` wiring was never completed
+
+**Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-08-12 (Sprint 3 CES v2 audit)
+
+`assessment/service.py:_get_distraction_count` is defined (story S3-36 Task 3.2–3.3) but
+`apps/api/app/modules/assessment/dna_fusion.py` contains no import or call to it. The
+story specified it should be wired into `fuse_learner_dna()`. The function is tested in
+isolation but the production call site was never connected.
+
+**Enforcement:** DISCIPLINE (import graphs are not CI-checked).
+
+---
+
+## D64 — Per-signal Redis history keys (`behavioral_history`, `head_pose_history`, `blink_history`) have no TTL
+
+**Status:** OPEN · **Owner:** Dev 3/Dev 4 · **Detected:** 2026-08-12 (Sprint 3 CES v2 audit)
+
+`process_attention_signal` writes `behavioral_history`, `head_pose_history`, and
+`blink_history` keys to Redis (S3-42) but sets no TTL. `ces_history` correctly receives
+`expire(_CES_WINDOW_TTL)` at line 315 of `tutor/service.py`. The per-signal history keys
+persist until Redis eviction. On Railway Redis with a 64 MB limit, accumulated orphaned
+keys from sessions that never reached SESSION_END accumulate indefinitely.
+
+**Fix:** Add `await redis.expire(f"session:{session_id}:{signal}_history", _CES_WINDOW_TTL)`
+after each `ltrim` call in `tutor/service.py`, matching the `ces_history` pattern.
+
+**Enforcement:** DISCIPLINE.
+
+---
+
+## D65 — Entire distraction trigger path (Scenarios 8, 10, 11, 12, 18) has zero unit test coverage
+
+**Status:** PARTIALLY FIXED (S3-52) · **Owner:** Dev 4 · **Detected:** 2026-08-12 (Sprint 3 CES v2 audit)
+
+The distraction trigger (`tutor/service.py:344–411`) — 2 consecutive low-CES windows →
+`dispatch_event("distraction_detected")` — has no unit test in the CES v2 test suite. The
+Lua atomic guard (`_can_intervene_distraction`), cooldown check, distraction cap, and D4
+gap/stale-history check are all live code with zero test coverage. The same applies to the
+"distraction blocks fatigue in same window" scenario (Scenario 12 in the coverage matrix).
+
+**S3-52 fix (2026-08-12):** Added `tests/test_s3_52_ces_production_hardening.py` covering:
+- D4 timestamp gap-check non-dispatch path (stale entries > 2×cadence → no dispatch)
+- dispatch_event.assert_not_called() for QUIZZING and INTERVENING states with low CES
+- per-signal lpush not called in QUIZZING state
+
+**Remaining gap (Dev 4):** The positive distraction trigger path (TEACHING + 2 consecutive
+low-CES + gap_ok → `_can_intervene_distraction` → dispatch) still has no unit test.
+Write `tests/test_distraction_trigger.py` covering that positive path and the Lua guard behavior.
+
+**Enforcement:** DISCIPLINE (remaining test file is absent, not a failing test).
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
