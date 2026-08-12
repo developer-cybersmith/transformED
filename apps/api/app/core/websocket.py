@@ -228,6 +228,8 @@ async def _init_session_state(session_id: str) -> None:
     ``accept()`` handshake, so every block is best-effort and never re-raises.
     """
     try:
+        import time as _time  # noqa: PLC0415
+
         from app.core.redis import get_redis
 
         redis = get_redis()
@@ -238,6 +240,14 @@ async def _init_session_state(session_id: str) -> None:
         await redis.delete(
             f"session:{session_id}:segment_index"
         )  # reset segment pointer for a reused id
+        # S3-40 (D15): record session start for fatigue duration gate.
+        # nx=True: first-connect wins — reconnects do not reset the clock.
+        await redis.set(
+            f"session:{session_id}:session_start_ts",
+            str(int(_time.time())),
+            ex=86400,
+            nx=True,
+        )
         logger.info("WS session initialised: session=%s", session_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to init session state for %s: %s", session_id, e)
