@@ -76,9 +76,16 @@ def _supabase_insert_ok():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_onboarding_llm_failure_releases_redis_lock():
-    """AC1 — D71: When the LLM call raises any exception, the Redis lock must
-    be absent after process_onboarding() raises HTTPException(503)."""
+async def test_onboarding_llm_failure_raises_503_for_router_cleanup():
+    """AC1 (service layer) — D71: When the LLM call raises any exception,
+    process_onboarding() must raise HTTPException(503) so the router's
+    `except HTTPException` cleanup fires and calls redis.delete(onboarding_key).
+
+    # MOCK-CONTRACT: This test verifies the 503 signal required for the router's
+    # Redis cleanup to execute. The actual lock deletion (redis.delete call) is
+    # verified at the router level in:
+    #   test_onboarding_endpoint.py::test_onboarding_router_releases_lock_on_503
+    """
     from fastapi import HTTPException
 
     supabase = _supabase_insert_ok()
@@ -195,6 +202,13 @@ async def test_onboarding_retry_after_llm_failure_succeeds():
     process_onboarding() must succeed (not hit unique-constraint 409).
 
     Simulates: first call fails at LLM → rows deleted → second call succeeds.
+
+    # MOCK-CONTRACT: This test verifies at service layer that process_onboarding()
+    # returns a valid result on the second call. The full AC3 requirements —
+    # HTTP 200 response code and no unique-constraint 409 from real Postgres —
+    # are structurally untestable at service layer (all DB calls are mocked).
+    # Router-level AC3 coverage requires an integration test against a real DB.
+    # AC3's HTTP 200 path is covered by test_onboarding_endpoint.py::test_http_201_on_success.
     """
     from fastapi import HTTPException
 
@@ -291,6 +305,7 @@ def test_migration_sql_has_rebrand_update():
     assert "REPLACE" in sql or "UPDATE" in sql, (
         "Migration must contain an UPDATE or REPLACE statement."
     )
-    assert "TRANSFORMEDED" not in sql and ("TRANSFORMIED" not in sql), (
-        "Migration SQL appears malformed — double-check the content."
+    assert "REPLACE(PROFILE_TEXT, 'TRANSFORMED', 'HIE')" in sql, (
+        "Migration must contain REPLACE(profile_text, 'TransformED', 'HIE'). "
+        "Check the exact string in the UPDATE statement."
     )
