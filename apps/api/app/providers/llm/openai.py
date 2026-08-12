@@ -22,7 +22,7 @@ from openai.types.chat import ChatCompletion
 
 from app.config import get_settings
 from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
-from app.core.langfuse import get_langfuse
+from app.core.langfuse import deterministic_trace_context, get_langfuse
 from app.core.retry import with_retry
 from app.providers.base import LLMProvider
 
@@ -121,11 +121,18 @@ class OpenAILLMProvider(LLMProvider):
         if langfuse is not None:
             generation = _safe_trace(
                 lambda: langfuse.start_observation(
-                    name="openai.chat",
+                    # Verb-first, model-agnostic name per Langfuse's naming
+                    # guidance (best-practices.md, fetched fresh in the
+                    # Langfuse-skill self-audit): names are referenced by
+                    # evaluators/dashboards/saved filters and should describe
+                    # the ACTION, not the model — the model is already the
+                    # separate `model=` attribute below.
+                    name="generate-chat-completion",
                     as_type="generation",
                     model=model,
                     input=messages,
                     metadata={"model": model, "lesson_id": self._lesson_id},
+                    trace_context=deterministic_trace_context(langfuse, self._lesson_id),
                 )
             )
 
@@ -203,7 +210,7 @@ class OpenAILLMProvider(LLMProvider):
         if langfuse is not None:
             generation = _safe_trace(
                 lambda: langfuse.start_observation(
-                    name="openai.chat.structured",
+                    name="generate-structured-completion",
                     as_type="generation",
                     model=model,
                     input=messages,
@@ -212,6 +219,7 @@ class OpenAILLMProvider(LLMProvider):
                         "response_format": response_format.__name__,
                         "lesson_id": self._lesson_id,
                     },
+                    trace_context=deterministic_trace_context(langfuse, self._lesson_id),
                 )
             )
 

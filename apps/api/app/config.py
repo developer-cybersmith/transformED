@@ -7,6 +7,7 @@ Call get_settings() everywhere — never instantiate Settings() directly.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from typing import Annotated
 
@@ -64,7 +65,16 @@ class Settings(BaseSettings):
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
     sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
     sarvam_voice_id: str = Field(
-        default="meera", description="Sarvam Bulbul v2 speaker name for narration synthesis"
+        # D67: "meera" is not a valid Bulbul v2 speaker -- confirmed via a
+        # real, live call to api.sarvam.ai (400 invalid_request_error,
+        # listing the valid speakers). Every real TTS call through the
+        # primary provider was 400ing and silently degrading to the Azure
+        # fallback on 100% of narration. "anushka" verified via a second
+        # live call (200 OK, real audio) -- chosen for parity with the
+        # existing Azure fallback default (en-IN-NeerjaNeural, Indian
+        # English), matching this product's target market.
+        default="anushka",
+        description="Sarvam Bulbul v2 speaker name for narration synthesis",
     )
     azure_tts_key: str | None = Field(
         default=None, description="Azure Cognitive Services TTS key — fallback"
@@ -87,6 +97,32 @@ class Settings(BaseSettings):
     langfuse_host: str = Field(
         default="https://cloud.langfuse.com", description="Langfuse host URL"
     )
+    # Langfuse-skill self-audit finding: environments.md fetched fresh — with
+    # no environment set, ALL traces (local dev runs, this session's manual
+    # self-audit call, staging, and real production lessons) land under
+    # Langfuse's default "default" environment, indistinguishable from each
+    # other in every dashboard/filter. Explicit constructor param (not just
+    # LANGFUSE_TRACING_ENVIRONMENT) so it's typed and validated like every
+    # other setting in this file rather than a bare ambient env var.
+    langfuse_environment: str = Field(
+        default="development",
+        description="Langfuse environment label (production/staging/development) — "
+        "keeps real-lesson traces separate from dev/test traces in the Langfuse UI",
+    )
+
+    @field_validator("langfuse_environment")
+    @classmethod
+    def _validate_langfuse_environment(cls, v: str) -> str:
+        # Langfuse's own constraint (environments.md): lowercase/digits/hyphen/
+        # underscore only, cannot start with "langfuse", max 40 chars. A value
+        # outside this is silently dropped by the SDK — surfaced here instead
+        # as a loud startup failure, not a trace that quietly loses its label.
+        if not re.fullmatch(r"(?!langfuse)[a-z0-9-_]+", v) or len(v) > 40:
+            raise ValueError(
+                f"LANGFUSE_ENVIRONMENT={v!r} is invalid — must match "
+                r"^(?!langfuse)[a-z0-9-_]+$ and be <= 40 chars (Langfuse SDK constraint)"
+            )
+        return v
 
     # ── PostHog ───────────────────────────────────────────────────────────────
     posthog_api_key: str = Field(
@@ -175,13 +211,26 @@ class Settings(BaseSettings):
         return cls._parse_email_allowlist(v)
 
     # ── Cost limits (PRD §12) ─────────────────────────────────────────────────
+    # A daily per-user spend cap (`max_daily_spend_per_user_usd`) was documented
+    # here but never had an enforcing reader anywhere in the codebase (D48) --
+    # removed rather than left looking like a real control. The per-lesson
+    # ceiling below and `max_concurrent_generations_per_user` are the only
+    # spend controls that actually run.
     max_lesson_cost_usd: float = Field(
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
     )
-    max_daily_spend_per_user_usd: float = Field(
-        default=10.00,
-        description="Daily per-user AI spend cap in USD",
+    max_narration_chars_per_lesson: int = Field(
+        default=10000,
+        ge=1,
+        description=(
+            "Node 8 hard cap: max narration chars across all segments combined "
+            "(decisionupdate.md section 8). TTS synthesis cost is proportional to "
+            "character count and is 67-73% of total lesson generation cost, so this "
+            "bounds the dominant cost driver before it's incurred. Enforced in "
+            "tts_node (not narration_generator_node, which is Send()-dispatched "
+            "once per section with no visibility into any other section's output)."
+        ),
     )
 
     # ── Book-scale chapter generation gates (Story 1-14, book-scale Phase 6) ──
@@ -388,6 +437,23 @@ class Settings(BaseSettings):
             "cap — keeps lesson density in the T2 range and keeps lesson_planner "
             "reliable. Independent of and well below the _MAX_PHASE1_SECTIONS "
             "fan-out DoS cap (60)."
+        ),
+    )
+
+    # ── Section body cap for Phase 1 LLM calls (Story 3-39) ───────────────────
+    section_body_max_chars: int = Field(
+        default=6000,
+        gt=0,
+        description=(
+            "Max chars of a section's body sent to each Phase 1 economy-node LLM "
+            "call (_get_section_body). Was a hardcoded function-default before "
+            "Story 3-39 — moved to Settings so re-tuning doesn't require editing "
+            "all 6 call sites. NOTE (Scale & Load, unrevisited-inherited per "
+            "SCALE-CONTRACT Q5): the 6000 VALUE itself predates book-scale "
+            "generation and is out of this story's scope to re-derive; Story "
+            "3-39 only made truncation past this cap an explicit, persisted, "
+            "surfaced degradation (section_truncations) instead of a "
+            "logger.warning nobody reads."
         ),
     )
 
