@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-06 (Story 3-33 DONE — S3-07 notification preference read-helper, D60 registered; Sprint 4 task added)
+**Last updated:** 2026-08-12 (S3-45 DONE — behavioral fatigue trigger dispatch, D7 implemented)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -17,11 +17,11 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 8 | 8 | 0 | 0 |
+| Sprint 3 | Weeks 6–7 | 9 | 9 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **47** | **38** | **0** | **9** |
+| **Total** | | **48** | **39** | **0** | **9** |
 
 Update this table each time a task is checked off below.
 
@@ -727,6 +727,14 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Unblocks Dev 2: S3-01 (Attention Consent Modal) and S3-02 (AttentionMonitor/MediaPipe)
   - Story: `docs/stories/3-32-dpdp-consent-write-endpoint.md` — status: done
   - Branch: `sprint3/s3-32-dpdp-consent-endpoint` — merged into `master-sprint3-dev3`
+
+- [x] **S3-45 — Behavioral fatigue trigger dispatch (D7)** — ✓ 2026-08-12
+  - `config.py`: `ces_fatigue_blink_threshold` (default 0.3), `ces_fatigue_head_pose_threshold` (default 0.3), `ces_fatigue_min_session_seconds` (default 900, ge=60) — all env-var tunable
+  - `websocket.py _init_session_state`: writes `session:{sid}:session_start_ts` (ex=86400); NOT written on reconnect path
+  - `tutor/service.py process_attention_signal`: fatigue trigger block — primary trigger (blink+head_pose both < threshold for 2 consecutive windows AND duration >= 900s), exhaustion fallback (all MediaPipe None AND duration floor), once-per-session via `_can_intervene_fatigue`, `lrange` bounded (end=1), fail-closed on missing `session_start_ts`
+  - 20 unit tests, all GREEN; ruff clean
+  - Branch: `sprint3/s3-45-fatigue-signal-trigger` — pushed to origin
+  - **Dependency note:** Exhaustion fallback (all-None MediaPipe) requires S3-38 to merge Optional NormalizedSignal fields. TOCTOU close (D6) requires S3-48 (Lua SET NX).
 
 ---
 
