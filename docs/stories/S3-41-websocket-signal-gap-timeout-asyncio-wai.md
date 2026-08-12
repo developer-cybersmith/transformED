@@ -318,3 +318,4 @@ and `missed_windows` counter are self-contained in the WebSocket coroutine.
 
 **NO migration required.** This story modifies only `apps/api/app/core/websocket.py`. No
 schema changes, no new tables, no new migration file.
+
