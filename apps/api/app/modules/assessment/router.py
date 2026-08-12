@@ -165,6 +165,7 @@ async def get_session_report_endpoint(
 ) -> SessionReport:
     """Return the final CES breakdown and scores for a completed session."""
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.core.redis import get_redis  # noqa: PLC0415 — S3-42 (D9): per-signal histories
     from app.modules.assessment.service import get_analytics_consent, get_session_report
 
     supabase = get_supabase()
@@ -172,6 +173,7 @@ async def get_session_report_endpoint(
         session_id=session_id,
         user_id=current_user["sub"],
         supabase=supabase,
+        redis=get_redis(),  # S3-42 (D9): enables real per-signal breakdown averages
     )
     consent = await get_analytics_consent(user_id=current_user["sub"], supabase=supabase)
     capture_event(

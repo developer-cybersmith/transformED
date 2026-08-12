@@ -314,6 +314,27 @@ async def process_attention_signal(
         await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
         await redis.expire(history_key, _CES_WINDOW_TTL)
 
+        # S3-42 (D9): per-signal histories for get_session_report accuracy.
+        # Only written when the signal is not None (MediaPipe may drop frames — S3-38 D13).
+        # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
+        if normalized.behavioral_score is not None:
+            await redis.lpush(
+                f"session:{session_id}:behavioral_history", normalized.behavioral_score
+            )
+            await redis.ltrim(
+                f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1
+            )
+        if normalized.head_pose_score is not None:
+            await redis.lpush(
+                f"session:{session_id}:head_pose_history", normalized.head_pose_score
+            )
+            await redis.ltrim(
+                f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1
+            )
+        if normalized.blink_rate is not None:
+            await redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate)
+            await redis.ltrim(f"session:{session_id}:blink_history", 0, _CES_HISTORY_MAX - 1)
+
         # Read history to evaluate the intervention trigger.
         # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
         history_raw: list[str] = await cast(

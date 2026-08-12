@@ -758,6 +758,7 @@ async def get_session_report(
     session_id: str,
     user_id: str,
     supabase: Client,
+    redis: Any = None,  # noqa: ANN401  — S3-42 (D9): optional; enables per-signal breakdowns
 ) -> SessionReport:
     """Aggregate a completed session's assessment data into a SessionReport.
 
@@ -880,12 +881,29 @@ async def get_session_report(
     # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
     teachback_normalised = (avg_teachback / 100.0) if teachback_count > 0 else None
+
+    # S3-42 (D9): read per-signal histories from Redis to populate real averages.
+    # Graceful fallback to 0.0 when redis is None, key missing, or history empty.
+    async def _signal_avg(key: str) -> float:
+        if redis is None:
+            return 0.0
+        try:
+            raw_vals: list[str] = await redis.lrange(key, 0, 9)  # BOUNDED: at most 10 entries
+            floats = [float(v) for v in raw_vals if v is not None]
+            return round(sum(floats) / len(floats), 4) if floats else 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    behavioral_avg = await _signal_avg(f"session:{session_id}:behavioral_history")
+    head_pose_avg = await _signal_avg(f"session:{session_id}:head_pose_history")
+    blink_avg = await _signal_avg(f"session:{session_id}:blink_history")
+
     ces_breakdown: dict[str, float] = _build_ces_breakdown(
         quiz_accuracy=quiz_accuracy,
         teachback_normalised=teachback_normalised,
-        behavioral_avg=0.0,  # S3-42 not yet implemented; 0.0 until Redis signal reads added
-        head_pose_avg=0.0,
-        blink_avg=0.0,
+        behavioral_avg=behavioral_avg,
+        head_pose_avg=head_pose_avg,
+        blink_avg=blink_avg,
         settings=settings,
     )
 
