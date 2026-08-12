@@ -70,11 +70,19 @@ re-verified rather than trusted from docs alone this time too).
   source of billing truth.
 - `imagen.py`'s security-critical exception sanitization (API key kept out
   of `__context__`) — re-verified unchanged by this story's edits.
-- `deterministic_trace_context(langfuse, lesson_id)` grouping every
-  provider call for one pipeline run under one trace — this matches
-  best-practices.md's own definition of a good trace scope ("one pipeline
-  execution... a document comes in, gets chunked, embedded, and stored" is
-  given as a textbook example) and needed no change.
+- The *design* of grouping every provider call for one pipeline run under
+  one trace via a seeded `create_trace_id` — this matches best-practices.md's
+  own definition of a good trace scope ("one pipeline execution... a
+  document comes in, gets chunked, embedded, and stored" is given as a
+  textbook example). **Correction (Round 2 independent review):** this
+  section originally said `deterministic_trace_context` itself "needed no
+  change" — false relative to `main`, where neither it nor any earlier
+  version of it exists; this function (renamed and generalized from an
+  earlier `lesson_id`-only helper written earlier in this same unmerged
+  line of work) is entirely new on this branch. What was already correct
+  is the *design pattern* it implements for the pipeline's `lesson_id` use
+  case specifically — AC-2 below is exactly the case where the same
+  pattern, copied onto a different use case (tutor sessions), was wrong.
 
 ## What was fixed
 
