@@ -142,11 +142,17 @@ def test_parse_missing_session_id_raises() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("field", ["behavioral_score", "head_pose_score", "blink_rate"])
-def test_parse_missing_required_float_raises(field: str) -> None:
-    """AC2: missing ANY required float → ValueError (covers all three _require_float branches)."""
+def test_parse_missing_behavioral_signal_returns_none(field: str) -> None:
+    """S3-38 D13 (MediaPipe frame drop): behavioral/head_pose/blink absent or null → None.
+
+    These signals are optional because MediaPipe can drop frames. The old test
+    expected ValueError (required-field), but the field is now _optional_float.
+    """
     payload = {k: v for k, v in _VALID_PAYLOAD.items() if k != field}
-    with pytest.raises(ValueError):
-        _parse_signal(payload)
+    parsed = _parse_signal(payload)
+    assert getattr(parsed, field) is None, (
+        f"_parse_signal must return None for missing {field!r}, not raise"
+    )
 
 
 @pytest.mark.unit

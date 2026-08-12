@@ -171,6 +171,11 @@ async def test_init_session_state_session_start_ts_has_86400_ttl():
     args, kwargs = ts_calls[0]
     ttl = kwargs.get("ex")
     assert ttl == 86400, f"session_start_ts must have ex=86400, got {ttl}"
+    # S3-53 AC 6 (D15): nx=True is the first-connect-wins guard — removing it
+    # would allow reconnects to reset the fatigue clock, permanently preventing
+    # fatigue from firing for long sessions with intermittent drops.
+    nx = kwargs.get("nx")
+    assert nx is True, f"session_start_ts must use nx=True (first-connect wins), got nx={nx!r}"
 
 
 @pytest.mark.unit

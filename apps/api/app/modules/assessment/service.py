@@ -1412,32 +1412,6 @@ async def write_intervention_event(
         sentry_sdk.capture_exception(exc)
 
 
-async def _get_distraction_count(
-    session_id: str,
-    *,
-    redis: Any,  # noqa: ANN401
-    supabase: Any,  # noqa: ANN401
-) -> int:
-    """Return the current distraction intervention count for a session.
-
-    Reads from Redis first (``tutor_distraction_count:{session_id}``).
-    On cache miss, reconstructs from session_events — the DB is the source of truth
-    for recovery after a Redis restart (D12 fallback).
-
-    BOUNDED: query filters by session_id + event_type + intervention_type —
-    at most settings.max_distraction_interventions rows per session (default 3).
-    """
-    val = await redis.get(f"tutor_distraction_count:{session_id}")
-    if val is not None:
-        return int(val)
-    resp = await asyncio.to_thread(
-        lambda: (
-            supabase.table("session_events")
-            .select("session_id", count="exact")
-            .eq("session_id", session_id)
-            .eq("event_type", "intervention_triggered")
-            .eq("payload->>intervention_type", "distraction")
-            .execute()
-        )
-    )
-    return resp.count or 0
+# D63 (S3-53): _get_distraction_count was removed — it was dead code.
+# frustration_tolerance in dna_fusion.py correctly reads intervention counts
+# from event_counts["intervention_triggered"] (session_events DB) at session end.

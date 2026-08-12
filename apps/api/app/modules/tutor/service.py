@@ -105,36 +105,23 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
 
 
 def compute_ces(signal: NormalizedSignal) -> float:
-    """Weighted Cognitive Engagement Score on the 0–100 scale (PRD §11).
+    """NormalizedSignal wrapper for the canonical CES formula in assessment/ces.py.
 
-    ``CES = (Σ signalᵢ × weightᵢ) × 100`` using the frozen ``settings.ces_weight_*``
-    weights, matching Dev 3's ``ces_contribution`` scale contract
-    (assessment/service.py) so ``ces_threshold = 50`` is correct.
-
-    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None``
-    (not yet attempted / skipped). The weight of any ``None`` signal is redistributed
-    proportionally across the present signals (each present weight ÷
-    sum-of-present-weights). This generalises the §11 teachback-``None`` rule — when
-    only teachback is ``None`` the present weights sum to 0.75, so each is divided by
-    0.75, reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
+    Formula arithmetic lives exclusively in ``assessment.ces.compute_ces`` (D1).
+    This wrapper preserves the ``NormalizedSignal``-based API used internally by
+    ``process_attention_signal`` without duplicating the weighted-sum logic.
     """
-    from app.config import get_settings
+    from app.config import get_settings  # noqa: PLC0415
+    from app.modules.assessment.ces import compute_ces as _canonical  # noqa: PLC0415
 
-    s = get_settings()
-    # (value, weight) for every signal, dropping the None ones.
-    pairs = [
-        (signal.quiz_accuracy, s.ces_weight_quiz),
-        (signal.teachback_score, s.ces_weight_teachback),
-        (signal.behavioral_score, s.ces_weight_behavioral),
-        (signal.head_pose_score, s.ces_weight_head_pose),
-        (signal.blink_rate, s.ces_weight_blink),
-    ]
-    present = [(v, w) for (v, w) in pairs if v is not None]
-    weight_sum = sum(w for _, w in present)
-    if weight_sum <= 0:
-        return 0.0
-    ces = sum(v * (w / weight_sum) for v, w in present) * 100.0
-    return max(0.0, min(100.0, ces))
+    return _canonical(
+        quiz_accuracy=signal.quiz_accuracy,
+        teachback_score=signal.teachback_score,
+        behavioral=signal.behavioral_score,
+        head_pose=signal.head_pose_score,
+        blink=signal.blink_rate,
+        settings=get_settings(),
+    )
 
 
 # ── Learner Mode helpers ──────────────────────────────────────────────────────
@@ -324,6 +311,7 @@ async def process_attention_signal(
             await redis.ltrim(
                 f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1
             )
+            await redis.expire(f"session:{session_id}:behavioral_history", _CES_WINDOW_TTL)  # D64
         if normalized.head_pose_score is not None:
             await redis.lpush(
                 f"session:{session_id}:head_pose_history", normalized.head_pose_score
@@ -331,9 +319,11 @@ async def process_attention_signal(
             await redis.ltrim(
                 f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1
             )
+            await redis.expire(f"session:{session_id}:head_pose_history", _CES_WINDOW_TTL)  # D64
         if normalized.blink_rate is not None:
             await redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate)
             await redis.ltrim(f"session:{session_id}:blink_history", 0, _CES_HISTORY_MAX - 1)
+            await redis.expire(f"session:{session_id}:blink_history", _CES_WINDOW_TTL)  # D64
 
         # Read history to evaluate the intervention trigger.
         # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.

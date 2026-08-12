@@ -64,7 +64,12 @@ class SessionReport(BaseModel):
     signal_coverage: int
     # S3-50 (D18) — CES history summary: compact engagement trend (min/max/mean/window_count)
     ces_history_summary: dict[str, Any] | None = None
-    # S3-51 (D19) — Intervention messages delivered during session
+    # S3-51 (D19) — Intervention trigger count for this session.
+    # SEMANTIC NOTE (S3-53): counts `intervention_triggered` events in the `session_events`
+    # DB table — measures trigger events, NOT WebSocket delivery confirmations.
+    # A WS delivery failure that still runs intervening_node creates a DB event but sends
+    # nothing to the client. Rename to intervention_events_count in a future non-frozen-
+    # contract release (requires 4-dev PR review per CLAUDE.md §16).
     intervention_messages_used: int = 0
 
 

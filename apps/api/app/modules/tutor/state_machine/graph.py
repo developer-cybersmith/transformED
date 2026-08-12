@@ -664,7 +664,7 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
     DB failures are logged at ERROR and captured to Sentry — never re-raised.
 
     ces_final = average of the Redis ces_history values (rounded to 2 dp).
-    If history is empty, ces_final = 0.0.
+    If history is empty, ces_final = None (distinguishable from zero engagement).
     BOUNDED: lrange 0..9 reads at most _CES_HISTORY_MAX=10 entries.
     """
     import json  # noqa: PLC0415
@@ -685,7 +685,9 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
                 except (ValueError, TypeError):
                     pass
 
-        ces_final = round(sum(values) / len(values), 2) if values else 0.0
+        # Empty history → None (distinguishable from zero engagement).
+        # numeric(5,2) column accepts NULL; 0.0 would incorrectly signal "student scored zero".
+        ces_final: float | None = round(sum(values) / len(values), 2) if values else None
         ended_at = datetime.now(tz=timezone.utc).isoformat()
 
         await asyncio.to_thread(
@@ -697,7 +699,7 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
             )
         )
         logger.info(
-            "[tutor:%s] session finalized: ces_final=%.2f ended_at=%s",
+            "[tutor:%s] session finalized: ces_final=%s ended_at=%s",
             session_id,
             ces_final,
             ended_at,
