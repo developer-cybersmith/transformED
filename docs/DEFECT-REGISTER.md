@@ -202,6 +202,14 @@ Not "documented limitations". Each carries an explicit condition that reopens it
 
 ---
 
+## CLOSED — Sprint 3 (2026-08-12)
+
+| ID | Defect | Class | Decision | Enforcement |
+|----|--------|-------|----------|-------------|
+| ~~D72~~ | **CLOSED 2026-08-12 (S3-42, branch `sprint3/s3-42-ces-breakdown-accuracy`).** `get_session_report` in `apps/api/app/modules/assessment/service.py` hardcoded `"behavioral": 0.0`, `"head_pose": 0.0`, `"blink": 0.0` in the `ces_breakdown` dict (comment: "Sprint 2: behavioral/head_pose/blink contributions deferred to Phase 3"). This meant the reported `ces_breakdown` was always wrong for any session that had attention signals — its five values did not sum to `ces_score`, and behavioral/head_pose/blink were always zero regardless of actual attention quality. Root cause: `process_attention_signal` stored only the composite CES value in Redis (`session:{session_id}:ces_history`); the individual signal components were never persisted, so `get_session_report` had nothing to read. | BW | Two coordinated changes: (1) `tutor/service.py:process_attention_signal` now `lpush`es the three signal components to separate Redis history lists (`session:{session_id}:behavioral_history`, `head_pose_history`, `blink_history`), trimmed to `_CES_HISTORY_MAX=10` and TTL'd identically to `ces_history`. (2) `assessment/service.py:get_session_report` now accepts `redis: Any = None`, reads those three history lists via an `_signal_avg` closure, and computes weighted contributions using `settings.ces_weight_*`. Router call site updated to pass `redis=get_redis()`. The existing Sprint-2 test asserting hardcoded-zero behavior was updated to assert zero-when-no-redis-data (correct for the right reason). | `tests/test_s3_42_ces_breakdown_accuracy.py::test_ces_breakdown_no_hardcoded_zero_for_behavioral` — source-inspection CI guard that fails if `"behavioral": 0.0` is re-introduced into `get_session_report` |
+
+---
+
 ## Part 3 — Process defects
 
 | ID | Defect | Decision | Enforcement |

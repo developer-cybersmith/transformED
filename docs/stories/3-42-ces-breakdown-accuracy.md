@@ -88,13 +88,13 @@ A CI-enforceable source scan confirms the pattern `"behavioral": 0.0` (literal z
 
 ## BMAD Process Gate
 
-- [ ] Story file committed first
-- [ ] Story commit pushed to `sprint3/s3-42-ces-breakdown-accuracy` before any implementation
-- [ ] RED tests written and failing
-- [ ] GREEN implementation passes
-- [ ] REFACTOR (no logic changes)
-- [ ] DEFECT-REGISTER.md D72 updated to FIXED + guard name
+- [x] Story file committed first
+- [x] Story commit pushed to `sprint3/s3-42-ces-breakdown-accuracy` before any implementation
+- [x] RED tests written and failing
+- [x] GREEN implementation passes
+- [x] REFACTOR (no logic changes)
+- [x] DEFECT-REGISTER.md D72 updated to FIXED + guard name
 
 ## Status
 
-Draft
+Done

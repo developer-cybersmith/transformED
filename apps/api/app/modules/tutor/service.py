@@ -307,6 +307,17 @@ async def process_attention_signal(
     await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
     await redis.expire(history_key, _CES_WINDOW_TTL)
 
+    # Per-signal component histories — used by get_session_report ces_breakdown (S3-42, D72).
+    # Each list is bounded and TTL'd identically to ces_history.
+    for _key, _val in (
+        (f"session:{session_id}:behavioral_history", normalized.behavioral_score),
+        (f"session:{session_id}:head_pose_history", normalized.head_pose_score),
+        (f"session:{session_id}:blink_history", normalized.blink_rate),
+    ):
+        await cast("Awaitable[int]", redis.lpush(_key, _val))
+        await cast("Awaitable[str]", redis.ltrim(_key, 0, _CES_HISTORY_MAX - 1))
+        await redis.expire(_key, _CES_WINDOW_TTL)
+
     # Read history to evaluate the intervention trigger
     history_raw: list[str] = await cast(
         "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)

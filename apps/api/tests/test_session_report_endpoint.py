@@ -207,6 +207,9 @@ def _mock_settings(monkeypatch) -> None:
     mock_settings = MagicMock()
     mock_settings.ces_weight_quiz = 0.35
     mock_settings.ces_weight_teachback = 0.25
+    mock_settings.ces_weight_behavioral = 0.20
+    mock_settings.ces_weight_head_pose = 0.12
+    mock_settings.ces_weight_blink = 0.08
     monkeypatch.setattr("app.modules.assessment.service.get_settings", lambda: mock_settings)
 
 
@@ -447,8 +450,8 @@ async def test_get_report_ces_breakdown_teachback_zero_when_no_attempts(mock_to_
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_ces_breakdown_attention_always_zero(mock_to_thread):
-    """AC 10: behavioral, head_pose, blink are always 0.0 in Sprint 2."""
+async def test_get_report_ces_breakdown_attention_zero_when_no_redis(mock_to_thread):
+    """AC 10 (updated S3-42/D72): behavioral, head_pose, blink are 0.0 when redis=None (no signal history)."""
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(
@@ -679,6 +682,7 @@ def test_http_get_report_returns_200():
         patch("app.modules.assessment.service.asyncio.to_thread") as mock_thread,
         patch("app.modules.assessment.service.get_settings") as mock_get_settings,
         patch("app.core.db.get_supabase") as mock_get_supabase,
+        patch("app.core.redis.get_redis", return_value=None),
     ):
         # Wire async shim
         async def _shim(func, *args, **kwargs):
@@ -689,6 +693,9 @@ def test_http_get_report_returns_200():
         mock_settings = MagicMock()
         mock_settings.ces_weight_quiz = 0.35
         mock_settings.ces_weight_teachback = 0.25
+        mock_settings.ces_weight_behavioral = 0.20
+        mock_settings.ces_weight_head_pose = 0.12
+        mock_settings.ces_weight_blink = 0.08
         mock_get_settings.return_value = mock_settings
 
         mock_get_supabase.return_value = _build_report_supabase(

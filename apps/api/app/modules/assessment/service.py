@@ -677,6 +677,7 @@ async def get_session_report(
     session_id: str,
     user_id: str,
     supabase: Client,
+    redis: Any = None,  # noqa: ANN401
 ) -> SessionReport:
     """Aggregate a completed session's assessment data into a SessionReport.
 
@@ -794,13 +795,31 @@ async def get_session_report(
     settings = get_settings()
     quiz_contribution = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
     teachback_contribution = round((avg_teachback / 100.0) * settings.ces_weight_teachback * 100, 4)
+
+    # Read per-signal component histories from Redis (S3-42, D72).
+    # process_attention_signal (tutor/service.py) writes these lists each window.
+    # Fail open: Redis unavailable or empty → 0.0 contribution (correct when no signals).
+    async def _signal_avg(key: str) -> float:
+        if redis is None:
+            return 0.0
+        try:
+            raw: list[str] = await redis.lrange(key, 0, -1)
+            vals = [float(v) for v in raw if v is not None]
+            return sum(vals) / len(vals) if vals else 0.0
+        except Exception:  # noqa: BLE001
+            logger.warning("ces_breakdown signal read failed key=%s", key)
+            return 0.0
+
+    avg_behavioral = await _signal_avg(f"session:{session_id}:behavioral_history")
+    avg_head_pose = await _signal_avg(f"session:{session_id}:head_pose_history")
+    avg_blink = await _signal_avg(f"session:{session_id}:blink_history")
+
     ces_breakdown: dict[str, float] = {
         "quiz": quiz_contribution,
         "teachback": teachback_contribution,
-        # Sprint 2: behavioral/head_pose/blink contributions deferred to Phase 3
-        "behavioral": 0.0,
-        "head_pose": 0.0,
-        "blink": 0.0,
+        "behavioral": round(avg_behavioral * settings.ces_weight_behavioral * 100, 4),
+        "head_pose": round(avg_head_pose * settings.ces_weight_head_pose * 100, 4),
+        "blink": round(avg_blink * settings.ces_weight_blink * 100, 4),
     }
 
     # Step 6 — Duration and completion timestamp from session timestamps
