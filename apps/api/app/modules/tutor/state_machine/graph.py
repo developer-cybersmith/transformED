@@ -47,6 +47,7 @@ tutor_cooldown:{session_id}           "1"   present (with TTL) during cooldown w
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from enum import StrEnum
 from typing import Any, TypedDict, cast
@@ -304,9 +305,23 @@ async def teach_back_node(state: TutorMachineState) -> TutorMachineState:
 
 async def session_end_node(state: TutorMachineState) -> TutorMachineState:
     """SESSION_END state: cleanup and final scoring."""
+    import asyncio  # noqa: PLC0415
+
     session_id = state.get("session_id", "")
     logger.info("[tutor:%s] → SESSION_END", session_id)
     await _persist_state(session_id, TutorState.SESSION_END)
+
+    # S3-35 (D3): fire-and-forget ces_final + ended_at write — never blocks FSM transition.
+    try:
+        from app.core.db import get_supabase  # noqa: PLC0415
+        from app.core.redis import get_redis  # noqa: PLC0415
+
+        asyncio.create_task(
+            _finalize_session(session_id, redis=get_redis(), supabase=get_supabase())
+        )
+    except Exception:
+        logger.exception("[tutor:%s] _finalize_session create_task failed", session_id)
+
     return {**state, "current_state": TutorState.SESSION_END}
 
 
@@ -609,3 +624,63 @@ async def _read_state(session_id: str) -> str | None:
     except Exception:  # noqa: BLE001
         logger.warning("Failed to read tutor state for session %s", session_id)
         return None
+
+
+# ── S3-35 (D3) — Session finalization ────────────────────────────────────────
+
+
+async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> None:
+    """Write ces_final and ended_at to the sessions table at SESSION_END.
+
+    Called via asyncio.create_task from session_end_node — fire-and-forget.
+    DB failures are logged at ERROR and captured to Sentry — never re-raised.
+
+    ces_final = average of the Redis ces_history values (rounded to 2 dp).
+    If history is empty, ces_final = 0.0.
+    BOUNDED: lrange 0..9 reads at most _CES_HISTORY_MAX=10 entries.
+    """
+    import json  # noqa: PLC0415
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    try:
+        history_raw: list[str] = await redis.lrange(
+            f"session:{session_id}:ces_history", 0, 9
+        )
+        values: list[float] = []
+        for raw in history_raw:
+            try:
+                parsed = json.loads(raw)
+                values.append(float(parsed["v"]))
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                try:
+                    values.append(float(raw))
+                except (ValueError, TypeError):
+                    pass
+
+        ces_final = round(sum(values) / len(values), 2) if values else 0.0
+        ended_at = datetime.now(tz=timezone.utc).isoformat()
+
+        await asyncio.to_thread(
+            lambda: (
+                supabase.table("sessions")
+                .update({"ces_final": ces_final, "ended_at": ended_at})
+                .eq("session_id", session_id)
+                .execute()
+            )
+        )
+        logger.info(
+            "[tutor:%s] session finalized: ces_final=%.2f ended_at=%s",
+            session_id,
+            ces_final,
+            ended_at,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[tutor:%s] _finalize_session DB write failed: %s", session_id, exc
+        )
+        try:
+            import sentry_sdk  # noqa: PLC0415
+
+            sentry_sdk.capture_exception(exc)
+        except Exception:  # noqa: BLE001
+            pass
