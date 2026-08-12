@@ -47,23 +47,29 @@ lesson.
   exact prior word-count-estimate code path, unchanged line-for-line in its branch.
 
 **What this story does:**
-1. Adds `mutagen` (MIT, pure-Python-ish, no ffmpeg binary — audio-metadata-only, consistent
+1. Adds `tinytag` (MIT, pure-Python, no ffmpeg binary — audio-metadata-only, consistent
    with CLAUDE.md's "no video/ffmpeg code exists yet" stance) as a runtime dependency.
+   **Round 2 correction:** Round 1 shipped this with `mutagen` instead, and asserted (wrongly,
+   unverified) that `mutagen` is MIT — it is actually GPL-2.0-or-later. Caught in the real
+   `/bmad-code-review` (Blind Hunter AND Acceptance Auditor, independently) and swapped to
+   `tinytag`, a genuinely MIT-licensed, functionally equivalent library — see this story's
+   Round 2 Senior Developer Review section.
 2. `tts_node`, right after a successful synthesis produces real `audio_bytes`
    (`graph.py:~3451`), measures the REAL duration in milliseconds via
-   `mutagen.mp3.MP3(io.BytesIO(audio_bytes)).info.length * 1000`, wrapped in its own
+   `tinytag.TinyTag.get(file_obj=io.BytesIO(audio_bytes)).duration * 1000`, wrapped in its own
    try/except (a parse failure degrades to `duration_ms=None`, never crashes the segment —
    this node's entire documented purpose is to never hard-fail).
 3. Carries that value as a **sibling** `"duration_ms"` key on the per-segment `audio_assets`
    wrapper dict (`{"segment_id": ..., "data": ..., "duration_ms": ...}`) — NOT inside `"data"`,
    because `"data"` is exactly the frozen, `extra="forbid"` `Narration.model_dump()` payload and
    a new key there would raise on any future `model_validate` round-trip.
-4. `package_builder_node` reads that sibling key into a small `duration_ms_by_id` dict
-   comprehension (mirroring the existing `audio_by_id = _index_by_segment_id(...)` lookup one
-   line above it) and passes the segment's value into `_estimate_slide_timestamps` via a new
-   optional `known_duration_ms` keyword — used directly as the total duration when not `None`;
-   the pre-existing word-count estimate is the fallback, byte-for-byte unchanged, when it is
-   `None` (browser fallback or an unparseable buffer).
+4. `package_builder_node` reads that sibling key into a `duration_ms_by_id` map (validated —
+   see Round 2 note below) and passes the segment's value into `_estimate_slide_timestamps` via a
+   new optional `known_duration_ms` keyword — used directly as the total duration when not `None`
+   and finite; the pre-existing word-count estimate is the fallback, byte-for-byte unchanged,
+   otherwise (browser fallback, an unparseable buffer, or — Round 2 — a non-numeric/NaN value
+   from a schema-drifted checkpoint, which Round 1 did not guard against and would have crashed
+   the whole node via a bare `round()`).
 
 ## Story
 
@@ -77,31 +83,37 @@ is actually at, instead of visibly drifting further out of sync the longer a seg
 
 ### Functional
 
-- [x] **AC 1.** `mutagen>=1.47.0` is added to `apps/api/pyproject.toml`'s `[project]`
+- [x] **AC 1.** `tinytag>=2.3.0,<3.0.0` is added to `apps/api/pyproject.toml`'s `[project]`
   `dependencies` list, with a comment noting it is audio-metadata-only (no ffmpeg binary,
   not a video/transcoding dependency).
   **Verified:** `apps/api/pyproject.toml:39` —
-  `"mutagen>=1.47.0",             # MIT — audio-metadata only (no ffmpeg binary); measures REAL MP3 duration in tts_node (Story S3-38), not a video/transcoding dependency`.
+  `"tinytag>=2.3.0,<3.0.0",        # MIT — audio-metadata only (no ffmpeg binary); measures REAL MP3 duration in tts_node (Story S3-38)...`.
+  **Round 2 correction:** Round 1 shipped `mutagen>=1.47.0` here, labeled `# MIT`, and the AC
+  text below claimed the same — both wrong. `pip show mutagen` / mutagen's own `COPYING` file:
+  GPL-2.0-or-later. Caught by the real `/bmad-code-review` (Blind Hunter AND Acceptance Auditor,
+  independently), swapped to `tinytag` (verified MIT via `pip show tinytag` — `License-Expression:
+  ` classifier + `LICENSE` file, both MIT), consistent with this codebase's zero-copyleft-
+  dependency pattern. See Round 2 review section for the full reasoning.
 - [x] **AC 2.** On `tts_node`'s success path (`audio_bytes is not None`, i.e. Sarvam or Azure
   actually returned audio), the node measures the real duration in milliseconds from those exact
-  bytes via `mutagen.mp3.MP3` and rounds to the nearest int.
-  **Verified:** `graph.py:~3492-3497` (`mp3_info = MP3(io.BytesIO(audio_bytes)).info; ...
-  duration_ms = round(mp3_info.length * 1000)`);
-  `test_successful_synthesis_measures_real_duration_via_mutagen` asserts
+  bytes via `tinytag.TinyTag.get` and rounds to the nearest int.
+  **Verified:** `graph.py:~3501-3504` (`tag = TinyTag.get(file_obj=io.BytesIO(audio_bytes)); ...
+  duration_ms = round(tag.duration * 1000)`);
+  `test_successful_synthesis_measures_real_duration_via_tinytag` asserts
   `assets[0]["duration_ms"] == _real_mp3_duration_ms()` against a genuine hand-built MP3 fixture
-  — PASSED.
-- [x] **AC 3.** A `mutagen` parse failure (corrupt/empty/non-MP3 buffer) is caught in its own
+  — PASSED. (Round 2: renamed from `..._via_mutagen` when the library was swapped.)
+- [x] **AC 3.** A `tinytag` parse failure (corrupt/empty/non-MP3 buffer) is caught in its own
   try/except, logs a warning, and leaves `duration_ms=None` — it must never raise out of
   `tts_node`, matching the node's existing "never hard-fails" contract for every other failure
   mode in the same loop.
-  **Verified:** `test_mutagen_parse_failure_degrades_duration_to_none_not_crash` feeds
+  **Verified:** `test_tinytag_parse_failure_degrades_duration_to_none_not_crash` feeds
   `b"AUDIO_BYTES"` (not real MP3) through the mocked provider — node completes normally,
   `duration_ms is None`, `audio_provider == "sarvam"`, `audio_url` still set — PASSED.
 - [x] **AC 4.** Every per-segment `audio_assets` wrapper dict gains a `"duration_ms"` key
   **sibling to** `"data"` (never inside it) — `None` on the browser-fallback path
   (`audio_bytes is None`) and on the whole-segment exception/degrade path, a real measured
   value on success.
-  **Verified:** 4 tests cover all 3 paths (`test_successful_synthesis_measures_real_duration_via_mutagen`,
+  **Verified:** 4 tests cover all 3 paths (`test_successful_synthesis_measures_real_duration_via_tinytag`,
   `test_browser_fallback_has_duration_none`, `test_whole_segment_exception_path_has_duration_none`,
   plus the parse-failure test above) — all PASSED; each also asserts
   `"duration_ms" not in assets[0]["data"]` / `set(assets[0]["data"]) == {"script", "audio_url",
@@ -124,20 +136,27 @@ is actually at, instead of visibly drifting further out of sync the longer a seg
   `test_known_duration_ms_none_preserves_exact_prior_estimate_behavior` both PASSED; full
   `test_package_builder_node.py` re-run unmodified, 53/53 pass including
   `test_multi_slide_segment_track_and_settings_flow` (the existing wpm-driven-estimate test).
-- [x] **AC 7.** `package_builder_node` builds a `duration_ms_by_id` dict comprehension reading
-  the sibling `"duration_ms"` key out of `state["audio_assets"]` (mirroring the existing
-  `audio_by_id` lookup's shape, no new helper function) and passes
+- [x] **AC 7.** `package_builder_node` builds a `duration_ms_by_id` map reading the sibling
+  `"duration_ms"` key out of `state["audio_assets"]` and passes
   `known_duration_ms=duration_ms_by_id.get(segment_id)` into its `_estimate_slide_timestamps`
   call site.
-  **Verified:** `graph.py:4100-4110` (lookup), `graph.py:~4300` (call site kwarg) —
-  `test_package_builder_uses_real_duration_not_word_count_estimate` PASSED.
+  **Verified:** `graph.py:~4127-4162` (lookup), `graph.py:~4308` (call site kwarg) —
+  `test_package_builder_uses_real_duration_not_word_count_estimate` PASSED. **Round 2:** the
+  lookup was a dict comprehension in Round 1; Edge Case Hunter found it trusted
+  `item.get("duration_ms")` unvalidated, which could crash the node on a non-numeric/NaN
+  checkpoint value — rewritten as a `for` loop with explicit numeric/finite validation (logging,
+  never crashing) and duplicate-`segment_id` warning parity with `_index_by_segment_id`. See
+  Round 2 review section.
 - [x] **AC 8.** The final `LessonPackage`'s `segments[i].narration.timestamps` for a segment
   whose audio was really synthesized reflect the REAL measured duration (verified against a
-  genuine, mutagen-parseable MP3 fixture — not a fake byte string), not the word-count formula's
+  genuine, tinytag-parseable MP3 fixture — not a fake byte string), not the word-count formula's
   output for the same script/slide count.
   **Verified:** `test_package_builder_uses_real_duration_not_word_count_estimate` asserts
-  `ts[0]["end_ms"] == real_duration_ms (2606)` and `!= word_count_estimate_ms (1200)` on the
-  actual `LessonPackage`-shaped `result["lesson_package"]` — PASSED.
+  `ts[0]["end_ms"] == real_duration_ms (2612)` and `!= word_count_estimate_ms (1200)` on the
+  actual `LessonPackage`-shaped `result["lesson_package"]` — PASSED. (Round 2: the fixture's
+  measured value changed from ~2606ms under `mutagen`'s byte-count/bitrate method to ~2612ms
+  under `tinytag`'s frame-count method — same bytes, two different legitimate MP3 duration
+  algorithms; see `test_fixture_duration_matches_a_pinned_independently_computed_value`.)
 
 ### Non-functional / regression-guard
 
@@ -150,8 +169,11 @@ is actually at, instead of visibly drifting further out of sync the longer a seg
   pre-fix state — see Debug Log for the exact pasted failure output: 6 of 10 tests failed with
   `KeyError: 'duration_ms'` (×4), `TypeError: _estimate_slide_timestamps() got an unexpected
   keyword argument 'known_duration_ms'` (×1), and `assert 1200 == 2606` (×1, the headline AC 8
-  test) — exactly the predicted failure modes.
-- [x] **AC 10.** The browser-fallback / unknown-duration path (`mutagen` parse failure, or no
+  test) — exactly the predicted failure modes. (This was Round 1's RED run, against the
+  mutagen-era code — the `2606` here is that round's real observed value, left as an accurate
+  historical record rather than rewritten to `2612`. Round 2's own new crash-prevention tests
+  have their own independent RED confirmation, pasted in the Round 2 review section below.)
+- [x] **AC 10.** The browser-fallback / unknown-duration path (`tinytag` parse failure, or no
   server audio at all) is tested and produces `timestamps` **identical** to the pre-existing
   word-count-estimate output — i.e. zero behavior change for every lesson that still hits the
   fallback chain's last resort.
@@ -176,12 +198,19 @@ is actually at, instead of visibly drifting further out of sync the longer a seg
   byte-for-byte unmodified.
 - [x] **AC 13.** `ruff check`, `ruff format --check`, and `mypy --ignore-missing-imports` all
   clean on both modified files (`graph.py`, `pyproject.toml` has no lint surface).
-  **Verified:** `ruff check` → "All checks passed!"; `ruff format --check` → "2 files already
-  formatted" (graph.py + new test file); `mypy app/modules/content/pipeline/graph.py
+  **Verified (Round 1):** `ruff check` → "All checks passed!"; `ruff format --check` → "2 files
+  already formatted" (graph.py + new test file); `mypy app/modules/content/pipeline/graph.py
   --ignore-missing-imports` → "Success: no issues found in 1 source file" (required a
   `None`-narrowing guard + one `# type: ignore[no-untyped-call]` on the `MP3(...)` call, since
   `mutagen`'s own typed `FileType.info` attribute is `StreamInfo | None` and `strict = true`'s
   `disallow_untyped_calls` flags the constructor itself — documented in Debug Log).
+  **Re-verified (Round 2, after the `mutagen` -> `tinytag` swap and the defensive-fix edits):**
+  `ruff check .` → "All checks passed!"; `ruff format --check` on both modified files → "2 files
+  already formatted"; `mypy app/modules/content/pipeline/graph.py --ignore-missing-imports` →
+  "Success: no issues found in 1 source file" — **`tinytag` needed no `# type: ignore` at all**
+  (unlike `mutagen`, it ships full call-site annotations on `TinyTag.get`, not just a `py.typed`
+  marker), so the `no-untyped-call` suppression from Round 1 is gone entirely, not just changed.
+  Full command output pasted in the Round 2 review section.
 
 ## Scale & Load
 
@@ -190,25 +219,45 @@ is actually at, instead of visibly drifting further out of sync the longer a seg
 1. **Unit of work, and its range.** One unit is one segment's synthesized audio buffer, measured
    once per segment per `tts_node` run. Range: 4–12 segments per lesson (per
    `docs/handoffs/lesson-delivery-dev1.md`), each buffer typically a few seconds to ~2 minutes of
-   narration audio (a few KB to low hundreds of KB of MP3). `mutagen.mp3.MP3(...)` parses the MP3
-   header/frame table in memory — it does not decode audio samples, so cost does not scale with
+   narration audio (a few KB to low hundreds of KB of MP3). `tinytag.TinyTag.get(...)` parses the
+   MP3 header/frame table in memory — it does not decode audio samples, so cost does not scale with
    duration, only with doing it once per segment (same order as the existing per-segment Storage
-   upload it sits next to).
+   upload it sits next to). *(Round 2: swapped from `mutagen` to `tinytag` — see this story's
+   Round 2 Senior Developer Review section; the license-driven library swap does not change this
+   answer, both parse header/frame metadata only.)*
 2. **Fixed budget vs. variable input.** N/A with reason: this story introduces no new fixed
    budget/cap. It replaces one *already-existing*, always-approximate value
    (`_estimate_slide_timestamps`'s word-count guess) with a measured one when available, and
    preserves the exact prior fallback behavior otherwise — there is no new place a variable input
-   can exceed a fixed budget. The `mutagen` parse itself has no size ceiling risked: `audio_bytes`
-   already passed through the existing `check_ceiling`/provider-call path before reaching this
-   step, so it is not attacker-controlled or unbounded-by-construction here.
+   can exceed a fixed budget. **Round 2 correction (Blind Hunter — the original wording here was
+   wrong, not just imprecise):** this originally claimed `audio_bytes` "already passed through the
+   existing `check_ceiling`... so it is not attacker-controlled or unbounded-by-construction here."
+   `check_ceiling` is a **dollar-cost** guard (the $3.00/lesson ceiling), not a byte-size or
+   audio-duration bound — it says nothing about how large a single TTS provider response can be.
+   The corrected answer: there is genuinely no NEW size ceiling introduced by this story (the
+   header-only parse cost is independent of buffer size for any input a TTS provider would
+   plausibly return), but there was also no PRE-EXISTING byte-size ceiling on `audio_bytes` for
+   this story to inherit or rely on either — that gap (if it is one) belongs to `tts_node`'s
+   provider-response handling generally, predates this story, and is out of this story's scope to
+   fix. Recorded accurately rather than claimed-safe-by-a-guard-that-doesn't-cover-it.
 3. **Scope of every limit.** N/A — no limit introduced.
-4. **Unbounded reads/writes.** None introduced. `duration_ms_by_id` in `package_builder_node` is
-   a dict comprehension over `state["audio_assets"]`, a list already fully materialized in memory
-   by the time `package_builder_node` runs (same list `audio_by_id`'s existing
-   `_index_by_segment_id` call already iterates, one line above) — no new Supabase read, no new
-   iteration source. Per CLAUDE.md's own framing for pipeline-internal work: this is in-memory,
-   not request-path, so `tests/unit/test_unbounded_queries.py`'s `.limit()`/`.range()` requirement
-   does not apply — stated explicitly per this task's instructions, not skipped silently.
+4. **Unbounded reads/writes.** None introduced. `duration_ms_by_id` in `package_builder_node`
+   iterates `state["audio_assets"]`, a list already fully materialized in memory by the time
+   `package_builder_node` runs (same list `audio_by_id`'s existing `_index_by_segment_id` call
+   already iterates, one line above) — no new Supabase read, no new iteration source. Per
+   CLAUDE.md's own framing for pipeline-internal work: this is in-memory, not request-path, so
+   `tests/unit/test_unbounded_queries.py`'s `.limit()`/`.range()` requirement does not apply —
+   stated explicitly per this task's instructions, not skipped silently. **Round 2 (Edge Case
+   Hunter):** the ORIGINAL `duration_ms_by_id` dict comprehension trusted `item.get("duration_ms")`
+   as-is from a Supabase JSONB checkpoint — a schema-drifted or hand-edited value (non-numeric or
+   NaN) reached `_estimate_slide_timestamps`'s bare `round(known_duration_ms)` and raised
+   `TypeError`/`ValueError`, crashing the WHOLE node rather than degrading just that one segment —
+   the same failure class `_index_by_segment_id` was hardened against for `audio_by_id` one story
+   ago (D32/D33). This is a "which values are trusted after a JSONB round trip" defect, not an
+   unbounded-reads one, but it is exactly the kind of thing Q4's spirit exists to surface —
+   confirmed reproducible by execution (see Round 2 review section) and fixed: non-numeric/
+   non-finite values are now validated and normalised to `None` (logged), both where the map is
+   built AND, defence-in-depth, inside `_estimate_slide_timestamps` itself.
 5. **Inherited caps re-derived?** N/A — no caps involved; this is a data-source substitution
    inside an existing per-segment loop, not a new limit.
 6. **Check-then-act under concurrency.** N/A — `tts_node` and `package_builder_node` each run
@@ -394,18 +443,29 @@ re-run and pass — this diff adds no `**state` spread and no new Supabase call.
 
 ### File List
 
+**Cumulative, Round 1 + Round 2:**
+
 - `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED (`tts_node`: real duration
-  measurement via `mutagen` + sibling `duration_ms` key on every path;
-  `_estimate_slide_timestamps`: new optional `known_duration_ms` keyword, docstring updated;
-  `package_builder_node`: new `duration_ms_by_id` lookup + wired into the existing
-  `_estimate_slide_timestamps` call site)
-- `apps/api/pyproject.toml` — MODIFIED (added `mutagen>=1.47.0` to `[project]` `dependencies`)
-- `apps/api/tests/unit/test_audio_duration_s3_38.py` — NEW (10 tests: fixture sanity check,
-  4 `tts_node` duration-measurement/degrade-path tests, 2 `_estimate_slide_timestamps` unit
-  tests, 3 `package_builder_node` wiring/fallback tests)
+  measurement, sibling `duration_ms` key on every path — Round 1 via `mutagen`, **Round 2:
+  swapped to `tinytag`** (license fix); `_estimate_slide_timestamps`: new optional
+  `known_duration_ms` keyword, docstring updated, **Round 2: added a `math.isfinite` guard**
+  (defence-in-depth against non-finite values reaching a bare `round()`);
+  `package_builder_node`: `duration_ms_by_id` lookup wired into the existing
+  `_estimate_slide_timestamps` call site — **Round 2: rewritten from an unvalidated dict
+  comprehension into a validated loop** (non-numeric/non-finite values normalised to `None` and
+  logged, duplicate-`segment_id` warning added) after Edge Case Hunter found the original could
+  crash the whole node on a malformed checkpoint value)
+- `apps/api/pyproject.toml` — MODIFIED (Round 1: added `mutagen>=1.47.0`; **Round 2: replaced
+  with `tinytag>=2.3.0,<3.0.0`**, license comment corrected)
+- `apps/api/tests/unit/test_audio_duration_s3_38.py` — NEW, then MODIFIED in Round 2 (17 tests
+  total: the original 10 renamed/updated for the `tinytag` swap, plus 7 new — a pinned-literal
+  duration cross-check, a two-segment mixed-duration-outcome test, two crash-prevention tests
+  (non-numeric and NaN `duration_ms`), a direct `_estimate_slide_timestamps` finiteness unit
+  test, a duplicate-`segment_id` logging test, and a JSON checkpoint round-trip test)
 - `docs/stories/3-38-real-audio-duration.md` — MODIFIED (this file: story-first commit, then
   ACs/tasks checked off with verification notes, Dev Agent Record filled in, Round-1 self-review
-  added)
+  added; **Round 2: AC/Scale & Load text corrected in place where Round 1's claims were wrong,
+  Round 2 Senior Developer Review section added**)
 
 ### Change Log
 
@@ -423,6 +483,26 @@ re-run and pass — this diff adds no `**state` spread and no new Supabase call.
   (real `None`-narrowing guard + one matching-pattern `# type: ignore[no-untyped-call]`), then
   clean.
 - 2026-08-11: Round 1 self-review (inline, 6 layers) — see below.
+- 2026-08-12: Round 2 — real `/bmad-code-review`, 4 independent parallel agents. Confirmed one
+  high-severity finding by execution (`pip show mutagen`): `mutagen` is GPL-2.0-or-later, not
+  MIT as Round 1's AC 1/pyproject comment claimed — swapped to `tinytag` (genuinely MIT,
+  verified the same way). Confirmed a second, real crash risk by execution (reverted the fix,
+  reproduced `TypeError`/`ValueError`): `duration_ms_by_id` trusted an unvalidated checkpoint
+  value into a bare `round()` — now validated, with a matching defence-in-depth guard inside
+  `_estimate_slide_timestamps` itself. Added 7 new tests (pinned-literal duration cross-check,
+  two-segment mixed-duration-outcome, two crash-prevention tests, a direct finiteness unit test,
+  a duplicate-`segment_id` log test, a JSON checkpoint round-trip) — 17/17 pass. Full regression: `test_tts_node.py` 14/14,
+  `test_package_builder_node.py` 39/39, CI guards `test_node_return_shape.py`/
+  `test_unbounded_queries.py` 19/19, broader `tests/unit/` 1010/1010 (excluding the same
+  pre-existing `pypdfium2`/`pdfplumber` environment gap Round 1 and Story 3-36 both already
+  documented). `ruff check` / `ruff format --check` / `mypy --ignore-missing-imports` all clean
+  — `tinytag` needed zero `# type: ignore` (fully call-site-annotated), unlike `mutagen`.
+  Corrected AC 1/2/3/4/7/8/10/13 and the Scale & Load Q1/Q2/Q4 text in place to reflect current
+  (Round 2) reality rather than leaving them describing Round 1's `mutagen`-based
+  implementation. One Blind Hunter finding investigated and REJECTED as factually wrong (the
+  `except` block's `duration_ms = None` reset is not a dead assignment — traced the exact
+  control flow and confirmed it discards a real, already-measured value on late validation
+  failure). Full findings table and dispositions below.
 
 ## Senior Developer Review (AI) — Round 1, inline self-review
 
@@ -539,3 +619,145 @@ claimed as covered.
   pre-existing tests in both files (e.g. `test_malformed_entry_degrades_that_segment_only_not_
   whole_node` in `test_tts_node.py`) — judged as adequately covered by existing precedent rather
   than needing its own new test, but named explicitly here rather than left unstated.
+  **Round 2: added anyway** (`test_two_segments_with_different_duration_outcomes_do_not_leak`)
+  — Blind Hunter raised the same gap independently, and it was cheap enough to just close
+  directly rather than re-argue the precedent-coverage judgment call a second time.
+
+## Senior Developer Review (AI) — Round 2 (real `/bmad-code-review`, 4 parallel agents)
+
+**Review date:** 2026-08-12
+**Outcome:** APPROVE WITH CHANGES — all applied before merge, including one defect (the license
+mislabel) more consequential than anything Round 1 found, and one confirmed-by-execution crash
+risk Round 1's self-review did not catch.
+
+Round 1 was Dev 1 self-reviewing inline — real diligence (10/10 tests, RED/GREEN both
+demonstrated, mypy genuinely fixed), but not independent, exactly as its own Layer 1 disclosed.
+This round ran 4 genuinely independent parallel reviewers (a Cynical/Blind-Hunter-style pass —
+diff-only; an Edge Case Hunter — diff + project read access; an Acceptance Auditor — diff + this
+story file, independently re-executing everything claimed; a Scale & Load Hunter — diff +
+`docs/SCALE-CONTRACT.md`). Every finding below was independently re-verified by actually running
+something (not taken on the reviewer's word) before being fixed, accepted, or rejected — the
+same rigor this project's own `docs/DEFECT-REGISTER.md` describes as missing from 9 of its first
+11 defects.
+
+### The most severe finding — a real license violation, CONFIRMED by execution
+
+Two of four reviewers (the Cynical/Blind-Hunter pass and the Acceptance Auditor, independently)
+flagged that `mutagen` is asserted `# MIT` in `pyproject.toml`, in the story's "What this story
+does" §1, and in AC 1's "Verified" note — and that this is simply wrong. Checked directly, not
+taken on either reviewer's word: `pip show mutagen` in a real venv →
+`License-Expression: GPL-2.0-or-later`; the installed package's own `COPYING` file is the literal
+GNU GPL v2 text. This is the exact "asserted, not verified" failure pattern
+`docs/DEFECT-REGISTER.md`'s binding rules exist to catch, applied to a license claim instead of
+an exception hierarchy or a DB column — in a codebase whose CLAUDE.md bans PyMuPDF **by name**
+for AGPL-3.0 and hand-picked every other PDF library specifically for a verified permissive
+license. GPL-2.0-or-later does not carry AGPL's network-use ("SaaS is conveying") trigger, so
+this is not the identical legal risk shape as the PyMuPDF case — but given a genuinely equivalent
+MIT-licensed library (`tinytag`) exists and is a drop-in replacement, the safest fix is to
+eliminate the ambiguity entirely rather than rely on a legal interpretation nobody here is
+qualified to bless. Swapped `mutagen` → `tinytag` (verified MIT the same way: `pip show tinytag`
+→ `License-Expression: MIT`, `LICENSE` file present, MIT text). Every AC, the Scale & Load
+section, and the test file were updated to match — not left describing a dependency the code no
+longer uses.
+
+### The second-most-severe finding — a confirmed, reproducible crash, not a hypothetical
+
+The Edge Case Hunter found that `duration_ms_by_id`'s original dict comprehension trusted
+`item.get("duration_ms")` from a Supabase JSONB checkpoint as-is, and that
+`_estimate_slide_timestamps`'s `round(known_duration_ms)` has no type/NaN guard — the exact
+failure class `_index_by_segment_id` was hardened against for `audio_by_id` one story ago
+(D32/D33). **Reproduced by execution, not assumed:** reverted the fix and ran the two new
+crash-prevention tests against the pre-fix code —
+
+```
+tests/unit/test_audio_duration_s3_38.py::test_non_numeric_duration_ms_does_not_crash_package_builder FAILED
+tests/unit/test_audio_duration_s3_38.py::test_nan_duration_ms_does_not_crash_package_builder FAILED
+tests/unit/test_audio_duration_s3_38.py::test_estimate_slide_timestamps_rejects_non_finite_known_duration_directly FAILED
+
+E   TypeError: type str doesn't define __round__ method
+E   ValueError: cannot convert float NaN to integer
+E   ValueError: cannot convert float NaN to integer
+```
+
+— confirming a schema-drifted or hand-edited `duration_ms` really does crash the WHOLE node
+(not just degrade one segment), contradicting `package_builder_node`'s own documented "one bad
+item never crashes the whole node" guarantee. Fixed at both ends: `duration_ms_by_id` is now
+built by an explicit loop that normalises non-numeric/non-finite values to `None` (logged, never
+raised) and warns on a duplicate `segment_id` (parity with `_index_by_segment_id`'s existing
+observability for the sibling `audio_by_id` map); `_estimate_slide_timestamps` itself also gained
+a `math.isfinite` guard as defence-in-depth, since it is a public module symbol other future
+callers could reach directly with an unvalidated value.
+
+### Findings — fixed
+
+| # | Finding | Source | Fix |
+|---|---|---|---|
+| 1 | `mutagen` mislabeled MIT; actually GPL-2.0-or-later — see above | Cynical/Blind Hunter AND Acceptance Auditor, independently, both confirmed via `pip show` | Swapped `mutagen` → `tinytag` (genuinely MIT, verified the same way) throughout `pyproject.toml`, `graph.py`, the test file, and every AC/Scale-&-Load reference that asserted the old library or its (wrong) license. |
+| 2 | `duration_ms_by_id` crashes the whole node on a non-numeric/NaN checkpoint value — see above | Edge Case Hunter; reproduced by execution (reverted the fix, ran the new tests, got the exact predicted `TypeError`/`ValueError`) | `duration_ms_by_id` rewritten as a validated loop (non-numeric/non-finite → `None`, logged); `_estimate_slide_timestamps` gained a matching `math.isfinite` guard, defence-in-depth. 3 new tests (non-numeric, NaN, direct-unit-test finiteness check). |
+| 2b | `duration_ms_by_id`'s original comprehension bypassed `_index_by_segment_id`'s duplicate-`segment_id` warning log — the sibling `audio_by_id` map logs it, this one didn't | Cynical/Blind Hunter | The rewritten loop now logs it too; `test_duplicate_segment_id_in_audio_assets_duration_ms_keeps_last_and_logs` proves it fires (via `caplog`), not just that "last one wins" resolves without crashing. |
+| 3 | Headline duration test computes its "expected" value via the exact same `round(x * 1000)`-shaped formula the production code runs, so it cannot catch a bug that changed that formula identically in both places | Cynical/Blind Hunter | Added `test_fixture_duration_matches_a_pinned_independently_computed_value` — asserts against a hardcoded literal (`2612`), independently observed by actually running the fixture through `tinytag`, not re-derived from the MPEG spec on paper (which would risk drifting from what the library actually computes). |
+| 4 | The fixture's own docstring/comment claimed `frame_len = 144 * bitrate / sample_rate = 470 bytes` — the actual value is 417 (`(144 * 128_000) // 44_100 == 417`) | Cynical/Blind Hunter, verified independently by direct computation | Comment corrected in the test file; noted as a Round 1 documentation-only error (the code always computed the real number — only the comment's arithmetic was wrong, so no test was ever silently trusting the wrong value). |
+| 5 | `duration_ms_by_id: dict[str, Any]` discarded the `float \| None` precision `_estimate_slide_timestamps`'s own `known_duration_ms` parameter is careful to declare | Cynical/Blind Hunter | Retyped as `dict[str, float \| None]` as part of the same loop rewrite (finding #2). |
+| 6 | No test covers a JSONB checkpoint round trip for the new `duration_ms` field | Cynical/Blind Hunter | Added `test_duration_ms_survives_a_json_checkpoint_round_trip` — narrow and explicit about its own scope (covers that `float \| None`, including NaN, round-trips through `json.dumps`/`json.loads` cleanly; does not claim to cover the full Supabase-mock checkpoint path end-to-end, which is a systemic property of how this entire test suite mocks Supabase, not specific to this field — see "accepted, not fixed" below). |
+| 7 | No test runs two segments with different duration outcomes in the same `package_builder_node` call | Cynical/Blind Hunter AND Scale & Load Hunter (via the corrected Q4 answer), independently; Round 1's own self-review had already named this as a judgment call, not a gap | Added `test_two_segments_with_different_duration_outcomes_do_not_leak` — proves sec_0's real duration and sec_1's word-count-estimate fallback don't cross-contaminate in one call. |
+| 8 | Scale & Load Q2 claimed `check_ceiling` bounds `audio_bytes`'s size — it is a dollar-cost guard, not a byte-size one | Cynical/Blind Hunter | Q2 corrected in place: no NEW size ceiling is introduced by this story, but there was also no pre-existing one to rely on — stated accurately instead of claimed-safe-by-a-guard-that-doesn't-cover-it (see Scale & Load section above). |
+| 9 | AC 1/2/3/4/7/8/10/13 and the "What this story does" section still describe the Round 1 `mutagen`-based implementation after the Round 2 swap | Acceptance Auditor (implicit — flagged that ACs must describe current, not historical, state) | All corrected in place, each with an explicit "Round 2 correction/note" marking what changed and why, rather than silently rewritten as if Round 1 had always used `tinytag`. |
+
+### Findings — accepted, not fixed (reasoning recorded)
+
+- **The `except` block's `duration_ms = None` is a "redundant, misleading dead assignment"**
+  (Cynical/Blind Hunter). **Investigated and REJECTED as factually wrong**, not accepted: traced
+  the exact control flow in `tts_node` (`graph.py:~3425-3550`). The mutagen/tinytag measurement
+  happens INSIDE the same outer per-segment `try` block, followed by `Narration.model_validate(...)`
+  — which can still raise. Any exception anywhere in that block (including AFTER a successful
+  duration measurement) reaches the outer `except`, which is exactly where this reset lives. It is
+  not a no-op: it discards a real, already-measured `duration_ms` when a LATER step in the same
+  try block (e.g. Narration validation) fails. The comment's own claim ("whatever partial work
+  happened before the exception... is discarded") is accurate. Kept as-is; recorded here so the
+  claim is not re-raised.
+- **No test characterizes `tinytag`'s (or `mutagen`'s, originally) behavior on a
+  truncated-but-header-valid MP3** (Cynical/Blind Hunter, Scale & Load Hunter, and Round 1's own
+  self-review, all independently). Still not fixed in Round 2 — genuinely low severity (the
+  surrounding try/except already degrades any parse anomaly to `None`, never a crash or a
+  silently-wrong-but-plausible value) and would need a deliberately-crafted truncated fixture that
+  adds real complexity for a case this story's fallback chain already handles safely by
+  construction. Left as a named, un-actioned gap rather than silently dropped a second time.
+- **The JSON checkpoint round-trip test (finding #6, fixed above) does not cover the FULL
+  Supabase-mocked checkpoint path end-to-end** — every OTHER test in this file (and in
+  `test_tts_node.py`/`test_package_builder_node.py`) mocks the Supabase client to hand back a
+  native Python dict directly, never a real serialized JSON string. This is a systemic property
+  of how this entire test suite mocks Supabase across every field of every node output, not
+  something specific to `duration_ms` — fixing it comprehensively would mean re-architecting the
+  Supabase test-double strategy pipeline-wide, which is out of this single story's scope. The
+  narrow round-trip test added here demonstrates `duration_ms` specifically carries no
+  JSON-unsafe type (no datetime/Decimal/etc.), which is the concrete risk this field could have
+  introduced; it does not claim to close the systemic gap.
+- **Whether GPL-2.0-or-later would actually have been a live legal problem for a
+  backend-only, never-redistributed dependency** (Acceptance Auditor's nuance, echoing the
+  Cynical/Blind Hunter finding) — genuinely debatable (GPL-2.0 lacks AGPL's network-use trigger,
+  and this codebase never distributes `apps/api` as software to end users). Not resolved by
+  argument here: swapped the dependency instead, which makes the question moot rather than
+  requiring a legal judgment call this review is not positioned to make.
+
+### Re-verification after fixes
+
+- `test_audio_duration_s3_38.py` — 17/17 pass (10 Round 1 + 7 Round 2)
+- The 3 new Round 2 crash-prevention/finiteness tests RED-confirmed by reverting `graph.py` alone
+  (`git stash`, not assumed) and re-running against the pre-Round-2 code — all 3 failed with the
+  exact predicted exception types (pasted above), then restored and reconfirmed GREEN
+- `test_tts_node.py` — 14/14 pass, file untouched
+- `test_package_builder_node.py` — 39/39 pass, file untouched
+- `test_node_return_shape.py` + `test_unbounded_queries.py` (CI guards) — 19/19 pass
+- Broader `tests/unit/` suite — 1011 passed, 1 skipped (excluding the same pre-existing
+  `pypdfium2`/`pdfplumber`-module-not-found environment gap Round 1 and Story 3-36 both already
+  documented; included, it's 1022 passed / 19 pre-existing-unrelated-failed / 6 skipped, same 19
+  failures as with this story's changes stashed out — confirmed identical either way)
+- `ruff check .` → "All checks passed!"
+- `ruff format --check` on both modified files → "2 files already formatted"
+- `mypy app/modules/content/pipeline/graph.py --ignore-missing-imports` → "Success: no issues
+  found in 1 source file" — zero `# type: ignore` needed for `tinytag` (fully call-site-annotated,
+  unlike `mutagen`)
+- `uv.lock` deliberately left untouched (matches Round 1's own convention): CI installs via
+  `uv pip install -e ".[dev]" --system`, not a locked sync, so the lockfile is not
+  merge-blocking either way — verified by reading `.github/workflows/ci.yml` directly rather than
+  assuming.

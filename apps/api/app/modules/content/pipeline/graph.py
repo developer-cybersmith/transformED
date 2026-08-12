@@ -3348,18 +3348,26 @@ async def tts_node(state: PipelineState) -> PipelineState:
     decision (word-to-slide timestamp mapping deferred to a follow-up story).
 
     Story S3-38: on a successful synthesis, this node also measures the REAL
-    audio duration of the synthesized bytes (via `mutagen`) and carries it as
+    audio duration of the synthesized bytes (via `tinytag`) and carries it as
     a `duration_ms` key SIBLING to `data` in each `audio_assets` wrapper dict
     (never inside `data` itself — `Narration` is `extra="forbid"` and frozen,
     see `packages/shared/lesson_package.schema.json`). `package_builder_node`
     uses this real duration to build `narration.timestamps` instead of
     `_estimate_slide_timestamps`'s word-count guess, when available.
-    `duration_ms` is `None` on the browser-fallback path or when `mutagen`
+    `duration_ms` is `None` on the browser-fallback path or when `tinytag`
     cannot parse the bytes — this node still never hard-fails on that.
+
+    Round 2 review note: the original implementation used `mutagen`, which
+    was mislabeled MIT in this story's ACs/pyproject comment — `mutagen` is
+    actually GPL-2.0-or-later (verified via `pip show mutagen` / its own
+    `COPYING` file). Swapped to `tinytag` (genuinely MIT, verified the same
+    way), consistent with this codebase's existing zero-copyleft-dependency
+    pattern (PyMuPDF banned by name for AGPL-3.0; every PDF library was
+    hand-picked for a verified permissive license).
     """
     import io
 
-    from mutagen.mp3 import MP3
+    from tinytag import TinyTag
 
     from app.core.db import get_supabase
     from app.schemas.lesson import Narration
@@ -3490,13 +3498,13 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     # package_builder_node falls back to the word-count
                     # estimate exactly as it did before this story.
                     try:
-                        mp3_info = MP3(io.BytesIO(audio_bytes)).info  # type: ignore[no-untyped-call]
-                        if mp3_info is None:
-                            raise ValueError("mutagen returned no audio stream info")
-                        duration_ms = round(mp3_info.length * 1000)
+                        tag = TinyTag.get(file_obj=io.BytesIO(audio_bytes))
+                        if tag.duration is None:
+                            raise ValueError("tinytag returned no duration")
+                        duration_ms = round(tag.duration * 1000)
                     except Exception:  # noqa: BLE001
                         logger.warning(
-                            "[%s] tts_node: mutagen could not parse synthesized audio "
+                            "[%s] tts_node: tinytag could not parse synthesized audio "
                             "for segment %s — duration unknown, package_builder_node "
                             "will fall back to the word-count estimate",
                             lesson_id,
@@ -3532,7 +3540,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     }
                 )
                 # Whatever partial work happened before the exception (e.g. a
-                # successful mutagen parse followed by a Narration validation
+                # successful tinytag parse followed by a Narration validation
                 # failure) is discarded along with the rest of this segment's
                 # attempt — this degrade path has no real audio, so it has no
                 # real duration either.
@@ -3544,7 +3552,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     "data": narration_data.model_dump(mode="json"),
                     # Story S3-38: SIBLING key to "data", never inside it —
                     # Narration is extra="forbid" (frozen schema). None when
-                    # unknown (browser fallback / mutagen parse failure);
+                    # unknown (browser fallback / tinytag parse failure);
                     # package_builder_node falls back to the word-count
                     # estimate in that case, unchanged from before this story.
                     "duration_ms": duration_ms,
@@ -3812,10 +3820,10 @@ def _estimate_slide_timestamps(
 
     Story S3-38: this is no longer ALWAYS an estimate. When the caller has a
     REAL measured duration for this segment's audio (`known_duration_ms` —
-    `tts_node` measures it from the synthesized MP3 bytes via `mutagen`), that
+    `tts_node` measures it from the synthesized MP3 bytes via `tinytag`), that
     real value is used directly as the total duration to split across slides.
     `known_duration_ms` is `None` on the browser-fallback path (no server
-    audio was ever synthesized) or when `mutagen` couldn't parse the bytes —
+    audio was ever synthesized) or when `tinytag` couldn't parse the bytes —
     in that case behaviour is UNCHANGED from before this story: we estimate
     the segment's audio duration from the script word count at
     `words_per_minute` and split it evenly across the slides. Real
@@ -3824,11 +3832,24 @@ def _estimate_slide_timestamps(
     entry per slide, first ``start_ms == 0``, each ``start_ms == previous
     end_ms`` (contiguous), ``start_ms < end_ms`` (non-degenerate), last
     ``end_ms == total duration``.
+
+    Round 2 review finding (Edge Case Hunter): `known_duration_ms` ultimately
+    originates from a Supabase JSONB checkpoint (`audio_assets[i].duration_ms`)
+    that could in principle be schema-drifted or hand-edited — a bare
+    ``round()`` on a NaN raises `ValueError`, on a non-numeric type raises
+    `TypeError`, either of which would crash `package_builder_node` on a
+    value this function was supposed to treat as "unknown, fall back to the
+    estimate" rather than a hard failure. `package_builder_node` now filters
+    non-numeric/non-finite values before calling this function, but this is
+    a public module symbol other future callers could reach directly, so the
+    same finiteness check is repeated here too (defence-in-depth, matching
+    the existing `words_per_minute = max(words_per_minute, 1)` guard just
+    below).
     """
     n = len(slides)
     if n == 0:
         return []
-    if known_duration_ms is not None:
+    if known_duration_ms is not None and math.isfinite(known_duration_ms):
         total_ms = round(known_duration_ms)
     else:
         # Defence-in-depth: `words_per_minute` is guarded by Settings(gt=0) at
@@ -4106,14 +4127,55 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     # Story S3-38: `duration_ms` is a SIBLING key to "data" in each
     # audio_assets wrapper dict (tts_node), not part of the frozen Narration
     # model — read it directly here rather than through `_index_by_segment_id`
-    # (which is scoped to a single `value_key`). Missing/malformed entries
-    # simply yield no mapping for that segment_id, which callers treat the
-    # same as "unknown" (None) via `.get()`.
-    duration_ms_by_id: dict[str, Any] = {
-        item["segment_id"]: item.get("duration_ms")
-        for item in state.get("audio_assets", [])
-        if isinstance(item, dict) and item.get("segment_id") is not None
-    }
+    # (which is scoped to a single dict-valued `value_key` and would coerce a
+    # numeric `duration_ms` to None, since it treats any non-dict value as
+    # malformed). Missing/malformed entries simply yield no mapping for that
+    # segment_id, which callers treat the same as "unknown" (None) via `.get()`.
+    #
+    # Round 2 review finding (Edge Case Hunter): the original version trusted
+    # `item.get("duration_ms")` as-is — a schema-drifted or hand-edited
+    # checkpoint could carry a non-numeric or NaN value there, which would
+    # reach `_estimate_slide_timestamps`'s `round(known_duration_ms)` and
+    # raise `TypeError`/`ValueError`, crashing this node entirely instead of
+    # degrading just that one segment (the exact failure class
+    # `_index_by_segment_id` was hardened against for `audio_by_id` etc. one
+    # story ago). Validated here the same way: non-numeric/non-finite values
+    # are logged and normalised to None rather than trusted. Duplicate
+    # segment_id also logged, for the same observability parity
+    # `_index_by_segment_id` already provides for its own maps.
+    duration_ms_by_id: dict[str, float | None] = {}
+    for item in state.get("audio_assets", []):
+        if not isinstance(item, dict):
+            continue
+        seg_id = item.get("segment_id")
+        if seg_id is None:
+            continue
+        if seg_id in duration_ms_by_id:
+            logger.warning(
+                "[%s] package_builder_node: duplicate segment_id %r in "
+                "audio_assets duration_ms — keeping the last entry",
+                lesson_id,
+                seg_id,
+            )
+        raw_duration = item.get("duration_ms")
+        if (
+            isinstance(raw_duration, int | float)
+            and not isinstance(raw_duration, bool)
+            and math.isfinite(raw_duration)
+        ):
+            duration_ms_by_id[seg_id] = raw_duration
+        else:
+            if raw_duration is not None:
+                logger.warning(
+                    "[%s] package_builder_node: audio_assets entry for %r has "
+                    "a non-numeric/non-finite duration_ms %r (%s) — treating "
+                    "as unknown, falling back to the word-count estimate",
+                    lesson_id,
+                    seg_id,
+                    raw_duration,
+                    type(raw_duration).__name__,
+                )
+            duration_ms_by_id[seg_id] = None
     # Story 2-31 AC-1: narration_generator_node emits a FLAT shape
     # ({"segment_id": ..., "script": ...}) — no "data" wrapper, so no value_key.
     # Used only to recover the script when a segment has no audio_assets entry.
@@ -4295,9 +4357,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # are available.
         #
         # Story S3-38: prefer the REAL measured audio duration (`duration_ms`,
-        # mutagen-derived in tts_node) when tts_node captured one for this
+        # tinytag-derived in tts_node) when tts_node captured one for this
         # segment — `_estimate_slide_timestamps` only falls back to the
-        # word-count guess when it's None (browser fallback / mutagen parse
+        # word-count guess when it's None (browser fallback / tinytag parse
         # failure), exactly as before this story.
         narration = {
             **narration,
