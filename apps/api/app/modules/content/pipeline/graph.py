@@ -2003,11 +2003,22 @@ def _get_section_body(
             max_chars,
             original_chars,
         )
+    capped_body = body[:max_chars]
     return _SectionBodyResult(
-        body=body[:max_chars],
+        body=capped_body,
         was_truncated=was_truncated,
+        # Round 2 finding: this was unconditionally `max_chars`, which is only
+        # correct in the was_truncated=True case (where len(body[:max_chars])
+        # == max_chars by construction). For an UNtruncated body this silently
+        # reported "capped to the full max_chars value" even though the body
+        # was shorter than the cap — a landmine for any future caller reading
+        # `capped_chars` directly off `_SectionBodyResult` without going
+        # through `_section_truncation_entries` (which only surfaces this
+        # field when was_truncated is True, so the bug never reached any
+        # currently-shipped output, but the field itself was wrong on its
+        # own terms). `len(capped_body)` is correct in both cases.
         original_chars=original_chars,
-        capped_chars=max_chars,
+        capped_chars=len(capped_body),
     )
 
 
@@ -2137,6 +2148,85 @@ async def _write_phase1_checkpoint(lesson_id: str, key: str, value: dict[str, An
     ).execute()
 
 
+def _section_truncation_checkpoint_key(node: str, section_id: str) -> str:
+    """Story 3-39 Round 2 (real /bmad-code-review) finding: the checkpoint
+    namespace `section_truncations`' retry-recoverability lives in, kept
+    STRICTLY SEPARATE from each node's own content checkpoint value.
+
+    Content checkpoints (summary/score/terms/interventions/narration/
+    quiz-batch) get passed, in at least 2 of the 6 nodes
+    (`segment_complexity_node`'s `score`, `narration_generator_node`'s
+    `result`), directly into a strict `extra="forbid"` Pydantic model
+    (`SegmentComplexity`, `Narration`) — see `apps/api/app/schemas/lesson.py`
+    and the "Never spread the flat entry: Narration is extra='forbid'"
+    comment already in `package_builder_node`. Mixing truncation bookkeeping
+    into those same dicts would risk a schema-validation regression the
+    moment either node's cached content shape is used unfiltered. A
+    dedicated key avoids that risk uniformly across all 6 nodes, at the cost
+    of one extra bounded (`.maybe_single()`, single-row) read on a cache hit
+    and one extra bounded write only when a section was actually truncated —
+    the same "extra checkpoint read for different information" pattern
+    `narration_generator_node`'s own opportunistic `segment_complexity` read
+    already establishes in this file.
+    """
+    return f"section_truncation:{node}:{section_id}"
+
+
+async def _persist_section_truncation_checkpoint(
+    lesson_id: str, *, node: str, section_id: str, result: _SectionBodyResult
+) -> None:
+    """Persist the truncation signal into its OWN checkpoint entry, durable
+    across ARQ retries (Story 3-39 Round 2 finding).
+
+    Call ONLY alongside a content-checkpoint write (i.e. only on a path this
+    section can later cache-hit on) — a section whose node never writes a
+    content checkpoint always recomputes `_get_section_body` fresh on retry,
+    so there is nothing to recover there. No-op when nothing was truncated —
+    an absent key on read degrades to "not truncated" either way, so
+    skipping the write in the common (untruncated) case costs nothing.
+    """
+    if not result.was_truncated:
+        return
+    await _write_phase1_checkpoint(
+        lesson_id,
+        _section_truncation_checkpoint_key(node, section_id),
+        {"original_chars": result.original_chars, "capped_chars": result.capped_chars},
+    )
+
+
+async def _read_section_truncation_checkpoint(
+    lesson_id: str, *, node: str, section_id: str
+) -> list[dict[str, Any]]:
+    """Reconstruct this node's `section_truncations` contribution on a cache
+    hit (Story 3-39 Round 2 finding).
+
+    Without this, a retried section that hits its content checkpoint skips
+    `_get_section_body` entirely and its truncation record silently
+    disappears from the admin-visible aggregate — even though the
+    truncation genuinely happened on the run that produced the now-cached
+    content. That is exactly the "silently wrong, not loudly broken" failure
+    class this story exists to close, one layer removed (Round 2 finding,
+    confirmed independently by 2 of 4 reviewers). An absent key — because
+    nothing was truncated, OR because this checkpoint predates this fix —
+    both correctly degrade to an empty list rather than raising.
+    """
+    cached = await _read_phase1_checkpoint(
+        lesson_id,
+        _section_truncation_checkpoint_key(node, section_id),
+        required_keys=("original_chars", "capped_chars"),
+    )
+    if cached is None:
+        return []
+    return [
+        {
+            "section_id": section_id,
+            "node": node,
+            "original_chars": cached["original_chars"],
+            "capped_chars": cached["capped_chars"],
+        }
+    ]
+
+
 async def _increment_phase1_progress(
     lesson_id: str, checkpoint_key: str, total_expected: int | None
 ) -> None:
@@ -2217,11 +2307,19 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
             "[%s] summarise_segment_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"segment_summaries": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="summarise_segment", section_id=section_id
+        )
+        return {"segment_summaries": [cached], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
     body = section_body.body
     section_truncations = _section_truncation_entries(
         node="summarise_segment", section_id=section_id, result=section_body
@@ -2250,6 +2348,9 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
 
     result = {"segment_id": section_id, "summary": summary_text}
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="summarise_segment", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"segment_summaries": [result], "section_truncations": section_truncations}
@@ -2498,11 +2599,19 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             "[%s] quiz_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"quiz_questions": cached["questions"]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="quiz_generator", section_id=section_id
+        )
+        return {"quiz_questions": cached["questions"], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
     body = section_body.body
     section_truncations = _section_truncation_entries(
         node="quiz_generator", section_id=section_id, result=section_body
@@ -2549,6 +2658,9 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             lesson_id,
             checkpoint_key,
             {"segment_id": section_id, "questions": rescued, "tier": tier},
+        )
+        await _persist_section_truncation_checkpoint(
+            lesson_id, node="quiz_generator", section_id=section_id, result=section_body
         )
         return {"quiz_questions": rescued, "section_truncations": section_truncations}
 
@@ -2679,6 +2791,9 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         "tier": tier,
     }
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, batch_checkpoint)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="quiz_generator", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"quiz_questions": valid_results, "section_truncations": section_truncations}
@@ -2762,11 +2877,19 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
             "[%s] segment_complexity_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"complexity_scores": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="segment_complexity", section_id=section_id
+        )
+        return {"complexity_scores": [cached], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
     body = section_body.body
     section_truncations = _section_truncation_entries(
         node="segment_complexity", section_id=section_id, result=section_body
@@ -2810,6 +2933,9 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     }
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, score)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="segment_complexity", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"complexity_scores": [score], "section_truncations": section_truncations}
@@ -2878,11 +3004,19 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
             "[%s] jargon_extractor_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"glossary": cached["terms"]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="jargon_extractor", section_id=section_id
+        )
+        return {"glossary": cached["terms"], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
     body = section_body.body
     section_truncations = _section_truncation_entries(
         node="jargon_extractor", section_id=section_id, result=section_body
@@ -2932,6 +3066,9 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
         )
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, {"terms": entries})
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="jargon_extractor", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"glossary": entries, "section_truncations": section_truncations}
@@ -3055,11 +3192,19 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"intervention_prompts": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="intervention_messages", section_id=section_id
+        )
+        return {"intervention_prompts": [cached], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
     body = section_body.body
     section_truncations = _section_truncation_entries(
         node="intervention_messages", section_id=section_id, result=section_body
@@ -3125,6 +3270,9 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
         )
     else:
         await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+        await _persist_section_truncation_checkpoint(
+            lesson_id, node="intervention_messages", section_id=section_id, result=section_body
+        )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"intervention_prompts": [result], "section_truncations": section_truncations}
@@ -3199,7 +3347,10 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"narration_scripts": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="narration_generator", section_id=section_id
+        )
+        return {"narration_scripts": [cached], "section_truncations": cached_truncations}
 
     # AC-6: opportunistic cross-node read — see docstring above.
     known_complexity = await _read_phase1_checkpoint(
@@ -3219,7 +3370,12 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    section_body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
     body = section_body.body
     section_truncations = _section_truncation_entries(
         node="narration_generator", section_id=section_id, result=section_body
@@ -3354,6 +3510,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     }
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="narration_generator", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
     return {"narration_scripts": [result], "section_truncations": section_truncations}

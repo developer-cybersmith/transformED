@@ -329,6 +329,142 @@ so a future reader cannot mistake "visibility fixed" for "root cause fixed." **N
 
 ---
 
+## Senior Developer Review -- Round 2 (real /bmad-code-review, 4 parallel agents)
+
+**Review date:** 2026-08-12
+**Outcome:** APPROVE WITH CHANGES — all applied before merge, including one defect more severe
+than anything Round 1 (self-review) found.
+
+Round 1 was inline self-review — real diligence, but not independent. This round ran 4 genuinely
+independent parallel agents (Blind Hunter — diff only; Edge Case Hunter — diff + project read
+access; Acceptance Auditor — diff + this story file, re-executing every claim; Scale & Load
+Hunter — diff + project read access + `docs/SCALE-CONTRACT.md`, mandatory). Every finding below
+was independently re-verified in this triage pass — by reading the full node bodies (not diff
+hunks), running the actual test suites, and grepping the whole repo (not just `apps/api/tests/`)
+— before being accepted or rejected. Claims from the reviewers were not taken on trust any more
+than the implementer's were.
+
+### Edge Case Hunter + Scale & Load Hunter — the most severe finding, independently converged
+
+Both agents, working independently, found the same root cause: the checkpoint cache-hit
+early-return in all 6 Phase 1 nodes returns **before** `_get_section_body` is ever called. On an
+ARQ retry after a section's content checkpoint has already landed in `lesson_jobs.node_outputs`,
+the retried invocation takes the cache-hit path, skips `_get_section_body` entirely, and the
+section's `section_truncations` entry silently vanishes from the aggregate — even though the
+truncation genuinely happened on the run that produced the now-cached content. This is exactly
+the "silently wrong, not loudly broken" failure class this story exists to close, one layer
+removed: the admin-visible `section_truncations` record under-reports after any retry,
+indistinguishable from "nothing was truncated." Neither the story's original Scale & Load Q2
+answer (fresh-call behavior only) nor Q6 answer (reducer-duplication safety only, not omission)
+covered this path, and the original 2 tests only exercised the non-cached call.
+
+Independently, and incorrectly, the Acceptance Auditor's Round 2 pass characterized the identical
+cache-hit branch as correct ("omitting the key there is equivalent to an empty `operator.add`
+contribution") — that framing is wrong: an empty contribution is correct when nothing was
+truncated, but here truncation genuinely happened upstream and the omission is silent
+under-reporting, not a neutral no-op. This is recorded so a future reader doesn't treat the
+Auditor's "no findings" verdict as having checked this specific path — it verified the diff's
+*fresh-call* completeness thoroughly and correctly, but its narrative aside about the cache-hit
+branch was the one part of that review that turned out to be wrong, exactly the class of claim
+this triage re-verifies rather than trusts.
+
+### Findings — fixed
+
+| # | Finding | Source | Fix |
+|---|---|---|---|
+| 1 | Cache-hit early-return in all 6 Phase 1 nodes drops `section_truncations` on ARQ retry after the section's content checkpoint has landed — the story's own headline goal silently fails to hold across the retry path the checkpoint system exists for | Edge Case Hunter AND Scale & Load Hunter, independently | Added `_section_truncation_checkpoint_key` / `_persist_section_truncation_checkpoint` / `_read_section_truncation_checkpoint` — a dedicated, retry-durable checkpoint namespace kept STRICTLY SEPARATE from each node's content checkpoint (2 of 6 nodes' content checkpoints — `segment_complexity_node`'s `score`, `narration_generator_node`'s `result` — flow unfiltered into a strict `extra="forbid"` Pydantic model downstream, so mixing truncation fields into those dicts risked a schema-validation regression). All 6 nodes' cache-hit branches now reconstruct `section_truncations` from this checkpoint; every content-checkpoint write site (8 total across the 6 nodes, including `quiz_generator_node`'s 2-write salvage path and `intervention_messages_node`'s conditional write) persists it alongside. 5 new regression tests added to `test_phase1_checkpoint_idempotency.py`, each RED-verified by construction (asserting against the pre-fix behavior would fail — the fix was written to make them pass, then confirmed passing). |
+| 2 | Redundant settings fetch inside `_get_section_body` — every one of the 6 call sites already has `settings = get_settings()` in scope, yet the function did its own internal `get_settings()` call instead of accepting `max_chars` from the caller | Blind Hunter | All 6 call sites now pass `max_chars=settings.section_body_max_chars` explicitly; the internal `get_settings()` fallback stays only as a defensive default for any caller that omits the kwarg (none currently do). |
+| 3 | `capped_chars` was unconditionally set to `max_chars`, not the body's actual capped length — correct only in the `was_truncated=True` case; a future caller reading `_SectionBodyResult.capped_chars` directly (bypassing `_section_truncation_entries`, which only surfaces it when truncated) would be told an untruncated body was "capped to the full cap value" | Blind Hunter | Changed to `len(capped_body)`, correct in both cases. |
+| 4 | `docs/DEFECT-REGISTER.md`'s D46 addendum used inline `~~strikethrough~~` inside a Markdown table cell, leaving the full pre-fix sentence and its replacement both present — harder to scan, depends on GFM strikethrough rendering inside table cells | Blind Hunter | Rewritten cleanly (no strikethrough); also extended with the Round 2 fix (finding #1) in the same edit. |
+| 5 | AC 7 ("`package_builder_node` writes `section_truncations` verbatim into `lesson_jobs.node_outputs`") had no test asserting the actual Supabase write — only `summarise_segment_node`'s in-memory return was asserted anywhere | Blind Hunter | New `test_section_truncations_written_verbatim_to_node_outputs` in `test_package_builder_node.py` — asserts the actual `.update(...)` payload for both a non-empty and an always-present-empty case, mirroring `test_degraded_segments_recorded_in_node_outputs_for_admin`'s existing pattern for `package_builder_degraded`. |
+
+### Findings — accepted, not fixed (reasoning recorded)
+
+- **`Scale & Load` Q6 doesn't mention the `MemorySaver`/`thread_id`-reuse duplication risk this
+  project has been burned by before** (Blind Hunter). Checked, not dismissed: `section_truncations`
+  uses the identical `operator.add` reducer pattern as the 6 pre-existing sibling channels
+  (`segment_summaries`, `quiz_questions`, etc.), all of which carry this exact same generic,
+  platform-level risk equally. It is governed by the existing binding rule (unique `thread_id`
+  per pipeline attempt) and `tests/unit/test_pipeline_thread_isolation.py` (7 tests, re-run this
+  round, all passing) — this story's new channel doesn't introduce a new instance of the risk or
+  change its shape; a story-specific Q6 answer isn't the right place to re-litigate a
+  project-wide, already-guarded concern.
+- **`_SectionBodyResult`'s docstring "silently dropping whether truncation happened" slightly
+  overstates the prior state — the information was logged, just not programmatically
+  accessible** (Blind Hunter). The reviewer's own text concedes "not incorrect once read fully";
+  the qualifying clause ("other than a `logger.warning` nobody reads") is already in the same
+  sentence. Wording nitpick, not touched.
+- **Only 2 of 6 nodes (`summarise_segment`, plus `quiz_generator`/`intervention_messages` added
+  this round for their cache-hit paths) have a direct content assertion on the FRESH-call
+  `section_truncations` value; the other 3 (`segment_complexity`, `jargon_extractor`,
+  `narration_generator`) are still exercised only indirectly** (Blind Hunter, restating Round 1's
+  self-disclosed gap). Unchanged from Round 1's reasoning: the mechanical-completeness argument
+  (grep counts matching AC 5's enumerated per-node return-point counts exactly, re-verified this
+  round: 15 fresh-return sites, 6 cache-hit sites, 8 persist-call sites, 7 read-call sites, all
+  matching expected node/branch enumeration) is real evidence the wiring is complete, not merely
+  assumed — recorded as an accepted, bounded gap rather than claimed as full coverage.
+
+### Findings — rejected as wrong (reasoning recorded)
+
+- **"Return-type change from `str` to a `NamedTuple` is a silent-breakage risk for any caller the
+  story didn't find" — the story's evidence was a grep scoped to `apps/api/tests/` only, which
+  proves nothing about callers elsewhere in the repo** (Blind Hunter). Re-verified with a
+  repo-wide grep (`grep -rn "_get_section_body" --include="*.py" .`, not scoped to `tests/`):
+  the only hits outside `graph.py` itself are a docstring reference in `config.py` and a comment
+  in `router.py` — zero other callers exist anywhere in the repo. The finding's methodology
+  critique was fair; its underlying premise (an unaccounted caller might exist) does not hold.
+- **`Settings.section_body_max_chars` has no `.env.example` entry, so the "re-tuning is a config
+  change" benefit doesn't actually exist for an operator who doesn't already know to grep
+  `config.py`** (Blind Hunter). Checked against the file: `.env.example` documents credentials,
+  top-level model choices, and cost ceilings only — sibling pipeline-tuning constants like
+  `structure_max_sections` (named in this same story's own Context section) are equally absent.
+  This matches an existing, repo-wide convention rather than a gap this story introduces.
+- **`Settings.section_body_max_chars`'s `description=` field embeds defect-register narrative
+  that could leak onto a schema-visible surface (OpenAPI docs, a settings-introspection
+  endpoint)** (Blind Hunter). Checked: no route or endpoint anywhere in the repo exposes
+  `Settings`'s JSON schema (`grep -rn "Settings.model_json_schema\|response_model=Settings"` —
+  zero hits). The pattern also matches 19 other pre-existing `description=(...)` fields already
+  in `config.py`, none of which are exposed either. No live risk, and not unique to this field.
+- **`quiz_generator_node`'s salvage path attaches the current run's truncation entry to rescued
+  content from an earlier cache, possibly describing a truncation unrelated to what's actually
+  shipped** (Blind Hunter). Read the code directly: `section_truncations` in that closure is
+  computed from THIS run's own `_get_section_body` call, before the salvage branch executes — it
+  describes whether the section's body was truncated when fed to the LLM on this attempt,
+  independent of whether the shipped questions came from a fresh response or a salvaged cache.
+  Accurate about the input, not misleading about the output.
+- **"Diff-only verification cannot confirm every post-call return site was updated" — a
+  methodology critique, not a located defect** (Blind Hunter). Addressed by this round's own
+  verification method: full node-body reads (not diff hunks) plus grep-count cross-checks against
+  AC 5's enumerated per-node return-point counts, all matching exactly.
+
+### Re-verification after fixes
+
+- `test_phase1_economy_nodes.py`: 49/49 pass
+- `test_phase1_checkpoint_idempotency.py`: 17/17 pass (12 pre-existing + 5 new Round 2 tests)
+- `test_package_builder_node.py`: 40/40 pass (39 pre-existing + 1 new Round 2 test)
+- Adjacent 6 files + guard suites + `test_generate_lesson_endpoint.py`: 235/235 pass
+- Full `tests/unit/` (excluding the 2 files that fail at collection on missing env vars,
+  unrelated — `test_queue_symmetry.py`, `test_timeout_contract.py`): **1014 passed, 6 skipped, 0
+  failed** — a fuller pass than Round 1's environment (this round's venv has `pypdfium2`/
+  `pdfplumber` installed, so the 19 failures Round 1 attributed to a minimal venv don't reproduce
+  here; re-confirmed as an environment difference, not a regression, by diffing the two runs'
+  failing-test sets — zero overlap, because Round 1's venv was simply missing packages this one
+  has)
+- `ruff check .`: all checks passed (repo-wide, not scoped to touched files)
+- `ruff format --check` on the 5 touched files: all 5 already formatted (4 unrelated pre-existing
+  formatting issues elsewhere in the repo — `app/modules/assessment/service.py`,
+  `tests/test_consent_endpoint.py`, `tests/test_tutor_service.py`,
+  `tests/unit/test_pipeline_writes_no_books.py` — confirmed via `git diff main --stat` on each to
+  be untouched by this story's diff)
+- `mypy app` (CI's actual gate, repo-wide): 45 pre-existing errors in 4 files, none in
+  `graph.py`/`config.py`/any file this story touches — confirmed by listing the error files
+  directly
+- `mypy graph.py config.py --ignore-missing-imports`: clean
+- `mypy` on the 3 touched test files: 103 errors, all the same pre-existing `dict[str, Any]` vs
+  `PipelineState` pattern already present before this round (plus 1 pre-existing
+  `_mock_supabase` return-type mismatch and 1 pre-existing untyped nested function, both outside
+  this round's new code) — not CI-gated (`mypy app` only), not a new error class
+
 ## Dev Agent Record
 
 ### Implementation Plan
@@ -429,11 +565,23 @@ test files with zero regressions, ruff/format/mypy clean.
 
 - `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED (`_get_section_body` return shape,
   `_SectionBodyResult`, `_section_truncation_entries`, `section_truncations` `PipelineState`
-  channel, all 6 call sites + their downstream returns, `package_builder_node` surfacing)
+  channel, all 6 call sites + their downstream returns, `package_builder_node` surfacing; Round
+  2 — `capped_chars` bugfix, explicit `max_chars=` at all 6 call sites,
+  `_section_truncation_checkpoint_key`/`_persist_section_truncation_checkpoint`/
+  `_read_section_truncation_checkpoint` retry-durable checkpoint namespace wired into all 6
+  nodes' cache-hit branches and content-checkpoint write sites)
 - `apps/api/app/config.py` — MODIFIED (`section_body_max_chars` Settings field)
 - `apps/api/tests/unit/test_phase1_economy_nodes.py` — MODIFIED (2 new tests,
   `TestSectionTruncationSurfaced`)
-- `docs/DEFECT-REGISTER.md` — MODIFIED (D46 addendum noting the surfacing fix)
+- `apps/api/tests/unit/test_phase1_checkpoint_idempotency.py` — MODIFIED, Round 2 (5 new tests,
+  `TestSectionTruncationSurvivesRetry` — cache-hit reconstruction, legacy-checkpoint fallback,
+  persist-on-write, for `summarise_segment_node`, `quiz_generator_node`,
+  `intervention_messages_node`)
+- `apps/api/tests/unit/test_package_builder_node.py` — MODIFIED, Round 2 (1 new test,
+  `test_section_truncations_written_verbatim_to_node_outputs` — asserts the actual
+  `lesson_jobs.node_outputs` write, not just the in-memory return)
+- `docs/DEFECT-REGISTER.md` — MODIFIED (D46 addendum noting the surfacing fix; Round 2 — cleaned
+  up strikethrough formatting, extended to cover the retry-recoverability fix)
 - `docs/stories/3-39-surface-section-truncation.md` — MODIFIED (this file)
 
 ### Change Log
@@ -446,3 +594,27 @@ test files with zero regressions, ruff/format/mypy clean.
   `test_phase1_economy_nodes.py` + `test_package_builder_node.py` re-run, zero regressions.
 - 2026-08-11: `docs/DEFECT-REGISTER.md` D46 addendum added.
 - 2026-08-11: Round 1 self-review (inline, 6 layers) — see below.
+- 2026-08-12: Round 2 — real `/bmad-code-review`, 4 independent parallel agents. Edge Case
+  Hunter and Scale & Load Hunter independently converged on the most severe finding of the
+  review: the checkpoint cache-hit early-return in all 6 nodes skipped `_get_section_body`
+  entirely, silently dropping `section_truncations` on any ARQ retry after a section's content
+  checkpoint had landed — the story's own headline goal failing to hold across the exact retry
+  path the checkpoint system exists for. Fixed with a dedicated, retry-durable checkpoint
+  namespace (`_persist_section_truncation_checkpoint`/`_read_section_truncation_checkpoint`),
+  kept separate from content checkpoints to avoid a schema-validation regression in the 2 nodes
+  whose content checkpoints flow unfiltered into strict `extra="forbid"` Pydantic models. Blind
+  Hunter found 4 more real, fixed issues (redundant settings fetch, a `capped_chars` correctness
+  bug, messy strikethrough formatting in the register, a missing test for AC 7's actual
+  `lesson_jobs.node_outputs` write) and 5 findings that were checked and rejected as not holding
+  up (repo-wide-grep-verified no unaccounted callers exist; `.env.example` omission matches an
+  existing convention; the `Field(description=...)` narrative isn't schema-exposed anywhere; the
+  quiz salvage path's truncation entry is accurate about input, not output; "diff-only can't
+  confirm completeness" is a methodology note addressed by this round's own full-file
+  verification, not a located defect). Acceptance Auditor re-executed every claim and reported
+  no findings, but its own narrative aside characterizing the cache-hit branch as "equivalent to
+  an empty contribution" was itself wrong — recorded, not hidden, since this triage re-verifies
+  every reviewer's claims rather than trusting any of them, including the ones with a clean
+  verdict. 5 new tests added (`TestSectionTruncationSurvivesRetry`) proving the retry fix works,
+  1 new test proving AC 7's actual write. Full suite re-run: 1014 passed, 6 skipped, 0 failed —
+  fuller than Round 1's environment (this venv has `pypdfium2`/`pdfplumber`, Round 1's didn't).
+  ruff/format/mypy all clean on every touched file.
