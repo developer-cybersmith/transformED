@@ -276,15 +276,10 @@ async def process_attention_signal(
 
     Steps
     -----
-    1. Parse and validate the payload → NormalizedSignal.
-    2. Compute the weighted CES (PRD §11, 0–100 scale).
-    3. Persist latest CES to ``session:{session_id}:ces_window`` and
-       ``tutor_ces:{session_id}`` (24 h TTL).
-    4. Prepend CES to ``session:{session_id}:ces_history`` (keep last 10).
-    5. Read history; if the two most-recent values are both below
-       ``settings.ces_threshold`` and tutor cooldown is absent, dispatch
-       ``distraction_detected`` to the tutor state machine.
-    6. Return CesResult.
+    1. Read tutor state (CLAUDE.md §10, D14): CES monitoring ONLY active in TEACHING.
+    2. If TEACHING: parse signal → compute CES → update Redis window/history → check trigger.
+    3. If QUIZZING: check Q&A deadline (separate concern, not CES-related).
+    4. Return CesResult.
     """
     from app.config import get_settings
     from app.core.redis import get_redis
@@ -293,116 +288,110 @@ async def process_attention_signal(
     settings = get_settings()
     redis = get_redis()
 
-    normalized = _parse_signal(signal)
-    ces = compute_ces(normalized)
-
-    window_key = f"session:{session_id}:ces_window"
-    history_key = f"session:{session_id}:ces_history"
-
-    # Latest window
-    await redis.set(window_key, ces, ex=_CES_WINDOW_TTL)
-    await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)  # ces_computation (s3-3)
-
-    # Prepend to history (D4: JSON format {"v": CES float, "t": Unix seconds int}) and trim to
-    # keep only the last _CES_HISTORY_MAX values.
-    # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
-    _entry = json.dumps({"v": ces, "t": int(_time.time())})
-    await cast("Awaitable[int]", redis.lpush(history_key, _entry))
-    await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
-    await redis.expire(history_key, _CES_WINDOW_TTL)
-
-    # Read history to evaluate the intervention trigger.
-    # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
-    history_raw: list[str] = await cast(
-        "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
-    )
-
-    intervention_dispatched = False
-
-    # Read tutor state once — used by both the CES intervention guard and the deadline check below.
-    # CLAUDE.md §10: CES monitoring ONLY active in TEACHING state.
+    # D14 (S3-39): read tutor state FIRST — compute_ces and history writes run ONLY in TEACHING.
+    # History accumulated in non-TEACHING states (QUIZZING, INTERVENING, TEACH_BACK) would
+    # create false low-CES pairs and trigger spurious interventions when TEACHING resumes.
     state_raw = await redis.get(f"tutor_state:{session_id}")
 
-    if len(history_raw) >= 2:
-        # D4: parse JSON entries {"v": float, "t": int}.  Backward-compat fallback: a legacy
-        # bare-float string gets t=0 so the gap check always fails for that pair — no false
-        # intervention on a mixed old/new history (abs(now - 0) >> 2*cadence).
-        def _parse_history_entry(raw: str) -> tuple[float, int]:
-            try:
-                parsed = json.loads(raw)
-                return float(parsed["v"]), int(parsed["t"])
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+    ces: float = 0.0
+    intervention_dispatched = False
+
+    if state_raw == "TEACHING":
+        normalized = _parse_signal(signal)
+        ces = compute_ces(normalized)
+
+        window_key = f"session:{session_id}:ces_window"
+        history_key = f"session:{session_id}:ces_history"
+
+        # Latest window
+        await redis.set(window_key, ces, ex=_CES_WINDOW_TTL)
+        await redis.set(f"tutor_ces:{session_id}", ces, ex=_CES_WINDOW_TTL)
+
+        # Prepend to history (D4: JSON {"v": CES float, "t": Unix seconds int}).
+        # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
+        _entry = json.dumps({"v": ces, "t": int(_time.time())})
+        await cast("Awaitable[int]", redis.lpush(history_key, _entry))
+        await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
+        await redis.expire(history_key, _CES_WINDOW_TTL)
+
+        # Read history to evaluate the intervention trigger.
+        # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
+        history_raw: list[str] = await cast(
+            "Awaitable[list[Any]]", redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
+        )
+
+        if len(history_raw) >= 2:
+            # D4: parse JSON entries {"v": float, "t": int}.  Backward-compat fallback: a legacy
+            # bare-float string gets t=0 so the gap check always fails for that pair — no false
+            # intervention on a mixed old/new history (abs(now - 0) >> 2*cadence).
+            def _parse_history_entry(raw: str) -> tuple[float, int]:
                 try:
-                    return float(raw), 0  # legacy bare float — timestamp unknown
-                except (ValueError, TypeError):
-                    return 0.0, 0  # fully corrupt — safe sentinel
-
-        v0, t0 = _parse_history_entry(history_raw[0])  # most recent (LPUSH prepends)
-        v1, t1 = _parse_history_entry(history_raw[1])  # second most recent
-
-        # D4 gap check: reject stale history from signal gaps / MediaPipe restarts.
-        gap_ok = abs(t0 - t1) <= 2 * settings.ces_cadence_seconds
-
-        # CLAUDE.md §10: CES interventions only fire in TEACHING state.
-        # D6: _can_intervene_distraction uses a Lua script to atomically check cooldown +
-        # distraction cap and increment the count — no separate EXISTS+GET two-step.
-        if (
-            gap_ok
-            and state_raw == "TEACHING"
-            and v0 < settings.ces_threshold
-            and v1 < settings.ces_threshold
-        ):
-            from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
-                _can_intervene_distraction,
-            )
-
-            can_dispatch = await _can_intervene_distraction(session_id, redis, settings)
-            if can_dispatch:
-                logger.info(
-                    "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching"
-                    " distraction_detected",
-                    session_id,
-                    v0,
-                    v1,
-                )
-                # Pass the current segment's pre-generated messages so the FSM can select one
-                # (Redis reads only — no DB/LLM on this hot path).
-                seg_msgs = await _segment_intervention_messages(session_id, redis)
-                result = await dispatch_event(
-                    session_id,
-                    "distraction_detected",
-                    payload={"intervention_messages": seg_msgs},
-                )
-                intervention_dispatched = True
-
-                # Deliver the selected message to the client (in-process WS hub). Best-effort:
-                # a delivery failure must never break signal processing.
-                msg = result.get("intervention_message")
-                if result.get("current_state") == "INTERVENING" and msg:
+                    parsed = json.loads(raw)
+                    return float(parsed["v"]), int(parsed["t"])
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                     try:
-                        from app.core.websocket import manager  # noqa: PLC0415
+                        return float(raw), 0  # legacy bare float — timestamp unknown
+                    except (ValueError, TypeError):
+                        return 0.0, 0  # fully corrupt — safe sentinel
 
-                        await manager.send(
-                            session_id,
-                            {
-                                "type": "tutor_intervene",
-                                "payload": {
-                                    "session_id": session_id,
-                                    "type": result.get("intervention_type") or "distraction",
-                                    "message": msg,
+            v0, t0 = _parse_history_entry(history_raw[0])  # most recent (LPUSH prepends)
+            v1, t1 = _parse_history_entry(history_raw[1])  # second most recent
+
+            # D4 gap check: reject stale history from signal gaps / MediaPipe restarts.
+            gap_ok = abs(t0 - t1) <= 2 * settings.ces_cadence_seconds
+
+            # D6: _can_intervene_distraction uses a Lua script to atomically check cooldown +
+            # distraction cap and increment the count — no separate EXISTS+GET two-step.
+            if gap_ok and v0 < settings.ces_threshold and v1 < settings.ces_threshold:
+                from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
+                    _can_intervene_distraction,
+                )
+
+                can_dispatch = await _can_intervene_distraction(session_id, redis, settings)
+                if can_dispatch:
+                    logger.info(
+                        "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching"
+                        " distraction_detected",
+                        session_id,
+                        v0,
+                        v1,
+                    )
+                    # Pass the current segment's pre-generated messages so the FSM can select one
+                    # (Redis reads only — no DB/LLM on this hot path).
+                    seg_msgs = await _segment_intervention_messages(session_id, redis)
+                    result = await dispatch_event(
+                        session_id,
+                        "distraction_detected",
+                        payload={"intervention_messages": seg_msgs},
+                    )
+                    intervention_dispatched = True
+
+                    # Deliver the selected message to the client (in-process WS hub).
+                    # Best-effort: a delivery failure must never break signal processing.
+                    msg = result.get("intervention_message")
+                    if result.get("current_state") == "INTERVENING" and msg:
+                        try:
+                            from app.core.websocket import manager  # noqa: PLC0415
+
+                            await manager.send(
+                                session_id,
+                                {
+                                    "type": "tutor_intervene",
+                                    "payload": {
+                                        "session_id": session_id,
+                                        "type": result.get("intervention_type") or "distraction",
+                                        "message": msg,
+                                    },
                                 },
-                            },
-                        )
-                    except Exception:
-                        logger.exception(
-                            "tutor_intervene delivery failed for %s", session_id
-                        )
+                            )
+                        except Exception:
+                            logger.exception(
+                                "tutor_intervene delivery failed for %s", session_id
+                            )
 
     # Learner Mode: auto-advance a QUIZZING session when the Q&A time limit elapses.
-    # This attention-signal path (fires every ~5 s) is the primary deadline enforcer
-    # when the student is not actively submitting client events.
+    # This attention-signal path (fires every ~5 s) is the primary deadline enforcer.
     # Delete-before-dispatch guard prevents double-fire from concurrent signals.
-    # state_raw is already populated above (used for CES guard too).
     if state_raw == "QUIZZING" and await _quiz_deadline_expired(session_id, redis):
         deleted = await redis.delete(f"session:{session_id}:quiz_deadline_at")
         if deleted:
