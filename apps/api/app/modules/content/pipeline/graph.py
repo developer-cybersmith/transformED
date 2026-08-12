@@ -1257,6 +1257,8 @@ async def _run_planner_batch(
     batch: list[dict[str, Any]],
     tier_framing: str,
     lesson_id: str,
+    *,
+    max_attempts: int = 3,
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
@@ -1264,7 +1266,19 @@ async def _run_planner_batch(
     structured completion small enough that the model reliably echoes every
     segment_id 1:1 — long single-shot enumerations collapse (44-in/10-out).
     Same provider/model/prompt as the single-call path. Raises (does not
-    fabricate) when the provider returns no parsed response."""
+    fabricate) when the provider returns no parsed response.
+
+    THROWAWAY FIX (2026-08-12, not yet reviewed by Dev 1): live-reproduced
+    that batch size alone does NOT fix segment-dropping — a real d2l.pdf
+    chapter dropped 2/10 AND separately 1/5 segments from correctly-sized
+    batches, despite the prompt already explicitly saying "do not omit"
+    (see _planner_system_prompt). So this now retries the SAME batch, up to
+    max_attempts times, whenever the response doesn't echo back exactly the
+    ids it was given — cheap (only fires on a demonstrated wrong response)
+    and treats the drop as model nondeterminism the outer degrade-not-
+    fabricate guard (in lesson_planner_node) still backstops if every
+    attempt fails."""
+    expected_ids = {s["segment_id"] for s in batch}
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
@@ -1272,13 +1286,33 @@ async def _run_planner_batch(
         {"role": "system", "content": _planner_system_prompt(tier_framing)},
         {"role": "user", "content": summaries_text},
     ]
-    response: _LessonPlanLLM | None = await provider.complete_structured(
-        messages, model, _LessonPlanLLM
-    )
-    if response is None:
-        logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
-        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response")
-    return response
+    last_response: _LessonPlanLLM | None = None
+    for attempt in range(1, max_attempts + 1):
+        response: _LessonPlanLLM | None = await provider.complete_structured(
+            messages, model, _LessonPlanLLM
+        )
+        if response is None:
+            logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response"
+            )
+        response_ids = {seg.segment_id for seg in response.segments}
+        if response_ids == expected_ids and len(response.segments) == len(batch):
+            return response
+        last_response = response
+        outcome = "retrying" if attempt < max_attempts else "giving up, outer guard will reject"
+        logger.warning(
+            "[%s] lesson_planner_node: batch of %d summaries returned %d segments "
+            "(attempt %d/%d) — %s",
+            lesson_id,
+            len(batch),
+            len(response.segments),
+            attempt,
+            max_attempts,
+            outcome,
+        )
+    assert last_response is not None  # loop always runs >= 1 iteration
+    return last_response
 
 
 async def lesson_planner_node(state: PipelineState) -> PipelineState:
