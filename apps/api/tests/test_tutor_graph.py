@@ -380,24 +380,30 @@ def _assert_intervention_suppressed(redis: AsyncMock, sid: str) -> None:
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_cooldown_stays_teaching(mocker) -> None:
-    """distraction_detected during an active cooldown → guard blocks → stays TEACHING
-    (suppressed)."""
+    """D6: distraction guard moved to service.py (_can_intervene_distraction Lua script).
+    route_from_teaching no longer guards distraction_detected — any distraction_detected
+    event that reaches the FSM transitions to INTERVENING unconditionally.
+    Guard blocking is tested in test_s3_48_lua_distraction_cap.py.
+    """
     _patch_settings(mocker)
-    redis = _keyed_redis("s-cool", state="TEACHING", exists=1)  # cooldown active
+    redis = _keyed_redis("s-cool", state="TEACHING", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
 
     from app.modules.tutor.state_machine.graph import dispatch_event
 
     result = await dispatch_event("s-cool", "distraction_detected")
 
-    assert result["current_state"] == TutorState.TEACHING
-    _assert_intervention_suppressed(redis, "s-cool")
+    # Guard now lives in service.py; FSM always transitions to INTERVENING on this event.
+    assert result["current_state"] == TutorState.INTERVENING
 
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_max_count_stays_teaching(mocker) -> None:
-    """distraction_detected at the per-session cap (count == max) → guard blocks → stays
-    TEACHING."""
+    """D6: same as cooldown test — guard moved to service.py; FSM unconditionally → INTERVENING.
+
+    The per-session cap is enforced by the Lua atomic check in _can_intervene_distraction
+    (test_s3_48_lua_distraction_cap.py). Events that reach the FSM already passed the guard.
+    """
     _patch_settings(mocker, max_distraction=3)
     redis = _keyed_redis("s-cap", state="TEACHING", count="3", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -406,8 +412,8 @@ async def test_distraction_blocked_by_max_count_stays_teaching(mocker) -> None:
 
     result = await dispatch_event("s-cap", "distraction_detected")
 
-    assert result["current_state"] == TutorState.TEACHING
-    _assert_intervention_suppressed(redis, "s-cap")
+    # Guard now lives in service.py; FSM always transitions to INTERVENING on this event.
+    assert result["current_state"] == TutorState.INTERVENING
 
 
 @pytest.mark.unit
@@ -563,13 +569,20 @@ async def test_fatigue_detected_sets_fatigue_fired_flag(mocker) -> None:
     result = await dispatch_event("s-ff", "fatigue_detected")
 
     assert result["current_state"] == TutorState.INTERVENING
-    redis.set.assert_any_call("tutor_fatigue_fired:s-ff", "1", ex=_STATE_TTL)
+    # D6: SET NX — prevents a race where two concurrent fatigue signals both pass the EXISTS check
+    # before either has written the flag; the second NX write is a no-op.
+    redis.set.assert_any_call("tutor_fatigue_fired:s-ff", "1", ex=_STATE_TTL, nx=True)
 
 
 @pytest.mark.unit
 async def test_distraction_detected_increments_count(mocker) -> None:
-    """AC2: distraction_detected increments the distraction counter (intervention_type =
-    distraction)."""
+    """D6: distraction_detected → INTERVENING. The count increment now happens inside the Lua
+    script (_can_intervene_distraction in service.py), not in intervening_node. The FSM just
+    records the transition; no redis.incr call is expected here.
+
+    The INCR responsibility transfer is tested in test_s3_48_lua_distraction_cap.py
+    (test_intervening_node_source_no_distraction_incr).
+    """
     _patch_settings(mocker)
     redis = _keyed_redis("s-dc", state="TEACHING", count="0", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -579,7 +592,8 @@ async def test_distraction_detected_increments_count(mocker) -> None:
     result = await dispatch_event("s-dc", "distraction_detected")
 
     assert result["current_state"] == TutorState.INTERVENING
-    redis.incr.assert_any_call("tutor_distraction_count:s-dc")
+    # Lua handled the INCR atomically in service.py — intervening_node must NOT double-count.
+    redis.incr.assert_not_called()
 
 
 @pytest.mark.unit

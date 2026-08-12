@@ -321,49 +321,56 @@ async def process_attention_signal(
     if len(history_raw) >= 2:
         # Index 0 is most recent (LPUSH prepends)
         recent = [float(v) for v in history_raw[:2]]
-        cooldown_key = f"tutor_cooldown:{session_id}"
-        in_cooldown = await redis.exists(cooldown_key)
 
-        # Enforce CLAUDE.md §10: CES interventions only fire in TEACHING state.
-        if (
-            state_raw == "TEACHING"
-            and all(v < settings.ces_threshold for v in recent)
-            and not in_cooldown
-        ):
-            logger.info(
-                "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching distraction_detected",
-                session_id,
-                recent[0],
-                recent[1],
+        # CLAUDE.md §10: CES interventions only fire in TEACHING state.
+        # D6: _can_intervene_distraction uses a Lua script to atomically check cooldown +
+        # distraction cap and increment the count — no separate EXISTS+GET two-step.
+        if state_raw == "TEACHING" and all(v < settings.ces_threshold for v in recent):
+            from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
+                _can_intervene_distraction,
             )
-            # Pass the current segment's pre-generated messages so the FSM can select one
-            # (Redis reads only — no DB/LLM on this hot path).
-            seg_msgs = await _segment_intervention_messages(session_id, redis)
-            result = await dispatch_event(
-                session_id, "distraction_detected", payload={"intervention_messages": seg_msgs}
-            )
-            intervention_dispatched = True
 
-            # Deliver the selected message to the client (in-process WS hub). Best-effort: a
-            # delivery failure must never break signal processing.
-            msg = result.get("intervention_message")
-            if result.get("current_state") == "INTERVENING" and msg:
-                try:
-                    from app.core.websocket import manager
+            can_dispatch = await _can_intervene_distraction(session_id, redis, settings)
+            if can_dispatch:
+                logger.info(
+                    "[tutor:%s] CES below threshold (%.3f, %.3f) — dispatching"
+                    " distraction_detected",
+                    session_id,
+                    recent[0],
+                    recent[1],
+                )
+                # Pass the current segment's pre-generated messages so the FSM can select one
+                # (Redis reads only — no DB/LLM on this hot path).
+                seg_msgs = await _segment_intervention_messages(session_id, redis)
+                result = await dispatch_event(
+                    session_id,
+                    "distraction_detected",
+                    payload={"intervention_messages": seg_msgs},
+                )
+                intervention_dispatched = True
 
-                    await manager.send(
-                        session_id,
-                        {
-                            "type": "tutor_intervene",
-                            "payload": {
-                                "session_id": session_id,
-                                "type": result.get("intervention_type") or "distraction",
-                                "message": msg,
+                # Deliver the selected message to the client (in-process WS hub). Best-effort:
+                # a delivery failure must never break signal processing.
+                msg = result.get("intervention_message")
+                if result.get("current_state") == "INTERVENING" and msg:
+                    try:
+                        from app.core.websocket import manager  # noqa: PLC0415
+
+                        await manager.send(
+                            session_id,
+                            {
+                                "type": "tutor_intervene",
+                                "payload": {
+                                    "session_id": session_id,
+                                    "type": result.get("intervention_type") or "distraction",
+                                    "message": msg,
+                                },
                             },
-                        },
-                    )
-                except Exception:
-                    logger.exception("tutor_intervene delivery failed for %s", session_id)
+                        )
+                    except Exception:
+                        logger.exception(
+                            "tutor_intervene delivery failed for %s", session_id
+                        )
 
     # Learner Mode: auto-advance a QUIZZING session when the Q&A time limit elapses.
     # This attention-signal path (fires every ~5 s) is the primary deadline enforcer

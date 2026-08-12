@@ -58,6 +58,24 @@ logger = logging.getLogger(__name__)
 
 _STATE_TTL = 86_400  # 24 h
 
+# ── Lua script for atomic distraction cap check+increment (D6) ───────────────
+# Redis Lua scripts execute atomically in Redis's single-threaded Lua VM, so
+# concurrent requests cannot race between the EXISTS/GET read and the INCR write.
+#
+# KEYS[1] = tutor_cooldown:{session_id}
+# KEYS[2] = tutor_distraction_count:{session_id}
+# ARGV[1] = max_distraction_per_session (string representation)
+# ARGV[2] = TTL for count key in seconds (string representation, matches _STATE_TTL)
+_DISTRACTION_GUARD_LUA = """
+local in_cooldown = redis.call('EXISTS', KEYS[1])
+if in_cooldown == 1 then return 'cooldown' end
+local count = tonumber(redis.call('GET', KEYS[2])) or 0
+if count >= tonumber(ARGV[1]) then return 'max_reached' end
+redis.call('INCR', KEYS[2])
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))
+return 'ok'
+"""
+
 # Maps an intervention-triggering event to the intervention_type it records / selects a message for.
 # Used by dispatch_event so the FSM records the RIGHT intervention (the fatigue path previously left
 # intervention_type=None → tutor_fatigue_fired was never set). Valid types match the LessonPackage
@@ -103,27 +121,38 @@ class TutorMachineState(TypedDict, total=False):
 # ── Guard functions ───────────────────────────────────────────────────────────
 
 
-async def _can_intervene_distraction(session_id: str) -> bool:
-    """Guard: distraction intervention allowed only if:
-    - Currently in cooldown? → No
-    - Distraction count < max? → Yes
+async def _can_intervene_distraction(  # noqa: ANN401
+    session_id: str,
+    redis: Any,  # noqa: ANN401
+    settings: Any,  # noqa: ANN401
+) -> bool:
+    """Guard: atomically check-and-increment the distraction cap via Lua (D6).
+
+    Replaces the non-atomic EXISTS + GET two-step with a single redis.eval call.
+    Redis executes Lua scripts atomically in its single-threaded VM, so concurrent
+    requests cannot race between the read and the increment.
+
+    Returns True only when the Lua script returns 'ok' (meaning: not in cooldown,
+    not at cap, and the count was incremented as part of this atomic check).
+    Returns False (fail-closed) on any Redis error.
     """
-    from app.config import get_settings
-    from app.core.redis import get_redis
-
-    settings = get_settings()
-    redis = get_redis()
-
     cooldown_key = f"tutor_cooldown:{session_id}"
     count_key = f"tutor_distraction_count:{session_id}"
-
-    in_cooldown = await redis.exists(cooldown_key)
-    if in_cooldown:
+    try:
+        result = await redis.eval(
+            _DISTRACTION_GUARD_LUA,
+            2,
+            cooldown_key,
+            count_key,
+            str(settings.max_distraction_per_session),
+            str(_STATE_TTL),
+        )
+        return result in (b"ok", "ok")
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[tutor:%s] _can_intervene_distraction redis.eval failed — fail-closed", session_id
+        )
         return False
-
-    count_raw = await redis.get(count_key)
-    count = int(count_raw) if count_raw else 0
-    return count < settings.max_distraction_per_session
 
 
 async def _can_intervene_fatigue(session_id: str) -> bool:
@@ -176,17 +205,19 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     settings = get_settings()
     redis = get_redis()
 
-    # Record the intervention
-    if intervention_type == "distraction":
-        await redis.incr(f"tutor_distraction_count:{session_id}")
-        await redis.expire(f"tutor_distraction_count:{session_id}", _STATE_TTL)
+    # Record the intervention.
+    # Distraction: count was already incremented atomically by the Lua guard in
+    # _can_intervene_distraction (D6). No second INCR here — that would double-count.
+    if intervention_type == "fatigue":
+        # nx=True: atomic SET NX prevents a race where two concurrent fatigue signals
+        # both pass _can_intervene_fatigue (EXISTS check) before either has written the flag.
+        await redis.set(f"tutor_fatigue_fired:{session_id}", "1", ex=_STATE_TTL, nx=True)
 
-    elif intervention_type == "fatigue":
-        await redis.set(f"tutor_fatigue_fired:{session_id}", "1", ex=_STATE_TTL)
-
-    # Start cooldown window
+    # Start cooldown window.
+    # nx=True: prevent a concurrent intervention from resetting an already-running cooldown
+    # (last-writer-wins would shorten the window; NX keeps the first writer's TTL).
     cooldown_key = f"tutor_cooldown:{session_id}"
-    await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds)
+    await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds, nx=True)
 
     # Select the pre-generated intervention message for this type from the segment's
     # intervention_messages (supplied via the event payload). The DB/Redis LessonPackage fetch and
@@ -265,11 +296,10 @@ async def route_from_teaching(state: TutorMachineState) -> str:
     event = state.get("event", "")
 
     if event == "distraction_detected":
-        # Guard: cooldown and max-distraction check
-        if await _can_intervene_distraction(session_id):
-            return "intervening"
-        logger.debug("[tutor:%s] distraction_detected but guard blocked intervention", session_id)
-        return "teaching"  # Stay in TEACHING — cooldown or max reached
+        # Guard already enforced atomically in service.py via _can_intervene_distraction
+        # (Lua script checked cooldown + cap and incremented the count before dispatch).
+        # route_from_teaching is only reached when the guard passed.
+        return "intervening"
 
     if event == "fatigue_detected":
         if await _can_intervene_fatigue(session_id):
