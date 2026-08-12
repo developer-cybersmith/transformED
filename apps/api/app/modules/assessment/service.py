@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import HTTPException, status
 from supabase import Client
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.core.db import rows, single_row
 from app.core.posthog_client import capture_event
 from app.modules.assessment.onboarding_questions import (
@@ -709,6 +709,50 @@ async def compute_ces_from_session_aggregates(
     return round(statistics.mean(windows), 2)
 
 
+def _build_ces_breakdown(
+    *,
+    quiz_accuracy: float,
+    teachback_normalised: float | None,
+    behavioral_avg: float,
+    head_pose_avg: float,
+    blink_avg: float,
+    settings: Settings,
+) -> dict[str, float]:
+    """Compute the per-signal CES contribution breakdown (D2, S3-46).
+
+    Nominal path (teachback_normalised is not None): each signal multiplied by
+    its nominal weight × 100.
+
+    Redistributed path (teachback_normalised is None): the teachback weight is
+    spread proportionally across the four remaining signals using
+    ``remaining = 1.0 - ces_weight_teachback``.  Each other signal's effective
+    weight becomes ``nominal / remaining``.  If ``remaining <= 0`` an all-zeros
+    dict is returned to avoid divide-by-zero.
+
+    All values are rounded to 4 decimal places.
+    """
+    if teachback_normalised is not None:
+        return {
+            "quiz": round(quiz_accuracy * settings.ces_weight_quiz * 100, 4),
+            "teachback": round(teachback_normalised * settings.ces_weight_teachback * 100, 4),
+            "behavioral": round(behavioral_avg * settings.ces_weight_behavioral * 100, 4),
+            "head_pose": round(head_pose_avg * settings.ces_weight_head_pose * 100, 4),
+            "blink": round(blink_avg * settings.ces_weight_blink * 100, 4),
+        }
+
+    remaining = 1.0 - settings.ces_weight_teachback
+    if remaining <= 0.0:
+        return {"quiz": 0.0, "teachback": 0.0, "behavioral": 0.0, "head_pose": 0.0, "blink": 0.0}
+
+    return {
+        "quiz": round(quiz_accuracy * (settings.ces_weight_quiz / remaining) * 100, 4),
+        "teachback": 0.0,
+        "behavioral": round(behavioral_avg * (settings.ces_weight_behavioral / remaining) * 100, 4),
+        "head_pose": round(head_pose_avg * (settings.ces_weight_head_pose / remaining) * 100, 4),
+        "blink": round(blink_avg * (settings.ces_weight_blink / remaining) * 100, 4),
+    }
+
+
 async def get_session_report(
     *,
     session_id: str,
@@ -827,18 +871,17 @@ async def get_session_report(
     )
     interventions_count: int = events_resp.count or 0
 
-    # Step 5 — CES breakdown arithmetic
+    # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
-    quiz_contribution = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
-    teachback_contribution = round((avg_teachback / 100.0) * settings.ces_weight_teachback * 100, 4)
-    ces_breakdown: dict[str, float] = {
-        "quiz": quiz_contribution,
-        "teachback": teachback_contribution,
-        # Sprint 2: behavioral/head_pose/blink contributions deferred to Phase 3
-        "behavioral": 0.0,
-        "head_pose": 0.0,
-        "blink": 0.0,
-    }
+    teachback_normalised = (avg_teachback / 100.0) if teachback_count > 0 else None
+    ces_breakdown: dict[str, float] = _build_ces_breakdown(
+        quiz_accuracy=quiz_accuracy,
+        teachback_normalised=teachback_normalised,
+        behavioral_avg=0.0,  # S3-42 not yet implemented; 0.0 until Redis signal reads added
+        head_pose_avg=0.0,
+        blink_avg=0.0,
+        settings=settings,
+    )
 
     # Step 6 — Duration and completion timestamp from session timestamps
     raw_started = row.get("started_at")

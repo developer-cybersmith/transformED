@@ -207,6 +207,9 @@ def _mock_settings(monkeypatch) -> None:
     mock_settings = MagicMock()
     mock_settings.ces_weight_quiz = 0.35
     mock_settings.ces_weight_teachback = 0.25
+    mock_settings.ces_weight_behavioral = 0.20
+    mock_settings.ces_weight_head_pose = 0.12
+    mock_settings.ces_weight_blink = 0.08
     monkeypatch.setattr("app.modules.assessment.service.get_settings", lambda: mock_settings)
 
 
@@ -403,10 +406,11 @@ async def test_get_report_ces_breakdown_quiz_matches_formula(mock_to_thread):
     """AC 8: ces_breakdown["quiz"] = quiz_accuracy * ces_weight_quiz * 100."""
     from app.modules.assessment.service import get_session_report
 
-    # 2/3 accuracy = 0.6667, weight=0.35 → 0.6667 * 0.35 * 100 = 23.3333
+    # 2/3 accuracy, no teachback (tb_rows=[]) → redistributed weight: 0.35/0.75
+    # quiz = (2/3) * (0.35/0.75) * 100 = 31.1111
     supabase = _build_report_supabase(quiz_rows=_QUIZ_ROWS_2_CORRECT_1_WRONG)
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
-    expected = round((2 / 3) * 0.35 * 100, 4)
+    expected = round((2 / 3) * (0.35 / 0.75) * 100, 4)
     assert result.ces_breakdown["quiz"] == pytest.approx(expected, rel=1e-4)
 
 
@@ -689,6 +693,9 @@ def test_http_get_report_returns_200():
         mock_settings = MagicMock()
         mock_settings.ces_weight_quiz = 0.35
         mock_settings.ces_weight_teachback = 0.25
+        mock_settings.ces_weight_behavioral = 0.20
+        mock_settings.ces_weight_head_pose = 0.12
+        mock_settings.ces_weight_blink = 0.08
         mock_get_settings.return_value = mock_settings
 
         mock_get_supabase.return_value = _build_report_supabase(
