@@ -362,7 +362,7 @@ after each `ltrim` call in `tutor/service.py`, matching the `ces_history` patter
 
 ## D65 — Entire distraction trigger path (Scenarios 8, 10, 11, 12, 18) has zero unit test coverage
 
-**Status:** OPEN · **Owner:** Dev 4 · **Detected:** 2026-08-12 (Sprint 3 CES v2 audit)
+**Status:** PARTIALLY FIXED (S3-52) · **Owner:** Dev 4 · **Detected:** 2026-08-12 (Sprint 3 CES v2 audit)
 
 The distraction trigger (`tutor/service.py:344–411`) — 2 consecutive low-CES windows →
 `dispatch_event("distraction_detected")` — has no unit test in the CES v2 test suite. The
@@ -370,10 +370,16 @@ Lua atomic guard (`_can_intervene_distraction`), cooldown check, distraction cap
 gap/stale-history check are all live code with zero test coverage. The same applies to the
 "distraction blocks fatigue in same window" scenario (Scenario 12 in the coverage matrix).
 
-**Fix:** Write a test file `tests/test_distraction_trigger.py` covering the 5 missing
-distraction scenarios. These must be committed to the branch.
+**S3-52 fix (2026-08-12):** Added `tests/test_s3_52_ces_production_hardening.py` covering:
+- D4 timestamp gap-check non-dispatch path (stale entries > 2×cadence → no dispatch)
+- dispatch_event.assert_not_called() for QUIZZING and INTERVENING states with low CES
+- per-signal lpush not called in QUIZZING state
 
-**Enforcement:** DISCIPLINE (test file is absent, not a failing test).
+**Remaining gap (Dev 4):** The positive distraction trigger path (TEACHING + 2 consecutive
+low-CES + gap_ok → `_can_intervene_distraction` → dispatch) still has no unit test.
+Write `tests/test_distraction_trigger.py` covering that positive path and the Lua guard behavior.
+
+**Enforcement:** DISCIPLINE (remaining test file is absent, not a failing test).
 
 ---
 

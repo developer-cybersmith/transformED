@@ -156,22 +156,42 @@ async def _can_intervene_distraction(  # noqa: ANN401
         return False
 
 
-async def _can_intervene_fatigue(session_id: str) -> bool:
-    """Atomic once-per-session gate for fatigue — SET-NX wins the race.
+async def _can_intervene_fatigue(session_id: str, redis: Any = None) -> bool:
+    """Gate for fatigue — checks cooldown THEN sets the once-per-session flag atomically.
 
-    Returns True only for the caller that atomically sets the flag.  Concurrent
-    callers (two attention signals arriving within the same 5-second window) both
-    check here; only the one whose SET-NX succeeds returns True.  This mirrors the
-    Lua-script pattern used by ``_can_intervene_distraction`` (D6).
+    PRD §10: a 2-minute cooldown applies after ANY intervention (distraction or fatigue).
+    This function checks ``tutor_cooldown:{session_id}`` FIRST (fast-fail) before
+    attempting SET-NX on ``tutor_fatigue_fired:{session_id}``, so fatigue cannot fire
+    within the 2-minute window of a preceding distraction intervention.
+
+    Sequence:
+      1. EXISTS tutor_cooldown:{session_id}  → if True, return False (cooldown active)
+      2. SET NX tutor_fatigue_fired:{session_id}  → returns True only for the winning caller
 
     NOTE: callers MUST NOT separately write ``tutor_fatigue_fired:{session_id}``
     after this returns True — the flag is already set here.
-    """
-    from app.core.redis import get_redis
 
-    redis = get_redis()
+    The EXISTS → SET-NX pair is NOT fully atomic (two Redis round-trips).  In the
+    extremely narrow race window where a concurrent intervening_node sets the cooldown
+    key between step 1 and step 2, fatigue and a new intervention could both start.
+    This is accepted and documented in S3-52 Scale & Load §6: the window is < 1 ms,
+    fatigue fires once per session anyway (SET-NX is atomic), and intervening_node
+    immediately starts a new cooldown TTL.  If this race is unacceptable in future,
+    replace with a single Lua script (EXISTS + SET NX in one eval call).
+    """
+    if redis is None:
+        from app.core.redis import get_redis  # noqa: PLC0415
+
+        redis = get_redis()
+
+    cooldown_key = f"tutor_cooldown:{session_id}"
     fatigue_key = f"tutor_fatigue_fired:{session_id}"
-    # SET NX: returns the set value on success, None if key already existed.
+
+    # Step 1: PRD §10 cooldown check — fast-fail if any intervention is still in window.
+    if await redis.exists(cooldown_key):
+        return False
+
+    # Step 2: once-per-session atomic gate — only one concurrent caller can win.
     was_set = await redis.set(fatigue_key, "1", ex=_STATE_TTL, nx=True)
     return was_set is not None
 
