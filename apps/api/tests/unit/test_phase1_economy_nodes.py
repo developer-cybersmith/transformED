@@ -1257,6 +1257,79 @@ class TestAC6NarrationGenerator:
         assert result["narration_scripts"] == []
 
 
+# ── Story 3-39: _get_section_body truncation surfaced, not just logged ──────
+
+
+class TestSectionTruncationSurfaced:
+    """Story 3-39: `_get_section_body` previously only did a `logger.warning`
+    when a section body exceeded `settings.section_body_max_chars` — nothing
+    was persisted or surfaced to any caller/admin record/final lesson package.
+    This is CLAUDE.md's own headline example of the banned "silent
+    truncation" pattern. Every one of the 6 Phase 1 economy nodes must now
+    surface the signal in its OWN `section_truncations` return (a fan-out-
+    safe `Annotated[list, operator.add]` channel), not just log it.
+
+    Uses `summarise_segment_node` as the representative case (simplest of
+    the 6 to set up) — all 6 call `_get_section_body` and route its result
+    through `_section_truncation_entries` identically, so this exercises the
+    shared mechanism, not node-specific logic.
+    """
+
+    @pytest.mark.asyncio
+    async def test_body_over_cap_is_surfaced_in_section_truncations(self) -> None:
+        from app.config import get_settings
+        from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
+
+        cap = get_settings().section_body_max_chars
+        oversized_section = {
+            "title": "Oversized Section",
+            "body": "x" * (cap + 500),
+            "page_start": 1,
+            "page_end": 3,
+        }
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = type(
+            "Summary", (), {"summary": "A short summary under the word cap."}
+        )()
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=oversized_section, _section_index=0)
+            result = await summarise_segment_node(state)
+
+        section_id = _derive_section_id(oversized_section, 0)
+        # Pre-fix, this key does not exist at all — nothing captures the
+        # truncation signal beyond a logger.warning nobody reads.
+        truncations = result["section_truncations"]
+        assert truncations == [
+            {
+                "section_id": section_id,
+                "node": "summarise_segment",
+                "original_chars": cap + 500,
+                "capped_chars": cap,
+            }
+        ], f"expected exactly one truncation entry for the oversized section, got {truncations!r}"
+
+    @pytest.mark.asyncio
+    async def test_body_under_cap_produces_empty_section_truncations(self) -> None:
+        """A section body under the cap must still return the key, as an
+        EMPTY list — not a missing key — matching this codebase's existing
+        always-present-possibly-empty convention (e.g.
+        `package_builder_degraded`'s `segment_ids`).
+        """
+        from app.modules.content.pipeline.graph import summarise_segment_node
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = type(
+            "Summary", (), {"summary": "A short summary under the word cap."}
+        )()
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await summarise_segment_node(state)
+
+        assert result["section_truncations"] == []
+
+
 # ── AC-7: cost ceiling wiring ────────────────────────────────────────────────
 
 

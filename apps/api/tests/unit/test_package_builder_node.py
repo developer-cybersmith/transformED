@@ -934,6 +934,55 @@ async def test_degraded_segments_recorded_in_node_outputs_for_admin() -> None:
     assert rec["total_segments"] == 2
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_section_truncations_written_verbatim_to_node_outputs() -> None:
+    """Story 3-39 AC-7 (Round 2 finding — the original diff's tests only
+    asserted on a single node's in-memory return, never on the actual
+    lesson_jobs.node_outputs write this AC is about). package_builder_node
+    must write state["section_truncations"] into the SAME admin-visibility
+    lesson_jobs.update(...) call as package_builder_degraded, verbatim and
+    always present (empty list when nothing truncated — asserted in the
+    second half of this test, not just the non-empty case)."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    truncations = [
+        {
+            "section_id": "sec_0",
+            "node": "summarise_segment",
+            "original_chars": 9000,
+            "capped_chars": 6000,
+        }
+    ]
+    sb, jobs_table, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        await package_builder_node(_base_state(section_truncations=truncations))
+
+    rec = None
+    for call in jobs_table.update.call_args_list:
+        payload = call[0][0]
+        if "section_truncations" in payload.get("node_outputs", {}):
+            rec = payload["node_outputs"]["section_truncations"]
+    assert rec is not None, "section_truncations must be recorded for admin visibility"
+    assert rec == truncations
+
+    # Always present, never a missing key, even when nothing was truncated.
+    sb2, jobs_table2, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb2):
+        await package_builder_node(_base_state(section_truncations=[]))
+
+    rec_empty: list[Any] | None = None
+    found_key = False
+    for call in jobs_table2.update.call_args_list:
+        payload = call[0][0]
+        node_outputs = payload.get("node_outputs", {})
+        if "section_truncations" in node_outputs:
+            found_key = True
+            rec_empty = node_outputs["section_truncations"]
+    assert found_key, "section_truncations key must be present even when empty"
+    assert rec_empty == []
+
+
 # ── Story 2-31: narration-script recovery + malformed-entry hardening ─────────
 
 

@@ -413,6 +413,23 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Section body cap for Phase 1 LLM calls (Story 3-39) ───────────────────
+    section_body_max_chars: int = Field(
+        default=6000,
+        gt=0,
+        description=(
+            "Max chars of a section's body sent to each Phase 1 economy-node LLM "
+            "call (_get_section_body). Was a hardcoded function-default before "
+            "Story 3-39 — moved to Settings so re-tuning doesn't require editing "
+            "all 6 call sites. NOTE (Scale & Load, unrevisited-inherited per "
+            "SCALE-CONTRACT Q5): the 6000 VALUE itself predates book-scale "
+            "generation and is out of this story's scope to re-derive; Story "
+            "3-39 only made truncation past this cap an explicit, persisted, "
+            "surfaced degradation (section_truncations) instead of a "
+            "logger.warning nobody reads."
+        ),
+    )
+
     # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
     lesson_planner_batch_size: int = Field(
         default=15,
