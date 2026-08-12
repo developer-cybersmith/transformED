@@ -28,8 +28,10 @@ import logging
 from typing import Any
 
 import httpx
+from langfuse import Langfuse
 
 from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
+from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace
 from app.core.retry import SanitizedHTTPError, with_retry
 from app.providers.base import ImageProvider
 
@@ -54,6 +56,15 @@ class ImagenProvider(ImageProvider):
         settings = get_settings()
         self._api_key = settings.google_api_key
         self._lesson_id = lesson_id
+        self._langfuse: Langfuse | None
+        try:
+            self._langfuse = get_langfuse()
+        except Exception:
+            logger.warning(
+                "Langfuse init failed — tracing disabled for ImagenProvider",
+                exc_info=True,
+            )
+            self._langfuse = None
 
     async def generate(
         self,
@@ -90,61 +101,114 @@ class ImagenProvider(ImageProvider):
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
-        # Built inside the `except` below, raised AFTER it — see the long note
-        # there. `sanitized` is the whole reason this control flow looks odd.
-        sanitized: SanitizedHTTPError | None = None
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.post(
-                    f"{_IMAGEN_URL}?key={self._api_key}",
-                    json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
+        # Langfuse: started BEFORE the request so a failure is traced too.
+        # CRITICAL — this provider's whole design exists to keep the API key
+        # (embedded in the request URL, see class docstring) out of any log or
+        # trace. `generation.update(..., status_message=...)` below ONLY ever
+        # sees `str(exc)` on the SANITIZED SanitizedHTTPError this function
+        # already raises — never the raw httpx exception, never `exc_info`.
+        # Do not change that without re-reading the docstring above.
+        generation = None
+        langfuse = self._langfuse
+        if langfuse is not None:
+            generation = safe_trace(
+                lambda: langfuse.start_observation(
+                    # Same name as openai_image.py's primary observation
+                    # (verb-first, provider-agnostic per Langfuse naming
+                    # guidance) — `model="imagen-4-fast"` vs
+                    # `"gpt-image-1-mini"` distinguishes primary vs fallback.
+                    name="generate-image",
+                    as_type="generation",
+                    model="imagen-4-fast",
+                    input=prompt,
+                    metadata={"size": size, "lesson_id": self._lesson_id},
+                    trace_context=deterministic_trace_context(langfuse, self._lesson_id),
                 )
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                # Redact the key before this exception (or anything that wraps
-                # it) can be logged with exc_info=True anywhere upstream —
-                # httpx's own exception message/repr embeds the full request
-                # URL, key included.
-                #
-                # Story 2-32 AC-5: SanitizedHTTPError, not a bare RuntimeError.
-                # Carrying the status code lets with_retry apply the PRD §14
-                # rules to a REDACTED error — previously every failure here,
-                # including a retryable 429/503, was unclassifiable and
-                # therefore fatal, which made this provider's @with_retry
-                # decorative. The status code is metadata, not the URL.
-                #
-                # httpx.HTTPError also covers TimeoutException/NetworkError,
-                # which have no `.response` and therefore no status. Those are
-                # transport failures — the MOST common transient failure of an
-                # outbound call — so they are flagged retryable explicitly
-                # rather than falling into the status-less "cannot classify,
-                # do not retry" branch (2026-07-29 review finding).
-                status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                sanitized = SanitizedHTTPError(
-                    f"Imagen 4 Fast request failed: {type(exc).__name__} "
-                    f"(status={status_code if status_code is not None else 'n/a'})",
-                    status_code=status_code,
-                    network_error=isinstance(exc, httpx.TimeoutException | httpx.NetworkError),
+            )
+
+        try:
+            # Built inside the `except` below, raised AFTER it — see the long
+            # note there. `sanitized` is the whole reason this control flow
+            # looks odd.
+            sanitized: SanitizedHTTPError | None = None
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                try:
+                    response = await client.post(
+                        f"{_IMAGEN_URL}?key={self._api_key}",
+                        json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
+                    )
+                    response.raise_for_status()
+                except httpx.HTTPError as exc:
+                    # Redact the key before this exception (or anything that
+                    # wraps it) can be logged with exc_info=True anywhere
+                    # upstream — httpx's own exception message/repr embeds the
+                    # full request URL, key included.
+                    #
+                    # Story 2-32 AC-5: SanitizedHTTPError, not a bare
+                    # RuntimeError. Carrying the status code lets with_retry
+                    # apply the PRD §14 rules to a REDACTED error — previously
+                    # every failure here, including a retryable 429/503, was
+                    # unclassifiable and therefore fatal, which made this
+                    # provider's @with_retry decorative. The status code is
+                    # metadata, not the URL.
+                    #
+                    # httpx.HTTPError also covers TimeoutException/NetworkError,
+                    # which have no `.response` and therefore no status. Those
+                    # are transport failures — the MOST common transient
+                    # failure of an outbound call — so they are flagged
+                    # retryable explicitly rather than falling into the
+                    # status-less "cannot classify, do not retry" branch
+                    # (2026-07-29 review finding).
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    sanitized = SanitizedHTTPError(
+                        f"Imagen 4 Fast request failed: {type(exc).__name__} "
+                        f"(status={status_code if status_code is not None else 'n/a'})",
+                        status_code=status_code,
+                        network_error=isinstance(exc, httpx.TimeoutException | httpx.NetworkError),
+                    )
+
+                # RAISED OUTSIDE THE `except` BLOCK, DELIBERATELY. `raise ...
+                # from None` inside it would set __cause__ = None and
+                # __suppress_context__ = True, but the raise statement STILL
+                # binds __context__ to the httpx exception — whose
+                # str()/repr() embed the key-bearing URL. Assigning
+                # __context__ = None before the raise does not help; the
+                # raise re-binds it. Only raising when no exception is active
+                # leaves __context__ genuinely None.
+                # Guarded by test_sanitized_error_does_not_retain_the_original_via_context.
+                if sanitized is not None:
+                    raise sanitized
+
+                body: dict[str, Any] = response.json()
+
+            predictions = body.get("predictions") or []
+            if not predictions or not predictions[0].get("bytesBase64Encoded"):
+                raise ValueError("Imagen 4 Fast returned an empty response (no predictions)")
+
+            b64_data = predictions[0]["bytesBase64Encoded"]
+
+            if generation is not None:
+                safe_trace(
+                    lambda: generation.update(
+                        output="1 image generated",
+                        usage_details={"images": 1},
+                        cost_details={"input": COST_PER_IMAGE},
+                    )
                 )
 
-            # RAISED OUTSIDE THE `except` BLOCK, DELIBERATELY. `raise ... from
-            # None` inside it would set __cause__ = None and
-            # __suppress_context__ = True, but the raise statement STILL binds
-            # __context__ to the httpx exception — whose str()/repr() embed the
-            # key-bearing URL. Assigning __context__ = None before the raise
-            # does not help; the raise re-binds it. Only raising when no
-            # exception is active leaves __context__ genuinely None.
-            # Guarded by test_sanitized_error_does_not_retain_the_original_via_context.
-            if sanitized is not None:
-                raise sanitized
+            return f"data:image/png;base64,{b64_data}"
 
-            body: dict[str, Any] = response.json()
+        except Exception as exc:
+            # `str(exc)` here is safe: by this point the only exceptions that
+            # can reach this frame are SanitizedHTTPError (already redacted),
+            # CircuitOpenError, or ValueError — never the raw httpx exception,
+            # which is fully consumed inside the except block above.
+            if generation is not None:
+                error_message = str(exc)
+                safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
+            raise
 
-        predictions = body.get("predictions") or []
-        if not predictions or not predictions[0].get("bytesBase64Encoded"):
-            raise ValueError("Imagen 4 Fast returned an empty response (no predictions)")
-
-        b64_data = predictions[0]["bytesBase64Encoded"]
-
-        return f"data:image/png;base64,{b64_data}"
+        finally:
+            if generation is not None:
+                safe_trace(generation.end)

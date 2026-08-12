@@ -3519,13 +3519,6 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     return {"narration_scripts": [result], "section_truncations": section_truncations}
 
 
-# Rough per-character cost estimates — neither vendor's exact billing API is
-# reachable from this environment to verify against; conservative flat
-# per-character rates, documented here so a future story can replace them
-# with real invoiced numbers once available (Story 2-8 Dev Notes).
-_SARVAM_COST_PER_CHAR = 0.00002
-_AZURE_TTS_COST_PER_CHAR = 0.000016
-
 # 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
 # Supabase Storage path (f"{lesson_id}/{segment_id}.mp3") — restrict it to
 # safe path-component characters so a malformed/adversarial segment_id can
@@ -3546,12 +3539,15 @@ async def _synthesize_with_fallback(
     None for the browser-fallback case (no server-side audio produced).
     """
     from app.config import get_settings
+    from app.providers.tts.sarvam import COST_PER_CHAR as _SARVAM_COST_PER_CHAR
     from app.providers.tts.sarvam import SarvamTTSProvider
 
     settings = get_settings()
 
     try:
-        audio_bytes, _ = await SarvamTTSProvider().synthesize(text, settings.sarvam_voice_id)
+        audio_bytes, _ = await SarvamTTSProvider(lesson_id).synthesize(
+            text, settings.sarvam_voice_id
+        )
         # 2026-07-15 review finding (Edge Case Hunter): `is not None` alone
         # accepted an empty/falsy-but-present return as a full success —
         # check truthiness so an empty/malformed body falls through instead.
@@ -3570,10 +3566,13 @@ async def _synthesize_with_fallback(
             exc_info=True,
         )
 
+    from app.providers.tts.azure import COST_PER_CHAR as _AZURE_TTS_COST_PER_CHAR
     from app.providers.tts.azure import AzureTTSProvider
 
     try:
-        audio_bytes, _ = await AzureTTSProvider().synthesize(text, settings.azure_tts_voice)
+        audio_bytes, _ = await AzureTTSProvider(lesson_id).synthesize(
+            text, settings.azure_tts_voice
+        )
         if audio_bytes:
             return audio_bytes, "azure", len(text) * _AZURE_TTS_COST_PER_CHAR
         logger.warning(
@@ -4665,12 +4664,46 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 
     def _group_by_segment_id(
         items: list[dict[str, Any]], *, label: str
-    ) -> dict[str, list[dict[str, Any]]]:
+    ) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
         """Same defensive-skip philosophy as `_index_by_segment_id`, but for
         the one-to-many groupings (slides/quiz/jargon can have multiple
-        entries per segment_id)."""
+        entries per segment_id).
+
+        D32: this docstring's claim was false until this fix — a non-dict
+        item, or an item missing/mis-typed "data", raised AttributeError/
+        KeyError/TypeError (each independently reproduced pre-fix — the
+        TypeError specifically at the `{**slide, "image_url": ...}` spread
+        further down this node, not inside this helper) and crashed
+        package_builder_node after 100% of the lesson's spend (site 2 of the
+        defect Story 2-31 closed at `_index_by_segment_id`, site 1 — binding
+        rule 6: wrong at site 2 means the pattern, not the instance, needed
+        fixing).
+
+        Returns `(grouped, fully_dropped_segment_ids)`. The second element —
+        found by this fix's own review round (Scale & Load Hunter + Edge
+        Case Hunter, independently) — is the set of segment_ids that had at
+        least one raw entry attributed to them but ended with zero
+        survivors after defensive filtering. Collapsing that case into
+        "this segment never had any entries" is itself a silent-wrong-result
+        risk: a segment whose quiz/jargon were all malformed is
+        indistinguishable from one that legitimately has none (neither
+        `Segment.quiz` nor `Segment.jargon` requires `min_length`), and for
+        slides specifically it silently drops the WHOLE segment via the
+        pre-existing zero-slides path below with no signal beyond a log
+        line. Callers use this set to feed the `degraded`/dropped-segment
+        aggregates so the loss is admin-visible, not just logged."""
         result: dict[str, list[dict[str, Any]]] = {}
+        attempted: set[str] = set()
         for item in items:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "[%s] package_builder_node: malformed %s entry is %s, not a dict — skipped: %r",
+                    lesson_id,
+                    label,
+                    type(item).__name__,
+                    item,
+                )
+                continue
             segment_id = item.get("segment_id")
             if segment_id is None:
                 logger.warning(
@@ -4681,12 +4714,32 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                     item,
                 )
                 continue
-            result.setdefault(segment_id, []).append(item["data"])
-        return result
+            attempted.add(segment_id)
+            data = item.get("data")
+            if not isinstance(data, dict):
+                logger.warning(
+                    "[%s] package_builder_node: %s entry for %r has a "
+                    "non-dict or missing 'data' value (%s) — skipped: %r",
+                    lesson_id,
+                    label,
+                    segment_id,
+                    type(data).__name__,
+                    item,
+                )
+                continue
+            result.setdefault(segment_id, []).append(data)
+        fully_dropped = attempted - result.keys()
+        return result, fully_dropped
 
-    slides_by_segment = _group_by_segment_id(state.get("slides", []), label="slides")
-    quiz_by_segment = _group_by_segment_id(state.get("quiz_questions", []), label="quiz_questions")
-    jargon_by_segment = _group_by_segment_id(state.get("glossary", []), label="glossary")
+    slides_by_segment, slides_fully_dropped = _group_by_segment_id(
+        state.get("slides", []), label="slides"
+    )
+    quiz_by_segment, quiz_fully_dropped = _group_by_segment_id(
+        state.get("quiz_questions", []), label="quiz_questions"
+    )
+    jargon_by_segment, jargon_fully_dropped = _group_by_segment_id(
+        state.get("glossary", []), label="glossary"
+    )
 
     # slide_images is a FLAT list with no segment_id at all (Story 2-9's
     # deliberate design) — correlate purely by slide_id.
@@ -4730,6 +4783,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     seen_terms: set[str] = set()
     glossary_out: list[dict[str, Any]] = []
     degraded_segment_ids: list[str] = []  # Story 2-21: aggregate degradation signal
+    # D32 review round: a segment dropped here because its slides existed but
+    # were ALL malformed is otherwise indistinguishable from one that simply
+    # never had slides — tracked separately so admin visibility can tell
+    # "upstream never produced this" from "upstream produced it and it was
+    # bad", the two having very different root causes to chase.
+    dropped_due_to_malformed_slides: list[str] = []
 
     for index, plan_seg in enumerate(plan_segments):
         segment_id = plan_seg.get("segment_id")
@@ -4753,12 +4812,25 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # segment WITH slides is never dropped for a missing economy output;
         # backfill neutral, schema-valid defaults so its succeeded parts survive.
         if not slides_data:
-            logger.warning(
-                "[%s] package_builder_node: segment %s has no slides — skipping "
-                "(a segment needs >=1 slide to render)",
-                lesson_id,
-                segment_id,
-            )
+            if segment_id in slides_fully_dropped:
+                # D32 review round: distinct root cause from "never had
+                # slides" — upstream produced slide(s) for this segment and
+                # every one of them failed the defensive checks above.
+                dropped_due_to_malformed_slides.append(segment_id)
+                logger.warning(
+                    "[%s] package_builder_node: segment %s had slide entries but "
+                    "ALL were malformed — skipping (a segment needs >=1 valid "
+                    "slide to render)",
+                    lesson_id,
+                    segment_id,
+                )
+            else:
+                logger.warning(
+                    "[%s] package_builder_node: segment %s has no slides — skipping "
+                    "(a segment needs >=1 slide to render)",
+                    lesson_id,
+                    segment_id,
+                )
             continue
 
         degraded: list[str] = []
@@ -4813,6 +4885,15 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         if interventions is None:
             interventions = _default_interventions()
             degraded.append("interventions")
+        # D32 review round: a segment that HAD quiz/jargon entries upstream
+        # but lost all of them to defensive filtering is degraded the same
+        # way a segment missing complexity/narration/interventions is — the
+        # content is thinner than what was actually produced, and that must
+        # be as visible as every other degrade path here, not just logged.
+        if segment_id in quiz_fully_dropped:
+            degraded.append("quiz")
+        if segment_id in jargon_fully_dropped:
+            degraded.append("jargon")
         if degraded:
             degraded_segment_ids.append(segment_id)
             logger.warning(
@@ -4911,6 +4992,21 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             degraded_segment_ids,
         )
 
+    if dropped_due_to_malformed_slides:
+        # D32 review round (Scale & Load Hunter): this is the case that made
+        # a crash silently wrong instead of just gone — a segment planned at
+        # `lesson_plan["segments"]` never reaches `segments_out` at all, so
+        # without this line the ONLY trace is a per-segment log message.
+        logger.warning(
+            "[%s] package_builder_node: %d planned segment(s) dropped entirely "
+            "because every slide entry for them was malformed (not because "
+            "upstream never produced any): %s — total_segments below reflects "
+            "the real shipped count, not the plan",
+            lesson_id,
+            len(dropped_due_to_malformed_slides),
+            dropped_due_to_malformed_slides,
+        )
+
     assembled: dict[str, Any] = {
         "lesson_id": lesson_id,
         "book_id": book_id,
@@ -4919,7 +5015,23 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         "metadata": {
             "title": lesson_plan.get("title", ""),
             "subject": lesson_plan.get("subject", ""),
-            "total_segments": lesson_plan.get("total_segments", len(segments_out)),
+            # D32 review round (Scale & Load Hunter — CONFIRMED, the most
+            # severe finding of that pass): this used to be
+            # `lesson_plan.get("total_segments", len(segments_out))`, and
+            # `lesson_plan` almost always HAS that key (set at planning
+            # time, Phase 2, before any segment can be dropped in Phase 3),
+            # so the `len(segments_out)` fallback essentially never fired.
+            # Any segment dropped after planning — for pre-existing reasons
+            # (genuinely no slides) or the new one this story makes reachable
+            # (slides existed but were all malformed) — left the
+            # STUDENT-FACING metadata claiming more segments than the
+            # package actually shipped, while the admin-only
+            # `package_builder_degraded.total_segments` two writes below
+            # already computed the real count correctly. Same failure shape
+            # as the book-scale 4%-of-the-book defect this project's Scale
+            # Contract exists because of, at segment granularity instead of
+            # book granularity. Always trust the real, just-built count.
+            "total_segments": len(segments_out),
             "estimated_duration_mins": lesson_plan.get("total_duration_min", 0),
             "complexity_level": lesson_plan.get("complexity_level", "medium"),
             # S2-LM1/S2-LM3: tier flows through PipelineState (set at
@@ -4968,8 +5080,14 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 **node_outputs,
                 "package_builder": lesson_package,
                 # Admin-visible degradation record (Story 2-21). Empty list = none.
+                # D32 review round: `dropped_segment_ids` (segments planned
+                # but never shipped, because every slide entry for them was
+                # malformed) added alongside `segment_ids` (segments shipped
+                # but with backfilled defaults) -- distinct failure shapes,
+                # both real content loss, neither visible before this fix.
                 "package_builder_degraded": {
                     "segment_ids": degraded_segment_ids,
+                    "dropped_segment_ids": dropped_due_to_malformed_slides,
                     "total_segments": len(segments_out),
                 },
                 # Story 3-39: admin-visible record of every section whose body
