@@ -60,12 +60,50 @@ export function processTimeUpdate(ms: number): void {
   }
 }
 
+/**
+ * Bug fix: moves currentSlideId to whatever slide covers `ms`, independent
+ * of playback status. A deliberate seek (the progress bar is usable while
+ * PAUSED/IDLE too, per PlayerControls' canSeek) must move the visible slide
+ * immediately -- processTimeUpdate's own per-tick sync is deliberately
+ * gated on status === 'PLAYING' (so a paused lesson doesn't drift), which
+ * previously meant a paused seek updated audioPositionMs optimistically
+ * (player.machine.ts's requestSeek) but left the slide showing the pre-seek
+ * position until the student resumed playback and a native 'timeupdate'
+ * event eventually caught up. Never touches audioPositionMs/quiz state --
+ * purely a visual slide sync. Exported for unit testing.
+ */
+export function syncSlideToPosition(ms: number): void {
+  const { lesson, currentSegmentIndex, currentSlideId, setCurrentSlide } = usePlayerStore.getState();
+  if (!lesson) return;
+  const segment = lesson.segments[currentSegmentIndex];
+  if (!segment) return;
+  const { timestamps } = segment.narration;
+  if (timestamps.length === 0) return;
+  const idx = binarySearchTimestamps(timestamps, ms);
+  const targetSlideId = timestamps[idx].slide_id;
+  if (targetSlideId !== currentSlideId) {
+    setCurrentSlide(targetSlideId);
+  }
+}
+
 export function AudioTimeline() {
   const audioRef = useRef<HTMLAudioElement>(null);
   // Tracks which segment_id the current/last SpeechSynthesis utterance was
   // started for, so a status-only re-render (PAUSED -> PLAYING) resumes
   // instead of restarting narration from the beginning (S2-34 AC-5, AC-8).
   const spokenSegmentIdRef = useRef<string | null>(null);
+  // Bug fix: the Web Speech API has no way to seek an in-progress utterance
+  // to an arbitrary position -- unlike a real <audio> element, there's no
+  // per-word/per-character timing to jump to. Without this, a seek moved the
+  // slide/time (via processTimeUpdate/syncSlideToPosition) but the SPOKEN
+  // narration just kept going from wherever it already was, completely
+  // disconnected from what the student now sees. Bumped on every seek while
+  // hasScript is true; the SpeechSynthesis effect below treats a nonce
+  // change the same as a segment change (cancel + restart), which is the
+  // best available approximation without word-level alignment data -- it
+  // restarts from the beginning of the script rather than leaving stale,
+  // desynced narration playing indefinitely.
+  const [speechResyncNonce, setSpeechResyncNonce] = useState(0);
 
   // Story 2-45: a successful automatic per-asset re-sign overrides the
   // store's (expired) audio_url for exactly the segment it was resolved
@@ -287,13 +325,20 @@ export function AudioTimeline() {
       return;
     }
 
-    // A new segment (or first entry into virtual-clock mode for it) -- stop
-    // whatever was playing/paused before, unconditional on status. AC-6
-    // requires cancel() on segment change regardless of PLAYING/PAUSED/QUIZ
-    // etc.; previously this only happened lazily on the next PLAYING
-    // transition, leaving a stale segment's utterance merely paused
-    // indefinitely if the segment changed while not PLAYING (review fix).
-    if (spokenSegmentIdRef.current !== segment.segment_id) {
+    // Bug fix: includes speechResyncNonce so a seek (which bumps the nonce
+    // without changing segment_id) is treated the same as a new segment --
+    // otherwise this comparison would never notice a seek at all, and the
+    // narration would just keep speaking from wherever it already was.
+    const speechKey = `${segment.segment_id}:${speechResyncNonce}`;
+
+    // A new segment (or first entry into virtual-clock mode for it, or a
+    // seek) -- stop whatever was playing/paused before, unconditional on
+    // status. AC-6 requires cancel() on segment change regardless of
+    // PLAYING/PAUSED/QUIZ etc.; previously this only happened lazily on the
+    // next PLAYING transition, leaving a stale segment's utterance merely
+    // paused indefinitely if the segment changed while not PLAYING (review
+    // fix).
+    if (spokenSegmentIdRef.current !== speechKey) {
       synth.cancel();
       spokenSegmentIdRef.current = null;
     }
@@ -312,7 +357,7 @@ export function AudioTimeline() {
       return;
     }
 
-    if (spokenSegmentIdRef.current === segment.segment_id) {
+    if (spokenSegmentIdRef.current === speechKey) {
       synth.resume();
       return;
     }
@@ -322,7 +367,6 @@ export function AudioTimeline() {
     // (notably Chrome) that can silently drop the new utterance (review
     // fix). Cleanup clears the pending call if the effect re-runs (e.g. a
     // rapid subsequent segment change) or unmounts before it fires.
-    const segmentId = segment.segment_id;
     const script = segment.narration.script;
     const rate = usePlayerStore.getState().playbackRate;
     const timeoutId = window.setTimeout(() => {
@@ -336,15 +380,16 @@ export function AudioTimeline() {
       // as an error or affect the lesson (review fix).
       utterance.onerror = () => {};
       synth.speak(utterance);
-      spokenSegmentIdRef.current = segmentId;
+      spokenSegmentIdRef.current = speechKey;
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
     // segment_id (not the whole segment object) is the intended dependency
     // per AC-8 -- re-running only when the segment actually changes, not on
-    // a re-render that happens to recreate the segment object.
+    // a re-render that happens to recreate the segment object. speechResyncNonce
+    // added for the seek bug fix above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segment?.segment_id, hasAudio, hasScript, status]);
+  }, [segment?.segment_id, hasAudio, hasScript, status, speechResyncNonce]);
 
   // Stop any in-progress/paused utterance on unmount (S2-34 AC-7). Also
   // resets spokenSegmentIdRef -- without this, a React StrictMode dev
@@ -365,6 +410,10 @@ export function AudioTimeline() {
   // by applying it directly via processTimeUpdate instead (S2-33 AC-5).
   useEffect(() => {
     if (seekRequestMs === null) return;
+    // Bug fix: sync the slide immediately, regardless of status -- see
+    // syncSlideToPosition's own doc comment for why processTimeUpdate alone
+    // (below, or via the next native 'timeupdate' event) isn't enough.
+    syncSlideToPosition(seekRequestMs);
     if (hasAudio) {
       const audio = audioRef.current;
       if (audio) {
@@ -372,6 +421,16 @@ export function AudioTimeline() {
       }
     } else if (hasScript) {
       processTimeUpdate(seekRequestMs);
+      // Bug fix: the Web Speech API can't be seeked to an arbitrary position
+      // (see speechResyncNonce's own doc comment) -- bump the nonce so the
+      // SpeechSynthesis effect below restarts the utterance instead of
+      // leaving it speaking on, completely disconnected from the new
+      // slide/time position. Deliberately synchronous -- this responds to a
+      // seek EVENT (seekRequestMs changing), not a per-render loop; same
+      // justification as this file's other eslint-disabled setState-in-effect
+      // calls.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSpeechResyncNonce((n) => n + 1);
     }
     usePlayerStore.getState().clearSeekRequest();
   }, [seekRequestMs, hasAudio, hasScript]);
