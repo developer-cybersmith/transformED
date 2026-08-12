@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-12 (S3-48 DONE — Lua atomic distraction cap, D6 implemented)
+**Last updated:** 2026-08-12 (S3-46 DONE — D2 ces_breakdown redistribution when teachback=None)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -17,11 +17,11 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 10 | 10 | 0 | 0 |
+| Sprint 3 | Weeks 6–7 | 12 | 12 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **49** | **40** | **0** | **9** |
+| **Total** | | **51** | **42** | **0** | **9** |
 
 Update this table each time a task is checked off below.
 
@@ -741,6 +741,20 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `service.py`: Replaced `redis.exists(cooldown_key)` + `not in_cooldown` condition with `_can_intervene_distraction(session_id, redis, settings)` Lua call; import is lazy inside condition block
   - 18 unit tests, all GREEN; 8 pre-existing tests updated to reflect guard-moved-to-service.py design; ruff clean
   - Branch: `sprint3/s3-48-lua-atomic-distraction-cap` — pushed to origin
+
+- [x] **S3-49 — JSON timestamps {v:float, t:int} in ces_history (D4)** — ✓ 2026-08-12
+  - `config.py`: added `ces_cadence_seconds: int = Field(default=5, gt=0)` — gap-check tolerance
+  - `tutor/service.py`: lpush now stores `json.dumps({"v": ces, "t": int(_time.time())})` instead of bare float; added `_parse_history_entry()` inner function with backward-compat fallback (bare float → t=0); D4 gap check `abs(t0-t1) <= 2 * ces_cadence_seconds` guards intervention trigger
+  - `assessment/service.py`: added `compute_ces_from_session_aggregates()` with JSON parsing + backward-compat bare-float fallback; `from app.config import Settings` added to module imports
+  - 13 unit tests in `test_s3_49_ces_history_timestamps.py` — all GREEN; existing tests updated for new JSON format and `ces_cadence_seconds` field
+  - Branch: `sprint3/s3-49-ces-history-timestamps` — merged into `sprint3/s3-46-ces-breakdown-redistribution`
+
+- [x] **S3-46 — ces_breakdown weight redistribution when teachback=None (D2)** — ✓ 2026-08-12
+  - `assessment/service.py`: added `_build_ces_breakdown(*, quiz_accuracy, teachback_normalised, behavioral_avg, head_pose_avg, blink_avg, settings)` pure helper; nominal path uses weights as-is, redistributed path divides each remaining weight by `1.0 - ces_weight_teachback`; degenerate guard when `remaining <= 0.0` returns all-zeros
+  - `get_session_report` Step 5 replaced inline dict with `_build_ces_breakdown` delegation; `teachback_normalised = avg_teachback/100 if teachback_count > 0 else None`
+  - `test_session_report_endpoint.py`: `_mock_settings` and inline mock updated with 3 missing weight attributes (`ces_weight_behavioral=0.20`, `ces_weight_head_pose=0.12`, `ces_weight_blink=0.08`); `test_get_report_ces_breakdown_quiz_matches_formula` expected updated to redistributed formula (no-teachback → `(2/3)*(0.35/0.75)*100`)
+  - 22 unit tests in `test_s3_46_ces_breakdown_redistribution.py` — all GREEN; 76/76 total session report tests GREEN
+  - Branch: `sprint3/s3-46-ces-breakdown-redistribution` — committed
 
 ---
 
