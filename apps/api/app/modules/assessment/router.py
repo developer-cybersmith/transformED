@@ -62,6 +62,10 @@ class SessionReport(BaseModel):
     # S3-47 (D17) — CES formula disclosure: which variant was applied + how many signals
     formula_applied: Literal["full_5_signal", "teachback_redistributed_4_signal"]
     signal_coverage: int
+    # S3-50 (D18) — CES history summary: compact engagement trend (min/max/mean/window_count)
+    ces_history_summary: dict[str, Any] | None = None
+    # S3-51 (D19) — Intervention messages delivered during session
+    intervention_messages_used: int = 0
 
 
 class LearnerDNA(BaseModel):

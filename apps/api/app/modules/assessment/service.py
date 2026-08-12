@@ -977,6 +977,34 @@ async def get_session_report(
         }
         _dna_snapshot = {"dimension_labels": _dim_labels, "growth_labels": _growth_labels}
 
+    # S3-50 (D18): ces_history_summary — compact engagement trend from Redis ces_history.
+    # BOUNDED: lrange reads at most 10 entries (ltrim cap at write time).
+    ces_history_summary: dict[str, Any] | None = None
+    if redis is not None:
+        try:
+            raw_history: list[str] = await redis.lrange(
+                f"session:{session_id}:ces_history", 0, 9
+            )
+            ces_vals: list[float] = []
+            for raw in raw_history:
+                try:
+                    parsed = json.loads(raw)
+                    ces_vals.append(float(parsed["v"]))
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                    try:
+                        ces_vals.append(float(raw))
+                    except (ValueError, TypeError):
+                        pass
+            if ces_vals:
+                ces_history_summary = {
+                    "mean": round(sum(ces_vals) / len(ces_vals), 2),
+                    "min": round(min(ces_vals), 2),
+                    "max": round(max(ces_vals), 2),
+                    "window_count": len(ces_vals),
+                }
+        except Exception:  # noqa: BLE001
+            ces_history_summary = None
+
     logger.info(
         "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
         session_id,
@@ -1007,6 +1035,10 @@ async def get_session_report(
         # S3-47 formula disclosure
         formula_applied=formula_applied,
         signal_coverage=signal_coverage,
+        # S3-50 CES history summary
+        ces_history_summary=ces_history_summary,
+        # S3-51 intervention messages delivered count
+        intervention_messages_used=interventions_count,
     )
 
 
