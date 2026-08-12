@@ -71,9 +71,13 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
       // max-h caps the image so it can never push the title/bullets out of
       // view on a wide/short viewport (review finding) -- w-full + aspect-video
       // alone made height scale purely with container width, sometimes taller
-      // than the whole slide panel. object-cover crops to fill whatever box
-      // results once max-h clamps it, so the image itself never distorts.
-      className="w-full max-h-[38vh] aspect-video object-cover rounded-xl"
+      // than the whole slide panel. object-contain + no fixed aspect-ratio
+      // (bug fix: object-cover + aspect-video was CROPPING the image to fill
+      // a box shaped differently than the source) -- the browser sizes the
+      // element from its own intrinsic ratio within the w-full/max-h bounds,
+      // so the full image is always visible, never cropped. mx-auto centers
+      // it on the rare image narrower than the panel once height is clamped.
+      className="w-full max-h-[38vh] object-contain rounded-xl mx-auto block"
       onError={handleImageError}
     />
   );
