@@ -940,9 +940,12 @@ async def get_session_report(
         duration_minutes = 0.0
         completed_at = None
 
-    # Step 7 — ces_score from sessions.ces_final (Dev 4 owns this write)
+    # Step 7 — ces_score from sessions.ces_final (Dev 4 owns this write).
+    # None means the session ended before _finalize_session ran (e.g. WebSocket
+    # disconnect before lesson_complete was sent); the frontend renders "Not measured"
+    # rather than showing 0.0 as "Room to Grow" for a genuinely unfinished session.
     ces_final = row.get("ces_final")
-    ces_score: float = float(ces_final) if ces_final is not None else 0.0
+    ces_score: float | None = float(ces_final) if ces_final is not None else None
 
     # Step 8 — Learner DNA snapshot (descriptive labels + session growth labels)
     _dna_snapshot: dict[str, Any] | None = None

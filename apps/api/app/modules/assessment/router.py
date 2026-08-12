@@ -44,7 +44,7 @@ class SessionReport(BaseModel):
     session_id: str
     user_id: str
     lesson_id: str
-    ces_score: float
+    ces_score: float | None = None  # None when session ended before finalization
     ces_breakdown: dict[str, float]
     interventions_count: int
     quiz_score: float | None
