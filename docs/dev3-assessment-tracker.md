@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-12 (S3-47 DONE — D17 formula_applied + signal_coverage in SessionReport)
+**Last updated:** 2026-08-12 (S3-53 DONE — CES production closure, D1/D62 canonical formula, D61/D63/D64/D65 gaps closed)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -17,11 +17,11 @@
 | Sprint 0 | Week 1 | 7 | 7 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 12 | 12 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 | 13 | 13 | 0 | 0 |
+| Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **52** | **43** | **0** | **9** |
+| **Total** | | **53** | **44** | **0** | **9** |
 
 Update this table each time a task is checked off below.
 
@@ -766,6 +766,19 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `test_session_report_endpoint.py`: `_mock_settings` and inline mock updated with 3 missing weight attributes (`ces_weight_behavioral=0.20`, `ces_weight_head_pose=0.12`, `ces_weight_blink=0.08`); `test_get_report_ces_breakdown_quiz_matches_formula` expected updated to redistributed formula (no-teachback → `(2/3)*(0.35/0.75)*100`)
   - 22 unit tests in `test_s3_46_ces_breakdown_redistribution.py` — all GREEN; 76/76 total session report tests GREEN
   - Branch: `sprint3/s3-46-ces-breakdown-redistribution` — committed
+
+- [x] **S3-53 — CES production closure (D1/D62 canonical formula + all remaining audit gaps)** — ✓ 2026-08-12
+  - **D1/D62:** ONE canonical `compute_ces` in `assessment/ces.py`; all 5 signals `float|None` with proportional redistribution for any None (including quiz_accuracy). `tutor/service.py` delegates to canonical formula — no inline formula. CI guard (AST scan in test_s3_53) prevents a second divergent implementation.
+  - **D64:** `redis.expire()` added for `behavioral_history`, `head_pose_history`, `blink_history` after each lpush+ltrim (same `_CES_WINDOW_TTL=86400` as `ces_history`).
+  - **D15:** Test asserts `session_start_ts` SET uses `nx=True` — first-connect wins; reconnects cannot reset the fatigue clock.
+  - **D65:** Test exercises the positive distraction trigger path end-to-end (TEACHING + 2 consecutive sub-threshold + guard allows → `dispatch_event` called).
+  - **D61:** `_init_session_state` retries `session_start_ts` write 3× with exponential backoff (0.1s, 0.2s); logs WARNING after all retries fail, session continues degraded (fatigue disabled for session).
+  - **D63:** Deleted dead `_get_distraction_count` from `assessment/service.py`. `dna_fusion.py` reads intervention counts from `session_events` DB (correct path already).
+  - **D19:** `SEMANTIC NOTE` added to `intervention_messages_used` in `router.py`: counts DB trigger events, not WS delivery confirmations. Rename deferred to next 4-dev frozen-contract review.
+  - **Finalization fix:** `_finalize_session` writes `ces_final=None` (not `0.0`) for empty `ces_history`. `None` distinguishes no-data from zero-engagement. Logger updated from `%.2f` to `%s` to handle `None` without `TypeError`.
+  - **Tests updated:** `test_ces.py` (2 redistribution tests updated for D62), `test_tutor_service.py` (3 tests updated for optional behavioral signals per D13), `test_s3_45_fatigue_trigger.py` (`nx=True` assertion added).
+  - 18 new tests in `test_s3_53_ces_production_closure.py` — all GREEN; 168 CES-related tests total GREEN.
+  - Branch: `sprint3/s3-53-ces-closure` — committed.
 
 ---
 
