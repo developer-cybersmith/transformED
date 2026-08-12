@@ -131,7 +131,7 @@ filterwarnings = [
     "error",
     # starlette 1.3.x testclient warns when falling back from httpx2 to httpx;
     # httpx2 is not in uv.lock and the httpx fallback works — suppress until the lock adds httpx2.
-    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    "ignore:.*starlette.*:DeprecationWarning",  # StarletteDeprecationWarning removed in starlette 0.37.x
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
     "ignore::ResourceWarning",
