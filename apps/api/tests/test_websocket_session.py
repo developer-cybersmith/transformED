@@ -630,6 +630,159 @@ async def test_g12_non_dict_metadata_writes_no_tier_keys(mocker):
     mock_pipe.set.assert_not_called()
 
 
+# ── D55 — lesson_package read-through fallback ────────────────────────────────
+#
+# pubsub.py only writes lesson_package:{session_id} for sessions WAITING on
+# generation at publish time. A session started after the lesson is already
+# `ready` -- a returning student, or any re-attempt of an existing lesson,
+# the overwhelmingly common case -- got no entry at all, so tier seeding and
+# _segment_intervention_messages (tutor/service.py) both silently found
+# nothing. Confirmed live 2026-08-12: CES correctly dropped into "Low" on
+# sustained distraction, the FSM correctly transitioned to INTERVENING, but no
+# tutor_intervene message ever reached the client because this exact cache
+# had never been populated for that session.
+
+
+def _make_fallback_supabase(*, lesson_id: str | None, content: dict | None = None) -> MagicMock:
+    """Supabase stub: a sessions.lesson_id read, then a lessons.content read."""
+    sb = MagicMock()
+
+    def _table(name: str) -> MagicMock:
+        t = MagicMock()
+        if name == "sessions":
+            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+                {"lesson_id": lesson_id} if lesson_id else None
+            )
+        elif name == "lessons":
+            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
+                {"content": content} if content is not None else None
+            )
+        return t
+
+    sb.table.side_effect = _table
+    return sb
+
+
+@pytest.mark.unit
+async def test_g13_cache_miss_falls_back_to_supabase_and_seeds_tier(mocker):
+    """D55: a lesson_package cache miss reads through to lessons.content instead
+    of silently seeding nothing."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(None)  # cache miss
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    pkg_content = json.loads(_make_pkg("T1"))
+    sb = _make_fallback_supabase(lesson_id="lesson-g13", content=pkg_content)
+    mocker.patch("app.core.db.get_supabase", return_value=sb)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g13")
+
+    mock_pipe.set.assert_any_call("session:sess-g13:learner_tier", "T1", ex=86400)
+    mock_pipe.set.assert_any_call("session:sess-g13:qa_phase_seconds", "600", ex=86400)
+
+
+@pytest.mark.unit
+async def test_g14_fallback_populates_the_cache_for_the_next_read(mocker):
+    """The read-through must WRITE lesson_package:{id} back, so a later read
+    (e.g. _segment_intervention_messages, the actual intervention hot path)
+    hits Redis, not Supabase again -- matching "process once, reuse everywhere"."""
+    mock_redis, _ = _make_redis_with_pipeline(None)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    pkg_content = json.loads(_make_pkg("T2"))
+    sb = _make_fallback_supabase(lesson_id="lesson-g14", content=pkg_content)
+    mocker.patch("app.core.db.get_supabase", return_value=sb)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g14")
+
+    set_calls = [
+        c for c in mock_redis.set.call_args_list if c.args and c.args[0] == "lesson_package:sess-g14"
+    ]
+    assert len(set_calls) == 1, "the fetched package must be written back under the same cache key"
+    assert json.loads(set_calls[0].args[1]) == pkg_content
+    assert set_calls[0].kwargs.get("ex") == 86400
+
+
+@pytest.mark.unit
+async def test_g15_fallback_session_not_found_writes_no_tier_keys(mocker):
+    """Cache miss AND the session itself has no matching row -- degrade to no
+    seeding, not a crash (e.g. a session_id that was never minted)."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(None)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    sb = _make_fallback_supabase(lesson_id=None)
+    mocker.patch("app.core.db.get_supabase", return_value=sb)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g15")
+
+    mock_pipe.set.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_g16_fallback_supabase_error_does_not_raise(mocker):
+    """AC6-equivalent for the fallback: a Supabase failure during the
+    read-through must never crash the WS handshake."""
+    mock_redis, mock_pipe = _make_redis_with_pipeline(None)
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+    sb = MagicMock()
+    sb.table.side_effect = RuntimeError("supabase down")
+    mocker.patch("app.core.db.get_supabase", return_value=sb)
+
+    from app.core.websocket import _seed_learner_tier
+
+    await _seed_learner_tier("sess-g16")  # must not raise
+
+    mock_pipe.set.assert_not_called()
+
+
+@pytest.mark.unit
+async def test_g17_intervention_messages_readable_after_fallback_seeds_the_cache(mocker):
+    """End-to-end proof of the actual bug: _segment_intervention_messages
+    (the real intervention hot path) must find real messages for a session
+    that connected after the lesson was already ready, once _seed_learner_tier
+    has run once for it -- not the {} it always returned before D55 was fixed."""
+    mock_redis, _ = _make_redis_with_pipeline(None)  # cache miss on _seed_learner_tier's read
+    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    _mock_settings(mocker)
+
+    pkg_content = {
+        "metadata": {"title": "Test", "tier": "T2"},
+        "segments": [
+            {"segment_id": "seg_0", "interventions": {"distraction": ["Refocus!"]}},
+        ],
+    }
+    sb = _make_fallback_supabase(lesson_id="lesson-g17", content=pkg_content)
+    mocker.patch("app.core.db.get_supabase", return_value=sb)
+
+    from app.core.websocket import _seed_learner_tier
+    from app.modules.tutor.service import _segment_intervention_messages
+
+    await _seed_learner_tier("sess-g17")  # populates lesson_package:sess-g17
+
+    # Simulate a real Redis for the second read: same store the fallback wrote to.
+    written = next(
+        c.args[1] for c in mock_redis.set.call_args_list if c.args[0] == "lesson_package:sess-g17"
+    )
+    real_shaped_redis = AsyncMock()
+
+    async def _get(key: str):
+        if key == "lesson_package:sess-g17":
+            return written
+        return None
+
+    real_shaped_redis.get = AsyncMock(side_effect=_get)
+
+    messages = await _segment_intervention_messages("sess-g17", real_shaped_redis)
+
+    assert messages == {"distraction": ["Refocus!"]}
+
+
 # ── Group H — Story 4-21: learner tier override via session_start WS payload ──
 #
 # _handle_session_start now accepts the full payload dict and, when the client
