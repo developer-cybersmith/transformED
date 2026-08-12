@@ -35,9 +35,9 @@ class NormalizedSignal:
     session_id: str
     quiz_accuracy: float | None  # None when quiz not yet attempted
     teachback_score: float | None  # None when teach-back skipped
-    behavioral_score: float
-    head_pose_score: float
-    blink_rate: float
+    behavioral_score: float | None  # None on MediaPipe frame drop (S3-38 D13)
+    head_pose_score: float | None  # None on MediaPipe frame drop (S3-38 D13)
+    blink_rate: float | None  # None on MediaPipe frame drop (S3-38 D13)
 
 
 @dataclass
@@ -95,9 +95,9 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
         session_id=str(session_id),
         quiz_accuracy=_optional_float("quiz_accuracy"),
         teachback_score=_optional_float("teachback_score"),
-        behavioral_score=_require_float("behavioral_score"),
-        head_pose_score=_require_float("head_pose_score"),
-        blink_rate=_require_float("blink_rate"),
+        behavioral_score=_optional_float("behavioral_score"),  # S3-38 D13: MediaPipe may drop
+        head_pose_score=_optional_float("head_pose_score"),  # S3-38 D13: MediaPipe may drop
+        blink_rate=_optional_float("blink_rate"),  # S3-38 D13: MediaPipe may drop
     )
 
 
