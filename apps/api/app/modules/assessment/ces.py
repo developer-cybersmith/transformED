@@ -1,4 +1,4 @@
-"""CES v2 — Canonical Cognitive Engagement Score computation (Story 3-34).
+"""CES v2 -- Canonical Cognitive Engagement Score computation (Story 3-34).
 
 Single authoritative implementation. ``tutor/service.py::compute_ces`` delegates
 to this function. No other module in the codebase computes a CES independently.
@@ -6,24 +6,38 @@ to this function. No other module in the codebase computes a CES independently.
 Generalized redistribution (AC 2, Story 3-34):
     Any signal whose value is ``None`` is excluded from the weighted sum. Its
     weight is redistributed proportionally across the *present* signals:
-        effective_weight_i = w_i / Σ(w_j for all present j)
+        effective_weight_i = w_i / sum(w_j for all present j)
 
     This generalises the §11 teachback-``None`` rule uniformly: when only
     teachback is ``None`` the present weights sum to 0.75, so each is divided by
     0.75, reproducing the §11 numbers exactly.
 
 Defects fixed in this story:
-    D61 — ``quiz_accuracy=None`` was treated as 0.0 (weight retained), not
+    D61 -- ``quiz_accuracy=None`` was treated as 0.0 (weight retained), not
           redistributed. Now handled identically to teachback=None.
-    D62 — ``tutor/service.py::compute_ces`` was a duplicate implementation with
+    D62 -- ``tutor/service.py::compute_ces`` was a duplicate implementation with
           no unit tests. Now it delegates here.
 """
 
 from __future__ import annotations
 
+import logging
+import math
+
 from app.config import Settings
 
+logger = logging.getLogger(__name__)
+
 __all__ = ["compute_ces"]
+
+# Signal names in canonical order, parallel to the raw_pairs tuple.
+_SIGNAL_NAMES: tuple[str, ...] = (
+    "quiz_accuracy",
+    "teachback_score",
+    "behavioral",
+    "head_pose",
+    "blink",
+)
 
 
 def compute_ces(
@@ -37,9 +51,10 @@ def compute_ces(
 ) -> float:
     """Compute the Cognitive Engagement Score (CES) from up to 5 normalised signals.
 
-    All present values must be normalised to [0, 1] by the caller; out-of-range
-    values are clamped silently. Returns a float on the 0-100 POINT scale,
-    rounded to 4 decimal places.
+    Present values must be normalised to [0, 1] by the caller.  Out-of-range
+    values emit a ``logger.warning`` and are clamped.  ``NaN`` or ``+/-inf``
+    raise ``ValueError`` (they indicate corrupt signals, not absent ones).
+    Returns a float on the 0-100 POINT scale, rounded to 4 decimal places.
 
     Any signal whose value is ``None`` is excluded from the weighted sum and its
     weight is redistributed proportionally across the remaining non-``None``
@@ -58,26 +73,50 @@ def compute_ces(
 
     Returns:
         CES as a float in [0.0, 100.0] on the POINT scale, rounded to 4 d.p.
-        Returns 0.0 when all five signals are None.
+        Returns 0.0 when all five signals are None or all present weights are 0.
+
+    Raises:
+        ValueError: If any present (non-None) signal value is NaN or +/-inf.
     """
-    # Build (value, weight) pairs for all signals; drop None entries.
-    raw_pairs: list[tuple[float | None, float]] = [
+    # Build (value, weight) pairs for all signals.
+    raw_pairs: tuple[tuple[float | None, float], ...] = (
         (quiz_accuracy, settings.ces_weight_quiz),
         (teachback_score, settings.ces_weight_teachback),
         (behavioral, settings.ces_weight_behavioral),
         (head_pose, settings.ces_weight_head_pose),
         (blink, settings.ces_weight_blink),
-    ]
+    )
 
-    # Keep only present (non-None) signals; clamp values to [0, 1].
-    present: list[tuple[float, float]] = [
-        (min(1.0, max(0.0, v)), w) for (v, w) in raw_pairs if v is not None
-    ]
+    # Validate, warn, and clamp each present signal.
+    present: list[tuple[float, float]] = []
+    for (v, w), name in zip(raw_pairs, _SIGNAL_NAMES):
+        if v is None:
+            continue  # absent signals are redistributed; None is valid
+        if not math.isfinite(v):
+            # AC 6: NaN / +/-inf indicates a corrupt signal -- raise immediately.
+            raise ValueError(
+                f"signal {name!r} has a non-finite value {v!r}; "
+                "expected a float in [0.0, 1.0] or None"
+            )
+        if v < 0.0 or v > 1.0:
+            # AC 5: warn before clamping so calibration bugs surface in logs.
+            logger.warning(
+                "signal %r=%r is outside [0.0, 1.0]; clamping to valid range",
+                name,
+                v,
+            )
+            v = min(1.0, max(0.0, v))
+        present.append((v, w))
 
-    weight_sum = sum(w for _, w in present)
-    if weight_sum <= 0.0:
+    # AC 8: NaN-safe guard.
+    # `weight_sum <= 0.0` evaluates to False when weight_sum is NaN (IEEE 754),
+    # which would skip the guard and produce a NaN result.  The `not (... > 0.0)`
+    # form treats NaN as "not positive", returning 0.0 instead.
+    weight_sum: float = sum(w for _, w in present)
+    if not (weight_sum > 0.0):
         # All signals None, or degenerate config where present weights sum to 0.
         return 0.0
 
-    ces = sum(v * (w / weight_sum) for v, w in present) * 100.0
-    return min(100.0, round(ces, 4))
+    ces: float = sum(v * (w / weight_sum) for v, w in present) * 100.0
+    # AC 7: symmetric clamp -- max(0.0, ...) guards against negative-weight configs.
+    return max(0.0, min(100.0, round(ces, 4)))
