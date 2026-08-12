@@ -47,7 +47,7 @@ export function CESIndicator() {
       data-testid="ces-indicator"
       data-band={band}
       title={BAND_LABELS[band]}
-      className={`absolute top-3 right-3 z-10 w-10 h-10 rounded-full flex items-center justify-center bg-black/40 backdrop-blur-sm`}
+      className={`absolute top-3 right-3 z-10 w-10 h-10 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm`}
     >
       <span className={`w-2.5 h-2.5 rounded-full ${BAND_COLORS[band]}`} />
     </div>

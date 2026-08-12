@@ -32,9 +32,9 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
     return (
       <div
         data-testid="slide-image-placeholder"
-        className="w-full aspect-video rounded-xl bg-neutral-800/50 flex items-center justify-center"
+        className="w-full aspect-video rounded-xl bg-neutral-100 flex items-center justify-center"
       >
-        <span className="text-neutral-600 text-sm">No image</span>
+        <span className="text-neutral-400 text-sm">No image</span>
       </div>
     );
   }
@@ -64,7 +64,18 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
   }
 
   return (
-    <img data-testid="slide-image" src={src} alt={title} className="w-full aspect-video object-cover rounded-xl" onError={handleImageError} />
+    <img
+      data-testid="slide-image"
+      src={src}
+      alt={title}
+      // max-h caps the image so it can never push the title/bullets out of
+      // view on a wide/short viewport (review finding) -- w-full + aspect-video
+      // alone made height scale purely with container width, sometimes taller
+      // than the whole slide panel. object-cover crops to fill whatever box
+      // results once max-h clamps it, so the image itself never distorts.
+      className="w-full max-h-[38vh] aspect-video object-cover rounded-xl"
+      onError={handleImageError}
+    />
   );
 }
 
@@ -83,6 +94,14 @@ interface SlideRendererProps {
 export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
   return (
     <div
+      // data-lenis-prevent (review finding): SmoothScroll.tsx's global Lenis
+      // instance hijacks wheel events for the whole document by default. The
+      // player's root (Player.tsx) is overflow-hidden -- this div's own
+      // overflow-y-auto is the ONLY element that can ever scroll slide content
+      // taller than the panel -- but without this attribute Lenis intercepts
+      // the wheel event before it reaches here, so the mouse wheel appeared to
+      // do nothing (a scrollbar drag, which bypasses Lenis, still worked).
+      data-lenis-prevent
       className={[
         'absolute inset-0 overflow-y-auto overscroll-y-contain p-6 transition-opacity duration-150',
         isActive ? 'opacity-100' : 'opacity-0 pointer-events-none',
@@ -103,13 +122,13 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
         title={slide.title}
       />
 
-      <h3 className="font-serif text-xl font-semibold text-white mt-5 mb-3 text-wrap-balance">
+      <h3 className="font-serif text-xl font-semibold text-neutral-900 mt-5 mb-3 text-wrap-balance">
         {slide.title}
       </h3>
 
       <ul className="space-y-2.5" role="list">
         {slide.bullets.map((bullet, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-neutral-300 text-[15px] leading-relaxed">
+          <li key={i} className="flex items-start gap-2.5 text-neutral-600 text-[15px] leading-relaxed">
             <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] shrink-0" aria-hidden />
             <span>
               <JargonHover text={bullet} jargon={jargon} />

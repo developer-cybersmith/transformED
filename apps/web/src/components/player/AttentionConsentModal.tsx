@@ -40,24 +40,24 @@ export function AttentionConsentModal() {
   return (
     <div
       data-testid="attention-consent-modal"
-      className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm"
+      className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-white/80 backdrop-blur-sm"
     >
-      <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-        <div className="px-6 pt-6 pb-4 border-b border-white/5">
+      <div className="w-full max-w-lg bg-white border border-neutral-200 rounded-2xl shadow-2xl overflow-hidden">
+        <div className="px-6 pt-6 pb-4 border-b border-neutral-100">
           <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider block mb-1">
             Attention Monitoring
           </span>
-          <h2 className="font-serif text-white text-xl font-semibold">Help your tutor notice when you drift</h2>
+          <h2 className="font-serif text-neutral-900 text-xl font-semibold">Help your tutor notice when you drift</h2>
         </div>
 
-        <div className="px-6 py-5 flex flex-col gap-3 text-neutral-300 text-sm leading-relaxed">
+        <div className="px-6 py-5 flex flex-col gap-3 text-neutral-600 text-sm leading-relaxed">
           <p>
             With your permission, this lesson can use your device&apos;s webcam to notice when your
             attention drifts, so the tutor can gently check in.
           </p>
           <p>
             Only five aggregate numbers are ever sent — head position, blink rate, and similar
-            summaries. <strong className="text-white font-medium">Raw video never leaves your browser</strong>,
+            summaries. <strong className="text-neutral-900 font-medium">Raw video never leaves your browser</strong>,
             never is it recorded, and never is it stored.
           </p>
           <p>You can decline. Declining does not change your lesson in any way.</p>
@@ -65,7 +65,7 @@ export function AttentionConsentModal() {
           {acceptFailed && (
             <div
               role="alert"
-              className="mt-1 flex flex-col gap-2 rounded-xl border border-red-400/30 bg-red-950/40 px-4 py-3 text-red-200"
+              className="mt-1 flex flex-col gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700"
             >
               <span>We couldn&apos;t save your choice just now. You can try again, or continue without this.</span>
               <div className="flex gap-2">
@@ -73,14 +73,14 @@ export function AttentionConsentModal() {
                   type="button"
                   onClick={handleAccept}
                   disabled={isSubmitting}
-                  className="px-3 py-1.5 rounded-full border border-red-300/40 text-xs font-medium hover:bg-red-900/40 disabled:opacity-60"
+                  className="px-3 py-1.5 rounded-full border border-red-300 text-xs font-medium hover:bg-red-100 disabled:opacity-60"
                 >
                   Retry
                 </button>
                 <button
                   type="button"
                   onClick={decline}
-                  className="px-3 py-1.5 rounded-full border border-red-300/40 text-xs font-medium hover:bg-red-900/40"
+                  className="px-3 py-1.5 rounded-full border border-red-300 text-xs font-medium hover:bg-red-100"
                 >
                   Continue without this
                 </button>
@@ -93,7 +93,7 @@ export function AttentionConsentModal() {
           <button
             type="button"
             onClick={decline}
-            className="px-4 py-2 rounded-full text-neutral-400 text-sm font-medium hover:text-white transition-colors"
+            className="px-4 py-2 rounded-full text-neutral-500 text-sm font-medium hover:text-neutral-900 transition-colors"
           >
             Decline
           </button>

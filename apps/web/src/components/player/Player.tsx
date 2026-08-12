@@ -187,7 +187,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   const segment = lesson.segments[currentSegmentIndex] ?? null;
 
   return (
-    <div className="flex-1 flex flex-col bg-primary-dark text-white overflow-hidden">
+    <div className="flex-1 flex flex-col bg-white text-neutral-900 overflow-hidden">
       {/* AudioTimeline: hidden, drives audio playback + slide sync */}
       <AudioTimeline />
 
@@ -198,7 +198,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             currentSlideId is set almost immediately after mount in real use,
             leaving that block rarely visible. */}
         <div className="absolute top-3 left-3 z-10">
-          <span className="px-3 py-1 rounded-full bg-black/40 backdrop-blur-sm text-neutral-200 text-xs font-medium uppercase tracking-wide">
+          <span className="px-3 py-1 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs font-medium uppercase tracking-wide">
             {TIER_LABELS[lesson.metadata.tier ?? 'T2'] ?? TIER_LABELS.T2}
           </span>
         </div>
@@ -215,8 +215,8 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
         {/* Lesson metadata shown before any slide is active */}
         {!currentSlideId && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6">
-            <h2 className="font-serif text-xl font-semibold">{lesson.metadata.title}</h2>
-            <p className="text-neutral-400 text-sm">
+            <h2 className="font-serif text-xl font-semibold text-neutral-900">{lesson.metadata.title}</h2>
+            <p className="text-neutral-500 text-sm">
               {lesson.metadata.total_segments} segments · ~{lesson.metadata.estimated_duration_mins} min
             </p>
           </div>
@@ -237,7 +237,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
 
         {/* Lesson complete screen */}
         {status === 'ENDED' && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 p-6 bg-primary-dark/95 backdrop-blur-sm">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 p-6 bg-white/95 backdrop-blur-sm">
             <div className="relative">
               <div className="absolute inset-0 bg-[var(--accent-secondary)]/20 rounded-full blur-xl animate-pulse" />
               <div className="relative w-20 h-20 bg-[var(--accent-secondary)]/10 text-4xl rounded-full flex items-center justify-center border border-[var(--accent-secondary)]/30">
@@ -245,8 +245,8 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
               </div>
             </div>
             <div className="text-center">
-              <h2 className="font-serif text-white text-2xl font-semibold mb-1">Lesson complete</h2>
-              <p className="text-neutral-400 text-sm">{lesson.metadata.title}</p>
+              <h2 className="font-serif text-neutral-900 text-2xl font-semibold mb-1">Lesson complete</h2>
+              <p className="text-neutral-500 text-sm">{lesson.metadata.title}</p>
             </div>
             <div className="flex flex-col items-center gap-3">
               {sessionId && (
@@ -260,7 +260,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
               )}
               <Link
                 href="/dashboard"
-                className="text-neutral-400 hover:text-white text-sm transition-colors"
+                className="text-neutral-500 hover:text-neutral-900 text-sm transition-colors"
               >
                 Back to Dashboard
               </Link>
@@ -271,10 +271,10 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
         {/* Buffering indicator — non-blocking, only while actively playing and stalled */}
         {isBuffering && status === 'PLAYING' && (
           <div
-            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-black/60 backdrop-blur-sm text-neutral-200 text-xs"
+            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs"
             data-testid="audio-buffering"
           >
-            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            <div className="w-3.5 h-3.5 border-2 border-neutral-200 border-t-[var(--accent-secondary)] rounded-full animate-spin" />
             Buffering...
           </div>
         )}
@@ -286,14 +286,14 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             not block their progress there with a full-screen overlay. */}
         {audioError && status !== 'QUIZ' && status !== 'TEACH_BACK' && status !== 'ENDED' && (
           <div
-            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-primary-dark/95 backdrop-blur-sm text-center"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-white/95 backdrop-blur-sm text-center"
             data-testid="audio-error"
           >
-            <p className="text-neutral-300 text-sm">
+            <p className="text-neutral-600 text-sm">
               This segment&apos;s audio couldn&apos;t be played. Check your connection and try again.
             </p>
             {audioRetryCount >= REPEATED_FAILURE_RETRY_THRESHOLD && (
-              <p className="text-neutral-500 text-xs max-w-xs">
+              <p className="text-neutral-400 text-xs max-w-xs">
                 Still not working after several tries — this may take a moment to resolve, or try refreshing the page.
               </p>
             )}
