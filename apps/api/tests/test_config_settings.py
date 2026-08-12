@@ -210,3 +210,79 @@ def test_admin_emails_and_approved_emails_are_independent(monkeypatch) -> None:
     )
     assert s.admin_emails == ["admin@foo.com"]
     assert s.approved_emails == ["student@foo.com"]
+
+
+# ── D67: sarvam_voice_id default must be a real Sarvam speaker ─────────────────
+
+# Copied verbatim from a live 400 invalid_request_error response from
+# api.sarvam.ai/text-to-speech (2026-08-12) -- NOT hand-typed. This is
+# Sarvam's own list of valid Bulbul v2 speakers at the time D67 was fixed.
+# If a future Sarvam API change drops "anushka" from this roster, this test
+# is the guard: it fails loudly instead of the pipeline silently degrading
+# every lesson's narration to the Azure fallback again (D67's original
+# failure mode -- "meera" was never a valid speaker and every real TTS call
+# 400'd, invisibly, on the primary provider).
+_SARVAM_VALID_SPEAKERS_2026_08_12 = {
+    "anushka",
+    "abhilash",
+    "manisha",
+    "vidya",
+    "arya",
+    "karun",
+    "hitesh",
+    "aditya",
+    "ritu",
+    "priya",
+    "neha",
+    "rahul",
+    "pooja",
+    "rohan",
+    "simran",
+    "kavya",
+    "amit",
+    "dev",
+    "ishita",
+    "shreya",
+    "ratan",
+    "varun",
+    "manan",
+    "sumit",
+    "roopa",
+    "kabir",
+    "aayan",
+    "shubh",
+    "ashutosh",
+    "advait",
+    "anand",
+    "tanya",
+    "tarun",
+    "sunny",
+    "mani",
+    "gokul",
+    "vijay",
+    "shruti",
+    "suhani",
+    "mohit",
+    "kavitha",
+    "rehan",
+    "soham",
+    "rupali",
+}
+
+
+@pytest.mark.unit
+def test_sarvam_voice_id_default_is_a_documented_valid_speaker(monkeypatch) -> None:
+    """D67: the default speaker must be one Sarvam's live API actually
+    recognizes -- "meera" was not, and every real TTS call silently 400'd
+    and degraded to the Azure fallback on 100% of narration."""
+    s = _make_settings(monkeypatch)
+    assert s.sarvam_voice_id in _SARVAM_VALID_SPEAKERS_2026_08_12
+
+
+@pytest.mark.unit
+def test_sarvam_voice_id_default_is_not_the_known_invalid_meera(monkeypatch) -> None:
+    """Regression pin: "meera" is the specific value D67 found broken --
+    assert it directly so a well-intentioned revert can't silently reintroduce
+    exactly this defect."""
+    s = _make_settings(monkeypatch)
+    assert s.sarvam_voice_id != "meera"

@@ -191,6 +191,19 @@ after re-reading the highest in use (D43) per the collision rule at the top of t
 
 ---
 
+### Found by the L1 pre-flight check (Story 3-41, 2026-08-12)
+
+Id allocated as D67 — **not** D63 (Story 3-36, unmerged branch `sprint3/s3-36-...`) or D64–D66
+(Story 3-40, unmerged branch `sprint3/s3-40-...`), both of which are ahead of `main`'s currently
+visible highest (D62) but must not be reused per the collision rule at the top of this file. This
+entry closes same-round — see below.
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| ~~D67~~ | **CLOSED same-round 2026-08-12 (Story 3-41).** `settings.sarvam_voice_id` defaulted to `"meera"` (`config.py:67-69`, set in Story 2-8), which is **not a valid Sarvam Bulbul v2 speaker** — confirmed via a real, live call to `api.sarvam.ai/text-to-speech`: `400 invalid_request_error`, `"Speaker 'meera' is not recognized. Available speakers are: anushka, abhilash, manisha, vidya, arya, karun, hitesh, aditya, ritu, priya, neha, rahul, pooja, rohan, simran, kavya, amit, dev, ishita, shreya, ratan, varun, manan, sumit, roopa, kabir, aayan, shubh, ashutosh, advait, anand, tanya, tarun, sunny, mani, gokul, vijay, shruti, suhani, mohit, kavitha, rehan, soham, rupali"`. Every real TTS call through the primary provider would 400 on the first attempt, fall through the full retry budget (non-retryable per Sarvam's own `invalid_request_error` classification — this is a config defect, not a transient failure, so retrying it burns nothing but wall-clock), then degrade to the Azure fallback on every single lesson — silently paying Azure's rate for 100% of narration instead of Sarvam's, and never actually exercising the primary provider this project chose. Found during L1 (`docs/LESSON-DELIVERY-TRACKER.md`) pre-flight, where it would otherwise have first surfaced as a confusing "why is every lesson using the fallback TTS provider" during the sprint's real-money acceptance run. | High (silent, 100% of narration cost misrouted, first-real-run blocker) | Default changed to `"anushka"` — verified via a second live call (not assumed): `200 OK`, real audio returned (122,940 base64 chars, non-empty). Chosen for parity with the existing Azure fallback default (`azure_tts_voice = "en-IN-NeerjaNeural"`, an Indian-English voice) — `anushka` is one of Sarvam's Indian-English-appropriate speakers, matching this product's target market. | `tests/unit/test_config_settings.py::test_sarvam_voice_id_default_is_a_documented_valid_speaker` — pins the default against the literal speaker list from Sarvam's own `400` response body, so a future Sarvam API change that drops `anushka` fails CI instead of silently degrading every lesson to the fallback provider again |
+
+---
+
 ### OPEN — accepted, with a named trigger
 
 Not "documented limitations". Each carries an explicit condition that reopens it.
@@ -350,8 +363,8 @@ checked.
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | **27** |
-| Fixed, awaiting merge | **0** — everything Dev 1 owns is on `main` |
+| Defects closed (fixed **and** guarded) | **28** — +1 from Story 3-41 (2026-08-12, branch `sprint3/s3-41-fix-sarvam-voice-default`): D67 (invalid `sarvam_voice_id` default, found during L1 pre-flight). **Note:** D63–D66 (Stories 3-36/3-40) are also closed but sit on separate unmerged branches not yet reflected in this count on `main` — see those branches' own register edits. |
+| Fixed, awaiting merge | **1** — D67 (this branch, `sprint3/s3-41-...`, not yet merged to `main`) |
 | **Open** | **26** |
 | Of which **live in production** | **3** — D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
