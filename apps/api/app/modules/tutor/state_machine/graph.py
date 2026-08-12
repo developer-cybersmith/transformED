@@ -225,6 +225,29 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     messages = (state.get("event_payload") or {}).get("intervention_messages") or {}
     chosen = messages.get(intervention_type) or []
     intervention_message = chosen[0] if chosen else None
+    message_key = chosen[0] if chosen else None  # same value; named for write_intervention_event
+
+    # S3-37 (D12): fire-and-forget DB event write — never blocks the Redis path.
+    # Wrapped in try/except so get_supabase() failures (e.g. DB unavailable on startup)
+    # are logged and swallowed rather than crashing the FSM transition.
+    try:
+        import asyncio  # noqa: PLC0415
+
+        from app.core.db import get_supabase  # noqa: PLC0415
+        from app.modules.assessment.service import write_intervention_event  # noqa: PLC0415
+
+        asyncio.create_task(
+            write_intervention_event(
+                session_id,
+                intervention_type=intervention_type,
+                window_index=int(state.get("window_index") or 0),
+                ces_at_trigger=float(state.get("last_ces") or 0.0),
+                message_key=message_key,
+                supabase=get_supabase(),
+            )
+        )
+    except Exception:
+        logger.exception("[tutor:%s] write_intervention_event create_task failed", session_id)
 
     await _persist_state(session_id, TutorState.INTERVENING)
     return {
