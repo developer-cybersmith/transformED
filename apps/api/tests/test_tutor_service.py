@@ -63,8 +63,19 @@ def _settings_mock(threshold: float = 0.5) -> MagicMock:
     return s
 
 
-def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float = 0.5):
-    """Patch the three lazy-imported dependencies and return (mock_redis, mock_dispatch)."""
+def _setup(
+    mocker,
+    *,
+    lrange_vals: list[str],
+    exists: int = 0,
+    threshold: float = 0.5,
+    can_dispatch: bool = True,
+):
+    """Patch the lazy-imported dependencies and return (mock_redis, mock_dispatch).
+
+    can_dispatch controls the return value of the Lua-backed _can_intervene_distraction
+    guard (D6). Set False to simulate cooldown / max-reached without a real Redis.
+    """
     mock_redis = AsyncMock()
     mock_redis.lrange = AsyncMock(return_value=lrange_vals)
     mock_redis.exists = AsyncMock(return_value=exists)
@@ -81,6 +92,15 @@ def _setup(mocker, *, lrange_vals: list[str], exists: int = 0, threshold: float 
     mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
 
     mocker.patch("app.config.get_settings", return_value=_settings_mock(threshold))
+
+    # D6 — _can_intervene_distraction is now a Lua-backed atomic guard. Patch it so
+    # tests stay unit-level (no real Redis eval). The source-level behaviour (eval called
+    # with correct keys/args, fail-closed, etc.) is covered in test_s3_48_lua_distraction_cap.py.
+    mock_guard = mocker.patch(
+        "app.modules.tutor.state_machine.graph._can_intervene_distraction",
+        new_callable=AsyncMock,
+    )
+    mock_guard.return_value = can_dispatch
 
     # dispatch_event returns the FSM result dict. Default to INTERVENING with no message so a fired
     # trigger doesn't spuriously enter the 4-8 delivery path — result.get("intervention_message")
@@ -238,17 +258,20 @@ async def test_one_below_one_above_no_dispatch(mocker) -> None:
 
 @pytest.mark.unit
 async def test_cooldown_blocks_dispatch(mocker) -> None:
-    """AC9: both below threshold BUT cooldown active → no dispatch."""
-    mock_redis, mock_dispatch = _setup(mocker, lrange_vals=["0.1", "0.2"], exists=1, threshold=0.5)
+    """AC9: both below threshold BUT Lua guard returns False (cooldown/cap) → no dispatch.
+
+    D6: the guard is now _can_intervene_distraction (Lua) — no separate redis.exists call.
+    We simulate the guard returning False (as it would when in cooldown or at the cap).
+    """
+    _, mock_dispatch = _setup(
+        mocker, lrange_vals=["0.1", "0.2"], threshold=0.5, can_dispatch=False
+    )
 
     from app.modules.tutor.service import process_attention_signal
 
     result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
 
     mock_dispatch.assert_not_called()
-    # The cooldown guard must actually be consulted — distinguishes "blocked by cooldown"
-    # from "trigger never ran at all".
-    mock_redis.exists.assert_called_once_with("tutor_cooldown:sess-1")
     assert result.intervention_dispatched is False
 
 
@@ -389,6 +412,12 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
     }
     mocker.patch("app.core.redis.get_redis", return_value=_intervention_redis(json.dumps(pkg)))
     mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
+    # D6: Lua guard — mock returning True so the dispatch path is exercised.
+    _guard = mocker.patch(
+        "app.modules.tutor.state_machine.graph._can_intervene_distraction",
+        new_callable=AsyncMock,
+    )
+    _guard.return_value = True
     mock_dispatch = _patch_dispatch(mocker, "focus up")
 
     mock_manager = MagicMock()
@@ -421,6 +450,12 @@ async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
         "app.core.redis.get_redis", return_value=_intervention_redis(None)
     )  # no cached package
     mocker.patch("app.config.get_settings", return_value=_settings_mock(0.5))
+    # D6: Lua guard — mock returning True; dispatch fires but message is None.
+    _guard = mocker.patch(
+        "app.modules.tutor.state_machine.graph._can_intervene_distraction",
+        new_callable=AsyncMock,
+    )
+    _guard.return_value = True
     _patch_dispatch(mocker, None)  # FSM returns no message when no package supplied
 
     mock_manager = MagicMock()
