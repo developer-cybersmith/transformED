@@ -2,7 +2,7 @@
 OpenAI Embeddings provider implementation.
 
 Uses text-embedding-3-small (1536 dims) — the fixed embedding model for
-TransformED AI.  Embeddings are generated ONCE at ingestion and never
+HIE.  Embeddings are generated ONCE at ingestion and never
 regenerated for stored content (CLAUDE.md rule).
 """
 

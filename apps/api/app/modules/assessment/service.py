@@ -1158,11 +1158,45 @@ async def process_onboarding(
         )
 
     # Step 4 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
+    # D71: provider.complete() already has @with_retry(max_attempts=3) for transient 429/5xx.
+    # If all retries fail the raw exception must be caught here: convert to HTTPException(503)
+    # so the router's `except HTTPException` cleanup fires and releases the Redis lock.
+    # Before raising we also delete the Step 3 rows so a retry can re-insert cleanly.
     provider = OpenAILLMProvider(lesson_id="onboarding")
-    profile_text = await generate_onboarding_profile(
-        badge_labels=badge_labels,
-        provider=provider,
-    )
+    try:
+        profile_text = await generate_onboarding_profile(
+            badge_labels=badge_labels,
+            provider=provider,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("onboarding: generate_onboarding_profile failed for user=%s", user_id)
+        _question_ids = [r["question_id"] for r in rows]
+        if _question_ids:  # supabase-py drops IN([]) filter for empty list in some versions
+            try:
+                del_resp = await asyncio.to_thread(
+                    lambda: supabase.table("onboarding_responses")
+                        .delete()
+                        .eq("user_id", user_id)
+                        .in_("question_id", _question_ids)
+                        .execute()
+                )
+                if getattr(del_resp, "error", None):  # supabase signals errors via resp.error, not exceptions
+                    logger.warning(
+                        "onboarding: rollback of onboarding_responses failed user=%s error=%s — "
+                        "user may need manual cleanup to retry",
+                        user_id,
+                        str(del_resp.error).replace("\n", " "),
+                    )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "onboarding: rollback of onboarding_responses failed user=%s (network/client error) — "
+                    "user may need manual cleanup to retry",
+                    user_id,
+                )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Profile generation temporarily unavailable — please retry.",
+        )
 
     # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
     dna_row: dict[str, Any] = {
@@ -1183,6 +1217,28 @@ async def process_onboarding(
             user_id,
             safe_upsert_err,
         )
+        # D71 variant: Step 5 failure also orphans Step 3 rows — roll back so retry can re-insert.
+        _question_ids = [r["question_id"] for r in rows]
+        if _question_ids:
+            try:
+                del_resp5 = await asyncio.to_thread(
+                    lambda: supabase.table("onboarding_responses")
+                        .delete()
+                        .eq("user_id", user_id)
+                        .in_("question_id", _question_ids)
+                        .execute()
+                )
+                if getattr(del_resp5, "error", None):
+                    logger.warning(
+                        "onboarding: step5 rollback of onboarding_responses failed user=%s error=%s",
+                        user_id,
+                        str(del_resp5.error).replace("\n", " "),
+                    )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "onboarding: step5 rollback of onboarding_responses failed user=%s (network error)",
+                    user_id,
+                )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist learner profile.",

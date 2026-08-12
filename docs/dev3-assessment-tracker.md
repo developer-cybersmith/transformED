@@ -716,6 +716,13 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Story: `docs/stories/3-31-reassessment-prompt.md` — status: done
   - Branch: `learner-mode-sprint-dev3-task4` — merged to `master-learner-mode-sprint-dev3`
 
+- [x] **S3-54 — Onboarding LLM lock deadlock + HIE rebrand fix (D71/D72)** — ✓ 2026-08-13
+  - **D71:** `process_onboarding()` Step 4 LLM call wrapped in `try/except Exception`; on failure: (a) rollback 20 orphaned `onboarding_responses` rows via `.eq("user_id").in_("question_id", _question_ids)`, (b) raise `HTTPException(503)` so router's existing `except HTTPException` cleanup fires and releases the Redis lock. Provider already has `@with_retry(max_attempts=3)`; permanent lock only triggered after all retries exhausted.
+  - **D72:** Replaced "TransformED" → "HIE" in `DPDP_DISCLAIMER` (line 120) and `ONBOARDING_PROFILE_SYSTEM_PROMPT` (line 131) in `prompts.py`. Migration `20260813000000_learner_dna_rebrand.sql` backfills existing `learner_dna.profile_text` rows.
+  - 7 unit tests in `tests/test_onboarding_llm_failure.py` — all GREEN; 57 existing onboarding tests unaffected
+  - Story: `docs/stories/3-54-onboarding-lock-brand-fix.md` — status: done
+  - Branch: `sprint3/s3-54-onboarding-lock-brand-fix`
+
 - [x] **Task 5 — DPDP consent write endpoint, D29 fix (Story 3-32)** — ✓ 2026-08-05
   - Root cause: Story 3-17 delivered the `user_consents` migration but never built the runtime write path; AC "user_consents rows written at onboarding consent step" was marked done on migration landing only
   - `POST /api/assessment/consent` — returns 201 (first consent) or 200 (idempotent)
