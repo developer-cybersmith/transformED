@@ -45,6 +45,7 @@ import logging
 import math
 import operator
 import re
+import unicodedata
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict, cast
@@ -3332,6 +3333,194 @@ async def _synthesize_with_fallback(
     return None, "browser", 0.0
 
 
+_SEGMENT_ORDER_RE = re.compile(r"^section_(\d+)_")
+
+
+def _segment_order_key(entry: dict[str, Any], fallback_index: int) -> int:
+    """Derive this entry's true lesson position from its segment_id.
+
+    `_derive_section_id` always produces `section_{index}_{title}` — the
+    leading integer is the section's real, stable position and never
+    repeats within a chapter. Reuse it here rather than trusting arrival
+    order: `narration_scripts` is `Annotated[list, operator.add]`, fed by
+    Send()-dispatched calls into the same LangGraph superstep with (per
+    narration_generator_node's own docstring) NO cross-node/cross-call
+    ordering guarantee — "Send()-dispatched calls do not all resolve in
+    lockstep". Trusting raw list order here would let the cap truncate an
+    arbitrary segment, not necessarily the tail of the lesson, and could
+    disagree between the original run and an ARQ retry of the same lesson.
+
+    Falls back to `fallback_index` (the entry's own position in the
+    already-dict-filtered input) when segment_id doesn't carry the
+    `section_{N}_` prefix — covers hand-built test fixtures and any future
+    caller not using `_derive_section_id`. This only produces a fully
+    correct ordering when either ALL entries carry the prefix (the only
+    case that occurs in production, since every entry in a given lesson's
+    narration_scripts is written by the same `_derive_section_id` call) or
+    NONE do; a mix of prefixed and unprefixed ids in the same list is not a
+    shape this pipeline ever produces.
+    """
+    segment_id = entry.get("segment_id")
+    if isinstance(segment_id, str):
+        match = _SEGMENT_ORDER_RE.match(segment_id)
+        if match:
+            return int(match.group(1))
+    return fallback_index
+
+
+def _safe_narration_script(entry: dict[str, Any]) -> str:
+    """Return entry['script'] if it's actually a string, else ''.
+
+    Mirrors `_index_by_segment_id`'s established defensive pattern a few
+    hundred lines below in this same file: a value that is PRESENT but not
+    the expected type (e.g. a bare int/list from a schema-drifted or
+    hand-edited checkpoint) must degrade to the safe default, not raise,
+    or the very first `len(...)` call on it crashes the whole node."""
+    script = entry.get("script")
+    return script if isinstance(script, str) else ""
+
+
+_COMBINING_CATEGORIES = frozenset({"Mn", "Mc", "Me"})
+
+
+def _trim_to_grapheme_boundary(script: str, cut: int) -> str:
+    """Slice `script[:cut]` without splitting a base character from a
+    Unicode combining mark that depends on it (e.g. a Devanagari matra/
+    virama — Sarvam Bulbul v2, this repo's primary TTS provider, targets
+    Indic scripts where this is common). A combining mark immediately
+    AFTER the raw cut point means the character immediately BEFORE it is a
+    base character being separated from a mark that belongs to it; back
+    the cut point up until that's no longer true.
+
+    Checks Unicode general category (Mn/Mc/Me), NOT `unicodedata.combining()`
+    — that function returns the *canonical combining class* used for
+    normalization ordering, which is 0 for most spacing/non-spacing Indic
+    vowel signs (e.g. DEVANAGARI VOWEL SIGN U is category Mn but combining
+    class 0). Category is the correct "is this character a dependent mark"
+    test; combining-class is not, and would silently miss the exact script
+    family this fix exists for.
+
+    Worst case the result is a few characters shorter than the exact
+    budget — always safe, never over budget, and correctness > exactness
+    here."""
+    while 0 < cut < len(script) and unicodedata.category(script[cut]) in _COMBINING_CATEGORIES:
+        cut -= 1
+    return script[:cut]
+
+
+def _apply_narration_char_cap(
+    lesson_id: str, narration_scripts: list[dict[str, Any]], max_chars: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Story 3-37 / decisionupdate.md §8: enforce a LESSON-WIDE hard cap of
+    `max_chars` narration characters across ALL segments combined, walked in
+    true lesson order (see `_segment_order_key`), before any TTS spend is
+    incurred.
+
+    This cannot live inside narration_generator_node — that node is
+    Send()-dispatched once per section with no visibility into any other
+    section's output (see that node's own docstring). tts_node is the first
+    point all segments' scripts are available together, and it runs
+    immediately before the actual (dominant, 67-73% of lesson cost) TTS
+    spend, so the cap is enforced here instead.
+
+    Once the running total would exceed `max_chars`, the segment that
+    crosses the boundary is truncated to a grapheme-safe slice that fills
+    as much of the remaining budget as it can without splitting a base
+    character from a combining mark (`_trim_to_grapheme_boundary`; matches
+    `_get_section_body`'s existing `[:max_chars]` character-level-slice
+    convention otherwise) and every segment after it has its script zeroed
+    — treated as empty, which the caller degrades through the same
+    browser-fallback shape already used for a malformed/missing script,
+    never a new shape.
+
+    A malformed entry that isn't a dict at all (a bare string/int/None from
+    a schema-drifted or hand-edited checkpoint — the exact case
+    `package_builder_node._index_by_segment_id` already defends against) is
+    logged and dropped rather than crashing the node on `entry.get(...)`,
+    matching this node's own "never hard-fails" guarantee.
+
+    ALWAYS returns a genuinely new list (every entry rebuilt via `{**entry,
+    ...}` or filtered — the caller never gets back the same list/dict
+    objects it passed in, on either the under-budget or over-budget path)
+    and an explicit degradation record — CLAUDE.md: silent truncation is
+    never acceptable, so the record is written even when `capped` is False,
+    and the caller persists it unconditionally rather than only on the
+    degraded path.
+    """
+    clean_entries: list[dict[str, Any]] = []
+    for i, entry in enumerate(narration_scripts):
+        if not isinstance(entry, dict):
+            logger.warning(
+                "[%s] narration_cap: narration_scripts entry %d is %s, not a dict — dropped: %r",
+                lesson_id,
+                i,
+                type(entry).__name__,
+                entry,
+            )
+            continue
+        clean_entries.append(entry)
+
+    ordered_entries = sorted(
+        enumerate(clean_entries), key=lambda pair: _segment_order_key(pair[1], pair[0])
+    )
+    entries = [entry for _, entry in ordered_entries]
+
+    original_total = sum(len(_safe_narration_script(entry)) for entry in entries)
+
+    if original_total <= max_chars:
+        return [{**entry} for entry in entries], {
+            "capped": False,
+            "original_total_chars": original_total,
+            "capped_total_chars": original_total,
+            "affected_segment_ids": [],
+        }
+
+    capped_scripts: list[dict[str, Any]] = []
+    affected_segment_ids: list[str] = []
+    running_total = 0
+    for i, entry in enumerate(entries):
+        script = _safe_narration_script(entry)
+        segment_id = entry.get("segment_id")
+        segment_label = segment_id if isinstance(segment_id, str) else f"<unknown-{i}>"
+        remaining_budget = max_chars - running_total
+        if remaining_budget <= 0:
+            # Cap already fully spent by an earlier segment — zero this one
+            # out. Only record it as "affected" if it actually had content
+            # to lose (an entry that was already blank isn't a new casualty).
+            if script:
+                affected_segment_ids.append(segment_label)
+            capped_scripts.append({**entry, "script": ""})
+            continue
+        if len(script) > remaining_budget:
+            # The segment that crosses the boundary — truncate to fill (at
+            # most) what's left of the budget, on a grapheme-safe boundary.
+            capped_scripts.append(
+                {**entry, "script": _trim_to_grapheme_boundary(script, remaining_budget)}
+            )
+            affected_segment_ids.append(segment_label)
+            running_total = max_chars
+        else:
+            capped_scripts.append({**entry})
+            running_total += len(script)
+
+    capped_total = sum(len(_safe_narration_script(e)) for e in capped_scripts)
+    logger.warning(
+        "[%s] narration_cap: lesson-wide narration exceeded %d chars (total %d) — "
+        "truncated/zeroed %d segment(s): %s",
+        lesson_id,
+        max_chars,
+        original_total,
+        len(affected_segment_ids),
+        affected_segment_ids,
+    )
+    return capped_scripts, {
+        "capped": True,
+        "original_total_chars": original_total,
+        "capped_total_chars": capped_total,
+        "affected_segment_ids": affected_segment_ids,
+    }
+
+
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
     Sarvam -> Azure -> Browser Speech fallback chain.
@@ -3347,6 +3536,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
     `Narration.timestamps` always ships `[]` — Story 2-8's explicit scope
     decision (word-to-slide timestamp mapping deferred to a follow-up story).
     """
+    from app.config import get_settings
     from app.core.db import get_supabase
     from app.schemas.lesson import Narration
 
@@ -3384,6 +3574,17 @@ async def tts_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 86.0, "tts_node")
         return {"audio_assets": cached, "progress_pct": 86.0}
 
+    # Story 3-37 / decisionupdate.md §8: enforce the lesson-wide narration
+    # character cap BEFORE any TTS spend — see _apply_narration_char_cap's
+    # docstring for why this must live here and not in
+    # narration_generator_node. Always applied (a no-op when under budget)
+    # so narration_cap_applied is always available to write below, on
+    # whichever of the two branches actually runs.
+    settings = get_settings()
+    narration_scripts, narration_cap_record = _apply_narration_char_cap(
+        lesson_id, narration_scripts, settings.max_narration_chars_per_lesson
+    )
+
     if not narration_scripts:
         logger.warning(
             "[%s] tts_node: zero narration_scripts — producing empty audio_assets "
@@ -3397,7 +3598,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
         supabase.table("lesson_jobs").update(
             {
                 "last_node": "tts_node",
-                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+                "node_outputs": {
+                    **node_outputs,
+                    "tts_node": audio_assets_out,
+                    "narration_cap_applied": narration_cap_record,
+                },
             }
         ).eq("lesson_id", lesson_id).execute()
     else:
@@ -3426,11 +3631,19 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 if not _SAFE_SEGMENT_ID_RE.match(segment_id):
                     raise ValueError(f"unsafe segment_id for storage path: {segment_id!r}")
 
+                # Story 3-37: a script zeroed by _apply_narration_char_cap
+                # (lesson-wide narration cap already exceeded by an earlier
+                # segment) needs no synthesis call at all — degrade straight
+                # to the browser-fallback shape without spending a network
+                # round-trip on empty text. Checked before the cost-ceiling
+                # pre-check below since there's nothing to synthesize either way.
+                if not script:
+                    audio_bytes, audio_provider, cost = None, "browser", 0.0
                 # Story 2-13/S2-13 AC-3: proactive per-segment cost-ceiling
                 # pre-check, mirroring image_generator_node's existing
                 # pattern (Story 2-9 AC-3) — skip straight to the free
                 # browser fallback rather than attempting Sarvam/Azure.
-                if await check_ceiling(lesson_id):
+                elif await check_ceiling(lesson_id):
                     logger.warning(
                         "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
                         "for segment %s (browser fallback)",
@@ -3501,7 +3714,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
         supabase.table("lesson_jobs").update(
             {
                 "last_node": "tts_node",
-                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+                "node_outputs": {
+                    **node_outputs,
+                    "tts_node": audio_assets_out,
+                    "narration_cap_applied": narration_cap_record,
+                },
             }
         ).eq("lesson_id", lesson_id).execute()
 

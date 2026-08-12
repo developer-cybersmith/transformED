@@ -193,6 +193,18 @@ class Settings(BaseSettings):
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
     )
+    max_narration_chars_per_lesson: int = Field(
+        default=10000,
+        ge=1,
+        description=(
+            "Node 8 hard cap: max narration chars across all segments combined "
+            "(decisionupdate.md section 8). TTS synthesis cost is proportional to "
+            "character count and is 67-73% of total lesson generation cost, so this "
+            "bounds the dominant cost driver before it's incurred. Enforced in "
+            "tts_node (not narration_generator_node, which is Send()-dispatched "
+            "once per section with no visibility into any other section's output)."
+        ),
+    )
 
     # ── Book-scale chapter generation gates (Story 1-14, book-scale Phase 6) ──
     max_chapter_pages: int = Field(
