@@ -20,8 +20,8 @@ const AGGREGATION_WINDOW_MS = 5000;
 // mismatched WASM/JS version pairing is an unverified cross-version risk
 // with no test coverage possible here (real WASM can't run under vitest).
 const WASM_BASE_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
-// DEFER-012: floating `latest` tag, not pinned to a specific model version --
-// see docs/deferred-work.md.
+// DEFER-012 / D66 (docs/DEFECT-REGISTER.md): floating `latest` tag, not
+// pinned to a specific model version -- see docs/deferred-work.md.
 const MODEL_ASSET_URL =
   'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task';
 

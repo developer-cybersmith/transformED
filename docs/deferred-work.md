@@ -5,6 +5,10 @@
 - **DEFER-001** — UUID `distinct_id` sent to PostHog with no erasure pathway for DPDP right-to-erasure. PostHog builds a persistent person profile keyed on the user's internal UUID; no code path calls PostHog's person-delete API when an account is deleted. Addressable in a dedicated DPDP compliance story before real-student launch.
 - **DEFER-002** — Synchronous `posthog.capture()` called from async route handlers and service functions (no `asyncio.to_thread` guard). Current PostHog Python SDK v3 queues internally and returns in microseconds — no measurable event-loop impact today. Add `asyncio.to_thread` wrapper if SDK v4 changes flush semantics.
 
+## Deferred from: S3-02 AttentionMonitor (Story 2-44, 2026-08-10)
+
+- **DEFER-012 / D66** — `apps/web/src/hooks/useAttentionMonitor.ts`'s `MODEL_ASSET_URL` points at a floating `float16/latest/face_landmarker.task` tag rather than a pinned MediaPipe model version. Now carries a real register ID — see `docs/DEFECT-REGISTER.md` **D66** for owner, severity, and trigger (Story 2-45 closed the missing-ID gap; the underlying floating-tag risk itself is still open). Originally allocated as D63, which collided with a pre-existing closed D63 on `sprint3-master`; corrected to D66 in Story 2-45's own code review.
+
 ## Deferred from: code review of 2-42-attention-consent-modal (2026-08-06)
 
 - **DEFER-003** — `useAttentionConsent`'s exported `consentStatus`/localStorage dismissal key are easy for a future dev to mistake for the real security-initialize gate, and the hook only re-reads Supabase on mount/user-change, not "every check" as AC-4's wording implies (`apps/web/src/hooks/useAttentionConsent.ts`). Applies to code (`AttentionMonitor`, S3-02) that doesn't exist yet — flag explicitly in that story's Dev Notes rather than fixing here.
@@ -28,3 +32,7 @@
 - **DEFER-013** — Two simultaneous `AttentionMonitor` mounts would silently double-send `attention_signal` messages for the same session — unlike `wsSendControl`/`wsSendAttentionSignal`'s identity-guarded registration in `useLessonSocket.ts`, nothing prevents two mounted hook instances from both acquiring a camera and both sending on the same tick. Not reachable under the current architecture (`AttentionMonitor` is rendered exactly once in `Player.tsx`); guarding against a hypothetical future double-mount regression is speculative complexity today.
 - **DEFER-014** — No story/tracker ID owns wiring `quiz_accuracy`/`teachback_score` into the `attention_signal` channel from `QuizOverlay`/`TeachBackModal`. The frozen `packages/shared/types/ws.ts` contract has had these fields since Sprint 0, but no component populates them yet — a pre-existing scope gap, not introduced or owned by S3-02.
 - **DEFER-015** — Whether attention monitoring should pause entirely (stop calling `detectForVideo`) when the browser tab is backgrounded (`document.hidden`), beyond the wall-clock correction applied to the blink-rate calculation for timer-throttling. A broader UX/architecture question (does a backgrounded tab's `<video>` element even keep decoding real frames across browsers) requiring product input, not a mechanical fix.
+
+## Deferred from: code review of 2-45-signed-url-refresh-and-defer-012 (2026-08-11)
+
+- **DEFER-016 / D67** — `GET /api/media/signed-url` (`apps/api/app/modules/media/router.py`) has no rate limiting, and Story 2-45 gives it its first real, automatic, unattended caller. Requires an `apps/api` change (a Dev 1 module) — out of scope for this frontend-only story. See `docs/DEFECT-REGISTER.md` **D67** for owner, severity, and trigger.
