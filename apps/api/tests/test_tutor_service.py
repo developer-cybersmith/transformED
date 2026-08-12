@@ -120,10 +120,44 @@ def test_parse_missing_session_id_raises() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("field", ["behavioral_score", "head_pose_score", "blink_rate"])
-def test_parse_missing_required_float_raises(field: str) -> None:
-    """AC2: missing ANY required float → ValueError (covers all three _require_float branches)."""
+def test_parse_missing_mediapipe_field_becomes_none(field: str) -> None:
+    """Story 4-25 AC1: a missing MediaPipe field is None, NOT a ValueError.
+
+    Supersedes the pre-Story-4-25 test of the same shape (which asserted the opposite —
+    these three used to be _require_float). A partial MediaPipe rollout (Dev 2 ships
+    head-pose before blink) must not make the server reject the whole frame."""
     payload = {k: v for k, v in _VALID_PAYLOAD.items() if k != field}
-    with pytest.raises(ValueError):
+    parsed = _parse_signal(payload)
+    assert getattr(parsed, field) is None
+    # The other two MediaPipe fields are untouched.
+    for other in ("behavioral_score", "head_pose_score", "blink_rate"):
+        if other != field:
+            assert getattr(parsed, other) == _VALID_PAYLOAD[other]
+
+
+@pytest.mark.unit
+def test_parse_all_three_mediapipe_fields_missing_but_quiz_present() -> None:
+    """Story 4-25 AC1: all three MediaPipe fields absent at once still parses fine as long as
+    at least one other signal (quiz_accuracy here) is present."""
+    payload = {
+        "session_id": "sess-1",
+        "quiz_accuracy": 0.8,
+        "teachback_score": None,
+    }
+    parsed = _parse_signal(payload)
+    assert parsed.behavioral_score is None
+    assert parsed.head_pose_score is None
+    assert parsed.blink_rate is None
+    assert parsed.quiz_accuracy == 0.8
+
+
+@pytest.mark.unit
+def test_parse_all_five_signals_absent_raises() -> None:
+    """Story 4-25 AC2: a frame with session_id but NO signal at all is malformed, not
+    "redistribute to 100%". Prevents compute_ces's weight_sum<=0 branch (CES=0.0) from
+    being reachable by an empty payload, which would falsely read as full disengagement."""
+    payload = {"session_id": "sess-1"}
+    with pytest.raises(ValueError, match="at least one non-null signal"):
         _parse_signal(payload)
 
 
@@ -141,8 +175,10 @@ def test_parse_none_optionals_preserved() -> None:
 
 
 @pytest.mark.unit
-def test_parse_non_numeric_required_raises() -> None:
-    """AC3: a non-numeric required field → ValueError."""
+def test_parse_non_numeric_mediapipe_field_raises() -> None:
+    """A non-numeric (but non-null) MediaPipe field is still invalid → ValueError.
+
+    Story 4-25 made these three optional when ABSENT, not tolerant of garbage when PRESENT."""
     payload = dict(_VALID_PAYLOAD)
     payload["behavioral_score"] = "abc"
     with pytest.raises(ValueError):
@@ -156,6 +192,100 @@ def test_parse_non_numeric_optional_raises() -> None:
     payload["quiz_accuracy"] = "x"
     with pytest.raises(ValueError):
         _parse_signal(payload)
+
+
+# ── Story 4-25 AC3: compute_ces redistribution over partial MediaPipe signals ──────
+#
+# No test in this suite previously called compute_ces() directly with a hand-built
+# NormalizedSignal — coverage was indirect, via process_attention_signal's module-level
+# _EXPECTED_CES pin. These are the first direct unit tests of the redistribution math
+# itself, and the first to prove it for combinations other than "teachback only is None"
+# (the one case §11 documents explicitly).
+
+
+@pytest.mark.unit
+def test_compute_ces_head_pose_only_present(mocker) -> None:
+    """AC3: only head_pose_score present → it alone carries 100% of the weight."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    signal = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral_score=None,
+        head_pose_score=0.9,
+        blink_rate=None,
+    )
+    assert compute_ces(signal) == pytest.approx(90.0)
+
+
+@pytest.mark.unit
+def test_compute_ces_blink_only_present(mocker) -> None:
+    """AC3: only blink_rate present → it alone carries 100% of the weight."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    signal = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral_score=None,
+        head_pose_score=None,
+        blink_rate=0.4,
+    )
+    assert compute_ces(signal) == pytest.approx(40.0)
+
+
+@pytest.mark.unit
+def test_compute_ces_behavioral_only_present(mocker) -> None:
+    """AC3: only behavioral_score present → it alone carries 100% of the weight."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    signal = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral_score=0.6,
+        head_pose_score=None,
+        blink_rate=None,
+    )
+    assert compute_ces(signal) == pytest.approx(60.0)
+
+
+@pytest.mark.unit
+def test_compute_ces_two_of_three_mediapipe_signals(mocker) -> None:
+    """AC3: head_pose + blink present, behavioral absent — weights redistribute
+    proportionally over the two present (0.12 and 0.08, summing to 0.20 → each ÷ 0.20)."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    signal = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral_score=None,
+        head_pose_score=0.8,
+        blink_rate=0.2,
+    )
+    # (0.8 * 0.12/0.20) + (0.2 * 0.08/0.20) = 0.48 + 0.08 = 0.56 → 56.0
+    assert compute_ces(signal) == pytest.approx(56.0)
+
+
+@pytest.mark.unit
+def test_compute_ces_quiz_plus_one_mediapipe_signal(mocker) -> None:
+    """AC3: quiz_accuracy + behavioral_score present, everything else None — mixes a
+    non-MediaPipe signal with a partial MediaPipe rollout."""
+    mocker.patch("app.config.get_settings", return_value=_settings_mock())
+
+    signal = NormalizedSignal(
+        session_id="s",
+        quiz_accuracy=1.0,
+        teachback_score=None,
+        behavioral_score=0.5,
+        head_pose_score=None,
+        blink_rate=None,
+    )
+    # weights present: quiz 0.35, behavioral 0.20 → sum 0.55
+    # (1.0 * 0.35/0.55) + (0.5 * 0.20/0.55) = 0.636... + 0.1818... = 0.8182 → 81.82
+    assert compute_ces(signal) == pytest.approx(81.818, abs=0.01)
 
 
 # ── Buffer writes (process_attention_signal) ────────────────────────────────────

@@ -34,9 +34,13 @@ class NormalizedSignal:
     session_id: str
     quiz_accuracy: float | None  # None when quiz not yet attempted
     teachback_score: float | None  # None when teach-back skipped
-    behavioral_score: float
-    head_pose_score: float
-    blink_rate: float
+    # Story 4-25 (SYNC-B): each of these three may now be None — a partial MediaPipe signal
+    # (e.g. head-pose shipped, blink not yet) must not make the server reject the whole frame.
+    # compute_ces already redistributes weights over whichever signals are present; only the
+    # parse boundary (_parse_signal) previously forced all three to be mandatory.
+    behavioral_score: float | None
+    head_pose_score: float | None
+    blink_rate: float | None
 
 
 @dataclass
@@ -55,7 +59,17 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
     """Map a WebSocket message dict into a validated NormalizedSignal.
 
     Accepts both the full WsMessage envelope (``{"type": ..., "payload": {...}}``)
-    and a flat dict.  Handles quiz_accuracy=None and teachback_score=None.
+    and a flat dict. All five signal fields (``quiz_accuracy``, ``teachback_score``,
+    ``behavioral_score``, ``head_pose_score``, ``blink_rate``) may individually be
+    ``None`` — Story 4-25 (SYNC-B): a partial MediaPipe rollout (e.g. head-pose shipped,
+    blink/behavioral not yet) must not make the server reject the entire frame.
+    ``compute_ces`` already redistributes weight over whichever signals are present.
+
+    Raises ``ValueError`` if EVERY one of the five is absent — a frame carrying no
+    attention data at all is a malformed message, not "redistribute to 100%". Without
+    this floor, ``compute_ces``'s ``weight_sum <= 0`` branch would silently return
+    ``0.0`` (a fully-disengaged reading) for a payload that said nothing at all, which
+    at ``ces_threshold = 50`` can falsely trigger an intervention from two empty frames.
     """
     # Unwrap WsMessage envelope if present
     data: dict[str, Any] = payload.get("payload") or payload
@@ -63,20 +77,6 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
     session_id = data.get("session_id")
     if not session_id:
         raise ValueError("attention_signal missing required field: session_id")
-
-    def _require_float(key: str) -> float:
-        v = data.get(key)
-        if v is None:
-            raise ValueError(f"attention_signal missing required field: {key}")
-        try:
-            f = float(v)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"attention_signal field {key!r} must be numeric") from exc
-        # Reject NaN/±inf: float("nan") would propagate through compute_ces and clamp to a
-        # misleading value (NaN→100 = maximally engaged), silently suppressing interventions.
-        if not math.isfinite(f):
-            raise ValueError(f"attention_signal field {key!r} must be a finite number")
-        return f
 
     def _optional_float(key: str) -> float | None:
         v = data.get(key)
@@ -86,17 +86,34 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
             f = float(v)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"attention_signal field {key!r} must be numeric or null") from exc
+        # Reject NaN/±inf: float("nan") would propagate through compute_ces and clamp to a
+        # misleading value (NaN→100 = maximally engaged), silently suppressing interventions.
         if not math.isfinite(f):
             raise ValueError(f"attention_signal field {key!r} must be a finite number or null")
         return f
 
+    quiz_accuracy = _optional_float("quiz_accuracy")
+    teachback_score = _optional_float("teachback_score")
+    behavioral_score = _optional_float("behavioral_score")
+    head_pose_score = _optional_float("head_pose_score")
+    blink_rate = _optional_float("blink_rate")
+
+    if all(
+        v is None
+        for v in (quiz_accuracy, teachback_score, behavioral_score, head_pose_score, blink_rate)
+    ):
+        raise ValueError(
+            "attention_signal must carry at least one non-null signal "
+            "(quiz_accuracy, teachback_score, behavioral_score, head_pose_score, blink_rate)"
+        )
+
     return NormalizedSignal(
         session_id=str(session_id),
-        quiz_accuracy=_optional_float("quiz_accuracy"),
-        teachback_score=_optional_float("teachback_score"),
-        behavioral_score=_require_float("behavioral_score"),
-        head_pose_score=_require_float("head_pose_score"),
-        blink_rate=_require_float("blink_rate"),
+        quiz_accuracy=quiz_accuracy,
+        teachback_score=teachback_score,
+        behavioral_score=behavioral_score,
+        head_pose_score=head_pose_score,
+        blink_rate=blink_rate,
     )
 
 
@@ -110,12 +127,14 @@ def compute_ces(signal: NormalizedSignal) -> float:
     weights, matching Dev 3's ``ces_contribution`` scale contract
     (assessment/service.py) so ``ces_threshold = 50`` is correct.
 
-    Signals are 0–1 fractions; ``quiz_accuracy`` / ``teachback_score`` may be ``None``
-    (not yet attempted / skipped). The weight of any ``None`` signal is redistributed
-    proportionally across the present signals (each present weight ÷
-    sum-of-present-weights). This generalises the §11 teachback-``None`` rule — when
-    only teachback is ``None`` the present weights sum to 0.75, so each is divided by
-    0.75, reproducing the §11 numbers exactly. Result is clamped to ``[0, 100]``.
+    Signals are 0–1 fractions; ANY of the five may be ``None`` (quiz not yet attempted,
+    teach-back skipped, or — Story 4-25 — a MediaPipe signal not yet shipped for this
+    session). The weight of any ``None`` signal is redistributed proportionally across
+    the present signals (each present weight ÷ sum-of-present-weights). This generalises
+    the §11 teachback-``None`` rule — when only teachback is ``None`` the present
+    weights sum to 0.75, so each is divided by 0.75, reproducing the §11 numbers
+    exactly. ``_parse_signal`` guarantees at least one signal is present, so
+    ``weight_sum`` is never 0 in practice. Result is clamped to ``[0, 100]``.
     """
     from app.config import get_settings
 
