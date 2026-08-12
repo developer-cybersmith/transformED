@@ -6,7 +6,7 @@ import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { trackEvent } from '@/lib/analytics';
-import { createSession } from '@/lib/assessment';
+import { completeSession, createSession } from '@/lib/assessment';
 import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
@@ -199,6 +199,22 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
     // id, not the object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lessonId, loadLesson]);
+
+  // Marks the session as ended so the session report's duration_minutes/
+  // completed_at (assessment/service.py::get_session_report, which reads
+  // sessions.ended_at) have a real value instead of silently staying
+  // 0.0/None forever -- confirmed nothing anywhere ever wrote that column
+  // (found via a live full-lesson playthrough, 2026-08-12). complete_session
+  // is idempotent server-side (writes ended_at only once), so a duplicate
+  // call here is harmless -- no ref guard needed. Non-fatal on failure: a
+  // report field being wrong must never block the "Lesson complete" screen,
+  // which is already rendered by the time this fires.
+  useEffect(() => {
+    if (status !== 'ENDED' || !sessionId) return;
+    void completeSession(sessionId).catch(() => {
+      // Swallowed on purpose -- see the comment above.
+    });
+  }, [status, sessionId]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;
 

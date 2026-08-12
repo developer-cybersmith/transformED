@@ -13,7 +13,8 @@ Covers:
   - AC 7: ces_breakdown has exactly 5 keys
   - AC 8: ces_breakdown["quiz"] formula
   - AC 9: ces_breakdown["teachback"] formula
-  - AC 10: behavioral/head_pose/blink always 0.0
+  - AC 10: behavioral/head_pose/blink averaged from session:{id}:ces_signal_totals
+    (0.0 when Redis unavailable or no attention signals were ever recorded)
   - AC 11: interventions_count from session_events
   - AC 12: duration_minutes from timestamps
   - AC 13: completed_at as ISO string or None
@@ -207,6 +208,9 @@ def _mock_settings(monkeypatch) -> None:
     mock_settings = MagicMock()
     mock_settings.ces_weight_quiz = 0.35
     mock_settings.ces_weight_teachback = 0.25
+    mock_settings.ces_weight_behavioral = 0.20
+    mock_settings.ces_weight_head_pose = 0.12
+    mock_settings.ces_weight_blink = 0.08
     monkeypatch.setattr("app.modules.assessment.service.get_settings", lambda: mock_settings)
 
 
@@ -447,8 +451,12 @@ async def test_get_report_ces_breakdown_teachback_zero_when_no_attempts(mock_to_
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_ces_breakdown_attention_always_zero(mock_to_thread):
-    """AC 10: behavioral, head_pose, blink are always 0.0 in Sprint 2."""
+async def test_get_report_ces_breakdown_attention_zero_when_redis_unavailable(mock_to_thread):
+    """AC 10 (updated): behavioral/head_pose/blink degrade to 0.0 when the
+    `ces_signal_totals` Redis read fails (e.g. Redis unavailable) -- no test
+    here patches app.core.redis.get_redis, so the real one raises
+    (RuntimeError: pool not initialised) and get_session_report must catch it
+    and render the quiz/teachback halves anyway rather than 500."""
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(
@@ -460,6 +468,40 @@ async def test_get_report_ces_breakdown_attention_always_zero(mock_to_thread):
     assert result.ces_breakdown["behavioral"] == pytest.approx(0.0)
     assert result.ces_breakdown["head_pose"] == pytest.approx(0.0)
     assert result.ces_breakdown["blink"] == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_report_ces_breakdown_attention_averaged_from_signal_totals(mock_to_thread):
+    """behavioral/head_pose/blink are now the SESSION-WIDE average of every
+    attention signal process_attention_signal ever recorded, read from
+    `session:{id}:ces_signal_totals` (tutor/service.py writes it), not a
+    hardcoded 0.0. 4 windows: behavioral sum=2.0, head_pose sum=1.2, blink
+    sum=0.8 → averages 0.5/0.3/0.2 -- matching the CES weight formula used
+    for quiz/teachback above (avg * weight * 100)."""
+    from app.modules.assessment.service import get_session_report
+
+    mock_redis = MagicMock()
+
+    async def _hgetall(_key: str) -> dict[str, str]:
+        return {
+            "behavioral_sum": "2.0",
+            "head_pose_sum": "1.2",
+            "blink_sum": "0.8",
+            "count": "4",
+        }
+
+    mock_redis.hgetall = _hgetall
+
+    supabase = _build_report_supabase()
+    with patch("app.core.redis.get_redis", return_value=mock_redis):
+        result = await get_session_report(
+            session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase
+        )
+
+    assert result.ces_breakdown["behavioral"] == pytest.approx(round(0.5 * 0.20 * 100, 4))
+    assert result.ces_breakdown["head_pose"] == pytest.approx(round(0.3 * 0.12 * 100, 4))
+    assert result.ces_breakdown["blink"] == pytest.approx(round(0.2 * 0.08 * 100, 4))
 
 
 @pytest.mark.unit

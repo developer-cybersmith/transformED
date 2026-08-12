@@ -107,6 +107,16 @@ afterEach(() => {
 // IDLE — so status must be set to ENDED *after* render, not before, or the
 // mount effect silently overwrites it.
 function renderEnded(sessionId: string) {
+  // Reset first -- usePlayerStore is a module-level singleton this file never
+  // resets between tests, so a previous test's leftover status/sessionId
+  // would otherwise be visible to this NEW component's very first render,
+  // before its own loadLesson-driven reset effect has had a chance to run
+  // (review fix: without this, the complete-session effect below could fire
+  // once using a PRIOR test's leftover sessionId before loadLesson's reset
+  // took effect -- harmless in production since it's idempotent and the
+  // leftover value was itself once genuinely correct, but it made this
+  // helper's callers flaky to assert on).
+  usePlayerStore.setState({ status: 'IDLE', sessionId: '' });
   const utils = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
   act(() => {
     usePlayerStore.setState({ status: 'ENDED', sessionId });
@@ -135,6 +145,39 @@ describe('Player — lesson complete (ENDED) screen', () => {
 
     expect(screen.queryByRole('link', { name: /session report/i })).toBeNull();
     expect(screen.getByRole('link', { name: /back to dashboard/i })).not.toBeNull();
+  });
+
+  // Found via a live full-lesson playthrough (2026-08-12): nothing anywhere
+  // ever called this, so sessions.ended_at silently stayed NULL forever and
+  // the session report's duration_minutes/completed_at were always 0.0/None.
+  it('calls the complete-session endpoint exactly once when reaching ENDED with a real sessionId', () => {
+    renderEnded('sess_abc123');
+
+    const completeCalls = apiPostMock.mock.calls.filter(
+      ([url]) => url === '/assessment/session/sess_abc123/complete'
+    );
+    expect(completeCalls).toHaveLength(1);
+  });
+
+  it('does NOT call the complete-session endpoint when sessionId is still empty', () => {
+    renderEnded('');
+
+    const completeCalls = apiPostMock.mock.calls.filter(([url]) =>
+      String(url).includes('/complete')
+    );
+    expect(completeCalls).toHaveLength(0);
+  });
+
+  it('does not re-call the complete-session endpoint on an unrelated re-render (same status/sessionId)', () => {
+    const { rerender } = renderEnded('sess_abc123');
+    apiPostMock.mockClear();
+
+    rerender(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    const completeCalls = apiPostMock.mock.calls.filter(
+      ([url]) => url === '/assessment/session/sess_abc123/complete'
+    );
+    expect(completeCalls).toHaveLength(0);
   });
 });
 

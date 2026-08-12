@@ -192,6 +192,27 @@ async def test_history_lpush_ltrim_expire_called(mocker) -> None:
 
 
 @pytest.mark.unit
+async def test_signal_totals_accumulated_for_session_report(mocker) -> None:
+    """assessment/service.py's get_session_report reads
+    `session:{id}:ces_signal_totals` to compute the ces_breakdown
+    behavioral/head_pose/blink averages -- before this, ces_history only ever
+    kept the already-blended `ces` number, so the report had nowhere to read a
+    real per-signal average from and hardcoded all three to 0.0."""
+    mock_redis, _ = _setup(mocker, lrange_vals=["0.5"])
+
+    from app.modules.tutor.service import process_attention_signal
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    totals_key = "session:sess-1:ces_signal_totals"
+    mock_redis.hincrbyfloat.assert_any_call(totals_key, "behavioral_sum", _VALID_PAYLOAD["behavioral_score"])
+    mock_redis.hincrbyfloat.assert_any_call(totals_key, "head_pose_sum", _VALID_PAYLOAD["head_pose_score"])
+    mock_redis.hincrbyfloat.assert_any_call(totals_key, "blink_sum", _VALID_PAYLOAD["blink_rate"])
+    mock_redis.hincrby.assert_any_call(totals_key, "count", 1)
+    mock_redis.expire.assert_any_call(totals_key, 86400)
+
+
+@pytest.mark.unit
 async def test_history_read_via_lrange(mocker) -> None:
     """AC6: history is read via lrange(key, 0, 9)."""
     mock_redis, _ = _setup(mocker, lrange_vals=["0.5"])

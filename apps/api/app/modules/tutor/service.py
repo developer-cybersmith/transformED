@@ -307,6 +307,30 @@ async def process_attention_signal(
     await cast("Awaitable[str]", redis.ltrim(history_key, 0, _CES_HISTORY_MAX - 1))
     await redis.expire(history_key, _CES_WINDOW_TTL)
 
+    # Running sums for the session's behavioral/head_pose/blink CES sub-scores.
+    # get_session_report() (assessment/service.py) has always reported these
+    # three as a hardcoded 0.0 in ces_breakdown -- ces_history above only ever
+    # kept the already-blended `ces` number, so there was nowhere for the report
+    # to read a real per-signal average from, even though every attention
+    # signal carries all three. A running (sum, count) hash survives the
+    # _CES_HISTORY_MAX=10 trim (the report needs the WHOLE session's average,
+    # not just the last 10 windows) and is O(1) per signal rather than
+    # re-summing a growing list on every report read.
+    totals_key = f"session:{session_id}:ces_signal_totals"
+    await cast(
+        "Awaitable[float]",
+        redis.hincrbyfloat(totals_key, "behavioral_sum", normalized.behavioral_score),
+    )
+    await cast(
+        "Awaitable[float]",
+        redis.hincrbyfloat(totals_key, "head_pose_sum", normalized.head_pose_score),
+    )
+    await cast(
+        "Awaitable[float]", redis.hincrbyfloat(totals_key, "blink_sum", normalized.blink_rate)
+    )
+    await cast("Awaitable[int]", redis.hincrby(totals_key, "count", 1))
+    await redis.expire(totals_key, _CES_WINDOW_TTL)
+
     # Bug fix: nothing anywhere ever sent the frozen `ces_update` message
     # (packages/shared/types/ws.ts) -- the frontend's CESIndicator has always
     # had complete, correct handling for it (useLessonSocket.ts's 'ces_update'

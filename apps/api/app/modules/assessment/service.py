@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, status
@@ -132,7 +132,8 @@ async def create_session(
 ) -> dict[str, Any]:
     """Mint a `sessions` row for *user_id* on *lesson_id* (Story 2-35 / D18).
 
-    **This is the only writer of `sessions` in the codebase.** Before this, all 7
+    **This is the only INSERTER of `sessions` in the codebase** (`complete_session`
+    below is the only UPDATER, of `ended_at` alone). Before this, all 7
     `table("sessions")` references were `.select(...)`, `apps/web` never inserted
     one either, and the frontend invented `crypto.randomUUID()`. So the ownership
     check in `grade_quiz` correctly rejected an id that had never existed, and
@@ -198,6 +199,65 @@ async def create_session(
         "lesson_id": str(row.get("lesson_id") or lesson_id),
         "started_at": str(started_at) if started_at is not None else None,
     }
+
+
+async def complete_session(
+    *,
+    session_id: str,
+    user_id: str,
+    supabase: Client,
+) -> dict[str, Any]:
+    """Mark *session_id* as ended, writing `sessions.ended_at`.
+
+    **This is the only writer of `sessions.ended_at` in the codebase.** Before
+    this, nothing ever wrote it -- confirmed by grepping the whole API for
+    `ended_at` -- so `get_session_report`'s `duration_minutes`/`completed_at`
+    fields silently returned 0.0/None for every session ever, including one a
+    student had genuinely finished start to end. The frontend must call this
+    exactly once, when the player reaches its terminal ENDED status.
+
+    Idempotent by construction: the UPDATE's `.is_("ended_at", "null")` filter
+    means only the FIRST call actually writes a row -- a double-fire (retry,
+    a second tab, StrictMode) affects 0 rows on every call after the first,
+    so a later, in-flight duplicate can never clobber the real completion
+    timestamp with a later one (Scale & Load Q6 -- concurrent check-then-act).
+
+    Raises:
+        HTTPException 404: the session does not exist **or** belongs to
+            someone else (SEC-006 — same response for both, matching
+            `create_session` above).
+    """
+    session_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, ended_at")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    session_row = single_row(session_resp)
+    if session_row is None or str(session_row.get("user_id", "")) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    existing_ended_at = session_row.get("ended_at")
+    if existing_ended_at:
+        return {"session_id": session_id, "ended_at": str(existing_ended_at)}
+
+    ended_at = datetime.now(UTC).isoformat()
+    await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .update({"ended_at": ended_at})
+            .eq("session_id", session_id)
+            .is_("ended_at", "null")
+            .execute()
+        )
+    )
+    return {"session_id": session_id, "ended_at": ended_at}
 
 
 async def grade_quiz(
@@ -794,13 +854,50 @@ async def get_session_report(
     settings = get_settings()
     quiz_contribution = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
     teachback_contribution = round((avg_teachback / 100.0) * settings.ces_weight_teachback * 100, 4)
+
+    # behavioral/head_pose/blink were hardcoded to 0.0 here even though every
+    # attention signal received during the session carries all three
+    # (tutor/service.py's process_attention_signal) -- ces_history there only
+    # ever kept the already-blended `ces` number, so there was nowhere for this
+    # report to read a real per-signal average from. process_attention_signal
+    # now also accumulates a running (sum, count) per session in
+    # `session:{id}:ces_signal_totals`; average over the WHOLE session here,
+    # the same way quiz/teachback above average over their own attempts.
+    # Redis-unavailable or a session with zero attention signals (consent
+    # declined, camera never granted) both degrade to 0.0 rather than raising --
+    # a report must still render the quiz/teachback halves in that case.
+    avg_behavioral = avg_head_pose = avg_blink = 0.0
+    signal_count = 0.0
+    try:
+        from app.core.redis import get_redis  # noqa: PLC0415 -- lazy, matches tutor/service.py
+
+        redis = get_redis()
+        totals = await redis.hgetall(f"session:{session_id}:ces_signal_totals")
+        signal_count = float(totals.get("count") or 0)
+        if signal_count > 0:
+            avg_behavioral = float(totals.get("behavioral_sum") or 0) / signal_count
+            avg_head_pose = float(totals.get("head_pose_sum") or 0) / signal_count
+            avg_blink = float(totals.get("blink_sum") or 0) / signal_count
+    except Exception:
+        logger.warning("ces signal totals read failed for session=%s", session_id, exc_info=True)
+
+    # Short-circuit at exactly 0.0 without touching settings.ces_weight_* at all when
+    # there is no signal data — a zero average times any weight is zero regardless,
+    # and this keeps a Redis-down/no-signal report from depending on those three
+    # weight settings being configured at all.
+    if signal_count > 0:
+        behavioral_contribution = round(avg_behavioral * settings.ces_weight_behavioral * 100, 4)
+        head_pose_contribution = round(avg_head_pose * settings.ces_weight_head_pose * 100, 4)
+        blink_contribution = round(avg_blink * settings.ces_weight_blink * 100, 4)
+    else:
+        behavioral_contribution = head_pose_contribution = blink_contribution = 0.0
+
     ces_breakdown: dict[str, float] = {
         "quiz": quiz_contribution,
         "teachback": teachback_contribution,
-        # Sprint 2: behavioral/head_pose/blink contributions deferred to Phase 3
-        "behavioral": 0.0,
-        "head_pose": 0.0,
-        "blink": 0.0,
+        "behavioral": behavioral_contribution,
+        "head_pose": head_pose_contribution,
+        "blink": blink_contribution,
     }
 
     # Step 6 — Duration and completion timestamp from session timestamps

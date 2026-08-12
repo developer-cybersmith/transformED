@@ -26,6 +26,7 @@ from app.modules.assessment.schemas import (
     QuizAnswer,
     QuizResult,
     QuizSubmission,
+    SessionCompleted,
     SessionCreate,
     SessionCreated,
     TeachbackResult,
@@ -103,6 +104,32 @@ async def create_session_endpoint(
         supabase=get_supabase(),
     )
     return SessionCreated(**created)
+
+
+@router.post(
+    "/session/{session_id}/complete",
+    response_model=SessionCompleted,
+    summary="Mark a session as ended — writes sessions.ended_at",
+)
+async def complete_session_endpoint(
+    session_id: str,
+    current_user: CurrentUser,
+) -> SessionCompleted:
+    """Call exactly once when the player reaches its terminal ENDED status.
+
+    Idempotent — see `complete_session`'s docstring in service.py. Without
+    this, `sessions.ended_at` never gets written by anything, and the session
+    report's `duration_minutes`/`completed_at` silently stay 0.0/None forever.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import complete_session
+
+    completed = await complete_session(
+        session_id=session_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
+    return SessionCompleted(**completed)
 
 
 @router.post(

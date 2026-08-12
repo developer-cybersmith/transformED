@@ -97,6 +97,24 @@ export async function createSession(payload: CreateSessionPayload): Promise<Sess
   return data;
 }
 
+// Matches apps/api/app/modules/assessment/schemas.py::SessionCompleted exactly.
+export interface SessionCompleted {
+  session_id: string;
+  ended_at: string;
+}
+
+// Call exactly once, when the player reaches its terminal ENDED status.
+// Idempotent server-side (writes sessions.ended_at only if still null) -- see
+// complete_session's docstring in service.py -- so a duplicate call (retry,
+// StrictMode double-invoke) is harmless, but this should still only be fired
+// once per real completion, not on every render.
+export async function completeSession(sessionId: string): Promise<SessionCompleted> {
+  const { data } = await api.post<SessionCompleted>(
+    `/assessment/session/${encodeURIComponent(sessionId)}/complete`
+  );
+  return data;
+}
+
 // ── Session report ──────────────────────────────────────────────────────────
 
 export async function getSessionReport(sessionId: string): Promise<SessionReport> {
