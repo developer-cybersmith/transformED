@@ -1303,3 +1303,79 @@ async def get_learner_dna_data(
         "reassessment_due": reassessment_due,
         "last_updated": row.get("last_updated"),
     }
+
+
+# ── S3-36 (D12) — Intervention event persistence ──────────────────────────────
+
+
+async def write_intervention_event(
+    session_id: str,
+    *,
+    intervention_type: str,
+    window_index: int,
+    ces_at_trigger: float,
+    message_key: str | None,
+    supabase: Any,  # noqa: ANN401
+) -> None:
+    """Write an intervention_triggered event to session_events (fire-and-forget).
+
+    Called via asyncio.create_task from the tutor intervening_node (D12).
+    DB failures are logged at ERROR and captured to Sentry — never re-raised,
+    so a DB outage cannot block the intervention dispatch path.
+    """
+    try:
+        row = {
+            "session_id": session_id,
+            "event_type": "intervention_triggered",
+            "payload": {
+                "intervention_type": intervention_type,
+                "window_index": window_index,
+                "ces_at_trigger": ces_at_trigger,
+                "message_key": message_key,
+            },
+        }
+        await asyncio.to_thread(
+            lambda: supabase.table("session_events").insert(row).execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        _safe_sid = str(session_id).replace("\n", " ").replace("\r", " ")
+        logger.error(
+            "write_intervention_event failed session=%s type=%s: %s",
+            _safe_sid,
+            intervention_type,
+            exc,
+        )
+        import sentry_sdk  # noqa: PLC0415
+
+        sentry_sdk.capture_exception(exc)
+
+
+async def _get_distraction_count(
+    session_id: str,
+    *,
+    redis: Any,  # noqa: ANN401
+    supabase: Any,  # noqa: ANN401
+) -> int:
+    """Return the current distraction intervention count for a session.
+
+    Reads from Redis first (``tutor_distraction_count:{session_id}``).
+    On cache miss, reconstructs from session_events — the DB is the source of truth
+    for recovery after a Redis restart (D12 fallback).
+
+    BOUNDED: query filters by session_id + event_type + intervention_type —
+    at most settings.max_distraction_interventions rows per session (default 3).
+    """
+    val = await redis.get(f"tutor_distraction_count:{session_id}")
+    if val is not None:
+        return int(val)
+    resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("session_events")
+            .select("session_id", count="exact")
+            .eq("session_id", session_id)
+            .eq("event_type", "intervention_triggered")
+            .eq("payload->>intervention_type", "distraction")
+            .execute()
+        )
+    )
+    return resp.count or 0
