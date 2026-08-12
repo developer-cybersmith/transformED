@@ -1004,11 +1004,37 @@ async def process_onboarding(
         )
 
     # Step 4 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
+    # D71: provider.complete() already has @with_retry(max_attempts=3) for transient 429/5xx.
+    # If all retries fail the raw exception must be caught here: convert to HTTPException(503)
+    # so the router's `except HTTPException` cleanup fires and releases the Redis lock.
+    # Before raising we also delete the Step 3 rows so a retry can re-insert cleanly.
     provider = OpenAILLMProvider(lesson_id="onboarding")
-    profile_text = await generate_onboarding_profile(
-        badge_labels=badge_labels,
-        provider=provider,
-    )
+    try:
+        profile_text = await generate_onboarding_profile(
+            badge_labels=badge_labels,
+            provider=provider,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("onboarding: generate_onboarding_profile failed for user=%s", user_id)
+        _question_ids = [r["question_id"] for r in rows]
+        try:
+            await asyncio.to_thread(
+                lambda: supabase.table("onboarding_responses")
+                    .delete()
+                    .eq("user_id", user_id)
+                    .in_("question_id", _question_ids)
+                    .execute()
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "onboarding: rollback of onboarding_responses failed user=%s — "
+                "user may need manual cleanup to retry",
+                user_id,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Profile generation temporarily unavailable — please retry.",
+        )
 
     # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
     dna_row: dict[str, Any] = {
