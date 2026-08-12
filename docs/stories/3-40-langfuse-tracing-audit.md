@@ -1,6 +1,6 @@
-# Story 3-37 — Langfuse instrumentation audit (environment, session semantics, naming)
+# Story 3-40 — Langfuse instrumentation audit (environment, session semantics, naming)
 
-**Branch:** `sprint3/s3-37-langfuse-tracing-audit` (stacked on the unmerged
+**Branch:** `sprint3/s3-40-langfuse-tracing-audit` (stacked on the unmerged
 `sprint3/s3-36-package-builder-defensive-fixes` tip — see "Dependency" below).
 **Owner:** Dev 1 (Langfuse is explicitly Dev 1's domain per CLAUDE.md §21).
 **Trigger:** User instruction — "Install the Langfuse AI skill from
