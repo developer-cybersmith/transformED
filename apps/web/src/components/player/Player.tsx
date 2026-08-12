@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
@@ -113,33 +113,45 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  // Keyed on lesson_id, NOT the lesson object reference (review fix, S2-33):
-  // a retry-triggered refetch (handleRetryAudio -> onRefetchLesson -> SWR
-  // mutate()) produces a NEW lesson object for the SAME lesson_id -- without
-  // this guard, that new reference alone would re-fire this effect and call
-  // loadLesson() again, silently resetting currentSegmentIndex/audioPositionMs/
-  // quizFiredForSegment/status/sessionId right after (or racing with) the
-  // deliberately-progress-preserving refreshLessonMedia() call in
-  // handleRetryAudio -- defeating the entire point of the retry-refetch flow.
-  // PlayerLoader's key={lesson.lesson_id} already forces a real remount (fresh
-  // ref, starts at null) whenever the lesson_id genuinely changes, so this
-  // ref only needs to guard against the same-lesson_id-new-reference case.
-  const loadedLessonIdRef = useRef<string | null>(null);
+  // Keyed on lesson_id (a stable primitive), NOT the lesson object reference
+  // (review fix, S2-33): a retry-triggered refetch (handleRetryAudio ->
+  // onRefetchLesson -> SWR mutate()) produces a NEW lesson object for the SAME
+  // lesson_id -- if this effect depended on the `lesson` object itself, that
+  // new reference alone would re-fire it and call loadLesson() again, silently
+  // resetting currentSegmentIndex/audioPositionMs/quizFiredForSegment/status/
+  // sessionId right after (or racing with) the deliberately-progress-preserving
+  // refreshLessonMedia() call in handleRetryAudio -- defeating the entire point
+  // of the retry-refetch flow. Depending on the id instead means React's own
+  // dependency comparison already skips the effect for that case -- no ref
+  // guard needed.
+  //
+  // A `loadedLessonIdRef`-style guard was tried here before and had to be
+  // reverted (bug found via live testing, 2026-08-12): React 18 Strict Mode's
+  // dev-only double-invoke (mount -> cleanup -> mount, same instance, same
+  // ref) set the ref on the first invocation, which made the guard's
+  // `ref.current === lesson.lesson_id` check block the SECOND (real,
+  // uncancelled) invocation from ever calling mintSession -- so the *only*
+  // mintSession call that ever ran was the first one, whose cleanup had
+  // already flipped `cancelled` to true by the time its fetch resolved.
+  // Net effect: sessionId stayed '' for the entire session in dev, silently --
+  // no error, no log, nothing -- until confirmed live via a Playwright
+  // session (WS never connected, [useAttentionMonitor] logged "dropping
+  // attention signal -- no active socket connection" forever). Depending on
+  // the primitive id removes the scenario the ref existed for, so the ref
+  // itself is gone -- there is no longer anything for it to guard.
+  const lessonId = lesson.lesson_id;
   useEffect(() => {
-    if (loadedLessonIdRef.current === lesson.lesson_id) return;
-    loadedLessonIdRef.current = lesson.lesson_id;
     loadLesson(lesson);
     // Must run after loadLesson's synchronous set() so state.lesson is
     // populated before restoreProgress validates the saved segmentIndex
     // against this lesson's actual bounds.
-    usePlayerStore.getState().restoreProgress(lesson.lesson_id);
+    usePlayerStore.getState().restoreProgress(lessonId);
 
     // Mints the real backend session (D18/Story 2-39) -- previously
     // loadLesson() invented sessionId: crypto.randomUUID() locally, which the
     // backend's ownership check correctly rejected (404 on every quiz/
     // teach-back submission, for every student, always). Fired once per
-    // lesson mount under the same loadedLessonIdRef guard as loadLesson()
-    // above -- every call mints a new attempt row server-side, which is
+    // lesson mount -- every call mints a new attempt row server-side, which is
     // intentional (re-learning must produce a new session for CES history),
     // but calling it more than once per mount would mint extra, orphaned rows.
     //
@@ -156,7 +168,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
 
     async function mintSession(attempt: number) {
       try {
-        const { session_id } = await createSession({ lesson_id: lesson.lesson_id });
+        const { session_id } = await createSession({ lesson_id: lessonId });
         if (cancelled) return;
         usePlayerStore.getState().setSessionId(session_id);
       } catch (err) {
@@ -182,7 +194,11 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
       cancelled = true;
       clearTimeout(retryTimeoutId);
     };
-  }, [lesson, loadLesson]);
+    // `lesson` itself is used inside (loadLesson(lesson)) but deliberately not
+    // listed -- see the comment above `lessonId` for why this depends on the
+    // id, not the object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, loadLesson]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;
 
