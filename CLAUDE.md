@@ -221,7 +221,7 @@ Applied and frozen migrations (do not alter):
 - No teach-back timer — creates test anxiety
 - No STT in MVP — typed teach-back only
 - Chunk embeddings at ingestion only — never regenerate stored chunk embeddings. Phase 2 RAG tutor query-embedding IS allowed (embed the student question at query time).
-- API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1)
+- API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1). **Topology is decided — read `docs/decisions/ADR-001-india-region-migration-topology.md` before designing this.** Settled there: Langfuse is Cloud and is NOT a service to deploy; API and worker stay separate processes (job timeout 1800s vs a web request lifecycle); Redis must move in the SAME change or the migration is a latency regression. Provider choice is still open.
 
 ## Defect Register — READ BEFORE FIXING ANYTHING
 

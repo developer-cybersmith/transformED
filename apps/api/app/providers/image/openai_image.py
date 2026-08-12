@@ -26,9 +26,11 @@ import logging
 from typing import Literal
 
 import httpx
+from langfuse import Langfuse
 from openai import AsyncOpenAI
 
 from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
+from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace
 from app.core.retry import with_retry
 from app.providers.base import ImageProvider
 
@@ -70,6 +72,15 @@ class OpenAIImageProvider(ImageProvider):
             timeout=httpx.Timeout(settings.openai_image_request_timeout_s, connect=5.0),
         )
         self._lesson_id = lesson_id
+        self._langfuse: Langfuse | None
+        try:
+            self._langfuse = get_langfuse()
+        except Exception:
+            logger.warning(
+                "Langfuse init failed — tracing disabled for OpenAIImageProvider",
+                exc_info=True,
+            )
+            self._langfuse = None
 
     async def generate(
         self,
@@ -112,6 +123,22 @@ class OpenAIImageProvider(ImageProvider):
                 f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
             )
 
+        generation = None
+        langfuse = self._langfuse
+        if langfuse is not None:
+            generation = safe_trace(
+                lambda: langfuse.start_observation(
+                    # Verb-first, model-agnostic name (Langfuse naming
+                    # guidance, best-practices.md).
+                    name="generate-image",
+                    as_type="generation",
+                    model="gpt-image-1-mini",
+                    input=prompt,
+                    metadata={"size": size, "lesson_id": self._lesson_id},
+                    trace_context=deterministic_trace_context(langfuse, self._lesson_id),
+                )
+            )
+
         try:
             response = await self._client.images.generate(
                 model="gpt-image-1-mini",
@@ -130,7 +157,28 @@ class OpenAIImageProvider(ImageProvider):
             if not b64_json:
                 raise ValueError("GPT Image 1 Mini returned an empty response (no b64_json)")
 
+            if generation is not None:
+                # Trace-only annotation, NOT the real cost accumulation (that
+                # deliberately stays in image_generator_node, only after a
+                # successful Storage upload -- see module docstring). Same
+                # COST_PER_IMAGE the node itself uses, so the two never disagree.
+                image_cost = COST_PER_IMAGE.get(size, COST_PER_IMAGE["1024x1024"])
+                safe_trace(
+                    lambda: generation.update(
+                        output="1 image generated",
+                        usage_details={"images": 1},
+                        cost_details={"input": image_cost},
+                    )
+                )
+
             return f"data:image/png;base64,{b64_json}"
 
-        except Exception:
+        except Exception as exc:
+            if generation is not None:
+                error_message = str(exc)
+                safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
             raise
+
+        finally:
+            if generation is not None:
+                safe_trace(generation.end)

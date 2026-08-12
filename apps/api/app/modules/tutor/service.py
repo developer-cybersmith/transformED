@@ -168,6 +168,93 @@ async def _quiz_deadline_expired(session_id: str, redis: Redis) -> bool:
         return False
 
 
+async def _intervention_deadline_expired(session_id: str, redis: Redis) -> bool:
+    """D63 safety net: return True if the INTERVENING timeout has elapsed for this session.
+
+    Mirrors ``_quiz_deadline_expired``'s fail-safe: any error returns False so a Redis blip
+    degrades to "stay put", never to an unwanted auto-transition. Key absence (no intervention
+    has ever fired, or intervention_complete already cleared it) also returns False.
+
+    This is a cheap, non-atomic pre-check only — used to avoid an EVAL round trip in the common
+    "clearly not expired" case. The authoritative, race-safe decision is
+    ``_delete_intervention_deadline_if_expired`` below; this function must never be used on its
+    own to decide whether to dispatch ``intervention_complete``.
+
+    Review finding (2026-08-11, PR #129 six-layer review, Process Integrity layer): unlike
+    ``_quiz_deadline_expired``, an error here is now logged — CLAUDE.md names "timeout" as a
+    covered budget type requiring a surfaced degradation, and a silent ``except: return False``
+    on a sustained Redis outage would leave a session invisibly stuck in INTERVENING.
+    """
+    import time as _time  # noqa: PLC0415
+
+    try:
+        raw = await redis.get(f"session:{session_id}:intervention_deadline_at")
+        if not raw:
+            return False
+        return _time.time() > float(raw)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[tutor:%s] intervention_deadline_at read failed — treating as not-expired",
+            session_id,
+            exc_info=True,
+        )
+        return False
+
+
+# Lua script: atomically read-compare-delete session:{sid}:intervention_deadline_at. A plain
+# GET-then-DELETE (the pre-review implementation) has a race window: two concurrent connections
+# on one session_id (an explicitly supported topology, per core/websocket.py's ConnectionManager)
+# can both read the SAME expired deadline, but between one caller's GET and its DELETE, a
+# concurrent caller can finish a full dispatch_event round trip that ends a fresh, unexpired
+# INTERVENING episode under the SAME key name — the delayed DELETE then destroys that fresh
+# episode instead of the stale one it read. Running the compare AND the delete inside one Lua
+# script closes the window: Redis executes the whole script atomically, so no other client's
+# command can interleave between the GET and the DEL.
+_DELETE_IF_EXPIRED_SCRIPT = """
+local raw = redis.call("GET", KEYS[1])
+if not raw then
+    return 0
+end
+local deadline = tonumber(raw)
+if deadline == nil then
+    return 0
+end
+if tonumber(ARGV[1]) > deadline then
+    redis.call("DEL", KEYS[1])
+    return 1
+end
+return 0
+"""
+
+
+async def _delete_intervention_deadline_if_expired(session_id: str, redis: Redis) -> bool:
+    """Atomically check-and-delete ``intervention_deadline_at`` in a single Redis round trip.
+
+    Returns True only if THIS call's script execution found the key expired and deleted it —
+    the one caller "'s script run that observes ``deadline < now`` is the only one that can ever
+    return True for a given deadline value, closing the cross-generation race described above.
+    Fails safe: any error (including a Redis version without Lua scripting) returns False —
+    never dispatches on an uncertain result; the next attention signal or client event retries.
+    """
+    import time as _time  # noqa: PLC0415
+
+    try:
+        result = await redis.eval(
+            _DELETE_IF_EXPIRED_SCRIPT,
+            1,
+            f"session:{session_id}:intervention_deadline_at",
+            str(int(_time.time())),
+        )
+        return bool(result)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[tutor:%s] intervention_deadline_at compare-and-delete failed",
+            session_id,
+            exc_info=True,
+        )
+        return False
+
+
 async def start_session(session_id: str) -> None:
     """Drive the IDLE → TEACHING transition for a newly started session.
 
@@ -182,6 +269,9 @@ async def start_session(session_id: str) -> None:
 # Lifecycle events a CLIENT may drive via WebSocket. distraction_detected / fatigue_detected are
 # excluded on purpose — those come from the server-side CES engine, not the client; session_reset is
 # admin-only; session_start has its own handler.
+# D63: intervention_complete added — the client dismissing an intervention overlay must be able to
+# drive INTERVENING → TEACHING. Previously omitted (not deliberately excluded like the events
+# above), which made route_from_intervening's only exit event undispatchable by anything.
 _CLIENT_DRIVABLE_EVENTS = frozenset(
     {
         "segment_complete",
@@ -193,6 +283,7 @@ _CLIENT_DRIVABLE_EVENTS = frozenset(
         "teachback_complete",
         "teachback_failed",
         "lesson_complete",
+        "intervention_complete",
     }
 )
 
@@ -221,6 +312,42 @@ async def advance_tutor_state(session_id: str, event: str) -> None:
             logger.info("[tutor:%s] Q&A deadline expired — auto quiz_complete", session_id)
             await dispatch_event(session_id, "quiz_complete")
         return
+
+    # D63 safety net: self-heal a session stuck in INTERVENING past its timeout, regardless of
+    # which event the client actually sent (it may never send intervention_complete at all).
+    if state_raw == "INTERVENING":
+        if await _intervention_deadline_expired(session_id, redis):
+            # The cheap pre-check says expired — the session is (or was, per a concurrent
+            # winner) leaving INTERVENING regardless of who actually performs the delete below.
+            # Authoritative, race-safe check: only the caller whose atomic script actually
+            # observes and deletes the expired key fires the synthetic dispatch (closes the
+            # cross-generation race — see _delete_intervention_deadline_if_expired's docstring).
+            if await _delete_intervention_deadline_if_expired(session_id, redis):
+                logger.info(
+                    "[tutor:%s] INTERVENING timeout expired — auto intervention_complete",
+                    session_id,
+                )
+                await dispatch_event(session_id, "intervention_complete")
+                if event == "intervention_complete":
+                    return  # avoid a redundant re-dispatch of the event just handled above
+            # Fall through unconditionally (whether this call won or lost the atomic
+            # compare-and-delete): the deadline WAS confirmed expired by the cheap pre-check, so
+            # the session is transitioning out of INTERVENING one way or another — replay the
+            # client's real event (e.g. segment_complete) so its side effects (like the
+            # segment_index increment below) are not silently dropped. dispatch_event always
+            # re-reads current_state fresh from Redis, so this is correct regardless of which
+            # caller actually performed the delete.
+        elif event != "intervention_complete":
+            # The cheap pre-check says NOT expired — the session is confidently, still genuinely
+            # INTERVENING with time remaining. Any event other than the real dismiss must not
+            # reach dispatch_event: route_from_intervening routes everything but
+            # intervention_complete back into intervening_node, which is NOT idempotent (it
+            # unconditionally re-arms intervention_deadline_at and re-sets the cooldown key) —
+            # recreating the exact D63 one-way-trap shape on any ordinary lifecycle event
+            # arriving while an intervention is showing. No-op instead.
+            return
+        # else: not (yet) expired, and event == "intervention_complete" — the real dismiss path,
+        # falls through normally to dispatch_event below.
 
     # Completing a segment advances the student's position (used to pick the right segment's
     # pre-generated intervention messages). 24h TTL, matching the other session keys.
@@ -502,6 +629,20 @@ async def process_attention_signal(
                 session_id,
             )
             await dispatch_event(session_id, "quiz_complete")
+
+    # D63 safety net: attention frames keep arriving from the client during INTERVENING (nothing
+    # stops MediaPipe/the heartbeat when an overlay is shown), so this recurring ~5s hook is what
+    # actually enforces the timeout when the client never sends intervention_complete at all.
+    # Atomic check-and-delete closes the cross-generation race a plain GET-then-DELETE has when
+    # two connections on one session_id race on the same key (see the helper's docstring).
+    if state_raw == "INTERVENING" and await _intervention_deadline_expired(session_id, redis):
+        if await _delete_intervention_deadline_if_expired(session_id, redis):
+            logger.info(
+                "[tutor:%s] INTERVENING timeout expired via attention signal — "
+                "auto intervention_complete",
+                session_id,
+            )
+            await dispatch_event(session_id, "intervention_complete")
 
     logger.debug(
         "[tutor:%s] ces=%.4f intervention_dispatched=%s",

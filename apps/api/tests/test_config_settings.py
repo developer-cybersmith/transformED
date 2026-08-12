@@ -34,6 +34,16 @@ def _make_settings(monkeypatch, **overrides: str) -> Settings:
     """Create a Settings instance with required env vars set via monkeypatch."""
     for key, val in _REQUIRED.items():
         monkeypatch.setenv(key, val)
+    # Explicitly isolate from whatever a developer's own local .env file
+    # happens to contain -- docs/DEPLOYMENT-OPS-NOTES.md tells every
+    # teammate to add APPROVED_EMAILS (and ADMIN_EMAILS is just as easy to
+    # have set locally) to their own apps/api/.env, and pydantic-settings
+    # reads that file as a lower-priority source than real env vars but a
+    # higher-priority one than the field default. Without this, any test
+    # that doesn't explicitly override these two would silently pass or
+    # fail depending on what's in the runner's own .env, not the code.
+    monkeypatch.setenv("ADMIN_EMAILS", "")
+    monkeypatch.setenv("APPROVED_EMAILS", "")
     for key, val in overrides.items():
         monkeypatch.setenv(key.upper(), val)
     return Settings()
@@ -140,6 +150,30 @@ def test_intervention_cooldown_default_is_two_minutes(monkeypatch) -> None:
     assert s.intervention_cooldown_seconds == 120
 
 
+@pytest.mark.unit
+def test_intervention_timeout_default_is_45_seconds(monkeypatch) -> None:
+    """D63 safety net default. Review finding (2026-08-11, PR #129 six-layer review, Test
+    Coverage layer): every prior test of this field used a hand-built MagicMock — none
+    instantiated the real Settings class, so a misnamed/misbound field would have gone
+    unnoticed. This test exercises the real class, mirroring
+    test_intervention_cooldown_default_is_two_minutes above for its sibling field."""
+    s = _make_settings(monkeypatch)
+    assert s.intervention_timeout_seconds == 45
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_value", ["0", "-1", "3601", "86400"])
+def test_intervention_timeout_rejects_out_of_bounds_values(monkeypatch, bad_value: str) -> None:
+    """Review Patch #2 (2026-08-11): ge=1/le=3600 bounds. A value <= 0 would self-heal an
+    intervention before the overlay could ever display; a value >= _STATE_TTL (86400s) would
+    let the Redis key holding the deadline expire before the deadline is ever reached,
+    permanently defeating the safety net — the same one-way-trap shape D63 exists to close."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _make_settings(monkeypatch, intervention_timeout_seconds=bad_value)
+
+
 # ── admin_emails / _parse_admin_emails (Story 2-25) ─────────────────────────────
 
 
@@ -163,3 +197,116 @@ def test_admin_emails_accepts_json_array_and_lowercases(monkeypatch) -> None:
     silently locking out any admin whose JWT email casing differed."""
     s = _make_settings(monkeypatch, admin_emails='["Admin@Foo.com", "Other@Bar.com"]')
     assert s.admin_emails == ["admin@foo.com", "other@bar.com"]
+
+
+# ── approved_emails / _parse_approved_emails (beta access gate) ─────────────────
+
+
+@pytest.mark.unit
+def test_approved_emails_default_is_empty(monkeypatch) -> None:
+    """Empty by default -- require_approved_user must fail closed, not open,
+    when this is unset, so an empty allowlist is the correct/safe default."""
+    s = _make_settings(monkeypatch)
+    assert s.approved_emails == []
+
+
+@pytest.mark.unit
+def test_approved_emails_parses_comma_separated_string_and_lowercases(monkeypatch) -> None:
+    s = _make_settings(monkeypatch, approved_emails="Student@Foo.com, Other@Bar.com ,")
+    assert s.approved_emails == ["student@foo.com", "other@bar.com"]
+
+
+@pytest.mark.unit
+def test_approved_emails_accepts_json_array_and_lowercases(monkeypatch) -> None:
+    s = _make_settings(monkeypatch, approved_emails='["Student@Foo.com", "Other@Bar.com"]')
+    assert s.approved_emails == ["student@foo.com", "other@bar.com"]
+
+
+@pytest.mark.unit
+def test_admin_emails_and_approved_emails_are_independent(monkeypatch) -> None:
+    """The two allowlists share a parser (_parse_email_allowlist) but must
+    remain fully independent fields -- setting one must never leak into
+    the other."""
+    s = _make_settings(
+        monkeypatch,
+        admin_emails="admin@foo.com",
+        approved_emails="student@foo.com",
+    )
+    assert s.admin_emails == ["admin@foo.com"]
+    assert s.approved_emails == ["student@foo.com"]
+
+
+# ── D67: sarvam_voice_id default must be a real Sarvam speaker ─────────────────
+
+# Copied verbatim from a live 400 invalid_request_error response from
+# api.sarvam.ai/text-to-speech (2026-08-12) -- NOT hand-typed. This is
+# Sarvam's own list of valid Bulbul v2 speakers at the time D67 was fixed.
+# If a future Sarvam API change drops "anushka" from this roster, this test
+# is the guard: it fails loudly instead of the pipeline silently degrading
+# every lesson's narration to the Azure fallback again (D67's original
+# failure mode -- "meera" was never a valid speaker and every real TTS call
+# 400'd, invisibly, on the primary provider).
+_SARVAM_VALID_SPEAKERS_2026_08_12 = {
+    "anushka",
+    "abhilash",
+    "manisha",
+    "vidya",
+    "arya",
+    "karun",
+    "hitesh",
+    "aditya",
+    "ritu",
+    "priya",
+    "neha",
+    "rahul",
+    "pooja",
+    "rohan",
+    "simran",
+    "kavya",
+    "amit",
+    "dev",
+    "ishita",
+    "shreya",
+    "ratan",
+    "varun",
+    "manan",
+    "sumit",
+    "roopa",
+    "kabir",
+    "aayan",
+    "shubh",
+    "ashutosh",
+    "advait",
+    "anand",
+    "tanya",
+    "tarun",
+    "sunny",
+    "mani",
+    "gokul",
+    "vijay",
+    "shruti",
+    "suhani",
+    "mohit",
+    "kavitha",
+    "rehan",
+    "soham",
+    "rupali",
+}
+
+
+@pytest.mark.unit
+def test_sarvam_voice_id_default_is_a_documented_valid_speaker(monkeypatch) -> None:
+    """D67: the default speaker must be one Sarvam's live API actually
+    recognizes -- "meera" was not, and every real TTS call silently 400'd
+    and degraded to the Azure fallback on 100% of narration."""
+    s = _make_settings(monkeypatch)
+    assert s.sarvam_voice_id in _SARVAM_VALID_SPEAKERS_2026_08_12
+
+
+@pytest.mark.unit
+def test_sarvam_voice_id_default_is_not_the_known_invalid_meera(monkeypatch) -> None:
+    """Regression pin: "meera" is the specific value D67 found broken --
+    assert it directly so a well-intentioned revert can't silently reintroduce
+    exactly this defect."""
+    s = _make_settings(monkeypatch)
+    assert s.sarvam_voice_id != "meera"

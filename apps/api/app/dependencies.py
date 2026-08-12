@@ -22,11 +22,13 @@ if TYPE_CHECKING:
 # Re-export for use in route type annotations
 __all__ = [
     "AdminUser",
+    "ApprovedUser",
     "ArqRedis",
     "CurrentUser",
     "get_arq_redis",
     "get_current_user",
     "require_admin",
+    "require_approved_user",
     "get_redis",
     "get_settings",
 ]
@@ -135,6 +137,36 @@ async def require_admin(
     return current_user
 
 
+async def require_approved_user(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, Any]:
+    """Gate a route to beta-approved users only.
+
+    Self-serve signup is open, but the routes this guards (upload, onboarding
+    diagnostic, teach-back) all trigger real OpenAI spend with no cost gate of
+    their own — an unapproved signup could otherwise run up real API cost.
+
+    Same minimal-viable static-allowlist mechanism as require_admin (see
+    APPROVED_EMAILS in config.py) — deliberately not DB-backed: a boolean
+    column on `users` would be writable by the user themselves under that
+    table's existing "update own row" RLS policy (id = auth.uid(), no column
+    restriction), which would let anyone self-approve. A static env-var
+    allowlist has no such client-reachable write path at all.
+
+    The caller is already authenticated (get_current_user ran first); a
+    non-approved user gets 403, not 404/401, since they're a real
+    authenticated user who is simply not yet approved for this route.
+    """
+    email = current_user.get("email")
+    if not email or email.lower() not in settings.approved_emails:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account does not have access yet — contact the team for beta access.",
+        )
+    return current_user
+
+
 async def get_arq_redis(request: Request) -> ArqRedisType:
     """Inject the ARQ Redis pool from app state (for job enqueue only).
 
@@ -156,6 +188,9 @@ CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 
 AdminUser = Annotated[dict[str, Any], Depends(require_admin)]
 """Type alias: inject the current user's JWT payload, 403 if not an admin."""
+
+ApprovedUser = Annotated[dict[str, Any], Depends(require_approved_user)]
+"""Type alias: inject the current user's JWT payload, 403 if not beta-approved."""
 
 ArqRedis = Annotated["ArqRedisType", Depends(get_arq_redis)]
 """Type alias: inject the ARQ job-enqueue pool."""

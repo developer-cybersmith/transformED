@@ -213,7 +213,7 @@ async def idle_node(state: TutorMachineState) -> TutorMachineState:
     """IDLE state: session not yet started."""
     logger.debug("[tutor:%s] → IDLE", state.get("session_id"))
     await _persist_state(state.get("session_id", ""), TutorState.IDLE)
-    return {**state, "current_state": TutorState.IDLE}
+    return {"current_state": TutorState.IDLE}
 
 
 async def teaching_node(state: TutorMachineState) -> TutorMachineState:
@@ -221,7 +221,7 @@ async def teaching_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.debug("[tutor:%s] → TEACHING", session_id)
     await _persist_state(session_id, TutorState.TEACHING)
-    return {**state, "current_state": TutorState.TEACHING, "in_teachback": False}
+    return {"current_state": TutorState.TEACHING, "in_teachback": False}
 
 
 async def intervening_node(state: TutorMachineState) -> TutorMachineState:
@@ -229,6 +229,8 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     intervention_type = state.get("intervention_type", "distraction")
     logger.info("[tutor:%s] → INTERVENING (type=%s)", session_id, intervention_type)
+
+    import time as _time  # noqa: PLC0415
 
     from app.config import get_settings
     from app.core.redis import get_redis
@@ -248,6 +250,15 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     # (last-writer-wins would shorten the window; NX keeps the first writer's TTL).
     cooldown_key = f"tutor_cooldown:{session_id}"
     await redis.set(cooldown_key, "1", ex=settings.intervention_cooldown_seconds, nx=True)
+
+    # D63 safety net: independent timeout so a session cannot be trapped in INTERVENING forever
+    # if intervention_complete is never dispatched (dropped WS message, or the client not yet
+    # implementing dismiss). Read by _intervention_deadline_expired (service.py) from
+    # process_attention_signal / advance_tutor_state — same shape as the QUIZZING
+    # quiz_deadline_at pattern. Independent of the cooldown key above (that governs time BETWEEN
+    # interventions; this governs time WITHIN one).
+    deadline = int(_time.time()) + settings.intervention_timeout_seconds
+    await redis.set(f"session:{session_id}:intervention_deadline_at", str(deadline), ex=_STATE_TTL)
 
     # Select the pre-generated intervention message for this type from the segment's
     # intervention_messages (supplied via the event payload). The DB/Redis LessonPackage fetch and
@@ -281,7 +292,6 @@ async def intervening_node(state: TutorMachineState) -> TutorMachineState:
 
     await _persist_state(session_id, TutorState.INTERVENING)
     return {
-        **state,
         "current_state": TutorState.INTERVENING,
         "intervention_message": intervention_message,
     }
@@ -292,7 +302,7 @@ async def checking_in_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.debug("[tutor:%s] → CHECKING_IN", session_id)
     await _persist_state(session_id, TutorState.CHECKING_IN)
-    return {**state, "current_state": TutorState.CHECKING_IN}
+    return {"current_state": TutorState.CHECKING_IN}
 
 
 async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
@@ -321,7 +331,7 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
             "[tutor:%s] quiz_deadline_at write failed — proceeding without deadline", session_id
         )
 
-    return {**state, "current_state": TutorState.QUIZZING}
+    return {"current_state": TutorState.QUIZZING}
 
 
 async def teach_back_node(state: TutorMachineState) -> TutorMachineState:
@@ -329,7 +339,7 @@ async def teach_back_node(state: TutorMachineState) -> TutorMachineState:
     session_id = state.get("session_id", "")
     logger.debug("[tutor:%s] → TEACH_BACK", session_id)
     await _persist_state(session_id, TutorState.TEACH_BACK)
-    return {**state, "current_state": TutorState.TEACH_BACK, "in_teachback": True}
+    return {"current_state": TutorState.TEACH_BACK, "in_teachback": True}
 
 
 async def session_end_node(state: TutorMachineState) -> TutorMachineState:
@@ -351,7 +361,7 @@ async def session_end_node(state: TutorMachineState) -> TutorMachineState:
     except Exception:
         logger.exception("[tutor:%s] _finalize_session create_task failed", session_id)
 
-    return {**state, "current_state": TutorState.SESSION_END}
+    return {"current_state": TutorState.SESSION_END}
 
 
 # ── Routing (conditional edges) ───────────────────────────────────────────────
@@ -611,21 +621,68 @@ async def dispatch_event(
 
 def _trace_dispatch(session_id: str, event: str, result: TutorMachineState | None) -> None:
     """Best-effort Langfuse trace of one dispatch. Observability must NEVER break the FSM, so any
-    Langfuse/config failure is swallowed."""
-    try:
-        from app.core.langfuse import get_langfuse
+    Langfuse/config failure is swallowed.
 
-        # langfuse 4.x removed the client-level `.trace()` method (attr-defined);
-        # this whole block is best-effort and any AttributeError is swallowed by
-        # the surrounding except, so behavior is unchanged. Types-only suppression.
-        get_langfuse().trace(  # type: ignore[attr-defined]
-            name="tutor.dispatch_event",
-            session_id=session_id,
-            input={"event": event},
-            output={"current_state": str(result.get("current_state")) if result else None},
-        )
+    Langfuse-skill review round: this previously called the client-level
+    `.trace()` method, which Langfuse 4.x removed — every single dispatch has
+    been silently untraced since the 4.x upgrade, and the only visible trace
+    of that was a DEBUG-level log line nobody reads in production (this
+    project's own convention elsewhere is WARNING for a swallowed
+    observability failure, precisely so it stays visible). Fixed to this
+    pinned SDK version's (4.14.3) real API: `create_event(...)` — a single
+    FSM dispatch is a discrete, instantaneous event, not a duration-spanning
+    `span` and not a cost-bearing `generation`; `start_observation` has no
+    `as_type="event"` overload in this version (confirmed against the
+    installed SDK's actual type stubs, not assumed from docs — the docs
+    describe a capability this pinned version doesn't have; `create_event`
+    is the dedicated method it exposes instead, and takes input/output
+    directly since an event has no separate start/end to update between).
+
+    Langfuse-skill self-audit round (fetched best-practices.md +
+    sessions.md fresh): the FIRST fix reused `deterministic_trace_context`
+    keyed on `session_id`, copying the pipeline's `lesson_id` pattern — that
+    was wrong for this call site. A tutor session can run for an hour-plus
+    with dozens of dispatches (state checks, interventions, quiz turns);
+    forcing every one of them into a single ever-growing trace_id is exactly
+    what best-practices.md warns against ("If multiple [units of work] happen
+    in sequence... that's where sessions come in. Each step is its own
+    trace, and the session ties them together... the per-turn model keeps
+    traces small and easy to navigate"). A lesson-generation pipeline run
+    IS "one self-contained unit of work" (the doc's own example — "one
+    pipeline execution"), so `lesson_id`-seeded `deterministic_trace_context`
+    stays correct there; a tutor dispatch is a turn within an ongoing
+    session, not a self-contained unit on its own.
+
+    Fixed: each dispatch is now its own trace (no `trace_context` — a fresh
+    random trace_id, matching "one trace per turn"), grouped into one
+    Langfuse Session via `propagate_attributes(session_id=...)` — the SDK's
+    only documented mechanism for setting the first-class `session_id`
+    trace attribute (verified against the real reference signatures:
+    `start_observation`/`create_event` take no `session_id` kwarg directly;
+    `propagate_attributes` is a context manager that sets it via contextvars
+    for every observation created within the `with` block, not only ones
+    parented through `start_as_current_observation`).
+    """
+    try:
+        from langfuse import propagate_attributes
+
+        from app.core.langfuse import get_langfuse, safe_trace
+
+        langfuse = get_langfuse()
+        with propagate_attributes(session_id=session_id):
+            safe_trace(
+                lambda: langfuse.create_event(
+                    name="dispatch-tutor-event",
+                    input={"event": event},
+                    output={"current_state": str(result.get("current_state")) if result else None},
+                    metadata={"session_id": session_id},
+                )
+            )
     except Exception:  # noqa: BLE001 — tracing is best-effort
-        logger.debug("langfuse trace skipped for %s/%s", session_id, event, exc_info=True)
+        # WARNING, not DEBUG (matches every other provider's swallow pattern)
+        # — an observability outage must stay visible in prod logs even
+        # though it never breaks the FSM.
+        logger.warning("langfuse trace skipped for %s/%s", session_id, event, exc_info=True)
 
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────

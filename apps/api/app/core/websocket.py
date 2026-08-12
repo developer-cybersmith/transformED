@@ -40,6 +40,7 @@ _SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 # "ping" / "session_start" — flat control messages, not the ws.ts payload union). Server/engine-only
 # events (distraction_detected, fatigue_detected) and admin events (session_reset) are NOT
 # here, so a client cannot drive them. Mirrors service._CLIENT_DRIVABLE_EVENTS.
+# D63: intervention_complete added — dismissing an intervention overlay must reach the FSM.
 _TUTOR_CLIENT_EVENTS = frozenset(
     {
         "segment_complete",
@@ -51,6 +52,7 @@ _TUTOR_CLIENT_EVENTS = frozenset(
         "teachback_complete",
         "teachback_failed",
         "lesson_complete",
+        "intervention_complete",
     }
 )
 

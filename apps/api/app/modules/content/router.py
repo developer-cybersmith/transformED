@@ -33,7 +33,7 @@ from app.config import get_settings
 from app.core.db import get_supabase, rows, single_row
 from app.core.rate_limit import _get_user_key, limiter
 from app.core.storage import sign_storage_path
-from app.dependencies import ArqRedis, CurrentUser
+from app.dependencies import ApprovedUser, ArqRedis, CurrentUser
 
 # Story 1-11: book/chapter read models live in this module, NOT packages/shared
 # (frozen contract, 4-dev review — CLAUDE.md §16).
@@ -654,7 +654,7 @@ def _resolve_lesson_content(
 async def upload_lesson(
     request: Request,
     response: Response,
-    current_user: CurrentUser,
+    current_user: ApprovedUser,
     arq_redis: ArqRedis,
     file: UploadFile = File(..., description="PDF file to process (max 50 MB)"),  # noqa: B008
     tier: str | None = Form(  # noqa: B008
