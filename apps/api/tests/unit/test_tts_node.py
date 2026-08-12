@@ -635,3 +635,170 @@ async def test_narration_cap_exact_boundary_fit_is_not_truncated() -> None:
         "capped_total_chars": 10000,
         "affected_segment_ids": ["sec_1"],
     }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_cap_empty_narration_scripts_list_is_uncapped_by_construction() -> None:
+    """Story 3-37 AC 6, Round-2 review (Cynical Review): a dedicated test for
+    the genuinely-empty-list case, distinct from
+    test_lesson_wide_narration_under_cap_is_completely_unaffected (which
+    only ever exercises 2 non-empty short segments). An empty
+    narration_scripts must still get an explicit, always-present
+    capped=False record — never skip the write just because there was
+    nothing to cap."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    sb = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await tts_node(_base_state(narration_scripts=[]))
+
+    assert result["audio_assets"] == []
+
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    assert len(checkpoint_calls) == 1
+    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
+    assert cap_record == {
+        "capped": False,
+        "original_total_chars": 0,
+        "capped_total_chars": 0,
+        "affected_segment_ids": [],
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_cap_reorders_out_of_order_fan_in_by_true_section_index() -> None:
+    """Story 3-37 Round-2 review (Cynical Review + Edge Case Hunter,
+    independently): narration_scripts is Annotated[list, operator.add], fed
+    by Send()-dispatched calls into the same LangGraph superstep with NO
+    cross-call ordering guarantee (narration_generator_node's own
+    docstring: "Send()-dispatched calls do not all resolve in lockstep").
+    Hand-construct the fan-in list arriving OUT of section order — the
+    LAST section by real segment_id index (section_3) must still be the
+    one that gets zeroed, never whichever entry happened to land last in
+    the (scrambled) list."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    # Arrival order: 2, 0, 3, 1 — deliberately not lesson order.
+    scripts = [
+        {"segment_id": "section_2_c", "script": "C" * 4000, "narration_style": "x"},
+        {"segment_id": "section_0_a", "script": "A" * 4000, "narration_style": "x"},
+        {"segment_id": "section_3_d", "script": "D" * 4000, "narration_style": "x"},
+        {"segment_id": "section_1_b", "script": "B" * 4000, "narration_style": "x"},
+    ]
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=scripts))
+
+    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
+    # True lesson order is 0,1,2,3 — sections 0 and 1 fit fully (8,000
+    # chars), section 2 crosses the boundary and is truncated to the
+    # remaining 2,000, section 3 (the REAL last section) is zeroed — even
+    # though it arrived BEFORE section_1 in the raw fan-in list.
+    assert by_id["section_0_a"]["script"] == "A" * 4000
+    assert by_id["section_1_b"]["script"] == "B" * 4000
+    assert by_id["section_2_c"]["script"] == "C" * 2000
+    assert by_id["section_3_d"]["script"] == ""
+
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
+    assert cap_record["affected_segment_ids"] == ["section_2_c", "section_3_d"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_cap_skips_non_dict_entry_without_crashing_node() -> None:
+    """Story 3-37 Round-2 review (Cynical Review): a non-dict entry in
+    narration_scripts (bare string, from a schema-drifted or hand-edited
+    checkpoint — the exact case package_builder_node._index_by_segment_id
+    already defends against a few hundred lines below in this file) must
+    be logged and dropped, never crash the whole node on `entry.get(...)`
+    — matches this node's own "never hard-fails" guarantee."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    scripts: list[Any] = [
+        {"segment_id": "sec_0", "script": "hello", "narration_style": "x"},
+        "not-a-dict-entry",
+        {"segment_id": "sec_1", "script": "world", "narration_style": "x"},
+    ]
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=scripts))
+
+    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
+    assert set(by_id) == {"sec_0", "sec_1"}
+    assert by_id["sec_0"]["script"] == "hello"
+    assert by_id["sec_1"]["script"] == "world"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_cap_truncation_does_not_split_devanagari_combining_mark() -> None:
+    """Story 3-37 Round-2 review (Cynical Review + Edge Case Hunter,
+    independently): Sarvam Bulbul v2 (this repo's primary TTS provider)
+    targets Indic scripts, where a raw character-index slice can land
+    between a base consonant and a dependent vowel sign (matra) that is a
+    SEPARATE Unicode codepoint — producing a technically-valid but
+    linguistically-broken orphaned base character right at the cap
+    boundary. The truncation must back off to the nearest safe boundary
+    instead."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    # "क" (KA, base) + "ि" (VOWEL SIGN I, combining) sit at indices 9999 and
+    # 10000 of a 10,001-char first segment — a raw script[:10000] slice
+    # would keep KA (index 9999) but drop its vowel sign (index 10000),
+    # landing precisely mid-cluster. The cap (10,000) forces this segment
+    # to cross the boundary since 10,001 > 10,000.
+    devanagari_pair = "कि"  # क + ि
+    first_segment = ("A" * 9999) + devanagari_pair  # 10,001 chars total
+    scripts = [
+        {"segment_id": "sec_0", "script": first_segment, "narration_style": "x"},
+        {"segment_id": "sec_1", "script": "B" * 100, "narration_style": "x"},
+    ]
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=scripts))
+
+    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
+    truncated = by_id["sec_0"]["script"]
+    # A naive script[:10000] slice would produce "A"*9999 + "क" — a bare
+    # base character orphaned from its vowel sign. The grapheme-safe trim
+    # must back off past BOTH, keeping only the plain "A" run.
+    assert truncated == "A" * 9999
+    assert not truncated.endswith("क")  # bare KA with no following matra
+    assert "ि" not in truncated
+    assert len(truncated) <= 10000

@@ -112,12 +112,14 @@ segments combined, before any TTS provider is called,
   "affected_segment_ids": [str, ...]}`. Always present, including when `capped is False` (in
   which case `original_total_chars == capped_total_chars` and `affected_segment_ids == []`).
   **Verified:** both new tests assert the exact dict on the single checkpoint write captured
-  from `sb.table.return_value.update.call_args_list`; the empty-`narration_scripts` branch is
-  covered by code inspection (`graph.py:3479-3489`, same `narration_cap_record` variable used
-  on both write sites) — not separately unit-tested since an empty list always takes the
-  `capped=False` path already proven by AC 9's test, and no new branch-specific behavior exists
-  there to test beyond "the key is present," which the empty-branch write site change is
-  identical in shape to the non-empty one.
+  from `sb.table.return_value.update.call_args_list`. Round-2 review (Cynical Review) correction:
+  this section previously claimed the empty-`narration_scripts` branch was "proven" by AC 9's
+  test — that test runs `_base_state()` with 2 non-empty short segments and never actually
+  exercises a truly empty list, so the claim was an inferential leap, not a demonstrated fact.
+  `test_narration_cap_empty_narration_scripts_list_is_uncapped_by_construction` now runs
+  `narration_scripts=[]` directly and asserts the exact `capped=False`/`0`/`0`/`[]` record on
+  the empty-branch write site (`graph.py`, the `if not narration_scripts:` branch) — closing the
+  gap for real rather than re-describing it.
 - [x] **AC 7 (Non-functional).** RED-confirmed: 4 segments of 4,000 chars each (16,000 total,
   exceeding the 10,000 default) fail against the pre-fix code because nothing currently caps
   the total — every segment reaches `_synthesize_with_fallback` with its full, uncapped script.
@@ -139,23 +141,36 @@ segments combined, before any TTS provider is called,
   **Verified:** `test_lesson_wide_narration_under_cap_is_completely_unaffected` PASSED.
 - [x] **AC 10.** Full `apps/api/tests/unit/test_tts_node.py` re-run unmodified after the fix,
   zero regressions.
-  **Verified:** `pytest tests/unit/test_tts_node.py` → **17 passed** (14 pre-existing + 3 new —
-  a third test, `test_narration_cap_exact_boundary_fit_is_not_truncated`, was added during
-  Round-1 self-review, see below). Also re-ran `tests/unit/test_package_builder_node.py`
-  (39/39, unmodified, no relation to this change but the task brief asked for "any other
-  directly-relevant existing test file") and `tests/test_config_settings.py` (15/15) for
-  additional config-change confidence.
-- [x] **AC 11.** `ruff check`, `ruff format --check`, `mypy --ignore-missing-imports` all clean
-  on both modified files.
-  **Verified:** `ruff check` → "All checks passed!"; `ruff format --check` → "3 files already
-  formatted"; `mypy app/config.py app/modules/content/pipeline/graph.py --ignore-missing-imports`
-  → "Success: no issues found in 2 source files". (`mypy` against the test file itself carries
-  17 `arg-type`/`no-untyped-def` findings, 15 of which are byte-identical pre-existing errors on
-  the baseline file at commit `9c6372b` — confirmed by running mypy against a checked-out copy
-  of the unmodified file; the other 2 are my new tests hitting the exact same pre-existing
-  `dict[str, Any]` vs `PipelineState` pattern every other test in the file already hits. Zero
-  new error *types* introduced. Not counted against AC 11, which scopes to the two modified
-  source files per the task brief's own instruction.)
+  **Verified (Round 2, superseding the Round-1 number below):**
+  `pytest tests/unit/test_tts_node.py` → **21 passed** (14 pre-existing + 3 Round 1 + 4 Round 2:
+  a dedicated empty-`narration_scripts` case, out-of-order fan-in reordering, a non-dict entry,
+  and a Devanagari grapheme-boundary case — see the Round 2 review section for why each was
+  added). `apps/api/tests/unit/test_admin_router.py` → **27 passed** (20 pre-existing + 4 Round
+  2, for the new `narration_capped` admin-visibility field). Full `tests/unit` +
+  `tests/integration -m "not postgres"` (matching CI's gating command exactly): **1058 passed,
+  6 skipped, 79 deselected**, zero regressions. *(Round 1 originally reported 17/17 here, plus
+  `test_package_builder_node.py` 39/39 and `test_config_settings.py` 15/15 individually — both
+  still pass unmodified and are included in the 1058 above.)*
+- [x] **AC 11.** `ruff check`, `ruff format --check`, `mypy` all clean on the modified source
+  files, and repo-wide (CI scope).
+  **Verified (Round 2, superseding the Round-1 number below):** `ruff check .` (repo-wide) →
+  "All checks passed!" (one real `E501` line-too-long was found in the new
+  `admin/router.py` code during this pass and fixed). `ruff format --check` on all 5 touched
+  files → clean (4 unrelated pre-existing files elsewhere in the repo would reformat; confirmed
+  not in this diff, not touched). `mypy app/config.py app/modules/content/pipeline/graph.py
+  app/modules/admin/router.py --ignore-missing-imports` → "Success: no issues found in 3 source
+  files". `mypy app` (full package, matching CI's `mypy app` exactly) → 45 pre-existing errors
+  in 4 files this story never touches, confirmed byte-identical before/after this diff via
+  `git stash`. (`mypy` against the two touched test files carries `arg-type`/`no-untyped-def`
+  findings — confirmed by running mypy against a checked-out copy of each unmodified baseline
+  file at commit `9c6372b`/`main` that every one of them is the same pre-existing
+  `dict[str, Any]` vs `PipelineState` pattern every test in `test_tts_node.py` already hits,
+  plus this round's own 7 new call sites of the identical pattern. Zero new error *types*.
+  Not counted against AC 11, which scopes to modified source files, not test files — see the
+  Round 2 review section for the independent re-verification of this exact claim, including
+  the parts of it that were fair pushback vs. confirmed-true.)
+  *(Round 1 originally reported "2 source files"/17 test-file findings before Round 2 added
+  `admin/router.py` and 7 more tests.)*
 
 ## Scale & Load
 
@@ -213,8 +228,12 @@ what was cut — loud, not silent.
 ## Tasks
 
 ### Task 1 — Config
-- [x] 1.1 Add `max_narration_chars_per_lesson` to `Settings` in `config.py`, near
-  `max_lesson_cost_usd` (AC 1)
+- [x] 1.1 Add `max_narration_chars_per_lesson` to `Settings` in `config.py`, in the "Cost
+  limits (PRD §12)" block alongside `max_lesson_cost_usd`/`max_daily_spend_per_user_usd` (AC 1)
+  — Round-2 review (Cynical Review) correction: the field is inserted directly after
+  `max_daily_spend_per_user_usd` ("Daily per-user AI spend cap"), not directly after
+  `max_lesson_cost_usd` as originally stated here; both are in the same cost-limits block, but
+  the earlier wording named the wrong immediate neighbor
 
 ### Task 2 — RED
 - [x] 2.1 Write a test with 4 segments (~4,000 chars each) exceeding the 10,000 default,
@@ -316,12 +335,22 @@ source files.
 
 - `apps/api/app/config.py` — MODIFIED (new `max_narration_chars_per_lesson` field,
   `config.py:186-195`)
-- `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED (new
+- `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED (Round 1: new
   `_apply_narration_char_cap()` helper immediately before `tts_node`; `tts_node` now applies
   the cap right after the idempotency cache-hit check, adds a `not script` fast-path in the
-  synthesis loop, and writes `narration_cap_applied` on both `node_outputs` write sites)
-- `apps/api/tests/unit/test_tts_node.py` — MODIFIED (3 new tests, appended after the existing
-  2026-07-20 review-round section)
+  synthesis loop, and writes `narration_cap_applied` on both `node_outputs` write sites.
+  Round 2: `_apply_narration_char_cap` rewritten to sort by true section order
+  (`_segment_order_key`), drop non-dict entries defensively, and truncate on a grapheme-safe
+  boundary (`_trim_to_grapheme_boundary`); `lesson_id` now threaded through for log
+  correlation; new `unicodedata` import)
+- `apps/api/app/modules/admin/router.py` — MODIFIED (Round 2: new `JobSummary.narration_capped`
+  field + `_job_row_to_summary` now reads `node_outputs["narration_cap_applied"]["capped"]`
+  off the row `select("*")` already fetches, instead of discarding it)
+- `apps/api/tests/unit/test_tts_node.py` — MODIFIED (Round 1: 3 new tests, appended after the
+  existing 2026-07-20 review-round section. Round 2: 4 more — empty-list AC 6 coverage,
+  out-of-order fan-in reordering, non-dict entry defense, Devanagari grapheme-safe truncation)
+- `apps/api/tests/unit/test_admin_router.py` — MODIFIED (Round 2: 4 new tests for
+  `narration_capped`)
 - `docs/stories/3-37-narration-char-cap.md` — this file
 
 ### Change Log
@@ -342,6 +371,34 @@ source files.
   17/17.
 - 2026-08-11: Implementation commit, story file finalized with AC verification notes and this
   review section.
+- 2026-08-12: Round 2 — real `/bmad-code-review`, 4 independent parallel agents. Two
+  independently-confirmed real defects fixed: fan-in order was trusted directly even though
+  `narration_scripts` is a `Send()`-fed `operator.add` reducer with no cross-call ordering
+  guarantee (could truncate/zero an arbitrary segment, not necessarily the lesson's tail);
+  a non-dict `narration_scripts` entry crashed the whole node via an unguarded `.get(...)`.
+  Also fixed: a non-grapheme-safe raw character slice could split a Devanagari base character
+  from its combining vowel sign at the cap boundary (Sarvam Bulbul v2 is this repo's primary
+  TTS provider); the degradation record was persisted but never read back out by any admin
+  endpoint (`JobSummary` enumerated 9 fields, none of them `node_outputs`) — added
+  `narration_capped` to the admin job-summary response; the new log line was missing
+  `lesson_id`; the "always returns a copy" docstring claim was previously false for the
+  under-budget fast path and for in-budget entries on the capped path — now genuinely true;
+  the `"<unknown>"` placeholder for a missing segment_id was ambiguous across multiple affected
+  entries — now unique per position. Also corrected: the AC 6 self-review previously cited a
+  test that didn't actually cover the empty-list branch — added a dedicated test instead of
+  just fixing the words. 7 new tests total (3 in `test_tts_node.py`'s ordering/non-dict/
+  grapheme cases + 1 dedicated empty-list case, 3 in `test_admin_router.py`), each RED-confirmed
+  by reverting the relevant source file alone via `git stash` and re-running against the
+  pre-round-2 code. One finding (unsanitized `segment_id` reaching `affected_segment_ids`
+  before `_SAFE_SEGMENT_ID_RE` runs) remains accepted-not-fixed, same reasoning as Round 1.
+  Two reviewer claims independently re-checked and found FALSE (not fixed, disposition
+  recorded): the 67–73% TTS-cost figure and the `_get_section_body` truncation-convention
+  citation are both real and verifiable in-repo, just not inside the diff itself. Full
+  `tests/unit` + `tests/integration` (`-m "not postgres"`, matching CI's gating scope exactly):
+  1058 passed, 6 skipped, 79 deselected. `ruff check .` / `ruff format --check` on the 5
+  touched files / `mypy app` (repo-wide, matching CI exactly): all clean, 45 pre-existing
+  errors in 4 untouched files confirmed byte-identical against baseline via a `git stash`
+  before/after comparison.
 
 ## Senior Developer Review (AI) — Round 1, inline self-review
 
@@ -402,11 +459,10 @@ reading the one field.
 ### Layer 4 — AC Completeness
 AC 1 → config field, confirmed present with correct default/constraint. AC 2/9 → the under-cap
 test. AC 3/4/5/8 → the over-cap test's four separate assertions (truncation, zeroing, total
-bound, and the two together as `affected_segment_ids`). AC 6 → both tests assert the exact
-degradation-record dict shape; the empty-`narration_scripts` branch's write is covered by code
-inspection rather than a dedicated test (recorded explicitly under AC 6 above, not silently
-skipped — the branch is one variable substitution identical in shape to the tested branch,
-and AC 9's under-cap test already proves the `capped=False` record shape end-to-end). AC 7 →
+bound, and the two together as `affected_segment_ids`). AC 6 → all three tests (over-cap,
+under-cap, and — added in Round 2 — a dedicated empty-list test) assert the exact
+degradation-record dict shape on the branch they exercise; see the AC 6 correction above for
+why the empty-list branch previously wasn't actually independently proven. AC 7 →
 RED output pasted verbatim in the Debug Log. AC 10/11 → actual command output, not asserted
 from memory. **No gaps found beyond the boundary-fit case already closed above.**
 
@@ -431,3 +487,147 @@ here; stated explicitly rather than silently omitted, per the task brief's own i
 one new Supabase write rides an existing update (zero new round-trips); the one new in-memory
 loop is bounded by the same segment-count range as every other Phase-1 consumer in this file,
 already gated upstream by `check_ceiling()` before Phase-1 dispatch. **No findings.**
+
+## Senior Developer Review (AI) — Round 2 (real `/bmad-code-review`, 4 parallel agents)
+
+**Review date:** 2026-08-12
+**Outcome:** APPROVE WITH CHANGES — all applied before merge, including two defects (fan-in
+ordering, non-dict-entry crash) more severe than anything Round 1's inline self-review found.
+
+Round 1 was Dev 1 self-reviewing inline — real diligence, but not independent, same limitation
+Story 3-36 named about its own Round 1. This round ran the actual `/bmad-code-review` skill: 4
+genuinely independent parallel agents (Cynical Review / Blind Hunter-style — diff + project
+read access; Edge Case Hunter, reporting structured findings — diff + project read access;
+Acceptance Auditor — diff + this story file, independently re-executed every claim; Scale &
+Load Hunter — diff + project read access + `docs/SCALE-CONTRACT.md`, mandatory, never
+skipped). Every finding below was independently re-verified by actually running code — reading
+the cited line numbers, reproducing the mypy/pytest claims from a clean venv, and RED-testing
+each fix against the pre-round-2 code via `git stash` — not accepted on any reviewer's or the
+implementer's assertion alone.
+
+### The two most severe findings — both CONFIRMED and fixed
+
+**Fan-in ordering (Cynical Review AND Edge Case Hunter, independently).** `_apply_narration_char_cap`
+walked `narration_scripts` in raw list order. But `narration_scripts` is
+`Annotated[list[dict], operator.add]`, fed by `Send()`-dispatched calls into the same
+LangGraph superstep — and `narration_generator_node`'s own docstring says outright:
+"Send()-dispatched calls do not all resolve in lockstep." Nothing sorted the fan-in list
+before walking the budget. Verified directly: `_derive_section_id` always produces
+`section_{index}_{title}`, so the true, stable position was available on every entry the whole
+time, just never used. All three Round-1 tests hand-built `narration_scripts` already in
+`sec_0..sec_3` order, so this was completely untested. **Fix:** `_segment_order_key` parses the
+leading integer out of `segment_id` and the helper now sorts by it before walking the budget
+(falling back to arrival position when the prefix isn't present, e.g. hand-built test fixtures
+using bare `sec_N` ids — this only produces a fully-correct order when every entry in a given
+list either has the prefix or none do, which is the only shape this pipeline ever actually
+produces, documented in the function's own docstring). New test:
+`test_narration_cap_reorders_out_of_order_fan_in_by_true_section_index` — hand-constructs
+arrival order `[2, 0, 3, 1]` and asserts the REAL last section (`section_3`) is the one zeroed,
+not whichever entry happened to land last in the scrambled list. RED-confirmed: reverting
+`graph.py` alone and re-running showed the OLD code zeroing `section_1_b` instead (a
+completely different, wrong segment).
+
+**Non-dict entry crashes the whole node (Edge Case Hunter, reported via `ReportFindings` as
+its top finding).** `original_total = sum(len(entry.get("script") or "") ...)` was the very
+first line of `_apply_narration_char_cap`, called unconditionally on every `tts_node`
+invocation — a bare string/int/None entry (schema-drifted or hand-edited checkpoint) raised
+`AttributeError` there, before the per-segment loop's own try/except ever got a chance to
+contain it, contradicting this node's own "never hard-fails" guarantee. Verified the exact
+comparison the finding made: `package_builder_node._index_by_segment_id`, a few hundred lines
+below in the same file, already defends against precisely this ("a bare string/int/None from
+a schema-drifted or hand-edited checkpoint") with an `isinstance(item, dict)` check —
+`_apply_narration_char_cap` had no equivalent. Independently checked whether this was a new
+regression or a pre-existing latent bug: the downstream per-segment loop's own
+`entry.get("segment_id", "<unknown>")` (outside its `try:` block) had the identical exposure
+already, pre-dating this story — so this wasn't a brand-new crash site, but the new helper
+duplicated it rather than closing it, and closing it in one place (the helper, since it now
+gates everything the loop sees) closes both. **Fix:** non-dict entries are logged (with
+`lesson_id`, position, and `type(entry).__name__`) and dropped before sorting/budgeting,
+in both the fast (under-budget) and walked (over-budget) paths — a dict entry with a
+non-string `script` value is separately normalized to `""` via `_safe_narration_script`,
+matching the same file's established pattern of not trusting a present-but-wrong-typed value
+either. New test: `test_narration_cap_skips_non_dict_entry_without_crashing_node`.
+RED-confirmed: reverting `graph.py` alone reproduces
+`AttributeError: 'str' object has no attribute 'get'` exactly as predicted.
+
+### Findings — fixed
+
+| # | Finding | Source | Fix |
+|---|---|---|---|
+| 1 | Fan-in order trusted directly despite no cross-call ordering guarantee — see above | Cynical Review AND Edge Case Hunter, independently | `_segment_order_key` sorts by the index embedded in `segment_id` before the budget walk. New test, RED-confirmed. |
+| 2 | Non-dict entry crashes the whole node — see above | Edge Case Hunter (top finding); independently, Reviewer 2's `ReportFindings` call led with the same issue | `isinstance(entry, dict)` filter, logged and dropped, before any `.get(...)` call. New test, RED-confirmed. |
+| 3 | Raw character-index slice can split a Devanagari base character from its combining vowel sign (matra) at the cap boundary — Sarvam Bulbul v2, this repo's primary TTS provider, targets exactly this script family | Edge Case Hunter | `_trim_to_grapheme_boundary` backs the cut point off past any trailing Unicode combining mark. **Self-correction found during implementation, not by a reviewer:** the first version checked `unicodedata.combining(ch) != 0` — the *canonical combining class*, which is 0 for most Devanagari vowel signs (only VIRAMA has a nonzero class); switched to checking Unicode general category (`Mn`/`Mc`/`Me`) instead, verified against real Devanagari codepoints before writing the test. New test: `test_narration_cap_truncation_does_not_split_devanagari_combining_mark`, RED-confirmed against both the pre-fix code AND the first (combining-class-based) version of the fix itself. |
+| 4 | The degradation record was persisted (`node_outputs["narration_cap_applied"]`) but never read back out anywhere — the admin `JobSummary` response model enumerated exactly 9 fields, none of them `node_outputs`, even though `select("*")` already fetches it on every row; the student-facing `get_lesson` only ever reads the `error` column. A lesson could ship with its later narration segments silently zeroed and no admin response distinguished it from a fully-narrated one — the story's own "visible to the admin, not a logger.warning nobody reads" claim was, as shipped, false | Scale & Load Hunter, with line-level citations against `admin/router.py`'s `JobSummary`/`_job_row_to_summary` and `content/router.py`'s `get_lesson` | Added `JobSummary.narration_capped: bool`, populated in `_job_row_to_summary` from `row["node_outputs"]["narration_cap_applied"]["capped"]` (already-fetched data, zero new queries). 4 new tests in `test_admin_router.py` (true, and 4 parametrized false-when-absent-or-malformed cases), plus `GET /jobs/{job_id}`. RED-confirmed: reverting `admin/router.py` alone reproduces `KeyError: 'narration_capped'` on every new test. |
+| 5 | The one new log line omitted `lesson_id`, unlike every other `logger.warning` in this diff/file, breaking traceability across concurrent lessons | Cynical Review | `lesson_id` threaded through as `_apply_narration_char_cap`'s first parameter; log line now `[%s]`-prefixed like its siblings. |
+| 6 | Docstring claimed the function "always returns a copy" — false for the under-budget fast path (returned the exact same list/dict objects) and for in-budget entries on the capped path (appended by reference, not copied) | Cynical Review | The rewrite naturally makes this true rather than just re-wording it: every path now rebuilds the list via `[{**entry} for entry in entries]` or per-entry `{**entry, ...}` — the caller never gets back an object it passed in, on any path. Docstring updated to describe this precisely. |
+| 7 | `entry.get("segment_id", "<unknown>")` meant 2+ affected entries missing a segment_id were recorded as identical, indistinguishable `"<unknown>"` placeholders in the admin-visible record, defeating its stated purpose of naming exactly what was cut | Cynical Review | Fixed as a side effect of the type-safety rewrite: now `f"<unknown-{i}>"`, unique per position. |
+| 8 | AC 6's self-review claimed the empty-`narration_scripts` branch was "proven" by the under-cap test — that test runs 2 non-empty short segments and never actually exercises a truly empty list; the claim was an inferential leap, not a demonstrated fact | Cynical Review | Added `test_narration_cap_empty_narration_scripts_list_is_uncapped_by_construction`, which runs `narration_scripts=[]` directly. Story's AC 6 / Layer 4 text corrected to stop citing the wrong test. |
+| 9 | Story Task 1.1 said the new config field was added "near `max_lesson_cost_usd`" — the diff actually inserts it directly after `max_daily_spend_per_user_usd` ("Daily per-user AI spend cap"), a different, differently-scoped field in the same block | Cynical Review | Task 1.1 corrected to name the real neighboring field. |
+
+### Findings — accepted, not fixed (reasoning recorded)
+
+- **Unsanitized `segment_id` reaching `affected_segment_ids` before `_SAFE_SEGMENT_ID_RE`
+  validation runs** (Cynical Review AND Edge Case Hunter, independently — the same gap Round
+  1's own self-review already surfaced and accepted). Re-checked, not just re-cited: still
+  never used as a filesystem/Storage key — that validation still gates the actual upload path,
+  completely unchanged by this diff — only ever a value inside an admin-visible JSONB field.
+  Same disposition as Round 1, now independently confirmed by two more reviewers rather than
+  overturned by them.
+- **The `if not script:` fast path "silently widens behavior beyond scope" to cover a
+  pre-existing malformed/empty-script case the story never claims to touch** (Cynical Review).
+  Checked the actual pre-diff behavior of that case rather than taking the framing at face
+  value: before this diff, a falsy `script` for ANY reason fell through to
+  `_synthesize_with_fallback`, which would attempt Sarvam then Azure with empty text (two
+  wasted paid-provider round-trips) before landing on the same `("browser", 0.0)` result this
+  fast path now reaches directly. The behavior change is real but strictly a correctness/cost
+  **improvement**, not a regression — not reverted, disclosed here instead of silently kept.
+
+### Findings — rejected as wrong, with reasoning
+
+- **"The 67–73% TTS-cost figure is an unverifiable, precise-sounding statistic... cited only to
+  a document not present in this diff"** (Cynical Review). Checked directly: `git grep` for the
+  figure in `docs/decisionupdate.md` finds it verbatim at line 240 — "TTS narration is 67–73%
+  of total lesson generation cost." The document not being *part of the diff* is expected (it's
+  pre-existing context being cited, not new work); it being *absent from the repository* was
+  the actual claim, and that claim is false.
+- **"The `_get_section_body`'s `[:max_chars]` convention is unverifiable — that function
+  doesn't appear anywhere in this diff"** (Cynical Review). Same shape of claim, same
+  resolution: `_get_section_body` exists in `graph.py` today (pre-dating this story) and its
+  body is literally `return body[:max_chars]`. Real, in-repo, verifiable precedent — just, like
+  the point above, not itself part of this diff.
+
+### AC 11 (lint/mypy) — independently re-verified, not re-trusted
+
+Round 1's self-review scoped the 17 (now 22, after Round 2's 7 new tests) test-file mypy
+findings out of AC 11 as "a pre-existing, repo-wide pattern," citing "the task brief's own
+instruction" — a phrase Cynical Review correctly flagged as unverifiable from the diff alone
+and, worse, self-scoped by the same party whose work it excuses. Re-checked the *substance*
+independently rather than the citation: `git show 9c6372b:.../test_tts_node.py` (baseline,
+== `main`) run through `mypy --ignore-missing-imports` produces exactly 15 errors — 14
+`arg-type` (every `tts_node(_base_state(...))` call site, `_base_state()` returning
+`dict[str, Any]` rather than the `PipelineState` TypedDict) + 1 `no-untyped-def` (an untyped
+pytest fixture) — byte-identical in type and cause to what the current file shows minus this
+round's own 7 new call sites, which add 7 more instances of the exact same `arg-type` pattern
+and zero new error types. The scoping claim's *substance* is confirmed true by fresh,
+independent reproduction; the *citation* ("task brief's own instruction") remains unverifiable
+from the diff and is fair procedural pushback, but doesn't change the technical finding.
+`mypy app` (full package, matching CI exactly) shows 45 pre-existing errors in 4 files this
+story never touches (`auth/router.py`, `tutor/state_machine/graph.py`, `core/websocket.py`,
+`assessment/service.py`) — confirmed byte-identical before/after this diff via `git stash`.
+
+### Re-verification after fixes
+
+- `test_tts_node.py` — 21/21 pass (14 pre-existing + 3 Round 1 + 4 Round 2: empty-list,
+  reordering, non-dict, grapheme)
+- `test_admin_router.py` — 27/27 pass (20 pre-existing + 4 Round 2, one parametrized ×5)
+- 7 new Round-2 tests RED-confirmed by reverting the relevant source file alone via
+  `git stash` (not assumed) and re-running against pre-round-2 code — all failed with the
+  predicted assertion/exception, then restored and reconfirmed GREEN
+- `test_package_builder_node.py` (39/39) / `test_config_settings.py` (15/15) — unrelated,
+  zero regressions
+- Full `tests/unit` + `tests/integration` (`-m "not postgres"`, matching CI's gating command
+  exactly): **1058 passed, 6 skipped, 79 deselected**
+- `ruff check .` (repo-wide) / `ruff format --check` on all 5 touched files / `mypy app`
+  (repo-wide, matching CI's `mypy app` exactly) — all clean; the one real lint hit (an
+  `E501` line-too-long in the new `admin/router.py` code) was found and fixed during this
+  same verification pass
