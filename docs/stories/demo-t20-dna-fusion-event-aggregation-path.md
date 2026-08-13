@@ -4,7 +4,7 @@
 **Sprint:** Demo Sprint
 **Owner:** Dev 3
 **Branch:** `dev3-demo-t20-phaseL5`
-**Depends on:** T19 (DNA fusion real session events), D75 (event aggregation coverage gap)
+**Depends on:** T19 (DNA fusion real session events), D94 (was D75) (event aggregation coverage gap)
 
 ---
 
@@ -15,7 +15,7 @@ have 37 passing tests for `fuse_learner_dna`. None of them verify that the **eve
 counting loop** in `dna_fusion.py` (lines 301–306) correctly converts `event_rows` from the
 Supabase mock into `event_counts` that propagate to the final upsert payload.
 
-**The specific gap (D75):**
+**The specific gap (D94 (was D75)):**
 
 ```python
 event_counts: dict[str, int] = {}
@@ -33,7 +33,7 @@ for r in event_rows:
   loop is exercised with the empty-list trivial case only.
 
 A regression in this loop (wrong dict key, off-by-one, missing `if t:` filter) is invisible
-to the current test suite. T20 closes D75 with 6 tests that assert concrete, arithmetically-derived
+to the current test suite. T20 closes D94 (was D75) with 6 tests that assert concrete, arithmetically-derived
 EMA values that depend on the counting loop being correct.
 
 ---
@@ -139,7 +139,7 @@ frustration_tolerance = 90.0
 - `goal_orientation`: signal=100-(1/4)*100=75.0; EMA=round(0.7×80.0+0.3×75.0,4)=**78.5**
 - `frustration_tolerance`: signal=100-(1/3)*100≈66.667; EMA=round(0.7×90.0+0.3×66.667,4)=**83.0** exactly (IEEE 754)
 
-*Why:* This is the comprehensive D75 closure — verifies that all four event-type signal
+*Why:* This is the comprehensive D94 (was D75) closure — verifies that all four event-type signal
 dimensions are correctly computed end-to-end from DB event_rows through the counting loop
 to the upsert payload. A single regression in any event-type's key name, counting logic,
 or signal formula causes at least one assertion to fail.
@@ -167,11 +167,11 @@ The mock event_rows list is fixed-size in every test. No production reads are in
 **Q5 — Which caps were INHERITED from an earlier design?**
 `_JARGON_CAP=5`, `_HELP_CAP=4`, `_SKIP_CAP=4`, `_INTERVENTION_CAP=3` — all defined in
 Story 3-25, Sprint 2. T20 exercises intermediate values (not just cap/zero), which is the
-gap D75 identified. No re-derivation needed — tests exercise constants, not change them.
+gap D94 (was D75) identified. No re-derivation needed — tests exercise constants, not change them.
 
 **Q6 — Is every check-then-act sequence safe under CONCURRENT requests?**
 T20 is tests-only. The `session_events` read is a plain SELECT; concurrent reads are safe
-at DB level. The Python-layer race on `session_count` (D74) is pre-existing and unrelated to
+at DB level. The Python-layer race on `session_count` (D93 (was D74)) is pre-existing and unrelated to
 the event aggregation path T20 adds coverage for.
 
 ---
@@ -292,9 +292,9 @@ For AC6 `frustration_tolerance`: signal = 100 - (1/3)*100 ≈ 66.6̄.
 IEEE 754: round(0.7×90.0 + 0.3×(100-(1/3)×100), 4) = round(63.0 + 20.000000000000004, 4) = **83.0** exactly.
 Use `pytest.approx(frustration_ema, rel=1e-3)` — consistent with all other assertions.
 
-### Known pre-existing test failure (D76)
+### Known pre-existing test failure (D95 (was D76))
 
-`test_dna_fusion.py::test_positional_args_raise_type_error` — uses `asyncio.get_event_loop().run_until_complete()` which fails in Python 3.12 with `asyncio_mode=auto`. Pre-existing from Story 3-25; not introduced by T20. Also in `test_dna_growth.py::test_positional_args_raise_type_error` and `test_dna_growth.py::test_record_dna_growth_inserts_9_rows_for_all_dims` (same pattern). Expected count: 3 pre-existing failures total. Registered as **D76** in `docs/DEFECT-REGISTER.md`.
+`test_dna_fusion.py::test_positional_args_raise_type_error` — uses `asyncio.get_event_loop().run_until_complete()` which fails in Python 3.12 with `asyncio_mode=auto`. Pre-existing from Story 3-25; not introduced by T20. Also in `test_dna_growth.py::test_positional_args_raise_type_error` and `test_dna_growth.py::test_record_dna_growth_inserts_9_rows_for_all_dims` (same pattern). Expected count: 3 pre-existing failures total. Registered as **D95 (was D76)** in `docs/DEFECT-REGISTER.md`.
 
 ---
 
@@ -313,12 +313,12 @@ Use `pytest.approx(frustration_ema, rel=1e-3)` — consistent with all other ass
 - [x] **P5 (LOW)** — Fixed `# ≈ 83.0001` comment (actual IEEE 754 result is 83.0 exactly). Changed `rel=1e-2` → `rel=1e-3` for frustration_tolerance (consistent with all other assertions).
 - [x] **P6 (MOD)** — Added `# MOCK-CONTRACT:` comment to AC4 explaining that the `if t:` guard is untestable via EMA output alone (`_compute_signals` ignores unknown keys via `.get()`).
 - [x] **P7 (LOW)** — AC5 story text updated to pin prior `curiosity_index=50.0` and expected EMA=35.0.
-- [x] **P8 (VIOLATION)** — Registered D76 (3 pre-existing asyncio.get_event_loop() failures) in defect register; added `(D76)` reference to Dev Notes paragraph (Process Integrity binding rule 5).
+- [x] **P8 (VIOLATION)** — Registered D95 (was D76) (3 pre-existing asyncio.get_event_loop() failures) in defect register; added `(D95 (was D76))` reference to Dev Notes paragraph (Process Integrity binding rule 5).
 
 ### Deferred findings (pre-existing, not introduced by T20)
 
-- **D77** (Scale & Load Q4): `session_events` SELECT in `dna_fusion.py` has no `.limit()`. 50,000 events → all rows materialised; no error raised. Pre-existing; fix: add `.limit(10000)` + `# BOUNDED:` justification.
-- **D78** (Scale & Load guard gap): `test_unbounded_queries.py` `REQUEST_PATH_FILENAMES` excludes `dna_fusion.py`. D77 and similar unbounded reads in `dna_fusion.py`, `ces.py`, `dna_growth.py` are invisible to CI. Pre-existing; fix: add `dna_fusion.py` to scanned filenames or switch to module-directory scan.
+- **D96 (was D77)** (Scale & Load Q4): `session_events` SELECT in `dna_fusion.py` has no `.limit()`. 50,000 events → all rows materialised; no error raised. Pre-existing; fix: add `.limit(10000)` + `# BOUNDED:` justification.
+- **D99 (was D78)** (Scale & Load guard gap): `test_unbounded_queries.py` `REQUEST_PATH_FILENAMES` excludes `dna_fusion.py`. D96 (was D77) and similar unbounded reads in `dna_fusion.py`, `ces.py`, `dna_growth.py` are invisible to CI. Pre-existing; fix: add `dna_fusion.py` to scanned filenames or switch to module-directory scan.
 - **Blind Hunter F1** (IDOR guard never tested): `fuse_learner_dna` ownership check at lines 242–246 has no cross-user test case. Pre-existing gap in the assessment test suite; separate story.
 - **Blind Hunter F2** (mock `.eq()` args unverified): all 5 mock query chains accept any column/value in `.eq()` — filter regression is invisible. Systemic mock pattern issue across assessment tests; separate story.
 
@@ -328,4 +328,4 @@ Use `pytest.approx(frustration_ema, rel=1e-3)` — consistent with all other ass
 
 | Date | Change |
 |------|--------|
-| 2026-08-13 | Story created — T20 scope: D75 event aggregation DB path, 6 ACs |
+| 2026-08-13 | Story created — T20 scope: D94 (was D75) event aggregation DB path, 6 ACs |

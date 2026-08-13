@@ -133,7 +133,7 @@ This is a named security assertion (separate test from AC1) with an explicit sec
 ### Framework and marks
 - pytest + `starlette.testclient.TestClient`
 - All tests marked `@pytest.mark.unit` — no external services, no LLM calls, no DB
-- `asyncio_mode=auto` is configured in `pyproject.toml` — use `async def` if needed; do NOT call `asyncio.get_event_loop().run_until_complete()` (D76 — Python 3.12 incompatible)
+- `asyncio_mode=auto` is configured in `pyproject.toml` — use `async def` if needed; do NOT call `asyncio.get_event_loop().run_until_complete()` (D95 (was D76) — Python 3.12 incompatible)
 
 ### Dependency override pattern
 Follow the exact pattern from `tests/test_teachback_endpoint.py`:
@@ -185,7 +185,7 @@ with patch("app.modules.assessment.router.grade_teachback") as mock:
 - Do NOT call real service functions — mock them for response-shape tests
 - Do NOT add `transcript`, `duration_seconds`, `user_id`, `session_id`, or `started_at` to schema as new fields
 - Do NOT modify `router.py` or `schemas.py` — this story adds tests only
-- Do NOT use `asyncio.get_event_loop().run_until_complete()` — D76
+- Do NOT use `asyncio.get_event_loop().run_until_complete()` — D95 (was D76)
 
 ### Response shape assertions
 AC3 (feedback is list):
@@ -319,7 +319,7 @@ T26 does NOT re-test what those files already cover at the model-inspection leve
 No production code changes. All ACs verified at the HTTP layer via TestClient with mocked service layer.
 239/239 assessment-scope tests pass. Pre-existing full-suite failures are unrelated (encoding, tinytag).
 
-6-agent BMAD code review passed. Two production schema gaps registered as D79 / D80 in DEFECT-REGISTER.md
+6-agent BMAD code review passed. Two production schema gaps registered as D97 (was D79) / D98 (was D80) in DEFECT-REGISTER.md
 (out of scope for this test-only story; require separate PR touching schemas.py).
 
 ### Debug Log
@@ -337,8 +337,8 @@ _No issues._
 - [x] TC-1 (Med): Add accepted-side boundary tests — `test_teachback_max_length_response_text_accepted`, `test_quiz_max_answers_accepted`
 - [x] TC-2 (Med): Add missing-field tests — `test_quiz_missing_session_id_returns_422`, `test_teachback_missing_session_id_returns_422`
 - [x] TC-3 (Med): Add `test_teachback_whitespace_only_response_text_accepted` documenting client-side guard requirement
-- [x] SL-D1 (Med / Deferred): Registered as D79 — `lesson_id: ""` → 500 instead of 422; fix is schema change, out of scope for T26
-- [x] SL-D2 (Med / Deferred): Registered as D80 — whitespace response_text triggers real LLM; fix is schema validator, out of scope for T26
+- [x] SL-D1 (Med / Deferred): Registered as D97 (was D79) — `lesson_id: ""` → 500 instead of 422; fix is schema change, out of scope for T26
+- [x] SL-D2 (Med / Deferred): Registered as D98 (was D80) — whitespace response_text triggers real LLM; fix is schema validator, out of scope for T26
 
 ### Change Log
 
@@ -346,4 +346,4 @@ _No issues._
 |------|--------|
 | 2026-08-13 | Story created — BMAD story-first gate (demo-t26-phaseL8) |
 | 2026-08-13 | Implementation complete — 18 tests, all passed, no regressions |
-| 2026-08-13 | 6-agent BMAD review complete — 5 fixes applied, test count 18 → 23; D79/D80 registered |
+| 2026-08-13 | 6-agent BMAD review complete — 5 fixes applied, test count 18 → 23; D97 (was D79)/D98 (was D80) registered |

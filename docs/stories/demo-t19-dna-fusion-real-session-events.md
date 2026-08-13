@@ -317,7 +317,7 @@ EMA: round(0.7*70.0 + 0.3*100.0, 4) = round(49.0 + 30.0, 4) = 79.0  # logical_de
 ## Senior Developer Review (AI) — 2026-08-13
 
 **Review outcome:** Changes Requested → Applied  
-**6-agent BMAD review completed.** 12 patches applied. 2 scale findings deferred as D74/D75.
+**6-agent BMAD review completed.** 12 patches applied. 2 scale findings deferred as D93 (was D74)/D94 (was D75).
 
 ### Review Findings & Patches Applied
 
@@ -338,8 +338,8 @@ EMA: round(0.7*70.0 + 0.3*100.0, 4) = round(49.0 + 30.0, 4) = 79.0  # logical_de
 
 ### Deferred Findings (Scale Contract — require D-nn)
 
-- **D74** (Race condition): `fuse_learner_dna` session_count is Python read-modify-write — two concurrent sessions for same user silently drops one EMA contribution. Deferred: requires production-level fix (DB-side increment or advisory lock). See DEFECT-REGISTER.md.
-- **D75** (Coverage gap): Event aggregation path (dna_fusion.py lines 289-306) has no integration test with non-empty `event_rows`. Deferred: all 5 `fuse_learner_dna` integration tests pass empty event_rows. See DEFECT-REGISTER.md.
+- **D93 (was D74)** (Race condition): `fuse_learner_dna` session_count is Python read-modify-write — two concurrent sessions for same user silently drops one EMA contribution. Deferred: requires production-level fix (DB-side increment or advisory lock). See DEFECT-REGISTER.md.
+- **D94 (was D75)** (Coverage gap): Event aggregation path (dna_fusion.py lines 289-306) has no integration test with non-empty `event_rows`. Deferred: all 5 `fuse_learner_dna` integration tests pass empty event_rows. See DEFECT-REGISTER.md.
 
 ### Decision Deferred
 

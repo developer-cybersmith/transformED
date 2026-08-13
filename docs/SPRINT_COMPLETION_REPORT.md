@@ -27,7 +27,7 @@ The Demo Sprint (Phase L4–L8) validates the Dev 3 assessment API against:
 | T16 | End-to-end session lifecycle with real UUID data | New test file: `test_e2e_session_flow_real_data.py` | 9/9 PASS | 9/9 | ✅ PASS |
 | T18 | Learner DNA generation with real 20-question onboarding data | New test file: `test_learner_dna_real_onboarding.py` | 9/9 PASS | 10/10 | ✅ PASS |
 | T19 | Learner DNA fusion: concrete EMA values and real session events | New test file: `test_dna_fusion_real_session.py` | 9/9 PASS | 9/9 | ✅ PASS |
-| T20 | Event aggregation DB path with non-empty event_rows (D75 closure) | New test file: `test_dna_fusion_event_aggregation.py` | 6/6 PASS | 6/6 | ✅ PASS |
+| T20 | Event aggregation DB path with non-empty event_rows (D94 (was D75) closure) | New test file: `test_dna_fusion_event_aggregation.py` | 6/6 PASS | 6/6 | ✅ PASS |
 | T26 | Quiz/teachback HTTP API contract for Dev 2 (Phase L8) | New test file: `test_t26_api_contract_dev2.py` | 8/8 PASS | 23/23 | ✅ PASS |
 | T28 | Learner DNA display contract for Dev 2 (cross-team) | New test file: `test_t28_dna_display_contract_dev2.py` | 10/10 PASS | 18/18 | ✅ PASS |
 | **Total** | | | **60/60 PASS** | **84/84** | ✅ |
@@ -87,7 +87,7 @@ The Demo Sprint (Phase L4–L8) validates the Dev 3 assessment API against:
 | AC9 | `ONBOARDING_PROFILE_SYSTEM_PROMPT` uses "HIE", not "TransformED" | **PASS** | `test_onboarding_system_prompt_uses_hie_not_transformED` — "HIE" present, "TransformED" absent |
 
 **Extra (review-added):** P10 intermediate score test validates /3 denominator at selected_index=2 → 66.67.  
-**T18 result: 9/9 ACs PASS, 10/10 tests PASS. 11 patches applied from 6-agent review. D74 registered.**
+**T18 result: 9/9 ACs PASS, 10/10 tests PASS. 11 patches applied from 6-agent review. D93 (was D74) registered.**
 
 ---
 
@@ -105,13 +105,13 @@ The Demo Sprint (Phase L4–L8) validates the Dev 3 assessment API against:
 | AC8 | session_count=9 → new_count=10 → Redis.set called; also fires at session 20 | **PASS** | `test_fuse_learner_dna_redis_reassessment_flag_at_session_10` — set called with correct key at 10 AND 20 (guards % vs == regression) |
 | AC9 | Redis.set ConnectionError is non-fatal; function returns 9 dims | **PASS** | `test_fuse_learner_dna_redis_failure_is_non_fatal` — returns dict with exactly 9 keys despite ConnectionError |
 
-**Note on AC3 spec vs. test:** Original AC3 text said `session_count == 3` in payload. Test asserts `"session_count" not in captured_upsert` (D74: increment must be atomic, not Python read-modify-write). The test is correct and passes; the AC3 text was not retroactively updated. Production behavior is correct — this is a story-text gap, not a defect.
+**Note on AC3 spec vs. test:** Original AC3 text said `session_count == 3` in payload. Test asserts `"session_count" not in captured_upsert` (D93 (was D74): increment must be atomic, not Python read-modify-write). The test is correct and passes; the AC3 text was not retroactively updated. Production behavior is correct — this is a story-text gap, not a defect.
 
-**T19 result: 9/9 PASS. 12 patches from 6-agent review. D74, D75 registered.**
+**T19 result: 9/9 PASS. 12 patches from 6-agent review. D93 (was D74), D94 (was D75) registered.**
 
 ---
 
-### T20 — Event Aggregation DB Path (D75 Closure)
+### T20 — Event Aggregation DB Path (D94 (was D75) Closure)
 
 | AC | Description | Verdict | Evidence |
 |----|-------------|---------|----------|
@@ -122,7 +122,7 @@ The Demo Sprint (Phase L4–L8) validates the Dev 3 assessment API against:
 | AC5 | session_events read failure alone → non-fatal; 9 dims returned; upsert succeeds | **PASS** | `test_fuse_event_aggregation_events_read_failure_alone_is_non_fatal` — result has 9 dims, len(captured)==1, curiosity≈35.0 |
 | AC6 | All 4 event types → exact EMA for all 5 signal dims: curiosity=46.0, help=42.5, study=57.5, goal=78.5, frustration=83.0 | **PASS** | `test_fuse_event_aggregation_all_four_event_types_exact_ema_all_dims` — all 5 assertions literal-pinned |
 
-**T20 result: 6/6 PASS. 8 patches from 6-agent review. D76, D77, D78 registered as pre-existing.**
+**T20 result: 6/6 PASS. 8 patches from 6-agent review. D95 (was D76), D96 (was D77), D99 (was D78) registered as pre-existing.**
 
 ---
 
@@ -139,9 +139,9 @@ The Demo Sprint (Phase L4–L8) validates the Dev 3 assessment API against:
 | AC7 | Extra client fields silently ignored on quiz and teachback | **PASS** | 2 tests, both 200 |
 | AC8 | Security: user_id from body never passed to create_session | **PASS** | `test_user_id_body_field_never_trusted` — captured["user_id"]=="user-001", ≠"attacker-id" |
 
-**Review-added tests (TC-1, TC-2, TC-3):** accepted boundary values (4000 chars, 50 answers); missing session_id → 422; whitespace-only response_text → 422 (D80 fixed in schemas.py validator).
+**Review-added tests (TC-1, TC-2, TC-3):** accepted boundary values (4000 chars, 50 answers); missing session_id → 422; whitespace-only response_text → 422 (D98 (was D80) fixed in schemas.py validator).
 
-**T26 result: 8/8 ACs PASS, 23/23 tests PASS. D79 registered (lesson_id="" → 500, deferred). D80 fixed (whitespace validator added).**
+**T26 result: 8/8 ACs PASS, 23/23 tests PASS. D97 (was D79) registered (lesson_id="" → 500, deferred). D98 (was D80) fixed (whitespace validator added).**
 
 ---
 
@@ -175,7 +175,7 @@ The Demo Sprint (Phase L4–L8) validates the Dev 3 assessment API against:
 | T15 → T16: `_build_real_lesson_package()` reused | ✅ | T16 duplicates builder (T15 not yet on main); UUID constants identical |
 | T16 → T19: UUID session → fuse_learner_dna IDOR guard | ✅ | AC7 in T19 uses same UUID pattern, 404 verified |
 | T18 → T28: onboarding result → HTTP contract | ✅ | T28 AC2 mock injects same 9 + 3 dimension keys T18 proves are stored |
-| T19 → T20: D75 event aggregation gap closure | ✅ | T20 explicitly closes D75 registered in T19; all 4 event types verified |
+| T19 → T20: D94 (was D75) event aggregation gap closure | ✅ | T20 explicitly closes D94 (was D75) registered in T19; all 4 event types verified |
 | T26 → T28: same HTTP test pattern (TestClient + monkeypatch) | ✅ | T28 Dev Notes references T26 pattern explicitly; lazy import mock paths consistent |
 | D72 guard (T18 AC4/AC9 + T28 AC3/AC4/AC7 + HIE brand regression) | ✅ | 7 distinct assertions across T18 and T28; DPDP_DISCLAIMER confirmed HIE-only |
 
@@ -212,15 +212,15 @@ All defects below have D-nn registrations in `docs/DEFECT-REGISTER.md`. None are
 
 | D-nn | Severity | Description | Owner | Status |
 |------|----------|-------------|-------|--------|
-| D74 | Medium | `fuse_learner_dna` session_count Python read-modify-write — concurrent sessions for same user can silently drop one EMA contribution | Dev 3 | Deferred; fix requires DB-side atomic increment or advisory lock |
-| D76 | Low | `test_dna_fusion.py::test_positional_args_raise_type_error` and 2 others use `asyncio.get_event_loop().run_until_complete()` — fails on Python 3.12 with `asyncio_mode=auto` | Dev 3 | Pre-existing; 3 known failures in test_dna_fusion.py + test_dna_growth.py (NOT in the 84-test suite) |
-| D77 | Medium | `session_events` SELECT in `dna_fusion.py` has no `.limit()` — 50,000 events would materialise all rows | Dev 3 | Deferred; fix: add `.limit(10000)` + BOUNDED comment |
-| D78 | Low | `test_unbounded_queries.py` REQUEST_PATH_FILENAMES excludes `dna_fusion.py`, `ces.py`, `dna_growth.py` — D77 class invisible to CI | Dev 3 | Deferred; fix: add paths to scanned list |
-| D79 | Medium | `lesson_id: ""` passes Pydantic min_length=1 (1 char) but reaches DB cast as UUID → 500 | Dev 3 | Deferred; fix requires min_length=36 or UUID validator |
+| D93 (was D74) | Medium | `fuse_learner_dna` session_count Python read-modify-write — concurrent sessions for same user can silently drop one EMA contribution | Dev 3 | Deferred; fix requires DB-side atomic increment or advisory lock |
+| D95 (was D76) | Low | `test_dna_fusion.py::test_positional_args_raise_type_error` and 2 others use `asyncio.get_event_loop().run_until_complete()` — fails on Python 3.12 with `asyncio_mode=auto` | Dev 3 | Pre-existing; 3 known failures in test_dna_fusion.py + test_dna_growth.py (NOT in the 84-test suite) |
+| D96 (was D77) | Medium | `session_events` SELECT in `dna_fusion.py` has no `.limit()` — 50,000 events would materialise all rows | Dev 3 | Deferred; fix: add `.limit(10000)` + BOUNDED comment |
+| D99 (was D78) | Low | `test_unbounded_queries.py` REQUEST_PATH_FILENAMES excludes `dna_fusion.py`, `ces.py`, `dna_growth.py` — D96 (was D77) class invisible to CI | Dev 3 | Deferred; fix: add paths to scanned list |
+| D97 (was D79) | Medium | `lesson_id: ""` passes Pydantic min_length=1 (1 char) but reaches DB cast as UUID → 500 | Dev 3 | Deferred; fix requires min_length=36 or UUID validator |
 | D87 | Low | Reassessment bypass 3-step non-atomic Redis race: `GET(key) → DELETE(lock) → SET NX(lock)` — race window if TTL expires between GET and DELETE | Dev 4 | Deferred; pre-existing in router.py:258-264 (DISCIPLINE enforcement) |
 
-**D75** (event aggregation coverage gap) is **CLOSED** by T20.  
-**D80** (whitespace response_text → LLM burn without 422) is **FIXED** by the `@field_validator` in `schemas.py` (TC-3 test confirms 422).
+**D94 (was D75)** (event aggregation coverage gap) is **CLOSED** by T20.  
+**D98 (was D80)** (whitespace response_text → LLM burn without 422) is **FIXED** by the `@field_validator` in `schemas.py` (TC-3 test confirms 422).
 
 ---
 
@@ -243,7 +243,7 @@ All defects below have D-nn registrations in `docs/DEFECT-REGISTER.md`. None are
 | POST /teachback: non-approved email | 403 | ✅ T26 AC6 |
 | POST /quiz: empty answers | 422 | ✅ T26 AC2 |
 | POST /quiz: 51 answers | 422 | ✅ T26 AC2 |
-| POST /teachback: whitespace response_text | 422 (D80 fixed) | ✅ T26 TC-3 |
+| POST /teachback: whitespace response_text | 422 (D98 (was D80) fixed) | ✅ T26 TC-3 |
 
 ---
 
@@ -271,9 +271,9 @@ Three test failures exist in the broader assessment test suite but are **outside
 
 | Test | Cause | D-nn |
 |------|-------|------|
-| `test_dna_fusion.py::test_positional_args_raise_type_error` | `asyncio.get_event_loop().run_until_complete()` incompatible with Python 3.12 + asyncio_mode=auto | D76 |
-| `test_dna_growth.py::test_positional_args_raise_type_error` | Same pattern | D76 |
-| `test_dna_growth.py::test_record_dna_growth_inserts_9_rows_for_all_dims` | Same pattern | D76 |
+| `test_dna_fusion.py::test_positional_args_raise_type_error` | `asyncio.get_event_loop().run_until_complete()` incompatible with Python 3.12 + asyncio_mode=auto | D95 (was D76) |
+| `test_dna_growth.py::test_positional_args_raise_type_error` | Same pattern | D95 (was D76) |
+| `test_dna_growth.py::test_record_dna_growth_inserts_9_rows_for_all_dims` | Same pattern | D95 (was D76) |
 
 These 3 failures predate the Demo Sprint and appear on `main`. They are not regressions.
 
@@ -286,9 +286,9 @@ These 3 failures predate the Demo Sprint and appear on `main`. They are not regr
 | T15 | 6/6 | 0 | 0 | ✅ Clean |
 | T16 | 6/6 | 0 | 0 | ✅ Clean |
 | T18 | 6/6 | 14 | 11 applied, 1 deferred | ✅ Resolved |
-| T19 | 6/6 | 14 | 12 applied, 2 deferred as D74/D75 | ✅ Resolved |
+| T19 | 6/6 | 14 | 12 applied, 2 deferred as D93 (was D74)/D94 (was D75) | ✅ Resolved |
 | T20 | 6/6 | 9 | 8 applied, 1 (Blind Hunter F1/F2) documented | ✅ Resolved |
-| T26 | 6/6 | 7 | 5 applied + 5 tests added, 2 deferred as D79/D80 | ✅ Resolved |
+| T26 | 6/6 | 7 | 5 applied + 5 tests added, 2 deferred as D97 (was D79)/D98 (was D80) | ✅ Resolved |
 | T28 | 6/6 | 24 total (8 patches, 8 deferred, 6 dismissed, 2 DN resolved) | 8 applied, all DDs resolved | ✅ Resolved |
 
 All 7 tasks received 6-agent BMAD reviews. All code-level findings were either patched or formally registered with D-nn numbers. No unregistered deferrals.
@@ -336,8 +336,8 @@ All 7 tasks received 6-agent BMAD reviews. All code-level findings were either p
 
 1. Every AC has at least one passing test that exercises the stated expected behavior at the correct layer (service, HTTP, or source-level).
 2. No test relies on an unregistered assumption about production behavior. Mock-contract comments document where integration coverage is at a separate layer.
-3. All registered defects (D74, D76, D77, D78, D79, D87) are known, documented, bounded, and none are in the critical path for the demo.
-4. D75 (event aggregation gap) is fully closed by T20. D80 (whitespace LLM burn) is fixed.
+3. All registered defects (D93 (was D74), D95 (was D76), D96 (was D77), D99 (was D78), D97 (was D79), D87) are known, documented, bounded, and none are in the critical path for the demo.
+4. D94 (was D75) (event aggregation gap) is fully closed by T20. D98 (was D80) (whitespace LLM burn) is fixed.
 5. No migration changes — database schema is identical to what was in `main` before the sprint.
 6. Security invariants: IDOR (SEC-006 pattern) verified at every service entry point; user_id from request body never trusted.
 
@@ -348,10 +348,10 @@ All 7 tasks received 6-agent BMAD reviews. All code-level findings were either p
 
 ### Post-Merge Sprint Backlog (D-nn tracked, not blocking demo)
 
-- D74: Replace Python-side session_count increment with atomic DB RPC
-- D77: Add `.limit(10000)` to `session_events` SELECT in `dna_fusion.py`
-- D78: Add `dna_fusion.py` to `test_unbounded_queries.py` scanned filenames
-- D79: Add UUID/min-length-36 validator to `SessionCreate.lesson_id`
+- D93 (was D74): Replace Python-side session_count increment with atomic DB RPC
+- D96 (was D77): Add `.limit(10000)` to `session_events` SELECT in `dna_fusion.py`
+- D99 (was D78): Add `dna_fusion.py` to `test_unbounded_queries.py` scanned filenames
+- D97 (was D79): Add UUID/min-length-36 validator to `SessionCreate.lesson_id`
 - D87: Replace 3-step Redis reassessment bypass with atomic MULTI/EXEC (Dev 4 owns)
 
 ---

@@ -23,7 +23,6 @@ Coverage:
 from __future__ import annotations
 
 import ast
-import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -96,7 +95,9 @@ def _supabase_mock(
             tbl.select.return_value.eq.return_value.execute.return_value = _resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp(event_rows)
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp(
+                event_rows
+            )
 
         elif name == "learner_dna":
             select_chain = tbl.select.return_value
@@ -462,7 +463,7 @@ async def test_async_happy_path_returns_9_dimension_dict():
 @pytest.mark.asyncio
 async def test_async_session_count_incremented():
     """AC20: session_count is incremented atomically via RPC, not in the upsert payload.
-    D74 fix: Python-side read-modify-write replaced by server-side atomic UPDATE."""
+    D93 (was D74) fix: Python-side read-modify-write replaced by server-side atomic UPDATE."""
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
@@ -495,7 +496,7 @@ async def test_async_session_count_incremented():
     # session_count must NOT be in the upsert payload — atomic RPC handles the increment
     assert "session_count" not in upsert_calls[0], (
         f"session_count found in upsert payload: {upsert_calls[0]}. "
-        "D74: use increment_learner_dna_session_count RPC instead."
+        "D93 (was D74): use increment_learner_dna_session_count RPC instead."
     )
     # RPC must have been called to atomically increment the counter
     supabase.rpc.assert_called_once_with(

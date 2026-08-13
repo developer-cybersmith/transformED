@@ -59,8 +59,9 @@ def _supabase_mock(
         tbl = MagicMock()
 
         if name == "sessions":
-            (tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
-             .return_value) = _make_resp(session_row)
+            (
+                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
+            ) = _make_resp(session_row)
 
         elif name == "quiz_attempts":
             tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(quiz_rows)
@@ -69,19 +70,24 @@ def _supabase_mock(
             tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _make_resp(event_rows)
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
+                _make_resp(event_rows)
+            )
 
         elif name == "learner_dna":
             # Read side — maybe_single
-            (tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
-             .return_value) = _make_resp(dna_row)
+            (
+                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
+            ) = _make_resp(dna_row)
             # Write side — upsert
             if capture_upsert is not None:
+
                 def _spy_upsert(payload: dict[str, Any], **kwargs: Any) -> MagicMock:
                     capture_upsert.append(dict(payload))  # list prevents silent overwrite on retry
                     m = MagicMock()
                     m.execute.return_value = _make_resp([])
                     return m
+
                 tbl.upsert.side_effect = _spy_upsert
             else:
                 tbl.upsert.return_value.execute.return_value = _make_resp([])
@@ -254,14 +260,19 @@ async def test_fuse_learner_dna_upsert_payload_contains_exact_ema_values(
 ) -> None:
     """AC3: upsert payload has exact EMA-computed float values, not just [0,100] range.
     Closes gap in test_async_happy_path_returns_9_dimension_dict (range-only assertion)."""
-    from app.modules.assessment.dna_fusion import fuse_learner_dna
     from app.config import Settings
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     settings = Settings(
-        supabase_url="http://x", supabase_anon_key="x",
-        supabase_service_role_key="x", supabase_jwt_secret="x",
-        openai_api_key="x", sarvam_api_key="x", heygen_api_key="x",
-        langfuse_public_key="x", langfuse_secret_key="x",
+        supabase_url="http://x",
+        supabase_anon_key="x",
+        supabase_service_role_key="x",
+        supabase_jwt_secret="x",
+        openai_api_key="x",
+        sarvam_api_key="x",
+        heygen_api_key="x",
+        langfuse_public_key="x",
+        langfuse_secret_key="x",
         dna_ema_retain=0.7,
     )
 
@@ -303,27 +314,27 @@ async def test_fuse_learner_dna_upsert_payload_contains_exact_ema_values(
 
     assert captured_upsert.get("pattern_recognition") == pytest.approx(
         expected_pattern, rel=1e-4
-    ), (
-        f"EMA(80.0, signal=100.0, retain=0.7)=86.0; "
-        f"got {captured_upsert.get('pattern_recognition')}"
-    )
-    assert captured_upsert.get("logical_deduction") == pytest.approx(
-        expected_logical, rel=1e-4
-    ), (
-        f"EMA(70.0, signal=100.0, retain=0.7)=79.0; "
-        f"got {captured_upsert.get('logical_deduction')}"
+    ), f"EMA(80.0, signal=100.0, retain=0.7)=86.0; got {captured_upsert.get('pattern_recognition')}"
+    assert captured_upsert.get("logical_deduction") == pytest.approx(expected_logical, rel=1e-4), (
+        f"EMA(70.0, signal=100.0, retain=0.7)=79.0; got {captured_upsert.get('logical_deduction')}"
     )
     assert captured_upsert.get("user_id") == _USER_UUID, (
         f"user_id missing from upsert payload; got {captured_upsert.get('user_id')!r}"
     )
     assert "session_count" not in captured_upsert, (
-        f"session_count must NOT be in upsert payload (D74: atomic RPC handles increment); "
-        f"got {captured_upsert.get('session_count')!r}"
+        f"session_count must NOT be in upsert payload (D93, was D74: "
+        f"atomic RPC handles increment); got {captured_upsert.get('session_count')!r}"
     )
     for dim in (
-        "pattern_recognition", "logical_deduction", "processing_speed",
-        "frustration_tolerance", "persistence", "help_seeking",
-        "goal_orientation", "curiosity_index", "study_independence",
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
     ):
         val = captured_upsert.get(dim)
         assert isinstance(val, float), f"{dim} in upsert payload is not float: {val!r}"
@@ -373,14 +384,19 @@ async def test_fuse_learner_dna_ended_at_none_no_upsert(
 ) -> None:
     """AC5: ended_at=None → returns None; learner_dna upsert must NOT be called.
     Strengthens AC14 from test_dna_fusion.py — existing test only checks return value."""
-    from app.modules.assessment.dna_fusion import fuse_learner_dna
     from app.config import Settings
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     settings = Settings(
-        supabase_url="http://x", supabase_anon_key="x",
-        supabase_service_role_key="x", supabase_jwt_secret="x",
-        openai_api_key="x", sarvam_api_key="x", heygen_api_key="x",
-        langfuse_public_key="x", langfuse_secret_key="x",
+        supabase_url="http://x",
+        supabase_anon_key="x",
+        supabase_service_role_key="x",
+        supabase_jwt_secret="x",
+        openai_api_key="x",
+        sarvam_api_key="x",
+        heygen_api_key="x",
+        langfuse_public_key="x",
+        langfuse_secret_key="x",
     )
 
     session_row = {"session_id": _SESSION_UUID, "user_id": _USER_UUID, "ended_at": None}
@@ -392,15 +408,18 @@ async def test_fuse_learner_dna_ended_at_none_no_upsert(
         tables_accessed.append(name)
         tbl = MagicMock()
         if name == "sessions":
-            (tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
-             .return_value) = _make_resp(session_row)
+            (
+                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
+            ) = _make_resp(session_row)
         elif name == "learner_dna":
+
             def _spy_upsert(*args: Any, **kwargs: Any) -> MagicMock:
                 nonlocal upsert_called
                 upsert_called = True
                 m = MagicMock()
                 m.execute.return_value = _make_resp([])
                 return m
+
             tbl.upsert.side_effect = _spy_upsert
         return tbl
 
@@ -415,9 +434,7 @@ async def test_fuse_learner_dna_ended_at_none_no_upsert(
     )
 
     assert result is None, f"Expected None for ended_at=None; got {result}"
-    assert not upsert_called, (
-        "learner_dna upsert should NOT be called when ended_at is None"
-    )
+    assert not upsert_called, "learner_dna upsert should NOT be called when ended_at is None"
     # AC5 spec: "supabase.table called at most once (sessions read only)"
     assert "quiz_attempts" not in tables_accessed, (
         "ended_at=None must early-exit before reading quiz_attempts; "
@@ -492,14 +509,19 @@ async def test_fuse_learner_dna_idor_raises_404(
     403 would be an existence oracle for session IDs (SEC-006 pattern)."""
     from fastapi import HTTPException
 
-    from app.modules.assessment.dna_fusion import fuse_learner_dna
     from app.config import Settings
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     settings = Settings(
-        supabase_url="http://x", supabase_anon_key="x",
-        supabase_service_role_key="x", supabase_jwt_secret="x",
-        openai_api_key="x", sarvam_api_key="x", heygen_api_key="x",
-        langfuse_public_key="x", langfuse_secret_key="x",
+        supabase_url="http://x",
+        supabase_anon_key="x",
+        supabase_service_role_key="x",
+        supabase_jwt_secret="x",
+        openai_api_key="x",
+        sarvam_api_key="x",
+        heygen_api_key="x",
+        langfuse_public_key="x",
+        langfuse_secret_key="x",
     )
 
     # Session belongs to user_B, but we call with user_A
@@ -544,8 +566,8 @@ async def test_fuse_learner_dna_redis_reassessment_flag_at_session_10(
 ) -> None:
     """AC8: old_session_count=9 → new_count=10 → Redis set called with reassessment key.
     _REASSESSMENT_INTERVAL=10 was completely untested before T19."""
-    from app.modules.assessment.dna_fusion import _REASSESSMENT_INTERVAL, fuse_learner_dna
     from app.config import Settings
+    from app.modules.assessment.dna_fusion import _REASSESSMENT_INTERVAL, fuse_learner_dna
 
     assert _REASSESSMENT_INTERVAL == 10, (
         f"Test assumes _REASSESSMENT_INTERVAL=10; actual={_REASSESSMENT_INTERVAL}. "
@@ -553,10 +575,15 @@ async def test_fuse_learner_dna_redis_reassessment_flag_at_session_10(
     )
 
     settings = Settings(
-        supabase_url="http://x", supabase_anon_key="x",
-        supabase_service_role_key="x", supabase_jwt_secret="x",
-        openai_api_key="x", sarvam_api_key="x", heygen_api_key="x",
-        langfuse_public_key="x", langfuse_secret_key="x",
+        supabase_url="http://x",
+        supabase_anon_key="x",
+        supabase_service_role_key="x",
+        supabase_jwt_secret="x",
+        openai_api_key="x",
+        sarvam_api_key="x",
+        heygen_api_key="x",
+        langfuse_public_key="x",
+        langfuse_secret_key="x",
     )
 
     dna_row = _base_dna_row(session_count=9)  # new_count will be 10
@@ -581,9 +608,15 @@ async def test_fuse_learner_dna_redis_reassessment_flag_at_session_10(
     assert result is not None, "fuse_learner_dna should return 9 dims even at session 10"
     # P4: spec says "returns 9 dims" — assert exact key set, not just non-None
     assert set(result.keys()) == {
-        "pattern_recognition", "logical_deduction", "processing_speed",
-        "frustration_tolerance", "persistence", "help_seeking",
-        "goal_orientation", "curiosity_index", "study_independence",
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
     }, f"Expected 9 dimension keys; got {set(result.keys())}"
 
     expected_key = f"user:{_USER_UUID}:reassessment_due"
@@ -625,14 +658,19 @@ async def test_fuse_learner_dna_redis_failure_is_non_fatal(
 ) -> None:
     """AC9: Redis.set raises ConnectionError at session 10 → function returns 9 dims.
     The try/except in Step 7 is correct but untested — a future refactor could re-raise."""
-    from app.modules.assessment.dna_fusion import fuse_learner_dna
     from app.config import Settings
+    from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     settings = Settings(
-        supabase_url="http://x", supabase_anon_key="x",
-        supabase_service_role_key="x", supabase_jwt_secret="x",
-        openai_api_key="x", sarvam_api_key="x", heygen_api_key="x",
-        langfuse_public_key="x", langfuse_secret_key="x",
+        supabase_url="http://x",
+        supabase_anon_key="x",
+        supabase_service_role_key="x",
+        supabase_jwt_secret="x",
+        openai_api_key="x",
+        sarvam_api_key="x",
+        heygen_api_key="x",
+        langfuse_public_key="x",
+        langfuse_secret_key="x",
     )
 
     dna_row = _base_dna_row(session_count=9)  # triggers reassessment path
@@ -659,7 +697,13 @@ async def test_fuse_learner_dna_redis_failure_is_non_fatal(
         "Redis ConnectionError in Step 7 must not propagate — fusion must return 9 dims"
     )
     assert set(result.keys()) == {
-        "pattern_recognition", "logical_deduction", "processing_speed",
-        "frustration_tolerance", "persistence", "help_seeking",
-        "goal_orientation", "curiosity_index", "study_independence",
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
     }, f"Expected 9 dimension keys in result; got {set(result.keys())}"

@@ -293,7 +293,9 @@ async def fuse_learner_dna(
                 supabase.table("session_events")
                 .select("event_type")
                 .eq("session_id", session_id)
-                .limit(10_000)  # D77: 60 Hz × 60 min = ~216 k rows worst case; cap and surface
+                .limit(
+                    10_000
+                )  # D96 (was D77): 60 Hz × 60 min = ~216 k rows worst case; cap and surface
                 .execute()
             )
         )
@@ -349,7 +351,7 @@ async def fuse_learner_dna(
         new_dims[dim] = _apply_ema(old_float, signals[dim], retain)
 
     # ── Step 5: Upsert learner_dna (dimensions only — session_count via RPC) ────
-    # D74: session_count is intentionally absent from the payload.  Concurrent
+    # D93 (was D74): session_count is intentionally absent from the payload.  Concurrent
     # calls both reading old_session_count and writing old+1 would silently drop
     # one increment.  The atomic RPC below serialises the counter update instead.
     upsert_payload: dict[str, Any] = {

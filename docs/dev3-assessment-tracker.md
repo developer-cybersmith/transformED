@@ -820,17 +820,17 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Test-only story: covers gaps in `dna_fusion.py` not addressed by existing `test_dna_fusion.py` (28 tests)
   - **ACs covered:** AC1–AC9 (compute_signals, mixed session, EMA upsert, teachback, ended_at guard, no-quiz, IDOR, Redis modulo, Redis non-fatal)
   - **12 patches applied during 6-agent review:** P1–P12
-  - **Deferred:** D74 (session_count read-modify-write race), D75 (event aggregation — closed by T20)
-  - 37/38 tests GREEN (1 pre-existing D76 failure in Python 3.12)
+  - **Deferred:** D93 (renumbered from D74; session_count read-modify-write race), D94 (renumbered from D75; event aggregation — closed by T20)
+  - 37/38 tests GREEN (1 pre-existing D95 (was D76) failure in Python 3.12)
   - Story: `docs/stories/demo-t19-dna-fusion-real-session-events.md` — status: done
   - Branch: `dev3-demo-t19-phaseL5` — PR #132 merged to `master-demo-dev3`
 
-- [x] **T20 — DNA fusion event aggregation DB path — 6 tests, closes D75** — ✓ 2026-08-13
+- [x] **T20 — DNA fusion event aggregation DB path — 6 tests, closes D94 (was D75)** — ✓ 2026-08-13
   - Test-only story: covers event aggregation counting loop (lines 289–306) with non-empty `event_rows`
   - **ACs covered:** AC1–AC6 (JARGON_CAP counting, mixed events, empty guard, if-t guard, error propagation, non-neutral help)
   - **8 patches applied during 6-agent review:** P1–P8
-  - **Deferred:** D76 (asyncio.get_event_loop pre-existing), D77 (session_events unbounded), D78 (CI guard blind spot)
-  - 6/6 T20 tests GREEN; 127/128 assessment GREEN (1 pre-existing D76 failure)
+  - **Deferred:** D95 (renumbered from D76; asyncio.get_event_loop pre-existing), D96 (renumbered from D77; session_events unbounded), D99 (renumbered from D78; CI guard blind spot)
+  - 6/6 T20 tests GREEN; 127/128 assessment GREEN (1 pre-existing D95 (was D76) failure)
   - Story: `docs/stories/demo-t20-dna-fusion-event-aggregation-path.md` — status: done
   - Branch: `dev3-demo-t20-phaseL5` — PR #134 merged to `master-demo-dev3`
 
