@@ -76,6 +76,19 @@ class Settings(BaseSettings):
         default="anushka",
         description="Sarvam Bulbul v2 speaker name for narration synthesis",
     )
+    sarvam_narration_pace: float = Field(
+        default=0.85,
+        ge=0.3,
+        le=3.0,
+        description=(
+            "Sarvam Bulbul v2 `pace` parameter for narration synthesis -- controls "
+            "speaking speed (lower is slower; Sarvam's own valid range for bulbul:v2 "
+            "is 0.3-3.0, default 1.0). Sarvam's raw 1.0 default read as 'very fast' in "
+            "real stakeholder playback (D89); 0.85 is a reasoned, moderately-slower "
+            "starting value, not an exact scientifically-derived one -- tune via env "
+            "var without a code change, same as sarvam_voice_id above."
+        ),
+    )
     azure_tts_key: str | None = Field(
         default=None, description="Azure Cognitive Services TTS key — fallback"
     )

@@ -38,6 +38,13 @@ still exactly one circuit-breaker outcome (Story 2-32 AC-3 unchanged).
 Every batch's decoded WAV clips are concatenated via the `wave` module
 (real PCM-frame concatenation under one header, not naive byte concatenation
 of multiple complete WAV files, which produces an invalid multi-header file).
+
+D89 (Story 3-52): a real stakeholder reported narration speed as "very fast"
+in real generated-lesson playback. Sarvam's real `pace` request parameter
+(default 1.0, valid range 0.3-3.0 for bulbul:v2) was never sent, so every
+lesson synthesized at Sarvam's raw 1.0 default. Fixed by sending
+`settings.sarvam_narration_pace` (default 0.85, tunable via env var, no
+code change) as `pace` on every synthesize request.
 """
 
 from __future__ import annotations
@@ -175,6 +182,10 @@ class SarvamTTSProvider(TTSProvider):
 
         settings = get_settings()
         self._api_key = settings.sarvam_api_key
+        # D89: real stakeholder report -- Sarvam's raw 1.0 `pace` default read
+        # as "very fast" in real playback. Read once here (same established
+        # pattern as self._api_key above), not re-read per call.
+        self._narration_pace = settings.sarvam_narration_pace
         self._lesson_id = lesson_id
         # AC-3-equivalent never-fail clause (matches providers/llm/openai.py):
         # a bad LANGFUSE_* env must degrade to no-tracing, never crash the
@@ -280,6 +291,10 @@ class SarvamTTSProvider(TTSProvider):
                             "inputs": batch,
                             "speaker": voice_id,
                             "target_language_code": "en-IN",
+                            # D89: Sarvam's real `pace` param -- lower is
+                            # slower; unset previously synthesized every
+                            # lesson at Sarvam's raw 1.0 default.
+                            "pace": self._narration_pace,
                         },
                     )
                     if response.status_code == 429:
