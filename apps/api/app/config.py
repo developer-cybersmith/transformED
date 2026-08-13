@@ -495,14 +495,26 @@ class Settings(BaseSettings):
     )
 
     # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
+    # D75 (Story 3-43): was 15, EQUAL to structure_max_sections (also 15) --
+    # Story 2-16's own comment assumed a chapter coalesced to the max would
+    # still "fit a single planner call" safely. Disproven live: two real runs
+    # on the same chapter returned 5 and 12 segments when 15 were expected
+    # (the exact 44-in/10-out collapse this batching exists to prevent).
+    # Lowered strictly BELOW structure_max_sections so a maximal chapter is
+    # now always genuinely split into multiple smaller, reliable batches
+    # instead of silently taking the single-call path. No documented "safe"
+    # threshold exists -- 10 is a reasoned conservative margin below the
+    # observed-unreliable value of 15, not a proven number.
     lesson_planner_batch_size: int = Field(
-        default=15,
+        default=10,
         gt=0,
         description=(
             "Max segment summaries sent to lesson_planner in a single LLM "
             "completion. Above this, summaries are split into ordered batches so "
             "the model reliably echoes every segment_id 1:1; at or below it the "
-            "planner makes exactly one call (unchanged behaviour)."
+            "planner makes exactly one call (unchanged behaviour). Deliberately "
+            "kept below structure_max_sections (D75) so the maximal coalesced "
+            "chapter always batches."
         ),
     )
 
