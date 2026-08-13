@@ -260,6 +260,7 @@ async def fuse_learner_dna(
     event_rows: list[dict[str, Any]] = []
 
     try:
+        # BOUNDED: per-session quiz attempts ≈ segments × questions × max_retries ≈ 150
         quiz_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("quiz_attempts")
@@ -273,6 +274,7 @@ async def fuse_learner_dna(
         logger.warning("DNA fusion: quiz read failed session=%s: %s", session_id, exc)
 
     try:
+        # BOUNDED: per-session teachback attempts ≈ segments × max_retries ≈ 30
         tb_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("teachback_attempts")
@@ -291,10 +293,17 @@ async def fuse_learner_dna(
                 supabase.table("session_events")
                 .select("event_type")
                 .eq("session_id", session_id)
+                .limit(10_000)  # D77: 60 Hz × 60 min = ~216 k rows worst case; cap and surface
                 .execute()
             )
         )
         event_rows = rows(events_resp)
+        if len(event_rows) == 10_000:
+            logger.error(
+                "DNA fusion: session_events hit 10 000-row cap — session=%s may have "
+                "incomplete event data; investigate session length or event emission rate",
+                session_id,
+            )
     except Exception as exc:
         logger.warning("DNA fusion: events read failed session=%s: %s", session_id, exc)
 
@@ -339,10 +348,12 @@ async def fuse_learner_dna(
         old_float = float(old_val) if old_val is not None else None
         new_dims[dim] = _apply_ema(old_float, signals[dim], retain)
 
-    # ── Step 5: Upsert learner_dna (dimensions + session_count only) ─────────
+    # ── Step 5: Upsert learner_dna (dimensions only — session_count via RPC) ────
+    # D74: session_count is intentionally absent from the payload.  Concurrent
+    # calls both reading old_session_count and writing old+1 would silently drop
+    # one increment.  The atomic RPC below serialises the counter update instead.
     upsert_payload: dict[str, Any] = {
         "user_id": user_id,
-        "session_count": old_session_count + 1,
         **new_dims,
     }
     try:
@@ -373,6 +384,22 @@ async def fuse_learner_dna(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not update learner profile.",
         ) from exc
+
+    # ── Step 5b: Atomic session_count increment ───────────────────────────────
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.rpc(
+                "increment_learner_dna_session_count",
+                {"p_user_id": str(user_id)},
+            ).execute()
+        )
+    except Exception as exc:
+        logger.warning(
+            "DNA fusion: session_count RPC failed user=%s: %s — "
+            "dimensions written, count may lag by 1",
+            user_id,
+            exc,
+        )
 
     # ── Step 6: Write growth tracking events (non-fatal) ──────────────────────
     from app.modules.assessment.dna_growth import record_dna_growth  # local import

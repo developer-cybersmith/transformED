@@ -137,11 +137,11 @@ def _supabase_mock(
             )
         elif name == "session_events":
             if events_raises:
-                tbl.select.return_value.eq.return_value.execute.side_effect = Exception(
+                tbl.select.return_value.eq.return_value.limit.return_value.execute.side_effect = Exception(
                     "session_events DB down"
                 )
             else:
-                tbl.select.return_value.eq.return_value.execute.return_value = _resp(event_rows)
+                tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp(event_rows)
             # Wire INSERT chain so write_system_events (called by record_dna_growth in Step 6)
             # returns a clean response. Without this, MagicMock().error is truthy and
             # write_system_events logs "0 events written" and silently returns 0 in every test.
