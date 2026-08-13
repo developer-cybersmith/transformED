@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 17 | 12 | 1 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 18 | 14 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **71** | **55** | **2** | **14** |
+| **Totals** | | **72** | **57** | **1** | **14** |
 
 ---
 
@@ -842,7 +842,7 @@ Every node must:
   - `apps/api/app/config.py` *(`max_narration_chars_per_lesson` 17,000→120,000, re-derived against real cost headroom — ≈$2.40 Sarvam spend = 80% of the $3.00 ceiling — not any duration target)*
   - **AC:** new `test_production_default_does_not_truncate_a_real_world_sized_lesson` uses the REAL settings default (not a mocked cap) against the exact real per-segment character distribution from lesson `abe4e438` ✅; RED-GREEN verified (failed against 17,000 with the exact predicted zeroing, passed against 120,000) ✅; full repo-wide regression re-baselined on this exact commit: 52 failed/2062 passed/86 skipped before, 52 failed/2063 passed/86 skipped after — zero new failures ✅ — see `docs/stories/3-45-narration-cap-safety-net.md`
 
-- [~] **S3-46 slide budget proportional to segment duration (D85, PARTIAL)** — 2026-08-13 (branch `sprint3/s3-46-slide-budget-duration`, merged to `main`)
+- [x] **S3-46 slide budget proportional to segment duration (D85)** — ✓ 2026-08-13 (branch `sprint3/s3-46-slide-budget-duration`, merged to `main`; Round 2 landed as S3-49/D87 same day — D85 now fully closed, not partial)
   - Found watching the D78-fixed demo lesson actually play in a browser: every one of 15 real segments (durations 1.23–3.48 real minutes) got exactly 1 static slide, because `_tier_slide_budget_per_segment` divided each tier's fixed total-lesson slide band evenly by segment COUNT, not duration. Fixed the mechanism — allocation is now proportional to each segment's real estimated duration share (already computed by lesson_planner, previously discarded) — verified correct via a T1 assertion (differentiates when the tier band has headroom)
   - `apps/api/app/modules/content/pipeline/graph.py` *(`_tier_slide_budget_per_segment` signature changed `(tier, segment_count: int) -> tuple[int,int]` → `(tier, segment_durations_min: list[float]) -> list[tuple[int,int]]`; `lesson_planner_node` call site updated to pass real per-segment durations and index each segment's own budget)*
   - **Honest gap, not hidden**: re-verified against the exact real 15-segment dataset and found T2/T3 still produce `(1,1)` for every segment even under the new mechanism — both tiers' total_max (15, 8) is `<=` the segment count, so there's nothing to proportionally redistribute; every segment is already pinned to the structural floor. **This is a stale `_TIER_TOTAL_SLIDE_BAND` value problem (never re-derived against `structure_max_sections=15`), not an implementation bug** — the mechanism is proven correct, but the user's actual observed T3 symptom is NOT yet fixed. Marked `[~]` Partial, not `[x]` Done, for exactly this reason. Follow-up (re-deriving the tier band values) needs explicit product/cost confirmation before implementing — more slides/tier = more `image_generator` spend
@@ -858,6 +858,12 @@ Every node must:
   - `apps/api/app/workers/jobs/reap_stale_lessons.py` *(new — ARQ cron job, every 10 min, finds `lessons.status='generating'` past `router._generating_cutoff_iso()`'s own bound and reaps each via `content_pipeline.py`'s existing `_update_lesson_status` helper, inheriting D86's real-cost persistence for free)*, `apps/api/app/workers/main.py` *(registers the cron job via `WorkerSettings.cron_jobs`)*
   - **AC:** 5 new tests in `test_reap_stale_lessons.py` ✅; RED-GREEN verified by moving the implementation file aside and confirming `ModuleNotFoundError`, then restoring ✅; full repo-wide regression 52 failed/2103 passed/86 skipped — established baseline, zero new failures ✅ — see `docs/stories/3-48-d53-stale-lesson-reaper.md`
   - Also corrected two stale `docs/DEFECT-REGISTER.md` lines while in the file: the D63/Dev4 "not yet merged here" note (independently verified merged via PR #129 during the branch triage) and the "live in production" count (was citing D29, already closed, instead of D71, the real open one)
+
+- [x] **S3-49 D87 slide budget targets minutes-per-slide, not a fixed total** — ✓ 2026-08-13 (branch `sprint3/s3-49-d87-slide-budget-duration-target`, merged to `main`)
+  - The D85 follow-up, explicitly deferred at D85's own close. D85 fixed HOW the budget is allocated (proportional to duration) but not WHAT total it allocates — `_TIER_TOTAL_SLIDE_BAND` was still a fixed lesson-wide count sized with no visibility into a real 15-segment lesson, so T2/T3 still collapsed to (1,1) for every segment even under D85's own fix. Confirmed before implementing (not assumed): `slide_generator_node`'s prompt sends the literal per-segment instruction with the real min/max, so this was purely a budget-value problem, not a separate LLM-compliance issue. Real cost checked before proposing numbers: image+LLM spend is ~$0.025/image, a few extra slides adds cents, not dollars
+  - `apps/api/app/modules/content/pipeline/graph.py` *(replaced fixed `_TIER_TOTAL_SLIDE_BAND` with `_TIER_MINUTES_PER_SLIDE_BAND` — T1 0.8-1.2, T2 1.2-1.8, T3 2.0-3.0 min/slide — the total now scales with the lesson's real estimated duration; D85's per-segment proportional loop unchanged)*
+  - **AC:** verified on the real demo-lesson dataset — T3's longest segment now gets (1,2) instead of (1,1), T2 gets (2,3), T1 gets (3,4), all three tiers differentiate now ✅; RED-GREEN verified via `git stash` on the implementation file only ✅; one test removed with its premise explained in place (a fixed per-tier total_min the fallback must undercut no longer exists once the fixed total was deleted) rather than silently dropped ✅; full repo-wide regression 52 failed/2102 passed/86 skipped both before and after — zero new failures ✅ — see `docs/stories/3-49-d87-slide-budget-duration-target.md`
+  - This closes D87 AND promotes D85 from partial to fully closed — both rounds now landed
 
 ---
 
