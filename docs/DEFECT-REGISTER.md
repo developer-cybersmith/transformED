@@ -33,6 +33,19 @@
 > branch that hadn't re-synced with `main` before allocating. On the 2026-08-06 merge of `main`
 > into `sprint3-master`: `main`'s D57/D58/D59 kept their numbers (already the trunk's canonical
 > meaning); `sprint3-master`'s D58/D59 were renumbered **D60**/**D61**. No entry was overwritten.
+>
+> ⚠️ **ID COLLISION, fourth occurrence, 2026-08-12/13.** The "Sprint 3 CES v2 audit" (below,
+> §D61–D65) allocated ids **D61, D62, D63, D64** for five CES-subsystem defects on 2026-08-12,
+> without re-reading the highest id already in use on `main` first — the exact rule this banner
+> states above, violated a fourth time. All four collide with pre-existing, unrelated entries:
+> D61 with the closed beta-access-allowlist test regression, D62 with the closed
+> `LANGFUSE_HOST` fix, D63 with **both** the closed `package_builder` fix and Dev 4's
+> INTERVENING-trap fix (already a two-way collision before this), and D64 with Dev 4's open
+> confusion-type-interventions-uncapped defect. Local reconciliation notes are added at each
+> collision site below rather than renumbering the audit's own section, matching this file's
+> established convention (see the D63 note). Found while reviewing `docs/ces-lifecycle-learner-
+> scenarios.md` / `docs/ces-decisions-developer-guide.md` against the register during the
+> 2026-08-13 `throwaway/lesson-planner-batch-fix` merge.
 
 This file exists because `docs/deferred-work.md` did not. That file was created to hold
 deferred findings; it contains **zero items** across a period in which the story files
@@ -197,13 +210,35 @@ after re-reading the highest in use (D43) per the collision rule at the top of t
 | **D60** | **S3-07 (Notifications UI) has three missing infrastructure pieces: no `PATCH /api/users/notifications` endpoint, no `user_notification_preferences` DB table, and a mock-only frontend.** (1) A repo-wide grep for `@router.patch` in the `users` module returns zero results — the module itself does not exist (`apps/api/app/modules/` has no `users/` directory). The endpoint was listed as an S3-07 deliverable but was never scoped to a developer. (2) A search of all nine migration files under `supabase/migrations/` finds no `user_notification_preferences` table. Dev 3's Story 3-33 documents the expected schema for Dev 1's reference. (3) Dev 2's notification preferences state is backed by an in-memory mock; it cannot survive a page reload and has no backend write path. This is the shape of D29 and D18: an interface everyone references but nobody built. | Med | **Dev 3 complete (Story 3-33, 2026-08-06).** **Dev 1 complete (migration 20260806000000, 2026-08-06).** **Dev 4 complete (Story 4-23, 2026-08-06): `PATCH /api/auth/notifications` in `apps/api/app/modules/auth/router.py`, JWT-guarded, read-merge-upsert pattern, 6-layer adversarial review applied, 16 tests green.** Remaining: Dev 2 — wire frontend to the real endpoint and remove the in-memory mock. **Trigger: the first sprint that adds email delivery to the assessment module — Dev 3's read-helper will silently opt everyone back in until Dev 2 closes this.** | Dev 3: `notification_prefs.py` + 12 tests ✅. Dev 1: migration 20260806000000 ✅. Dev 4: `auth/router.py` `patch_notifications` + `apps/api/tests/test_notifications_endpoint.py` — 16 tests ✅. Dev 2: frontend wiring ⏳. |
 | ~~D61~~ | **CLOSED same-day (fixed + guarded). PR #126 (beta-access allowlist) gated `POST /lessons` behind `require_approved_user`, verified only against its own branch's test suite — which predates book-scale's `test_generate_lesson_endpoint.py` entirely (that branch forked from an older `main`). Merging into current `main` broke 9 of that file's tests** (`test_upload_tier_422_names_the_path_read_off_the_registered_route`, both parametrizations of `test_source_pdf_path_reconstructs_the_real_storage_key` / `test_upload_sanitises_the_filename_before_it_reaches_the_storage_key`), all 403ing with "This account does not have access yet" — `app.dependency_overrides` only patched `get_current_user`, and `require_approved_user`'s own internal `Depends(get_current_user)` resolves through that same override, but the allowlist itself was still empty by default, so the fail-closed design correctly rejected the fake test user. **Exactly the failure mode binding rule 1 names: verified against "touched files" (the PR's own isolated branch), not CI scope (current `main`'s full test surface).** | Med (process) | **FIXED same-day** — both call sites (`test_upload_tier_422_names_the_path_read_off_the_registered_route`, the shared `_upload_and_capture` helper) now also override `require_approved_user` alongside `get_current_user`, matching the auth shape these tests already simulate. Full suite re-run: 23 failed (all pre-existing, unrelated: D40's dna_growth leak ×19, D58's eval_runner, and 3 pubsub tests needing a local Redis this environment doesn't have) / 1755 passed — the 9 new failures are gone, no others appeared. | `tests/unit/test_generate_lesson_endpoint.py` — same 81 tests, all green; would redden immediately if the override were removed since the route's dependency chain hasn't changed, only the test's simulated auth |
 | ~~D62~~ | **CLOSED 2026-08-11 (Story 3-35, branch `sprint3/s3-35-env-config-fixes`, fixed together with D31 as planned).** `.env.example:41` said `LANGFUSE_HOST=http://localhost:3010`, implying Langfuse is self-hosted. It is not — `config.py:87-88` defaults to `https://cloud.langfuse.com` and the live `.env` uses Cloud. **This directly caused an architecture-review question** ("is Langfuse still a 3rd service?"), i.e. the wrong template value propagated into someone else's mental model of the deployment topology. **Renumbered from D38, then D61, on repeated 2026-08-06 merges** — this ADR-001 branch (opened 2026-07-30) first allocated D38, which collided with `main`'s own independent D38 (book-scale migration verification, closed 2026-08-03); renumbered to D61, which then collided with a same-day `main` commit fixing a live test regression (also D61); this is the third id this single defect has carried without ever being wrong about anything — a live demonstration of why this file has no allocator. | Low | **Fixed.** Template corrected to `https://cloud.langfuse.com`. | `apps/api/tests/test_env_example_consistency.py::test_env_example_matches_settings_defaults_or_is_a_documented_exception` — general-purpose guard: every `.env.example` key with a corresponding `Settings` default must match it, or be an explicitly documented exception (`REDIS_URL` is the one whitelisted case, a real Railway-format example rather than the localhost dev default). RED-confirmed (`LANGFUSE_HOST` was the only mismatch found), GREEN after. |
+
+**Note (the "Sprint 3 CES v2 audit" section below independently reused D61 and D62 for two
+different, unrelated CES defects, detected 2026-08-12).** The D61 above (this row's neighbour,
+beta-access allowlist test regression, closed) is **not** the same D61 as §"D61 — `session_start_ts`
+missing silently disables fatigue for entire session" further down this file — that is Dev 4's,
+still open. Likewise this D62 (`LANGFUSE_HOST`, closed) is **not** the same D62 as §"D62 —
+`compute_ces_from_session_aggregates` is dead code" further down — that is Dev 3's, still open.
+Two more ids from the same audit round collide with entries already in this file; see the D63
+note immediately below and the D64 row's note further down. Both entries above stay closed under
+their existing numbers; the CES-audit section keeps D61–D65 too, per this file's convention of
+reconciling by note rather than renumbering after the fact (see the ⚠️ fourth-occurrence banner
+at the top of this file).
 | ~~D63~~ | **CLOSED same-round 2026-08-11 (Story 3-36, branch `sprint3/s3-36-package-builder-defensive-fixes`) — found by D32's own `/bmad-code-review` (Scale & Load Hunter, independently confirmed in part by Edge Case Hunter and Blind Hunter), not by a separate audit.** D32's defensive-skip fix converts a malformed `slides`/`quiz_questions`/`glossary` entry from a crash into a silent `continue`. Two consequences neither D32's original scope nor its 3 new tests caught: **(a)** `_group_by_segment_id`'s callers never fed the "entries existed but were all malformed" signal into `degraded_segment_ids` — a segment whose quiz/jargon were all dropped is indistinguishable from one that legitimately has none (`Segment.quiz`/`Segment.jargon` have no `min_length`); **(b)** far more severe — a segment whose ONLY slide entry is malformed falls into the pre-existing zero-slides drop path (`graph.py:4165-4172`, predates this story) and is removed from `segments_out` entirely, but `metadata.total_segments` was `lesson_plan.get("total_segments", len(segments_out))` — and `lesson_plan` almost always HAS that key (frozen at planning time, before any segment can be dropped), so the fallback essentially never fired. The shipped, student-facing package could claim more segments than it contained — **the exact "reports success while being wrong" shape the book-scale 4%-of-the-book defect exists in this register to name, now at segment granularity.** The admin-only `package_builder_degraded.total_segments` (same node, a few lines below) already computed the real count correctly — the two counts diverged in one write. | High (scale-contract) | **Fixed in the same commit as D32.** `_group_by_segment_id` now returns `(grouped, fully_dropped_segment_ids)`; callers add `"quiz"`/`"jargon"` to `degraded_segment_ids` when a segment's entries were all dropped, and a new `dropped_due_to_malformed_slides` list feeds a new `package_builder_degraded.dropped_segment_ids` field (distinct from `segment_ids`: dropped-entirely vs shipped-degraded). `metadata.total_segments` now always reads `len(segments_out)` — the real, just-built count — never the stale planning-time value. | 3 new tests: `test_segment_with_only_slide_malformed_drops_segment_and_total_segments_matches_shipped` (RED-confirmed by reverting `graph.py` alone and re-running — real `2 == 1` assertion failure reproduced, not assumed), `test_all_quiz_entries_for_a_segment_malformed_is_degraded_not_silently_empty`, `test_all_jargon_entries_for_a_segment_malformed_is_degraded_not_silently_empty`. All 45 tests in `test_package_builder_node.py` green after. |
 
 **Note (Dev 4's D63 is a DIFFERENT, unrelated defect** — Story 4-24 / PR #129's INTERVENING
-one-way-trap fix, on `sprint4/s4-6-intervention-recovery`, not yet merged here. Two independent
-teams allocated D63 for two different things before either saw the other's work; this row is
-Dev 1's D63 (package_builder), already closed and merged. Dev 4's D63 stays open/tracked on its
-own branch until that branch merges — a second, real collision this file's own banner predicts.)**
+one-way-trap fix, on `sprint4/s4-6-intervention-recovery`. Two independent teams allocated D63
+for two different things before either saw the other's work; this row is Dev 1's D63
+(package_builder), already closed and merged. Dev 4's D63 has since merged too — confirmed
+present in `sprint3-master`'s `state_machine/graph.py` as of the 2026-08-13 `main` merge (atomic
+Lua distraction guard + `intervention_deadline_at` timeout self-heal), so both this row and Dev
+4's D63 are now closed under the same number, which happened to land without a numeric conflict
+only because it was reconciled by note instead of renumbered.
+
+**Update, 2026-08-13 — THIRD meaning found.** The "Sprint 3 CES v2 audit" section further down
+this file (§"D63 — `_get_distraction_count` is dead code") independently allocated D63 a third
+time, for yet another unrelated defect (Dev 3's, `dna_fusion.py` wiring gap). Same root cause as
+above: the audit didn't re-read the highest id on `main` first (see the ⚠️ fourth-occurrence
+banner at the top of this file). That section keeps its own D63 rather than being renumbered —
+readers must use the surrounding section heading, not the bare id, to tell these three apart.)**
 
 ---
 
@@ -212,6 +247,20 @@ own branch until that branch merges — a second, real collision this file's own
 | ID | Defect | Sev | Decision | Enforcement |
 |----|--------|-----|----------|-------------|
 | **D64** | **Confusion-type interventions (fired via `teachback_failed`) have no cap at all.** `intervening_node` (`apps/api/app/modules/tutor/state_machine/graph.py`) only tracks two of the three intervention types: `distraction` increments `tutor_distraction_count` (capped by `max_distraction_per_session`) and `fatigue` sets a once-only flag (`tutor_fatigue_fired`) — the `confusion` branch (reached via `teachback_failed`) has neither a counter nor a once-only guard. A student who fails teach-back repeatedly in one session can be routed into `INTERVENING` with `intervention_type="confusion"` an unbounded number of times. Named only in prose in Story 4-24's own Scale & Load §1 ("unbounded by count today — pre-existing, not introduced here") with no register ID — exactly the shape binding rule 5 forbids. Found by the Acceptance Auditor layer of the Story 4-24 / D63 six-layer review (2026-08-11), not by an incident. | Low–Med (pre-existing; not introduced by D63) | **Deferred, not fixed.** Distraction and fatigue are capped because CLAUDE.md §10 states those caps explicitly; §10 says nothing about a confusion/teach-back-failure cap, so this may be intentional (teach-back is explicitly never-gating per CLAUDE.md's "never gate lesson progress on teach-back score" rule) rather than an oversight — needs a product decision, not just a code fix. **Owner: Dev 4. Trigger: the first session observed with repeated teach-back failures in quick succession, or Sprint 4 hardening — whichever comes first.** | *(to add — a test proving `intervention_type="confusion"` fires unboundedly within one session, once the cap decision is made)* |
+
+**Note (the "Sprint 3 CES v2 audit" section further down this file independently reused D64 for
+a different, unrelated defect** — "Per-signal Redis history keys ... have no TTL"
+(Dev 3/Dev 4's, detected 2026-08-12). This row (confusion-type interventions uncapped, Dev 4's,
+still genuinely open) keeps its number; the audit section keeps its own D64 too, per this file's
+reconcile-by-note convention (see the ⚠️ fourth-occurrence banner at the top of this file).
+**Also found while reconciling, 2026-08-13:** the audit section's D64 fix is not actually
+outstanding — `redis.expire(key, _CES_WINDOW_TTL)` is present for all three keys
+(`behavioral_history`/`head_pose_history`/`blink_history`) in the current `tutor/service.py`
+(each call tagged `# D64`), confirmed on `sprint3-master` post the 2026-08-13 merge of `main` and
+`throwaway/lesson-planner-batch-fix`. That section's own "Status: OPEN" for its D64 appears
+stale relative to code and should be reviewed by its owner (Dev 3/Dev 4) — left as OPEN here
+rather than flipped unilaterally, since closing an entry is this file's convention for the named
+owner to do.)**
 
 ---
 
