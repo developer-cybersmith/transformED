@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 16 | 11 | 1 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 17 | 12 | 1 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **70** | **54** | **2** | **14** |
+| **Totals** | | **71** | **55** | **2** | **14** |
 
 ---
 
@@ -852,6 +852,12 @@ Every node must:
   - Found auditing `docs/handoffs/lesson-delivery-dev1.md`'s own L1 checklist item "Record: measured cost per lesson" against real data: `lesson_jobs.cost_usd` was never written anywhere in `content_pipeline_job`, confirmed by zero references in the file and by `clear_lesson_cost()`'s own docstring promising a persistence step that was never built. Two real successful lesson generations this session, both with confirmed real OpenAI + Sarvam spend, both showed `cost_usd = 0.0000`. The live $3.00 ceiling enforcement (Redis-backed) was never wrong — only the durable post-hoc record
   - `apps/api/app/workers/jobs/content_pipeline.py` *(success path reads `get_cost()` before `clear_lesson_cost()` clears it, folds into the completion update; `_update_lesson_status` extended to persist real cost on every "failed" transition too — a partially-completed lesson now records its real partial spend, not 0; both read sites degrade-not-crash on a Redis failure)*
   - **AC:** 6 new tests across `test_lesson_ready_pubsub.py` (success path) and `test_timeout_contract.py` (failure path) ✅; RED-GREEN verified via Edit tool (3 of 6 failed against pre-fix code with real errors) ✅; full repo-wide regression 54 failed/2090 passed/85 skipped before, same failed set/2096 passed after — zero new failures ✅ — see `docs/stories/3-47-cost-persist-lesson-jobs.md`
+
+- [x] **S3-48 D53 stale-generating-lesson reaper** — ✓ 2026-08-13 (branch `sprint3/s3-48-d53-stale-lesson-reaper`, merged to `main`)
+  - Explicit priority pick — the only defect flagged both High and live-in-production. Read the code before writing anything: `router.py`'s staleness-predicate workaround (ignore stale `generating` rows in the idempotency/concurrency checks) already existed; only the actual reaper — a job that transitions the stuck row to `failed` in the database — was missing, exactly as the code's own docstring said ("there is no reaper")
+  - `apps/api/app/workers/jobs/reap_stale_lessons.py` *(new — ARQ cron job, every 10 min, finds `lessons.status='generating'` past `router._generating_cutoff_iso()`'s own bound and reaps each via `content_pipeline.py`'s existing `_update_lesson_status` helper, inheriting D86's real-cost persistence for free)*, `apps/api/app/workers/main.py` *(registers the cron job via `WorkerSettings.cron_jobs`)*
+  - **AC:** 5 new tests in `test_reap_stale_lessons.py` ✅; RED-GREEN verified by moving the implementation file aside and confirming `ModuleNotFoundError`, then restoring ✅; full repo-wide regression 52 failed/2103 passed/86 skipped — established baseline, zero new failures ✅ — see `docs/stories/3-48-d53-stale-lesson-reaper.md`
+  - Also corrected two stale `docs/DEFECT-REGISTER.md` lines while in the file: the D63/Dev4 "not yet merged here" note (independently verified merged via PR #129 during the branch triage) and the "live in production" count (was citing D29, already closed, instead of D71, the real open one)
 
 ---
 
