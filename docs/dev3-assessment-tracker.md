@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-13 (T15/T19/T20 DONE — quiz+teachback real schema, DNA fusion EMA coverage, event aggregation; D75 closed, D76/D77/D78 registered)
+**Last updated:** 2026-08-13 (T15/T16/T19/T20 DONE — quiz+teachback, e2e session flow, DNA fusion EMA coverage, event aggregation; D75 closed, D76/D77/D78 registered)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,10 +19,10 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
-| Demo Sprint | Aug 2026 | 7 | 3 | 0 | 4 |
+| Demo Sprint | Aug 2026 | 7 | 4 | 0 | 3 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **60** | **47** | **0** | **13** |
+| **Total** | | **60** | **48** | **0** | **12** |
 
 Update this table each time a task is checked off below.
 
@@ -795,19 +795,24 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 > **Source:** `d:/HIE-Demo-Task-Tracker.xlsx` — Dev 3 individual and collaborative tasks.
 > **Branch strategy:** Each task gets its own branch targeting `master-demo-dev3` (not main).
 
-- [x] **T15 (Phase L4) — Validate quiz and teach-back payloads against the first real package** — ✓ 2026-08-13
-  - Validate `grade_quiz` and `grade_teachback` against schema-accurate LessonPackage fixture
-  - All 9 ACs covered; 134/134 tests green; `test_real_package_payload_validation.py` added
-  - Critical finding: simplified fixtures silently scored teachback with `topic=""` and `key_concepts=[]`
+- [x] **T15 — Validate quiz+teachback against real LessonPackage schema** — ✓ 2026-08-13
+  - 9 unit tests in `apps/api/tests/test_real_package_payload_validation.py`
+  - Key finding: simplified fixtures silently scored teachback with `topic=""` and `key_concepts=[]`; schema-accurate fixture uses UUID IDs, namespaced segment/question IDs, all required fields
+  - 9/9 PASS; BMAD 6-agent review clean (0 findings)
   - Branch: `dev3-demo-t15-phaseL4` — PR merged to `master-demo-dev3`
+  - Story: `docs/stories/demo-t15-quiz-teachback-real-package-validation.md` — status: done
 
-- [ ] **T16 (Phase L5) — Validate end-to-end session flow with real data**
-  - End-to-end session: create → quiz → teachback → session report with real-format IDs
-  - Branch: `dev3-demo-t16-phaseL5` → `master-demo-dev3`
+- [x] **T16 — End-to-end session flow with real UUID data** — ✓ 2026-08-13
+  - 9 unit tests in `apps/api/tests/test_e2e_session_flow_real_data.py`
+  - Validates full lifecycle: `create_session` → `grade_quiz` → `grade_teachback` → `get_session_report`
+  - AC coverage: DB-minted session UUID (not client value), IDOR guards, formula disclosure, quiz_score=None when no quiz_attempts
+  - 9/9 PASS; BMAD 6-agent review clean (0 findings)
+  - Branch: `dev3-demo-t16-phaseL5` — PR merged to `master-demo-dev3`
+  - Story: `docs/stories/demo-t16-e2e-session-flow-real-data.md` — status: done
 
 - [ ] **T18 (Phase L7) — Learner DNA profile generation with real onboarding data**
   - Test `process_onboarding` and Learner DNA generation with real-format onboarding payloads
-  - Branch: `dev3-demo-t18-phaseL7` → `master-demo-dev3`
+  - Branch: `dev3-demo-t18-phaseL5` → `master-demo-dev3`
 
 - [x] **T19 — DNA fusion real session events (9 tests, 12 review patches)** — ✓ 2026-08-13
   - Test-only story: covers gaps in `dna_fusion.py` not addressed by existing `test_dna_fusion.py` (28 tests)
