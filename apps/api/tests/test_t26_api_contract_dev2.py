@@ -232,8 +232,7 @@ def test_quiz_51_answers_returns_422() -> None:
     payload = {
         **_VALID_QUIZ_PAYLOAD,
         "answers": [
-            {"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0}
-            for i in range(51)
+            {"question_id": f"q{i}", "response_index": 0, "response_time_ms": 0} for i in range(51)
         ],
     }
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
@@ -707,11 +706,13 @@ def test_teachback_missing_session_id_returns_422() -> None:
 
 @pytest.mark.unit
 def test_teachback_whitespace_only_response_text_returns_422() -> None:
-    """TC-3: response_text = "   " (whitespace only) → 422 (D80 validator rejects blank content).
+    """TC-3: response_text = "   " (whitespace only) → 422
+    (D98, was D80: validator rejects blank content).
 
-    D80 fixed: @field_validator on TeachbackSubmission strips and rejects whitespace-only
-    response_text before the request reaches grade_teachback. The API now enforces content,
-    not just character count (demo/defect-fixes-d79-d80, 2026-08-13).
+    D98 (was D80) fixed: @field_validator on TeachbackSubmission strips and
+    rejects whitespace-only response_text before the request reaches
+    grade_teachback. The API now enforces content, not just character count
+    (demo/defect-fixes-d79-d80, 2026-08-13).
 
     Dev 2 must still add a client-side trim() guard as a UX measure — the server 422
     provides a safety net, not a replacement for immediate UI feedback.
@@ -721,6 +722,6 @@ def test_teachback_whitespace_only_response_text_returns_422() -> None:
         resp = _approved_client.post("/api/assessment/teachback", json=payload)
 
     assert resp.status_code == 422, (
-        f"D80: whitespace-only response_text must return 422 (validator strips and rejects). "
-        f"Got {resp.status_code}: {resp.text}"
+        f"D98 (was D80): whitespace-only response_text must return 422 "
+        f"(validator strips and rejects). Got {resp.status_code}: {resp.text}"
     )

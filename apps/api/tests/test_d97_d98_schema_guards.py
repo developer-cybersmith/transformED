@@ -1,9 +1,9 @@
-"""Guards for D79 and D80 — assessment schema validation fixes.
+"""Guards for D97 and D98 (renumbered from D79/D80) — assessment schema validation fixes.
 
-D79: SessionCreate.lesson_id now has min_length=1 — empty string returns 422
+D97 (was D79): SessionCreate.lesson_id now has min_length=1 — empty string returns 422
      instead of reaching the Supabase lessons table and producing a 500.
 
-D80: TeachbackSubmission.response_text now has a @field_validator that strips
+D98 (was D80): TeachbackSubmission.response_text now has a @field_validator that strips
      and rejects whitespace-only content — "   " returns 422 instead of
      silently triggering a real GPT-4o-mini call.
 
@@ -47,12 +47,12 @@ _VALID_TEACHBACK_PAYLOAD = {
 }
 
 
-# ── D79 guards ────────────────────────────────────────────────────────────────
+# ── D97 (was D79) guards ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
 def test_sessions_empty_lesson_id_returns_422() -> None:
-    """D79: lesson_id='' must return 422, not reach the DB and produce 500.
+    """D97 (was D79): lesson_id='' must return 422, not reach the DB and produce 500.
 
     Before the fix: empty string satisfied `str` type, passed Pydantic, reached
     Supabase with a UUID-type column, raised a cast error → HTTP 500.
@@ -61,27 +61,27 @@ def test_sessions_empty_lesson_id_returns_422() -> None:
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/sessions", json={"lesson_id": ""})
     assert resp.status_code == 422, (
-        f"D79: empty lesson_id must return 422 (min_length=1 enforced at schema layer). "
+        f"D97 (was D79): empty lesson_id must return 422 (min_length=1 enforced at schema layer). "
         f"Got {resp.status_code}: {resp.text}"
     )
 
 
 @pytest.mark.unit
 def test_sessions_null_lesson_id_returns_422() -> None:
-    """D79: lesson_id=null must return 422 (Pydantic rejects None for str field)."""
+    """D97 (was D79): lesson_id=null must return 422 (Pydantic rejects None for str field)."""
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post("/api/assessment/sessions", json={"lesson_id": None})
     assert resp.status_code == 422, (
-        f"D79: null lesson_id must return 422. Got {resp.status_code}: {resp.text}"
+        f"D97 (was D79): null lesson_id must return 422. Got {resp.status_code}: {resp.text}"
     )
 
 
-# ── D80 guards ────────────────────────────────────────────────────────────────
+# ── D98 (was D80) guards ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
 def test_teachback_whitespace_only_response_text_returns_422() -> None:
-    """D80: response_text='   ' (whitespace only) must return 422, not trigger LLM.
+    """D98 (was D80): response_text='   ' (whitespace only) must return 422, not trigger LLM.
 
     Before the fix: min_length=1 counted characters — a single space satisfied it,
     the request reached grade_teachback, and a real GPT-4o-mini call was made.
@@ -92,14 +92,14 @@ def test_teachback_whitespace_only_response_text_returns_422() -> None:
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
             resp = _client.post("/api/assessment/teachback", json=payload)
         assert resp.status_code == 422, (
-            f"D80: whitespace-only response_text {whitespace_variant!r} must return 422. "
+            f"D98 (was D80): whitespace-only response_text {whitespace_variant!r} must return 422. "
             f"Got {resp.status_code}: {resp.text}"
         )
 
 
 @pytest.mark.unit
 def test_teachback_single_char_response_text_accepted() -> None:
-    """D80: response_text='A' (single non-whitespace char) must still be accepted.
+    """D98 (was D80): response_text='A' (single non-whitespace char) must still be accepted.
 
     The validator must reject only whitespace — any real content, even 1 character,
     must pass. This test guards against over-eager validation.
@@ -125,6 +125,6 @@ def test_teachback_single_char_response_text_accepted() -> None:
             resp = _client.post("/api/assessment/teachback", json=payload)
 
     assert resp.status_code == 200, (
-        f"D80: single non-whitespace char must be accepted (validator only rejects blank). "
-        f"Got {resp.status_code}: {resp.text}"
+        f"D98 (was D80): single non-whitespace char must be accepted "
+        f"(validator only rejects blank). Got {resp.status_code}: {resp.text}"
     )

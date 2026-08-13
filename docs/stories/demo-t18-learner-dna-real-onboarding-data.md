@@ -102,11 +102,11 @@ no new real I/O introduced. Range is deterministic.
 layer — the 20-response limit is fixed. The `_compute_dimension_scores` bucket covers
 exactly 9 dimensions.
 
-**Known limitation (D74):** questions not in `QUESTION_SUBDIMENSION_MAP` are silently
+**Known limitation (D93 (was D74)):** questions not in `QUESTION_SUBDIMENSION_MAP` are silently
 skipped (no error emitted). A typo in the map (e.g. `c_1` instead of `c1`) drops one of
 the three `pattern_recognition` questions: correct mean = 55.56, actual mean = 83.33 —
 27.77-point inflation, badge awarded incorrectly, no error surfaced. This is a pre-existing
-behaviour inherited from Story 3-18, not introduced by T18. Registered as D74 in
+behaviour inherited from Story 3-18, not introduced by T18. Registered as D93 (was D74) in
 `docs/DEFECT-REGISTER.md`; resolution deferred — requires a map-validation guard and AC
 update across the onboarding test suite. The Scale Contract Q2 prohibition on silent
 truncation applies; this is a known, documented, and registered limitation, not a dismissal.
@@ -219,7 +219,7 @@ monkeypatch.setattr("app.modules.assessment.service.generate_onboarding_profile"
 - [x] [Review][Patch] AC3 DPDP disclaimer assertion is circular — fixed: mock now returns `"You are a Pattern Thinker."` (no disclaimer); assertion changed to `== "You are a Pattern Thinker."` (non-circular) — ✓ 2026-08-13
 - [x] [Review][Patch] AC6 "exactly 3 fields" not enforced — fixed: `assert set(type(result).model_fields.keys()) == {"badge_labels", "profile_text", "session_count"}` added — ✓ 2026-08-13
 - [x] [Review][Patch] AC7 only `pattern_recognition` verified after removing `e2` — fixed: loop asserts all 8 non-persistence dims == 100.0 — ✓ 2026-08-13
-- [x] [Review][Patch][Scale Q2] Story §Scale & Load Q2 self-contradicts — fixed: Q2 rewritten to correctly acknowledge silent-skip limitation; registered as D74 in DEFECT-REGISTER.md — ✓ 2026-08-13
+- [x] [Review][Patch][Scale Q2] Story §Scale & Load Q2 self-contradicts — fixed: Q2 rewritten to correctly acknowledge silent-skip limitation; registered as D93 (was D74) in DEFECT-REGISTER.md — ✓ 2026-08-13
 - [x] [Review][Patch][Scale Q5] Formula denominator `3` inherited cap — fixed: `assert all(0.0 <= v <= 100.0 ...)` added to AC1; `# BOUNDED:` comment added to service.py:1076 — ✓ 2026-08-13
 - [x] [Review][Patch] Table routing fragile — fixed: `mock.table.side_effect = lambda name: {"onboarding_responses": insert_table, "learner_dna": dna_table}[name]` — ✓ 2026-08-13
 - [x] [Review][Patch] AC3 upsert spy never asserts `user_id == _USER_UUID` — fixed: assertion added — ✓ 2026-08-13

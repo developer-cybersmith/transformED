@@ -1,9 +1,9 @@
-"""Story 3-55 — D92 and D94 enforcement tests.
+"""Story 3-55 — D102 (was D92) and D104 (was D94) enforcement tests.
 
-D92 — `session_events` SELECT in `dna_fusion.py` must carry `.limit()`.
-D94 — `SessionCreate.lesson_id` must validate UUID format before the DB cast.
+D102 (was D92) — `session_events` SELECT in `dna_fusion.py` must carry `.limit()`.
+D104 (was D94) — `SessionCreate.lesson_id` must validate UUID format before the DB cast.
 
-D93 (CI scan scope) lives in `test_unbounded_queries.py` alongside the other
+D103 (was D93, CI scan scope) lives in `test_unbounded_queries.py` alongside the other
 premise tests for the scanner.
 """
 
@@ -75,12 +75,12 @@ def _chain_is_bounded(chain: ast.expr, select_call: ast.Call) -> bool:
     )
 
 
-# ── D92 — session_events bounded ─────────────────────────────────────────────
+# ── D102 (was D92) — session_events bounded ─────────────────────────────────────────────
 
 
 @pytest.mark.unit
 def test_dna_fusion_session_events_is_bounded() -> None:
-    """D92 — the `session_events` SELECT in `dna_fusion.py` must carry `.limit()`.
+    """D102 (was D92) — the `session_events` SELECT in `dna_fusion.py` must carry `.limit()`.
 
     A student can generate many events in a single session (jargon hovers, skips,
     help requests). Without a limit, the session-end fusion call materialises every
@@ -106,18 +106,18 @@ def test_dna_fusion_session_events_is_bounded() -> None:
             bounded_session_events = True
 
     assert bounded_session_events, (
-        "D92: the `session_events` SELECT in dna_fusion.py has no .limit() — "
+        "D102 (was D92): the `session_events` SELECT in dna_fusion.py has no .limit() — "
         "add .limit(10_000) to cap event rows per session. "
         "Scale Contract Q4 requires every request-path read to be bounded."
     )
 
 
-# ── D94 — SessionCreate.lesson_id UUID validation ────────────────────────────
+# ── D104 (was D94) — SessionCreate.lesson_id UUID validation ────────────────────────────
 
 
 @pytest.mark.unit
 def test_session_create_validates_uuid_format() -> None:
-    """D94 — `SessionCreate.lesson_id` must reject non-UUID strings at Pydantic.
+    """D104 (was D94) — `SessionCreate.lesson_id` must reject non-UUID strings at Pydantic.
 
     Without a validator, any non-UUID string (including a typo like "x") passes
     Pydantic validation, reaches the DB UUID cast, and 500s with a Postgres error

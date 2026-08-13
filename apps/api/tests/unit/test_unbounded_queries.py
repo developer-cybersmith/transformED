@@ -120,7 +120,7 @@ MODULES_DIR = API_ROOT / "app" / "modules"
 # Request-path file names. See SCOPE in the module docstring.
 # D78: dna_fusion / dna_growth / ces* / dna_profile are called from request-path
 # service.py handlers and must be covered by the unbounded-query guard.
-# D93 (Story 3-55): dna_fusion.py explicitly added here.
+# D103 (Story 3-55, renumbered from D93 on merge): dna_fusion.py explicitly added here.
 REQUEST_PATH_FILENAMES = (
     "router.py",
     "service.py",
@@ -427,14 +427,14 @@ def test_request_path_modules_are_where_we_think_they_are() -> None:
     assert "assessment/service.py" in names, "the service layer is in scope, not just routers"
     assert "analytics/service.py" in names
     assert "assessment/dna_fusion.py" in names, (
-        "D93: dna_fusion.py is on the request path but not in CI scanner scope — "
+        "D103: dna_fusion.py is on the request path but not in CI scanner scope — "
         "add 'dna_fusion.py' to REQUEST_PATH_FILENAMES"
     )
 
 
 @pytest.mark.unit
 def test_dna_fusion_is_in_scan_scope() -> None:
-    """D93 (AC8) — dna_fusion.py must appear in request_path_modules() output.
+    """D103 (AC8, was D93) — dna_fusion.py must appear in request_path_modules() output.
 
     Named test required by Story 3-55 AC8. If dna_fusion.py is removed from
     REQUEST_PATH_FILENAMES, this test fails before any new unbounded SELECT in
@@ -442,7 +442,7 @@ def test_dna_fusion_is_in_scan_scope() -> None:
     """
     names = {p.relative_to(MODULES_DIR).as_posix() for p in request_path_modules()}
     assert "assessment/dna_fusion.py" in names, (
-        "D93: dna_fusion.py is on the request path but not in CI scanner scope — "
+        "D103: dna_fusion.py is on the request path but not in CI scanner scope — "
         "add 'dna_fusion.py' to REQUEST_PATH_FILENAMES"
     )
 

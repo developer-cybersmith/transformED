@@ -1,7 +1,7 @@
 """
 Demo T20 — Learner DNA Fusion: event aggregation DB path with non-empty event_rows.
 
-Closes D75: the counting loop in dna_fusion.py (lines 301-306) has zero integration
+Closes D94 (was D75): the counting loop in dna_fusion.py (lines 301-306) has zero integration
 test coverage with non-empty event_rows that produce concrete, verifiable EMA output.
 
 Test count: 6
@@ -137,11 +137,13 @@ def _supabase_mock(
             )
         elif name == "session_events":
             if events_raises:
-                tbl.select.return_value.eq.return_value.limit.return_value.execute.side_effect = Exception(
-                    "session_events DB down"
+                tbl.select.return_value.eq.return_value.limit.return_value.execute.side_effect = (
+                    Exception("session_events DB down")
                 )
             else:
-                tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp(event_rows)
+                tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
+                    _resp(event_rows)
+                )
             # Wire INSERT chain so write_system_events (called by record_dna_growth in Step 6)
             # returns a clean response. Without this, MagicMock().error is truthy and
             # write_system_events logs "0 events written" and silently returns 0 in every test.
@@ -190,12 +192,11 @@ async def test_fuse_event_aggregation_3_jargon_hovers_exact_curiosity_ema():
 
     assert result is not None, "fuse_learner_dna must return a dict, not None"
     assert len(captured) == 1, (
-        f"Expected exactly 1 upsert call, got {len(captured)}. "
-        "Multiple calls indicate a retry bug."
+        f"Expected exactly 1 upsert call, got {len(captured)}. Multiple calls indicate a retry bug."
     )
     payload = captured[0]
 
-    # D75 fix: assert the concrete value that depends on count=3 being correct
+    # D94 (was D75) fix: assert the concrete value that depends on count=3 being correct
     # signal = (3/5)*100 = 60.0; EMA = round(0.7*20.0 + 0.3*60.0, 4) = 32.0
     expected_ema = round(0.7 * 20.0 + 0.3 * 60.0, 4)  # = 32.0
     assert payload.get("curiosity_index") == pytest.approx(expected_ema, rel=1e-3), (
@@ -253,7 +254,7 @@ async def test_fuse_event_aggregation_4_jargon_hovers_distinct_from_cap_and_3_ev
     )
 
     # Explicitly not the cap value (5-event) or the 3-event value
-    cap_ema = round(0.7 * 50.0 + 0.3 * 100.0, 4)   # 5 events → 65.0
+    cap_ema = round(0.7 * 50.0 + 0.3 * 100.0, 4)  # 5 events → 65.0
     three_event_ema = round(0.7 * 50.0 + 0.3 * 60.0, 4)  # 3 events → 53.0
     assert curiosity != pytest.approx(cap_ema, rel=1e-3), (
         "curiosity_index matches the cap (5 events) — counting loop counted 5 instead of 4"
@@ -402,9 +403,7 @@ async def test_fuse_event_aggregation_events_read_failure_alone_is_non_fatal():
         settings=_settings(retain=0.7),
     )
 
-    assert result is not None, (
-        "fuse_learner_dna must not raise when only session_events read fails"
-    )
+    assert result is not None, "fuse_learner_dna must not raise when only session_events read fails"
     assert set(result.keys()) == set(_NINE_DIMENSIONS), (
         f"Expected exactly 9 dims; got {set(result.keys())}"
     )
@@ -428,7 +427,7 @@ async def test_fuse_event_aggregation_all_four_event_types_exact_ema_all_dims():
     intervention_triggered) in one session → exact EMA verified for all four
     signal-driven dimensions in the upsert payload.
 
-    This is the comprehensive D75 closure. A regression in any event-type's key name
+    This is the comprehensive D94 (was D75) closure. A regression in any event-type's key name
     or counting logic causes at least one assertion to fail.
 
     EMA reference table (all from production constants, retain=0.7):
@@ -447,7 +446,8 @@ async def test_fuse_event_aggregation_all_four_event_types_exact_ema_all_dims():
 
     event_rows = (
         [{"event_type": "jargon_hover"}] * 3
-        + [{"event_type": "help_seeking"}] * 1  # 1 event → signal=25.0 ≠ _NEUTRAL; catches loop bugs
+        + [{"event_type": "help_seeking"}]
+        * 1  # 1 event → signal=25.0 ≠ _NEUTRAL; catches loop bugs
         + [{"event_type": "skip_segment"}] * 1
         + [{"event_type": "intervention_triggered"}] * 1
     )
