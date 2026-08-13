@@ -1163,15 +1163,27 @@ class _LessonPlanLLM(BaseModel):
     segments: list[_LessonPlanSegmentLLM]
 
 
-# Story 2-13.5 (S2-LM4/S2-LM5): Learner Mode tier -> total-lesson slide-count
-# band. T1 = full depth, T2 = standard (default), T3 = critical-topics-only /
-# refresher. lesson_planner_node allocates this total across segments into a
-# per-segment slide_budget that slide_generator_node reads and respects — it
-# does not re-derive tier logic independently (tracker's own S2-LM4 note).
-_TIER_TOTAL_SLIDE_BAND: dict[str, tuple[int, int]] = {
-    "T1": (20, 25),
-    "T2": (12, 15),
-    "T3": (6, 8),
+# Story 2-13.5 (S2-LM4/S2-LM5), re-derived D87: Learner Mode tier -> a
+# minutes-per-slide RATIO, not a fixed lesson-wide slide COUNT. T1 = full
+# depth (richest pacing), T2 = standard (default), T3 = critical-topics-only
+# / refresher (leanest pacing). lesson_planner_node allocates the resulting
+# total across segments into a per-segment slide_budget that
+# slide_generator_node reads and respects — it does not re-derive tier logic
+# independently (tracker's own S2-LM4 note).
+#
+# D87: a FIXED total (the pre-existing `_TIER_TOTAL_SLIDE_BAND`, T1=(20,25),
+# T2=(12,15), T3=(6,8)) was sized with no visibility into a real
+# structure_max_sections=15 lesson. At 15 segments T2's and T3's totals were
+# already <= the segment count, so D85's proportional-by-duration allocator
+# had nothing left to redistribute — every segment stayed pinned to the
+# structural floor of 1, identical to the bug D85 was built to fix. A ratio
+# that scales with the lesson's REAL total duration (already computed before
+# this runs) fixes the root cause instead of needing re-derivation again the
+# next time segment counts or lesson lengths change.
+_TIER_MINUTES_PER_SLIDE_BAND: dict[str, tuple[float, float]] = {
+    "T1": (0.8, 1.2),
+    "T2": (1.2, 1.8),
+    "T3": (2.0, 3.0),
 }
 # Story 3-28 (AC-4): per-tier MCQ count band for quiz_generator_node.
 # T1 = full-depth comprehension (3-5 Qs), T2 = standard (2-3 Qs),
@@ -1209,49 +1221,39 @@ def _tier_slide_budget_per_segment(
     not a validated contract field.
 
     D85: previously divided the tier's total band evenly by segment COUNT
-    (a flat `ceil(total / segment_count)` shared by every segment). At
-    structure_max_sections=15 (the common case for a content-dense chapter),
-    this collapsed to a single shared (1,1) pair for BOTH T2 and T3 —
-    ceil(12/15)=1, ceil(15/15)=1, ceil(6/15)=1, ceil(8/15)=1 — so EVERY
-    segment got exactly one slide regardless of how long its narration ran
-    (observed live: 15 real segments, narration 1.23-3.48 min, all sharing
-    one static slide). Real per-segment `duration_min` estimates already
-    exist by the time this is called (from the lesson_planner LLM's own
-    structured output) and are used here instead of a flat segment count.
+    (a flat `ceil(total / segment_count)` shared by every segment) — fixed
+    to allocate proportionally by duration instead. D87: the total itself
+    now scales with the lesson's real estimated duration via
+    `_TIER_MINUTES_PER_SLIDE_BAND`, instead of being a fixed lesson-wide
+    count sized with no visibility into a real 15-segment lesson (observed
+    live: 15 real segments, narration 1.23-3.48 min, T2 and T3 both still
+    producing one static slide per segment under D85 alone, because their
+    old fixed totals were already <= the segment count). Real per-segment
+    `duration_min` estimates already exist by the time this is called (from
+    the lesson_planner LLM's own structured output) and are used both to
+    compute the total and to allocate it proportionally across segments.
     """
-    total_min, total_max = _TIER_TOTAL_SLIDE_BAND.get(tier, _TIER_TOTAL_SLIDE_BAND[_DEFAULT_TIER])
     n = len(segment_durations_min)
     if n <= 0:
         return []
     total_duration = sum(segment_durations_min)
     if total_duration <= 0:
-        # No real duration signal (malformed/all-zero input) — fall back to
-        # the old flat-division behavior rather than divide by zero or
-        # fabricate a per-segment distribution with no basis. Same
-        # ceiling-division formula as before (see historical note below),
-        # applied uniformly to every segment.
-        #
-        # Both bounds are clamped to the structural 1-8/segment ceiling — a
-        # low-segment-count T1 chapter (e.g. 1 segment, total_min=20) would
-        # otherwise produce per_min=20, above the 8-slide structural limit
-        # slide_generator's own schema can represent (caught during this
-        # story's own dev notes before it shipped, not in a later review round).
-        #
-        # 2026-07-17 review finding (Blind Hunter): per_min used FLOOR division
-        # (total_min // segment_count) with no round-up — for an unevenly
-        # divisible total (e.g. T3's total_min=6 over 5 segments: 6//5=1), the
-        # worst-case actual total (segment_count * per_min) can fall BELOW the
-        # tier's own advertised floor, silently breaking the "T3 = 6-8 slides"
-        # promise. Switched to ceiling division so per-segment minimums always
-        # sum to at least total_min — the tradeoff (confirmed against every
-        # existing test case, all unaffected) is a per-segment band that can run
-        # slightly narrow-but-safe rather than wide-but-under-promised; this is
-        # still a soft heuristic, not an exact allocator (see docstring).
-        per_min = min(
-            _MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, math.ceil(total_min / n))
-        )
-        per_max = max(per_min, min(_MAX_SLIDES_PER_SEGMENT, math.ceil(total_max / n)))
-        return [(per_min, per_max)] * n
+        # No real duration signal (malformed/all-zero input) -- there is no
+        # basis for a duration-based total, and lesson_planner_node's own
+        # duration_min > 0 guard already rejects this before slide-budget
+        # logic ever runs in practice (confirmed by D85's own test) -- this
+        # is a defensive-only path. Safest lean default: every segment gets
+        # exactly the structural floor, never zero.
+        return [(_MIN_SLIDES_PER_SEGMENT, _MIN_SLIDES_PER_SEGMENT)] * n
+
+    min_per_slide, max_per_slide = _TIER_MINUTES_PER_SLIDE_BAND.get(
+        tier, _TIER_MINUTES_PER_SLIDE_BAND[_DEFAULT_TIER]
+    )
+    # More minutes/slide -> fewer slides (the lean end); fewer minutes/slide
+    # -> more slides (the rich end) -- hence total_min divides by the LARGER
+    # ratio and total_max divides by the SMALLER one.
+    total_min = total_duration / max_per_slide
+    total_max = total_duration / min_per_slide
 
     budgets: list[tuple[int, int]] = []
     for dur in segment_durations_min:
