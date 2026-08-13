@@ -357,8 +357,8 @@ checked.
 
 | | Count |
 |---|---|
-| Defects closed (fixed **and** guarded) | **28** — D63 (INTERVENING one-way trap, Dev 4) closed 2026-08-11 in two rounds, same session: first-round fix, then a six-layer review of PR #129 caught a re-arming regression IN that fix before merge, fixed same session |
-| Fixed, awaiting merge | **1** — D63 (both rounds), on `sprint4/s4-6-intervention-recovery`, not yet on `main` |
+| Defects closed (fixed **and** guarded) | **29** — D63 (INTERVENING one-way trap, Dev 4) closed 2026-08-11, merged via PR #129 to `main` after two rounds of fixes and six-layer adversarial review |
+| Fixed, awaiting merge | **0** |
 | **Open** | **27** — includes **D64** (confusion-type interventions uncapped), deferred from the same review |
 | Of which **live in production** | **3** — D29 (DPDP consent row, Dev 3), **D31** (env prefix, Dev 1), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
