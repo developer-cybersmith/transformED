@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 18 | 14 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 19 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **72** | **57** | **1** | **14** |
+| **Totals** | | **77** | **62** | **1** | **14** |
 
 ---
 
@@ -864,6 +864,31 @@ Every node must:
   - `apps/api/app/modules/content/pipeline/graph.py` *(replaced fixed `_TIER_TOTAL_SLIDE_BAND` with `_TIER_MINUTES_PER_SLIDE_BAND` — T1 0.8-1.2, T2 1.2-1.8, T3 2.0-3.0 min/slide — the total now scales with the lesson's real estimated duration; D85's per-segment proportional loop unchanged)*
   - **AC:** verified on the real demo-lesson dataset — T3's longest segment now gets (1,2) instead of (1,1), T2 gets (2,3), T1 gets (3,4), all three tiers differentiate now ✅; RED-GREEN verified via `git stash` on the implementation file only ✅; one test removed with its premise explained in place (a fixed per-tier total_min the fallback must undercut no longer exists once the fixed total was deleted) rather than silently dropped ✅; full repo-wide regression 52 failed/2102 passed/86 skipped both before and after — zero new failures ✅ — see `docs/stories/3-49-d87-slide-budget-duration-target.md`
   - This closes D87 AND promotes D85 from partial to fully closed — both rounds now landed
+
+- [x] **S3-50 D54 force=true lesson regeneration** — ✓ 2026-08-13 (branch `sprint3/s3-50-d54-force-regenerate`, merged to `main`)
+  - D53's own escape hatch, landing the same day D53 closed. `GenerateLessonRequest.force: bool = False` bypasses ONLY Gate 5's idempotency early-return; Gate 6 (page-span) and Gate 7 (concurrency) stay fully unconditional. Confirmed before implementing that no "mark superseded" logic was needed — `_latest_lesson` already picks `max(created_at)` fresh on every read
+  - `apps/api/app/modules/content/schemas.py` (`force` field), `apps/api/app/modules/content/router.py` (Gate 5 loop conditionally skipped)
+  - **AC:** 4 new tests in `test_generate_lesson_endpoint.py` (force bypasses existing generating/ready lesson; force omitted unchanged; force still respects the concurrency cap) ✅; RED-GREEN via Edit tool ✅; full repo-wide regression 54 failed/2102 passed/85 skipped before, same failed set/2107 passed after — zero new failures ✅ — see `docs/stories/3-50-d54-force-regenerate.md`
+
+- [x] **S3-51 D59(a) bound the admin cost-report query** — ✓ 2026-08-13 (branch `sprint3/s3-51-d59a-admin-cost-bounded`, merged to `main`)
+  - `get_cost_report` materialised every `lesson_jobs` row for the period with no `.limit()`. Added `_COST_REPORT_ROW_LIMIT=10_000` + a `CostReport.truncated` flag (set only when the fetch hits the ceiling exactly — an explicit surfaced signal, never a silent under-report of real spend). Removed the now-fixed query from `test_unbounded_queries.py`'s allow-list rather than leaving it there. D59(b), `analytics/service.py`, is Dev 3's and untouched
+  - `apps/api/app/modules/admin/router.py`, `apps/api/tests/unit/test_unbounded_queries.py`
+  - **AC:** 3 new tests (`.limit()` present; `truncated=False` under limit; `truncated=True` at the limit boundary) ✅; RED-GREEN via Edit tool ✅; full repo-wide regression 54 failed/2102 passed/85 skipped before, same failed set/2105 passed after — zero new failures ✅ — see `docs/stories/3-51-d59a-admin-cost-bounded.md`
+
+- [x] **S3-52 D89 Sarvam narration pace** — ✓ 2026-08-13 (branch `sprint3/s3-52-d89-sarvam-pace`, merged to `main`)
+  - A real stakeholder reported narration as "very fast" watching the real lesson play. Verified against Sarvam's real API docs (not assumed): a `pace` param exists (default 1.0, range 0.3-3.0) and was never sent — every lesson synthesized at the raw default
+  - `apps/api/app/config.py` (`sarvam_narration_pace`, default 0.85, env-tunable), `apps/api/app/providers/tts/sarvam.py` (sends `pace` in the request payload)
+  - **AC:** new test asserts the real payload includes the configured pace ✅; RED confirmed (`KeyError: 'pace'` reverted) ✅; full repo-wide regression 52 pre-existing failures unchanged (verified on a clean baseline worktree) — zero new failures ✅ — see `docs/stories/3-52-d89-sarvam-pace.md`
+
+- [x] **S3-53 D88 slide overflow + D90 caption overlay** — ✓ 2026-08-13 (branch `sprint3/s3-53-d88-d90-player-ui-fixes`, merged to `main`)
+  - Same real playback session, two more real findings. D88: `layout.tsx`'s `min-h-screen` + `Player.tsx`'s missing `min-h-0` — a classic flex `min-height:auto` bug letting tall slide content push the page past the viewport instead of scrolling inside `SlideRenderer.tsx`'s already-correct internal scroll. D90: zero caption UI existed anywhere (confirmed via repo-wide grep); added a non-synced, always-visible panel showing the current segment's full narration script (word-level sync isn't possible yet — Sarvam word timestamps aren't implemented). **This is normally Dev 2's file territory** — implemented directly with exact root causes already identified, explicitly flagged in the story for Dev 2's visibility
+  - `apps/web/src/app/lesson/[id]/layout.tsx`, `apps/web/src/components/player/Player.tsx`, new `apps/web/src/components/player/CaptionOverlay.tsx`
+  - **AC:** 6 new/updated tests (`CaptionOverlay.test.tsx` ×4, `Player.test.tsx` D88/D90 blocks ×2) ✅; `npm run type-check`/`npm run lint` clean ✅; full `apps/web` suite 768 passed, 5 pre-existing failures confirmed identical on baseline, unrelated files — zero regressions ✅ — see `docs/stories/3-53-d88-d90-player-ui-fixes.md`
+
+- [x] **S3-54 D91 reaper uses a real started_at, not lessons.created_at** — ✓ 2026-08-13 (branch `sprint3/s3-54-d91-reaper-real-started-at`, merged to `main`)
+  - D53's own deliberately-deferred follow-up ("the durable fix is the D53 reaper plus a real started_at"), triggered by live evidence, not a fresh discovery: running the real ch5/T1 generation, an ARQ retry was delayed ~32 minutes before being dequeued (event-loop-blocking), and the reaper marked the lesson `failed` while it was still actually running — leaving `lessons.status='failed'` and `lesson_jobs.status='running'` permanently inconsistent. Same run also hit a real, non-code blocker worth recording: Sarvam TTS returned `402 Payment Required` (account out of credits, same shape as the L0 OpenAI blocker) and Azure returned `401` (pre-existing, never configured) — every segment fell to the free browser fallback as a result
+  - `apps/api/app/workers/jobs/content_pipeline.py` (`_update_lesson_status` writes real `lesson_jobs.started_at` on the "running" transition, fresh on every retry), `apps/api/app/workers/jobs/reap_stale_lessons.py` (queries `lesson_jobs` directly, generous outer bound + precise per-row refinement using `started_at` when available). Gate 5/Gate 7 in `router.py` deliberately unchanged — their conservative direction is safe, only the reaper's false-positive direction was harmful
+  - **AC:** `test_does_not_reap_a_job_with_a_recent_real_start_despite_old_created_at` reproduces the exact live false positive directly ✅; 5 more tests covering the base/never-started/no-op/query-shape/one-bad-row cases ✅; `test_running_transition_writes_a_real_started_at` in `test_timeout_contract.py` ✅; RED-GREEN via `mv`-aside + `git stash`/pop ✅; full repo-wide regression 52 failed/2113 passed/86 skipped — established baseline, zero new failures ✅ — see `docs/stories/3-54-d91-reaper-real-started-at.md`
 
 ---
 
