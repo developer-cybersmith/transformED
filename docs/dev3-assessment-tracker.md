@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-12 (S3-53 DONE — CES production closure, D1/D62 canonical formula, D61/D63/D64/D65 gaps closed)
+**Last updated:** 2026-08-13 (T28 DONE — Learner DNA display contract, 18 tests; Demo Sprint 7/7 complete; master-demo-dev3 READY TO MERGE)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,9 +19,10 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
+| Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **53** | **44** | **0** | **9** |
+| **Total** | | **60** | **50** | **0** | **10** |
 
 Update this table each time a task is checked off below.
 
@@ -786,6 +787,70 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - **Tests updated:** `test_ces.py` (2 redistribution tests updated for D62), `test_tutor_service.py` (3 tests updated for optional behavioral signals per D13), `test_s3_45_fatigue_trigger.py` (`nx=True` assertion added).
   - 18 new tests in `test_s3_53_ces_production_closure.py` — all GREEN; 168 CES-related tests total GREEN.
   - Branch: `sprint3/s3-53-ces-closure` — committed.
+
+---
+
+## Demo Sprint — HIE Demo Preparation (Aug 2026)
+
+> **Source:** `d:/HIE-Demo-Task-Tracker.xlsx` — Dev 3 individual and collaborative tasks.
+> **Branch strategy:** Each task gets its own branch targeting `master-demo-dev3` (not main).
+
+- [x] **T15 — Validate quiz+teachback against real LessonPackage schema** — ✓ 2026-08-13
+  - 9 unit tests in `apps/api/tests/test_real_package_payload_validation.py`
+  - Key finding: simplified fixtures silently scored teachback with `topic=""` and `key_concepts=[]`; schema-accurate fixture uses UUID IDs, namespaced segment/question IDs, all required fields
+  - 9/9 PASS; BMAD 6-agent review clean (0 findings)
+  - Branch: `dev3-demo-t15-phaseL4` — PR merged to `master-demo-dev3`
+  - Story: `docs/stories/demo-t15-quiz-teachback-real-package-validation.md` — status: done
+
+- [x] **T16 — End-to-end session flow with real UUID data** — ✓ 2026-08-13
+  - 9 unit tests in `apps/api/tests/test_e2e_session_flow_real_data.py`
+  - Validates full lifecycle: `create_session` → `grade_quiz` → `grade_teachback` → `get_session_report`
+  - AC coverage: DB-minted session UUID (not client value), IDOR guards, formula disclosure, quiz_score=None when no quiz_attempts
+  - 9/9 PASS; BMAD 6-agent review clean (0 findings)
+  - Branch: `dev3-demo-t16-phaseL5` — PR merged to `master-demo-dev3`
+  - Story: `docs/stories/demo-t16-e2e-session-flow-real-data.md` — status: done
+
+- [x] **T18 — Learner DNA profile generation with real onboarding data** — ✓ 2026-08-13
+  - 10 unit tests in `apps/api/tests/test_learner_dna_real_onboarding.py`; 11 review patches applied
+  - Tests `process_onboarding` and Learner DNA EMA generation with real-format onboarding payloads
+  - Branch: `dev3-demo-t18-phaseL5` — PR merged to `master-demo-dev3`
+  - Story: `docs/stories/demo-t18-learner-dna-real-onboarding-data.md` — status: done
+
+- [x] **T19 — DNA fusion real session events (9 tests, 12 review patches)** — ✓ 2026-08-13
+  - Test-only story: covers gaps in `dna_fusion.py` not addressed by existing `test_dna_fusion.py` (28 tests)
+  - **ACs covered:** AC1–AC9 (compute_signals, mixed session, EMA upsert, teachback, ended_at guard, no-quiz, IDOR, Redis modulo, Redis non-fatal)
+  - **12 patches applied during 6-agent review:** P1–P12
+  - **Deferred:** D74 (session_count read-modify-write race), D75 (event aggregation — closed by T20)
+  - 37/38 tests GREEN (1 pre-existing D76 failure in Python 3.12)
+  - Story: `docs/stories/demo-t19-dna-fusion-real-session-events.md` — status: done
+  - Branch: `dev3-demo-t19-phaseL5` — PR #132 merged to `master-demo-dev3`
+
+- [x] **T20 — DNA fusion event aggregation DB path — 6 tests, closes D75** — ✓ 2026-08-13
+  - Test-only story: covers event aggregation counting loop (lines 289–306) with non-empty `event_rows`
+  - **ACs covered:** AC1–AC6 (JARGON_CAP counting, mixed events, empty guard, if-t guard, error propagation, non-neutral help)
+  - **8 patches applied during 6-agent review:** P1–P8
+  - **Deferred:** D76 (asyncio.get_event_loop pre-existing), D77 (session_events unbounded), D78 (CI guard blind spot)
+  - 6/6 T20 tests GREEN; 127/128 assessment GREEN (1 pre-existing D76 failure)
+  - Story: `docs/stories/demo-t20-dna-fusion-event-aggregation-path.md` — status: done
+  - Branch: `dev3-demo-t20-phaseL5` — PR #134 merged to `master-demo-dev3`
+
+- [x] **T26 (Cross-team) — Quiz/teachback API contract review with Dev 2** — ✓ 2026-08-13
+  - Confirm Dev 2's player sends payloads matching the frozen API contract
+  - 18 HTTP-layer contract tests added: `apps/api/tests/test_t26_api_contract_dev2.py` — 18/18 pass
+  - Covers: 422 bounds (answers, response_text, response_index, response_time_ms), banned-field silencing (transcript, duration_seconds), response shapes (feedback is list, rubric_scores are str labels), ApprovedUser 403 gate, security invariant (user_id from body never trusted), extra-field silence
+  - Story: `docs/stories/demo-t26-quiz-teachback-api-contract-dev2.md`
+  - Branch: `dev3-demo-t26-phaseL8` — PR targets `master-demo-dev3`
+  - **Owner:** Dev 3 + Dev 2 (collaborative)
+
+- [x] **T28 (Cross-team) — Learner DNA display review with Dev 2** — ✓ 2026-08-13
+  - 18 unit tests in `apps/api/tests/test_t28_dna_display_contract_dev2.py`; 8 review patches applied
+  - ACs: no raw dimension scores in GET/POST, DPDP_DISCLAIMER uses "HIE", ONBOARDING_PROFILE_SYSTEM_PROMPT uses "HIE", badge_labels have no IQ/EQ/SQ (word-boundary match), profile_text ends with DPDP_DISCLAIMER, GET returns 200/404, response shape has all 6 required fields
+  - Review-added: P7 (Redis failure → 200), P8 (empty badge_labels → 200), DN-1 (profile_text=null → 200), DN-2 (no dimensions/scores container keys)
+  - D87 registered (non-atomic Redis reassessment bypass — Dev 4 owned, deferred)
+  - 18/18 PASS; 84/84 Demo Sprint tests PASS
+  - Story: `docs/stories/demo-t28-learner-dna-crossteam.md` — status: done
+  - Branch: `dev3-demo-t28-crossteam` — PR merged to `master-demo-dev3`
+  - **Owner:** Dev 3 + Dev 2 (collaborative)
 
 ---
 
