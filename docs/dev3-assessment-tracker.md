@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-13 (T20 DONE — DNA fusion event aggregation 6 tests, closes D75, D76/D77/D78 registered)
+**Last updated:** 2026-08-13 (T15/T19/T20 DONE — quiz+teachback real schema, DNA fusion EMA coverage, event aggregation; D75 closed, D76/D77/D78 registered)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,10 +19,10 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
-| Demo Sprint | Aug 2026 | 2 | 2 | 0 | 0 |
+| Demo Sprint | Aug 2026 | 7 | 3 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **55** | **46** | **0** | **9** |
+| **Total** | | **60** | **47** | **0** | **13** |
 
 Update this table each time a task is checked off below.
 
@@ -790,35 +790,50 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 
 ---
 
-## Demo Sprint — Aug 2026
+## Demo Sprint — HIE Demo Preparation (Aug 2026)
 
-> **Goal:** Isolated test-only stories validating production logic gaps in existing modules, with full BMAD workflow (story-first → dev → 6-agent review → PR).
+> **Source:** `d:/HIE-Demo-Task-Tracker.xlsx` — Dev 3 individual and collaborative tasks.
+> **Branch strategy:** Each task gets its own branch targeting `master-demo-dev3` (not main).
+
+- [x] **T15 (Phase L4) — Validate quiz and teach-back payloads against the first real package** — ✓ 2026-08-13
+  - Validate `grade_quiz` and `grade_teachback` against schema-accurate LessonPackage fixture
+  - All 9 ACs covered; 134/134 tests green; `test_real_package_payload_validation.py` added
+  - Critical finding: simplified fixtures silently scored teachback with `topic=""` and `key_concepts=[]`
+  - Branch: `dev3-demo-t15-phaseL4` — PR merged to `master-demo-dev3`
+
+- [ ] **T16 (Phase L5) — Validate end-to-end session flow with real data**
+  - End-to-end session: create → quiz → teachback → session report with real-format IDs
+  - Branch: `dev3-demo-t16-phaseL5` → `master-demo-dev3`
+
+- [ ] **T18 (Phase L7) — Learner DNA profile generation with real onboarding data**
+  - Test `process_onboarding` and Learner DNA generation with real-format onboarding payloads
+  - Branch: `dev3-demo-t18-phaseL7` → `master-demo-dev3`
 
 - [x] **T19 — DNA fusion real session events (9 tests, 12 review patches)** — ✓ 2026-08-13
   - Test-only story: covers gaps in `dna_fusion.py` not addressed by existing `test_dna_fusion.py` (28 tests)
-  - **ACs covered:**
-    - AC1: `_compute_signals` intermediate count — 3 jargon hovers with `_JARGON_CAP=5` → `curiosity_index = 40.0` (spec-pinned literal + dynamic check)
-    - AC2: mixed real session — all 9 dims from quiz_rows + tb_rows + event_counts; concrete expected values (not dynamic math)
-    - AC3: EMA upsert payload exact values — `fuse_learner_dna` writes correct EMA floats; list-based spy catches double-call retry bug
-    - AC4: two-segment teachback — zero jargon hovers → `curiosity_index = 0.0`; two tb entries → non-neutral `persistence`
-    - AC5: `ended_at=None` → no upsert; table access tracking confirms quiz/tb/events tables never read when session incomplete
-    - AC6: no-quiz session — 3 dims missing signal → neutral 50.0; `help_seeking`/`study_independence` are computable from events alone
-    - AC7: IDOR → 404 (not 403); `dna_row=_base_dna_row()` so ownership check is the only 404 source (Blind Hunter P1 fix)
-    - AC8: Redis reassessment flag at session 10 and session 20 (modulo); exact 9-dim key set asserted; tuple-discard fix (P10)
-    - AC9: Redis failure non-fatal — `ConnectionError` on `redis.set` → `fuse_learner_dna` returns result, no exception raised
-  - **12 patches applied during 6-agent review:** P1 (IDOR dna_row), P2 (list-based spy), P3 (AC8 session-20 modulo), P4 (exact 9-dim keys), P5 (story doc fix: correct patch target), P6 (AC1 literal 40.0 pin), P7 (AC2 concrete values), P8 (AC5 table tracking), P9 (AC6 3 missing dims), P10 (AC8 tuple-discard), P11 (AC4 spot checks), P12 (AC2 rel consistency)
-  - **Deferred:** D74 (read-modify-write race on `session_count`), D75 (event aggregation path — closed by T20)
-  - 37/38 tests GREEN (9 T19 + 28 existing; 1 pre-existing D76 failure in Python 3.12)
+  - **ACs covered:** AC1–AC9 (compute_signals, mixed session, EMA upsert, teachback, ended_at guard, no-quiz, IDOR, Redis modulo, Redis non-fatal)
+  - **12 patches applied during 6-agent review:** P1–P12
+  - **Deferred:** D74 (session_count read-modify-write race), D75 (event aggregation — closed by T20)
+  - 37/38 tests GREEN (1 pre-existing D76 failure in Python 3.12)
   - Story: `docs/stories/demo-t19-dna-fusion-real-session-events.md` — status: done
   - Branch: `dev3-demo-t19-phaseL5` — PR #132 merged to `master-demo-dev3`
+
 - [x] **T20 — DNA fusion event aggregation DB path — 6 tests, closes D75** — ✓ 2026-08-13
-  - Test-only story: covers `fuse_learner_dna` event aggregation counting loop (lines 289–306) with non-empty `event_rows`
-  - **ACs covered:** AC1 (`_JARGON_CAP` counting, spec-pin 59.0), AC2 (mixed event types, concrete EMA values), AC3 (empty event_rows → neutral), AC4 (`if t:` guard via MOCK-CONTRACT), AC5 (events-raises → propagates), AC6 (1 help_seeking → EMA 42.5 ≠ neutral)
-  - **8 patches applied during 6-agent review:** P1 (INSERT mock for session_events), P2 (`on_conflict="user_id"` assert), P3 (AC6 help=1 non-neutral), P4 (spec-pin literal 59.0), P5 (frustration comment fix), P6 (MOCK-CONTRACT comment), P7 (story AC5 update), P8 (story AC6 EMA values)
-  - **Deferred:** D76 (asyncio.get_event_loop pre-existing), D77 (session_events SELECT unbounded), D78 (test_unbounded_queries CI blind spot)
-  - 6/6 T20 tests GREEN; 127/128 assessment module GREEN (1 pre-existing D76 failure)
+  - Test-only story: covers event aggregation counting loop (lines 289–306) with non-empty `event_rows`
+  - **ACs covered:** AC1–AC6 (JARGON_CAP counting, mixed events, empty guard, if-t guard, error propagation, non-neutral help)
+  - **8 patches applied during 6-agent review:** P1–P8
+  - **Deferred:** D76 (asyncio.get_event_loop pre-existing), D77 (session_events unbounded), D78 (CI guard blind spot)
+  - 6/6 T20 tests GREEN; 127/128 assessment GREEN (1 pre-existing D76 failure)
   - Story: `docs/stories/demo-t20-dna-fusion-event-aggregation-path.md` — status: done
   - Branch: `dev3-demo-t20-phaseL5` — PR #134 merged to `master-demo-dev3`
+
+- [ ] **T26 (Cross-team) — Quiz/teachback API contract review with Dev 2**
+  - Confirm Dev 2's player sends payloads matching the frozen API contract
+  - **Owner:** Dev 3 + Dev 2 (collaborative)
+
+- [ ] **T28 (Cross-team) — Learner DNA display review with Dev 2**
+  - Confirm Learner DNA profile text renders correctly in Dev 2's frontend; HIE brand consistent; no raw scores
+  - **Owner:** Dev 3 + Dev 2 (collaborative)
 
 ---
 
