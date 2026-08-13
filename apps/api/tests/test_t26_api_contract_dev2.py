@@ -709,15 +709,17 @@ def test_teachback_missing_session_id_returns_422() -> None:
 def test_teachback_whitespace_only_response_text_accepted(monkeypatch) -> None:
     """TC-3: response_text = "   " (whitespace only) → 200 (API does not reject it).
 
-    IMPORTANT FOR DEV 2: The API enforces min_length=1 (character count), NOT content.
-    A single space satisfies min_length=1 and passes all Pydantic validation.
-    The request reaches grade_teachback with substantively empty content.
+    NOTE: D80 (demo/defect-fixes-d79-d80) adds a @field_validator that makes the API
+    return 422 for whitespace-only content. After that PR is merged to master-demo-dev3
+    and this branch is rebased, this test must be flipped to assert 422 and the
+    service mock block removed. The test then moves to test_d79_d80_schema_guards.py.
 
-    Dev 2 MUST add a client-side non-blank guard before the Submit button:
+    Until the fix is merged, this test documents the pre-fix contract behaviour:
+    The API enforces min_length=1 (character count), NOT content. A single space
+    satisfies min_length=1 and reaches grade_teachback with substantively empty content.
+
+    Dev 2 MUST add a client-side non-blank guard before the Submit button regardless:
         if (responseText.trim().length === 0) → show error, do not submit.
-
-    Without this client-side guard, a student submitting only spaces will receive
-    a low-quality rubric score from the LLM without a clear validation error.
     """
 
     async def _fake_grade_teachback(**kwargs):
