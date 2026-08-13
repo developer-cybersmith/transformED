@@ -1633,8 +1633,10 @@ Shows as qualitative label: `ces < 0.4 → "Low"`, `0.4–0.7 → "Engaged"`, `>
 
 ### S3-05 — Session Report: Attention Timeline Chart
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED — **unblocked 2026-08-10**, S3-02 shipped and is merged into `sprint3-master`. Real signals only flow once a session actually reaches `TEACHING` with consent granted; live end-to-end signal data hasn't been verified against a real browser/camera yet (blocked separately on the OpenAI account credit issue preventing a fresh lesson from being generated to test against — see chat history 2026-08-10).  
-**Files to create:** `src/components/reports/AttentionChart.tsx`
+**Status:** 🧪 Implemented, pending code review — 2026-08-13. Story `2-46-attention-timeline-chart.md`, branch `sprint3/s3-05-attention-timeline-chart` off `sprint3-master`. All 6 tasks/ACs done, TDD throughout, backend suite regression-verified via worktree comparison (zero net-new failures), frontend 79 files/957 tests green, `tsc`/`eslint` clean. **Not yet run against a real browser/camera end-to-end session** — built and tested against fixture data (the live-signal caveat below still applies until that happens).  
+**Files:** `src/components/reports/AttentionChart.tsx` (new), `src/components/reports/SessionReport.tsx` (wired), plus a backend extension to `GET /api/session/{id}/report` (`ces_timeline`, `intervention_events` — see story for why this crossed into Dev 3's module).
+
+**Scope decision (2026-08-13):** the real report API had no per-window timeline or intervention-timestamp data at all — extended it within this same story (user decision) rather than deferring or faking the chart. Also found: Redis `ces_history` caps at the last 10 windows regardless of session length (~50s at default cadence) — registered as **D77** (`docs/DEFECT-REGISTER.md`), explicitly out of scope here; the chart surfaces this honestly via a recency caption instead of implying full-session coverage.
 
 Area chart of CES over session time. X-axis: minutes. Y-axis: 0–1 (but shown as Low/Med/High labels). Marks interventions as vertical lines.
 
