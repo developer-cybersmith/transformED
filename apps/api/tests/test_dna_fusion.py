@@ -96,7 +96,7 @@ def _supabase_mock(
             tbl.select.return_value.eq.return_value.execute.return_value = _resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp(event_rows)
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp(event_rows)
 
         elif name == "learner_dna":
             select_chain = tbl.select.return_value
@@ -146,13 +146,12 @@ def test_dunder_all_exports_only_fuse_learner_dna():
 
 
 @pytest.mark.unit
-def test_positional_args_raise_type_error():
+@pytest.mark.asyncio
+async def test_positional_args_raise_type_error():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     with pytest.raises(TypeError):
-        asyncio.get_event_loop().run_until_complete(
-            fuse_learner_dna("uid", "sid", MagicMock(), _settings())
-        )
+        await fuse_learner_dna("uid", "sid", MagicMock(), _settings())
 
 
 # ── AC 4: _apply_ema ──────────────────────────────────────────────────────────
@@ -462,6 +461,8 @@ async def test_async_happy_path_returns_9_dimension_dict():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_session_count_incremented():
+    """AC20: session_count is incremented atomically via RPC, not in the upsert payload.
+    D74 fix: Python-side read-modify-write replaced by server-side atomic UPDATE."""
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
@@ -491,7 +492,16 @@ async def test_async_session_count_incremented():
 
     await fuse_learner_dna(user_id="u1", session_id="s1", supabase=supabase, settings=_settings())
     assert len(upsert_calls) == 1
-    assert upsert_calls[0].get("session_count") == 4  # 3 + 1
+    # session_count must NOT be in the upsert payload — atomic RPC handles the increment
+    assert "session_count" not in upsert_calls[0], (
+        f"session_count found in upsert payload: {upsert_calls[0]}. "
+        "D74: use increment_learner_dna_session_count RPC instead."
+    )
+    # RPC must have been called to atomically increment the counter
+    supabase.rpc.assert_called_once_with(
+        "increment_learner_dna_session_count",
+        {"p_user_id": "u1"},
+    )
 
 
 # ── AC 17: upsert DB failure → 503 ──────────────────────────────────────────

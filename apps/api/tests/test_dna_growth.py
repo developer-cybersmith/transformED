@@ -137,7 +137,7 @@ def _supabase_mock_fusion(
         elif name == "teachback_attempts":
             tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp([])
         elif name == "learner_dna":
             chain = tbl.select.return_value.eq.return_value.maybe_single.return_value
             chain.execute.return_value = _resp(dna_row)
@@ -148,6 +148,7 @@ def _supabase_mock_fusion(
         return tbl
 
     supabase.table.side_effect = _table
+    supabase.rpc.return_value.execute.return_value = _resp([])
     return supabase
 
 
@@ -165,17 +166,16 @@ def test_dunder_all_exports_only_record_dna_growth():
 
 
 @pytest.mark.unit
-def test_positional_args_raise_type_error():
+@pytest.mark.asyncio
+async def test_positional_args_raise_type_error():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     with pytest.raises(TypeError):
-        asyncio.get_event_loop().run_until_complete(
-            record_dna_growth(
-                _SESSION_ID,  # positional — should raise
-                _all_old_dims(),
-                _all_new_dims(),
-                MagicMock(),
-            )
+        await record_dna_growth(
+            _SESSION_ID,  # positional — should raise
+            _all_old_dims(),
+            _all_new_dims(),
+            MagicMock(),
         )
 
 
@@ -183,17 +183,16 @@ def test_positional_args_raise_type_error():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_inserts_9_rows_for_all_dims():
+@pytest.mark.asyncio
+async def test_record_dna_growth_inserts_9_rows_for_all_dims():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth(inserted_count=9)
-    result = asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(65.0),
-            new_dims=_all_new_dims(70.0),
-            supabase=supabase,
-        )
+    result = await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(65.0),
+        new_dims=_all_new_dims(70.0),
+        supabase=supabase,
     )
     assert result == 9
     tbl = supabase.table.return_value
@@ -204,17 +203,16 @@ def test_record_dna_growth_inserts_9_rows_for_all_dims():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_uses_single_bulk_insert():
+@pytest.mark.asyncio
+async def test_record_dna_growth_uses_single_bulk_insert():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth()
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(),
-            new_dims=_all_new_dims(),
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(),
+        new_dims=_all_new_dims(),
+        supabase=supabase,
     )
     tbl = supabase.table.return_value
     # insert must be called EXACTLY once — not 9 separate times
@@ -225,17 +223,16 @@ def test_record_dna_growth_uses_single_bulk_insert():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_payload_structure():
+@pytest.mark.asyncio
+async def test_record_dna_growth_payload_structure():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth()
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(65.0),
-            new_dims=_all_new_dims(70.0),
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(65.0),
+        new_dims=_all_new_dims(70.0),
+        supabase=supabase,
     )
     tbl = supabase.table.return_value
     rows = tbl.insert.call_args[0][0]
@@ -251,34 +248,32 @@ def test_record_dna_growth_payload_structure():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_event_type_is_dna_update():
+@pytest.mark.asyncio
+async def test_record_dna_growth_event_type_is_dna_update():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth()
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(),
-            new_dims=_all_new_dims(),
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(),
+        new_dims=_all_new_dims(),
+        supabase=supabase,
     )
     rows = supabase.table.return_value.insert.call_args[0][0]
     assert all(r["event_type"] == "dna_update" for r in rows)
 
 
 @pytest.mark.unit
-def test_record_dna_growth_session_id_in_all_rows():
+@pytest.mark.asyncio
+async def test_record_dna_growth_session_id_in_all_rows():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth()
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(),
-            new_dims=_all_new_dims(),
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(),
+        new_dims=_all_new_dims(),
+        supabase=supabase,
     )
     rows = supabase.table.return_value.insert.call_args[0][0]
     assert all(r["session_id"] == _SESSION_ID for r in rows)
@@ -288,20 +283,19 @@ def test_record_dna_growth_session_id_in_all_rows():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_delta_computed_correctly():
+@pytest.mark.asyncio
+async def test_record_dna_growth_delta_computed_correctly():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     # Use a specific dimension with known values for easy assertion
     new_dims = {"pattern_recognition": 70.0}
     old_dims = {"pattern_recognition": 65.0}
     supabase = _supabase_mock_growth(inserted_count=1)
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=old_dims,
-            new_dims=new_dims,
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=old_dims,
+        new_dims=new_dims,
+        supabase=supabase,
     )
     rows = supabase.table.return_value.insert.call_args[0][0]
     assert len(rows) == 1
@@ -310,20 +304,19 @@ def test_record_dna_growth_delta_computed_correctly():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_delta_precision_4_decimal_places():
+@pytest.mark.asyncio
+async def test_record_dna_growth_delta_precision_4_decimal_places():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     # round(38.7654 - 33.3333, 4) = round(5.4321, 4) = 5.4321
     new_dims = {"pattern_recognition": 38.7654}
     old_dims = {"pattern_recognition": 33.3333}
     supabase = _supabase_mock_growth(inserted_count=1)
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=old_dims,
-            new_dims=new_dims,
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=old_dims,
+        new_dims=new_dims,
+        supabase=supabase,
     )
     rows = supabase.table.return_value.insert.call_args[0][0]
     delta = rows[0]["payload"]["delta"]
@@ -336,18 +329,17 @@ def test_record_dna_growth_delta_precision_4_decimal_places():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_old_value_none_first_session():
+@pytest.mark.asyncio
+async def test_record_dna_growth_old_value_none_first_session():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     # All old_dims are None — first session, no prior row
     supabase = _supabase_mock_growth()
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(None),
-            new_dims=_all_new_dims(65.0),
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(None),
+        new_dims=_all_new_dims(65.0),
+        supabase=supabase,
     )
     rows = supabase.table.return_value.insert.call_args[0][0]
     for row in rows:
@@ -358,20 +350,19 @@ def test_record_dna_growth_old_value_none_first_session():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_mixed_old_some_none():
+@pytest.mark.asyncio
+async def test_record_dna_growth_mixed_old_some_none():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     # Only some dimensions have old values
     new_dims = {"pattern_recognition": 70.0, "logical_deduction": 60.0}
     old_dims = {"pattern_recognition": 65.0, "logical_deduction": None}
     supabase = _supabase_mock_growth(inserted_count=2)
-    asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=old_dims,
-            new_dims=new_dims,
-            supabase=supabase,
-        )
+    await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=old_dims,
+        new_dims=new_dims,
+        supabase=supabase,
     )
     rows = supabase.table.return_value.insert.call_args[0][0]
     row_map = {r["payload"]["dimension"]: r["payload"] for r in rows}
@@ -387,17 +378,16 @@ def test_record_dna_growth_mixed_old_some_none():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_empty_new_dims_returns_zero_no_db_call():
+@pytest.mark.asyncio
+async def test_record_dna_growth_empty_new_dims_returns_zero_no_db_call():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth()
-    result = asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims={},
-            new_dims={},
-            supabase=supabase,
-        )
+    result = await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims={},
+        new_dims={},
+        supabase=supabase,
     )
     assert result == 0
     supabase.table.assert_not_called()
@@ -407,17 +397,16 @@ def test_record_dna_growth_empty_new_dims_returns_zero_no_db_call():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_db_exception_returns_zero():
+@pytest.mark.asyncio
+async def test_record_dna_growth_db_exception_returns_zero():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth(insert_raises=True)
-    result = asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(),
-            new_dims=_all_new_dims(),
-            supabase=supabase,
-        )
+    result = await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(),
+        new_dims=_all_new_dims(),
+        supabase=supabase,
     )
     # Non-fatal — must NOT raise, must return 0
     assert result == 0
@@ -427,17 +416,16 @@ def test_record_dna_growth_db_exception_returns_zero():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_insert_error_field_returns_zero():
+@pytest.mark.asyncio
+async def test_record_dna_growth_insert_error_field_returns_zero():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth(insert_error=True)
-    result = asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(),
-            new_dims=_all_new_dims(),
-            supabase=supabase,
-        )
+    result = await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(),
+        new_dims=_all_new_dims(),
+        supabase=supabase,
     )
     assert result == 0
 
@@ -446,17 +434,16 @@ def test_record_dna_growth_insert_error_field_returns_zero():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_returns_inserted_count():
+@pytest.mark.asyncio
+async def test_record_dna_growth_returns_inserted_count():
     from app.modules.assessment.dna_growth import record_dna_growth
 
     supabase = _supabase_mock_growth(inserted_count=9)
-    result = asyncio.get_event_loop().run_until_complete(
-        record_dna_growth(
-            session_id=_SESSION_ID,
-            old_dims=_all_old_dims(),
-            new_dims=_all_new_dims(),
-            supabase=supabase,
-        )
+    result = await record_dna_growth(
+        session_id=_SESSION_ID,
+        old_dims=_all_old_dims(),
+        new_dims=_all_new_dims(),
+        supabase=supabase,
     )
     assert result == 9
 
@@ -465,7 +452,8 @@ def test_record_dna_growth_returns_inserted_count():
 
 
 @pytest.mark.unit
-def test_fuse_learner_dna_calls_record_dna_growth_after_upsert():
+@pytest.mark.asyncio
+async def test_fuse_learner_dna_calls_record_dna_growth_after_upsert():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     with patch(
@@ -474,13 +462,11 @@ def test_fuse_learner_dna_calls_record_dna_growth_after_upsert():
     ) as mock_growth:
         mock_growth.return_value = 9
         supabase = _supabase_mock_fusion()
-        result = asyncio.get_event_loop().run_until_complete(
-            fuse_learner_dna(
-                user_id=_USER_ID,
-                session_id=_SESSION_ID,
-                supabase=supabase,
-                settings=_settings_fusion(),
-            )
+        result = await fuse_learner_dna(
+            user_id=_USER_ID,
+            session_id=_SESSION_ID,
+            supabase=supabase,
+            settings=_settings_fusion(),
         )
     # fuse_learner_dna must have returned new_dims (9 keys)
     assert result is not None
@@ -497,7 +483,8 @@ def test_fuse_learner_dna_calls_record_dna_growth_after_upsert():
 
 
 @pytest.mark.unit
-def test_fuse_learner_dna_growth_failure_does_not_prevent_return():
+@pytest.mark.asyncio
+async def test_fuse_learner_dna_growth_failure_does_not_prevent_return():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     with patch(
@@ -507,13 +494,11 @@ def test_fuse_learner_dna_growth_failure_does_not_prevent_return():
         # Growth tracking raises — must be non-fatal
         mock_growth.side_effect = Exception("growth write failed")
         supabase = _supabase_mock_fusion()
-        result = asyncio.get_event_loop().run_until_complete(
-            fuse_learner_dna(
-                user_id=_USER_ID,
-                session_id=_SESSION_ID,
-                supabase=supabase,
-                settings=_settings_fusion(),
-            )
+        result = await fuse_learner_dna(
+            user_id=_USER_ID,
+            session_id=_SESSION_ID,
+            supabase=supabase,
+            settings=_settings_fusion(),
         )
     # fuse_learner_dna must still return new_dims despite growth failure
     assert result is not None
@@ -524,7 +509,8 @@ def test_fuse_learner_dna_growth_failure_does_not_prevent_return():
 
 
 @pytest.mark.unit
-def test_fuse_learner_dna_old_dims_for_growth_none_on_first_session():
+@pytest.mark.asyncio
+async def test_fuse_learner_dna_old_dims_for_growth_none_on_first_session():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     with patch(
@@ -534,13 +520,11 @@ def test_fuse_learner_dna_old_dims_for_growth_none_on_first_session():
         mock_growth.return_value = 9
         # dna_row=None → first session, no prior DB row
         supabase = _supabase_mock_fusion(dna_row=None)
-        asyncio.get_event_loop().run_until_complete(
-            fuse_learner_dna(
-                user_id=_USER_ID,
-                session_id=_SESSION_ID,
-                supabase=supabase,
-                settings=_settings_fusion(),
-            )
+        await fuse_learner_dna(
+            user_id=_USER_ID,
+            session_id=_SESSION_ID,
+            supabase=supabase,
+            settings=_settings_fusion(),
         )
     mock_growth.assert_called_once()
     old_dims = mock_growth.call_args.kwargs["old_dims"]
@@ -553,7 +537,8 @@ def test_fuse_learner_dna_old_dims_for_growth_none_on_first_session():
 
 
 @pytest.mark.unit
-def test_record_dna_growth_session_id_sanitized_in_logs(caplog):
+@pytest.mark.asyncio
+async def test_record_dna_growth_session_id_sanitized_in_logs(caplog):
     """AC 10 — _safe_sid strips \\n and \\r before all logger calls."""
     import logging
 
@@ -561,13 +546,11 @@ def test_record_dna_growth_session_id_sanitized_in_logs(caplog):
 
     supabase = _supabase_mock_growth(inserted_count=9)
     with caplog.at_level(logging.INFO, logger="app.modules.assessment.dna_growth"):
-        result = asyncio.get_event_loop().run_until_complete(
-            record_dna_growth(
-                session_id="evil\nsession\rid",
-                old_dims=_all_old_dims(),
-                new_dims=_all_new_dims(),
-                supabase=supabase,
-            )
+        result = await record_dna_growth(
+            session_id="evil\nsession\rid",
+            old_dims=_all_old_dims(),
+            new_dims=_all_new_dims(),
+            supabase=supabase,
         )
     assert result == 9
     assert len(caplog.records) > 0, "Expected at least one log record from dna_growth"

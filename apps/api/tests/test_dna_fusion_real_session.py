@@ -69,7 +69,7 @@ def _supabase_mock(
             tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(event_rows)
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _make_resp(event_rows)
 
         elif name == "learner_dna":
             # Read side — maybe_single
@@ -316,8 +316,9 @@ async def test_fuse_learner_dna_upsert_payload_contains_exact_ema_values(
     assert captured_upsert.get("user_id") == _USER_UUID, (
         f"user_id missing from upsert payload; got {captured_upsert.get('user_id')!r}"
     )
-    assert captured_upsert.get("session_count") == 3, (  # old=2, +1
-        f"session_count should be 3; got {captured_upsert.get('session_count')}"
+    assert "session_count" not in captured_upsert, (
+        f"session_count must NOT be in upsert payload (D74: atomic RPC handles increment); "
+        f"got {captured_upsert.get('session_count')!r}"
     )
     for dim in (
         "pattern_recognition", "logical_deduction", "processing_speed",
