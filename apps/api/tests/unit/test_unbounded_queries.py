@@ -422,6 +422,21 @@ def test_request_path_modules_are_where_we_think_they_are() -> None:
 
 
 @pytest.mark.unit
+def test_dna_fusion_is_in_scan_scope() -> None:
+    """D93 (AC8) — dna_fusion.py must appear in request_path_modules() output.
+
+    Named test required by Story 3-55 AC8. If dna_fusion.py is removed from
+    REQUEST_PATH_FILENAMES, this test fails before any new unbounded SELECT in
+    dna_fusion.py can silently escape the CI scanner.
+    """
+    names = {p.relative_to(MODULES_DIR).as_posix() for p in request_path_modules()}
+    assert "assessment/dna_fusion.py" in names, (
+        "D93: dna_fusion.py is on the request path but not in CI scanner scope — "
+        "add 'dna_fusion.py' to REQUEST_PATH_FILENAMES"
+    )
+
+
+@pytest.mark.unit
 def test_pipeline_is_out_of_scope() -> None:
     """Premise for the SCOPE section: pipeline code is excluded on purpose.
 

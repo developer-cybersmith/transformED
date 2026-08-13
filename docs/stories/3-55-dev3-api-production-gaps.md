@@ -28,7 +28,7 @@ Dev 3's Assessment API has five outstanding production-readiness issues. Two (D7
 5. `quiz_attempts` and `teachback_attempts` SELECTs in `dna_fusion.py` each carry a `# BOUNDED:` comment explaining why their row count is naturally capped (per-session, bounded by lesson structure).
 6. `docs/DEFECT-REGISTER.md` gains a new entry **D93** (CI scan gap, `dna_fusion.py` missing from scope, Dev 3, closed by this story) with the premise test as enforcement.
 7. `REQUEST_PATH_FILENAMES` in `test_unbounded_queries.py` includes `"dna_fusion.py"`.
-8. A new premise test `test_dna_fusion_is_in_scan_scope` asserts that `assessment/dna_fusion.py` is returned by `request_path_modules()`.
+8. A new standalone test `test_dna_fusion_is_in_scan_scope` asserts that `assessment/dna_fusion.py` is returned by `request_path_modules()`. **Implemented:** both as a standalone `def test_dna_fusion_is_in_scan_scope():` in `test_unbounded_queries.py` AND as an assertion inside `test_request_path_modules_are_where_we_think_they_are` (redundant guard).
 9. `docs/DEFECT-REGISTER.md` gains a new entry **D94** (lesson_id UUID validation gap, Dev 3, closed by this story) with `test_session_create_validates_uuid_format` as enforcement.
 10. `SessionCreate.lesson_id` accepts a valid UUID string and raises `ValidationError` for any non-UUID input (`"x"`, `""`, `"not-a-uuid"`, `"123"`).
 11. The existing `body.lesson_id` usage in `router.py` continues to work unchanged (string type preserved through the validator).

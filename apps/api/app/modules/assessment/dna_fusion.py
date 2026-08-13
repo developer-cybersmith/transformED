@@ -259,13 +259,20 @@ async def fuse_learner_dna(
     tb_rows: list[dict[str, Any]] = []
     event_rows: list[dict[str, Any]] = []
 
-    # BOUNDED: per-session; a lesson has at most 15 segments × 10 Q = 150 quiz_attempts per session.
+    # D96 (Story 3-55 review): quiz retakes are permitted — UNIQUE (session_id,
+    # question_id, attempt_number) allows successive attempt_number values, so a
+    # single session can accumulate far more than "1 attempt × N questions" rows.
+    # Cap at 10,000 to bound the read; beyond the cap the oldest attempts are
+    # omitted from the accuracy computation. See D96 for the full-accuracy fix
+    # (use latest attempt per question only) in Sprint 4. Scale Contract Q4.
     try:
         quiz_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("quiz_attempts")
                 .select("is_correct, response_time_ms, segment_id")
                 .eq("session_id", session_id)
+                .order("created_at")
+                .limit(10_000)
                 .execute()
             )
         )
@@ -273,13 +280,19 @@ async def fuse_learner_dna(
     except Exception as exc:
         logger.warning("DNA fusion: quiz read failed session=%s: %s", session_id, exc)
 
-    # BOUNDED: per-session; a lesson has at most 15 segments × 5 retries = 75 teachback_attempts per session.
+    # D97 (Story 3-55 review): teachback retakes are permitted — no server-side cap
+    # is enforced in service.py or schemas.py, and each retake incurs a GPT-4o-mini
+    # call. "5 retries" existed only in a comment, not in code or schema. Cap at
+    # 10,000 to bound the read. See D97 for the per-session LLM cost ceiling and
+    # latest-attempt-only computation fix in Sprint 4. Scale Contract Q4.
     try:
         tb_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("teachback_attempts")
                 .select("score, attempt_number, segment_id")
                 .eq("session_id", session_id)
+                .order("created_at")
+                .limit(10_000)
                 .execute()
             )
         )
@@ -289,19 +302,27 @@ async def fuse_learner_dna(
 
     # D92 (Story 3-55): 10,000-row cap on session events. Typical volume is < 100
     # (jargon hovers, skips, help requests); 10,000 is a 100× safety margin.
-    # Beyond the cap the oldest events are omitted — the signal (event-type counts)
-    # degrades gracefully, not catastrophically. Scale Contract Q4.
+    # .order("created_at") ensures the OLDEST events are omitted at the cap (not a
+    # non-deterministic heap-order subset). Scale Contract Q2: truncation is surfaced
+    # via logger.warning so the admin has visibility when the cap is hit.
     try:
         events_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("session_events")
                 .select("event_type")
                 .eq("session_id", session_id)
+                .order("created_at")
                 .limit(10_000)
                 .execute()
             )
         )
         event_rows = rows(events_resp)
+        if len(event_rows) == 10_000:
+            logger.warning(
+                "D92: session_events cap reached for session=%s — DNA event signals "
+                "computed on first 10,000 rows only; oldest events omitted.",
+                session_id,
+            )
     except Exception as exc:
         logger.warning("DNA fusion: events read failed session=%s: %s", session_id, exc)
 
