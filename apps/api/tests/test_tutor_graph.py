@@ -57,11 +57,12 @@ def _keyed_redis(sid: str, *, state: str, count: str | None = None, exists: int 
     return redis
 
 
-def _patch_settings(mocker, *, max_distraction: int = 3) -> None:
+def _patch_settings(mocker, *, max_distraction: int = 3, intervention_timeout: int = 45) -> None:
     """Patch get_settings — required by any test whose path reaches a guard or intervening_node."""
     settings = MagicMock()
     settings.max_distraction_per_session = max_distraction
     settings.intervention_cooldown_seconds = 120
+    settings.intervention_timeout_seconds = intervention_timeout  # D63 safety net
     mocker.patch("app.config.get_settings", return_value=settings)
 
 
@@ -189,6 +190,71 @@ async def test_intervening_complete_returns_to_teaching(mocker) -> None:
     from app.modules.tutor.state_machine.graph import dispatch_event
 
     result = await dispatch_event("s-interv", "intervention_complete")
+
+    assert result["current_state"] == TutorState.TEACHING
+
+
+@pytest.mark.unit
+async def test_intervening_node_writes_intervention_deadline(mocker) -> None:
+    """D63 AC2: entering INTERVENING writes intervention_deadline_at using
+    settings.intervention_timeout_seconds, with the same 24h TTL as every other tutor key."""
+    _patch_settings(mocker, intervention_timeout=45)
+    redis = _keyed_redis("s-deadline", state="TEACHING", count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-deadline", "distraction_detected")
+
+    assert result["current_state"] == TutorState.INTERVENING
+    deadline_key = "session:s-deadline:intervention_deadline_at"
+    deadline_calls = [c for c in redis.set.call_args_list if c.args[0] == deadline_key]
+    assert len(deadline_calls) == 1, "expected exactly one intervention_deadline_at write"
+    assert deadline_calls[0].kwargs.get("ex") == _STATE_TTL
+
+
+@pytest.mark.unit
+async def test_intervening_node_returns_only_owned_keys(mocker) -> None:
+    """D63 AC6: intervening_node must not spread `{**state, ...}` — only current_state and
+    intervention_message are its own keys. Direct-call regression pin, complementing the
+    AST-scan guard in test_node_return_shape.py."""
+    _patch_settings(mocker)
+    redis = _keyed_redis("s-owned", state="TEACHING", count="0", exists=0)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import intervening_node
+
+    state = {
+        "session_id": "s-owned",
+        "event": "distraction_detected",
+        "event_payload": {},
+        "intervention_type": "distraction",
+        # Planted extra state keys — if the node ever re-spreads `**state`, these come back
+        # out in the return value.
+        "user_id": "u-1",
+        "lesson_id": "l-1",
+        "ces_score": 42.0,
+    }
+    result = await intervening_node(state)  # type: ignore[arg-type]
+
+    assert set(result) == {"current_state", "intervention_message"}, (
+        f"intervening_node returned {sorted(result)} — extra keys mean state is being "
+        "spread back out"
+    )
+
+
+@pytest.mark.unit
+async def test_intervention_complete_from_non_intervening_state_is_safe_noop(mocker) -> None:
+    """Review finding (2026-08-11, PR #129 six-layer review, Edge Case Hunter layer): no test
+    previously pinned that a client spamming intervention_complete from a state OTHER than
+    INTERVENING is a safe no-op. Every routing function except route_from_intervening ignores
+    events it doesn't recognize and defaults to staying put — this proves it holds for
+    intervention_complete specifically, not just for a generic unrecognized event."""
+    mocker.patch("app.core.redis.get_redis", return_value=_redis("TEACHING"))
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    result = await dispatch_event("s-interv-from-teaching", "intervention_complete")
 
     assert result["current_state"] == TutorState.TEACHING
 
@@ -380,24 +446,30 @@ def _assert_intervention_suppressed(redis: AsyncMock, sid: str) -> None:
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_cooldown_stays_teaching(mocker) -> None:
-    """distraction_detected during an active cooldown → guard blocks → stays TEACHING
-    (suppressed)."""
+    """D6: distraction guard moved to service.py (_can_intervene_distraction Lua script).
+    route_from_teaching no longer guards distraction_detected — any distraction_detected
+    event that reaches the FSM transitions to INTERVENING unconditionally.
+    Guard blocking is tested in test_s3_48_lua_distraction_cap.py.
+    """
     _patch_settings(mocker)
-    redis = _keyed_redis("s-cool", state="TEACHING", exists=1)  # cooldown active
+    redis = _keyed_redis("s-cool", state="TEACHING", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
 
     from app.modules.tutor.state_machine.graph import dispatch_event
 
     result = await dispatch_event("s-cool", "distraction_detected")
 
-    assert result["current_state"] == TutorState.TEACHING
-    _assert_intervention_suppressed(redis, "s-cool")
+    # Guard now lives in service.py; FSM always transitions to INTERVENING on this event.
+    assert result["current_state"] == TutorState.INTERVENING
 
 
 @pytest.mark.unit
 async def test_distraction_blocked_by_max_count_stays_teaching(mocker) -> None:
-    """distraction_detected at the per-session cap (count == max) → guard blocks → stays
-    TEACHING."""
+    """D6: same as cooldown test — guard moved to service.py; FSM unconditionally → INTERVENING.
+
+    The per-session cap is enforced by the Lua atomic check in _can_intervene_distraction
+    (test_s3_48_lua_distraction_cap.py). Events that reach the FSM already passed the guard.
+    """
     _patch_settings(mocker, max_distraction=3)
     redis = _keyed_redis("s-cap", state="TEACHING", count="3", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -406,8 +478,8 @@ async def test_distraction_blocked_by_max_count_stays_teaching(mocker) -> None:
 
     result = await dispatch_event("s-cap", "distraction_detected")
 
-    assert result["current_state"] == TutorState.TEACHING
-    _assert_intervention_suppressed(redis, "s-cap")
+    # Guard now lives in service.py; FSM always transitions to INTERVENING on this event.
+    assert result["current_state"] == TutorState.INTERVENING
 
 
 @pytest.mark.unit
@@ -563,13 +635,20 @@ async def test_fatigue_detected_sets_fatigue_fired_flag(mocker) -> None:
     result = await dispatch_event("s-ff", "fatigue_detected")
 
     assert result["current_state"] == TutorState.INTERVENING
-    redis.set.assert_any_call("tutor_fatigue_fired:s-ff", "1", ex=_STATE_TTL)
+    # D6: SET NX — prevents a race where two concurrent fatigue signals both pass the EXISTS check
+    # before either has written the flag; the second NX write is a no-op.
+    redis.set.assert_any_call("tutor_fatigue_fired:s-ff", "1", ex=_STATE_TTL, nx=True)
 
 
 @pytest.mark.unit
 async def test_distraction_detected_increments_count(mocker) -> None:
-    """AC2: distraction_detected increments the distraction counter (intervention_type =
-    distraction)."""
+    """D6: distraction_detected → INTERVENING. The count increment now happens inside the Lua
+    script (_can_intervene_distraction in service.py), not in intervening_node. The FSM just
+    records the transition; no redis.incr call is expected here.
+
+    The INCR responsibility transfer is tested in test_s3_48_lua_distraction_cap.py
+    (test_intervening_node_source_no_distraction_incr).
+    """
     _patch_settings(mocker)
     redis = _keyed_redis("s-dc", state="TEACHING", count="0", exists=0)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
@@ -579,7 +658,8 @@ async def test_distraction_detected_increments_count(mocker) -> None:
     result = await dispatch_event("s-dc", "distraction_detected")
 
     assert result["current_state"] == TutorState.INTERVENING
-    redis.incr.assert_any_call("tutor_distraction_count:s-dc")
+    # Lua handled the INCR atomically in service.py — intervening_node must NOT double-count.
+    redis.incr.assert_not_called()
 
 
 @pytest.mark.unit

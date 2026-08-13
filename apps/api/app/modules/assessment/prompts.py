@@ -117,7 +117,7 @@ def build_teachback_user_prompt(
 
 DPDP_DISCLAIMER = (
     "This assessment reflects your personal learning preferences, not your intelligence "
-    "or capability. TransformED Learner DNA is not a clinical assessment and does not "
+    "or capability. HIE Learner DNA is not a clinical assessment and does not "
     "diagnose any learning or psychological condition. — Pursuant to DPDP Act 2023."
 )
 
@@ -128,7 +128,7 @@ ONBOARDING_PROFILE_SYSTEM_PROMPT = (
     "Based on the student's earned badges (reflecting their strongest learning traits), write 2-3 "
     "sentences that:\n"
     "1. Describe their dominant learning style in plain, positive language\n"
-    "2. Give one practical tip for how they can use this to learn more effectively in TransformED\n"
+    "2. Give one practical tip for how they can use this to learn more effectively with HIE\n"
     "3. End naturally — the DPDP disclaimer will be appended automatically; do NOT write it "
     "yourself\n"
     "\n"

@@ -510,3 +510,247 @@ class TestExistingStory21TestsUnaffected:
 
         assert result["segment_summaries"][0]["segment_id"] == _derive_section_id(SECTION_0, 0)
         assert result["segment_summaries"][0]["summary"] == "A short summary under the word cap."
+
+
+class TestSectionTruncationSurvivesRetry:
+    """Story 3-39 Round 2 (real /bmad-code-review, 2 of 4 parallel reviewers,
+    independently) finding: the cache-hit early-return in all 6 Phase 1
+    nodes returns BEFORE `_get_section_body` is ever called, so on an ARQ
+    retry that hits a section's already-written content checkpoint,
+    `section_truncations` for that section silently vanished from the
+    admin-visible aggregate — even though the truncation genuinely happened
+    on the run that produced the now-cached content. Exactly the "silently
+    wrong, not loudly broken" failure class this story exists to close, one
+    layer removed.
+
+    Fixed by persisting the truncation signal into its own retry-durable
+    checkpoint entry (`_persist_section_truncation_checkpoint` /
+    `_read_section_truncation_checkpoint`), kept deliberately SEPARATE from
+    each node's content checkpoint value — several of the 6 nodes' content
+    checkpoints (`segment_complexity_node`'s `score`,
+    `narration_generator_node`'s `result`) get passed unfiltered into a
+    strict `extra="forbid"` Pydantic model downstream, so mixing truncation
+    fields into those dicts would risk a schema-validation regression.
+    """
+
+    @pytest.mark.asyncio
+    async def test_summarise_segment_reconstructs_truncation_on_cache_hit(self) -> None:
+        from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        cached_summary = {"segment_id": section_id, "summary": "Already-computed summary."}
+        mock_jobs_table = _make_jobs_table(
+            {
+                f"summarise_segment:{section_id}": cached_summary,
+                f"section_truncation:summarise_segment:{section_id}": {
+                    "original_chars": 9000,
+                    "capped_chars": 6000,
+                },
+            }
+        )
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
+            state = _base_state()
+            result = await summarise_segment_node(state)
+
+        mock_provider.complete_structured.assert_not_called()
+        assert result["segment_summaries"] == [cached_summary]
+        assert result["section_truncations"] == [
+            {
+                "section_id": section_id,
+                "node": "summarise_segment",
+                "original_chars": 9000,
+                "capped_chars": 6000,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_summarise_segment_cache_hit_with_no_truncation_checkpoint_is_empty(
+        self,
+    ) -> None:
+        """Covers BOTH real cases that produce no truncation checkpoint entry:
+        the section genuinely was not truncated, and a checkpoint written
+        before this fix existed (legacy — no `section_truncation:...` key at
+        all). Both must degrade to an empty list, not raise."""
+        from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        cached_summary = {"segment_id": section_id, "summary": "Already-computed summary."}
+        mock_jobs_table = _make_jobs_table({f"summarise_segment:{section_id}": cached_summary})
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
+            state = _base_state()
+            result = await summarise_segment_node(state)
+
+        assert result["section_truncations"] == []
+
+    @pytest.mark.asyncio
+    async def test_summarise_segment_persists_truncation_checkpoint_on_fresh_truncated_write(
+        self,
+    ) -> None:
+        """The write side of the same fix: a fresh (cache-miss) run whose
+        section body IS over the cap must persist a truncation checkpoint —
+        via the SAME atomic merge RPC as the content checkpoint, under its
+        own key — so a LATER retry (once the content checkpoint exists) can
+        reconstruct it instead of silently omitting it."""
+        from app.config import get_settings
+        from app.modules.content.pipeline.graph import _derive_section_id, summarise_segment_node
+
+        cap = get_settings().section_body_max_chars
+        oversized_section = {"title": "Oversized", "body": "x" * (cap + 500)}
+        section_id = _derive_section_id(oversized_section, 0)
+        mock_jobs_table = _make_jobs_table({})  # cache miss
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = type(
+            "Summary", (), {"summary": "A fresh summary."}
+        )()
+
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
+            state = _base_state(_section=oversized_section)
+            await summarise_segment_node(state)
+
+        expected_key = f"section_truncation:summarise_segment:{section_id}"
+        rpc_calls = mock_supabase.rpc.call_args_list
+        truncation_calls = [c for c in rpc_calls if c[0][1]["p_key"] == expected_key]
+        assert len(truncation_calls) == 1, (
+            f"expected exactly one truncation-checkpoint RPC write, got {len(truncation_calls)} "
+            f"(all rpc calls: {[c[0][1]['p_key'] for c in rpc_calls]})"
+        )
+        assert truncation_calls[0][0][1]["p_value"] == {
+            "original_chars": cap + 500,
+            "capped_chars": cap,
+        }
+
+    @pytest.mark.asyncio
+    async def test_quiz_generator_reconstructs_truncation_on_cache_hit(self) -> None:
+        """quiz_generator_node is the most structurally different of the 6
+        (two content-checkpoint write sites — the salvage path and the main
+        success path) — covered separately from summarise_segment_node's
+        representative case for that reason."""
+        from app.modules.content.pipeline.graph import _derive_section_id, quiz_generator_node
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        q0 = {
+            "segment_id": section_id,
+            "data": {
+                "question_id": f"quiz_{section_id}_0",
+                "type": "mcq",
+                "question": "Already-computed question?",
+                "options": ["A", "B", "C", "D"],
+                "correct_index": 0,
+                "explanation": "Already-computed explanation.",
+                "difficulty": "medium",
+            },
+        }
+        cached_batch = {"segment_id": section_id, "questions": [q0]}
+        mock_jobs_table = _make_jobs_table(
+            {
+                f"quiz_generator:{section_id}": cached_batch,
+                f"section_truncation:quiz_generator:{section_id}": {
+                    "original_chars": 7200,
+                    "capped_chars": 6000,
+                },
+            }
+        )
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
+            state = _base_state()
+            result = await quiz_generator_node(state)
+
+        mock_provider.complete_structured.assert_not_called()
+        assert result["quiz_questions"] == [q0]
+        assert result["section_truncations"] == [
+            {
+                "section_id": section_id,
+                "node": "quiz_generator",
+                "original_chars": 7200,
+                "capped_chars": 6000,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_intervention_messages_reconstructs_truncation_on_cache_hit(self) -> None:
+        """intervention_messages_node's content-checkpoint write is
+        conditional (skipped entirely when output required padding) —
+        covered separately to make sure the truncation-checkpoint reconstruct
+        on cache-hit doesn't assume the unconditional-write shape the other
+        nodes have."""
+        from app.modules.content.pipeline.graph import (
+            _derive_section_id,
+            intervention_messages_node,
+        )
+
+        section_id = _derive_section_id(SECTION_0, 0)
+        cached_interventions = {
+            "segment_id": section_id,
+            "data": {
+                "distraction": ["d1", "d2", "d3"],
+                "confusion": ["c1", "c2", "c3"],
+                "fatigue": ["f1", "f2", "f3"],
+            },
+        }
+        mock_jobs_table = _make_jobs_table(
+            {
+                f"intervention_messages:{section_id}": cached_interventions,
+                f"section_truncation:intervention_messages:{section_id}": {
+                    "original_chars": 6800,
+                    "capped_chars": 6000,
+                },
+            }
+        )
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value = mock_jobs_table
+        mock_provider = AsyncMock()
+
+        with (
+            patch("app.core.db.get_supabase", return_value=mock_supabase),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.redis.get_redis", return_value=AsyncMock()),
+        ):
+            state = _base_state()
+            result = await intervention_messages_node(state)
+
+        mock_provider.complete_structured.assert_not_called()
+        assert result["intervention_prompts"] == [cached_interventions]
+        assert result["section_truncations"] == [
+            {
+                "section_id": section_id,
+                "node": "intervention_messages",
+                "original_chars": 6800,
+                "capped_chars": 6000,
+            }
+        ]

@@ -385,6 +385,181 @@ async def test_segment_with_zero_slides_is_skipped() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_malformed_slide_entry_that_is_not_a_dict_is_skipped_not_crashed() -> None:
+    """D32: `_group_by_segment_id` must skip a non-dict entry (e.g. a bare string
+    from a schema-drifted checkpoint), mirroring `_index_by_segment_id`'s existing
+    check (Story 2-31). Pre-fix, `item.get("segment_id")` on a plain string raises
+    AttributeError and crashes package_builder_node after 100% of the lesson's
+    spend -- this must not happen; the other, well-formed slide for sec_0 survives."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    malformed = "not-a-dict-slide-entry"
+    sb, _, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(slides=[*SLIDES, malformed]))
+
+    package = result["lesson_package"]
+    assert len(package["segments"]) == 2, "both segments survive; the malformed entry is skipped"
+    seg0 = next(s for s in package["segments"] if s["segment_id"] == "sec_0")
+    assert len(seg0["slides"]) == 1, "only the real slide, the malformed entry did not get in"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_malformed_slide_entry_missing_data_key_is_skipped_not_crashed() -> None:
+    """D32: a dict entry with a segment_id but no "data" key must be skipped, not
+    a raw KeyError from `item["data"]`. Docstring says "same defensive-skip
+    philosophy as _index_by_segment_id" -- before this fix, that claim was false."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    malformed = {"segment_id": "sec_0"}  # no "data" key at all
+    sb, _, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(slides=[*SLIDES, malformed]))
+
+    package = result["lesson_package"]
+    seg0 = next(s for s in package["segments"] if s["segment_id"] == "sec_0")
+    assert len(seg0["slides"]) == 1, "only the real slide; the missing-data entry was skipped"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_malformed_slide_entry_with_non_dict_data_value_is_skipped_not_crashed() -> None:
+    """D32: a "data" value that is present but not a dict (e.g. a string) must be
+    skipped, mirroring `_index_by_segment_id`'s value-type check (graph.py:4015-27).
+    Pre-fix this string reaches downstream code that does `{**value}`-shaped
+    access on it and crashes."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    malformed = {"segment_id": "sec_1", "data": "not-a-dict-value"}
+    sb, _, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(slides=[*SLIDES, malformed]))
+
+    package = result["lesson_package"]
+    seg1 = next(s for s in package["segments"] if s["segment_id"] == "sec_1")
+    assert len(seg1["slides"]) == 1, "only the real slide; the non-dict data entry was skipped"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_segment_with_only_slide_malformed_drops_segment_and_total_segments_matches_shipped(
+    caplog: Any,
+) -> None:
+    """D32 review round (Scale & Load Hunter — CONFIRMED, most severe finding).
+
+    When a segment's ONLY slide entry is malformed (not one bad entry among
+    several good ones — the whole segment's supply), the pre-existing
+    zero-slides path drops the entire segment. Before this fix,
+    `metadata.total_segments` still read the stale planning-time count
+    (`lesson_plan["total_segments"]`), so the shipped package claimed 2
+    segments while containing 1 — the same "reports success while being
+    wrong" shape as the book-scale 4%-of-the-book defect, at segment
+    granularity. `total_segments` must always equal the real, just-built
+    `len(segments)`, and the drop must be recorded in
+    `package_builder_degraded.dropped_segment_ids` (distinct from
+    `segment_ids`, which is for segments that shipped degraded, not dropped).
+    """
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    only_bad_for_sec0 = [
+        s if s["segment_id"] != "sec_0" else {"segment_id": "sec_0", "data": "not-a-dict"}
+        for s in SLIDES
+    ]
+    sb, jobs_table, _ = _mock_supabase()
+
+    with caplog.at_level("WARNING"):
+        with patch("app.core.db.get_supabase", return_value=sb):
+            result = await package_builder_node(_base_state(slides=only_bad_for_sec0))
+
+    package = result["lesson_package"]
+    assert len(package["segments"]) == 1
+    assert package["segments"][0]["segment_id"] == "sec_1"
+    assert package["metadata"]["total_segments"] == 1, (
+        "total_segments must be the real shipped count, not the stale lesson_plan value (2)"
+    )
+    assert any("ALL were malformed" in r.message for r in caplog.records), (
+        "the malformed-slides drop reason must actually be logged, not just asserted"
+    )
+
+    rec = None
+    for call in jobs_table.update.call_args_list:
+        payload = call[0][0]
+        if "package_builder_degraded" in payload.get("node_outputs", {}):
+            rec = payload["node_outputs"]["package_builder_degraded"]
+    assert rec is not None
+    assert rec["dropped_segment_ids"] == ["sec_0"], (
+        "distinct from segment_ids (degraded, not dropped)"
+    )
+    assert rec["total_segments"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_all_quiz_entries_for_a_segment_malformed_is_degraded_not_silently_empty() -> None:
+    """D32 review round (Edge Case Hunter + Scale & Load Hunter, independently
+    confirmed): a segment whose quiz entries all fail the defensive checks
+    must NOT be indistinguishable from a segment that legitimately has zero
+    quiz questions (`Segment.quiz` has no `min_length`, per
+    `test_segment_with_zero_quiz_and_jargon_still_included`). The segment
+    survives (quiz is not mandatory like slides), but must appear in the
+    admin degradation aggregate — the same visibility already given to a
+    missing complexity/narration/interventions entry."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    malformed_quiz = [{"segment_id": "sec_0", "data": "not-a-dict"}]
+    sb, jobs_table, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(quiz_questions=malformed_quiz))
+
+    package = result["lesson_package"]
+    seg0 = next(s for s in package["segments"] if s["segment_id"] == "sec_0")
+    assert seg0["quiz"] == [], "the malformed entry itself must not appear"
+
+    rec = None
+    for call in jobs_table.update.call_args_list:
+        payload = call[0][0]
+        if "package_builder_degraded" in payload.get("node_outputs", {}):
+            rec = payload["node_outputs"]["package_builder_degraded"]
+    assert rec is not None
+    assert "sec_0" in rec["segment_ids"], (
+        "a segment that had quiz entries but lost all of them must be flagged degraded"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_all_jargon_entries_for_a_segment_malformed_is_degraded_not_silently_empty() -> None:
+    """D32 review round: same as the quiz case, for glossary/jargon."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    malformed_glossary = [{"segment_id": "sec_1", "data": "not-a-dict"}]
+    sb, jobs_table, _ = _mock_supabase()
+
+    with patch("app.core.db.get_supabase", return_value=sb):
+        result = await package_builder_node(_base_state(glossary=malformed_glossary))
+
+    package = result["lesson_package"]
+    seg1 = next(s for s in package["segments"] if s["segment_id"] == "sec_1")
+    assert seg1["jargon"] == []
+
+    rec = None
+    for call in jobs_table.update.call_args_list:
+        payload = call[0][0]
+        if "package_builder_degraded" in payload.get("node_outputs", {}):
+            rec = payload["node_outputs"]["package_builder_degraded"]
+    assert rec is not None
+    assert "sec_1" in rec["segment_ids"], (
+        "a segment that had jargon entries but lost all of them must be flagged degraded"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_all_segments_without_slides_raises_runtime_error_and_writes_nothing() -> None:
     """Story 2-21/AC-4: 'zero usable segments' raises ONLY when every segment
     lacks slides (a genuine empty lesson) — no longer for a recoverable missing
@@ -932,6 +1107,55 @@ async def test_degraded_segments_recorded_in_node_outputs_for_admin() -> None:
     assert rec is not None, "degradation must be recorded for admin visibility"
     assert rec["segment_ids"] == ["sec_0"]
     assert rec["total_segments"] == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_section_truncations_written_verbatim_to_node_outputs() -> None:
+    """Story 3-39 AC-7 (Round 2 finding — the original diff's tests only
+    asserted on a single node's in-memory return, never on the actual
+    lesson_jobs.node_outputs write this AC is about). package_builder_node
+    must write state["section_truncations"] into the SAME admin-visibility
+    lesson_jobs.update(...) call as package_builder_degraded, verbatim and
+    always present (empty list when nothing truncated — asserted in the
+    second half of this test, not just the non-empty case)."""
+    from app.modules.content.pipeline.graph import package_builder_node
+
+    truncations = [
+        {
+            "section_id": "sec_0",
+            "node": "summarise_segment",
+            "original_chars": 9000,
+            "capped_chars": 6000,
+        }
+    ]
+    sb, jobs_table, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb):
+        await package_builder_node(_base_state(section_truncations=truncations))
+
+    rec = None
+    for call in jobs_table.update.call_args_list:
+        payload = call[0][0]
+        if "section_truncations" in payload.get("node_outputs", {}):
+            rec = payload["node_outputs"]["section_truncations"]
+    assert rec is not None, "section_truncations must be recorded for admin visibility"
+    assert rec == truncations
+
+    # Always present, never a missing key, even when nothing was truncated.
+    sb2, jobs_table2, _ = _mock_supabase()
+    with patch("app.core.db.get_supabase", return_value=sb2):
+        await package_builder_node(_base_state(section_truncations=[]))
+
+    rec_empty: list[Any] | None = None
+    found_key = False
+    for call in jobs_table2.update.call_args_list:
+        payload = call[0][0]
+        node_outputs = payload.get("node_outputs", {})
+        if "section_truncations" in node_outputs:
+            found_key = True
+            rec_empty = node_outputs["section_truncations"]
+    assert found_key, "section_truncations key must be present even when empty"
+    assert rec_empty == []
 
 
 # ── Story 2-31: narration-script recovery + malformed-entry hardening ─────────
