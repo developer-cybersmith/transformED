@@ -1,6 +1,6 @@
 # Demo T20 — Learner DNA Fusion: event aggregation DB path with non-empty event_rows
 
-**Status:** in-progress
+**Status:** done
 **Sprint:** Demo Sprint
 **Owner:** Dev 3
 **Branch:** `dev3-demo-t20-phaseL5`
@@ -99,12 +99,14 @@ pins the behaviour.
 ### AC5 — session_events DB read failure → event_counts={} → neutral signals → upsert succeeds
 
 **Given** only the `session_events` table read raises an `Exception` (quiz_attempts and
-teachback_attempts succeed with empty lists), a prior `learner_dna` row exists,
+teachback_attempts succeed with empty lists), a prior `learner_dna` row with **all dimensions
+= 50.0** (including `curiosity_index = 50.0`),
 **When** `fuse_learner_dna` is called,
 **Then**:
 - No exception raised (non-fatal path per production code line 298–300)
 - Return value is a dict with exactly 9 dimensions
-- `curiosity_index` reflects `event_counts={}` → signal=0.0 → EMA from prior value
+- `curiosity_index` in upsert == `pytest.approx(35.0, rel=1e-3)`
+  — signal=0.0 (empty event_counts); old=50.0; EMA=round(0.7×50.0+0.3×0.0,4)=35.0
 
 *Why:* AC18 in `test_dna_fusion.py` fails all three reads simultaneously. This test isolates
 the individual `session_events` read failure to verify the fallback path independently.
@@ -132,10 +134,10 @@ frustration_tolerance = 90.0
 **When** `fuse_learner_dna` is called with quiz_rows=[], tb_rows=[],
 **Then** the captured upsert payload must match all of the following:
 - `curiosity_index`: signal=(3/5)*100=60.0; EMA=round(0.7×40.0+0.3×60.0,4)=**46.0**
-- `help_seeking`: signal=(2/4)*100=50.0; EMA=round(0.7×50.0+0.3×50.0,4)=**50.0**
-- `study_independence`: signal=100.0-50.0=50.0; EMA=round(0.7×50.0+0.3×50.0,4)=**50.0**
+- `help_seeking`: signal=(1/4)*100=25.0; EMA=round(0.7×50.0+0.3×25.0,4)=**42.5** (≠50.0 neutral — verifies loop)
+- `study_independence`: signal=100.0-25.0=75.0; EMA=round(0.7×50.0+0.3×75.0,4)=**57.5** (≠50.0 — verifies inversion)
 - `goal_orientation`: signal=100-(1/4)*100=75.0; EMA=round(0.7×80.0+0.3×75.0,4)=**78.5**
-- `frustration_tolerance`: signal=100-(1/3)*100=66.667; EMA=round(0.7×90.0+0.3×66.667,4)=**83.0001**
+- `frustration_tolerance`: signal=100-(1/3)*100≈66.667; EMA=round(0.7×90.0+0.3×66.667,4)=**83.0** exactly (IEEE 754)
 
 *Why:* This is the comprehensive D75 closure — verifies that all four event-type signal
 dimensions are correctly computed end-to-end from DB event_rows through the counting loop
@@ -179,15 +181,16 @@ the event aggregation path T20 adds coverage for.
 - [x] **T1 — STORY: Create `docs/stories/demo-t20-dna-fusion-event-aggregation-path.md`** — ✓ 2026-08-13
   - Story-first commit (no implementation in same commit)
 
-- [ ] **T2 — IMPLEMENT: Write `apps/api/tests/test_dna_fusion_event_aggregation.py` (6 tests)**
+- [x] **T2 — IMPLEMENT: Write `apps/api/tests/test_dna_fusion_event_aggregation.py` (6 tests)** — ✓ 2026-08-13
   - AC1: 3 jargon_hover → curiosity_index EMA = 32.0 in upsert
   - AC2: 4 jargon_hover → curiosity_index EMA = 59.0, not 60.0-based or cap-based
   - AC3: unknown event_type → harmless, curiosity_index reflects 0 known events
   - AC4: empty-string event_type filtered → only real jargon_hover counted
   - AC5: session_events read failure alone → non-fatal, returns 9 dims
-  - AC6: all four event types → exact EMA for all four signal dims
+  - AC6: all four event types → exact EMA for all four signal dims (help=1 event→42.5≠neutral)
 
-- [ ] **T3 — VERIFY: run full test suite, confirm no regressions**
+- [x] **T3 — VERIFY: run full test suite, confirm no regressions** — ✓ 2026-08-13
+  - 6/6 T20 tests PASS; assessment module regression GREEN
 
 ---
 
@@ -277,25 +280,47 @@ All values derived from constants in `dna_fusion.py`:
 | event_type | count | signal formula | signal | old | EMA |
 |---|---|---|---|---|---|
 | jargon_hover | 3 | (3/5)*100 | 60.0 | 40.0 | round(0.7×40+0.3×60,4)=46.0 |
-| help_seeking | 2 | (2/4)*100 | 50.0 | 50.0 | round(0.7×50+0.3×50,4)=50.0 |
+| help_seeking | 1 | (1/4)*100 | 25.0 | 50.0 | round(0.7×50+0.3×25,4)=**42.5** |
 | skip_segment | 1 | 100-(1/4)*100 | 75.0 | 80.0 | round(0.7×80+0.3×75,4)=78.5 |
 | intervention | 1 | 100-(1/3)*100 | 66.6̄ | 90.0 | round(0.7×90+0.3×66.6̄,4)=83.0 |
+| study_independence | — | 100-help_signal | 75.0 | 50.0 | round(0.7×50+0.3×75,4)=**57.5** |
 
-study_independence = 100 - help_signal = 100 - 50.0 = 50.0; EMA(50.0, 50.0) = 50.0.
+Note: `help_seeking` uses count=1 (not 2) so signal=25.0 ≠ _NEUTRAL=50.0. With count=2,
+signal=50.0=_NEUTRAL → EMA=50.0, indistinguishable from a neutral fallback or wrong-key bug.
 
-For AC6 `frustration_tolerance`: signal = 100 - (1/3)*100 = 100 - 33.333... = 66.6667.
-EMA = round(0.7×90.0 + 0.3×66.6667, 4) = round(63.0 + 20.0001, 4) = round(83.0001, 4) = 83.0001.
-Use `pytest.approx(83.0, rel=1e-2)` (1% relative) to avoid floating-point fragility.
+For AC6 `frustration_tolerance`: signal = 100 - (1/3)*100 ≈ 66.6̄.
+IEEE 754: round(0.7×90.0 + 0.3×(100-(1/3)×100), 4) = round(63.0 + 20.000000000000004, 4) = **83.0** exactly.
+Use `pytest.approx(frustration_ema, rel=1e-3)` — consistent with all other assertions.
 
-### Known pre-existing test failure
+### Known pre-existing test failure (D76)
 
-`test_dna_fusion.py::test_positional_args_raise_type_error` — uses `asyncio.get_event_loop().run_until_complete()` which fails in Python 3.12 with `asyncio_mode=auto`. Pre-existing from Story 3-25; not introduced by T20. Also in `test_dna_growth.py::test_positional_args_raise_type_error` and `test_dna_growth.py::test_record_dna_growth_inserts_9_rows_for_all_dims` (same pattern). Expected count: 3 pre-existing failures total.
+`test_dna_fusion.py::test_positional_args_raise_type_error` — uses `asyncio.get_event_loop().run_until_complete()` which fails in Python 3.12 with `asyncio_mode=auto`. Pre-existing from Story 3-25; not introduced by T20. Also in `test_dna_growth.py::test_positional_args_raise_type_error` and `test_dna_growth.py::test_record_dna_growth_inserts_9_rows_for_all_dims` (same pattern). Expected count: 3 pre-existing failures total. Registered as **D76** in `docs/DEFECT-REGISTER.md`.
 
 ---
 
 ## Senior Developer Review (AI)
 
-*(To be populated after code review)*
+**Review date:** 2026-08-13
+**Outcome:** Approve (8 patches applied)
+**Layers run:** 6 — Story Quality, Blind Hunter, AC Completeness, Edge Case Hunter, Process Integrity, Scale & Load Hunter
+
+### Action Items (all resolved before commit)
+
+- [x] **P1 (HIGH)** — Wire `session_events` INSERT chain in mock so `record_dna_growth` (Step 6) does not silently fail in all 6 tests. Added `tbl.insert.return_value.execute.return_value = _resp([])`.
+- [x] **P2 (MED)** — Assert `on_conflict="user_id"` in `_spy_upsert`. Without this, changing to `on_conflict="id"` would create duplicate `learner_dna` rows silently.
+- [x] **P3 (MOD)** — AC6 `help_seeking` count changed 2→1. Count=2 produces signal=50.0=_NEUTRAL; EMA=50.0 is indistinguishable from a neutral fallback bug. Count=1 → signal=25.0 → EMA=42.5 ≠ 50.0. Also verifies `study_independence` inversion (57.5 ≠ 50.0).
+- [x] **P4 (LOW)** — AC2: added spec-pin literal `assert expected_ema == pytest.approx(59.0, rel=1e-6)` (consistent with AC1/AC3/AC4 pattern).
+- [x] **P5 (LOW)** — Fixed `# ≈ 83.0001` comment (actual IEEE 754 result is 83.0 exactly). Changed `rel=1e-2` → `rel=1e-3` for frustration_tolerance (consistent with all other assertions).
+- [x] **P6 (MOD)** — Added `# MOCK-CONTRACT:` comment to AC4 explaining that the `if t:` guard is untestable via EMA output alone (`_compute_signals` ignores unknown keys via `.get()`).
+- [x] **P7 (LOW)** — AC5 story text updated to pin prior `curiosity_index=50.0` and expected EMA=35.0.
+- [x] **P8 (VIOLATION)** — Registered D76 (3 pre-existing asyncio.get_event_loop() failures) in defect register; added `(D76)` reference to Dev Notes paragraph (Process Integrity binding rule 5).
+
+### Deferred findings (pre-existing, not introduced by T20)
+
+- **D77** (Scale & Load Q4): `session_events` SELECT in `dna_fusion.py` has no `.limit()`. 50,000 events → all rows materialised; no error raised. Pre-existing; fix: add `.limit(10000)` + `# BOUNDED:` justification.
+- **D78** (Scale & Load guard gap): `test_unbounded_queries.py` `REQUEST_PATH_FILENAMES` excludes `dna_fusion.py`. D77 and similar unbounded reads in `dna_fusion.py`, `ces.py`, `dna_growth.py` are invisible to CI. Pre-existing; fix: add `dna_fusion.py` to scanned filenames or switch to module-directory scan.
+- **Blind Hunter F1** (IDOR guard never tested): `fuse_learner_dna` ownership check at lines 242–246 has no cross-user test case. Pre-existing gap in the assessment test suite; separate story.
+- **Blind Hunter F2** (mock `.eq()` args unverified): all 5 mock query chains accept any column/value in `.eq()` — filter regression is invisible. Systemic mock pattern issue across assessment tests; separate story.
 
 ---
 
