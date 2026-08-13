@@ -1,7 +1,7 @@
 ---
 id: demo-t28
 title: "T28 (Cross-team) — Learner DNA display contract tests for Dev 2"
-status: review
+status: done
 branch: dev3-demo-t28-crossteam
 target_branch: master-demo-dev3
 owner: Dev3
@@ -273,7 +273,7 @@ Pre-existing 5 failures on main (tutor tests) are unrelated to this story.
 - [x] [Review][Defer] **D87 (Scale)**: Reassessment bypass 3-step non-atomic race — `GET(reassessment_key) → DELETE(onboarding_done) → SET NX(onboarding_done)` are three non-atomic Redis ops. If `reassessment_key` TTL expires between GET and DELETE, the idempotency lock is released without a valid reassessment in effect, granting one unauthorized resubmission with no error. Pre-existing in router.py:258-264, not introduced by T28. **Registered as D87.** [router.py:258] — deferred, pre-existing race
 
 ### Action Items
-- [ ] Resolve DN-1 (profile_text null contract)
-- [ ] Resolve DN-2 (AC1 nested-key guard)
-- [ ] Apply patches P1–P8
-- [ ] Confirm D87 registered in DEFECT-REGISTER.md
+- [x] Resolve DN-1 (profile_text null contract) — decision: null is valid; test added
+- [x] Resolve DN-2 (AC1 nested-key guard) — decision: add flat forward guard; test added
+- [x] Apply patches P1–P8 — all applied, 18/18 GREEN
+- [x] Confirm D87 registered in DEFECT-REGISTER.md — registered 2026-08-13
