@@ -508,6 +508,44 @@ Write `tests/test_distraction_trigger.py` covering that positive path and the Lu
 
 ---
 
+## D77 — No durable per-session CES history exists beyond the last 10 Redis-capped windows
+
+**Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-08-13 (Story 2-46 / S3-05, attention
+timeline chart pre-implementation analysis)
+
+`session:{id}:ces_history` is the only place any per-window CES value with a timestamp is
+kept, and it is `ltrim`'d to the last `_CES_HISTORY_MAX=10` entries (`tutor/service.py`) —
+by design, to bound Redis memory, matching the `BOUNDED` convention. At the default 5-second
+cadence that is **the last ~50 seconds of the session**, for a session of any length. Nothing
+else — no DB table, no JSONB column, no other Redis structure — persists the full sequence of
+CES windows anywhere. A student who studies for 20 minutes has exactly the same 10 stored
+windows available afterward as one who studied for 50 seconds.
+
+This surfaced while scoping Story 2-46 (S3-05, `docs/dev2-sprint-tracker.md`)'s "area chart of
+CES over session time" — the report endpoint (`GET /api/session/{id}/report`) can only ever
+expose what Redis still has, i.e. a recency window, never the true full-session timeline the
+story's acceptance criteria describe. Exposing the capped 10 entries through the API *as if*
+they were the whole session would be the exact silent-truncation shape CLAUDE.md's Scale
+Contract forbids — cheap and wrong, not loudly broken.
+
+**Fix:** Persist every CES window durably as it's computed — e.g. append to a
+`sessions.ces_timeline jsonb` column (mirroring how `ces_final` is written once at
+`_finalize_session`, but incrementally per window) or a new `ces_windows` table
+(`session_id`, `window_index`, `ces`, `created_at`) — so a full-session query is possible
+without depending on Redis retention. Out of scope for Story 2-46, which instead exposes the
+existing capped Redis data honestly labelled as a recency window, not a full-session view.
+
+**Trigger:** the first support request or design review that expects the attention timeline
+chart to show more than the last ~50 seconds of a session, or a future story that persists
+CES windows for another reason (e.g. cross-session trend analysis) and can absorb this at the
+same time.
+
+**Enforcement:** DISCIPLINE — no test can fail for data that doesn't exist yet; the fix is a
+new persistence path plus a test that a >10-window session still returns its earliest windows
+after finalization.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
@@ -568,9 +606,9 @@ checked.
 
 | | Count |
 |---|---|
-| Defects closed (fixed, guarded, or withdrawn) | **36 of 75** registered ids — recomputed directly from this file's own strikethrough rows after the 2026-08-13 merge of `main`, `sprint3-master`, and `throwaway/lesson-planner-batch-fix` (which itself absorbed Story 3-54's D71–D73), rather than propagating any branch's own narrative count forward — all had already drifted from the literal row count by the time they were written. Includes D74–D76 (formerly `sprint3-master`'s D63–D65: PdfBookmark TOC crash, ES256 rate-limit key, proxy beta-gate test fix — renumbered on this merge, see the entries above) and D55 (`lesson_package` read-through, closed 2026-08-12 — found live by a real full-lesson playthrough). |
+| Defects closed (fixed, guarded, or withdrawn) | **36 of 76** registered ids — recomputed directly from this file's own strikethrough rows after the 2026-08-13 merge of `main`, `sprint3-master`, and `throwaway/lesson-planner-batch-fix` (which itself absorbed Story 3-54's D71–D73), rather than propagating any branch's own narrative count forward — all had already drifted from the literal row count by the time they were written. Includes D74–D76 (formerly `sprint3-master`'s D63–D65: PdfBookmark TOC crash, ES256 rate-limit key, proxy beta-gate test fix — renumbered on this merge, see the entries above) and D55 (`lesson_package` read-through, closed 2026-08-12 — found live by a real full-lesson playthrough). |
 | Fixed, awaiting merge | **0** — everything now on `sprint3-master`; Dev 4's D63 (INTERVENING one-way trap fix, `sprint4/s4-6-intervention-recovery`, PR #129) is already closed and merged, not awaiting |
-| **Open** | **39 of 75** — includes `main`'s D64 (confusion-type interventions uncapped, Dev 4, deferred), D69/D70 (no span hierarchy, no `user_id` attribution), and D66 (Dev 2, MediaPipe model tag pin) |
+| **Open** | **40 of 76** — includes `main`'s D64 (confusion-type interventions uncapped, Dev 4, deferred), D69/D70 (no span hierarchy, no `user_id` attribution), D66 (Dev 2, MediaPipe model tag pin), and D77 (no durable full-session CES history beyond the last 10 Redis-capped windows, Dev 3, found while scoping Story 2-46) |
 | Of which **live in production** | **2** — D29 (DPDP consent row, Dev 3), **D53** (a stuck `generating` lesson permanently locks a user out, Dev 1). D18/D35 closed 2026-08-04 on `main`; D34 closed 2026-08-04 by book-scale Phase 6.5; D31 closed 2026-08-11 (Story 3-35); D55 closed 2026-08-12. |
 | Of which **self-inflicted 2026-07-29** | **0** — all six resolved (5 fixed, D15 rejected as a wrong finding) |
 | Of which **found by the 2026-07-29 cross-team Sprint 2 completion audit** | **2** (D29, D30) — `docs/sprint2-completion-audit-2026-07-29.md`; **D29 closed 2026-08-05, D30 closed 2026-08-04** |
