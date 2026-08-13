@@ -118,7 +118,17 @@ API_ROOT = Path(__file__).resolve().parents[2]
 MODULES_DIR = API_ROOT / "app" / "modules"
 
 # Request-path file names. See SCOPE in the module docstring.
-REQUEST_PATH_FILENAMES = ("router.py", "service.py")
+# D78: dna_fusion / dna_growth / ces* / dna_profile are called from request-path
+# service.py handlers and must be covered by the unbounded-query guard.
+REQUEST_PATH_FILENAMES = (
+    "router.py",
+    "service.py",
+    "dna_fusion.py",
+    "dna_growth.py",
+    "ces.py",
+    "ces_baseline.py",
+    "dna_profile.py",
+)
 
 # Supabase-py table selectors.
 _TABLE_SELECTORS = frozenset({"table", "from_"})

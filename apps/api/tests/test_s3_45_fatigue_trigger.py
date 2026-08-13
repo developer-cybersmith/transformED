@@ -1,4 +1,4 @@
-﻿"""Tests for S3-45 — Behavioral Fatigue Trigger (D7).
+"""Tests for S3-45 — Behavioral Fatigue Trigger (D7).
 
 AC coverage:
   AC1  three config settings with correct defaults and validation
@@ -331,7 +331,7 @@ async def test_fatigue_detected_dispatched_after_15_minute_floor_with_low_blink_
         result = await process_attention_signal("sess-001", _NORMAL_SIGNAL)
 
     fatigue_calls = [c for c in mock_dispatch.call_args_list if "fatigue_detected" in str(c)]
-    assert len(fatigue_calls) >= 1, "fatigue_detected must be dispatched after 15-min floor"
+    assert len(fatigue_calls) == 1, "fatigue_detected must be dispatched exactly once after 15-min floor"
     assert result.intervention_dispatched is True
 
 
@@ -627,6 +627,7 @@ async def test_fatigue_tutor_intervene_ws_message_delivered_on_dispatch():
     sent_payload = sent_args[1]["payload"] if len(sent_args) > 1 else {}
     assert sent_payload.get("type") == "fatigue"
     assert sent_payload.get("message") == "Take a short break..."
+    assert sent_payload.get("session_id") == "sess-001"
 
 
 # ── AC 12: lrange uses end index 1 ───────────────────────────────────────────
