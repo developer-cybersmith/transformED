@@ -220,28 +220,41 @@ class Settings(BaseSettings):
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
     )
-    # D76 (Story 3-43): was 10,000, sized against decisionupdate.md section 8's
-    # ~1,600 chars/min speed assumption -- stale. Real measured Sarvam Bulbul
-    # v2 rate (live test, 2026-08-13): 18.44 chars/sec = 1,106.6 chars/min. At
-    # the real rate 10,000 chars is only ~9 real minutes, not the ~5 min
-    # decisionupdate.md assumed. A 15-minute lesson needs ~16,600 chars.
-    # Cost was never the real constraint: even 17,000 chars costs ~$0.33 in
-    # TTS (COST_PER_CHAR=0.00002) / ~$0.40 total lesson cost -- ~13% of the
-    # $3.00 ceiling below. Raised to 17,000 (16,600 + margin).
+    # D78 (Story 3-45): D76 raised this 10,000 -> 17,000 sized against "a real
+    # 15-minute lesson" -- a demo illustration, not a real product requirement.
+    # That framing was wrong and actively harmful: the first real successful
+    # generation under D75-D77 (lesson abe4e438, an entirely ordinary 29-page,
+    # 15-section chapter, nowhere near max_chapter_pages=200) produced 43,793
+    # real narration chars and had 9 of 15 segments ZEROED by the 17,000 cap --
+    # a complete loss of real TTS audio for 60% of the lesson -- while real
+    # cost sat at just 29% of the $3.00 ceiling. Lesson length must be driven
+    # by the chapter's real content, not by any duration target; only real
+    # cost may shorten it. Raised 17,000 -> 120,000: sized against
+    # decisionupdate.md section 8's own "TTS is 67-73% of total lesson cost"
+    # claim -- 120,000 chars = ~$2.40 of Sarvam TTS spend (COST_PER_CHAR=
+    # 0.00002) = 80% of the $3.00 ceiling, leaving the remaining 20% for the
+    # LLM + image spend the same ceiling already tracks.
     max_narration_chars_per_lesson: int = Field(
-        default=17000,
+        default=120000,
         ge=1,
         description=(
-            "Node 8 hard cap: max narration chars across all segments combined "
-            "(decisionupdate.md section 8). Sized against the REAL measured Sarvam "
-            "TTS rate (~1,107 chars/min, D76), not decisionupdate.md's stale ~1,600 "
-            "chars/min assumption, to allow a real 15-minute lesson within the "
-            "$3.00/lesson ceiling (cost headroom is large: ~13% of ceiling at this "
-            "value). TTS synthesis cost is proportional to character count and is "
+            "Node 8 SAFETY-NET cap: max narration chars across all segments "
+            "combined (decisionupdate.md section 8). This is a cost backstop, "
+            "NOT a duration target -- lesson length is driven by the chapter's "
+            "real content; only real cost may shorten it. Sized against real "
+            "cost headroom (D78): 120,000 chars = ~$2.40 Sarvam TTS spend = 80% "
+            "of the $3.00/lesson ceiling, leaving 20% for LLM + image spend. "
+            "TTS synthesis cost is proportional to character count and is "
             "67-73% of total lesson generation cost, so this still bounds the "
-            "dominant cost driver before it's incurred. Enforced in tts_node (not "
-            "narration_generator_node, which is Send()-dispatched once per section "
-            "with no visibility into any other section's output)."
+            "dominant cost driver before it's incurred -- but as a pre-emptive "
+            "backstop against a pathological outlier, not a number aimed at any "
+            "particular runtime. The real, dollar-accurate, dynamically-enforced "
+            "bound is app.core.cost_tracker.check_ceiling, checked per-segment "
+            "before every paid TTS call; this cap exists only to stop an "
+            "unbounded burst of spend before that per-segment check can catch "
+            "up. Enforced in tts_node (not narration_generator_node, which is "
+            "Send()-dispatched once per section with no visibility into any "
+            "other section's output)."
         ),
     )
 
