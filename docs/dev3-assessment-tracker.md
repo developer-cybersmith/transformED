@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-12 (S3-53 DONE — CES production closure, D1/D62 canonical formula, D61/D63/D64/D65 gaps closed)
+**Last updated:** 2026-08-13 (T19 DONE — DNA fusion real session events, 9 tests, 12 review patches, D74/D75 deferred)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,9 +19,10 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
+| Demo Sprint | Aug 2026 | 1 | 1 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **53** | **44** | **0** | **9** |
+| **Total** | | **54** | **45** | **0** | **9** |
 
 Update this table each time a task is checked off below.
 
@@ -786,6 +787,30 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - **Tests updated:** `test_ces.py` (2 redistribution tests updated for D62), `test_tutor_service.py` (3 tests updated for optional behavioral signals per D13), `test_s3_45_fatigue_trigger.py` (`nx=True` assertion added).
   - 18 new tests in `test_s3_53_ces_production_closure.py` — all GREEN; 168 CES-related tests total GREEN.
   - Branch: `sprint3/s3-53-ces-closure` — committed.
+
+---
+
+## Demo Sprint — Aug 2026
+
+> **Goal:** Isolated test-only stories validating production logic gaps in existing modules, with full BMAD workflow (story-first → dev → 6-agent review → PR).
+
+- [x] **T19 — DNA fusion real session events (9 tests, 12 review patches)** — ✓ 2026-08-13
+  - Test-only story: covers gaps in `dna_fusion.py` not addressed by existing `test_dna_fusion.py` (28 tests)
+  - **ACs covered:**
+    - AC1: `_compute_signals` intermediate count — 3 jargon hovers with `_JARGON_CAP=5` → `curiosity_index = 40.0` (spec-pinned literal + dynamic check)
+    - AC2: mixed real session — all 9 dims from quiz_rows + tb_rows + event_counts; concrete expected values (not dynamic math)
+    - AC3: EMA upsert payload exact values — `fuse_learner_dna` writes correct EMA floats; list-based spy catches double-call retry bug
+    - AC4: two-segment teachback — zero jargon hovers → `curiosity_index = 0.0`; two tb entries → non-neutral `persistence`
+    - AC5: `ended_at=None` → no upsert; table access tracking confirms quiz/tb/events tables never read when session incomplete
+    - AC6: no-quiz session — 3 dims missing signal → neutral 50.0; `help_seeking`/`study_independence` are computable from events alone
+    - AC7: IDOR → 404 (not 403); `dna_row=_base_dna_row()` so ownership check is the only 404 source (Blind Hunter P1 fix)
+    - AC8: Redis reassessment flag at session 10 and session 20 (modulo); exact 9-dim key set asserted; tuple-discard fix (P10)
+    - AC9: Redis failure non-fatal — `ConnectionError` on `redis.set` → `fuse_learner_dna` returns result, no exception raised
+  - **12 patches applied during 6-agent review:** P1 (IDOR dna_row), P2 (list-based spy), P3 (AC8 session-20 modulo), P4 (exact 9-dim keys), P5 (story doc fix: correct patch target), P6 (AC1 literal 40.0 pin), P7 (AC2 concrete values), P8 (AC5 table tracking), P9 (AC6 3 missing dims), P10 (AC8 tuple-discard), P11 (AC4 spot checks), P12 (AC2 rel consistency)
+  - **Deferred:** D74 (read-modify-write race on `session_count`), D75 (event aggregation path has zero integration test with non-empty event_rows)
+  - 37/38 tests GREEN (9 T19 + 28 existing; 1 pre-existing failure on `test_positional_args_raise_type_error` in Python 3.12)
+  - Story: `docs/stories/demo-t19-dna-fusion-real-session-events.md` — status: done
+  - Branch: `dev3-demo-t19-phaseL5` — PR to `master-demo-dev3`
 
 ---
 

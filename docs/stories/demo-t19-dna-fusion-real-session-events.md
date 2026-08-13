@@ -1,6 +1,6 @@
 # Demo T19 — Learner DNA Fusion: concrete EMA values and real session event mix
 
-**Status:** in-progress
+**Status:** done
 **Sprint:** Demo Sprint
 **Owner:** Dev 3
 **Branch:** `dev3-demo-t19-phaseL5`
@@ -307,10 +307,43 @@ EMA: round(0.7*70.0 + 0.3*100.0, 4) = round(49.0 + 30.0, 4) = 79.0  # logical_de
 
 ## Tasks / Subtasks
 
-- [ ] **T1 — RED: write 9 failing tests (one per AC)**
-- [ ] **T2 — GREEN: confirm all 9 tests pass (no implementation changes needed)**
-- [ ] **T3 — VERIFY: run existing test_dna_fusion.py + T19 suite, confirm no regressions**
+- [x] **T1 — RED: write 9 failing tests (one per AC)** — ✓ 2026-08-13
+- [x] **T2 — GREEN: confirm all 9 tests pass (no implementation changes needed)** — ✓ 2026-08-13
+- [x] **T3 — VERIFY: run existing test_dna_fusion.py + T19 suite, confirm no regressions** — ✓ 2026-08-13 (37/38 pass; 1 pre-existing failure in test_dna_fusion.py::test_positional_args_raise_type_error — asyncio.get_event_loop() incompatible with Python 3.12 + asyncio_mode=auto; predates T19)
 - [ ] **T4 — UPDATE dev3-assessment-tracker.md**
+
+---
+
+## Senior Developer Review (AI) — 2026-08-13
+
+**Review outcome:** Changes Requested → Applied  
+**6-agent BMAD review completed.** 12 patches applied. 2 scale findings deferred as D74/D75.
+
+### Review Findings & Patches Applied
+
+| ID | Layer | Severity | Finding | Resolution |
+|----|-------|----------|---------|-----------|
+| P1 | Blind Hunter | HIGH | AC7 IDOR: `dna_row=None` allows spurious 404 from missing-DNA path — IDOR undetected when victim has a DNA record | Fixed: `dna_row=_base_dna_row()` so only ownership check produces 404 |
+| P2 | Edge Case | Critical | AC3: `dict.update()` spy silently overwrites on 2nd upsert; no call-count assertion | Fixed: switched to list-based capture with `len == 1` assertion |
+| P3 | Scale/Edge | HIGH | AC8: only tests session 10; `% vs ==` refactor undetectable | Fixed: added session 20 check in AC8 test |
+| P4 | Auditor | Medium | AC8: "returns 9 dims" asserts only `result is not None` | Fixed: added exact key-set assertion |
+| P5 | Story L1 | Medium | Dev Notes patch target wrong (`dna_fusion.record_dna_growth` doesn't exist in module namespace) | Fixed: corrected to `dna_growth.record_dna_growth` |
+| P6 | Auditor | Medium | AC1: dynamic expected only — `_JARGON_CAP` constant change undetectable | Fixed: added literal `40.0` assertion alongside dynamic |
+| P7 | Auditor | Medium | AC2: 5 assertions use dynamic cap-derived values — cap changes undetectable | Fixed: replaced with concrete spec values (66.67, 25.0, 75.0, 75.0, 60.0) |
+| P8 | Story/Edge | Low | AC5: spec says "at most 1 table access" but only upsert spy verified | Fixed: added `tables_accessed` list, assert quiz/teachback/events not accessed |
+| P9 | Story L1 | Medium | AC6: `persistence`, `help_seeking`, `study_independence` missing assertions | Fixed: added all 3 with correct expected values |
+| P10 | Story L1 | Low | AC8: tuple-discard pattern — failure message silently dropped | Fixed: removed trailing comma-tuple |
+| P11 | Edge Case | Medium | AC4: only `persistence` asserted; multi-segment bug could corrupt other dims | Fixed: added `curiosity_index` and `study_independence` spot-checks |
+| P12 | Edge Case | Minor | AC2: `processing_speed` uses `rel=1e-2` vs `rel=1e-3` for all other dims | Fixed: changed to `rel=1e-3` for consistency |
+
+### Deferred Findings (Scale Contract — require D-nn)
+
+- **D74** (Race condition): `fuse_learner_dna` session_count is Python read-modify-write — two concurrent sessions for same user silently drops one EMA contribution. Deferred: requires production-level fix (DB-side increment or advisory lock). See DEFECT-REGISTER.md.
+- **D75** (Coverage gap): Event aggregation path (dna_fusion.py lines 289-306) has no integration test with non-empty `event_rows`. Deferred: all 5 `fuse_learner_dna` integration tests pass empty event_rows. See DEFECT-REGISTER.md.
+
+### Decision Deferred
+
+- AC8 Redis TTL: no policy decision on whether `user:{uid}:reassessment_due` should expire. Currently the flag persists indefinitely. TTL policy must be decided before production use.
 
 ---
 
@@ -326,7 +359,7 @@ A public-API-only test (only calling `fuse_learner_dna`) cannot isolate which st
 Patch it as `AsyncMock` in all tests that call `fuse_learner_dna`, otherwise Step 6 hits
 the real `dna_growth.py` which makes additional DB calls not set up in the mock.
 
-Patch target: `"app.modules.assessment.dna_fusion.record_dna_growth"`
+Patch target: `"app.modules.assessment.dna_growth.record_dna_growth"` (source module — NOT `dna_fusion.record_dna_growth`, which does not exist in `dna_fusion`'s module namespace because the import is deferred inside the function body)
 
 ### Session_count=9 → 10 path
 `new_count = old_session_count + 1 = 10`; `10 % 10 == 0`; Redis `set` fires.
