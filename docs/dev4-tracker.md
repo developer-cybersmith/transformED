@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-11 (Story 4-24 — D63 INTERVENING recovery complete: event path + timeout safety net, landed before Dev 2's L6/MediaPipe per the lesson-delivery tracker's ordering rule)
-**Overall status:** 33/41 Completed · 6 Partial · 2 Not Started
+**Last updated:** 2026-08-13 (Story 4-26 — tutor router endpoints GET /state + POST /intervene implemented; 24 tests green; ruff clean)
+**Overall status:** 34/42 Completed · 6 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -20,10 +20,10 @@
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 9 | 9 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 7 | 1 | 6 | 0 |
+| Sprint 4 | Weeks 8–9 | 8 | 2 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **41** | **33** | **6** | **2** |
+| **Total** | | **42** | **34** | **6** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -593,6 +593,19 @@ MAX_DISTRACTION_PER_SESSION=3
     flagged in the story's Dev Notes, not built here (matches the D60 Dev4-builds/Dev2-wires split).
   - **AC MET:** INTERVENING → TEACHING via the event path (pre-existing test, still green) AND via
     the timeout path with no client event sent (new tests) ✅
+
+<!-- CHECK:tutor_router_impl -->
+- [Completed] **Tutor router endpoints: GET /session/{id}/state + POST /session/{id}/intervene (Story 4-26)** ✅ 2026-08-13 (24/24 tests green; ruff clean; demo-critical — replaces 501 stubs)
+  - File: `apps/api/app/modules/tutor/router.py` + `apps/api/tests/test_tutor_router.py`
+  - `GET /api/tutor/session/{session_id}/state` — 5 Redis point lookups (O(1) each); 404 if state key absent; zero-values for missing optional keys; TTL → cooldown_remaining
+  - `POST /api/tutor/session/{session_id}/intervene` — dispatches FSM event via `dispatch_event`; `force=True` deletes cooldown key only (distraction cap + fatigue-once flag are safety invariants not bypassed); sends `tutor_intervene` WS message directly when transition to INTERVENING occurs (no wait for next attention signal)
+  - `InterventionRequest.intervention_type` changed from `str` → `Literal["distraction","fatigue","confusion"]` (closes pre-existing gap flagged in Story 4-14)
+  - `_INTERVENTION_EVENT` map: `distraction→distraction_detected`, `fatigue→fatigue_detected`, `confusion→teachback_failed`
+  - JWT enforced via `CurrentUser` on both handlers
+  - All 6 Scale & Load questions answered in Story 4-26: all Redis reads O(1), no unbounded ops, no silent truncation
+  - **Demo impact:** `POST /intervene` allows scripted demo triggers without live MediaPipe signals; `GET /state` gives admin visibility
+  - Story: `docs/stories/4-26-tutor-router-impl.md` · Branch: `sprint4/s4-26-tutor-router-impl`
+  - **AC MET:** 12/12 ACs verified by 24 unit tests; ruff check + ruff format clean ✅
 
 <!-- CHECK:threshold_tuning -->
 - [Partial] **Intervention threshold tuning (is CES < 50 right?)** ⚠️ PARTIAL — methodology written; findings pending ≥20 real sessions
