@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-13 (T26 DONE — Quiz/teachback API contract tests (18 tests); D74/D76/D77/D78 fixed + merged; T28 pending)
+**Last updated:** 2026-08-13 (T28 DONE — Learner DNA display contract, 18 tests; Demo Sprint 7/7 complete; master-demo-dev3 READY TO MERGE)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,10 +19,10 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
-| Demo Sprint | Aug 2026 | 7 | 6 | 0 | 1 |
+| Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **60** | **49** | **0** | **11** |
+| **Total** | | **60** | **50** | **0** | **10** |
 
 Update this table each time a task is checked off below.
 
@@ -842,8 +842,14 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Branch: `dev3-demo-t26-phaseL8` — PR targets `master-demo-dev3`
   - **Owner:** Dev 3 + Dev 2 (collaborative)
 
-- [ ] **T28 (Cross-team) — Learner DNA display review with Dev 2**
-  - Confirm Learner DNA profile text renders correctly in Dev 2's frontend; HIE brand consistent; no raw scores
+- [x] **T28 (Cross-team) — Learner DNA display review with Dev 2** — ✓ 2026-08-13
+  - 18 unit tests in `apps/api/tests/test_t28_dna_display_contract_dev2.py`; 8 review patches applied
+  - ACs: no raw dimension scores in GET/POST, DPDP_DISCLAIMER uses "HIE", ONBOARDING_PROFILE_SYSTEM_PROMPT uses "HIE", badge_labels have no IQ/EQ/SQ (word-boundary match), profile_text ends with DPDP_DISCLAIMER, GET returns 200/404, response shape has all 6 required fields
+  - Review-added: P7 (Redis failure → 200), P8 (empty badge_labels → 200), DN-1 (profile_text=null → 200), DN-2 (no dimensions/scores container keys)
+  - D87 registered (non-atomic Redis reassessment bypass — Dev 4 owned, deferred)
+  - 18/18 PASS; 84/84 Demo Sprint tests PASS
+  - Story: `docs/stories/demo-t28-learner-dna-crossteam.md` — status: done
+  - Branch: `dev3-demo-t28-crossteam` — PR merged to `master-demo-dev3`
   - **Owner:** Dev 3 + Dev 2 (collaborative)
 
 ---
