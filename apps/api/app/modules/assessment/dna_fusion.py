@@ -259,6 +259,7 @@ async def fuse_learner_dna(
     tb_rows: list[dict[str, Any]] = []
     event_rows: list[dict[str, Any]] = []
 
+    # BOUNDED: per-session; a lesson has at most 15 segments × 10 Q = 150 quiz_attempts per session.
     try:
         quiz_resp = await asyncio.to_thread(
             lambda: (
@@ -272,6 +273,7 @@ async def fuse_learner_dna(
     except Exception as exc:
         logger.warning("DNA fusion: quiz read failed session=%s: %s", session_id, exc)
 
+    # BOUNDED: per-session; a lesson has at most 15 segments × 5 retries = 75 teachback_attempts per session.
     try:
         tb_resp = await asyncio.to_thread(
             lambda: (
@@ -285,12 +287,17 @@ async def fuse_learner_dna(
     except Exception as exc:
         logger.warning("DNA fusion: teachback read failed session=%s: %s", session_id, exc)
 
+    # D92 (Story 3-55): 10,000-row cap on session events. Typical volume is < 100
+    # (jargon hovers, skips, help requests); 10,000 is a 100× safety margin.
+    # Beyond the cap the oldest events are omitted — the signal (event-type counts)
+    # degrades gracefully, not catastrophically. Scale Contract Q4.
     try:
         events_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("session_events")
                 .select("event_type")
                 .eq("session_id", session_id)
+                .limit(10_000)
                 .execute()
             )
         )

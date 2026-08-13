@@ -118,7 +118,7 @@ API_ROOT = Path(__file__).resolve().parents[2]
 MODULES_DIR = API_ROOT / "app" / "modules"
 
 # Request-path file names. See SCOPE in the module docstring.
-REQUEST_PATH_FILENAMES = ("router.py", "service.py")
+REQUEST_PATH_FILENAMES = ("router.py", "service.py", "dna_fusion.py")  # D93 (Story 3-55)
 
 # Supabase-py table selectors.
 _TABLE_SELECTORS = frozenset({"table", "from_"})
@@ -415,6 +415,10 @@ def test_request_path_modules_are_where_we_think_they_are() -> None:
         assert f"{module}/router.py" in names, f"scan does not reach {module}/router.py"
     assert "assessment/service.py" in names, "the service layer is in scope, not just routers"
     assert "analytics/service.py" in names
+    assert "assessment/dna_fusion.py" in names, (
+        "D93: dna_fusion.py is on the request path but not in CI scanner scope — "
+        "add 'dna_fusion.py' to REQUEST_PATH_FILENAMES"
+    )
 
 
 @pytest.mark.unit

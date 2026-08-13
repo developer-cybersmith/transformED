@@ -7,9 +7,10 @@ Neither imports the other — both import from here to avoid circular imports.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "QuizAnswer",
@@ -51,6 +52,22 @@ class SessionCreate(BaseModel):
     """
 
     lesson_id: str
+
+    @field_validator("lesson_id", mode="before")
+    @classmethod
+    def lesson_id_must_be_uuid(cls, v: object) -> str:
+        """D94 (Story 3-55): reject non-UUID strings before the Postgres cast.
+
+        Without this, a typo like "x" passes Pydantic validation and causes a
+        500 from the DB with no actionable message for the caller.
+        """
+        try:
+            return str(uuid.UUID(str(v)))  # normalises to lowercase RFC 4122
+        except (ValueError, AttributeError):
+            raise ValueError(
+                f"lesson_id must be a valid UUID "
+                f"(e.g. '123e4567-e89b-12d3-a456-426614174000'), got: {v!r}"
+            )
 
 
 class SessionCreated(BaseModel):
