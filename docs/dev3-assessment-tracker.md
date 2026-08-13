@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-13 (T15/T16/T18/T19/T20 DONE — all 5 Demo tasks merged to master-demo-dev3; D75 closed, D74/D76/D77/D78 registered)
+**Last updated:** 2026-08-13 (T26 DONE — Quiz/teachback API contract tests (18 tests); D74/D76/D77/D78 fixed + merged; T28 pending)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,7 +19,7 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
-| Demo Sprint | Aug 2026 | 7 | 5 | 0 | 2 |
+| Demo Sprint | Aug 2026 | 7 | 6 | 0 | 1 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
 | **Total** | | **60** | **49** | **0** | **11** |
@@ -834,8 +834,12 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Story: `docs/stories/demo-t20-dna-fusion-event-aggregation-path.md` — status: done
   - Branch: `dev3-demo-t20-phaseL5` — PR #134 merged to `master-demo-dev3`
 
-- [ ] **T26 (Cross-team) — Quiz/teachback API contract review with Dev 2**
+- [x] **T26 (Cross-team) — Quiz/teachback API contract review with Dev 2** — ✓ 2026-08-13
   - Confirm Dev 2's player sends payloads matching the frozen API contract
+  - 18 HTTP-layer contract tests added: `apps/api/tests/test_t26_api_contract_dev2.py` — 18/18 pass
+  - Covers: 422 bounds (answers, response_text, response_index, response_time_ms), banned-field silencing (transcript, duration_seconds), response shapes (feedback is list, rubric_scores are str labels), ApprovedUser 403 gate, security invariant (user_id from body never trusted), extra-field silence
+  - Story: `docs/stories/demo-t26-quiz-teachback-api-contract-dev2.md`
+  - Branch: `dev3-demo-t26-phaseL8` — PR targets `master-demo-dev3`
   - **Owner:** Dev 3 + Dev 2 (collaborative)
 
 - [ ] **T28 (Cross-team) — Learner DNA display review with Dev 2**
