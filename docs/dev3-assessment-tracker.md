@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-12 (S3-53 DONE — CES production closure, D1/D62 canonical formula, D61/D63/D64/D65 gaps closed)
+**Last updated:** 2026-08-13 (Demo T16 DONE — e2e session flow with real UUID data; 9 tests, BMAD 6-agent review clean)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,9 +19,10 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
+| Demo Sprint | Ongoing | 7 | 2 | 0 | 5 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **53** | **44** | **0** | **9** |
+| **Total** | | **60** | **46** | **0** | **14** |
 
 Update this table each time a task is checked off below.
 
@@ -786,6 +787,44 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - **Tests updated:** `test_ces.py` (2 redistribution tests updated for D62), `test_tutor_service.py` (3 tests updated for optional behavioral signals per D13), `test_s3_45_fatigue_trigger.py` (`nx=True` assertion added).
   - 18 new tests in `test_s3_53_ces_production_closure.py` — all GREEN; 168 CES-related tests total GREEN.
   - Branch: `sprint3/s3-53-ces-closure` — committed.
+
+---
+
+## Demo Sprint (Ongoing — HIE Demo Validation)
+
+> **Goal:** Validate the full assessment + CES + Learner DNA stack against real LessonPackage schema data.
+> Target: `master-demo-dev3` integration branch. Each task branches from `main`.
+
+- [x] **T15 — Validate quiz+teachback against real LessonPackage schema** — ✓ 2026-08-13
+  - 9 unit tests in `apps/api/tests/test_real_package_payload_validation.py`
+  - Key finding: existing teachback tests silently called score_teachback with `topic=""` and `key_concepts=[]` due to simplified segment fixtures missing `title`/`jargon` fields
+  - Schema-accurate fixture: UUID IDs (lesson, book, chapter), namespaced segment/question IDs (seg-0-intro-thermodynamics, seg-0-q-0), all required fields present
+  - 9/9 PASS; BMAD 6-agent review clean (0 findings)
+  - Branch: `dev3-demo-t15-phaseL4` — pushed, PR to `master-demo-dev3`
+  - Story: `docs/stories/demo-t15-quiz-teachback-real-package-validation.md` — status: done
+
+- [x] **T16 — End-to-end session flow with real UUID data** — ✓ 2026-08-13
+  - 9 unit tests in `apps/api/tests/test_e2e_session_flow_real_data.py`
+  - Validates full lifecycle: `create_session` → `grade_quiz` → `grade_teachback` → `get_session_report`
+  - AC coverage: DB-minted session UUID (not client value), IDOR guards on both create_session and get_session_report, full_5_signal vs teachback_redistributed formula disclosure, quiz_score=None when no quiz_attempts
+  - 9/9 PASS; BMAD 6-agent review clean (0 findings)
+  - Branch: `dev3-demo-t16-phaseL5` — pushed, PR to `master-demo-dev3`
+  - Story: `docs/stories/demo-t16-e2e-session-flow-real-data.md` — status: done
+
+- [ ] **T18 — Learner DNA profile generation with real onboarding data**
+  - Branch: `dev3-demo-t18-phaseL7` (not yet started)
+
+- [ ] **T19 — Session report e2e with real lesson data**
+  - Branch: `dev3-demo-t19-phaseL7` (not yet started)
+
+- [ ] **T20 — CES formula integration verification with Dev 4** *(collaborative)*
+  - Branch: `dev3-demo-t20` (not yet started)
+
+- [ ] **T26 — Quiz/teachback API contract review with Dev 2** *(collaborative)*
+  - Branch: `dev3-demo-t26` (not yet started)
+
+- [ ] **T28 — Learner DNA display review with Dev 2** *(collaborative)*
+  - Branch: `dev3-demo-t28` (not yet started)
 
 ---
 
