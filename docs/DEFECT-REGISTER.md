@@ -486,6 +486,14 @@ checked.
 
 ---
 
+### Found live during the L1 acceptance run (Story 3-42, 2026-08-12/13)
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| ~~D74~~ | **CLOSED same-round 2026-08-13 (Story 3-42).** Two compounding defects in `SarvamTTSProvider._synthesize_inner`, both found live while investigating why every real narration segment fell through Sarvam → Azure (unconfigured) → browser during L1, AFTER D67 (invalid voice default) was already fixed. **(1)** Sarvam hard-limits each `inputs[]` string to 500 characters (real 400: `"String should have at most 500 characters"`) — every real narration segment observed runs 1,351–4,069 chars, so D67 alone could never have produced real Sarvam audio. **(2)** `audio_bytes = response.content` (pre-fix) captured the raw JSON response body, not audio — Sarvam's real response is `Content-Type: application/json`, `{"request_id": ..., "audios": ["<base64 WAV>", ...]}`. Confirmed live: `resp.content[:50]` is JSON text; the real audio only exists at `base64.b64decode(resp.json()["audios"][0])`. This has been broken since Story 2-8 and never caught because every existing test mocked `SarvamTTSProvider` at the call site — the pre-fix unit test for this exact function hardcoded `content=b"FAKEAUDIO"` and asserted the code returns it verbatim, literally encoding the bug as expected behavior. A **third** constraint (`inputs[]` also caps at 3 items/request, real 400: `"List should have at most 3 items"`) was found live while designing the fix, requiring batched requests, not assumed from docs. | High (Sarvam has never once produced real, playable audio in this project's history — not a voice-id issue, not an edge case, the universal case) | Added `_chunk_narration_text` (sentence-boundary splitting, word-boundary fallback for oversized single sentences), `_batched` (≤3 items/request), and `_concatenate_wav_clips` (real PCM-frame concatenation via the stdlib `wave` module — naive byte-concatenation of complete WAV files produces an invalid multi-header file). Verified live end-to-end against the real Sarvam API before writing tests: a 2,406-char segment → 5 chunks → 2 batched requests → one valid 130.45s WAV file, confirmed by reading it back with `wave`. | `tests/unit/test_sarvam_chunking.py` (15 tests: chunk-boundary respect, sentence-boundary preference, no dropped/duplicated words, oversized-sentence fallback, batch-size respect, real multi-clip WAV concatenation vs. a naive-join contrast test proving the naive approach is wrong) + `tests/unit/test_tts_providers.py`'s corrected success test (asserts DECODED audio, not raw `response.content`) and a new multi-batch integration test. RED-verified: reintroduced the old `response.content` bug and confirmed both the decode test and the multi-batch test fail; restored and confirmed GREEN. |
+
+---
+
 ## Scorecard
 
 | | Count |
