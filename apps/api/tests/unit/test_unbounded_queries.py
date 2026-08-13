@@ -379,13 +379,12 @@ def _unbounded_selects(source: str) -> list[str]:
 #
 # Do NOT add an entry to make a build green. Fix the query or register the defect.
 _KNOWN_UNBOUNDED: dict[str, set[str]] = {
-    # D59 · Dev 1 · admin cost report materialises EVERY lesson_jobs row joined to
-    # lessons for the period, then groups in Python because PostgREST has no
-    # server-side GROUP BY. Fine at 23 lessons; it is the admin panel's own
-    # Sprint 3 task (S3-4) that will make it real.
-    "admin/router.py": {
-        "lesson_jobs.select('cost_usd, lesson_id, lessons!inner(user_id, created_at)')"
-    },
+    # D59(a) closed — Story 3-51 added `.limit(_COST_REPORT_ROW_LIMIT)` +
+    # a surfaced `truncated` flag to admin/router.py's cost report query.
+    # Entry removed, not left in place: an allow-listed query that is now
+    # actually bounded would be the "matches existing accepted pattern"
+    # ratchet CLAUDE.md's binding rule 6 names, not a real fix.
+    #
     # D59 · Dev 3 · analytics selects every session id for a user with no bound.
     # Grows without limit as a student uses the product — the definition of a
     # read that is fine in testing and wrong in production.
