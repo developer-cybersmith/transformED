@@ -18,12 +18,14 @@ from __future__ import annotations
 import logging
 
 from arq.connections import RedisSettings
+from arq.cron import cron
 
 from app.config import get_settings
 from app.core.langfuse import get_langfuse
 from app.core.queues import PIPELINE_QUEUE
 from app.workers.jobs.book_ingest import book_ingest_job
 from app.workers.jobs.content_pipeline import content_pipeline_job
+from app.workers.jobs.reap_stale_lessons import reap_stale_generating_lessons
 
 logger = logging.getLogger(__name__)
 
@@ -136,3 +138,11 @@ class WorkerSettings:
 
     # ── Queue names ──
     queue_name: str = PIPELINE_QUEUE
+
+    # ── Periodic jobs (D53) ──
+    cron_jobs = [
+        # Every 10 minutes: catch lessons stuck in 'generating' past the ARQ
+        # job timeout (a crashed/OOM-killed/evicted worker) and mark them
+        # 'failed' for real -- see reap_stale_lessons.py's module docstring.
+        cron(reap_stale_generating_lessons, minute={0, 10, 20, 30, 40, 50}),
+    ]

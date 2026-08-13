@@ -267,6 +267,84 @@ async def test_failure_paths_write_schema_valid_status(
     )
 
 
+# ── D86: real accumulated cost persisted to lesson_jobs.cost_usd on failure ──
+
+
+async def test_generic_exception_failure_write_includes_real_cost() -> None:
+    """D86: a FAILURE path (generic `except Exception` branch) must also
+    persist real cost_usd in its lesson_jobs update, not just status/error —
+    _update_lesson_status fetches it internally via get_cost() when
+    status=='failed' and no explicit cost_usd was passed."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase, tables = _make_multi_table_supabase_mock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch(
+            "app.modules.content.pipeline.graph.run_pipeline",
+            new=AsyncMock(side_effect=ValueError("generic failure")),
+        ),
+        patch("app.core.cost_tracker.get_cost", new=AsyncMock(return_value=0.9876)),
+    ):
+        with pytest.raises(ValueError, match="generic failure"):
+            await job_mod.content_pipeline_job({}, "lesson-fail-cost")
+
+    update_payloads = [c.args[0] for c in tables["lesson_jobs"].update.call_args_list]
+    failed = [p for p in update_payloads if p.get("status") == "failed"]
+    assert failed, f"no status='failed' write (payloads: {update_payloads})"
+    assert failed[0]["cost_usd"] == 0.9876, failed[0]
+    for payload in update_payloads:
+        illegal = set(payload) - _LESSON_JOBS_COLUMNS
+        assert not illegal, f"write uses nonexistent lesson_jobs columns: {illegal}"
+
+
+async def test_failure_write_survives_get_cost_failure() -> None:
+    """D86: a get_cost() failure inside _update_lesson_status must NOT crash
+    the job — the existing status/error update must still succeed, with
+    cost_usd simply omitted/unset (never a fabricated 0)."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase, tables = _make_multi_table_supabase_mock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch(
+            "app.modules.content.pipeline.graph.run_pipeline",
+            new=AsyncMock(side_effect=ValueError("generic failure")),
+        ),
+        patch(
+            "app.core.cost_tracker.get_cost",
+            new=AsyncMock(side_effect=RuntimeError("Redis pool is not initialised")),
+        ),
+    ):
+        with pytest.raises(ValueError, match="generic failure"):
+            await job_mod.content_pipeline_job({}, "lesson-fail-cost-redis-down")
+
+    update_payloads = [c.args[0] for c in tables["lesson_jobs"].update.call_args_list]
+    failed = [p for p in update_payloads if p.get("status") == "failed"]
+    assert failed, f"no status='failed' write (payloads: {update_payloads})"
+    assert "cost_usd" not in failed[0], (
+        f"cost_usd must be omitted on a get_cost() failure, got {failed[0]}"
+    )
+
+
+async def test_running_transition_does_not_fetch_cost() -> None:
+    """D86: the 'running' status transition has no accumulated cost yet —
+    _update_lesson_status must not fetch cost for any status other than
+    'failed' (pure waste, and would spuriously write cost_usd=0.0 to a
+    freshly-started lesson)."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase = MagicMock()
+    get_cost_mock = AsyncMock(return_value=1.0)
+
+    with patch("app.core.cost_tracker.get_cost", new=get_cost_mock):
+        await job_mod._update_lesson_status(supabase, "lesson-running", "running")
+
+    get_cost_mock.assert_not_awaited()
+
+
 # ── Story S2-LM3: tier fetched from lessons and threaded to run_pipeline ────
 
 

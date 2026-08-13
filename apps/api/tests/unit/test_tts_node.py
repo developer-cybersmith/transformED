@@ -71,6 +71,19 @@ def _mock_supabase(node_outputs: dict[str, Any] | None = None) -> MagicMock:
     return sb
 
 
+def _mock_settings_with_narration_cap(cap: int) -> MagicMock:
+    """D76 (Story 3-43): tts_node's only settings read in its cap-enforcement
+    path is settings.max_narration_chars_per_lesson (verified — the sole
+    `settings.` access in that code path). Pins a test-local cap value so
+    the narration-cap boundary tests exercise the CAP MECHANISM, independent
+    of whatever the real production default happens to be — decoupled from
+    the D76 change (10,000 -> 17,000) rather than requiring every boundary
+    test's fixture arithmetic to be rewritten to a new magic number."""
+    settings = MagicMock()
+    settings.max_narration_chars_per_lesson = cap
+    return settings
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_happy_path_sarvam_success_produces_nested_narration_entries() -> None:
@@ -511,6 +524,7 @@ async def test_lesson_wide_narration_cap_truncates_and_zeroes_over_budget_segmen
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 
@@ -616,6 +630,7 @@ async def test_narration_cap_exact_boundary_fit_is_not_truncated() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 
@@ -701,6 +716,7 @@ async def test_narration_cap_reorders_out_of_order_fan_in_by_true_section_index(
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 
@@ -790,6 +806,7 @@ async def test_narration_cap_truncation_does_not_split_devanagari_combining_mark
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 
@@ -802,3 +819,67 @@ async def test_narration_cap_truncation_does_not_split_devanagari_combining_mark
     assert not truncated.endswith("क")  # bare KA with no following matra
     assert "ि" not in truncated
     assert len(truncated) <= 10000
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_production_default_does_not_truncate_a_real_world_sized_lesson() -> None:
+    """D78 (Story 3-45): the REAL settings.max_narration_chars_per_lesson (not
+    a mocked test-local cap) must not truncate an ordinary real chapter.
+
+    RED (pre-fix, cap=17,000): lesson abe4e438-052f-48d9-818f-590e3a42b2bb's
+    real production run — an entirely ordinary 29-page, 15-section chapter,
+    nowhere near max_chapter_pages=200 — produced 43,793 real narration
+    chars and had segments 6-14 (9 of 15) zeroed by the cap, silently losing
+    all real TTS audio for 60% of the lesson while real cost sat at 29% of
+    the $3.00 ceiling. This test reproduces that exact per-segment character
+    distribution against the REAL default and asserts nothing is zeroed.
+    """
+    from app.modules.content.pipeline.graph import tts_node
+
+    # Exact per-segment script lengths from the real production run.
+    real_segment_char_counts = [
+        3502,
+        3083,
+        3357,
+        1436,
+        4035,
+        1587,
+        3251,
+        2160,
+        3847,
+        3984,
+        1161,
+        2910,
+        3634,
+        3187,
+        2659,
+    ]
+    assert sum(real_segment_char_counts) == 43793
+    scripts = [
+        {"segment_id": f"sec_{i}", "script": "A" * n, "narration_style": "x"}
+        for i, n in enumerate(real_segment_char_counts)
+    ]
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        # Deliberately NOT patching app.config.get_settings — this must
+        # exercise the real production default.
+    ):
+        result = await tts_node(_base_state(narration_scripts=scripts))
+
+    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
+    for i, n in enumerate(real_segment_char_counts):
+        seg = by_id[f"sec_{i}"]
+        assert seg["script"] == "A" * n, (
+            f"sec_{i} was truncated/zeroed by the production narration cap "
+            f"({len(seg['script'])} of {n} chars survived) — the real default is "
+            "still cutting off an entirely ordinary chapter"
+        )
+        assert seg["audio_provider"] == "sarvam"

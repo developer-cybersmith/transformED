@@ -188,6 +188,96 @@ REAL_LESSON_PACKAGE: dict = {
 }
 
 
+# -- D86: real accumulated cost persisted to lesson_jobs.cost_usd on success --
+
+
+@pytest.mark.unit
+async def test_success_completion_write_includes_real_cost_from_get_cost(mocker) -> None:
+    """D86: the SUCCESS path's lesson_jobs completion update must include a
+    real cost_usd value sourced from get_cost() — not 0, not absent from the
+    payload. clear_lesson_cost()'s own docstring promises the cost "has been
+    persisted to the DB" before the Redis key is deleted; this proves that
+    promise is now kept."""
+    lesson_id = "lesson-cost-success"
+
+    mock_redis = AsyncMock()
+    mock_supabase = _make_mock_supabase()
+    _patch_pipeline_deps(mocker, mock_redis, mock_supabase, {})
+    mocker.patch(
+        "app.core.cost_tracker.get_cost",
+        new=AsyncMock(return_value=1.23456),
+    )
+
+    from app.workers.jobs.content_pipeline import content_pipeline_job
+
+    await content_pipeline_job(ctx={}, lesson_id=lesson_id)
+
+    update_payloads = [c.args[0] for c in mock_supabase.table.return_value.update.call_args_list]
+    completion = [p for p in update_payloads if p.get("status") == "completed"]
+    assert completion, f"no status='completed' write found (payloads: {update_payloads})"
+    # numeric(10,4) column — rounded to 4 decimal places, matching the fix design.
+    assert completion[0]["cost_usd"] == 1.2346, completion[0]
+
+
+@pytest.mark.unit
+async def test_success_completion_write_cost_read_happens_before_cost_cleared(mocker) -> None:
+    """D86: cost must be read BEFORE clear_lesson_cost() deletes the Redis
+    key — reading after would always observe 0 (or a deleted key), silently
+    reintroducing the exact defect this story fixes."""
+    lesson_id = "lesson-cost-order"
+    call_order: list[str] = []
+
+    mock_redis = AsyncMock()
+    mock_supabase = _make_mock_supabase()
+    _patch_pipeline_deps(mocker, mock_redis, mock_supabase, {})
+
+    async def _get_cost(_lesson_id: str) -> float:
+        call_order.append("get_cost")
+        return 2.5
+
+    async def _clear_lesson_cost(_lesson_id: str) -> None:
+        call_order.append("clear_lesson_cost")
+
+    mocker.patch("app.core.cost_tracker.get_cost", new=_get_cost)
+    mocker.patch("app.core.cost_tracker.clear_lesson_cost", new=_clear_lesson_cost)
+
+    from app.workers.jobs.content_pipeline import content_pipeline_job
+
+    await content_pipeline_job(ctx={}, lesson_id=lesson_id)
+
+    assert call_order == ["get_cost", "clear_lesson_cost"], call_order
+
+
+@pytest.mark.unit
+async def test_success_completion_write_survives_get_cost_failure(mocker) -> None:
+    """D86: a get_cost() failure (Redis error) must NOT crash an otherwise-
+    successful pipeline run — the completion write still succeeds with
+    cost_usd simply omitted from the payload (column keeps its existing/
+    default value), matching this codebase's established
+    try/except-and-degrade pattern for secondary tracking concerns."""
+    lesson_id = "lesson-cost-redis-down"
+
+    mock_redis = AsyncMock()
+    mock_supabase = _make_mock_supabase()
+    _patch_pipeline_deps(mocker, mock_redis, mock_supabase, {})
+    mocker.patch(
+        "app.core.cost_tracker.get_cost",
+        new=AsyncMock(side_effect=RuntimeError("Redis pool is not initialised")),
+    )
+
+    from app.workers.jobs.content_pipeline import content_pipeline_job
+
+    result = await content_pipeline_job(ctx={}, lesson_id=lesson_id)
+
+    assert result["status"] == "completed"
+    update_payloads = [c.args[0] for c in mock_supabase.table.return_value.update.call_args_list]
+    completion = [p for p in update_payloads if p.get("status") == "completed"]
+    assert completion, f"no status='completed' write found (payloads: {update_payloads})"
+    assert "cost_usd" not in completion[0], (
+        f"cost_usd must be omitted on a get_cost() failure, got {completion[0]}"
+    )
+
+
 # -- Story 2-12: package_summary against the REAL nested LessonPackage shape --
 
 

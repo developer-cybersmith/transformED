@@ -220,16 +220,41 @@ class Settings(BaseSettings):
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
     )
+    # D78 (Story 3-45): D76 raised this 10,000 -> 17,000 sized against "a real
+    # 15-minute lesson" -- a demo illustration, not a real product requirement.
+    # That framing was wrong and actively harmful: the first real successful
+    # generation under D75-D77 (lesson abe4e438, an entirely ordinary 29-page,
+    # 15-section chapter, nowhere near max_chapter_pages=200) produced 43,793
+    # real narration chars and had 9 of 15 segments ZEROED by the 17,000 cap --
+    # a complete loss of real TTS audio for 60% of the lesson -- while real
+    # cost sat at just 29% of the $3.00 ceiling. Lesson length must be driven
+    # by the chapter's real content, not by any duration target; only real
+    # cost may shorten it. Raised 17,000 -> 120,000: sized against
+    # decisionupdate.md section 8's own "TTS is 67-73% of total lesson cost"
+    # claim -- 120,000 chars = ~$2.40 of Sarvam TTS spend (COST_PER_CHAR=
+    # 0.00002) = 80% of the $3.00 ceiling, leaving the remaining 20% for the
+    # LLM + image spend the same ceiling already tracks.
     max_narration_chars_per_lesson: int = Field(
-        default=10000,
+        default=120000,
         ge=1,
         description=(
-            "Node 8 hard cap: max narration chars across all segments combined "
-            "(decisionupdate.md section 8). TTS synthesis cost is proportional to "
-            "character count and is 67-73% of total lesson generation cost, so this "
-            "bounds the dominant cost driver before it's incurred. Enforced in "
-            "tts_node (not narration_generator_node, which is Send()-dispatched "
-            "once per section with no visibility into any other section's output)."
+            "Node 8 SAFETY-NET cap: max narration chars across all segments "
+            "combined (decisionupdate.md section 8). This is a cost backstop, "
+            "NOT a duration target -- lesson length is driven by the chapter's "
+            "real content; only real cost may shorten it. Sized against real "
+            "cost headroom (D78): 120,000 chars = ~$2.40 Sarvam TTS spend = 80% "
+            "of the $3.00/lesson ceiling, leaving 20% for LLM + image spend. "
+            "TTS synthesis cost is proportional to character count and is "
+            "67-73% of total lesson generation cost, so this still bounds the "
+            "dominant cost driver before it's incurred -- but as a pre-emptive "
+            "backstop against a pathological outlier, not a number aimed at any "
+            "particular runtime. The real, dollar-accurate, dynamically-enforced "
+            "bound is app.core.cost_tracker.check_ceiling, checked per-segment "
+            "before every paid TTS call; this cap exists only to stop an "
+            "unbounded burst of spend before that per-segment check can catch "
+            "up. Enforced in tts_node (not narration_generator_node, which is "
+            "Send()-dispatched once per section with no visibility into any "
+            "other section's output)."
         ),
     )
 
@@ -495,14 +520,26 @@ class Settings(BaseSettings):
     )
 
     # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
+    # D75 (Story 3-43): was 15, EQUAL to structure_max_sections (also 15) --
+    # Story 2-16's own comment assumed a chapter coalesced to the max would
+    # still "fit a single planner call" safely. Disproven live: two real runs
+    # on the same chapter returned 5 and 12 segments when 15 were expected
+    # (the exact 44-in/10-out collapse this batching exists to prevent).
+    # Lowered strictly BELOW structure_max_sections so a maximal chapter is
+    # now always genuinely split into multiple smaller, reliable batches
+    # instead of silently taking the single-call path. No documented "safe"
+    # threshold exists -- 10 is a reasoned conservative margin below the
+    # observed-unreliable value of 15, not a proven number.
     lesson_planner_batch_size: int = Field(
-        default=15,
+        default=10,
         gt=0,
         description=(
             "Max segment summaries sent to lesson_planner in a single LLM "
             "completion. Above this, summaries are split into ordered batches so "
             "the model reliably echoes every segment_id 1:1; at or below it the "
-            "planner makes exactly one call (unchanged behaviour)."
+            "planner makes exactly one call (unchanged behaviour). Deliberately "
+            "kept below structure_max_sections (D75) so the maximal coalesced "
+            "chapter always batches."
         ),
     )
 
