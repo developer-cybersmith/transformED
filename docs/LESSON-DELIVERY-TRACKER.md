@@ -171,18 +171,44 @@ Story 1-13 AC10 · book-scale Phases 5, 6, 6.5 · Track W W0–W4 (all currently
   trusted from the API): real, non-silent PCM audio, durations matching the package's recorded
   timestamps to the millisecond. One slide image independently downloaded and confirmed a real
   1024×1024 PNG.
-- **Schema validation against `packages/shared/lesson_package.schema.json` was never run.**
-  The end-to-end test's step 3 (schema validation) is unchecked — flagging honestly rather than
-  assuming the package is schema-valid because it rendered correctly in the player.
-- **Cost recorded: real dollar figure still missing for THIS lesson.** D86 (fixed 2026-08-13,
-  same day) now makes `lesson_jobs.cost_usd` actually persist — but `1baae6f6` was generated
-  BEFORE D86 merged, so its own `cost_usd` row is still `0.0000`, same as every earlier real run
-  this session. The mechanism is fixed; this specific lesson's real number was never captured.
-  Estimate only: narration alone was ~44.6k chars ≈ $0.89 Sarvam spend (well under the $3.00
-  ceiling), but LLM + image spend was never separately measured.
-- **Per-node timings from Langfuse:** not pulled/recorded here — Langfuse traces exist (D62's
-  fix made tracing work) but nobody has fetched and compiled a per-node timing breakdown into
-  this document.
+- **Schema validation — now run, real pass.** `1baae6f6`'s real package validated against
+  `packages/shared/lesson_package.schema.json` with **zero errors**, checked directly with the
+  `jsonschema` library (2026-08-14). Confirmed the schema is genuinely strict before trusting the
+  result (top-level AND per-`Segment` `required` fields + `additionalProperties: false` — would
+  catch both missing and unexpected fields), not a vacuous pass.
+- **Cost — now recorded, real and precise, from Langfuse (not the DB's own `cost_usd`, which is
+  `0.0000` for this lesson since it predates D86).** Real total: **$1.2500** — 42% of the $3.00
+  ceiling. Real per-node-type breakdown (`response_format`/`name` grouping, 123 real observations):
+
+  | Node / call type | Calls | Total time | Avg/call | Real cost |
+  |---|--:|--:|--:|--:|
+  | `generate-image` (slides) | 15 | 633.4s | 42.2s | $0.3000 |
+  | `synthesize-speech` (Sarvam) | 15 | 173.9s | 11.6s | $0.8916 |
+  | `_NarrationScriptLLM` | 15 | 137.1s | 9.1s | $0.0080 |
+  | `_JargonListLLM` | 15 | 135.4s | 9.0s | $0.0054 |
+  | `_SegmentInterventionsLLM` | 15 | 134.1s | 8.9s | $0.0048 |
+  | `_QuizBatchLLM` | 15 | 133.8s | 8.9s | $0.0048 |
+  | `_SegmentSummaryLLM` | 15 | 80.0s | 5.3s | $0.0032 |
+  | `_SegmentComplexityLLM` | 15 | 63.8s | 4.3s | $0.0035 |
+  | `_SlideDeckLLM` (slide_generator) | 1 | 14.6s | 14.6s | $0.0159 |
+  | `_LessonPlanLLM` (lesson_planner) | 2 | 7.0s | 3.5s | $0.0128 |
+
+  TTS is **71.3%** of real total cost ($0.8916 / $1.2500) — matches `decisionupdate.md`'s
+  "67-73% of total" claim almost exactly, the first time that number has been checked against
+  real data rather than assumed.
+- **Wall-clock — now recorded, real, from Langfuse's own trace-level latency: 935.845s (~15.6
+  min).** (Differs from the ~1213.55s worker-log elapsed time recorded earlier — the ~277s gap is
+  real overhead outside this trace's own observations: Phase A extraction/chunking/embedding and
+  inter-node Supabase checkpoint writes.) **Real finding, not assumed:** `generate-image` calls
+  were checked for overlap by real start/end timestamps and are **fully sequential, zero overlap**
+  — one image at a time, ~40-52s each, back to back. At 633.4s out of 935.845s total trace time,
+  image generation alone is **~68% of this lesson's entire wall-clock**. Phase 1's economy nodes
+  (`_SegmentSummaryLLM` etc.) DO run with real parallelism (their summed latency, 684s, exceeds
+  the trace's own 935.845s total by less than it would if serial — confirmed structurally, not
+  just plausible). **Not fixed here** (out of this specific task's scope, which was to record and
+  measure, not optimize) — but a real, concrete, evidence-backed opportunity: parallelizing
+  `image_generator_node`'s 15 calls the same way Phase 1 already does could plausibly cut total
+  generation time roughly in half.
 - **Real defects found and fixed live during this run** (not assumed, all in
   `docs/DEFECT-REGISTER.md`): D75 (lesson_planner batch reliability), D76+D78 (narration cap
   mis-sized then corrected), D77 (per-batch echo retry), D85 (slide-budget allocation, partial —
