@@ -1265,6 +1265,9 @@ def _planner_system_prompt(tier_framing: str) -> str:
     )
 
 
+_PLANNER_BATCH_MAX_ATTEMPTS = 3
+
+
 async def _run_planner_batch(
     provider: Any,  # noqa: ANN401 — provider type imported locally to avoid a circular import
     model: str,
@@ -1277,8 +1280,26 @@ async def _run_planner_batch(
     Story 2-16 (RC-3): calling the planner one batch at a time keeps each
     structured completion small enough that the model reliably echoes every
     segment_id 1:1 — long single-shot enumerations collapse (44-in/10-out).
-    Same provider/model/prompt as the single-call path. Raises (does not
-    fabricate) when the provider returns no parsed response."""
+    Same provider/model/prompt as the single-call path.
+
+    D77 (Story 3-43 follow-up): even a correctly-sized batch (D75 lowered
+    lesson_planner_batch_size below structure_max_sections so batching
+    always genuinely engages) can still have a real LLM under-echo some
+    segment_ids — confirmed live during two real demo-generation attempts,
+    both with batching correctly engaged (verified via the real Langfuse
+    trace: one call with exactly 10 segment_id refs, one with exactly 5),
+    yet the assembled result still lost 1-3 ids. Retries THIS batch's own
+    completion (not the whole node, not the other already-correct batches)
+    up to _PLANNER_BATCH_MAX_ATTEMPTS times when the response doesn't echo
+    back every input id in this batch exactly once — targets the real
+    observed failure mode directly instead of guessing an even smaller
+    "safe" batch size with no more evidence than D75 already had.
+
+    Still raises (does not fabricate) when the provider returns no parsed
+    response, or when every retry attempt still mismatches — the existing
+    assembled-response guard in lesson_planner_node remains the final
+    backstop either way."""
+    input_ids = {s["segment_id"] for s in batch}
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
@@ -1286,13 +1307,41 @@ async def _run_planner_batch(
         {"role": "system", "content": _planner_system_prompt(tier_framing)},
         {"role": "user", "content": summaries_text},
     ]
-    response: _LessonPlanLLM | None = await provider.complete_structured(
-        messages, model, _LessonPlanLLM
-    )
-    if response is None:
-        logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
-        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response")
-    return response
+
+    last_response: _LessonPlanLLM | None = None
+    for attempt in range(1, _PLANNER_BATCH_MAX_ATTEMPTS + 1):
+        response: _LessonPlanLLM | None = await provider.complete_structured(
+            messages, model, _LessonPlanLLM
+        )
+        if response is None:
+            logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response"
+            )
+
+        response_ids = {seg.segment_id for seg in response.segments}
+        if response_ids == input_ids and len(response.segments) == len(batch):
+            return response
+
+        last_response = response
+        logger.warning(
+            "[%s] lesson_planner_node: batch echo mismatch on attempt %d/%d — "
+            "expected %d ids, got %d ids (missing=%s, unexpected=%s) — retrying this batch",
+            lesson_id,
+            attempt,
+            _PLANNER_BATCH_MAX_ATTEMPTS,
+            len(batch),
+            len(response.segments),
+            sorted(input_ids - response_ids),
+            sorted(response_ids - input_ids),
+        )
+
+    # Exhausted retries — return the last attempt's response and let the
+    # EXISTING assembled-response guard block in lesson_planner_node raise
+    # its own contextual error (unchanged behaviour, just reached after
+    # real retries instead of on the first mismatch).
+    assert last_response is not None  # loop always sets this before falling through
+    return last_response
 
 
 async def lesson_planner_node(state: PipelineState) -> PipelineState:

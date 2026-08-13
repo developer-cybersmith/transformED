@@ -913,6 +913,117 @@ async def test_planner_batches_at_structure_max_sections_boundary() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_planner_retries_same_batch_on_echo_mismatch_and_recovers() -> None:
+    """D77 (Story 3-43 follow-up): confirmed live during two real demo-
+    generation attempts that a real LLM can under-echo a batch even when
+    batching is correctly sized (D75) -- retries the SAME batch's completion
+    before giving up, rather than failing the whole node on the first
+    mismatch. This test proves RECOVERY: the first attempt under-echoes,
+    the second attempt is correct, and the node succeeds using the
+    RECOVERED (not the failed) response -- not just that the eventual
+    failure guard still fires (that's test_planner_batched_dropped_id_still_rejected,
+    a permanently-corrupt mock; this one is transient, like the real world)."""
+    from app.modules.content.pipeline.graph import (
+        _LessonPlanLLM,
+        _LessonPlanSegmentLLM,
+        lesson_planner_node,
+    )
+
+    n = 10  # fits in a single batch at the default batch_size (10) -- exercises
+    # the retry path via _run_planner_batch regardless of single-vs-multi-batch.
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(n)]
+
+    call_count = 0
+
+    def _flaky_then_correct(*args: Any, **kwargs: Any) -> _LessonPlanLLM:
+        nonlocal call_count
+        call_count += 1
+        ids = _ids_from_messages(args)
+        if call_count == 1:
+            # First attempt under-echoes by one id -- the real observed
+            # failure mode (14/15, 12/15 in production).
+            ids = ids[:-1]
+        segs = [
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"T {sid}", duration_min=2.0) for sid in ids
+        ]
+        return _LessonPlanLLM(
+            title="Full Plan",
+            subject="Subject",
+            objectives=["Obj one"],
+            complexity_level="medium",
+            segments=segs,
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _flaky_then_correct
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert call_count == 2, "must retry exactly once after the first mismatch, then stop"
+    plan = result["lesson_plan"]
+    assert plan["total_segments"] == n, "the RECOVERED (2nd) response must be used, not rejected"
+    assert [s["segment_id"] for s in plan["segments"]] == [f"sec_{i}" for i in range(n)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_planner_batch_retry_exhausts_and_still_raises_via_existing_guard() -> None:
+    """D77: when EVERY retry attempt still mismatches (a permanently-broken
+    batch, not a transient one), the node must still raise via the existing
+    assembled-response guard -- retries are a recovery attempt, not a
+    weakening of the failure guarantee. Asserts the exact retry ceiling
+    (_PLANNER_BATCH_MAX_ATTEMPTS) is respected, not retried forever."""
+    from app.modules.content.pipeline.graph import (
+        _PLANNER_BATCH_MAX_ATTEMPTS,
+        _LessonPlanLLM,
+        _LessonPlanSegmentLLM,
+        lesson_planner_node,
+    )
+
+    n = 5
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(n)]
+
+    call_count = 0
+
+    def _always_drops_last(*args: Any, **kwargs: Any) -> _LessonPlanLLM:
+        nonlocal call_count
+        call_count += 1
+        ids = _ids_from_messages(args)[:-1]
+        segs = [
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"T {sid}", duration_min=2.0) for sid in ids
+        ]
+        return _LessonPlanLLM(
+            title="Full Plan",
+            subject="Subject",
+            objectives=["Obj one"],
+            complexity_level="medium",
+            segments=segs,
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _always_drops_last
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        pytest.raises(RuntimeError, match="segment count mismatch"),
+    ):
+        await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert call_count == _PLANNER_BATCH_MAX_ATTEMPTS, (
+        f"must attempt exactly {_PLANNER_BATCH_MAX_ATTEMPTS} times, no more, no fewer"
+    )
+    sb.table.return_value.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_planner_batched_dropped_id_still_rejected() -> None:
     """Story 2-16 RC-3 / AC-6: batching does NOT weaken the guard — if a batch
     drops a segment_id, the assembled count mismatch still raises (no fabrication)."""
