@@ -85,17 +85,39 @@ export type ErrorMessage = WsMessage<
 
 /**
  * Batched engagement signals sent by the frontend every N seconds.
- * Null values indicate a metric was not available in this window.
+ * All numeric fields are on the [0.0, 1.0] scale.
+ * Null values indicate a metric was not available in this window —
+ * the backend redistributes CES weights proportionally across present signals.
+ *
+ * SYNC-B freeze (Story 4-27, 2026-08-13): field definitions and null semantics
+ * are now authoritative. Do not change without a PR reviewed by all 4 developers.
  */
 export type AttentionSignalMessage = WsMessage<
   'attention_signal',
   {
     session_id: string;
+
+    /** range: [0.0, 1.0] — fraction of quiz questions answered correctly this window.
+     *  null = no quiz submitted yet. */
     quiz_accuracy: number | null;
+
+    /** range: [0.0, 1.0] — normalised teach-back score.
+     *  null = teach-back skipped or not yet attempted. */
     teachback_score: number | null;
-    behavioral_score: number;
-    head_pose_score: number;
-    blink_rate: number;
+
+    /** range: [0.0, 1.0] — tab-visibility score (MVP definition).
+     *  1.0 = document.visibilityState === 'visible' (tab in foreground).
+     *  0.0 = tab is hidden (backgrounded, minimised, or visibilityState !== 'visible').
+     *  null = Page Visibility API unavailable (e.g. cross-origin iframe restriction). */
+    behavioral_score: number | null;
+
+    /** range: [0.0, 1.0] — normalised head-pose attention score from MediaPipe.
+     *  null = MediaPipe not yet initialised, or this frame was dropped. */
+    head_pose_score: number | null;
+
+    /** range: [0.0, 1.0] — normalised blink-rate score (higher = more alert).
+     *  null = MediaPipe not yet initialised, or this frame was dropped. */
+    blink_rate: number | null;
   }
 >;
 

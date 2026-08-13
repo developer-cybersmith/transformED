@@ -84,12 +84,13 @@ being checked.
 | **L2** | Narration cost + timing truth | Dev 1 | ⬜ Not started (partly startable now) |
 | **L3** | A student plays it in a browser | Dev 1 + Dev 2 | ⬜ Blocked by L1 |
 | **L4** | Quiz + teach-back on a real package | Dev 3 | ⬜ Blocked by L1 |
-| **L5** | CES made feedable | Dev 3 + Dev 4 | ⬜ Not started |
-| **L6** | Attention capture (MediaPipe) | Dev 2 | ⬜ Not started |
-| **L7** | Interventions fire *and recover* | Dev 4 | ⬜ Not started |
+| **L5** | CES made feedable | Dev 3 + Dev 4 | 🔨 In progress — SYNC-A closed; SYNC-B frozen (Story 4-27); T18 (quiz_accuracy fraction) still Dev 3's |
+| **L6** | Attention capture (MediaPipe) | Dev 2 | ⬜ Unblocked by SYNC-B (Story 4-27) — ready to build |
+| **L7** | Interventions fire *and recover* | Dev 4 | 🔨 Implemented — D63 fixed (PR #129), 501 stubs fixed (PR #135), `{**state}` guard widened (PR #129); exit criterion pending L6 |
 | **L8** | One student, one complete lesson | All | ⬜ The finish line |
 
-**Totals:** 9 phases · 0 Verified · 0 Implemented · 9 Not started.
+**Totals:** 9 phases · 0 Verified · 2 Implemented (L5, L7) · 7 Not started.
+**Last updated:** 2026-08-13 (Story 4-27 — SYNC-A closed, SYNC-B frozen, L7 deviations 1/4a/4b/4c fixed).
 
 ---
 

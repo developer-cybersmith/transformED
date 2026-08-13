@@ -1320,3 +1320,204 @@ async def test_delete_intervention_deadline_if_expired_false_on_redis_error() ->
     redis.eval = AsyncMock(side_effect=RuntimeError("redis down"))
 
     assert await _delete_intervention_deadline_if_expired("s", redis) is False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Story 4-27 — behavioral_score definition + SYNC-B wire contract freeze
+# AC6: _parse_signal accepts missing / null behavioral_score without raising
+# AC7: compute_ces redistributes weights when MediaPipe signals are None
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_parse_signal_behavioral_score_missing_yields_none() -> None:
+    """AC6: behavioral_score absent from payload → NormalizedSignal.behavioral_score = None.
+
+    The wire contract (ws.ts post-SYNC-B) marks behavioral_score as number | null.
+    The backend must accept a payload that omits the key entirely — missing key is
+    equivalent to null.
+    """
+    payload = {
+        "session_id": "ses-partial",
+        "quiz_accuracy": 0.8,
+        "teachback_score": None,
+        # behavioral_score intentionally absent
+        "head_pose_score": 0.7,
+        "blink_rate": 0.5,
+    }
+    result = _parse_signal(payload)
+    assert result.behavioral_score is None
+    assert result.head_pose_score == pytest.approx(0.7)
+    assert result.blink_rate == pytest.approx(0.5)
+
+
+@pytest.mark.unit
+def test_parse_signal_behavioral_score_null_yields_none() -> None:
+    """AC6: behavioral_score=null in payload → NormalizedSignal.behavioral_score = None.
+
+    Covers the explicit-null case (JSON null → Python None), distinct from the
+    missing-key case above.
+    """
+    payload = {
+        "session_id": "ses-null-behavioral",
+        "quiz_accuracy": None,
+        "teachback_score": None,
+        "behavioral_score": None,
+        "head_pose_score": None,
+        "blink_rate": None,
+    }
+    result = _parse_signal(payload)
+    assert result.behavioral_score is None
+    assert result.head_pose_score is None
+    assert result.blink_rate is None
+    assert result.quiz_accuracy is None
+
+
+@pytest.mark.unit
+def test_parse_signal_nonfinite_behavioral_score_raises() -> None:
+    """AC6: A non-finite behavioral_score (NaN, Inf) still raises ValueError.
+
+    Null/absent is valid (partial signal); a value that slipped through as NaN
+    is not — it would propagate through compute_ces and clamp to a misleading score.
+    """
+    import math
+
+    for bad_value in (math.nan, math.inf, -math.inf):
+        payload = {
+            "session_id": "ses-nonfinite",
+            "quiz_accuracy": 0.8,
+            "teachback_score": None,
+            "behavioral_score": bad_value,
+            "head_pose_score": 0.7,
+            "blink_rate": 0.5,
+        }
+        with pytest.raises(ValueError, match="behavioral_score"):
+            _parse_signal(payload)
+
+
+@pytest.mark.unit
+def test_compute_ces_behavioral_none_redistributes_not_zero() -> None:
+    """AC7: behavioral_score=None → weight redistributed, not treated as 0.0.
+
+    With head_pose=0.6 and blink=0.6 as the only present signals, the
+    redistributed CES should equal 60.0 (not drop toward zero as it would if
+    the 0.20 behavioral weight were applied at 0.0).
+    """
+    from unittest.mock import MagicMock
+
+    from app.modules.assessment.ces import compute_ces as canonical
+
+    s = MagicMock()
+    s.ces_weight_quiz = 0.35
+    s.ces_weight_teachback = 0.25
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
+
+    # Only head_pose and blink present at 0.6; behavioral, quiz, teachback all None.
+    # weight_sum = 0.12 + 0.08 = 0.20
+    # CES = 0.6 × (0.12/0.20) × 100 + 0.6 × (0.08/0.20) × 100 = 60.0
+    result = canonical(
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral=None,
+        head_pose=0.6,
+        blink=0.6,
+        settings=s,
+    )
+
+    assert result == pytest.approx(60.0, abs=0.01), (
+        f"behavioral=None should redistribute weights; got CES={result:.4f}, expected 60.0"
+    )
+
+    # Confirm it is HIGHER than if behavioral=0.0 were substituted at full weight.
+    result_zero_subst = canonical(
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral=0.0,
+        head_pose=0.6,
+        blink=0.6,
+        settings=s,
+    )
+    assert result > result_zero_subst, (
+        f"Redistribution (CES={result:.2f}) must be > zero-substitution"
+        f" (CES={result_zero_subst:.2f})"
+    )
+
+
+@pytest.mark.unit
+def test_compute_ces_all_mediapipe_none_quiz_only() -> None:
+    """AC7: All three MediaPipe signals None, quiz_accuracy=0.8 → CES ≈ 80.0.
+
+    Only quiz_accuracy is present. Its weight (0.35) is the only contributor;
+    weight_sum=0.35 → redistributed weight=1.0 → CES = 0.8 × 100 = 80.0.
+    This is the earliest-phase scenario: lesson just started, no attention
+    capture yet, student answered first quiz correctly.
+    """
+    from unittest.mock import MagicMock
+
+    from app.modules.assessment.ces import compute_ces as canonical
+
+    s = MagicMock()
+    s.ces_weight_quiz = 0.35
+    s.ces_weight_teachback = 0.25
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
+
+    result = canonical(
+        quiz_accuracy=0.8,
+        teachback_score=None,
+        behavioral=None,
+        head_pose=None,
+        blink=None,
+        settings=s,
+    )
+    assert result == pytest.approx(80.0, abs=0.01), (
+        f"quiz_accuracy=0.8 only → expected CES 80.0, got {result:.4f}"
+    )
+
+
+@pytest.mark.unit
+def test_compute_ces_partial_mediapipe_via_tutor_wrapper() -> None:
+    """AC7 integration: partial MediaPipe signal passes through tutor/service.py
+    compute_ces wrapper and matches the canonical formula directly.
+
+    Verifies the wrapper correctly forwards None fields to assessment/ces.py.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from app.modules.assessment.ces import compute_ces as canonical
+    from app.modules.tutor.service import compute_ces as tutor_ces
+
+    s = MagicMock()
+    s.ces_weight_quiz = 0.35
+    s.ces_weight_teachback = 0.25
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
+
+    signal = NormalizedSignal(
+        session_id="ses-partial-integration",
+        quiz_accuracy=0.7,
+        teachback_score=None,
+        behavioral_score=None,  # absent — tab API unavailable
+        head_pose_score=0.8,
+        blink_rate=None,        # absent — MediaPipe not yet initialised
+    )
+
+    expected = canonical(
+        quiz_accuracy=0.7,
+        teachback_score=None,
+        behavioral=None,
+        head_pose=0.8,
+        blink=None,
+        settings=s,
+    )
+
+    with patch("app.config.get_settings", return_value=s):
+        actual = tutor_ces(signal)
+
+    assert abs(actual - expected) < 1e-6, (
+        f"tutor wrapper must forward None fields: expected {expected:.4f}, got {actual:.4f}"
+    )

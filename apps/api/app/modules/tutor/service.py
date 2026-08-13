@@ -110,6 +110,12 @@ def compute_ces(signal: NormalizedSignal) -> float:
     Formula arithmetic lives exclusively in ``assessment.ces.compute_ces`` (D1).
     This wrapper preserves the ``NormalizedSignal``-based API used internally by
     ``process_attention_signal`` without duplicating the weighted-sum logic.
+
+    SYNC-A resolved (Story 4-27, 2026-08-13): ``assessment/ces.py`` is the single
+    canonical implementation. This wrapper is the only permitted caller outside the
+    assessment module. The CI guard ``test_ces_formula_defined_in_one_place`` (in
+    ``test_s3_53_ces_production_closure.py``) enforces this: any second formula
+    definition fails the build.
     """
     from app.config import get_settings  # noqa: PLC0415
     from app.modules.assessment.ces import compute_ces as _canonical  # noqa: PLC0415
