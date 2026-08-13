@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useSessionReport } from '@/hooks/useSessionReport';
 import { cesScoreColor, formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
+import { AttentionChart } from '@/components/reports/AttentionChart';
 import type { DnaDimension, LearnerDnaSnapshot } from '@/types/assessment';
 
 interface SessionReportProps {
@@ -187,6 +188,13 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           </span>
         </div>
       </div>
+
+      {report.ces_timeline !== null && (
+        <AttentionChart
+          timeline={report.ces_timeline}
+          interventions={report.intervention_events}
+        />
+      )}
 
       {report.learner_dna_snapshot && (
         <DnaSnapshotSection snapshot={report.learner_dna_snapshot} />

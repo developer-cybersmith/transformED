@@ -115,6 +115,12 @@ export interface SessionReport {
   quiz_accuracy_label: 'Strong' | 'Developing' | 'Needs Review' | null;
   // Story 3-30 addition — null when the user has no learner_dna row yet.
   learner_dna_snapshot: LearnerDnaSnapshot | null;
+  // Story 2-46 (S3-05) additions — attention timeline chart data. ces_timeline can never
+  // exceed 10 points (D77, docs/DEFECT-REGISTER.md) — the last ~50s of the session at default
+  // cadence, never the whole session; the chart must present this as a recency window.
+  // intervention_events never carries the raw CES value at trigger time (AC-5).
+  ces_timeline: { minute: number; ces: number }[] | null;
+  intervention_events: { minute: number; type: string }[] | null;
 }
 
 // ── GET /api/assessment/user/dna ──────────────────────────────────────────

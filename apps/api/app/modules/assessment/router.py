@@ -72,6 +72,13 @@ class SessionReport(BaseModel):
     # nothing to the client. Rename to intervention_events_count in a future non-frozen-
     # contract release (requires 4-dev PR review per CLAUDE.md §16).
     intervention_messages_used: int = 0
+    # S3-05 (Story 2-46) — attention timeline chart data. NOT the same field the S3-53 note
+    # above proposes renaming `intervention_messages_used` to (`intervention_events_count`,
+    # a count) — this is a LIST of {"minute","type"} points for the chart's vertical markers.
+    # Never includes `ces_at_trigger` (present in the underlying session_events payload) —
+    # enforced in service.py, not just by convention (AC-5).
+    ces_timeline: list[dict[str, float]] | None = None
+    intervention_events: list[dict[str, Any]] | None = None
 
 
 class LearnerDNA(BaseModel):
