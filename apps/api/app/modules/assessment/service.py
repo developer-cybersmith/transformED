@@ -947,6 +947,22 @@ async def get_session_report(
     )
     interventions_count: int = events_resp.count or 0
 
+    # Step 4b — S3-05 (Story 2-46): raw intervention rows for the attention timeline chart's
+    # vertical markers. BOUNDED: .limit(20) safety ceiling; natural bound is
+    # max_distraction_per_session (default 3) + 1 fatigue + a handful of D64-uncapped confusion
+    # events. minute-offset math happens later, once `started_at` is available (Step 6).
+    intervention_rows_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("session_events")
+            .select("created_at, payload")
+            .eq("session_id", session_id)
+            .eq("event_type", "intervention_triggered")
+            .limit(20)
+            .execute()
+        )
+    )
+    intervention_rows: list[dict[str, Any]] = rows(intervention_rows_resp)
+
     # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
     teachback_normalised = (avg_teachback / 100.0) if teachback_count > 0 else None
@@ -1054,17 +1070,33 @@ async def get_session_report(
 
     # S3-50 (D18): ces_history_summary — compact engagement trend from Redis ces_history.
     # BOUNDED: lrange reads at most 10 entries (ltrim cap at write time).
+    #
+    # S3-05 (Story 2-46) / D77: ces_timeline reuses this SAME read (no second Redis round
+    # trip) to also build a chronological [{"minute","ces"}, ...] series for the attention
+    # timeline chart. `ces_history` is LPUSH'd (newest-first), so raw order is reversed to get
+    # oldest-first. Legacy bare-float entries (no "t") cannot be time-placed and are excluded
+    # from ces_timeline, but still counted in ces_history_summary exactly as before this story
+    # (AC-2 non-regression). D77: this can never exceed _CES_HISTORY_MAX=10 entries — the last
+    # ~50s of the session at default cadence, regardless of session length. The frontend must
+    # present this as a recency window, never as full-session coverage.
     ces_history_summary: dict[str, Any] | None = None
+    ces_timeline: list[dict[str, float]] | None = None
     if redis is not None:
         try:
             raw_history: list[str] = await redis.lrange(
                 f"session:{session_id}:ces_history", 0, 9
             )
             ces_vals: list[float] = []
+            timeline_points: list[dict[str, float]] = []
+            started_at_unix = started_at.timestamp() if started_at is not None else None
             for raw in raw_history:
                 try:
                     parsed = json.loads(raw)
-                    ces_vals.append(float(parsed["v"]))
+                    v = float(parsed["v"])
+                    ces_vals.append(v)
+                    if started_at_unix is not None and "t" in parsed:
+                        minute = round((float(parsed["t"]) - started_at_unix) / 60.0, 2)
+                        timeline_points.append({"minute": minute, "ces": round(v, 2)})
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                     try:
                         ces_vals.append(float(raw))
@@ -1077,8 +1109,38 @@ async def get_session_report(
                     "max": round(max(ces_vals), 2),
                     "window_count": len(ces_vals),
                 }
+            if timeline_points:
+                ces_timeline = list(reversed(timeline_points))
         except Exception:  # noqa: BLE001
             ces_history_summary = None
+            ces_timeline = None
+
+    # S3-05 (Story 2-46): intervention_events — minute + type only, computed from the
+    # Step 4b raw rows now that `started_at` (Step 6) is available. AC-5: `ces_at_trigger`
+    # (present in the raw payload) is never extracted here — enforced at the contract level,
+    # not by frontend discipline alone. A malformed row (no created_at) is skipped, not fatal.
+    intervention_events: list[dict[str, Any]] | None = None
+    if intervention_rows and started_at is not None:
+        _started_at_unix = started_at.timestamp()
+        _computed_events: list[dict[str, Any]] = []
+        for _row in intervention_rows:
+            _raw_created = _row.get("created_at")
+            if not _raw_created:
+                continue
+            try:
+                _created_dt = (
+                    datetime.fromisoformat(_raw_created.replace("Z", "+00:00"))
+                    if isinstance(_raw_created, str)
+                    else _raw_created
+                )
+                _minute = round((_created_dt.timestamp() - _started_at_unix) / 60.0, 2)
+            except (ValueError, TypeError):
+                continue
+            _payload = _row.get("payload") or {}
+            _itype = _payload.get("intervention_type") if isinstance(_payload, dict) else None
+            _computed_events.append({"minute": _minute, "type": _itype or "unknown"})
+        if _computed_events:
+            intervention_events = _computed_events
 
     logger.info(
         "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
@@ -1114,6 +1176,9 @@ async def get_session_report(
         ces_history_summary=ces_history_summary,
         # S3-51 intervention messages delivered count
         intervention_messages_used=interventions_count,
+        # S3-05 (Story 2-46) attention timeline chart data
+        ces_timeline=ces_timeline,
+        intervention_events=intervention_events,
     )
 
 

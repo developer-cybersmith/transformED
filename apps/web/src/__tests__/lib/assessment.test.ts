@@ -37,6 +37,20 @@ describe('getSessionReport', () => {
 
     expect(apiGetMock).toHaveBeenCalledWith('/assessment/session/sess_abc123/report');
   });
+
+  it('passes through ces_timeline and intervention_events unchanged (Story 2-46/S3-05)', async () => {
+    const responseData = {
+      session_id: 'sess_abc123',
+      ces_timeline: [{ minute: 0, ces: 60 }, { minute: 1, ces: 70 }],
+      intervention_events: [{ minute: 3, type: 'distraction' }],
+    };
+    apiGetMock.mockResolvedValue({ data: responseData });
+
+    const result = await getSessionReport('sess_abc123');
+
+    expect(result.ces_timeline).toEqual(responseData.ces_timeline);
+    expect(result.intervention_events).toEqual(responseData.intervention_events);
+  });
 });
 
 describe('submitQuiz', () => {
