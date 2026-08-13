@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 14 | 10 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 16 | 11 | 1 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **68** | **53** | **1** | **14** |
+| **Totals** | | **70** | **54** | **2** | **14** |
 
 ---
 
@@ -841,6 +841,17 @@ Every node must:
   - Found inspecting the first real, fully successful demo lesson produced after D75+D76+D77 (lesson `abe4e438`, an ordinary 29-page/15-section chapter). D76's 17,000-char cap, sized against "a real 15-minute lesson," proved actively harmful on real data: 43,793 real narration chars crossed the cap and zeroed segments 6–14 (9 of 15) — a complete loss of real Sarvam audio for 60% of the lesson (all 9 fell back to browser TTS), while real cost sat at just 29% of the $3.00 ceiling. `package_builder`'s D32/D33 recovery correctly preserved the text (working as designed), but the audio experience was materially degraded
   - `apps/api/app/config.py` *(`max_narration_chars_per_lesson` 17,000→120,000, re-derived against real cost headroom — ≈$2.40 Sarvam spend = 80% of the $3.00 ceiling — not any duration target)*
   - **AC:** new `test_production_default_does_not_truncate_a_real_world_sized_lesson` uses the REAL settings default (not a mocked cap) against the exact real per-segment character distribution from lesson `abe4e438` ✅; RED-GREEN verified (failed against 17,000 with the exact predicted zeroing, passed against 120,000) ✅; full repo-wide regression re-baselined on this exact commit: 52 failed/2062 passed/86 skipped before, 52 failed/2063 passed/86 skipped after — zero new failures ✅ — see `docs/stories/3-45-narration-cap-safety-net.md`
+
+- [~] **S3-46 slide budget proportional to segment duration (D85, PARTIAL)** — 2026-08-13 (branch `sprint3/s3-46-slide-budget-duration`, merged to `main`)
+  - Found watching the D78-fixed demo lesson actually play in a browser: every one of 15 real segments (durations 1.23–3.48 real minutes) got exactly 1 static slide, because `_tier_slide_budget_per_segment` divided each tier's fixed total-lesson slide band evenly by segment COUNT, not duration. Fixed the mechanism — allocation is now proportional to each segment's real estimated duration share (already computed by lesson_planner, previously discarded) — verified correct via a T1 assertion (differentiates when the tier band has headroom)
+  - `apps/api/app/modules/content/pipeline/graph.py` *(`_tier_slide_budget_per_segment` signature changed `(tier, segment_count: int) -> tuple[int,int]` → `(tier, segment_durations_min: list[float]) -> list[tuple[int,int]]`; `lesson_planner_node` call site updated to pass real per-segment durations and index each segment's own budget)*
+  - **Honest gap, not hidden**: re-verified against the exact real 15-segment dataset and found T2/T3 still produce `(1,1)` for every segment even under the new mechanism — both tiers' total_max (15, 8) is `<=` the segment count, so there's nothing to proportionally redistribute; every segment is already pinned to the structural floor. **This is a stale `_TIER_TOTAL_SLIDE_BAND` value problem (never re-derived against `structure_max_sections=15`), not an implementation bug** — the mechanism is proven correct, but the user's actual observed T3 symptom is NOT yet fixed. Marked `[~]` Partial, not `[x]` Done, for exactly this reason. Follow-up (re-deriving the tier band values) needs explicit product/cost confirmation before implementing — more slides/tier = more `image_generator` spend
+  - **AC:** `test_slide_budget_proportional_to_real_d85_durations` (real 15-segment dataset, asserts the T2 non-differentiation finding explicitly + T1 differentiation) + `test_slide_budget_zero_total_duration_falls_back_to_flat_division` ✅; RED-GREEN verified via Edit tool ✅; full repo-wide regression (worktree-local baseline) 52 failed/2013 passed/86 skipped/3 collection errors before, same failed count/2015 passed after — zero new failures ✅ — see `docs/stories/3-46-slide-budget-duration.md`
+
+- [x] **S3-47 persist real accumulated cost to lesson_jobs.cost_usd (D86)** — ✓ 2026-08-13 (branch `sprint3/s3-47-cost-persist-lesson-jobs`, merged to `main`)
+  - Found auditing `docs/handoffs/lesson-delivery-dev1.md`'s own L1 checklist item "Record: measured cost per lesson" against real data: `lesson_jobs.cost_usd` was never written anywhere in `content_pipeline_job`, confirmed by zero references in the file and by `clear_lesson_cost()`'s own docstring promising a persistence step that was never built. Two real successful lesson generations this session, both with confirmed real OpenAI + Sarvam spend, both showed `cost_usd = 0.0000`. The live $3.00 ceiling enforcement (Redis-backed) was never wrong — only the durable post-hoc record
+  - `apps/api/app/workers/jobs/content_pipeline.py` *(success path reads `get_cost()` before `clear_lesson_cost()` clears it, folds into the completion update; `_update_lesson_status` extended to persist real cost on every "failed" transition too — a partially-completed lesson now records its real partial spend, not 0; both read sites degrade-not-crash on a Redis failure)*
+  - **AC:** 6 new tests across `test_lesson_ready_pubsub.py` (success path) and `test_timeout_contract.py` (failure path) ✅; RED-GREEN verified via Edit tool (3 of 6 failed against pre-fix code with real errors) ✅; full repo-wide regression 54 failed/2090 passed/85 skipped before, same failed set/2096 passed after — zero new failures ✅ — see `docs/stories/3-47-cost-persist-lesson-jobs.md`
 
 ---
 
