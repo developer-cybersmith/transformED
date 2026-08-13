@@ -345,6 +345,28 @@ async def test_running_transition_does_not_fetch_cost() -> None:
     get_cost_mock.assert_not_awaited()
 
 
+async def test_running_transition_writes_a_real_started_at() -> None:
+    """D91: the 'running' transition must write a real started_at timestamp
+    to lesson_jobs -- the reaper's precise staleness signal, distinct from
+    lessons.created_at (row-insert time, before the job was even enqueued).
+    Every retry attempt must overwrite it with ITS OWN start time (a fresh
+    attempt deserves a fresh staleness clock)."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase, tables = _make_multi_table_supabase_mock()
+
+    with patch("app.core.cost_tracker.get_cost", new=AsyncMock()):
+        await job_mod._update_lesson_status(supabase, "lesson-running", "running")
+
+    payload = tables["lesson_jobs"].update.call_args.args[0]
+    assert "started_at" in payload
+    # A real ISO-8601 timestamp, not a placeholder -- parseable and recent.
+    from datetime import UTC, datetime
+
+    parsed = datetime.fromisoformat(payload["started_at"])
+    assert (datetime.now(tz=UTC) - parsed).total_seconds() < 5
+
+
 # ── Story S2-LM3: tier fetched from lessons and threaded to run_pipeline ────
 
 

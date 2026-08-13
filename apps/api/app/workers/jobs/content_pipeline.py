@@ -309,7 +309,21 @@ async def _update_lesson_status(
     pure waste). A Redis read failure degrades to leaving cost_usd unset
     rather than raising: this is a secondary tracking concern and must never
     break the primary status write below (matches the try/except-and-degrade
-    pattern this function already applies to its own Supabase writes)."""
+    pattern this function already applies to its own Supabase writes).
+
+    D91: the 'running' transition also writes lesson_jobs.started_at — the
+    REAL moment this attempt began executing, not lessons.created_at (when
+    the row was inserted, before the job was even enqueued). D53's reaper
+    used created_at as its only staleness signal, which conflates queue-wait
+    time with run time: a job that sits queued for a while before a worker
+    picks it up gets less real run-time budget than arq_job_timeout_s before
+    being reaped, even though it may still be genuinely alive and working.
+    Observed live: a real job whose retry was delayed ~32 minutes before ARQ
+    even dequeued it got reaped while still actually running, leaving
+    lessons.status='failed' and lesson_jobs.status='running' inconsistent.
+    Every retry attempt overwrites started_at with ITS OWN start time, which
+    is correct — a fresh attempt deserves a fresh staleness clock, not the
+    original row's creation time or an earlier attempt's start."""
     if status == "failed" and cost_usd is None:
         try:
             from app.core.cost_tracker import get_cost
@@ -327,6 +341,10 @@ async def _update_lesson_status(
             payload["error"] = error[:2000]  # Truncate to avoid DB column overflow
         if cost_usd is not None:
             payload["cost_usd"] = round(cost_usd, 4)
+        if status == "running":
+            from datetime import datetime
+
+            payload["started_at"] = datetime.now(tz=UTC).isoformat()
 
         supabase.table("lesson_jobs").update(payload).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001
