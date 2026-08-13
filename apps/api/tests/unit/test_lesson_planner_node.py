@@ -852,6 +852,67 @@ async def test_planner_batches_above_threshold_produces_full_plan() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_planner_batches_at_structure_max_sections_boundary() -> None:
+    """D75 (Story 3-43): a chapter coalesced to EXACTLY structure_max_sections
+    (15 segments — the maximal, most common real-world case, since coalescing
+    caps at this value) must genuinely batch under the current default
+    config, not silently take the single-call path. Two real production runs
+    on a 15-segment chapter returned 5 and 12 segments before this fix —
+    proving the single-call path is unreliable at this size. This test uses
+    the REAL settings.structure_max_sections value (not a hardcoded 15) so it
+    stays correct if that default is ever re-tuned."""
+    from app.config import get_settings
+    from app.modules.content.pipeline.graph import (
+        _LessonPlanLLM,
+        _LessonPlanSegmentLLM,
+        lesson_planner_node,
+    )
+
+    n = get_settings().structure_max_sections
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(n)]
+
+    def _batch_response(*args: Any, **kwargs: Any) -> _LessonPlanLLM:
+        messages = args[0]
+        user_text = messages[1]["content"]
+        ids = [
+            line.split("segment_id=")[1].split(":")[0]
+            for line in user_text.splitlines()
+            if "segment_id=" in line
+        ]
+        segs = [
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"Title {sid}", duration_min=3.0)
+            for sid in ids
+        ]
+        return _LessonPlanLLM(
+            title="Full Plan",
+            subject="Subject",
+            objectives=["Obj one", "Obj two"],
+            complexity_level="medium",
+            segments=segs,
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _batch_response
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert mock_provider.complete_structured.call_count > 1, (
+        f"D75: {n} summaries (structure_max_sections) must trigger real batching "
+        "under the default config — a single call at this size is the exact "
+        "shape that collapsed in production (15 expected, 5 or 12 returned)"
+    )
+    plan = result["lesson_plan"]
+    assert plan["total_segments"] == n
+    assert [s["segment_id"] for s in plan["segments"]] == [f"sec_{i}" for i in range(n)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_planner_batched_dropped_id_still_rejected() -> None:
     """Story 2-16 RC-3 / AC-6: batching does NOT weaken the guard — if a batch
     drops a segment_id, the assembled count mismatch still raises (no fabrication)."""
@@ -925,13 +986,18 @@ def _make_plan_llm(ids: list[str]) -> Any:
 @pytest.mark.parametrize(
     ("n", "expected_calls"),
     [
-        (15, 1),  # == batch_size -> single call (boundary)
-        (16, 2),  # batch_size + 1 -> 15 + 1 (one-element final batch)
-        (30, 2),  # exact multiple -> 15 + 15 (no remainder)
+        (10, 1),  # == batch_size (D75: now 10, was 15) -> single call (boundary)
+        (11, 2),  # batch_size + 1 -> 10 + 1 (one-element final batch)
+        (15, 2),  # structure_max_sections (D75's real-world case) -> 10 + 5
+        (20, 2),  # exact multiple -> 10 + 10 (no remainder)
     ],
 )
 async def test_planner_batch_boundaries(n: int, expected_calls: int) -> None:
-    """Story 2-16 RC-3: the <= vs > batch_size boundary and remainder handling."""
+    """Story 2-16 RC-3 / D75 (Story 3-43): the <= vs > batch_size boundary and
+    remainder handling, against the current lesson_planner_batch_size=10
+    default (lowered from 15 by D75 so structure_max_sections=15 always
+    genuinely batches — see test_planner_batches_at_structure_max_sections_boundary
+    for why)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     summaries = [{"segment_id": f"sec_{i}", "summary": f"S{i}."} for i in range(n)]

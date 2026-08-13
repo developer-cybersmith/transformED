@@ -230,18 +230,27 @@ def test_coalesce_single_subfloor_section_is_kept() -> None:
 
 @pytest.mark.unit
 def test_config_defaults_and_planner_batch_invariant() -> None:
-    """AC-3: defaults are 200/15/15; the coalesce cap must never exceed the
-    planner's single-call batch size (else batching would be forced by default).
-    Also verify the batch-size Field carries the gt=0 guard (Blind Hunter)."""
+    """AC-3 (amended by D75, Story 3-43): defaults are 200/15/10. The ORIGINAL
+    invariant here required the coalesce cap to fit a single planner call
+    (structure_max_sections <= lesson_planner_batch_size) -- that was Story
+    2-16's own assumption, disproven live when two real runs on a 15-segment
+    chapter returned 5 and 12 segments (the exact 1:1-echo collapse batching
+    exists to prevent). D75 flips the relationship deliberately: the batch
+    size must now be STRICTLY BELOW the coalesce cap, so the maximal
+    (structure_max_sections-sized) chapter always genuinely batches instead
+    of silently taking the single-call path. Also verify the batch-size
+    Field still carries its gt=0 guard (Blind Hunter)."""
     from app.config import Settings
 
     fields = Settings.model_fields
     assert fields["structure_min_section_chars"].default == 200
     assert fields["structure_max_sections"].default == 15
-    assert fields["lesson_planner_batch_size"].default == 15
-    assert (
-        fields["structure_max_sections"].default <= fields["lesson_planner_batch_size"].default
-    ), "coalesced section count must fit a single planner call in the default config"
+    assert fields["lesson_planner_batch_size"].default == 10
+    assert fields["lesson_planner_batch_size"].default < fields["structure_max_sections"].default, (
+        "D75: batch size must be strictly below the coalesce cap so a maximal "
+        "chapter is always genuinely split into multiple reliable batches, "
+        "never silently taking the single (unreliable) call path"
+    )
     # gt=0 guard present on lesson_planner_batch_size (rejects 0 / negative)
     assert any(getattr(m, "gt", None) == 0 for m in fields["lesson_planner_batch_size"].metadata)
     assert any(getattr(m, "ge", None) == 1 for m in fields["structure_max_sections"].metadata)
