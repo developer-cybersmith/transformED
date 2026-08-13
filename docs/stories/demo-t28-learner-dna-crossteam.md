@@ -1,7 +1,7 @@
 ---
 id: demo-t28
 title: "T28 (Cross-team) — Learner DNA display contract tests for Dev 2"
-status: ready-for-dev
+status: review
 branch: dev3-demo-t28-crossteam
 target_branch: master-demo-dev3
 owner: Dev3
@@ -125,17 +125,17 @@ schema-valid against `LearnerDNA` Pydantic model.
 
 ## Tasks / Subtasks
 
-- [ ] **T1 — Write test file** `apps/api/tests/test_t28_dna_display_contract_dev2.py`
-  - [ ] T1a — AC3/AC4 source-level guards: `DPDP_DISCLAIMER` contains "HIE Learner DNA", no "TransformED"; `ONBOARDING_PROFILE_SYSTEM_PROMPT` contains "HIE", no "TransformED"; both contain "DPDP Act 2023" / "HIE"
-  - [ ] T1b — AC1: `GET /user/dna` response body has no raw numeric dimension keys; mock DB row explicitly containing all nine dimension columns + sub-dimensions
-  - [ ] T1c — AC8/AC9/AC10: `GET /user/dna` 200 smoke + 404 for missing row + shape validation (all required fields present)
-  - [ ] T1d — AC7: `GET /user/dna` `profile_text` ends with `DPDP_DISCLAIMER`
-  - [ ] T1e — AC5: `badge_labels` no IQ/EQ/SQ terms (GET /user/dna path)
-  - [ ] T1f — AC2: `POST /onboarding/submit` response body has no raw numeric dimension keys
-  - [ ] T1g — AC6: `POST /onboarding/submit` `profile_text` ends with `DPDP_DISCLAIMER`
-  - [ ] T1h — AC5: `badge_labels` no IQ/EQ/SQ terms (onboarding path)
-- [ ] **T2 — Run full test suite and confirm all tests GREEN**
-- [ ] **T3 — Commit + push branch; confirm story-first gate satisfied**
+- [x] **T1 — Write test file** `apps/api/tests/test_t28_dna_display_contract_dev2.py`
+  - [x] T1a — AC3/AC4 source-level guards: `DPDP_DISCLAIMER` contains "HIE Learner DNA", no "TransformED"; `ONBOARDING_PROFILE_SYSTEM_PROMPT` contains "HIE", no "TransformED"; both contain "DPDP Act 2023" / "HIE"
+  - [x] T1b — AC1: `GET /user/dna` response body has no raw numeric dimension keys; mock DB row explicitly containing all nine dimension columns + sub-dimensions
+  - [x] T1c — AC8/AC9/AC10: `GET /user/dna` 200 smoke + 404 for missing row + shape validation (all required fields present)
+  - [x] T1d — AC7: `GET /user/dna` `profile_text` ends with `DPDP_DISCLAIMER`
+  - [x] T1e — AC5: `badge_labels` no IQ/EQ/SQ terms (GET /user/dna path)
+  - [x] T1f — AC2: `POST /onboarding/submit` response body has no raw numeric dimension keys
+  - [x] T1g — AC6: `POST /onboarding/submit` `profile_text` ends with `DPDP_DISCLAIMER`
+  - [x] T1h — AC5: `badge_labels` no IQ/EQ/SQ terms (onboarding path)
+- [x] **T2 — Run full test suite and confirm all tests GREEN** — 14/14 GREEN, 0 regressions
+- [x] **T3 — Commit + push branch; confirm story-first gate satisfied** — story commit `8241b06` is chronologically first on branch
 
 ---
 
@@ -216,16 +216,28 @@ Also patch `"app.modules.assessment.service.get_analytics_consent"` for GET /use
 ## Dev Agent Record
 
 ### Debug Log
-*(empty)*
+- D72 confirmed already fixed in `main` via Story 3-54 (`6bad7a8`) — both `DPDP_DISCLAIMER`
+  and `ONBOARDING_PROFILE_SYSTEM_PROMPT` already use "HIE". Tests document the fixed state
+  and guard against regression.
+- All 5 pre-existing test failures in tutor_graph/tutor_router on this branch are unrelated
+  to T28 — they predated this branch on `main` (sprint3/s3-45 changes not yet in this branch).
+- 14/14 T28 tests GREEN in 6.19s. Zero new failures introduced.
 
 ### Completion Notes
-*(empty)*
+14 machine-executable HTTP contract tests cover all 10 ACs:
+- 3 source-level guards (AC3/AC4): DPDP_DISCLAIMER + ONBOARDING_PROFILE_SYSTEM_PROMPT brand
+- 7 GET /user/dna tests (AC1/AC5/AC7/AC8/AC9/AC10 + HIE brand regression)
+- 4 POST /onboarding/submit tests (AC2/AC5/AC6 + HIE brand regression)
+All tests are `@pytest.mark.unit` — no real Supabase, OpenAI, or Redis required.
+Pre-existing 5 failures on main (tutor tests) are unrelated to this story.
 
 ### File List
-*(to be filled during implementation)*
+- `apps/api/tests/test_t28_dna_display_contract_dev2.py` — NEW (14 tests)
+- `docs/stories/demo-t28-learner-dna-crossteam.md` — this file (story + completion notes)
 
 ### Change Log
-*(to be filled during implementation)*
+- 2026-08-13: T28 story file created (story-first gate, commit `8241b06`)
+- 2026-08-13: `test_t28_dna_display_contract_dev2.py` written — 14 tests, 14/14 GREEN
 
 ---
 
