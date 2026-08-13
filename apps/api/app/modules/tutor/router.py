@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 from app.core.redis import get_redis
 from app.core.websocket import manager
 from app.dependencies import CurrentUser
-from app.modules.tutor.service import _segment_intervention_messages
+from app.modules.tutor.service import segment_intervention_messages
 from app.modules.tutor.state_machine.graph import dispatch_event
 
 logger = logging.getLogger(__name__)
@@ -35,8 +35,8 @@ class TutorSessionState(BaseModel):
     distraction_count: int
     intervention_cooldown_remaining_seconds: int
     fatigue_fired: bool
-    current_slide_index: int | None = None
-    last_intervention_type: str | None = None
+    current_slide_index: int | None = None  # D69: not yet persisted in Redis; always None
+    last_intervention_type: str | None = None  # D69: not yet persisted in Redis; always None
 
 
 class InterventionRequest(BaseModel):
@@ -70,22 +70,31 @@ async def get_session_state(
 
     All fields are read from Redis point lookups (O(1) each). Returns 404 when
     the session has never been initialised. Missing optional keys (CES, counters,
-    flags) degrade to zero-values rather than 500.
+    flags) degrade to zero-values rather than 500. Full Redis failure → 503.
     """
-    state_raw = await redis.get(f"tutor_state:{session_id}")
-    if not state_raw:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active session found for session_id={session_id!r}",
-        )
+    try:
+        state_raw = await redis.get(f"tutor_state:{session_id}")
+        if not state_raw:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found.",
+            )
 
-    ces_raw = await redis.get(f"tutor_ces:{session_id}")
-    count_raw = await redis.get(f"tutor_distraction_count:{session_id}")
-    fatigue_raw = await redis.exists(f"tutor_fatigue_fired:{session_id}")
-    # TTL returns -2 when key is absent, -1 when key has no TTL, else seconds remaining.
-    # BOUNDED: tutor_cooldown TTL is naturally bounded to [0, intervention_cooldown_seconds].
-    ttl = await redis.ttl(f"tutor_cooldown:{session_id}")
-    cooldown_remaining = max(0, ttl) if ttl > 0 else 0
+        ces_raw = await redis.get(f"tutor_ces:{session_id}")
+        count_raw = await redis.get(f"tutor_distraction_count:{session_id}")
+        fatigue_raw = await redis.exists(f"tutor_fatigue_fired:{session_id}")
+        # TTL returns -2 when key is absent, -1 when key has no TTL, else seconds remaining.
+        # BOUNDED: tutor_cooldown TTL is naturally bounded to [0, intervention_cooldown_seconds].
+        ttl = await redis.ttl(f"tutor_cooldown:{session_id}")
+        cooldown_remaining = max(0, ttl) if ttl > 0 else 0
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Redis unavailable in get_session_state for %s: %s", session_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Session service temporarily unavailable.",
+        ) from exc
 
     return TutorSessionState(
         session_id=session_id,
@@ -121,23 +130,41 @@ async def trigger_intervention(
     so the intervention overlay renders immediately without waiting for the next
     attention signal.
     """
-    state_raw = await redis.get(f"tutor_state:{session_id}")
-    if not state_raw:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active session found for session_id={session_id!r}",
-        )
+    try:
+        state_raw = await redis.get(f"tutor_state:{session_id}")
+        if not state_raw:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found.",
+            )
 
-    # force=True bypasses the cooldown only (not the distraction cap or fatigue-once flag)
-    if body.force:
-        await redis.delete(f"tutor_cooldown:{session_id}")
+        # force=True bypasses the cooldown only (not the distraction cap or fatigue-once flag)
+        if body.force:
+            await redis.delete(f"tutor_cooldown:{session_id}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Redis unavailable in trigger_intervention for %s: %s", session_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Session service temporarily unavailable.",
+        ) from exc
 
     event = _INTERVENTION_EVENT[body.intervention_type]
 
     # Fetch pre-generated intervention messages from the cached lesson package
-    seg_msgs = await _segment_intervention_messages(session_id, redis)
+    seg_msgs = await segment_intervention_messages(session_id, redis)
 
-    result = await dispatch_event(session_id, event, payload={"intervention_messages": seg_msgs})
+    try:
+        result = await dispatch_event(
+            session_id, event, payload={"intervention_messages": seg_msgs}
+        )
+    except Exception as exc:
+        logger.error("dispatch_event failed for %s event=%s: %s", session_id, event, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intervention could not be dispatched.",
+        ) from exc
 
     to_state = str(result.get("current_state", ""))
     dispatched = to_state == "INTERVENING"

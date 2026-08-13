@@ -34,7 +34,7 @@ from app.core.redis import get_redis
 # ── Test constants ────────────────────────────────────────────────────────────
 
 _SECRET = "test-jwt-secret-padded-to-32-bytes!!"
-_PAST_EPOCH = 1_700_000_000   # 2023 — provably in the past
+_PAST_EPOCH = 1_700_000_000  # 2023 — provably in the past
 _FUTURE_EPOCH = 4_102_444_800  # 2100 — provably in the future
 _USER_ID = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
 _SESSION_ID = "sess1111-2222-3333-4444-555555555555"
@@ -75,7 +75,7 @@ def _make_redis(
     ces: str | None = "72.5",
     distraction_count: str | None = "1",
     fatigue_fired: int = 0,  # redis.exists() returns count of existing keys
-    cooldown_ttl: int = 0,   # redis.ttl() returns -2 if key absent, -1 if no TTL, else seconds
+    cooldown_ttl: int = 0,  # redis.ttl() returns -2 if key absent, -1 if no TTL, else seconds
 ) -> AsyncMock:
     """Build an AsyncMock redis with preset responses for the five state keys."""
     redis = AsyncMock()
@@ -285,18 +285,22 @@ def test_post_intervene_dispatches_correct_fsm_event_ac6(
         "intervention_type": intervention_type,
     }
 
-    with patch(
-        "app.modules.tutor.router.dispatch_event",
-        new_callable=AsyncMock,
-        return_value=_dispatch_result,
-    ) as mock_dispatch, patch(
-        "app.modules.tutor.router._segment_intervention_messages",
-        new_callable=AsyncMock,
-        return_value={},
-    ), patch(
-        "app.modules.tutor.router.manager",
-        new_callable=MagicMock,
-    ) as mock_manager:
+    with (
+        patch(
+            "app.modules.tutor.router.dispatch_event",
+            new_callable=AsyncMock,
+            return_value=_dispatch_result,
+        ) as mock_dispatch,
+        patch(
+            "app.modules.tutor.router.segment_intervention_messages",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.modules.tutor.router.manager",
+            new_callable=MagicMock,
+        ) as mock_manager,
+    ):
         mock_manager.send = AsyncMock()
         client = _make_app(redis)
         resp = client.post(
@@ -327,14 +331,17 @@ def test_post_intervene_guard_blocked_returns_dispatched_false_ac7():
         "intervention_type": None,
     }
 
-    with patch(
-        "app.modules.tutor.router.dispatch_event",
-        new_callable=AsyncMock,
-        return_value=_dispatch_result,
-    ), patch(
-        "app.modules.tutor.router._segment_intervention_messages",
-        new_callable=AsyncMock,
-        return_value={},
+    with (
+        patch(
+            "app.modules.tutor.router.dispatch_event",
+            new_callable=AsyncMock,
+            return_value=_dispatch_result,
+        ),
+        patch(
+            "app.modules.tutor.router.segment_intervention_messages",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
     ):
         client = _make_app(redis)
         resp = client.post(
@@ -361,18 +368,22 @@ def test_post_intervene_force_deletes_cooldown_key_before_dispatch_ac8():
         "intervention_type": "distraction",
     }
 
-    with patch(
-        "app.modules.tutor.router.dispatch_event",
-        new_callable=AsyncMock,
-        return_value=_dispatch_result,
-    ), patch(
-        "app.modules.tutor.router._segment_intervention_messages",
-        new_callable=AsyncMock,
-        return_value={},
-    ), patch(
-        "app.modules.tutor.router.manager",
-        new_callable=MagicMock,
-    ) as mock_manager:
+    with (
+        patch(
+            "app.modules.tutor.router.dispatch_event",
+            new_callable=AsyncMock,
+            return_value=_dispatch_result,
+        ),
+        patch(
+            "app.modules.tutor.router.segment_intervention_messages",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.modules.tutor.router.manager",
+            new_callable=MagicMock,
+        ) as mock_manager,
+    ):
         mock_manager.send = AsyncMock()
         client = _make_app(redis)
         resp = client.post(
@@ -397,18 +408,22 @@ def test_post_intervene_force_false_does_not_delete_cooldown():
         "intervention_type": "distraction",
     }
 
-    with patch(
-        "app.modules.tutor.router.dispatch_event",
-        new_callable=AsyncMock,
-        return_value=_dispatch_result,
-    ), patch(
-        "app.modules.tutor.router._segment_intervention_messages",
-        new_callable=AsyncMock,
-        return_value={},
-    ), patch(
-        "app.modules.tutor.router.manager",
-        new_callable=MagicMock,
-    ) as mock_manager:
+    with (
+        patch(
+            "app.modules.tutor.router.dispatch_event",
+            new_callable=AsyncMock,
+            return_value=_dispatch_result,
+        ),
+        patch(
+            "app.modules.tutor.router.segment_intervention_messages",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.modules.tutor.router.manager",
+            new_callable=MagicMock,
+        ) as mock_manager,
+    ):
         mock_manager.send = AsyncMock()
         client = _make_app(redis)
         resp = client.post(
@@ -434,18 +449,22 @@ def test_post_intervene_sends_ws_message_when_intervention_fires():
         "intervention_type": "distraction",
     }
 
-    with patch(
-        "app.modules.tutor.router.dispatch_event",
-        new_callable=AsyncMock,
-        return_value=_dispatch_result,
-    ), patch(
-        "app.modules.tutor.router._segment_intervention_messages",
-        new_callable=AsyncMock,
-        return_value={},
-    ), patch(
-        "app.modules.tutor.router.manager",
-        new_callable=MagicMock,
-    ) as mock_manager:
+    with (
+        patch(
+            "app.modules.tutor.router.dispatch_event",
+            new_callable=AsyncMock,
+            return_value=_dispatch_result,
+        ),
+        patch(
+            "app.modules.tutor.router.segment_intervention_messages",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.modules.tutor.router.manager",
+            new_callable=MagicMock,
+        ) as mock_manager,
+    ):
         mock_manager.send = AsyncMock()
         client = _make_app(redis)
         client.post(
@@ -473,18 +492,22 @@ def test_post_intervene_no_ws_message_when_guard_blocks():
         "intervention_type": None,
     }
 
-    with patch(
-        "app.modules.tutor.router.dispatch_event",
-        new_callable=AsyncMock,
-        return_value=_dispatch_result,
-    ), patch(
-        "app.modules.tutor.router._segment_intervention_messages",
-        new_callable=AsyncMock,
-        return_value={},
-    ), patch(
-        "app.modules.tutor.router.manager",
-        new_callable=MagicMock,
-    ) as mock_manager:
+    with (
+        patch(
+            "app.modules.tutor.router.dispatch_event",
+            new_callable=AsyncMock,
+            return_value=_dispatch_result,
+        ),
+        patch(
+            "app.modules.tutor.router.segment_intervention_messages",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch(
+            "app.modules.tutor.router.manager",
+            new_callable=MagicMock,
+        ) as mock_manager,
+    ):
         mock_manager.send = AsyncMock()
         client = _make_app(redis)
         client.post(
@@ -524,5 +547,75 @@ def test_intervention_request_type_is_literal_not_str_ac10():
     assert origin is typing.Literal, (
         f"InterventionRequest.intervention_type should be Literal[...], "
         f"got annotation={type_hint!r} (origin={origin!r}). "
-        "Change it from 'str' to 'Literal[\"distraction\", \"fatigue\", \"confusion\"]'."
+        'Change it from \'str\' to \'Literal["distraction", "fatigue", "confusion"]\'.'
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AC 4 extension — Redis full failure → 503 (F7 patch)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+def test_get_session_state_redis_unavailable_returns_503():
+    """AC 4 (F7) — full Redis failure (connection error) → 503, not 500."""
+    redis = AsyncMock()
+    redis.get.side_effect = ConnectionError("Redis down")
+
+    client = _make_app(redis)
+    resp = client.get(
+        f"/api/tutor/session/{_SESSION_ID}/state",
+        headers=_auth(_token()),
+    )
+    assert resp.status_code == 503, (
+        f"Expected 503 when Redis is unavailable, got {resp.status_code}. "
+        "Add try/except around Redis calls in get_session_state (AC4, F7)."
+    )
+
+
+@pytest.mark.unit
+def test_post_intervene_redis_unavailable_returns_503():
+    """F7/F9 — full Redis failure in POST handler → 503, not 500."""
+    redis = AsyncMock()
+    redis.get.side_effect = ConnectionError("Redis down")
+
+    client = _make_app(redis)
+    resp = client.post(
+        f"/api/tutor/session/{_SESSION_ID}/intervene",
+        json={"intervention_type": "distraction"},
+        headers=_auth(_token()),
+    )
+    assert resp.status_code == 503, (
+        f"Expected 503 when Redis is unavailable, got {resp.status_code}. "
+        "Add try/except around Redis calls in trigger_intervention (F7/F9)."
+    )
+
+
+@pytest.mark.unit
+def test_post_intervene_dispatch_event_failure_returns_503():
+    """F9 — dispatch_event raises an exception → 503, not 500."""
+    redis = _make_redis(state="TEACHING")
+
+    with (
+        patch(
+            "app.modules.tutor.router.dispatch_event",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("LangGraph recursion limit exceeded"),
+        ),
+        patch(
+            "app.modules.tutor.router.segment_intervention_messages",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+    ):
+        client = _make_app(redis)
+        resp = client.post(
+            f"/api/tutor/session/{_SESSION_ID}/intervene",
+            json={"intervention_type": "distraction"},
+            headers=_auth(_token()),
+        )
+
+    assert resp.status_code == 503, (
+        f"Expected 503 when dispatch_event raises, got {resp.status_code}. "
+        "Add try/except around dispatch_event call in trigger_intervention (F9)."
     )

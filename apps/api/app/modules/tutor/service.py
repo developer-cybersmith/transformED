@@ -394,6 +394,10 @@ async def _segment_intervention_messages(session_id: str, redis: Redis) -> dict[
         return {}
 
 
+# Public alias — callers outside this module must use this name.
+segment_intervention_messages = _segment_intervention_messages
+
+
 async def process_attention_signal(
     session_id: str,
     signal: dict[str, Any],
