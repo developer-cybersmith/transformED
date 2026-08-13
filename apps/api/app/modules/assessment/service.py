@@ -409,11 +409,9 @@ async def grade_quiz(
     quiz_accuracy: float = correct_count / total_count if total_count > 0 else 0.0
 
     settings = get_settings()
+    # ces_contribution: per-quiz component on the 0-100 POINT scale (max 35.0 pts at full accuracy).
+    # assessment/ces.py is the canonical weighted-sum formula (SYNC-A resolved).
     ces_contribution: float = round(quiz_accuracy * settings.ces_weight_quiz * 100, 4)
-    # CES SCALE CONTRACT (communicate to Dev 4):
-    # ces_contribution is on the 0-100 POINT scale.
-    # ces_weight_quiz (0.35 default) = max 35.0 pts at full accuracy.
-    # Dev 4's ces.py must SUM component contributions directly — do NOT multiply by 100 again.
 
     # Step 10 — Build per-question feedback
     feedback: list[dict[str, Any]] = [
@@ -457,6 +455,7 @@ async def grade_quiz(
         score=quiz_accuracy * 100,
         correct_count=correct_count,
         total_count=total_count,
+        quiz_accuracy=quiz_accuracy,
         ces_contribution=ces_contribution,
         feedback=feedback,
     )

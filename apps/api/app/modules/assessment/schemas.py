@@ -79,6 +79,10 @@ class QuizResult(BaseModel):
     score: float
     correct_count: int
     total_count: int
+    # quiz_accuracy is the 0-1 fraction (correct_count / total_count).
+    # Dev 2 must pass this value as AttentionSignalMessage.quiz_accuracy in the WebSocket
+    # signal — do NOT use `score` (which is 0-100 display scale) for that field.
+    quiz_accuracy: float
     ces_contribution: float
     feedback: list[dict[str, Any]]
 
