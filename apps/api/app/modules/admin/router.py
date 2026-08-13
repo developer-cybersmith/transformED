@@ -33,6 +33,12 @@ __version__ = "0.1.0"
 
 _VALID_JOB_STATUSES = frozenset({"pending", "running", "completed", "failed"})
 _REDIS_PING_TIMEOUT_SECONDS = 3.0
+# D59(a): cost report row ceiling. Sized generously above any realistic
+# near-term admin report volume (real scale today is ~23 lessons total).
+# `CostReport.truncated` is set True when a response hits this exactly —
+# see that field's docstring for why this must be an explicit surfaced
+# signal, not a silent drop.
+_COST_REPORT_ROW_LIMIT = 10_000
 
 
 # ── Response models ───────────────────────────────────────────────────────────
@@ -71,6 +77,11 @@ class CostReport(BaseModel):
     # Revisit once Epic 3 Story 3.3 (Langfuse cost attribution) lands.
     by_user: list[dict[str, float | str]]
     lessons_processed: int
+    # D59(a): True means the query hit `_COST_REPORT_ROW_LIMIT` — more
+    # lesson_jobs rows exist for this period than were fetched, so this
+    # report may be missing rows and UNDER-reporting real spend. Narrow
+    # the period or raise the limit.
+    truncated: bool = False
 
 
 class DeepHealthStatus(BaseModel):
@@ -210,9 +221,15 @@ async def get_cost_report(
         supabase.table("lesson_jobs")
         .select("cost_usd, lesson_id, lessons!inner(user_id, created_at)")
         .gte("lessons.created_at", start.isoformat())
+        .limit(_COST_REPORT_ROW_LIMIT)
         .execute()
     )
     matching = rows(resp)
+    # D59(a): exactly hitting the limit is the real signal more rows may
+    # exist beyond it (not a guess) — PostgREST returned precisely what was
+    # asked for, which is indistinguishable from "there could be more"
+    # without a second query. Surfaced on the response, never dropped silently.
+    truncated = len(matching) == _COST_REPORT_ROW_LIMIT
 
     totals_by_user: dict[str, float] = {}
     total_cost = 0.0
@@ -229,6 +246,7 @@ async def get_cost_report(
             {"user_id": user_id, "cost_usd": cost} for user_id, cost in totals_by_user.items()
         ],
         lessons_processed=len({row["lesson_id"] for row in matching}),
+        truncated=truncated,
     )
 
 
