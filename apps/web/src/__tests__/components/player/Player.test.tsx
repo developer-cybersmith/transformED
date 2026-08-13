@@ -143,6 +143,43 @@ describe('Player — tier badge (S2-10)', () => {
   });
 });
 
+describe('Player — slide area is height-bounded (D88)', () => {
+  it('slide-area container has min-h-0 so it can shrink inside its flex-1 parent instead of growing past the viewport', () => {
+    const { container } = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    // A flex item's default min-height is `auto` (won't shrink below content's
+    // natural height) even inside flex-1 -- min-h-0 is what actually lets
+    // SlideRenderer's own overflow-y-auto engage instead of the whole page
+    // growing past the viewport (D88 root cause).
+    const slideArea = container.querySelector('.relative.flex-1.min-h-0');
+    expect(slideArea).not.toBeNull();
+  });
+});
+
+describe('Player — caption overlay shows current segment narration (D90)', () => {
+  it('renders the current segment\'s narration script text', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    expect(screen.getByTestId('caption-overlay')).not.toBeNull();
+    expect(
+      screen.getByText(/Welcome to the Hacksplaining video tutorial series/)
+    ).not.toBeNull();
+  });
+
+  it('renders no caption overlay when the current segment has no narration script', () => {
+    const noScriptLesson = {
+      ...mockLessonPackage,
+      segments: mockLessonPackage.segments.map((seg, i) =>
+        i === 0 ? { ...seg, narration: { ...seg.narration, script: '' } } : seg
+      ),
+    };
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={noScriptLesson} />);
+
+    expect(screen.queryByTestId('caption-overlay')).toBeNull();
+  });
+});
+
 describe('Player — restores saved progress on mount (S2-05)', () => {
   it('restores segment index, slide, and quizFiredForSegment from a valid saved snapshot', () => {
     localStorage.setItem(
