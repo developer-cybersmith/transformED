@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-12 (S3-53 DONE — CES production closure, D1/D62 canonical formula, D61/D63/D64/D65 gaps closed)
+**Last updated:** 2026-08-13 (T18 Demo Phase L5 DONE — Learner DNA real onboarding data, 10 tests pass, 11 review patches applied, D74 registered)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -19,9 +19,10 @@
 | Sprint 2 | Weeks 4–5 | 7 | 7 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 14 | 14 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
+| Demo Sprint | Phase L5 | 1 | 1 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **53** | **44** | **0** | **9** |
+| **Total** | | **54** | **45** | **0** | **9** |
 
 Update this table each time a task is checked off below.
 
@@ -838,6 +839,21 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `get_notification_preference()` lives in `apps/api/app/modules/assessment/notification_prefs.py` (Story 3-33, merged 2026-08-06)
   - **Prerequisite:** Dev 1 must have applied the `user_notification_preferences` migration (D60) before this task is testable end-to-end
   - **AC:** Session report emails respect `session_report_email = false`; no email sent to opted-out user; D60 closed when table exists and this is wired
+
+---
+
+## Demo Sprint — Phase L5 (2026-08-13)
+
+> **Goal:** End-to-end test coverage with real onboarding data — validates QUESTION_SUBDIMENSION_MAP,
+> badge labels, upsert row integrity, and DPDP branding (D72).
+
+- [x] **T18 — Learner DNA profile generation with real onboarding data** — ✓ 2026-08-13
+  - 10 tests: AC1–AC9 + P10 intermediate denominator test; all 10 PASS
+  - BMAD 6-agent adversarial review: 11 patches applied, 1 deferred (RLS pre-existing), D74 registered
+  - Files: `apps/api/tests/test_learner_dna_real_onboarding.py` (new, 10 tests)
+  - `service.py:1076`: `# BOUNDED:` comment added (P5 — Scale Contract Q5)
+  - Story: `docs/stories/demo-t18-learner-dna-real-onboarding-data.md` — status: done
+  - Branch: `dev3-demo-t18-phaseL5` — PR targeting `master-demo-dev3`
 
 ---
 

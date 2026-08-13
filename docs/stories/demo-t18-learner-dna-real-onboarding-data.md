@@ -1,6 +1,6 @@
 # Demo T18 — Learner DNA profile generation with real onboarding data
 
-**Status:** in-progress
+**Status:** done
 **Sprint:** Demo Sprint
 **Owner:** Dev 3
 **Branch:** `dev3-demo-t18-phaseL5`
@@ -100,8 +100,16 @@ no new real I/O introduced. Range is deterministic.
 **Q2 — Fixed budgets while input varies:**
 `OnboardingDiagnosticSubmission` enforces `min_length=20, max_length=20` at the Pydantic
 layer — the 20-response limit is fixed. The `_compute_dimension_scores` bucket covers
-exactly 9 dimensions. No silent truncation: questions not in `QUESTION_SUBDIMENSION_MAP`
-are silently skipped (no error), which is existing documented behaviour, not new.
+exactly 9 dimensions.
+
+**Known limitation (D74):** questions not in `QUESTION_SUBDIMENSION_MAP` are silently
+skipped (no error emitted). A typo in the map (e.g. `c_1` instead of `c1`) drops one of
+the three `pattern_recognition` questions: correct mean = 55.56, actual mean = 83.33 —
+27.77-point inflation, badge awarded incorrectly, no error surfaced. This is a pre-existing
+behaviour inherited from Story 3-18, not introduced by T18. Registered as D74 in
+`docs/DEFECT-REGISTER.md`; resolution deferred — requires a map-validation guard and AC
+update across the onboarding test suite. The Scale Contract Q2 prohibition on silent
+truncation applies; this is a known, documented, and registered limitation, not a dismissal.
 
 **Q3 — Scope of every limit:**
 - 20-question bound: per-user, per-submission (Pydantic schema enforces it)
@@ -199,10 +207,27 @@ monkeypatch.setattr("app.modules.assessment.service.generate_onboarding_profile"
 
 ## Tasks / Subtasks
 
-- [ ] **T1 — RED: write 9 failing tests (one per AC)**
-- [ ] **T2 — GREEN: confirm all 9 tests pass (no implementation changes needed)**
-- [ ] **T3 — VERIFY: run full assessment test suite, confirm no regressions**
-- [ ] **T4 — UPDATE dev3-assessment-tracker.md**
+- [x] **T1 — RED: write 9 failing tests (one per AC)** — ✓ 2026-08-13
+- [x] **T2 — GREEN: confirm all 9 tests pass (no implementation changes needed)** — ✓ 2026-08-13 (9/9 passed)
+- [x] **T3 — VERIFY: run full assessment test suite, confirm no regressions** — ✓ 2026-08-13 (pre-existing failures confirmed pre-existing)
+- [x] **T4 — UPDATE dev3-assessment-tracker.md** — ✓ 2026-08-13
+
+### Review Findings
+
+**BMAD 6-agent adversarial review — 2026-08-13 — 11 patch, 1 defer, 3 dismissed**
+
+- [x] [Review][Patch] AC3 DPDP disclaimer assertion is circular — fixed: mock now returns `"You are a Pattern Thinker."` (no disclaimer); assertion changed to `== "You are a Pattern Thinker."` (non-circular) — ✓ 2026-08-13
+- [x] [Review][Patch] AC6 "exactly 3 fields" not enforced — fixed: `assert set(type(result).model_fields.keys()) == {"badge_labels", "profile_text", "session_count"}` added — ✓ 2026-08-13
+- [x] [Review][Patch] AC7 only `pattern_recognition` verified after removing `e2` — fixed: loop asserts all 8 non-persistence dims == 100.0 — ✓ 2026-08-13
+- [x] [Review][Patch][Scale Q2] Story §Scale & Load Q2 self-contradicts — fixed: Q2 rewritten to correctly acknowledge silent-skip limitation; registered as D74 in DEFECT-REGISTER.md — ✓ 2026-08-13
+- [x] [Review][Patch][Scale Q5] Formula denominator `3` inherited cap — fixed: `assert all(0.0 <= v <= 100.0 ...)` added to AC1; `# BOUNDED:` comment added to service.py:1076 — ✓ 2026-08-13
+- [x] [Review][Patch] Table routing fragile — fixed: `mock.table.side_effect = lambda name: {"onboarding_responses": insert_table, "learner_dna": dna_table}[name]` — ✓ 2026-08-13
+- [x] [Review][Patch] AC3 upsert spy never asserts `user_id == _USER_UUID` — fixed: assertion added — ✓ 2026-08-13
+- [x] [Review][Patch] AC1 only 3 of 9 dimension values verified — fixed: loop asserts all 9 dims == 100.0 — ✓ 2026-08-13
+- [x] [Review][Patch] AC5 `badge_labels` content not verified end-to-end — fixed: `assert "Pattern Thinker" in captured["badge_labels"]` added — ✓ 2026-08-13
+- [x] [Review][Patch] No intermediate score test — fixed: `test_compute_dimension_scores_intermediate_score_validates_denominator` added (selected_index=2 → 66.67) — ✓ 2026-08-13
+- [x] [Review][Patch] AC5 no call-count guard — fixed: `call_count` nonlocal counter added; `assert call_count == 1` — ✓ 2026-08-13
+- [x] [Review][Defer] RLS policy never exercised — `MagicMock` has no Postgres catalog; pre-existing across all assessment tests, not introduced by T18 — deferred, pre-existing infrastructure gap
 
 ---
 
