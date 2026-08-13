@@ -1322,6 +1322,108 @@ def test_duplicate_check_is_scoped_to_chapter_tier_and_user() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# D54 — `force=true` bypasses ONLY Gate 5's idempotency short-circuit
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Gate 5's default behaviour (asserted above) must be completely unchanged when
+# `force` is omitted. `force=true` opts a single request out of the 200-with-
+# existing-lesson branch only — Gate 6 (page-span) and Gate 7 (concurrency) are
+# independent controls and still apply, proven by the concurrency test below.
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("existing_status", ["generating", "ready"])
+def test_force_true_creates_a_new_lesson_despite_an_existing_live_one(
+    existing_status: str,
+) -> None:
+    """A student stuck with a poor, truncated, or (pre-D53-reaper) stuck lesson
+    has no route to a new one without this — Gate 5 would otherwise hand back
+    the same disappointing lesson_id forever."""
+    sc = _ok_scenario(
+        existing_lessons=[
+            {
+                "lesson_id": EXISTING_LESSON_ID,
+                "status": existing_status,
+                "tier": _default_tier(),
+                "created_at": _fresh_iso(),
+            }
+        ]
+    )
+    resp, sb, pool = _post(sc, body={"tier": _default_tier(), "force": True})
+
+    assert resp.status_code == 202, (
+        f"force=true with an existing '{existing_status}' lesson must still create a new one"
+    )
+    body = resp.json()
+    assert body["lesson_id"] == NEW_LESSON_ID
+    assert body["status"] == "queued"
+    assert body["job_id"] == ARQ_JOB_ID
+    assert len(sb.of("lessons", "insert")) == 1
+    assert len(sb.of("lesson_jobs", "insert")) == 1
+    assert pool.enqueue_job.await_count == 1
+
+
+@pytest.mark.unit
+def test_force_omitted_with_an_existing_ready_lesson_is_unchanged() -> None:
+    """The default case must not regress: force defaults to False, so a plain
+    retry of a 202 still gets the existing lesson back with no second enqueue."""
+    sc = _ok_scenario(
+        existing_lessons=[
+            {
+                "lesson_id": EXISTING_LESSON_ID,
+                "status": "ready",
+                "tier": _default_tier(),
+                "created_at": _fresh_iso(),
+            }
+        ]
+    )
+    resp, sb, pool = _post(sc, body={"tier": _default_tier()})
+
+    assert resp.status_code == 200
+    assert resp.json()["lesson_id"] == EXISTING_LESSON_ID
+    assert pool.enqueue_job.await_count == 0
+    assert sb.of("lessons", "insert") == []
+    assert sb.of("lesson_jobs", "insert") == []
+
+
+@pytest.mark.unit
+def test_force_defaults_to_false_when_omitted_from_the_body() -> None:
+    """`GenerateLessonRequest.force` must default to False so every existing
+    caller that has never heard of this field keeps today's behaviour."""
+    from app.modules.content.schemas import GenerateLessonRequest
+
+    assert GenerateLessonRequest().force is False
+
+
+@pytest.mark.unit
+def test_force_true_still_respects_the_concurrency_cap() -> None:
+    """force=true bypasses Gate 5 only — Gate 7 is the real spend control and
+    must still 429 a caller who is already at their concurrency cap, exactly as
+    it would for a non-forced request."""
+    from app.config import get_settings
+
+    cap = get_settings().max_concurrent_generations_per_user
+    sc = _ok_scenario(
+        concurrent_generating=cap,
+        existing_lessons=[
+            {
+                "lesson_id": EXISTING_LESSON_ID,
+                "status": "ready",
+                "tier": _default_tier(),
+                "created_at": _fresh_iso(),
+            }
+        ],
+    )
+    resp, sb, pool = _post(sc, body={"tier": _default_tier(), "force": True})
+
+    assert resp.status_code == 429
+    assert "retry-after" in {k.lower() for k in resp.headers}
+    assert sb.of("lessons", "insert") == []
+    assert sb.of("lesson_jobs", "insert") == []
+    assert pool.enqueue_job.await_count == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # AC10 — rollback touches only what this request created
 # ══════════════════════════════════════════════════════════════════════════════
 #
