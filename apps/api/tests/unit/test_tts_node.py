@@ -71,6 +71,19 @@ def _mock_supabase(node_outputs: dict[str, Any] | None = None) -> MagicMock:
     return sb
 
 
+def _mock_settings_with_narration_cap(cap: int) -> MagicMock:
+    """D76 (Story 3-43): tts_node's only settings read in its cap-enforcement
+    path is settings.max_narration_chars_per_lesson (verified — the sole
+    `settings.` access in that code path). Pins a test-local cap value so
+    the narration-cap boundary tests exercise the CAP MECHANISM, independent
+    of whatever the real production default happens to be — decoupled from
+    the D76 change (10,000 -> 17,000) rather than requiring every boundary
+    test's fixture arithmetic to be rewritten to a new magic number."""
+    settings = MagicMock()
+    settings.max_narration_chars_per_lesson = cap
+    return settings
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_happy_path_sarvam_success_produces_nested_narration_entries() -> None:
@@ -511,6 +524,7 @@ async def test_lesson_wide_narration_cap_truncates_and_zeroes_over_budget_segmen
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 
@@ -616,6 +630,7 @@ async def test_narration_cap_exact_boundary_fit_is_not_truncated() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 
@@ -701,6 +716,7 @@ async def test_narration_cap_reorders_out_of_order_fan_in_by_true_section_index(
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 
@@ -790,6 +806,7 @@ async def test_narration_cap_truncation_does_not_split_devanagari_combining_mark
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
     ):
         result = await tts_node(_base_state(narration_scripts=scripts))
 

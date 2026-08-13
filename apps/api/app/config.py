@@ -220,16 +220,28 @@ class Settings(BaseSettings):
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
     )
+    # D76 (Story 3-43): was 10,000, sized against decisionupdate.md section 8's
+    # ~1,600 chars/min speed assumption -- stale. Real measured Sarvam Bulbul
+    # v2 rate (live test, 2026-08-13): 18.44 chars/sec = 1,106.6 chars/min. At
+    # the real rate 10,000 chars is only ~9 real minutes, not the ~5 min
+    # decisionupdate.md assumed. A 15-minute lesson needs ~16,600 chars.
+    # Cost was never the real constraint: even 17,000 chars costs ~$0.33 in
+    # TTS (COST_PER_CHAR=0.00002) / ~$0.40 total lesson cost -- ~13% of the
+    # $3.00 ceiling below. Raised to 17,000 (16,600 + margin).
     max_narration_chars_per_lesson: int = Field(
-        default=10000,
+        default=17000,
         ge=1,
         description=(
             "Node 8 hard cap: max narration chars across all segments combined "
-            "(decisionupdate.md section 8). TTS synthesis cost is proportional to "
-            "character count and is 67-73% of total lesson generation cost, so this "
-            "bounds the dominant cost driver before it's incurred. Enforced in "
-            "tts_node (not narration_generator_node, which is Send()-dispatched "
-            "once per section with no visibility into any other section's output)."
+            "(decisionupdate.md section 8). Sized against the REAL measured Sarvam "
+            "TTS rate (~1,107 chars/min, D76), not decisionupdate.md's stale ~1,600 "
+            "chars/min assumption, to allow a real 15-minute lesson within the "
+            "$3.00/lesson ceiling (cost headroom is large: ~13% of ceiling at this "
+            "value). TTS synthesis cost is proportional to character count and is "
+            "67-73% of total lesson generation cost, so this still bounds the "
+            "dominant cost driver before it's incurred. Enforced in tts_node (not "
+            "narration_generator_node, which is Send()-dispatched once per section "
+            "with no visibility into any other section's output)."
         ),
     )
 
