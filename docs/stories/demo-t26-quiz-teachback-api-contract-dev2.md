@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 baseline_commit: 5b33523
 ---
 
@@ -315,16 +315,35 @@ T26 does NOT re-test what those files already cover at the model-inspection leve
 ## Dev Agent Record
 
 ### Completion Notes
-18 new unit tests in `apps/api/tests/test_t26_api_contract_dev2.py`. No production code changes.
-All ACs verified at the HTTP layer via TestClient with mocked service layer.
-171/171 assessment-scope tests pass. Pre-existing full-suite failures are unrelated (encoding, tinytag).
+23 unit tests in `apps/api/tests/test_t26_api_contract_dev2.py` (18 original + 5 added post-review).
+No production code changes. All ACs verified at the HTTP layer via TestClient with mocked service layer.
+239/239 assessment-scope tests pass. Pre-existing full-suite failures are unrelated (encoding, tinytag).
+
+6-agent BMAD code review passed. Two production schema gaps registered as D79 / D80 in DEFECT-REGISTER.md
+(out of scope for this test-only story; require separate PR touching schemas.py).
 
 ### Debug Log
 _No issues._
+
+### Senior Developer Review (AI)
+
+**Outcome:** Approved (after fixes applied)
+**Review date:** 2026-08-13
+**Layers:** Story Quality ✅ | Blind Hunter ✅ | Test Coverage ✅ | AC Completeness ✅ | Process Integrity ✅ | Scale & Load ✅
+
+**Action Items (all resolved):**
+- [x] AC4-GAP (High / Blocker): Add kwargs inspection to `_fake_grade_teachback` — `assert "transcript" not in kwargs`
+- [x] BH-1 (Med): Change `_denied_settings.approved_emails = []` → `["other_approved@example.com"]`
+- [x] TC-1 (Med): Add accepted-side boundary tests — `test_teachback_max_length_response_text_accepted`, `test_quiz_max_answers_accepted`
+- [x] TC-2 (Med): Add missing-field tests — `test_quiz_missing_session_id_returns_422`, `test_teachback_missing_session_id_returns_422`
+- [x] TC-3 (Med): Add `test_teachback_whitespace_only_response_text_accepted` documenting client-side guard requirement
+- [x] SL-D1 (Med / Deferred): Registered as D79 — `lesson_id: ""` → 500 instead of 422; fix is schema change, out of scope for T26
+- [x] SL-D2 (Med / Deferred): Registered as D80 — whitespace response_text triggers real LLM; fix is schema validator, out of scope for T26
 
 ### Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-08-13 | Story created — BMAD story-first gate (demo-t26-phaseL8) |
-| 2026-08-13 | Implementation complete — 18 tests, 18 passed, no regressions |
+| 2026-08-13 | Implementation complete — 18 tests, all passed, no regressions |
+| 2026-08-13 | 6-agent BMAD review complete — 5 fixes applied, test count 18 → 23; D79/D80 registered |

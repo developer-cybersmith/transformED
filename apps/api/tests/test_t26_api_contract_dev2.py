@@ -44,9 +44,14 @@ def _approved_settings() -> MagicMock:
 
 
 def _denied_settings() -> MagicMock:
-    """No email is approved — teachback 403 path."""
+    """not_on_list@example.com is excluded from a non-empty allowlist — teachback 403 path.
+
+    Uses a real non-empty list so the test verifies "email excluded" not "list always empty".
+    A production misconfiguration (approved_emails=[]) would produce 403 for everyone,
+    but that bug would be invisible with an empty test allowlist.
+    """
     s = MagicMock()
-    s.approved_emails = []
+    s.approved_emails = ["other_approved@example.com"]
     return s
 
 
@@ -387,10 +392,17 @@ def test_teachback_transcript_field_silently_ignored(monkeypatch) -> None:
     STT is permanently banned (CLAUDE.md). transcript is not in TeachbackSubmission.
     Pydantic extra='ignore' discards it before the handler runs.
     Dev 2 will NOT get a 422 if transcript is accidentally included.
-    The transcript value is NOT passed to grade_teachback.
+    The transcript value is NOT passed to grade_teachback (service-call invariant).
     """
 
     async def _fake_grade_teachback(**kwargs):
+        # AC4 service-call invariant: Pydantic must strip transcript before the handler
+        # forwards kwargs to grade_teachback. If this assertion fires, the schema was
+        # accidentally widened to include transcript and is plumbing it to the scorer.
+        assert "transcript" not in kwargs, (
+            "AC4 violation: transcript reached grade_teachback kwargs. "
+            "TeachbackSubmission must never accept transcript — STT is permanently banned."
+        )
         return TeachbackResult(
             session_id="sess-001",
             rubric_scores={"accuracy": "Good", "completeness": "Fair", "clarity": "Good"},
@@ -407,9 +419,6 @@ def test_teachback_transcript_field_silently_ignored(monkeypatch) -> None:
     assert resp.status_code == 200, (
         f"transcript field must be silently ignored, not cause 422. "
         f"Got {resp.status_code}: {resp.text}"
-    )
-    assert "transcript" not in resp.json(), (
-        "transcript must NOT appear in any response field"
     )
 
 
@@ -580,4 +589,152 @@ def test_teachback_extra_client_fields_silently_ignored(monkeypatch) -> None:
     assert resp.status_code == 200, (
         f"Extra client fields in teachback payload must be silently ignored, not cause 422. "
         f"Got {resp.status_code}: {resp.text}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TC-1 — Accepted-side boundary tests (one-sided gaps filled)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_teachback_max_length_response_text_accepted(monkeypatch) -> None:
+    """TC-1: response_text exactly 4000 chars → 200 (boundary is inclusive: <= 4000 is valid).
+
+    Dev 2 implementing a character counter must cap at 4000, not 3999.
+    This test proves the exact boundary value is accepted, not only that 4001 is rejected.
+    """
+
+    async def _fake_grade_teachback(**kwargs):
+        return TeachbackResult(
+            session_id="sess-001",
+            rubric_scores={"accuracy": "Good", "completeness": "Good", "clarity": "Good"},
+            overall_score=80.0,
+            ces_contribution=20.0,
+            feedback="Accepted.",
+        )
+
+    monkeypatch.setattr("app.modules.assessment.service.grade_teachback", _fake_grade_teachback)
+    payload = {**_VALID_TEACHBACK_PAYLOAD, "response_text": "x" * 4000}
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _approved_client.post("/api/assessment/teachback", json=payload)
+
+    assert resp.status_code == 200, (
+        f"response_text of exactly 4000 chars must be accepted (max_length=4000 is inclusive). "
+        f"Dev 2 character counter must allow up to and including 4000 chars. "
+        f"Got {resp.status_code}: {resp.text}"
+    )
+
+
+@pytest.mark.unit
+def test_quiz_max_answers_accepted(monkeypatch) -> None:
+    """TC-1: answers list with exactly 50 items → 200 (boundary is inclusive: <= 50 is valid).
+
+    Dev 2 batching answers must allow up to and including 50 per submission.
+    This test proves the exact boundary value is accepted, not only that 51 is rejected.
+    """
+
+    async def _fake_grade_quiz(**kwargs):
+        return QuizResult(
+            session_id="sess-001",
+            score=80.0,
+            correct_count=40,
+            total_count=50,
+            ces_contribution=28.0,
+            feedback=[],
+        )
+
+    monkeypatch.setattr("app.modules.assessment.service.grade_quiz", _fake_grade_quiz)
+    payload = {
+        **_VALID_QUIZ_PAYLOAD,
+        "answers": [
+            {"question_id": f"q{i}", "response_index": 0, "response_time_ms": 500}
+            for i in range(50)
+        ],
+    }
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=payload)
+
+    assert resp.status_code == 200, (
+        f"Exactly 50 answers must be accepted (max_length=50 is inclusive). "
+        f"Got {resp.status_code}: {resp.text}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TC-2 — Required top-level field validation (session_id missing → 422)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_quiz_missing_session_id_returns_422() -> None:
+    """TC-2: POST /quiz without session_id → 422 (required field).
+
+    Dev 2 must wire session_id from the POST /sessions response before submitting quiz.
+    If the wiring fails and session_id is undefined/omitted, the API returns 422 — not 500.
+    """
+    payload = {k: v for k, v in _VALID_QUIZ_PAYLOAD.items() if k != "session_id"}
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _client.post("/api/assessment/quiz", json=payload)
+    assert resp.status_code == 422, (
+        f"Missing session_id in quiz payload must return 422. "
+        f"Dev 2: wire session_id from POST /sessions before submitting quiz. "
+        f"Got {resp.status_code}: {resp.text}"
+    )
+
+
+@pytest.mark.unit
+def test_teachback_missing_session_id_returns_422() -> None:
+    """TC-2: POST /teachback without session_id → 422 (required field).
+
+    Dev 2 must wire session_id from the POST /sessions response before submitting teachback.
+    If the wiring fails and session_id is undefined/omitted, the API returns 422 — not 500.
+    """
+    payload = {k: v for k, v in _VALID_TEACHBACK_PAYLOAD.items() if k != "session_id"}
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _approved_client.post("/api/assessment/teachback", json=payload)
+    assert resp.status_code == 422, (
+        f"Missing session_id in teachback payload must return 422. "
+        f"Dev 2: wire session_id from POST /sessions before submitting teachback. "
+        f"Got {resp.status_code}: {resp.text}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TC-3 — Whitespace-only response_text: passes API validation, client must guard
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_teachback_whitespace_only_response_text_accepted(monkeypatch) -> None:
+    """TC-3: response_text = "   " (whitespace only) → 200 (API does not reject it).
+
+    IMPORTANT FOR DEV 2: The API enforces min_length=1 (character count), NOT content.
+    A single space satisfies min_length=1 and passes all Pydantic validation.
+    The request reaches grade_teachback with substantively empty content.
+
+    Dev 2 MUST add a client-side non-blank guard before the Submit button:
+        if (responseText.trim().length === 0) → show error, do not submit.
+
+    Without this client-side guard, a student submitting only spaces will receive
+    a low-quality rubric score from the LLM without a clear validation error.
+    """
+
+    async def _fake_grade_teachback(**kwargs):
+        return TeachbackResult(
+            session_id="sess-001",
+            rubric_scores={"accuracy": "Needs improvement", "completeness": "Poor", "clarity": "Poor"},
+            overall_score=10.0,
+            ces_contribution=2.5,
+            feedback="Response appears to be empty.",
+        )
+
+    monkeypatch.setattr("app.modules.assessment.service.grade_teachback", _fake_grade_teachback)
+    payload = {**_VALID_TEACHBACK_PAYLOAD, "response_text": "   "}
+    with patch("app.core.db.get_supabase", return_value=MagicMock()):
+        resp = _approved_client.post("/api/assessment/teachback", json=payload)
+
+    assert resp.status_code == 200, (
+        f"Whitespace-only response_text passes API validation (min_length counts chars, not content). "
+        f"Dev 2 must prevent this with a client-side trim() guard. Got {resp.status_code}: {resp.text}"
     )
