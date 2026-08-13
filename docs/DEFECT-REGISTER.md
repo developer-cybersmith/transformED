@@ -1,4 +1,4 @@
-# Defect Register & Binding Decisions
+﻿# Defect Register & Binding Decisions
 
 **Owner:** Dev 1 · **Created:** 2026-07-29 · **Last updated:** 2026-08-13 · **Status:** ACTIVE
 
@@ -610,3 +610,4 @@ register, `dna_fusion.py`, `schemas.py`, `test_unbounded_queries.py`,
 That last row is the honest health metric. Six of nine rules currently depend on someone
 remembering. **BD-3 is the one that converts the most of them into machine checks, which is
 why it is first.**
+
