@@ -4,7 +4,7 @@ baseline_commit: 0cf8731
 
 # Story 2.46: Session Report — Attention Timeline Chart (S3-05)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -228,6 +228,31 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
   touched file. Backend `ruff` unavailable in this local environment (pre-existing gap, not
   fixed here) — not run.
 
+### Review Findings
+
+- [x] [Review][Patch] Missing `.order("created_at", desc=True)` on the new `session_events`
+  query — `.limit(20)` alone gives PostgREST no ordering guarantee, contradicting the story's
+  own claim of "20 most recent." [apps/api/app/modules/assessment/service.py:954]
+- [x] [Review][Patch] No exception handling around the new `session_events` query — an
+  unhandled Supabase failure would 500 the whole report instead of degrading gracefully.
+  [apps/api/app/modules/assessment/service.py:954]
+- [x] [Review][Patch] Unguarded `float()` parsing of Redis `ces_history` values accepts
+  `nan`/`inf`, which serializes as invalid JSON and breaks the whole report page.
+  [apps/api/app/modules/assessment/service.py:1109]
+- [x] [Review][Patch] `.limit(20)`/`.order()` call arguments never asserted; `started_at`-missing
+  case for `intervention_events` untested; exact 2-point boundary for AC-6 untested — closed with
+  4 new tests (3 backend, 1 frontend).
+- [x] [Review][Defer] Marker exact `minute` position / `<title>` tooltip text content, X-axis
+  "real vs. evenly-spaced" values, mobile "reduced height" prop, `useMediaQuery`'s reactive
+  resubscription path — real coverage gaps on already-correct behavior, no defect behind any of
+  them. [apps/web/src/components/reports/AttentionChart.tsx] — deferred, follow-up polish only.
+- [x] [Review][Defer] `bandLabel`'s 50/70 thresholds vs. `formatCesLabel`'s displayed text using
+  40/60/80 — pre-existing inconsistency between two `utils.ts` functions, not introduced by this
+  story. [apps/web/src/lib/utils.ts] — deferred; corrected this story's own comment to not
+  overclaim the guarantee instead.
+
+See "Senior Developer Review (AI)" below for full detail, dismissed findings, and reasoning.
+
 ## Dev Notes
 
 ### What NOT to do
@@ -342,3 +367,81 @@ Remove the worktree (`git worktree remove --force`) when done.
 - `apps/web/package.json` (MODIFIED — added `recharts@2.15.4`)
 - `pnpm-lock.yaml` (MODIFIED — lockfile update for the new dependency)
 - `docs/DEFECT-REGISTER.md` (MODIFIED — registered D77, and separately the D61-D64 reconciliation notes from the prior turn)
+
+## Senior Developer Review (AI)
+
+**Date:** 2026-08-13 · **Reviewers:** 8 parallel adversarial layers (Blind Hunter, Edge Case
+Hunter, Acceptance Auditor, Scale & Load Hunter — the `bmad-code-review` skill's built-ins — plus
+Story Quality, Test Coverage, AC Completeness, and Process Integrity, supplied per CLAUDE.md's
+6-layer gate since the skill only natively covers 2 of the 6 named layers) · **Outcome:** 3
+confirmed defects fixed, several test-coverage gaps closed, several findings correctly dismissed
+or deferred as non-issues.
+
+### Findings fixed
+
+1. **[High] Missing `.order("created_at", desc=True)` on the new `session_events` query**
+   (`service.py`, Step 4b) — confirmed independently by 3 layers (Scale & Load Hunter, Edge Case
+   Hunter, Acceptance Auditor). `.limit(20)` alone gives PostgREST no ordering guarantee; once a
+   session exceeds the natural bound (reachable today via D64's open, uncapped
+   confusion-intervention path), the 20 rows returned would be an arbitrary subset, not "the 20
+   most recent" as the story's own Scale & Load §2 and AC-1 claimed. **Fixed:** added
+   `.order("created_at", desc=True)` before `.limit(20)`, and reversed the result back to
+   chronological order when building `intervention_events` (consistent with `ces_timeline`'s
+   oldest-first convention). New test:
+   `test_intervention_events_query_orders_by_created_at_desc_before_limiting`.
+2. **[High] No exception handling around the new `session_events` query** (Test Coverage layer)
+   — unlike the adjacent Redis block, a Supabase failure on this call would propagate an
+   unhandled exception out of `get_session_report`, turning an optional-display-data failure
+   into a 500 for the whole report. **Fixed:** wrapped in `try/except`, degrading to
+   `intervention_events = None` on failure. New test:
+   `test_intervention_events_degrades_to_none_when_query_raises`.
+3. **[High] Unguarded `float()` parsing of Redis `ces_history` values** (Edge Case Hunter) — a
+   stray `"nan"`/`"inf"` entry is accepted by `float()` without raising, and FastAPI's default
+   `JSONResponse` (no `orjson` in this codebase) serializes it as a literal `NaN`/`Infinity`
+   token — invalid JSON that breaks the frontend's `JSON.parse` for the **whole** report, not
+   just the new field. This gap predates this story (`ces_history_summary`'s mean/min/max already
+   had it); this diff's `ces_timeline` shared the same unguarded parse point, doubling the blast
+   radius. **Fixed:** added a `math.isfinite()` guard at the single shared parse point, fixing
+   both the pre-existing exposure and the new one for free. New test:
+   `test_ces_history_rejects_non_finite_values_instead_of_producing_invalid_json`.
+
+### Test-coverage gaps closed
+
+- `.limit(20)`/`.order()` call arguments were never actually asserted (Test Coverage + AC
+  Completeness) — now asserted directly on the captured mock.
+- `intervention_events` when `started_at` is missing was untested (AC Completeness) — new test
+  `test_intervention_events_is_none_when_started_at_missing`.
+- The exact 2-point boundary for AC-6's `<2` fallback was untested (only 1 and 3 points were
+  covered) — new frontend test at the exact boundary.
+
+### Findings reviewed and NOT acted on (with reasoning)
+
+- **IDOR scope note (Blind Hunter):** the new query filters only by `session_id`, not `user_id` —
+  flagged as unverifiable in isolation, but it exactly mirrors the pre-existing, unmodified
+  sibling `events_resp` count query in the same function, which relies on `get_session_report`'s
+  earlier SEC-006 ownership check (Step 1). Not a new gap.
+- **Direct `session_events` table access from the assessment module** (Process Integrity) —
+  pre-existing pattern in the same file (the Step 4 count query), not introduced by this diff.
+- **Caption could overstate point count if `ces_history_summary.window_count` includes legacy
+  entries excluded from `ces_timeline`** (Story Quality) — doesn't apply: `AttentionChart.tsx`'s
+  caption uses `timeline.length` (the real rendered array), never `window_count`.
+- **Commit `f572337` also updates the story file's own Change Log/Dev Agent Record** (Story
+  Quality) — a literal reading of "never share a commit with the story file" is technically
+  violated, but this repo's own precedent is mixed (S3-54 did the same; S3-53 didn't); the
+  substantive story-first intent (ACs exist before code, story-only commit is chronologically
+  first) was honored.
+- **`bandLabel`'s 50/70 thresholds vs. `formatCesLabel`'s displayed text using 40/60/80**
+  (Edge Case Hunter) — real, pre-existing inconsistency between two `utils.ts` functions, not
+  introduced here; corrected the code comment's overclaim (it guaranteed color/band agreement,
+  not label-text agreement) rather than redesigning either function's established thresholds.
+- **Marker exact `minute` position / `<title>` tooltip text content, X-axis "real vs. evenly-spaced"
+  values, mobile "reduced height" prop, `useMediaQuery`'s reactive resubscription path** (Test
+  Coverage + AC Completeness) — real coverage gaps on already-correct behavior (no defect behind
+  any of them), deferred as follow-up polish rather than blocking this review round.
+
+### Verification after fixes
+
+Backend: `test_s3_05_attention_timeline_chart.py` 14/14 (10 original + 4 new). Full suite via
+`--continue-on-collection-errors`: 230 failed / 52 errors (identical to pre-story baseline), 1746
+passed (+4 vs. pre-fix). Frontend: 79 files / 958 tests green (+1 boundary test), `tsc --noEmit`
+clean, `eslint` clean on all touched files.

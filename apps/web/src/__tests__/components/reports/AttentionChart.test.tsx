@@ -49,6 +49,14 @@ describe('AttentionChart', () => {
     expect(queryByTestId('attention-chart')).toBeNull();
   });
 
+  it('renders the chart at exactly the 2-point boundary (review finding — untested boundary)', () => {
+    const { getByTestId, queryByTestId } = render(
+      <AttentionChart timeline={[{ minute: 0, ces: 40 }, { minute: 1, ces: 60 }]} interventions={null} />
+    );
+    expect(getByTestId('attention-chart')).toBeTruthy();
+    expect(queryByTestId('attention-chart-empty')).toBeNull();
+  });
+
   it('renders the chart when timeline has 2+ points', () => {
     const { getByTestId, container } = render(
       <AttentionChart timeline={TIMELINE} interventions={null} />

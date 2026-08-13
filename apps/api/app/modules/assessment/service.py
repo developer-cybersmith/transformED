@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import statistics
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -950,18 +951,32 @@ async def get_session_report(
     # Step 4b — S3-05 (Story 2-46): raw intervention rows for the attention timeline chart's
     # vertical markers. BOUNDED: .limit(20) safety ceiling; natural bound is
     # max_distraction_per_session (default 3) + 1 fatigue + a handful of D64-uncapped confusion
-    # events. minute-offset math happens later, once `started_at` is available (Step 6).
-    intervention_rows_resp = await asyncio.to_thread(
-        lambda: (
-            supabase.table("session_events")
-            .select("created_at, payload")
-            .eq("session_id", session_id)
-            .eq("event_type", "intervention_triggered")
-            .limit(20)
-            .execute()
+    # events. `.order("created_at", desc=True)` makes "the 20 most recent" actually true --
+    # without it PostgREST gives no ordering guarantee, so once the natural bound is exceeded
+    # (reachable today via D64's uncapped confusion interventions) `.limit(20)` alone could
+    # silently keep an arbitrary subset instead of the most recent ones (review finding).
+    # Degrades to an empty list (never raises) on a Supabase failure -- this field is optional
+    # display data, not worth failing the whole report over, matching the Redis block below.
+    # minute-offset math happens later, once `started_at` is available (Step 6); the DESC order
+    # is reversed back to chronological (oldest-first) there, matching ces_timeline's convention.
+    try:
+        intervention_rows_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("session_events")
+                .select("created_at, payload")
+                .eq("session_id", session_id)
+                .eq("event_type", "intervention_triggered")
+                .order("created_at", desc=True)
+                .limit(20)
+                .execute()
+            )
         )
-    )
-    intervention_rows: list[dict[str, Any]] = rows(intervention_rows_resp)
+        intervention_rows: list[dict[str, Any]] = rows(intervention_rows_resp)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "intervention rows fetch failed for session=%s", session_id, exc_info=True
+        )
+        intervention_rows = []
 
     # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
@@ -1079,6 +1094,13 @@ async def get_session_report(
     # (AC-2 non-regression). D77: this can never exceed _CES_HISTORY_MAX=10 entries — the last
     # ~50s of the session at default cadence, regardless of session length. The frontend must
     # present this as a recency window, never as full-session coverage.
+    #
+    # Review finding: a non-finite `v` (a stray "nan"/"inf" string ever written to
+    # session:{id}:ces_history) is accepted by float() without raising, then serialized by
+    # FastAPI's default JSONResponse as a literal NaN/Infinity token -- invalid per the JSON
+    # spec, which breaks the frontend's JSON.parse for the WHOLE report, not just this field.
+    # math.isfinite() rejects it at the same point non-finite floats are already rejected
+    # elsewhere in this codebase (tutor/service.py's attention-signal parser).
     ces_history_summary: dict[str, Any] | None = None
     ces_timeline: list[dict[str, float]] | None = None
     if redis is not None:
@@ -1093,13 +1115,18 @@ async def get_session_report(
                 try:
                     parsed = json.loads(raw)
                     v = float(parsed["v"])
+                    if not math.isfinite(v):
+                        raise ValueError("non-finite ces value")  # noqa: TRY301
                     ces_vals.append(v)
                     if started_at_unix is not None and "t" in parsed:
                         minute = round((float(parsed["t"]) - started_at_unix) / 60.0, 2)
-                        timeline_points.append({"minute": minute, "ces": round(v, 2)})
+                        if math.isfinite(minute):
+                            timeline_points.append({"minute": minute, "ces": round(v, 2)})
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                     try:
-                        ces_vals.append(float(raw))
+                        v = float(raw)
+                        if math.isfinite(v):
+                            ces_vals.append(v)
                     except (ValueError, TypeError):
                         pass
             if ces_vals:
@@ -1119,11 +1146,14 @@ async def get_session_report(
     # Step 4b raw rows now that `started_at` (Step 6) is available. AC-5: `ces_at_trigger`
     # (present in the raw payload) is never extracted here — enforced at the contract level,
     # not by frontend discipline alone. A malformed row (no created_at) is skipped, not fatal.
+    # Step 4b fetches newest-first (`.order("created_at", desc=True)`, so the cap keeps the
+    # true most-recent 20) — reversed back to chronological (oldest-first) here, matching
+    # ces_timeline's convention.
     intervention_events: list[dict[str, Any]] | None = None
     if intervention_rows and started_at is not None:
         _started_at_unix = started_at.timestamp()
         _computed_events: list[dict[str, Any]] = []
-        for _row in intervention_rows:
+        for _row in reversed(intervention_rows):
             _raw_created = _row.get("created_at")
             if not _raw_created:
                 continue

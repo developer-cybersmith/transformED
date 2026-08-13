@@ -27,8 +27,12 @@ interface AttentionChartProps {
 }
 
 // Reuses the EXACT thresholds already established by cesScoreColor/formatCesLabel
-// (apps/web/src/lib/utils.ts) so this chart and the Focus tile above it never
-// disagree about what "Low"/"Medium"/"High" mean. Never shows a raw CES number --
+// (apps/web/src/lib/utils.ts) -- the same 50/70 boundaries `cesScoreColor` uses to pick
+// the Focus tile's color, so this chart's bands and that tile's color never disagree.
+// Review finding: `formatCesLabel`'s own displayed TEXT uses different thresholds
+// (40/60/80) for its five labels ("Highly Engaged".."Room to Grow") -- that mismatch
+// predates this story and isn't fixed here; the guarantee below is about color/band
+// boundaries, not about the Focus tile's label wording. Never shows a raw CES number --
 // this is the only formatter the Y-axis ever calls.
 function bandLabel(ces: number): 'Low' | 'Medium' | 'High' {
   if (ces >= 70) return 'High';
