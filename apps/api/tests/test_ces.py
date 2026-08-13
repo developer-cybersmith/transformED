@@ -245,7 +245,7 @@ def test_redistribution_weights_are_proportional():
 def test_quiz_accuracy_none_redistributes_weight():
     """AC 8 (updated S3-53): quiz_accuracy=None → quiz dropped, weight redistributed to remaining 4.
 
-    Old behaviour (D62): None treated as 0.0, weight retained → CES=65.0.
+    Old behaviour (D61/D62): None treated as 0.0, weight retained → CES=65.0.
     Correct behaviour  : quiz dropped; remaining weights (0.65) normalize to 1.0.
     With all remaining signals=1.0 → CES = 100.0.
     """
@@ -272,7 +272,7 @@ def test_quiz_accuracy_none_redistributes_weight():
 def test_both_none_quiz_and_teachback_redistributed():
     """AC 8+7 (updated S3-53): quiz=None + teachback=None → both dropped, remaining 3 normalize.
 
-    Old behaviour (D62): quiz treated as 0 inside redistribution → CES≈53.3.
+    Old behaviour (D61/D62): quiz treated as 0 inside redistribution → CES≈53.3.
     Correct behaviour  : both dropped; remaining signals (0.40 total weight) normalize.
     With behavioral=head_pose=blink=1.0 → CES = 100.0.
     """
@@ -289,7 +289,7 @@ def test_both_none_quiz_and_teachback_redistributed():
         blink=1.0,
         settings=s,
     )
-    assert result == pytest.approx(100.0, abs=0.1)
+    assert result == pytest.approx(100.0, abs=0.001)
 
 
 # ── AC 9: division-by-zero guard ─────────────────────────────────────────────
@@ -485,6 +485,138 @@ def test_teachback_zero_uses_full_formula_not_redistribution():
 
 
 # ── Output clamp: CES never exceeds 100.0 ────────────────────────────────────
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Story 3-34 RED TESTS — describe CORRECT behavior (fail with current ces.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+def test_quiz_accuracy_none_redistributes_weight():
+    """Story 3-34 AC 2+3: quiz_accuracy=None redistributes its weight proportionally.
+
+    # BREAKING-CHANGE: D61
+    Old behavior (bug): quiz=None treated as 0.0, weight retained → CES = 65.0
+    New behavior (correct): quiz weight redistributed across present signals → CES = 100.0
+    """
+    compute_ces = _import_compute_ces()
+    s = _settings()  # quiz=0.35, tb=0.25, beh=0.20, hp=0.12, blink=0.08
+    # quiz=None: weight 0.35 redistributed over tb+beh+hp+blink (weight_sum=0.65)
+    # All 4 present signals = 1.0 → effective weight = 1.0 → CES = 100.0
+    result = compute_ces(
+        quiz_accuracy=None,
+        teachback_score=1.0,
+        behavioral=1.0,
+        head_pose=1.0,
+        blink=1.0,
+        settings=s,
+    )
+    assert result == pytest.approx(100.0, abs=0.001)
+
+
+@pytest.mark.unit
+def test_both_academic_signals_none_redistributes_behavioral():
+    """Story 3-34 AC 2+3: quiz=None AND teachback=None both redistribute.
+
+    # BREAKING-CHANGE: D61
+    Old behavior: quiz=None→0.0 in teachback redistribution → ~53.33
+    New behavior: both redistribute, only beh+hp+blink present → CES = 100.0
+    """
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    # Only beh=1.0, hp=1.0, blink=1.0 present → weight_sum=0.40
+    # CES = 1.0 × (0.40/0.40) × 100 = 100.0
+    result = compute_ces(
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral=1.0,
+        head_pose=1.0,
+        blink=1.0,
+        settings=s,
+    )
+    assert result == pytest.approx(100.0, abs=0.001)
+
+
+@pytest.mark.unit
+def test_behavioral_none_redistributes():
+    """Story 3-34 AC 2: behavioral=None redistributes weight across other present signals."""
+    compute_ces = _import_compute_ces()
+    s = _settings()  # beh weight=0.20
+    # Only quiz=1.0, teachback=1.0, hp=1.0, blink=1.0 present → weight_sum=0.80
+    result = compute_ces(
+        quiz_accuracy=1.0,
+        teachback_score=1.0,
+        behavioral=None,
+        head_pose=1.0,
+        blink=1.0,
+        settings=s,
+    )
+    assert result == pytest.approx(100.0, abs=0.001)
+
+
+@pytest.mark.unit
+def test_head_pose_none_redistributes():
+    """Story 3-34 AC 2: head_pose=None redistributes weight. All others=1.0 → 100.0."""
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    result = compute_ces(
+        quiz_accuracy=1.0,
+        teachback_score=1.0,
+        behavioral=1.0,
+        head_pose=None,
+        blink=1.0,
+        settings=s,
+    )
+    assert result == pytest.approx(100.0, abs=0.001)
+
+
+@pytest.mark.unit
+def test_blink_none_redistributes():
+    """Story 3-34 AC 2: blink=None redistributes weight. All others=1.0 → 100.0."""
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    result = compute_ces(
+        quiz_accuracy=1.0,
+        teachback_score=1.0,
+        behavioral=1.0,
+        head_pose=1.0,
+        blink=None,
+        settings=s,
+    )
+    assert result == pytest.approx(100.0, abs=0.001)
+
+
+@pytest.mark.unit
+def test_all_five_none_returns_zero():
+    """Story 3-34 AC 4: all five signals=None → weight_sum=0 → returns 0.0 without raising."""
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    result = compute_ces(
+        quiz_accuracy=None,
+        teachback_score=None,
+        behavioral=None,
+        head_pose=None,
+        blink=None,
+        settings=s,
+    )
+    assert result == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.unit
+def test_single_signal_present_returns_its_value_scaled():
+    """Story 3-34 AC 2: only quiz=0.6 present → effective weight = 1.0 → CES = 60.0."""
+    compute_ces = _import_compute_ces()
+    s = _settings()
+    result = compute_ces(
+        quiz_accuracy=0.6,
+        teachback_score=None,
+        behavioral=None,
+        head_pose=None,
+        blink=None,
+        settings=s,
+    )
+    assert result == pytest.approx(60.0, abs=0.001)
 
 
 @pytest.mark.unit
