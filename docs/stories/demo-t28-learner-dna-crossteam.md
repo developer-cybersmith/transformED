@@ -242,4 +242,38 @@ Pre-existing 5 failures on main (tutor tests) are unrelated to this story.
 ---
 
 ## Senior Developer Review (AI)
-*(to be filled after /bmad-code-review)*
+
+**Date:** 2026-08-13 | **Layers:** Story Quality · Blind Hunter · Edge Case Hunter · Acceptance Auditor · Scale & Load Hunter · Process Integrity (6/6)
+**Result:** Changes Requested — 2 decision-needed, 8 patches, 8 deferred, 6 dismissed
+
+### Review Findings
+
+#### Decision-Needed
+- [ ] [Review][Decision] DN-1: `profile_text=None` — is null a valid contract state Dev 2 must handle, or should the test cover the null scenario separately? `LearnerDNA.profile_text: str | None` means a user with a row but null profile_text returns `"profile_text": null`. The current AC7 test asserts non-null only in the happy-path mock. Decision: (a) add a test asserting null is returned without error, or (b) assert null never reaches the client (service always generates text before storing the row).
+- [ ] [Review][Decision] DN-2: AC1 flat top-level check — `raw_key not in body` only checks top-level dict keys. If a future developer adds `dimensions: dict` to `LearnerDNA` carrying nested scores, the test passes while Dev 2 receives raw scores. Decision: (a) add `assert "dimensions" not in body` as a forward-looking guard now, or (b) accept the current flat check as sufficient until a concrete nesting proposal exists.
+
+#### Patches
+- [ ] [Review][Patch] P1: AC2 vacuously true — `test_onboarding_response_has_no_raw_dimension_scores` mocks `process_onboarding` to return `_ONBOARDING_RESULT` (an `OnboardingResult` object with no dimension keys). The 9 assertions are trivially true regardless of `response_model`. Fix: use an `AsyncMock(return_value={...dict with all 9 keys...})` instead of the clean schema object, mirroring the AC1 pattern. [test_t28_dna_display_contract_dev2.py:350]
+- [ ] [Review][Patch] P2 (Scale/Critical): `_RAW_DIMENSION_KEYS` has 9 items but story AC1 text bans 12. Missing: `cognitive_score`, `emotional_score`, `self_direction_score`. If any of those 3 keys appeared in the response, every AC1 assertion passes GREEN. [test_t28_dna_display_contract_dev2.py:37]
+- [ ] [Review][Patch] P3 (Scale): AC5 substring check `banned_term not in label.lower()` has no word boundary — `"technique"` contains `"iq"`, `"sequential"` contains `"eq"`, `"unique"` contains `"iq"`. Legitimate badge names trigger CI failure. Fix: use `re.search(r'\b' + re.escape(term) + r'\b', label.lower())` or check full words only. [test_t28_dna_display_contract_dev2.py:50]
+- [ ] [Review][Patch] P4 (Process): Missing `# MOCK-CONTRACT:` annotations on AC1 (impossible production scenario — service never returns dimension keys), AC6, AC7 (disclaimer is pre-baked into mock fixture — test proves HTTP passthrough, not actual disclaimer appending). Add comments naming the tests that cover the real-mechanism paths. [test_t28_dna_display_contract_dev2.py:215, 273, 433]
+- [ ] [Review][Patch] P5: `"spiritual quotient"` missing from `_BANNED_BADGE_TERMS`. `"sq"` catches raw substring `sq` but `"Spiritual Quotient Achiever"` contains no two-adjacent `sq` characters — `"spiritual quotient"` as a two-word phrase is not caught. [test_t28_dna_display_contract_dev2.py:50]
+- [ ] [Review][Patch] P6 (Security): JWT `sub` → service `user_id` binding never asserted. `get_learner_dna_data` is patched as `AsyncMock(return_value=_FULL_DNA_ROW)` which accepts any kwarg. If the router changed to pass `user_id` from a URL param instead of JWT sub, the test would still pass. Fix: add `mock_get_dna_data.assert_called_once_with(user_id="user-001", ...)` or check `call_args.kwargs`. [test_t28_dna_display_contract_dev2.py:175]
+- [ ] [Review][Patch] P7: Redis failure + valid DNA row path untested. GET /user/dna wraps `get_redis()` in try/except — if Redis is unavailable, `redis_client=None` and the service is still called. No test verifies that a Redis outage returns 200 (not 500) with `reassessment_due: false`. [test_t28_dna_display_contract_dev2.py]
+- [ ] [Review][Patch] P8: `badge_labels=[]` (empty list) not tested. Service returns `[]` when all dimension scores are below the badge threshold (70). No test verifies the endpoint returns 200 with `"badge_labels": []` rather than 422 or 500. [test_t28_dna_display_contract_dev2.py]
+
+#### Deferred
+- [x] [Review][Defer] D-IDOR: No 403/cross-user IDOR negative tests — display contract scope; belongs in auth integration tests [test_t28_dna_display_contract_dev2.py] — deferred, pre-existing scope decision
+- [x] [Review][Defer] D-401: No unauthenticated (401) test — JWT gate tests belong in auth test suite [test_t28_dna_display_contract_dev2.py] — deferred, pre-existing scope decision
+- [x] [Review][Defer] D-BADGE-UNIT: AC5 never calls real `_compute_badge_labels()` — needs a separate unit test for that function; out of HTTP contract scope [test_t28_dna_display_contract_dev2.py] — deferred, separate story
+- [x] [Review][Defer] D-409: 409 conflict (duplicate onboarding) not tested — idempotency contract out of display scope [test_t28_dna_display_contract_dev2.py] — deferred, separate story
+- [x] [Review][Defer] D-FORMAT: `last_updated` format uncontracted — design choice, needs API versioning discussion — deferred, design decision
+- [x] [Review][Defer] D-REDIS-POST: POST /onboarding/submit `get_redis()` has no try/except — pre-existing production code issue in router, not introduced by T28 [router.py:254] — deferred, pre-existing D-nn needed
+- [x] [Review][Defer] D-LOCK: Non-HTTPException from `process_onboarding` does not release the Redis lock — pre-existing production code issue [router.py:271] — deferred, pre-existing D-nn needed
+- [x] [Review][Defer] **D87 (Scale)**: Reassessment bypass 3-step non-atomic race — `GET(reassessment_key) → DELETE(onboarding_done) → SET NX(onboarding_done)` are three non-atomic Redis ops. If `reassessment_key` TTL expires between GET and DELETE, the idempotency lock is released without a valid reassessment in effect, granting one unauthorized resubmission with no error. Pre-existing in router.py:258-264, not introduced by T28. **Registered as D87.** [router.py:258] — deferred, pre-existing race
+
+### Action Items
+- [ ] Resolve DN-1 (profile_text null contract)
+- [ ] Resolve DN-2 (AC1 nested-key guard)
+- [ ] Apply patches P1–P8
+- [ ] Confirm D87 registered in DEFECT-REGISTER.md
