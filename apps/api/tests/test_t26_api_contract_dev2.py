@@ -706,37 +706,21 @@ def test_teachback_missing_session_id_returns_422() -> None:
 
 
 @pytest.mark.unit
-def test_teachback_whitespace_only_response_text_accepted(monkeypatch) -> None:
-    """TC-3: response_text = "   " (whitespace only) → 200 (API does not reject it).
+def test_teachback_whitespace_only_response_text_returns_422() -> None:
+    """TC-3: response_text = "   " (whitespace only) → 422 (D80 validator rejects blank content).
 
-    NOTE: D80 (demo/defect-fixes-d79-d80) adds a @field_validator that makes the API
-    return 422 for whitespace-only content. After that PR is merged to master-demo-dev3
-    and this branch is rebased, this test must be flipped to assert 422 and the
-    service mock block removed. The test then moves to test_d79_d80_schema_guards.py.
+    D80 fixed: @field_validator on TeachbackSubmission strips and rejects whitespace-only
+    response_text before the request reaches grade_teachback. The API now enforces content,
+    not just character count (demo/defect-fixes-d79-d80, 2026-08-13).
 
-    Until the fix is merged, this test documents the pre-fix contract behaviour:
-    The API enforces min_length=1 (character count), NOT content. A single space
-    satisfies min_length=1 and reaches grade_teachback with substantively empty content.
-
-    Dev 2 MUST add a client-side non-blank guard before the Submit button regardless:
-        if (responseText.trim().length === 0) → show error, do not submit.
+    Dev 2 must still add a client-side trim() guard as a UX measure — the server 422
+    provides a safety net, not a replacement for immediate UI feedback.
     """
-
-    async def _fake_grade_teachback(**kwargs):
-        return TeachbackResult(
-            session_id="sess-001",
-            rubric_scores={"accuracy": "Needs improvement", "completeness": "Poor", "clarity": "Poor"},
-            overall_score=10.0,
-            ces_contribution=2.5,
-            feedback="Response appears to be empty.",
-        )
-
-    monkeypatch.setattr("app.modules.assessment.service.grade_teachback", _fake_grade_teachback)
     payload = {**_VALID_TEACHBACK_PAYLOAD, "response_text": "   "}
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _approved_client.post("/api/assessment/teachback", json=payload)
 
-    assert resp.status_code == 200, (
-        f"Whitespace-only response_text passes API validation (min_length counts chars, not content). "
-        f"Dev 2 must prevent this with a client-side trim() guard. Got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 422, (
+        f"D80: whitespace-only response_text must return 422 (validator strips and rejects). "
+        f"Got {resp.status_code}: {resp.text}"
     )
