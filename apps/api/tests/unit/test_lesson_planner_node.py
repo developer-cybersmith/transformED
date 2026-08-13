@@ -925,9 +925,11 @@ def _make_plan_llm(ids: list[str]) -> Any:
 @pytest.mark.parametrize(
     ("n", "expected_calls"),
     [
-        (15, 1),  # == batch_size -> single call (boundary)
-        (16, 2),  # batch_size + 1 -> 15 + 1 (one-element final batch)
-        (30, 2),  # exact multiple -> 15 + 15 (no remainder)
+        # Throwaway fix (2026-08-12): default lesson_planner_batch_size is now
+        # 10, not 15 -- boundaries rescaled to match, same intent as before.
+        (10, 1),  # == batch_size -> single call (boundary)
+        (11, 2),  # batch_size + 1 -> 10 + 1 (one-element final batch)
+        (20, 2),  # exact multiple -> 10 + 10 (no remainder)
     ],
 )
 async def test_planner_batch_boundaries(n: int, expected_calls: int) -> None:

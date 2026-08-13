@@ -5,7 +5,7 @@ import { TutorInterventionCard } from '@/components/player/TutorInterventionCard
 import { usePlayerStore } from '@/stores/player.machine';
 
 beforeEach(() => {
-  usePlayerStore.setState({ activeIntervention: null, status: 'PLAYING' });
+  usePlayerStore.setState({ activeIntervention: null, status: 'PLAYING', wsSendControl: null });
 });
 
 afterEach(() => {
@@ -86,6 +86,61 @@ describe('TutorInterventionCard dismissal (S3-03 AC-6)', () => {
     });
 
     expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  // Bug fix (found live, 2026-08-12): dismissal only ever cleared local React
+  // state -- the server-side FSM never learned the intervention ended, so it
+  // stayed stuck in INTERVENING forever and CES monitoring silently died for
+  // the rest of every session after its first intervention.
+  it('sends intervention_complete over the WebSocket on manual dismiss', () => {
+    const wsSendControl = vi.fn();
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'x' },
+        wsSendControl,
+      });
+    });
+    render(<TutorInterventionCard />);
+
+    act(() => {
+      screen.getByRole('button', { name: /dismiss/i }).click();
+    });
+
+    expect(wsSendControl).toHaveBeenCalledWith({ type: 'intervention_complete' });
+  });
+
+  it('sends intervention_complete over the WebSocket on auto-dismiss', () => {
+    vi.useFakeTimers();
+    const wsSendControl = vi.fn();
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'x' },
+        wsSendControl,
+      });
+    });
+    render(<TutorInterventionCard />);
+
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+
+    expect(wsSendControl).toHaveBeenCalledWith({ type: 'intervention_complete' });
+  });
+
+  it('does not throw when wsSendControl is null (socket never connected)', () => {
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'x' },
+        wsSendControl: null,
+      });
+    });
+    render(<TutorInterventionCard />);
+
+    expect(() => {
+      act(() => {
+        screen.getByRole('button', { name: /dismiss/i }).click();
+      });
+    }).not.toThrow();
   });
 
   it('auto-dismisses after exactly 30000ms, removing the card from the DOM (not just the store)', () => {

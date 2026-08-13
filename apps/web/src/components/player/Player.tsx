@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { trackEvent } from '@/lib/analytics';
-import { createSession } from '@/lib/assessment';
+import { completeSession, createSession } from '@/lib/assessment';
 import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
@@ -113,33 +113,45 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  // Keyed on lesson_id, NOT the lesson object reference (review fix, S2-33):
-  // a retry-triggered refetch (handleRetryAudio -> onRefetchLesson -> SWR
-  // mutate()) produces a NEW lesson object for the SAME lesson_id -- without
-  // this guard, that new reference alone would re-fire this effect and call
-  // loadLesson() again, silently resetting currentSegmentIndex/audioPositionMs/
-  // quizFiredForSegment/status/sessionId right after (or racing with) the
-  // deliberately-progress-preserving refreshLessonMedia() call in
-  // handleRetryAudio -- defeating the entire point of the retry-refetch flow.
-  // PlayerLoader's key={lesson.lesson_id} already forces a real remount (fresh
-  // ref, starts at null) whenever the lesson_id genuinely changes, so this
-  // ref only needs to guard against the same-lesson_id-new-reference case.
-  const loadedLessonIdRef = useRef<string | null>(null);
+  // Keyed on lesson_id (a stable primitive), NOT the lesson object reference
+  // (review fix, S2-33): a retry-triggered refetch (handleRetryAudio ->
+  // onRefetchLesson -> SWR mutate()) produces a NEW lesson object for the SAME
+  // lesson_id -- if this effect depended on the `lesson` object itself, that
+  // new reference alone would re-fire it and call loadLesson() again, silently
+  // resetting currentSegmentIndex/audioPositionMs/quizFiredForSegment/status/
+  // sessionId right after (or racing with) the deliberately-progress-preserving
+  // refreshLessonMedia() call in handleRetryAudio -- defeating the entire point
+  // of the retry-refetch flow. Depending on the id instead means React's own
+  // dependency comparison already skips the effect for that case -- no ref
+  // guard needed.
+  //
+  // A `loadedLessonIdRef`-style guard was tried here before and had to be
+  // reverted (bug found via live testing, 2026-08-12): React 18 Strict Mode's
+  // dev-only double-invoke (mount -> cleanup -> mount, same instance, same
+  // ref) set the ref on the first invocation, which made the guard's
+  // `ref.current === lesson.lesson_id` check block the SECOND (real,
+  // uncancelled) invocation from ever calling mintSession -- so the *only*
+  // mintSession call that ever ran was the first one, whose cleanup had
+  // already flipped `cancelled` to true by the time its fetch resolved.
+  // Net effect: sessionId stayed '' for the entire session in dev, silently --
+  // no error, no log, nothing -- until confirmed live via a Playwright
+  // session (WS never connected, [useAttentionMonitor] logged "dropping
+  // attention signal -- no active socket connection" forever). Depending on
+  // the primitive id removes the scenario the ref existed for, so the ref
+  // itself is gone -- there is no longer anything for it to guard.
+  const lessonId = lesson.lesson_id;
   useEffect(() => {
-    if (loadedLessonIdRef.current === lesson.lesson_id) return;
-    loadedLessonIdRef.current = lesson.lesson_id;
     loadLesson(lesson);
     // Must run after loadLesson's synchronous set() so state.lesson is
     // populated before restoreProgress validates the saved segmentIndex
     // against this lesson's actual bounds.
-    usePlayerStore.getState().restoreProgress(lesson.lesson_id);
+    usePlayerStore.getState().restoreProgress(lessonId);
 
     // Mints the real backend session (D18/Story 2-39) -- previously
     // loadLesson() invented sessionId: crypto.randomUUID() locally, which the
     // backend's ownership check correctly rejected (404 on every quiz/
     // teach-back submission, for every student, always). Fired once per
-    // lesson mount under the same loadedLessonIdRef guard as loadLesson()
-    // above -- every call mints a new attempt row server-side, which is
+    // lesson mount -- every call mints a new attempt row server-side, which is
     // intentional (re-learning must produce a new session for CES history),
     // but calling it more than once per mount would mint extra, orphaned rows.
     //
@@ -156,7 +168,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
 
     async function mintSession(attempt: number) {
       try {
-        const { session_id } = await createSession({ lesson_id: lesson.lesson_id });
+        const { session_id } = await createSession({ lesson_id: lessonId });
         if (cancelled) return;
         usePlayerStore.getState().setSessionId(session_id);
       } catch (err) {
@@ -182,12 +194,32 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
       cancelled = true;
       clearTimeout(retryTimeoutId);
     };
-  }, [lesson, loadLesson]);
+    // `lesson` itself is used inside (loadLesson(lesson)) but deliberately not
+    // listed -- see the comment above `lessonId` for why this depends on the
+    // id, not the object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, loadLesson]);
+
+  // Marks the session as ended so the session report's duration_minutes/
+  // completed_at (assessment/service.py::get_session_report, which reads
+  // sessions.ended_at) have a real value instead of silently staying
+  // 0.0/None forever -- confirmed nothing anywhere ever wrote that column
+  // (found via a live full-lesson playthrough, 2026-08-12). complete_session
+  // is idempotent server-side (writes ended_at only once), so a duplicate
+  // call here is harmless -- no ref guard needed. Non-fatal on failure: a
+  // report field being wrong must never block the "Lesson complete" screen,
+  // which is already rendered by the time this fires.
+  useEffect(() => {
+    if (status !== 'ENDED' || !sessionId) return;
+    void completeSession(sessionId).catch(() => {
+      // Swallowed on purpose -- see the comment above.
+    });
+  }, [status, sessionId]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;
 
   return (
-    <div className="flex-1 flex flex-col bg-primary-dark text-white overflow-hidden">
+    <div className="flex-1 flex flex-col bg-white text-neutral-900 overflow-hidden">
       {/* AudioTimeline: hidden, drives audio playback + slide sync */}
       <AudioTimeline />
 
@@ -198,7 +230,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             currentSlideId is set almost immediately after mount in real use,
             leaving that block rarely visible. */}
         <div className="absolute top-3 left-3 z-10">
-          <span className="px-3 py-1 rounded-full bg-black/40 backdrop-blur-sm text-neutral-200 text-xs font-medium uppercase tracking-wide">
+          <span className="px-3 py-1 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs font-medium uppercase tracking-wide">
             {TIER_LABELS[lesson.metadata.tier ?? 'T2'] ?? TIER_LABELS.T2}
           </span>
         </div>
@@ -215,8 +247,8 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
         {/* Lesson metadata shown before any slide is active */}
         {!currentSlideId && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6">
-            <h2 className="font-serif text-xl font-semibold">{lesson.metadata.title}</h2>
-            <p className="text-neutral-400 text-sm">
+            <h2 className="font-serif text-xl font-semibold text-neutral-900">{lesson.metadata.title}</h2>
+            <p className="text-neutral-500 text-sm">
               {lesson.metadata.total_segments} segments · ~{lesson.metadata.estimated_duration_mins} min
             </p>
           </div>
@@ -237,7 +269,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
 
         {/* Lesson complete screen */}
         {status === 'ENDED' && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 p-6 bg-primary-dark/95 backdrop-blur-sm">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 p-6 bg-white/95 backdrop-blur-sm">
             <div className="relative">
               <div className="absolute inset-0 bg-[var(--accent-secondary)]/20 rounded-full blur-xl animate-pulse" />
               <div className="relative w-20 h-20 bg-[var(--accent-secondary)]/10 text-4xl rounded-full flex items-center justify-center border border-[var(--accent-secondary)]/30">
@@ -245,8 +277,8 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
               </div>
             </div>
             <div className="text-center">
-              <h2 className="font-serif text-white text-2xl font-semibold mb-1">Lesson complete</h2>
-              <p className="text-neutral-400 text-sm">{lesson.metadata.title}</p>
+              <h2 className="font-serif text-neutral-900 text-2xl font-semibold mb-1">Lesson complete</h2>
+              <p className="text-neutral-500 text-sm">{lesson.metadata.title}</p>
             </div>
             <div className="flex flex-col items-center gap-3">
               {sessionId && (
@@ -260,7 +292,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
               )}
               <Link
                 href="/dashboard"
-                className="text-neutral-400 hover:text-white text-sm transition-colors"
+                className="text-neutral-500 hover:text-neutral-900 text-sm transition-colors"
               >
                 Back to Dashboard
               </Link>
@@ -271,10 +303,10 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
         {/* Buffering indicator — non-blocking, only while actively playing and stalled */}
         {isBuffering && status === 'PLAYING' && (
           <div
-            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-black/60 backdrop-blur-sm text-neutral-200 text-xs"
+            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs"
             data-testid="audio-buffering"
           >
-            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            <div className="w-3.5 h-3.5 border-2 border-neutral-200 border-t-[var(--accent-secondary)] rounded-full animate-spin" />
             Buffering...
           </div>
         )}
@@ -286,14 +318,14 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             not block their progress there with a full-screen overlay. */}
         {audioError && status !== 'QUIZ' && status !== 'TEACH_BACK' && status !== 'ENDED' && (
           <div
-            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-primary-dark/95 backdrop-blur-sm text-center"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-white/95 backdrop-blur-sm text-center"
             data-testid="audio-error"
           >
-            <p className="text-neutral-300 text-sm">
+            <p className="text-neutral-600 text-sm">
               This segment&apos;s audio couldn&apos;t be played. Check your connection and try again.
             </p>
             {audioRetryCount >= REPEATED_FAILURE_RETRY_THRESHOLD && (
-              <p className="text-neutral-500 text-xs max-w-xs">
+              <p className="text-neutral-400 text-xs max-w-xs">
                 Still not working after several tries — this may take a moment to resolve, or try refreshing the page.
               </p>
             )}

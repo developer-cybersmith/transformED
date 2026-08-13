@@ -25,7 +25,10 @@ beforeEach(() => {
   submitTeachBackMock.mockReset();
   submitTeachBackMock.mockResolvedValue(RESULT);
   usePlayerStore.getState().loadLesson(mockLessonPackage);
-  usePlayerStore.setState({ status: 'TEACH_BACK', currentSegmentIndex: 0 });
+  // A real sessionId is the realistic default (mintSession has already
+  // resolved by the time a student reaches teach-back in normal use) --
+  // tests that specifically care about the empty-sessionId guard override this.
+  usePlayerStore.setState({ status: 'TEACH_BACK', currentSegmentIndex: 0, sessionId: 'sess_42' });
 });
 
 function renderModal() {
@@ -131,5 +134,20 @@ describe('TeachBackModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Submit & Continue' }));
 
     await waitFor(() => expect(exitTeachBack).toHaveBeenCalled());
+  });
+
+  it('does not call the API and exits gracefully when sessionId is still empty (mintSession has not resolved yet)', async () => {
+    // Bug fix: session_id='' reaches Postgres as a real 500 (22P02 invalid
+    // input syntax for type uuid) if this call is ever attempted.
+    usePlayerStore.setState({ sessionId: '' });
+    const exitTeachBack = vi.fn();
+    usePlayerStore.setState({ exitTeachBack });
+    renderModal();
+
+    await userEvent.type(screen.getByPlaceholderText('Type your explanation here…'), 'It terminates the query early.');
+    await userEvent.click(screen.getByRole('button', { name: 'Submit & Continue' }));
+
+    await waitFor(() => expect(exitTeachBack).toHaveBeenCalled());
+    expect(submitTeachBackMock).not.toHaveBeenCalled();
   });
 });

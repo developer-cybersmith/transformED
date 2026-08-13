@@ -233,6 +233,7 @@ async def test_history_lpush_ltrim_expire_called(mocker) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.unit
 async def test_history_read_via_lrange(mocker) -> None:
     """AC6: history is read via lrange(key, 0, 9)."""
     mock_redis, _ = _setup(mocker, lrange_vals=["0.5"])
@@ -453,11 +454,16 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
     _, kwargs = mock_dispatch.call_args
     assert kwargs["payload"]["intervention_messages"]["distraction"][0] == "focus up"
 
+    # Bug fix: every attention signal now also emits a ces_update, so a fired
+    # intervention means TWO sends this window, not one -- find each by type
+    # rather than assuming call_args is the only/last call.
+    assert mock_manager.send.call_count == 2
+    sent_messages = [call.args[1] for call in mock_manager.send.call_args_list]
+    ces_sent = next(m for m in sent_messages if m["type"] == "ces_update")
+    assert ces_sent["payload"]["session_id"] == "sess-1"
+
     # The client received a ws.ts-shaped tutor_intervene message.
-    mock_manager.send.assert_called_once()
-    sid_arg, sent = mock_manager.send.call_args[0]
-    assert sid_arg == "sess-1"
-    assert sent["type"] == "tutor_intervene"
+    sent = next(m for m in sent_messages if m["type"] == "tutor_intervene")
     assert sent["payload"]["message"] == "focus up"
     assert sent["payload"]["type"] == "distraction"
     assert sent["payload"]["session_id"] == "sess-1"
@@ -487,7 +493,13 @@ async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
 
     result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
 
-    mock_manager.send.assert_not_called()
+    # Bug fix: ces_update is sent on every signal regardless of intervention
+    # delivery -- tutor_intervene is skipped here (cache miss, no message),
+    # but that must not suppress the (unrelated) ces_update send.
+    mock_manager.send.assert_called_once()
+    sid_arg, sent = mock_manager.send.call_args[0]
+    assert sid_arg == "sess-1"
+    assert sent["type"] == "ces_update"
     assert result.intervention_dispatched is True  # the intervention still fired in the FSM
 
 

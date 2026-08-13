@@ -281,10 +281,78 @@ async def _init_session_state(session_id: str) -> None:
 _VALID_TIERS: frozenset[str] = frozenset({"T1", "T2", "T3"})
 
 
+async def _fetch_and_cache_lesson_package(session_id: str) -> dict[str, Any] | None:
+    """D55 fix: read-through fallback for a `lesson_package:{session_id}` cache miss.
+
+    `pubsub.py` only writes this key for sessions that were WAITING on
+    generation at publish time. A session started after the lesson is already
+    `ready` — a returning student, or literally any re-attempt of an existing
+    lesson, which is the overwhelmingly common case — gets no entry at all, so
+    `_seed_learner_tier` silently returned and `_segment_intervention_messages`
+    (`modules/tutor/service.py`) always missed too: the Sprint 3 intervention
+    hot path found nothing for virtually every real session. Confirmed live
+    (2026-08-12): a student's CES correctly dropped into the "Low" band on
+    sustained distraction, but no `tutor_intervene` message ever reached the
+    client, because this exact cache had never been populated for their
+    session.
+
+    Fetches straight from the durable `lessons.content` JSONB (the same
+    column `content/router.py:get_lesson` reads) and populates the SAME key
+    `pubsub.py` writes, with the SAME 24h TTL — every later read this
+    session's whole lifetime (this call, `_segment_intervention_messages`,
+    a future reconnect) hits Redis, not Supabase, matching "process once,
+    reuse everywhere". Returns None (never raises) on any miss or failure —
+    the two callers already treat that as "nothing to seed".
+    """
+    try:
+        import asyncio
+        import json as _json  # noqa: PLC0415
+
+        from app.core.db import get_supabase  # type: ignore[import]
+        from app.core.redis import get_redis  # type: ignore[import]
+
+        supabase = get_supabase()
+
+        def _fetch() -> dict[str, Any] | None:
+            session_resp = (
+                supabase.table("sessions")
+                .select("lesson_id")
+                .eq("session_id", session_id)
+                .maybe_single()
+                .execute()
+            )
+            session_row = session_resp.data if session_resp else None
+            lesson_id = (session_row or {}).get("lesson_id")
+            if not lesson_id:
+                return None
+            lesson_resp = (
+                supabase.table("lessons")
+                .select("content")
+                .eq("lesson_id", lesson_id)
+                .maybe_single()
+                .execute()
+            )
+            lesson_row = lesson_resp.data if lesson_resp else None
+            content = (lesson_row or {}).get("content")
+            return content if isinstance(content, dict) else None
+
+        pkg = await asyncio.to_thread(_fetch)
+        if pkg is None:
+            return None
+
+        await get_redis().set(f"lesson_package:{session_id}", _json.dumps(pkg), ex=86_400)
+        logger.info("lesson_package cache read-through populated for session=%s", session_id)
+        return pkg
+    except Exception:  # noqa: BLE001
+        logger.warning("lesson_package read-through fetch failed for %s", session_id, exc_info=True)
+        return None
+
+
 async def _seed_learner_tier(session_id: str) -> None:
     """Best-effort learner tier seeding from the cached lesson package.
 
-    Reads ``lesson_package:{session_id}`` from Redis.  If present and
+    Reads ``lesson_package:{session_id}`` from Redis, falling back to
+    ``_fetch_and_cache_lesson_package`` on a miss (D55). If present and
     ``metadata.tier`` is a valid tier string (T1/T2/T3), atomically
     writes ``session:{session_id}:learner_tier`` and
     ``session:{session_id}:qa_phase_seconds`` (both 24 h TTL).
@@ -310,9 +378,12 @@ async def _seed_learner_tier(session_id: str) -> None:
 
         _redis = get_redis()
         raw_pkg = await _redis.get(f"lesson_package:{session_id}")
-        if not raw_pkg:
-            return
-        pkg = _json.loads(raw_pkg)
+        if raw_pkg:
+            pkg = _json.loads(raw_pkg)
+        else:
+            pkg = await _fetch_and_cache_lesson_package(session_id)
+            if pkg is None:
+                return
         metadata = pkg.get("metadata")
         if not isinstance(metadata, dict):
             return

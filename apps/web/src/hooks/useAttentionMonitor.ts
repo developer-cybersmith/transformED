@@ -35,6 +35,32 @@ interface FaceLandmarkerLike {
   close: () => void;
 }
 
+// The MediaPipe/TFLite WASM bindings pipe their own internal C++ LOG(INFO)
+// lines (e.g. "INFO: Created TensorFlow Lite XNNPACK delegate for CPU.")
+// straight through console.error -- not this app's code, and not a real
+// error, just an upstream logging quirk (tracked D66/DEFER-012 alongside the
+// other MediaPipe pin note above). Next.js's dev overlay treats ANY
+// console.error as a blocking full-page "Console Error" dialog, so every
+// landmarker init otherwise interrupts local testing for no reason. Scoped
+// to exactly this call (restored in `finally`) so a genuine error anywhere
+// else in the app still surfaces through console.error normally.
+function isBenignTfliteInfoLog(args: unknown[]): boolean {
+  return typeof args[0] === 'string' && /^INFO: /.test(args[0]);
+}
+
+async function withTfliteInfoLogsSuppressed<T>(fn: () => Promise<T>): Promise<T> {
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    if (isBenignTfliteInfoLog(args)) return;
+    originalError(...args);
+  };
+  try {
+    return await fn();
+  } finally {
+    console.error = originalError;
+  }
+}
+
 /**
  * Lazily imported (not a static top-level import) so the WASM-loading module
  * is only ever pulled in once consent is confirmed, and so tests can mock
@@ -54,16 +80,20 @@ async function createFaceLandmarker(): Promise<FaceLandmarkerLike> {
     numFaces: 1,
   };
   try {
-    return (await FaceLandmarker.createFromOptions(vision, {
-      ...baseOptions,
-      baseOptions: { modelAssetPath: MODEL_ASSET_URL, delegate: 'GPU' },
-    })) as FaceLandmarkerLike;
+    return (await withTfliteInfoLogsSuppressed(() =>
+      FaceLandmarker.createFromOptions(vision, {
+        ...baseOptions,
+        baseOptions: { modelAssetPath: MODEL_ASSET_URL, delegate: 'GPU' },
+      })
+    )) as FaceLandmarkerLike;
   } catch (gpuErr) {
     console.error('[useAttentionMonitor] GPU delegate failed, retrying with CPU delegate', gpuErr);
-    return (await FaceLandmarker.createFromOptions(vision, {
-      ...baseOptions,
-      baseOptions: { modelAssetPath: MODEL_ASSET_URL, delegate: 'CPU' },
-    })) as FaceLandmarkerLike;
+    return (await withTfliteInfoLogsSuppressed(() =>
+      FaceLandmarker.createFromOptions(vision, {
+        ...baseOptions,
+        baseOptions: { modelAssetPath: MODEL_ASSET_URL, delegate: 'CPU' },
+      })
+    )) as FaceLandmarkerLike;
   }
 }
 

@@ -13,7 +13,8 @@ Covers:
   - AC 7: ces_breakdown has exactly 5 keys
   - AC 8: ces_breakdown["quiz"] formula
   - AC 9: ces_breakdown["teachback"] formula
-  - AC 10: behavioral/head_pose/blink always 0.0
+  - AC 10: behavioral/head_pose/blink averaged from session:{id}:ces_signal_totals
+    (0.0 when Redis unavailable or no attention signals were ever recorded)
   - AC 11: interventions_count from session_events
   - AC 12: duration_minutes from timestamps
   - AC 13: completed_at as ISO string or None
@@ -451,8 +452,12 @@ async def test_get_report_ces_breakdown_teachback_zero_when_no_attempts(mock_to_
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_ces_breakdown_attention_always_zero(mock_to_thread):
-    """AC 10: behavioral, head_pose, blink are always 0.0 in Sprint 2."""
+async def test_get_report_ces_breakdown_attention_zero_when_redis_unavailable(mock_to_thread):
+    """AC 10 (updated): behavioral/head_pose/blink degrade to 0.0 when the
+    `ces_signal_totals` Redis read fails (e.g. Redis unavailable) -- no test
+    here patches app.core.redis.get_redis, so the real one raises
+    (RuntimeError: pool not initialised) and get_session_report must catch it
+    and render the quiz/teachback halves anyway rather than 500."""
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(
@@ -466,6 +471,8 @@ async def test_get_report_ces_breakdown_attention_always_zero(mock_to_thread):
     assert result.ces_breakdown["blink"] == pytest.approx(0.0)
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_get_report_interventions_count_from_session_events(mock_to_thread):

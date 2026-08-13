@@ -8,7 +8,7 @@ import asyncio
 import json
 import logging
 import statistics
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, status
@@ -134,7 +134,8 @@ async def create_session(
 ) -> dict[str, Any]:
     """Mint a `sessions` row for *user_id* on *lesson_id* (Story 2-35 / D18).
 
-    **This is the only writer of `sessions` in the codebase.** Before this, all 7
+    **This is the only INSERTER of `sessions` in the codebase** (`complete_session`
+    below is the only UPDATER, of `ended_at` alone). Before this, all 7
     `table("sessions")` references were `.select(...)`, `apps/web` never inserted
     one either, and the frontend invented `crypto.randomUUID()`. So the ownership
     check in `grade_quiz` correctly rejected an id that had never existed, and
@@ -200,6 +201,65 @@ async def create_session(
         "lesson_id": str(row.get("lesson_id") or lesson_id),
         "started_at": str(started_at) if started_at is not None else None,
     }
+
+
+async def complete_session(
+    *,
+    session_id: str,
+    user_id: str,
+    supabase: Client,
+) -> dict[str, Any]:
+    """Mark *session_id* as ended, writing `sessions.ended_at`.
+
+    **This is the only writer of `sessions.ended_at` in the codebase.** Before
+    this, nothing ever wrote it -- confirmed by grepping the whole API for
+    `ended_at` -- so `get_session_report`'s `duration_minutes`/`completed_at`
+    fields silently returned 0.0/None for every session ever, including one a
+    student had genuinely finished start to end. The frontend must call this
+    exactly once, when the player reaches its terminal ENDED status.
+
+    Idempotent by construction: the UPDATE's `.is_("ended_at", "null")` filter
+    means only the FIRST call actually writes a row -- a double-fire (retry,
+    a second tab, StrictMode) affects 0 rows on every call after the first,
+    so a later, in-flight duplicate can never clobber the real completion
+    timestamp with a later one (Scale & Load Q6 -- concurrent check-then-act).
+
+    Raises:
+        HTTPException 404: the session does not exist **or** belongs to
+            someone else (SEC-006 — same response for both, matching
+            `create_session` above).
+    """
+    session_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, ended_at")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    session_row = single_row(session_resp)
+    if session_row is None or str(session_row.get("user_id", "")) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    existing_ended_at = session_row.get("ended_at")
+    if existing_ended_at:
+        return {"session_id": session_id, "ended_at": str(existing_ended_at)}
+
+    ended_at = datetime.now(UTC).isoformat()
+    await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .update({"ended_at": ended_at})
+            .eq("session_id", session_id)
+            .is_("ended_at", "null")
+            .execute()
+        )
+    )
+    return {"session_id": session_id, "ended_at": ended_at}
 
 
 async def grade_quiz(

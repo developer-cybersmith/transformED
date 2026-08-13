@@ -495,14 +495,26 @@ class Settings(BaseSettings):
     )
 
     # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
+    #
+    # THROWAWAY FIX (local unblock, not yet reviewed by Dev 1 -- see the note
+    # sent 2026-08-12): this used to default to 15, equal to
+    # structure_max_sections, which meant a full-size chapter ALWAYS took the
+    # single-call path and NEVER exercised the batching safety net below --
+    # live-reproduced on a real d2l.pdf chapter: 15 segments sent in one
+    # completion, GPT-4o returned only 10, hard-failing the job. Deliberately
+    # kept BELOW structure_max_sections now so a full chapter is guaranteed to
+    # batch instead of gambling on an unbatched call at a size already shown
+    # to be unreliable.
     lesson_planner_batch_size: int = Field(
-        default=15,
+        default=10,
         gt=0,
         description=(
             "Max segment summaries sent to lesson_planner in a single LLM "
             "completion. Above this, summaries are split into ordered batches so "
             "the model reliably echoes every segment_id 1:1; at or below it the "
-            "planner makes exactly one call (unchanged behaviour)."
+            "planner makes exactly one call (unchanged behaviour). Deliberately "
+            "kept below structure_max_sections so a full-size chapter always "
+            "batches -- see the THROWAWAY FIX note above."
         ),
     )
 

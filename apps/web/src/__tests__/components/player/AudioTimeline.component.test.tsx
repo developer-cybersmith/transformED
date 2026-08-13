@@ -198,11 +198,6 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
   });
 
   it('absorbs a pending seek via processTimeUpdate instead of setting .currentTime on a nonexistent real element', () => {
-    // status must be PLAYING for the seek to actually move currentSlideId --
-    // processTimeUpdate itself no-ops otherwise (same guard the real-audio
-    // path is already subject to: a seek while paused updates audioPositionMs
-    // immediately via requestSeek(), but slide sync only catches up once
-    // playback resumes).
     const lessonWithScriptOnly = {
       ...mockLessonPackage,
       segments: [
@@ -217,6 +212,44 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
 
     act(() => {
       usePlayerStore.getState().requestSeek(40000); // into seg_0's sl_0_1 range (35000-92000)
+    });
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().seekRequestMs).toBeNull();
+  });
+
+  it('bug fix: a seek while PAUSED moves the slide immediately (real audio) -- previously stuck on the pre-seek slide until playback resumed and a native timeupdate caught up', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PAUSED', currentSegmentIndex: 0, currentSlideId: 'sl_0_0' });
+
+    render(<AudioTimeline />);
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(40000); // into sl_0_1's range (35000-92000)
+    });
+
+    // No 'timeupdate' event fired -- processTimeUpdate's own status==='PLAYING'
+    // guard would reject this while PAUSED, so this only passes via the new
+    // status-independent syncSlideToPosition call.
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().seekRequestMs).toBeNull();
+  });
+
+  it('bug fix: a seek while PAUSED moves the slide immediately (script-only virtual clock)', () => {
+    const lessonWithScriptOnly = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
+    usePlayerStore.setState({ status: 'PAUSED', currentSegmentIndex: 0, currentSlideId: 'sl_0_0', quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(40000);
     });
 
     expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
@@ -918,6 +951,53 @@ describe('AudioTimeline — SpeechSynthesis fallback (S2-34)', () => {
 
     expect(cancelMock).toHaveBeenCalled();
     expect(utteranceCtor).toHaveBeenCalledWith(lesson.segments[1].narration.script);
+  });
+
+  it('bug fix: a seek within the SAME segment cancels and restarts the utterance (the Web Speech API cannot be seeked to an arbitrary position, unlike a real <audio> element)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+    flushSpeakTimeout();
+    cancelMock.mockClear();
+    speakMock.mockClear();
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(40000); // still segment 0 -- segment_id is unchanged
+    });
+    flushSpeakTimeout();
+
+    // Without the fix, spokenSegmentIdRef still matched (segment_id unchanged),
+    // so this comparison would take the resume() branch and never cancel/respeak
+    // -- the narration would just keep going from wherever it already was.
+    expect(cancelMock).toHaveBeenCalled();
+    expect(speakMock).toHaveBeenCalledTimes(1);
+    expect(utteranceCtor).toHaveBeenLastCalledWith(lesson.segments[0].narration.script);
+  });
+
+  it('bug fix: a seek while PAUSED still cancels the stale utterance (so it does not silently keep speaking on resume)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { rerender } = render(<AudioTimeline />);
+    flushSpeakTimeout();
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED' });
+    });
+    rerender(<AudioTimeline />);
+    cancelMock.mockClear();
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(10000);
+    });
+    rerender(<AudioTimeline />);
+
+    expect(cancelMock).toHaveBeenCalled();
   });
 
   it('cancels immediately when the segment changes even while PAUSED, not deferred to the next PLAYING transition (AC-6 review fix)', () => {
