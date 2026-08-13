@@ -1,6 +1,6 @@
 # Story Demo-T15 — Validate Quiz + Teach-Back Payloads Against Real LessonPackage Schema
 
-**Status:** in-progress
+**Status:** done
 **Sprint:** Demo Sprint (Phase L4)
 **Owner:** Dev 3 + Dev 2 (Dev 3 owns backend validation; Dev 2 owns player integration)
 **Branch:** `dev3-demo-t15-phaseL4`
@@ -132,22 +132,22 @@ logic.
 
 ## Tasks / Subtasks
 
-- [ ] **T1 — RED: write failing tests**
-  - [ ] T1.1 `test_real_schema_quiz_fixture_validates_against_schema` — jsonschema validation
-  - [ ] T1.2 `test_quiz_with_real_package_succeeds` — AC1
-  - [ ] T1.3 `test_teachback_receives_title_and_jargon_from_real_segment` — AC2
-  - [ ] T1.4 `test_session_chain_uuid_ids_quiz_and_teachback` — AC3
-  - [ ] T1.5 `test_segment_not_found_uuid_lesson_id_in_error` — AC5
-  - [ ] T1.6 `test_idor_guard_uuid_user_ids` — AC6
-  - [ ] T1.7 `test_wrong_question_id_returns_422` — AC7
-  - [ ] T1.8 `test_empty_jargon_teachback_graceful` — AC8
-  - [ ] T1.9 `test_response_index_out_of_range_422` — AC9
-- [ ] **T2 — GREEN: implement — build schema-accurate fixture + any service fixes**
-  - [ ] T2.1 `_build_real_lesson_package()` factory in test module
-  - [ ] T2.2 Fix any KeyError/AttributeError discovered by running real-schema data
-  - [ ] T2.3 Fix empty `title` / `jargon` silent gap if required
-- [ ] **T3 — VERIFY: run full test suite, confirm no regressions**
-- [ ] **T4 — UPDATE dev3-assessment-tracker.md: mark T15 complete**
+- [x] **T1 — RED: write failing tests** — ✓ 2026-08-13
+  - [x] T1.1 `test_real_schema_quiz_fixture_validates_against_schema` — jsonschema validation
+  - [x] T1.2 `test_quiz_with_real_package_succeeds` — AC1
+  - [x] T1.3 `test_teachback_receives_title_and_jargon_from_real_segment` — AC2
+  - [x] T1.4 `test_session_chain_uuid_ids_quiz_and_teachback` — AC3
+  - [x] T1.5 `test_segment_not_found_uuid_lesson_id_in_error` — AC5
+  - [x] T1.6 `test_idor_guard_uuid_user_ids` — AC6
+  - [x] T1.7 `test_wrong_question_id_returns_422` — AC7
+  - [x] T1.8 `test_empty_jargon_teachback_graceful` — AC8
+  - [x] T1.9 `test_response_index_out_of_range_422` — AC9
+- [x] **T2 — GREEN: implement — build schema-accurate fixture + any service fixes** — ✓ 2026-08-13
+  - [x] T2.1 `_build_real_lesson_package()` factory in test module
+  - [x] T2.2 No KeyError/AttributeError — service code handled real schema correctly
+  - [x] T2.3 Empty title/jargon gap confirmed via AC2 spy — title+jargon now explicitly tested
+- [x] **T3 — VERIFY: run full test suite, confirm no regressions** — ✓ 2026-08-13 — 134/134 passed
+- [x] **T4 — UPDATE dev3-assessment-tracker.md: mark T15 complete** — ✓ 2026-08-13
 
 ---
 
@@ -241,8 +241,22 @@ The `jsonschema` package is already in dev dependencies (`pyproject.toml`).
 
 ---
 
+### Review Findings
+
+**6-agent adversarial review — 2026-08-13 — 0 patch, 0 defer, 0 dismissed**
+
+✅ Clean review — all 6 layers passed.
+
+Layers run: Story Quality · Blind Hunter · Test Coverage (Edge Case Hunter) · AC Completeness (Acceptance Auditor) · Process Integrity · Scale & Load Hunter
+
+Scale & Load Hunter result: `[]` (no findings — diff is test-only, no new reads/writes, no budget caps introduced)
+
+---
+
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-08-13 | Story created (story-first gate) |
+| 2026-08-13 | Implementation complete — 9 tests, 134/134 suite green |
+| 2026-08-13 | BMAD 6-agent review: clean — 0 findings |

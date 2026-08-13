@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-12 (S3-53 DONE — CES production closure, D1/D62 canonical formula, D61/D63/D64/D65 gaps closed)
+**Last updated:** 2026-08-13 (Demo T15 DONE — quiz+teachback validated against real LessonPackage schema, 134/134 tests green)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -21,7 +21,8 @@
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **53** | **44** | **0** | **9** |
+| Demo Sprint | 2026-08-13+ | 7 | 1 | 0 | 6 |
+| **Total** | | **60** | **45** | **0** | **15** |
 
 Update this table each time a task is checked off below.
 
@@ -854,6 +855,50 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Review the `learner_dna` row for the first real paying student after their first session
   - Verify: `profile_text` is coherent and student-appropriate, DPDP disclaimer present, all 9 dimensions non-null
   - **AC:** Profile approved; no clinical language; student-facing text reads naturally
+
+---
+
+## Demo Sprint — HIE Demo Preparation (2026-08-13+)
+
+> **Source:** `d:/HIE-Demo-Task-Tracker.xlsx` — Dev 3 individual and collaborative tasks.
+> **Branch strategy:** Each task gets its own branch targeting `master-demo-dev3` (not main).
+
+- [x] **T15 (Phase L4) — Validate quiz and teach-back payloads against the first real package** — ✓ 2026-08-13
+  - Validate `grade_quiz` and `grade_teachback` against schema-accurate LessonPackage fixture
+  - All 9 ACs covered; 134/134 tests green; `test_real_package_payload_validation.py` added
+  - Critical finding: simplified fixtures silently scored teachback with `topic=""` and `key_concepts=[]`
+  - **Branch:** `dev3-demo-t15-phaseL4` → `master-demo-dev3`
+  - **AC:** All 9 test cases pass; fixture validates against `lesson_package.schema.json`
+
+- [ ] **T16 (Phase L5) — Validate end-to-end session flow with real data**
+  - End-to-end session: create → quiz → teachback → session report with real-format IDs
+  - **Branch:** `dev3-demo-t16-phaseL5` → `master-demo-dev3`
+  - **AC:** TBD (story to be created via BMAD story-first gate before implementation)
+
+- [ ] **T18 (Phase L7) — Learner DNA profile generation with real onboarding data**
+  - Test `process_onboarding` and Learner DNA generation with real-format onboarding payloads
+  - **Branch:** `dev3-demo-t18-phaseL7` → `master-demo-dev3`
+  - **AC:** TBD
+
+- [ ] **T19 (Phase L8) — Session report end-to-end with real lesson data**
+  - Verify session report generates correctly after a full session with real package data
+  - **Branch:** `dev3-demo-t19-phaseL8` → `master-demo-dev3`
+  - **AC:** TBD
+
+- [ ] **T20 (Cross-team L2) — CES formula integration verification with Dev 4**
+  - Confirm Dev 4's Redis CES signal and Dev 3's CES formula produce consistent output on real data
+  - **Owner:** Dev 3 + Dev 4 (collaborative)
+  - **AC:** TBD
+
+- [ ] **T26 (Cross-team) — Quiz/teachback API contract review with Dev 2**
+  - Confirm Dev 2's player sends payloads matching the frozen API contract (session_id, lesson_id, segment_id, answers)
+  - **Owner:** Dev 3 + Dev 2 (collaborative)
+  - **AC:** TBD
+
+- [ ] **T28 (Cross-team) — Learner DNA display review with Dev 2**
+  - Confirm Learner DNA profile text renders correctly in Dev 2's frontend; HIE brand consistent; no raw scores
+  - **Owner:** Dev 3 + Dev 2 (collaborative)
+  - **AC:** TBD
 
 ---
 
