@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "QuizAnswer",
@@ -48,9 +48,11 @@ class SessionCreate(BaseModel):
     default, so a client sending any of those three is silently ignored rather
     than trusted — asserted by
     `test_user_id_comes_from_the_jwt_and_is_never_accepted_from_the_client`.
+    D79: min_length=1 ensures empty string returns 422 rather than reaching the DB
+    with a cast-to-UUID error that would produce 500.
     """
 
-    lesson_id: str
+    lesson_id: str = Field(min_length=1)
 
 
 class SessionCreated(BaseModel):
@@ -95,6 +97,16 @@ class TeachbackSubmission(BaseModel):
     response_text: str = Field(
         min_length=1, max_length=4000, description="Student's typed teach-back response"
     )
+
+    @field_validator("response_text")
+    @classmethod
+    def response_text_not_blank(cls, v: str) -> str:
+        # D80: min_length=1 counts characters, not content — a single space passes.
+        # Strip first so "   " is treated as empty and returned as 422, not forwarded
+        # to grade_teachback as substantively empty content that silently burns tokens.
+        if not v.strip():
+            raise ValueError("response_text must not be blank or whitespace-only")
+        return v
 
 
 class TeachbackResult(BaseModel):
