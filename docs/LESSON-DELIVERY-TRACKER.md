@@ -82,7 +82,7 @@ being checked.
 | **L0** | Unblock spending | **User** | 🧪 Implemented — credits added, D62 (Langfuse 401) fixed |
 | **L1** | One real lesson package exists | Dev 1 | 🧪 Implemented — 1 of 2 required chapter/tier combos done (ch 0 / T3 only); schema validation + full cost/timing capture still outstanding |
 | **L2** | Narration cost + timing truth | Dev 1 | 🧪 Implemented — 2 of 3 items done (cap re-derived twice, slide timing from real audio verified); 3rd item (`_get_section_body` window) only half-fixed, root cause (D46) still open |
-| **L3** | A student plays it in a browser | Dev 1 + Dev 2 | 🧪 Implemented — real playback confirmed by a real person; 5 real UX defects found live (2 root-caused/partially fixed, 3 identified not yet fixed) |
+| **L3** | A student plays it in a browser | Dev 1 + Dev 2 | 🧪 Implemented — real playback confirmed by a real person; 4 of 5 real UX defects found live now fixed (D87, D88, D89, D90); only voice expressiveness remains open |
 | **L4** | Quiz + teach-back on a real package | Dev 3 | ⬜ Blocked by L1 |
 | **L5** | CES made feedable | Dev 3 + Dev 4 | ⬜ Not started |
 | **L6** | Attention capture (MediaPipe) | Dev 2 | ⬜ Not started |
@@ -191,6 +191,27 @@ Story 1-13 AC10 · book-scale Phases 5, 6, 6.5 · Track W W0–W4 (all currently
 **Net: L1's real deliverable exists and is genuinely verified end-to-end for one combination
 (ch 0 / T3), not the two combinations the exit criterion asks for.** The second chapter/tier
 (ch 5 / T1) is still outstanding.
+
+### Second attempt, 2026-08-13 — real external blocker, not a code failure
+
+Attempted the outstanding combination: ch 5 "Builders' Guide" (26p) at T1, lesson `b0a96211`.
+**Result: `status=failed`, and the reason is an operational/billing blocker, not a defect:**
+
+- **Sarvam TTS returned `402 Payment Required`** on every segment — the account is out of
+  credits, the exact same shape as the L0 OpenAI-credits blocker at the start of this sprint.
+  This needs the account topped up before any further real generation is worth attempting.
+- **Azure TTS returned `401 Unauthorized`** — a pre-existing, already-known gap (never fully
+  configured as a real fallback), not something new.
+- With both paid providers down, every segment fell through to the free `browser` fallback.
+- This run also surfaced and led to fixing a real bug in D53's own reaper (D91 — see
+  `docs/DEFECT-REGISTER.md`): an ARQ retry delayed ~32 minutes before being dequeued (a separate,
+  pre-existing event-loop-blocking issue) caused the reaper to mark this lesson `failed` while it
+  was still actually running. Fixed same day; the inconsistent DB state self-resolved when the
+  worker was restarted onto the fixed code.
+
+**Ch 5 / T1 remains outstanding, now blocked externally on Sarvam credits rather than on any
+known code gap.** Retrying before credits are confirmed restored would just re-produce the same
+`402` on every segment.
 
 ---
 
@@ -326,6 +347,23 @@ the slides" — is not yet a clean pass.** Audio genuinely plays and matches nar
 the visual/pacing experience has real, identified defects (2 fixed at the mechanism level with a
 residual gap, 3 not yet fixed at all). Signed-URL auto-refresh (the known risk above) was not
 separately stress-tested (session was short enough not to hit the expiry window).
+
+### Update, 2026-08-13 — 4 of the 5 defects above are now fixed
+
+- Item 1 (slide overflow) — **fixed, D88.**
+- Item 2 (D85 slide-budget-per-tier) — **fixed, D87.**
+- Item 3 (narration pace) — **fixed, D89.**
+- Item 4 (captions) — **fixed, D90.**
+- Item 5 (voice expressiveness) — **still open**, no simple fix identified (see D89's own entry
+  in `docs/DEFECT-REGISTER.md`).
+
+## Handoff — real lesson_ids available for Dev2/3/4 testing
+
+| lesson_id | Chapter / tier | Status | Notes |
+|---|---|---|---|
+| `1baae6f6-20cf-4cbd-a72d-c76408a9056e` | ch 0 "Introduction" / T3 | `ready` | The one to use. Post-D78 fix — all 15 segments real Sarvam audio, independently verified (downloaded + validated with `wave`). Currently owned by `aplahoti1295@gmail.com` (real Google account) after a manual reassignment this session — reassign again if a different test account needs it. |
+| `abe4e438-052f-48d9-818f-590e3a42b2bb` | ch 0 "Introduction" / T3 | `ready`, superseded | Pre-D78 — 9 of 15 segments degraded to browser-fallback audio (no real TTS). Keep only as a reference for what the D76→D78 defect looked like; don't use for real testing. |
+| `b0a96211-15cf-41eb-8642-3c4d570a1c9f` | ch 5 "Builders' Guide" / T1 | `failed` | Blocked on Sarvam credits (D91's entry has the full story). Useful only if someone wants a real example of a failed-lesson state for error-handling UI testing. |
 
 ---
 
