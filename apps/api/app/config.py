@@ -7,6 +7,7 @@ Call get_settings() everywhere — never instantiate Settings() directly.
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from typing import Annotated
 
@@ -64,7 +65,16 @@ class Settings(BaseSettings):
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
     sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
     sarvam_voice_id: str = Field(
-        default="meera", description="Sarvam Bulbul v2 speaker name for narration synthesis"
+        # D67: "meera" is not a valid Bulbul v2 speaker -- confirmed via a
+        # real, live call to api.sarvam.ai (400 invalid_request_error,
+        # listing the valid speakers). Every real TTS call through the
+        # primary provider was 400ing and silently degrading to the Azure
+        # fallback on 100% of narration. "anushka" verified via a second
+        # live call (200 OK, real audio) -- chosen for parity with the
+        # existing Azure fallback default (en-IN-NeerjaNeural, Indian
+        # English), matching this product's target market.
+        default="anushka",
+        description="Sarvam Bulbul v2 speaker name for narration synthesis",
     )
     azure_tts_key: str | None = Field(
         default=None, description="Azure Cognitive Services TTS key — fallback"
@@ -87,6 +97,32 @@ class Settings(BaseSettings):
     langfuse_host: str = Field(
         default="https://cloud.langfuse.com", description="Langfuse host URL"
     )
+    # Langfuse-skill self-audit finding: environments.md fetched fresh — with
+    # no environment set, ALL traces (local dev runs, this session's manual
+    # self-audit call, staging, and real production lessons) land under
+    # Langfuse's default "default" environment, indistinguishable from each
+    # other in every dashboard/filter. Explicit constructor param (not just
+    # LANGFUSE_TRACING_ENVIRONMENT) so it's typed and validated like every
+    # other setting in this file rather than a bare ambient env var.
+    langfuse_environment: str = Field(
+        default="development",
+        description="Langfuse environment label (production/staging/development) — "
+        "keeps real-lesson traces separate from dev/test traces in the Langfuse UI",
+    )
+
+    @field_validator("langfuse_environment")
+    @classmethod
+    def _validate_langfuse_environment(cls, v: str) -> str:
+        # Langfuse's own constraint (environments.md): lowercase/digits/hyphen/
+        # underscore only, cannot start with "langfuse", max 40 chars. A value
+        # outside this is silently dropped by the SDK — surfaced here instead
+        # as a loud startup failure, not a trace that quietly loses its label.
+        if not re.fullmatch(r"(?!langfuse)[a-z0-9-_]+", v) or len(v) > 40:
+            raise ValueError(
+                f"LANGFUSE_ENVIRONMENT={v!r} is invalid — must match "
+                r"^(?!langfuse)[a-z0-9-_]+$ and be <= 40 chars (Langfuse SDK constraint)"
+            )
+        return v
 
     # ── PostHog ───────────────────────────────────────────────────────────────
     posthog_api_key: str = Field(
@@ -175,13 +211,51 @@ class Settings(BaseSettings):
         return cls._parse_email_allowlist(v)
 
     # ── Cost limits (PRD §12) ─────────────────────────────────────────────────
+    # A daily per-user spend cap (`max_daily_spend_per_user_usd`) was documented
+    # here but never had an enforcing reader anywhere in the codebase (D48) --
+    # removed rather than left looking like a real control. The per-lesson
+    # ceiling below and `max_concurrent_generations_per_user` are the only
+    # spend controls that actually run.
     max_lesson_cost_usd: float = Field(
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
     )
-    max_daily_spend_per_user_usd: float = Field(
-        default=10.00,
-        description="Daily per-user AI spend cap in USD",
+    # D78 (Story 3-45): D76 raised this 10,000 -> 17,000 sized against "a real
+    # 15-minute lesson" -- a demo illustration, not a real product requirement.
+    # That framing was wrong and actively harmful: the first real successful
+    # generation under D75-D77 (lesson abe4e438, an entirely ordinary 29-page,
+    # 15-section chapter, nowhere near max_chapter_pages=200) produced 43,793
+    # real narration chars and had 9 of 15 segments ZEROED by the 17,000 cap --
+    # a complete loss of real TTS audio for 60% of the lesson -- while real
+    # cost sat at just 29% of the $3.00 ceiling. Lesson length must be driven
+    # by the chapter's real content, not by any duration target; only real
+    # cost may shorten it. Raised 17,000 -> 120,000: sized against
+    # decisionupdate.md section 8's own "TTS is 67-73% of total lesson cost"
+    # claim -- 120,000 chars = ~$2.40 of Sarvam TTS spend (COST_PER_CHAR=
+    # 0.00002) = 80% of the $3.00 ceiling, leaving the remaining 20% for the
+    # LLM + image spend the same ceiling already tracks.
+    max_narration_chars_per_lesson: int = Field(
+        default=120000,
+        ge=1,
+        description=(
+            "Node 8 SAFETY-NET cap: max narration chars across all segments "
+            "combined (decisionupdate.md section 8). This is a cost backstop, "
+            "NOT a duration target -- lesson length is driven by the chapter's "
+            "real content; only real cost may shorten it. Sized against real "
+            "cost headroom (D78): 120,000 chars = ~$2.40 Sarvam TTS spend = 80% "
+            "of the $3.00/lesson ceiling, leaving 20% for LLM + image spend. "
+            "TTS synthesis cost is proportional to character count and is "
+            "67-73% of total lesson generation cost, so this still bounds the "
+            "dominant cost driver before it's incurred -- but as a pre-emptive "
+            "backstop against a pathological outlier, not a number aimed at any "
+            "particular runtime. The real, dollar-accurate, dynamically-enforced "
+            "bound is app.core.cost_tracker.check_ceiling, checked per-segment "
+            "before every paid TTS call; this cap exists only to stop an "
+            "unbounded burst of spend before that per-segment check can catch "
+            "up. Enforced in tts_node (not narration_generator_node, which is "
+            "Send()-dispatched once per section with no visibility into any "
+            "other section's output)."
+        ),
     )
 
     # ── Book-scale chapter generation gates (Story 1-14, book-scale Phase 6) ──
@@ -256,6 +330,43 @@ class Settings(BaseSettings):
     ces_threshold: float = Field(
         default=50.0,
         description="CES score below this triggers an intervention",
+    )
+    ces_fatigue_blink_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Blink rate (0-1) below which the signal indicates fatigue. "
+            "Default 0.3 per Schleicher et al. 2008. "
+            "Env: CES_FATIGUE_BLINK_THRESHOLD"
+        ),
+    )
+    ces_fatigue_head_pose_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Head pose score (0-1) below which the signal indicates fatigue. "
+            "Default 0.3 per Bosch et al. 2015. "
+            "Env: CES_FATIGUE_HEAD_POSE_THRESHOLD"
+        ),
+    )
+    ces_fatigue_min_session_seconds: int = Field(
+        default=900,
+        ge=60,
+        description=(
+            "Minimum session duration in seconds before fatigue trigger is eligible. "
+            "Default 900 s (15 min). Env: CES_FATIGUE_MIN_SESSION_SECONDS"
+        ),
+    )
+    ces_cadence_seconds: int = Field(
+        default=5,
+        gt=0,
+        description=(
+            "Expected interval between consecutive CES windows in seconds. "
+            "Used by the D4 gap-check: abs(t0-t1) must be <= 2*cadence before the "
+            "distraction trigger fires (default 10 s tolerance at 5 s cadence)."
+        ),
     )
 
     @model_validator(mode="after")
@@ -391,15 +502,44 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Section body cap for Phase 1 LLM calls (Story 3-39) ───────────────────
+    section_body_max_chars: int = Field(
+        default=6000,
+        gt=0,
+        description=(
+            "Max chars of a section's body sent to each Phase 1 economy-node LLM "
+            "call (_get_section_body). Was a hardcoded function-default before "
+            "Story 3-39 — moved to Settings so re-tuning doesn't require editing "
+            "all 6 call sites. NOTE (Scale & Load, unrevisited-inherited per "
+            "SCALE-CONTRACT Q5): the 6000 VALUE itself predates book-scale "
+            "generation and is out of this story's scope to re-derive; Story "
+            "3-39 only made truncation past this cap an explicit, persisted, "
+            "surfaced degradation (section_truncations) instead of a "
+            "logger.warning nobody reads."
+        ),
+    )
+
     # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
+    # D75 (Story 3-43): was 15, EQUAL to structure_max_sections (also 15) --
+    # Story 2-16's own comment assumed a chapter coalesced to the max would
+    # still "fit a single planner call" safely. Disproven live: two real runs
+    # on the same chapter returned 5 and 12 segments when 15 were expected
+    # (the exact 44-in/10-out collapse this batching exists to prevent).
+    # Lowered strictly BELOW structure_max_sections so a maximal chapter is
+    # now always genuinely split into multiple smaller, reliable batches
+    # instead of silently taking the single-call path. No documented "safe"
+    # threshold exists -- 10 is a reasoned conservative margin below the
+    # observed-unreliable value of 15, not a proven number.
     lesson_planner_batch_size: int = Field(
-        default=15,
+        default=10,
         gt=0,
         description=(
             "Max segment summaries sent to lesson_planner in a single LLM "
             "completion. Above this, summaries are split into ordered batches so "
             "the model reliably echoes every segment_id 1:1; at or below it the "
-            "planner makes exactly one call (unchanged behaviour)."
+            "planner makes exactly one call (unchanged behaviour). Deliberately "
+            "kept below structure_max_sections (D75) so the maximal coalesced "
+            "chapter always batches."
         ),
     )
 

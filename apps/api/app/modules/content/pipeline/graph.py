@@ -45,9 +45,10 @@ import logging
 import math
 import operator
 import re
+import unicodedata
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, NamedTuple, TypedDict, cast
 from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -149,6 +150,19 @@ class PipelineState(TypedDict, total=False):
     narration_scripts: Annotated[
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, script, narration_style, word_count}]
+
+    # Story 3-39: surfaces _get_section_body's truncation signal, previously
+    # only a logger.warning nobody reads (CLAUDE.md's own headline example of
+    # the banned "silent truncation" pattern). Populated by all 6 Phase 1
+    # economy nodes (same fan-out as segment_summaries etc. above) — each
+    # dispatch appends AT MOST the one entry IT produced (or an empty list),
+    # never re-emits accumulated state, so this channel is additive-safe
+    # under the same operator.add reducer. Consumed by package_builder_node,
+    # which writes it verbatim into lesson_jobs.node_outputs for admin
+    # visibility (mirrors package_builder_degraded's existing pattern).
+    section_truncations: Annotated[
+        list[dict[str, Any]], operator.add
+    ]  # [{segment_id, node, original_chars, capped_chars}]
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
@@ -1251,6 +1265,9 @@ def _planner_system_prompt(tier_framing: str) -> str:
     )
 
 
+_PLANNER_BATCH_MAX_ATTEMPTS = 3
+
+
 async def _run_planner_batch(
     provider: Any,  # noqa: ANN401 — provider type imported locally to avoid a circular import
     model: str,
@@ -1263,8 +1280,26 @@ async def _run_planner_batch(
     Story 2-16 (RC-3): calling the planner one batch at a time keeps each
     structured completion small enough that the model reliably echoes every
     segment_id 1:1 — long single-shot enumerations collapse (44-in/10-out).
-    Same provider/model/prompt as the single-call path. Raises (does not
-    fabricate) when the provider returns no parsed response."""
+    Same provider/model/prompt as the single-call path.
+
+    D77 (Story 3-43 follow-up): even a correctly-sized batch (D75 lowered
+    lesson_planner_batch_size below structure_max_sections so batching
+    always genuinely engages) can still have a real LLM under-echo some
+    segment_ids — confirmed live during two real demo-generation attempts,
+    both with batching correctly engaged (verified via the real Langfuse
+    trace: one call with exactly 10 segment_id refs, one with exactly 5),
+    yet the assembled result still lost 1-3 ids. Retries THIS batch's own
+    completion (not the whole node, not the other already-correct batches)
+    up to _PLANNER_BATCH_MAX_ATTEMPTS times when the response doesn't echo
+    back every input id in this batch exactly once — targets the real
+    observed failure mode directly instead of guessing an even smaller
+    "safe" batch size with no more evidence than D75 already had.
+
+    Still raises (does not fabricate) when the provider returns no parsed
+    response, or when every retry attempt still mismatches — the existing
+    assembled-response guard in lesson_planner_node remains the final
+    backstop either way."""
+    input_ids = {s["segment_id"] for s in batch}
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
@@ -1272,13 +1307,41 @@ async def _run_planner_batch(
         {"role": "system", "content": _planner_system_prompt(tier_framing)},
         {"role": "user", "content": summaries_text},
     ]
-    response: _LessonPlanLLM | None = await provider.complete_structured(
-        messages, model, _LessonPlanLLM
-    )
-    if response is None:
-        logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
-        raise RuntimeError(f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response")
-    return response
+
+    last_response: _LessonPlanLLM | None = None
+    for attempt in range(1, _PLANNER_BATCH_MAX_ATTEMPTS + 1):
+        response: _LessonPlanLLM | None = await provider.complete_structured(
+            messages, model, _LessonPlanLLM
+        )
+        if response is None:
+            logger.warning("[%s] lesson_planner_node: LLM returned no parsed response", lesson_id)
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response"
+            )
+
+        response_ids = {seg.segment_id for seg in response.segments}
+        if response_ids == input_ids and len(response.segments) == len(batch):
+            return response
+
+        last_response = response
+        logger.warning(
+            "[%s] lesson_planner_node: batch echo mismatch on attempt %d/%d — "
+            "expected %d ids, got %d ids (missing=%s, unexpected=%s) — retrying this batch",
+            lesson_id,
+            attempt,
+            _PLANNER_BATCH_MAX_ATTEMPTS,
+            len(batch),
+            len(response.segments),
+            sorted(input_ids - response_ids),
+            sorted(response_ids - input_ids),
+        )
+
+    # Exhausted retries — return the last attempt's response and let the
+    # EXISTING assembled-response guard block in lesson_planner_node raise
+    # its own contextual error (unchanged behaviour, just reached after
+    # real retries instead of on the first mismatch).
+    assert last_response is not None  # loop always sets this before falling through
+    return last_response
 
 
 async def lesson_planner_node(state: PipelineState) -> PipelineState:
@@ -1938,26 +2001,101 @@ _UNTRUSTED_CONTENT_GUARD = (
 )
 
 
+class _SectionBodyResult(NamedTuple):
+    """Return shape for `_get_section_body` (Story 3-39).
+
+    Was a bare `str` before this story — silently dropping whether truncation
+    happened, other than a `logger.warning` nobody reads. This is CLAUDE.md's
+    own headline example of the banned "silent truncation" pattern (the
+    1,151-page-book-to-4%-of-itself defect). `was_truncated` plus the exact
+    before/after character counts are now available to every one of the 6
+    Phase 1 call sites, so each node can persist the degradation in its OWN
+    `section_truncations` return (see PipelineState) instead of only logging
+    it.
+    """
+
+    body: str
+    was_truncated: bool
+    original_chars: int
+    capped_chars: int
+
+
 def _get_section_body(
-    section: dict[str, Any], *, lesson_id: str, section_id: str, max_chars: int = 6000
-) -> str:
+    section: dict[str, Any], *, lesson_id: str, section_id: str, max_chars: int | None = None
+) -> _SectionBodyResult:
     """Return the section body, capped to *max_chars* for the LLM prompt.
+
+    `max_chars` defaults to `settings.section_body_max_chars` (Story 3-39 —
+    was a hardcoded `= 6000` default before this story, moved to Settings so
+    a future re-tuning is a config change, not an edit to all 6 call sites).
+    The cap VALUE itself is unrevisited-inherited (SCALE-CONTRACT Q5) and out
+    of this story's scope to re-derive — see Settings.section_body_max_chars.
 
     Logs when truncation happens — previously silent, unlike `_cap_words`'s
     logged truncation of the LLM's *output* (Story 2-1 review finding: the
     asymmetry meant a long section's summary/score could be based on only its
-    first ~6000 characters with zero trace of that happening).
+    first ~6000 characters with zero trace of that happening). As of Story
+    3-39, the truncation signal is ALSO returned (not just logged) so callers
+    can persist it, not just print it.
     """
+    if max_chars is None:
+        from app.config import get_settings
+
+        max_chars = get_settings().section_body_max_chars
     body: str = section.get("body", "")
-    if len(body) > max_chars:
+    original_chars = len(body)
+    was_truncated = original_chars > max_chars
+    if was_truncated:
         logger.warning(
             "[%s] section %s body truncated to %d chars (was %d) before LLM call",
             lesson_id,
             section_id,
             max_chars,
-            len(body),
+            original_chars,
         )
-    return body[:max_chars]
+    capped_body = body[:max_chars]
+    return _SectionBodyResult(
+        body=capped_body,
+        was_truncated=was_truncated,
+        # Round 2 finding: this was unconditionally `max_chars`, which is only
+        # correct in the was_truncated=True case (where len(body[:max_chars])
+        # == max_chars by construction). For an UNtruncated body this silently
+        # reported "capped to the full max_chars value" even though the body
+        # was shorter than the cap — a landmine for any future caller reading
+        # `capped_chars` directly off `_SectionBodyResult` without going
+        # through `_section_truncation_entries` (which only surfaces this
+        # field when was_truncated is True, so the bug never reached any
+        # currently-shipped output, but the field itself was wrong on its
+        # own terms). `len(capped_body)` is correct in both cases.
+        original_chars=original_chars,
+        capped_chars=len(capped_body),
+    )
+
+
+def _section_truncation_entries(
+    *, node: str, section_id: str, result: _SectionBodyResult
+) -> list[dict[str, Any]]:
+    """Build this node's `section_truncations` contribution from a
+    `_get_section_body` result (Story 3-39).
+
+    Always returns a list — EMPTY when nothing truncated, never a missing
+    key — matching this codebase's existing convention for always-present-
+    possibly-empty aggregate fields (e.g. `package_builder_degraded`'s
+    `segment_ids`). The caller includes this list in the SAME return dict
+    the node already uses for its own owned channel(s) — never a separate
+    `{**state, ...}` spread (CLAUDE.md's binding rule; see the 16x
+    duplication defect this rule exists to prevent).
+    """
+    if not result.was_truncated:
+        return []
+    return [
+        {
+            "section_id": section_id,
+            "node": node,
+            "original_chars": result.original_chars,
+            "capped_chars": result.capped_chars,
+        }
+    ]
 
 
 # All 6 economy nodes are checkpointed/progress-instrumented as of Story 2-1
@@ -2060,6 +2198,85 @@ async def _write_phase1_checkpoint(lesson_id: str, key: str, value: dict[str, An
     ).execute()
 
 
+def _section_truncation_checkpoint_key(node: str, section_id: str) -> str:
+    """Story 3-39 Round 2 (real /bmad-code-review) finding: the checkpoint
+    namespace `section_truncations`' retry-recoverability lives in, kept
+    STRICTLY SEPARATE from each node's own content checkpoint value.
+
+    Content checkpoints (summary/score/terms/interventions/narration/
+    quiz-batch) get passed, in at least 2 of the 6 nodes
+    (`segment_complexity_node`'s `score`, `narration_generator_node`'s
+    `result`), directly into a strict `extra="forbid"` Pydantic model
+    (`SegmentComplexity`, `Narration`) — see `apps/api/app/schemas/lesson.py`
+    and the "Never spread the flat entry: Narration is extra='forbid'"
+    comment already in `package_builder_node`. Mixing truncation bookkeeping
+    into those same dicts would risk a schema-validation regression the
+    moment either node's cached content shape is used unfiltered. A
+    dedicated key avoids that risk uniformly across all 6 nodes, at the cost
+    of one extra bounded (`.maybe_single()`, single-row) read on a cache hit
+    and one extra bounded write only when a section was actually truncated —
+    the same "extra checkpoint read for different information" pattern
+    `narration_generator_node`'s own opportunistic `segment_complexity` read
+    already establishes in this file.
+    """
+    return f"section_truncation:{node}:{section_id}"
+
+
+async def _persist_section_truncation_checkpoint(
+    lesson_id: str, *, node: str, section_id: str, result: _SectionBodyResult
+) -> None:
+    """Persist the truncation signal into its OWN checkpoint entry, durable
+    across ARQ retries (Story 3-39 Round 2 finding).
+
+    Call ONLY alongside a content-checkpoint write (i.e. only on a path this
+    section can later cache-hit on) — a section whose node never writes a
+    content checkpoint always recomputes `_get_section_body` fresh on retry,
+    so there is nothing to recover there. No-op when nothing was truncated —
+    an absent key on read degrades to "not truncated" either way, so
+    skipping the write in the common (untruncated) case costs nothing.
+    """
+    if not result.was_truncated:
+        return
+    await _write_phase1_checkpoint(
+        lesson_id,
+        _section_truncation_checkpoint_key(node, section_id),
+        {"original_chars": result.original_chars, "capped_chars": result.capped_chars},
+    )
+
+
+async def _read_section_truncation_checkpoint(
+    lesson_id: str, *, node: str, section_id: str
+) -> list[dict[str, Any]]:
+    """Reconstruct this node's `section_truncations` contribution on a cache
+    hit (Story 3-39 Round 2 finding).
+
+    Without this, a retried section that hits its content checkpoint skips
+    `_get_section_body` entirely and its truncation record silently
+    disappears from the admin-visible aggregate — even though the
+    truncation genuinely happened on the run that produced the now-cached
+    content. That is exactly the "silently wrong, not loudly broken" failure
+    class this story exists to close, one layer removed (Round 2 finding,
+    confirmed independently by 2 of 4 reviewers). An absent key — because
+    nothing was truncated, OR because this checkpoint predates this fix —
+    both correctly degrade to an empty list rather than raising.
+    """
+    cached = await _read_phase1_checkpoint(
+        lesson_id,
+        _section_truncation_checkpoint_key(node, section_id),
+        required_keys=("original_chars", "capped_chars"),
+    )
+    if cached is None:
+        return []
+    return [
+        {
+            "section_id": section_id,
+            "node": node,
+            "original_chars": cached["original_chars"],
+            "capped_chars": cached["capped_chars"],
+        }
+    ]
+
+
 async def _increment_phase1_progress(
     lesson_id: str, checkpoint_key: str, total_expected: int | None
 ) -> None:
@@ -2140,11 +2357,23 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
             "[%s] summarise_segment_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"segment_summaries": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="summarise_segment", section_id=section_id
+        )
+        return {"segment_summaries": [cached], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="summarise_segment", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2164,14 +2393,17 @@ async def summarise_segment_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"segment_summaries": []}
+        return {"segment_summaries": [], "section_truncations": section_truncations}
     summary_text = _cap_words(response.summary, 100)
 
     result = {"segment_id": section_id, "summary": summary_text}
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="summarise_segment", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"segment_summaries": [result]}
+    return {"segment_summaries": [result], "section_truncations": section_truncations}
 
 
 class _QuizQuestionLLM(BaseModel):
@@ -2417,11 +2649,23 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             "[%s] quiz_generator_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"quiz_questions": cached["questions"]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="quiz_generator", section_id=section_id
+        )
+        return {"quiz_questions": cached["questions"], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="quiz_generator", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2446,10 +2690,10 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         """
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
         if salvageable is None:
-            return {"quiz_questions": []}
+            return {"quiz_questions": [], "section_truncations": section_truncations}
         rescued = list(salvageable["questions"])[:n_max]
         if not rescued:
-            return {"quiz_questions": []}
+            return {"quiz_questions": [], "section_truncations": section_truncations}
         logger.warning(
             "[%s] quiz_generator_node: %s — %s; salvaging %d question(s) from the "
             "rejected cache rather than shipping an empty quiz, and re-stamping "
@@ -2465,7 +2709,10 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
             checkpoint_key,
             {"segment_id": section_id, "questions": rescued, "tier": tier},
         )
-        return {"quiz_questions": rescued}
+        await _persist_section_truncation_checkpoint(
+            lesson_id, node="quiz_generator", section_id=section_id, result=section_body
+        )
+        return {"quiz_questions": rescued, "section_truncations": section_truncations}
 
     # AC-15: single LLM call per segment using _QuizBatchLLM structured output.
     response = await provider.complete_structured(messages, settings.llm_mini, _QuizBatchLLM)
@@ -2594,9 +2841,12 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         "tier": tier,
     }
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, batch_checkpoint)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="quiz_generator", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"quiz_questions": valid_results}
+    return {"quiz_questions": valid_results, "section_truncations": section_truncations}
 
 
 def _clamp(value: float, lo: float, hi: float, *, label: str) -> float:
@@ -2677,11 +2927,23 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
             "[%s] segment_complexity_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"complexity_scores": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="segment_complexity", section_id=section_id
+        )
+        return {"complexity_scores": [cached], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="segment_complexity", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2705,7 +2967,7 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"complexity_scores": []}
+        return {"complexity_scores": [], "section_truncations": section_truncations}
 
     score: dict[str, Any] = {
         "segment_id": section_id,
@@ -2721,9 +2983,12 @@ async def segment_complexity_node(state: PipelineState) -> PipelineState:
     }
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, score)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="segment_complexity", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"complexity_scores": [score]}
+    return {"complexity_scores": [score], "section_truncations": section_truncations}
 
 
 class _JargonEntryLLM(BaseModel):
@@ -2789,11 +3054,23 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
             "[%s] jargon_extractor_node: %s — cache hit, skipping LLM call", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"glossary": cached["terms"]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="jargon_extractor", section_id=section_id
+        )
+        return {"glossary": cached["terms"], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="jargon_extractor", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -2814,7 +3091,7 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"glossary": []}
+        return {"glossary": [], "section_truncations": section_truncations}
 
     # Output shape is nested (`{"segment_id": ..., "data": {"term", "definition"}}`)
     # — 2026-07-14 review finding, same reasoning as `quiz_generator_node`'s
@@ -2839,9 +3116,12 @@ async def jargon_extractor_node(state: PipelineState) -> PipelineState:
         )
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, {"terms": entries})
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="jargon_extractor", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"glossary": entries}
+    return {"glossary": entries, "section_truncations": section_truncations}
 
 
 class _SegmentInterventionsLLM(BaseModel):
@@ -2962,11 +3242,23 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"intervention_prompts": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="intervention_messages", section_id=section_id
+        )
+        return {"intervention_prompts": [cached], "section_truncations": cached_truncations}
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="intervention_messages", section_id=section_id, result=section_body
+    )
     messages = [
         {
             "role": "system",
@@ -3028,9 +3320,12 @@ async def intervention_messages_node(state: PipelineState) -> PipelineState:
         )
     else:
         await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+        await _persist_section_truncation_checkpoint(
+            lesson_id, node="intervention_messages", section_id=section_id, result=section_body
+        )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"intervention_prompts": [result]}
+    return {"intervention_prompts": [result], "section_truncations": section_truncations}
 
 
 class _NarrationScriptLLM(BaseModel):
@@ -3102,7 +3397,10 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"narration_scripts": [cached]}
+        cached_truncations = await _read_section_truncation_checkpoint(
+            lesson_id, node="narration_generator", section_id=section_id
+        )
+        return {"narration_scripts": [cached], "section_truncations": cached_truncations}
 
     # AC-6: opportunistic cross-node read — see docstring above.
     known_complexity = await _read_phase1_checkpoint(
@@ -3122,7 +3420,16 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     provider = get_llm_provider(settings.llm_mini, lesson_id)
-    body = _get_section_body(section, lesson_id=lesson_id, section_id=section_id)
+    section_body = _get_section_body(
+        section,
+        lesson_id=lesson_id,
+        section_id=section_id,
+        max_chars=settings.section_body_max_chars,
+    )
+    body = section_body.body
+    section_truncations = _section_truncation_entries(
+        node="narration_generator", section_id=section_id, result=section_body
+    )
     if known_narration_style:
         style_instruction = (
             f"This section's narration_style has already been determined as "
@@ -3168,7 +3475,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             section_id,
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"narration_scripts": []}
+        return {"narration_scripts": [], "section_truncations": section_truncations}
 
     script = response.script.strip()
     # 2026-07-14 review finding (Edge Case Hunter): unlike quiz_generator_node
@@ -3180,7 +3487,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             "[%s] narration_generator_node: %s — blank script, rejecting", lesson_id, section_id
         )
         await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
-        return {"narration_scripts": []}
+        return {"narration_scripts": [], "section_truncations": section_truncations}
     word_count = len(script.split())
     # Known complexity's narration_style wins over the LLM's own guess when
     # available (AC-6) — the LLM was only asked to honor it in tone, its own
@@ -3234,7 +3541,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             await _increment_phase1_progress(
                 lesson_id, checkpoint_key, state.get("_total_sections")
             )
-            return {"narration_scripts": []}
+            return {"narration_scripts": [], "section_truncations": section_truncations}
     else:
         logger.info(
             "[%s] narration_generator_node: %s — no target_duration_sec or page range "
@@ -3253,17 +3560,13 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     }
 
     await _write_phase1_checkpoint(lesson_id, checkpoint_key, result)
+    await _persist_section_truncation_checkpoint(
+        lesson_id, node="narration_generator", section_id=section_id, result=section_body
+    )
     await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
 
-    return {"narration_scripts": [result]}
+    return {"narration_scripts": [result], "section_truncations": section_truncations}
 
-
-# Rough per-character cost estimates — neither vendor's exact billing API is
-# reachable from this environment to verify against; conservative flat
-# per-character rates, documented here so a future story can replace them
-# with real invoiced numbers once available (Story 2-8 Dev Notes).
-_SARVAM_COST_PER_CHAR = 0.00002
-_AZURE_TTS_COST_PER_CHAR = 0.000016
 
 # 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
 # Supabase Storage path (f"{lesson_id}/{segment_id}.mp3") — restrict it to
@@ -3285,12 +3588,15 @@ async def _synthesize_with_fallback(
     None for the browser-fallback case (no server-side audio produced).
     """
     from app.config import get_settings
+    from app.providers.tts.sarvam import COST_PER_CHAR as _SARVAM_COST_PER_CHAR
     from app.providers.tts.sarvam import SarvamTTSProvider
 
     settings = get_settings()
 
     try:
-        audio_bytes, _ = await SarvamTTSProvider().synthesize(text, settings.sarvam_voice_id)
+        audio_bytes, _ = await SarvamTTSProvider(lesson_id).synthesize(
+            text, settings.sarvam_voice_id
+        )
         # 2026-07-15 review finding (Edge Case Hunter): `is not None` alone
         # accepted an empty/falsy-but-present return as a full success —
         # check truthiness so an empty/malformed body falls through instead.
@@ -3309,10 +3615,13 @@ async def _synthesize_with_fallback(
             exc_info=True,
         )
 
+    from app.providers.tts.azure import COST_PER_CHAR as _AZURE_TTS_COST_PER_CHAR
     from app.providers.tts.azure import AzureTTSProvider
 
     try:
-        audio_bytes, _ = await AzureTTSProvider().synthesize(text, settings.azure_tts_voice)
+        audio_bytes, _ = await AzureTTSProvider(lesson_id).synthesize(
+            text, settings.azure_tts_voice
+        )
         if audio_bytes:
             return audio_bytes, "azure", len(text) * _AZURE_TTS_COST_PER_CHAR
         logger.warning(
@@ -3332,6 +3641,194 @@ async def _synthesize_with_fallback(
     return None, "browser", 0.0
 
 
+_SEGMENT_ORDER_RE = re.compile(r"^section_(\d+)_")
+
+
+def _segment_order_key(entry: dict[str, Any], fallback_index: int) -> int:
+    """Derive this entry's true lesson position from its segment_id.
+
+    `_derive_section_id` always produces `section_{index}_{title}` — the
+    leading integer is the section's real, stable position and never
+    repeats within a chapter. Reuse it here rather than trusting arrival
+    order: `narration_scripts` is `Annotated[list, operator.add]`, fed by
+    Send()-dispatched calls into the same LangGraph superstep with (per
+    narration_generator_node's own docstring) NO cross-node/cross-call
+    ordering guarantee — "Send()-dispatched calls do not all resolve in
+    lockstep". Trusting raw list order here would let the cap truncate an
+    arbitrary segment, not necessarily the tail of the lesson, and could
+    disagree between the original run and an ARQ retry of the same lesson.
+
+    Falls back to `fallback_index` (the entry's own position in the
+    already-dict-filtered input) when segment_id doesn't carry the
+    `section_{N}_` prefix — covers hand-built test fixtures and any future
+    caller not using `_derive_section_id`. This only produces a fully
+    correct ordering when either ALL entries carry the prefix (the only
+    case that occurs in production, since every entry in a given lesson's
+    narration_scripts is written by the same `_derive_section_id` call) or
+    NONE do; a mix of prefixed and unprefixed ids in the same list is not a
+    shape this pipeline ever produces.
+    """
+    segment_id = entry.get("segment_id")
+    if isinstance(segment_id, str):
+        match = _SEGMENT_ORDER_RE.match(segment_id)
+        if match:
+            return int(match.group(1))
+    return fallback_index
+
+
+def _safe_narration_script(entry: dict[str, Any]) -> str:
+    """Return entry['script'] if it's actually a string, else ''.
+
+    Mirrors `_index_by_segment_id`'s established defensive pattern a few
+    hundred lines below in this same file: a value that is PRESENT but not
+    the expected type (e.g. a bare int/list from a schema-drifted or
+    hand-edited checkpoint) must degrade to the safe default, not raise,
+    or the very first `len(...)` call on it crashes the whole node."""
+    script = entry.get("script")
+    return script if isinstance(script, str) else ""
+
+
+_COMBINING_CATEGORIES = frozenset({"Mn", "Mc", "Me"})
+
+
+def _trim_to_grapheme_boundary(script: str, cut: int) -> str:
+    """Slice `script[:cut]` without splitting a base character from a
+    Unicode combining mark that depends on it (e.g. a Devanagari matra/
+    virama — Sarvam Bulbul v2, this repo's primary TTS provider, targets
+    Indic scripts where this is common). A combining mark immediately
+    AFTER the raw cut point means the character immediately BEFORE it is a
+    base character being separated from a mark that belongs to it; back
+    the cut point up until that's no longer true.
+
+    Checks Unicode general category (Mn/Mc/Me), NOT `unicodedata.combining()`
+    — that function returns the *canonical combining class* used for
+    normalization ordering, which is 0 for most spacing/non-spacing Indic
+    vowel signs (e.g. DEVANAGARI VOWEL SIGN U is category Mn but combining
+    class 0). Category is the correct "is this character a dependent mark"
+    test; combining-class is not, and would silently miss the exact script
+    family this fix exists for.
+
+    Worst case the result is a few characters shorter than the exact
+    budget — always safe, never over budget, and correctness > exactness
+    here."""
+    while 0 < cut < len(script) and unicodedata.category(script[cut]) in _COMBINING_CATEGORIES:
+        cut -= 1
+    return script[:cut]
+
+
+def _apply_narration_char_cap(
+    lesson_id: str, narration_scripts: list[dict[str, Any]], max_chars: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Story 3-37 / decisionupdate.md §8: enforce a LESSON-WIDE hard cap of
+    `max_chars` narration characters across ALL segments combined, walked in
+    true lesson order (see `_segment_order_key`), before any TTS spend is
+    incurred.
+
+    This cannot live inside narration_generator_node — that node is
+    Send()-dispatched once per section with no visibility into any other
+    section's output (see that node's own docstring). tts_node is the first
+    point all segments' scripts are available together, and it runs
+    immediately before the actual (dominant, 67-73% of lesson cost) TTS
+    spend, so the cap is enforced here instead.
+
+    Once the running total would exceed `max_chars`, the segment that
+    crosses the boundary is truncated to a grapheme-safe slice that fills
+    as much of the remaining budget as it can without splitting a base
+    character from a combining mark (`_trim_to_grapheme_boundary`; matches
+    `_get_section_body`'s existing `[:max_chars]` character-level-slice
+    convention otherwise) and every segment after it has its script zeroed
+    — treated as empty, which the caller degrades through the same
+    browser-fallback shape already used for a malformed/missing script,
+    never a new shape.
+
+    A malformed entry that isn't a dict at all (a bare string/int/None from
+    a schema-drifted or hand-edited checkpoint — the exact case
+    `package_builder_node._index_by_segment_id` already defends against) is
+    logged and dropped rather than crashing the node on `entry.get(...)`,
+    matching this node's own "never hard-fails" guarantee.
+
+    ALWAYS returns a genuinely new list (every entry rebuilt via `{**entry,
+    ...}` or filtered — the caller never gets back the same list/dict
+    objects it passed in, on either the under-budget or over-budget path)
+    and an explicit degradation record — CLAUDE.md: silent truncation is
+    never acceptable, so the record is written even when `capped` is False,
+    and the caller persists it unconditionally rather than only on the
+    degraded path.
+    """
+    clean_entries: list[dict[str, Any]] = []
+    for i, entry in enumerate(narration_scripts):
+        if not isinstance(entry, dict):
+            logger.warning(
+                "[%s] narration_cap: narration_scripts entry %d is %s, not a dict — dropped: %r",
+                lesson_id,
+                i,
+                type(entry).__name__,
+                entry,
+            )
+            continue
+        clean_entries.append(entry)
+
+    ordered_entries = sorted(
+        enumerate(clean_entries), key=lambda pair: _segment_order_key(pair[1], pair[0])
+    )
+    entries = [entry for _, entry in ordered_entries]
+
+    original_total = sum(len(_safe_narration_script(entry)) for entry in entries)
+
+    if original_total <= max_chars:
+        return [{**entry} for entry in entries], {
+            "capped": False,
+            "original_total_chars": original_total,
+            "capped_total_chars": original_total,
+            "affected_segment_ids": [],
+        }
+
+    capped_scripts: list[dict[str, Any]] = []
+    affected_segment_ids: list[str] = []
+    running_total = 0
+    for i, entry in enumerate(entries):
+        script = _safe_narration_script(entry)
+        segment_id = entry.get("segment_id")
+        segment_label = segment_id if isinstance(segment_id, str) else f"<unknown-{i}>"
+        remaining_budget = max_chars - running_total
+        if remaining_budget <= 0:
+            # Cap already fully spent by an earlier segment — zero this one
+            # out. Only record it as "affected" if it actually had content
+            # to lose (an entry that was already blank isn't a new casualty).
+            if script:
+                affected_segment_ids.append(segment_label)
+            capped_scripts.append({**entry, "script": ""})
+            continue
+        if len(script) > remaining_budget:
+            # The segment that crosses the boundary — truncate to fill (at
+            # most) what's left of the budget, on a grapheme-safe boundary.
+            capped_scripts.append(
+                {**entry, "script": _trim_to_grapheme_boundary(script, remaining_budget)}
+            )
+            affected_segment_ids.append(segment_label)
+            running_total = max_chars
+        else:
+            capped_scripts.append({**entry})
+            running_total += len(script)
+
+    capped_total = sum(len(_safe_narration_script(e)) for e in capped_scripts)
+    logger.warning(
+        "[%s] narration_cap: lesson-wide narration exceeded %d chars (total %d) — "
+        "truncated/zeroed %d segment(s): %s",
+        lesson_id,
+        max_chars,
+        original_total,
+        len(affected_segment_ids),
+        affected_segment_ids,
+    )
+    return capped_scripts, {
+        "capped": True,
+        "original_total_chars": original_total,
+        "capped_total_chars": capped_total,
+        "affected_segment_ids": affected_segment_ids,
+    }
+
+
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
     Sarvam -> Azure -> Browser Speech fallback chain.
@@ -3346,7 +3843,30 @@ async def tts_node(state: PipelineState) -> PipelineState:
 
     `Narration.timestamps` always ships `[]` — Story 2-8's explicit scope
     decision (word-to-slide timestamp mapping deferred to a follow-up story).
+
+    Story S3-38: on a successful synthesis, this node also measures the REAL
+    audio duration of the synthesized bytes (via `tinytag`) and carries it as
+    a `duration_ms` key SIBLING to `data` in each `audio_assets` wrapper dict
+    (never inside `data` itself — `Narration` is `extra="forbid"` and frozen,
+    see `packages/shared/lesson_package.schema.json`). `package_builder_node`
+    uses this real duration to build `narration.timestamps` instead of
+    `_estimate_slide_timestamps`'s word-count guess, when available.
+    `duration_ms` is `None` on the browser-fallback path or when `tinytag`
+    cannot parse the bytes — this node still never hard-fails on that.
+
+    Round 2 review note: the original implementation used `mutagen`, which
+    was mislabeled MIT in this story's ACs/pyproject comment — `mutagen` is
+    actually GPL-2.0-or-later (verified via `pip show mutagen` / its own
+    `COPYING` file). Swapped to `tinytag` (genuinely MIT, verified the same
+    way), consistent with this codebase's existing zero-copyleft-dependency
+    pattern (PyMuPDF banned by name for AGPL-3.0; every PDF library was
+    hand-picked for a verified permissive license).
     """
+    import io
+
+    from tinytag import TinyTag
+
+    from app.config import get_settings
     from app.core.db import get_supabase
     from app.schemas.lesson import Narration
 
@@ -3384,6 +3904,17 @@ async def tts_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 86.0, "tts_node")
         return {"audio_assets": cached, "progress_pct": 86.0}
 
+    # Story 3-37 / decisionupdate.md §8: enforce the lesson-wide narration
+    # character cap BEFORE any TTS spend — see _apply_narration_char_cap's
+    # docstring for why this must live here and not in
+    # narration_generator_node. Always applied (a no-op when under budget)
+    # so narration_cap_applied is always available to write below, on
+    # whichever of the two branches actually runs.
+    settings = get_settings()
+    narration_scripts, narration_cap_record = _apply_narration_char_cap(
+        lesson_id, narration_scripts, settings.max_narration_chars_per_lesson
+    )
+
     if not narration_scripts:
         logger.warning(
             "[%s] tts_node: zero narration_scripts — producing empty audio_assets "
@@ -3397,7 +3928,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
         supabase.table("lesson_jobs").update(
             {
                 "last_node": "tts_node",
-                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+                "node_outputs": {
+                    **node_outputs,
+                    "tts_node": audio_assets_out,
+                    "narration_cap_applied": narration_cap_record,
+                },
             }
         ).eq("lesson_id", lesson_id).execute()
     else:
@@ -3417,6 +3952,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
             # node exists to provide. Now any failure anywhere in a single
             # segment's processing degrades JUST that segment to the browser
             # fallback, never the whole node.
+            duration_ms: float | None = None
             try:
                 script = entry["script"]
 
@@ -3426,11 +3962,19 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 if not _SAFE_SEGMENT_ID_RE.match(segment_id):
                     raise ValueError(f"unsafe segment_id for storage path: {segment_id!r}")
 
+                # Story 3-37: a script zeroed by _apply_narration_char_cap
+                # (lesson-wide narration cap already exceeded by an earlier
+                # segment) needs no synthesis call at all — degrade straight
+                # to the browser-fallback shape without spending a network
+                # round-trip on empty text. Checked before the cost-ceiling
+                # pre-check below since there's nothing to synthesize either way.
+                if not script:
+                    audio_bytes, audio_provider, cost = None, "browser", 0.0
                 # Story 2-13/S2-13 AC-3: proactive per-segment cost-ceiling
                 # pre-check, mirroring image_generator_node's existing
                 # pattern (Story 2-9 AC-3) — skip straight to the free
                 # browser fallback rather than attempting Sarvam/Azure.
-                if await check_ceiling(lesson_id):
+                elif await check_ceiling(lesson_id):
                     logger.warning(
                         "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
                         "for segment %s (browser fallback)",
@@ -3463,6 +4007,32 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     from app.core.cost_tracker import accumulate_cost
 
                     await accumulate_cost(lesson_id, cost)
+
+                    # Story S3-38: measure the REAL duration of the synthesized
+                    # bytes instead of leaving package_builder_node to guess it
+                    # later from word_count/words_per_minute — that estimate has
+                    # no relationship to the actual MP3 and can visibly desync
+                    # slide changes from audio. Never let a parse failure crash
+                    # this segment (or the node) — this node's whole documented
+                    # purpose is to never hard-fail; an unparseable/corrupt
+                    # buffer just leaves duration unknown (None), and
+                    # package_builder_node falls back to the word-count
+                    # estimate exactly as it did before this story.
+                    try:
+                        tag = TinyTag.get(file_obj=io.BytesIO(audio_bytes))
+                        if tag.duration is None:
+                            raise ValueError("tinytag returned no duration")
+                        duration_ms = round(tag.duration * 1000)
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "[%s] tts_node: tinytag could not parse synthesized audio "
+                            "for segment %s — duration unknown, package_builder_node "
+                            "will fall back to the word-count estimate",
+                            lesson_id,
+                            segment_id,
+                            exc_info=True,
+                        )
+                        duration_ms = None
                 else:
                     audio_path = ""
 
@@ -3490,18 +4060,34 @@ async def tts_node(state: PipelineState) -> PipelineState:
                         "timestamps": [],
                     }
                 )
+                # Whatever partial work happened before the exception (e.g. a
+                # successful tinytag parse followed by a Narration validation
+                # failure) is discarded along with the rest of this segment's
+                # attempt — this degrade path has no real audio, so it has no
+                # real duration either.
+                duration_ms = None
 
             audio_assets_out.append(
                 {
                     "segment_id": segment_id,
                     "data": narration_data.model_dump(mode="json"),
+                    # Story S3-38: SIBLING key to "data", never inside it —
+                    # Narration is extra="forbid" (frozen schema). None when
+                    # unknown (browser fallback / tinytag parse failure);
+                    # package_builder_node falls back to the word-count
+                    # estimate in that case, unchanged from before this story.
+                    "duration_ms": duration_ms,
                 }
             )
 
         supabase.table("lesson_jobs").update(
             {
                 "last_node": "tts_node",
-                "node_outputs": {**node_outputs, "tts_node": audio_assets_out},
+                "node_outputs": {
+                    **node_outputs,
+                    "tts_node": audio_assets_out,
+                    "narration_cap_applied": narration_cap_record,
+                },
             }
         ).eq("lesson_id", lesson_id).execute()
 
@@ -3749,31 +4335,58 @@ def _estimate_slide_timestamps(
     *,
     words_per_minute: int,
     default_ms_per_slide: int,
+    known_duration_ms: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Distribute a segment's slides across an ESTIMATED narration duration.
+    """Distribute a segment's slides across the narration's duration.
 
     Story 2-19: `tts_node` ships `timestamps: []`; the player needs a contiguous
     ``{slide_id, start_ms, end_ms}`` track to sync slides (binary search by time)
-    and to fire the segment-end quiz (``timestamps.at(-1).end_ms``). We estimate
-    the segment's audio duration from the script word count at `words_per_minute`
-    and split it evenly across the slides — real forced-alignment / word-level
-    timing remains deferred (Story 2-8's original scope). Guarantees (AC-1/AC-2):
-    one entry per slide, first ``start_ms == 0``, each ``start_ms == previous
+    and to fire the segment-end quiz (``timestamps.at(-1).end_ms``).
+
+    Story S3-38: this is no longer ALWAYS an estimate. When the caller has a
+    REAL measured duration for this segment's audio (`known_duration_ms` —
+    `tts_node` measures it from the synthesized MP3 bytes via `tinytag`), that
+    real value is used directly as the total duration to split across slides.
+    `known_duration_ms` is `None` on the browser-fallback path (no server
+    audio was ever synthesized) or when `tinytag` couldn't parse the bytes —
+    in that case behaviour is UNCHANGED from before this story: we estimate
+    the segment's audio duration from the script word count at
+    `words_per_minute` and split it evenly across the slides. Real
+    forced-alignment / word-level timing remains deferred either way (Story
+    2-8's original scope). Guarantees (AC-1/AC-2), true in both cases: one
+    entry per slide, first ``start_ms == 0``, each ``start_ms == previous
     end_ms`` (contiguous), ``start_ms < end_ms`` (non-degenerate), last
-    ``end_ms == estimated duration``.
+    ``end_ms == total duration``.
+
+    Round 2 review finding (Edge Case Hunter): `known_duration_ms` ultimately
+    originates from a Supabase JSONB checkpoint (`audio_assets[i].duration_ms`)
+    that could in principle be schema-drifted or hand-edited — a bare
+    ``round()`` on a NaN raises `ValueError`, on a non-numeric type raises
+    `TypeError`, either of which would crash `package_builder_node` on a
+    value this function was supposed to treat as "unknown, fall back to the
+    estimate" rather than a hard failure. `package_builder_node` now filters
+    non-numeric/non-finite values before calling this function, but this is
+    a public module symbol other future callers could reach directly, so the
+    same finiteness check is repeated here too (defence-in-depth, matching
+    the existing `words_per_minute = max(words_per_minute, 1)` guard just
+    below).
     """
     n = len(slides)
     if n == 0:
         return []
-    # Defence-in-depth: `words_per_minute` is guarded by Settings(gt=0) at the
-    # only call site, but this is now a public module symbol — never divide by 0.
-    words_per_minute = max(words_per_minute, 1)
-    word_count = len(script.split())
-    total_ms = (
-        round(word_count / words_per_minute * 60_000)
-        if word_count > 0
-        else default_ms_per_slide * n
-    )
+    if known_duration_ms is not None and math.isfinite(known_duration_ms):
+        total_ms = round(known_duration_ms)
+    else:
+        # Defence-in-depth: `words_per_minute` is guarded by Settings(gt=0) at
+        # the only call site, but this is now a public module symbol — never
+        # divide by 0.
+        words_per_minute = max(words_per_minute, 1)
+        word_count = len(script.split())
+        total_ms = (
+            round(word_count / words_per_minute * 60_000)
+            if word_count > 0
+            else default_ms_per_slide * n
+        )
     total_ms = max(total_ms, n)  # ≥ 1 ms per slide so windows never collapse
     timestamps: list[dict[str, Any]] = []
     prev_end = 0
@@ -4036,6 +4649,58 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     audio_by_id = _index_by_segment_id(
         state.get("audio_assets", []), label="audio_assets", value_key="data"
     )
+    # Story S3-38: `duration_ms` is a SIBLING key to "data" in each
+    # audio_assets wrapper dict (tts_node), not part of the frozen Narration
+    # model — read it directly here rather than through `_index_by_segment_id`
+    # (which is scoped to a single dict-valued `value_key` and would coerce a
+    # numeric `duration_ms` to None, since it treats any non-dict value as
+    # malformed). Missing/malformed entries simply yield no mapping for that
+    # segment_id, which callers treat the same as "unknown" (None) via `.get()`.
+    #
+    # Round 2 review finding (Edge Case Hunter): the original version trusted
+    # `item.get("duration_ms")` as-is — a schema-drifted or hand-edited
+    # checkpoint could carry a non-numeric or NaN value there, which would
+    # reach `_estimate_slide_timestamps`'s `round(known_duration_ms)` and
+    # raise `TypeError`/`ValueError`, crashing this node entirely instead of
+    # degrading just that one segment (the exact failure class
+    # `_index_by_segment_id` was hardened against for `audio_by_id` etc. one
+    # story ago). Validated here the same way: non-numeric/non-finite values
+    # are logged and normalised to None rather than trusted. Duplicate
+    # segment_id also logged, for the same observability parity
+    # `_index_by_segment_id` already provides for its own maps.
+    duration_ms_by_id: dict[str, float | None] = {}
+    for item in state.get("audio_assets", []):
+        if not isinstance(item, dict):
+            continue
+        seg_id = item.get("segment_id")
+        if seg_id is None:
+            continue
+        if seg_id in duration_ms_by_id:
+            logger.warning(
+                "[%s] package_builder_node: duplicate segment_id %r in "
+                "audio_assets duration_ms — keeping the last entry",
+                lesson_id,
+                seg_id,
+            )
+        raw_duration = item.get("duration_ms")
+        if (
+            isinstance(raw_duration, int | float)
+            and not isinstance(raw_duration, bool)
+            and math.isfinite(raw_duration)
+        ):
+            duration_ms_by_id[seg_id] = raw_duration
+        else:
+            if raw_duration is not None:
+                logger.warning(
+                    "[%s] package_builder_node: audio_assets entry for %r has "
+                    "a non-numeric/non-finite duration_ms %r (%s) — treating "
+                    "as unknown, falling back to the word-count estimate",
+                    lesson_id,
+                    seg_id,
+                    raw_duration,
+                    type(raw_duration).__name__,
+                )
+            duration_ms_by_id[seg_id] = None
     # Story 2-31 AC-1: narration_generator_node emits a FLAT shape
     # ({"segment_id": ..., "script": ...}) — no "data" wrapper, so no value_key.
     # Used only to recover the script when a segment has no audio_assets entry.
@@ -4048,12 +4713,46 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 
     def _group_by_segment_id(
         items: list[dict[str, Any]], *, label: str
-    ) -> dict[str, list[dict[str, Any]]]:
+    ) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
         """Same defensive-skip philosophy as `_index_by_segment_id`, but for
         the one-to-many groupings (slides/quiz/jargon can have multiple
-        entries per segment_id)."""
+        entries per segment_id).
+
+        D32: this docstring's claim was false until this fix — a non-dict
+        item, or an item missing/mis-typed "data", raised AttributeError/
+        KeyError/TypeError (each independently reproduced pre-fix — the
+        TypeError specifically at the `{**slide, "image_url": ...}` spread
+        further down this node, not inside this helper) and crashed
+        package_builder_node after 100% of the lesson's spend (site 2 of the
+        defect Story 2-31 closed at `_index_by_segment_id`, site 1 — binding
+        rule 6: wrong at site 2 means the pattern, not the instance, needed
+        fixing).
+
+        Returns `(grouped, fully_dropped_segment_ids)`. The second element —
+        found by this fix's own review round (Scale & Load Hunter + Edge
+        Case Hunter, independently) — is the set of segment_ids that had at
+        least one raw entry attributed to them but ended with zero
+        survivors after defensive filtering. Collapsing that case into
+        "this segment never had any entries" is itself a silent-wrong-result
+        risk: a segment whose quiz/jargon were all malformed is
+        indistinguishable from one that legitimately has none (neither
+        `Segment.quiz` nor `Segment.jargon` requires `min_length`), and for
+        slides specifically it silently drops the WHOLE segment via the
+        pre-existing zero-slides path below with no signal beyond a log
+        line. Callers use this set to feed the `degraded`/dropped-segment
+        aggregates so the loss is admin-visible, not just logged."""
         result: dict[str, list[dict[str, Any]]] = {}
+        attempted: set[str] = set()
         for item in items:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "[%s] package_builder_node: malformed %s entry is %s, not a dict — skipped: %r",
+                    lesson_id,
+                    label,
+                    type(item).__name__,
+                    item,
+                )
+                continue
             segment_id = item.get("segment_id")
             if segment_id is None:
                 logger.warning(
@@ -4064,12 +4763,32 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                     item,
                 )
                 continue
-            result.setdefault(segment_id, []).append(item["data"])
-        return result
+            attempted.add(segment_id)
+            data = item.get("data")
+            if not isinstance(data, dict):
+                logger.warning(
+                    "[%s] package_builder_node: %s entry for %r has a "
+                    "non-dict or missing 'data' value (%s) — skipped: %r",
+                    lesson_id,
+                    label,
+                    segment_id,
+                    type(data).__name__,
+                    item,
+                )
+                continue
+            result.setdefault(segment_id, []).append(data)
+        fully_dropped = attempted - result.keys()
+        return result, fully_dropped
 
-    slides_by_segment = _group_by_segment_id(state.get("slides", []), label="slides")
-    quiz_by_segment = _group_by_segment_id(state.get("quiz_questions", []), label="quiz_questions")
-    jargon_by_segment = _group_by_segment_id(state.get("glossary", []), label="glossary")
+    slides_by_segment, slides_fully_dropped = _group_by_segment_id(
+        state.get("slides", []), label="slides"
+    )
+    quiz_by_segment, quiz_fully_dropped = _group_by_segment_id(
+        state.get("quiz_questions", []), label="quiz_questions"
+    )
+    jargon_by_segment, jargon_fully_dropped = _group_by_segment_id(
+        state.get("glossary", []), label="glossary"
+    )
 
     # slide_images is a FLAT list with no segment_id at all (Story 2-9's
     # deliberate design) — correlate purely by slide_id.
@@ -4113,6 +4832,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     seen_terms: set[str] = set()
     glossary_out: list[dict[str, Any]] = []
     degraded_segment_ids: list[str] = []  # Story 2-21: aggregate degradation signal
+    # D32 review round: a segment dropped here because its slides existed but
+    # were ALL malformed is otherwise indistinguishable from one that simply
+    # never had slides — tracked separately so admin visibility can tell
+    # "upstream never produced this" from "upstream produced it and it was
+    # bad", the two having very different root causes to chase.
+    dropped_due_to_malformed_slides: list[str] = []
 
     for index, plan_seg in enumerate(plan_segments):
         segment_id = plan_seg.get("segment_id")
@@ -4136,12 +4861,25 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # segment WITH slides is never dropped for a missing economy output;
         # backfill neutral, schema-valid defaults so its succeeded parts survive.
         if not slides_data:
-            logger.warning(
-                "[%s] package_builder_node: segment %s has no slides — skipping "
-                "(a segment needs >=1 slide to render)",
-                lesson_id,
-                segment_id,
-            )
+            if segment_id in slides_fully_dropped:
+                # D32 review round: distinct root cause from "never had
+                # slides" — upstream produced slide(s) for this segment and
+                # every one of them failed the defensive checks above.
+                dropped_due_to_malformed_slides.append(segment_id)
+                logger.warning(
+                    "[%s] package_builder_node: segment %s had slide entries but "
+                    "ALL were malformed — skipping (a segment needs >=1 valid "
+                    "slide to render)",
+                    lesson_id,
+                    segment_id,
+                )
+            else:
+                logger.warning(
+                    "[%s] package_builder_node: segment %s has no slides — skipping "
+                    "(a segment needs >=1 slide to render)",
+                    lesson_id,
+                    segment_id,
+                )
             continue
 
         degraded: list[str] = []
@@ -4196,6 +4934,15 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         if interventions is None:
             interventions = _default_interventions()
             degraded.append("interventions")
+        # D32 review round: a segment that HAD quiz/jargon entries upstream
+        # but lost all of them to defensive filtering is degraded the same
+        # way a segment missing complexity/narration/interventions is — the
+        # content is thinner than what was actually produced, and that must
+        # be as visible as every other degrade path here, not just logged.
+        if segment_id in quiz_fully_dropped:
+            degraded.append("quiz")
+        if segment_id in jargon_fully_dropped:
+            degraded.append("jargon")
         if degraded:
             degraded_segment_ids.append(segment_id)
             logger.warning(
@@ -4212,9 +4959,15 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         ]
 
         # Story 2-19: tts_node ships timestamps=[] (it has no slide context), which
-        # leaves the player unable to sync slides. Synthesize an estimated
-        # contiguous timestamp track here, where both the segment's slides and its
-        # narration script are available.
+        # leaves the player unable to sync slides. Build a contiguous timestamp
+        # track here, where both the segment's slides and its narration script
+        # are available.
+        #
+        # Story S3-38: prefer the REAL measured audio duration (`duration_ms`,
+        # tinytag-derived in tts_node) when tts_node captured one for this
+        # segment — `_estimate_slide_timestamps` only falls back to the
+        # word-count guess when it's None (browser fallback / tinytag parse
+        # failure), exactly as before this story.
         narration = {
             **narration,
             "timestamps": _estimate_slide_timestamps(
@@ -4224,6 +4977,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 narration.get("script") or "",
                 words_per_minute=settings.narration_words_per_minute,
                 default_ms_per_slide=settings.default_ms_per_slide,
+                known_duration_ms=duration_ms_by_id.get(segment_id),
             ),
         }
 
@@ -4287,6 +5041,21 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             degraded_segment_ids,
         )
 
+    if dropped_due_to_malformed_slides:
+        # D32 review round (Scale & Load Hunter): this is the case that made
+        # a crash silently wrong instead of just gone — a segment planned at
+        # `lesson_plan["segments"]` never reaches `segments_out` at all, so
+        # without this line the ONLY trace is a per-segment log message.
+        logger.warning(
+            "[%s] package_builder_node: %d planned segment(s) dropped entirely "
+            "because every slide entry for them was malformed (not because "
+            "upstream never produced any): %s — total_segments below reflects "
+            "the real shipped count, not the plan",
+            lesson_id,
+            len(dropped_due_to_malformed_slides),
+            dropped_due_to_malformed_slides,
+        )
+
     assembled: dict[str, Any] = {
         "lesson_id": lesson_id,
         "book_id": book_id,
@@ -4295,7 +5064,23 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         "metadata": {
             "title": lesson_plan.get("title", ""),
             "subject": lesson_plan.get("subject", ""),
-            "total_segments": lesson_plan.get("total_segments", len(segments_out)),
+            # D32 review round (Scale & Load Hunter — CONFIRMED, the most
+            # severe finding of that pass): this used to be
+            # `lesson_plan.get("total_segments", len(segments_out))`, and
+            # `lesson_plan` almost always HAS that key (set at planning
+            # time, Phase 2, before any segment can be dropped in Phase 3),
+            # so the `len(segments_out)` fallback essentially never fired.
+            # Any segment dropped after planning — for pre-existing reasons
+            # (genuinely no slides) or the new one this story makes reachable
+            # (slides existed but were all malformed) — left the
+            # STUDENT-FACING metadata claiming more segments than the
+            # package actually shipped, while the admin-only
+            # `package_builder_degraded.total_segments` two writes below
+            # already computed the real count correctly. Same failure shape
+            # as the book-scale 4%-of-the-book defect this project's Scale
+            # Contract exists because of, at segment granularity instead of
+            # book granularity. Always trust the real, just-built count.
+            "total_segments": len(segments_out),
             "estimated_duration_mins": lesson_plan.get("total_duration_min", 0),
             "complexity_level": lesson_plan.get("complexity_level", "medium"),
             # S2-LM1/S2-LM3: tier flows through PipelineState (set at
@@ -4344,10 +5129,21 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 **node_outputs,
                 "package_builder": lesson_package,
                 # Admin-visible degradation record (Story 2-21). Empty list = none.
+                # D32 review round: `dropped_segment_ids` (segments planned
+                # but never shipped, because every slide entry for them was
+                # malformed) added alongside `segment_ids` (segments shipped
+                # but with backfilled defaults) -- distinct failure shapes,
+                # both real content loss, neither visible before this fix.
                 "package_builder_degraded": {
                     "segment_ids": degraded_segment_ids,
+                    "dropped_segment_ids": dropped_due_to_malformed_slides,
                     "total_segments": len(segments_out),
                 },
+                # Story 3-39: admin-visible record of every section whose body
+                # was truncated to settings.section_body_max_chars before a
+                # Phase 1 LLM call — sibling to package_builder_degraded above.
+                # Always written (empty list = none), never a missing key.
+                "section_truncations": state.get("section_truncations", []),
             },
         }
     ).eq("lesson_id", lesson_id).execute()

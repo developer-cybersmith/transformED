@@ -266,14 +266,14 @@ Options:
 
 ### DEFERRED with D-nn required (per SCALE-CONTRACT Q2, binding rule 5/7) (8)
 
-**D65 — IDOR + force=true missing ownership/role gate + WS cross-user delivery** *(new)*  
+**D79 — IDOR + force=true missing ownership/role gate + WS cross-user delivery** *(new)*  
 `current_user["sub"]` is never compared to session ownership. Any authenticated user can
 read/write any session. `force=true` has no admin-role gate. WS `manager.send` delivers
 to whoever is connected on `session_id` — no ownership check.  
 Explicitly deferred in story Out of Scope; tracked here per binding rule 5.  
 *Enforcement: integration test hitting real auth path when session ownership is added.*
 
-**D66 — Concurrent POST double-fire race** *(new)*  
+**D80 — Concurrent POST double-fire race** *(new)*  
 Two simultaneous `force=true` POSTs both delete the cooldown key (idempotent) then both call
 `dispatch_event`. The distraction cap bounds total fires per session but two concurrent
 non-force POSTs that both arrive before the cooldown TTL sets can also double-fire.  
@@ -281,7 +281,7 @@ Documented in Scale & Load Q6; bounded by `max_distraction_per_session`. Accepta
 admin/demo use.  
 *Enforcement: DISCIPLINE (no machine check; cap provides natural bound).*
 
-**D67 — MemorySaver `thread_id=session_id` scope undocumented** *(new)*  
+**D81 — MemorySaver `thread_id=session_id` scope undocumented** *(new)*  
 `dispatch_event` reuses `thread_id=session_id` across calls. `MemorySaver` is process-local
 and never evicted — accumulated channel state grows for the session's lifetime. This is
 intentional for the tutor FSM (continuity), unlike the content pipeline (retry isolation).
@@ -289,13 +289,13 @@ The distinction is not documented in `graph.py`.
 Scale & Load Q5 claim "per-attempt nonce" is also inaccurate — fix the story text.  
 *Enforcement: add a comment in `graph.py` distinguishing tutor FSM intent from content pipeline rule.*
 
-**D68 — Full LessonPackage JSON deserialized on every intervention call** *(pre-existing in service.py)*  
+**D82 — Full LessonPackage JSON deserialized on every intervention call** *(pre-existing in service.py)*  
 `_segment_intervention_messages` reads and fully deserialises the entire lesson package from
 Redis on every call. For a large lesson package this is O(package size) per intervention.
 Pre-existing defect in `service.py`, not introduced by this PR.  
 *Enforcement: DISCIPLINE pending cache refactor in service.py.*
 
-**D69 — `current_slide_index` / `last_intervention_type` always `null`** *(new)*  
+**D83 — `current_slide_index` / `last_intervention_type` always `null`** *(new)*  
 `TutorSessionState` schema exposes these fields. They are never populated (not persisted in
 Redis). Callers receiving `null` may interpret the absence as "slide 0" or "no intervention
 yet" — a silent-wrong-result for any caller that branches on these values.  
@@ -303,7 +303,7 @@ Deferred per story Out of Scope; fields should either be removed from the schema
 `# BOUNDED:` note added explaining the null contract.  
 *Enforcement: DISCIPLINE — add docstring to `TutorSessionState` fields noting null contract.*
 
-**D70 — Intervention message always index `[0]`, silent wrong message after first segment** *(pre-existing in service.py)*  
+**D84 — Intervention message always index `[0]`, silent wrong message after first segment** *(pre-existing in service.py)*  
 `_segment_intervention_messages` returns `messages[0]` from the first segment's interventions
 regardless of the current segment. Pre-existing in service.py.  
 *Enforcement: DISCIPLINE pending segment-tracking implementation.*

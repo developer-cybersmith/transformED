@@ -2,7 +2,7 @@
 OpenAI Embeddings provider implementation.
 
 Uses text-embedding-3-small (1536 dims) — the fixed embedding model for
-TransformED AI.  Embeddings are generated ONCE at ingestion and never
+HIE.  Embeddings are generated ONCE at ingestion and never
 regenerated for stored content (CLAUDE.md rule).
 """
 
@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 
 from app.config import get_settings
 from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
-from app.core.langfuse import get_langfuse
+from app.core.langfuse import deterministic_trace_context, get_langfuse
 from app.core.retry import with_retry
 from app.providers.base import EmbeddingsProvider
 
@@ -119,8 +119,17 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         if langfuse is not None:
             generation = _safe_trace(
                 lambda: langfuse.start_observation(
-                    name="openai.embeddings",
-                    as_type="generation",
+                    # Verb-first, model-agnostic name (Langfuse naming
+                    # guidance, best-practices.md) — model is the separate
+                    # `model=` attribute below.
+                    name="generate-embeddings",
+                    # "embedding" is the more specific observation type for
+                    # this call (a text-embedding-3-small call is not a chat
+                    # generation) -- both "generation" and "embedding" support
+                    # usage_details/cost_details ingestion per Langfuse's
+                    # token-and-cost-tracking docs, so this only sharpens
+                    # filtering/analytics, it does not lose cost tracking.
+                    as_type="embedding",
                     model=self._model,
                     input=f"{len(texts)} texts",
                     metadata={
@@ -128,6 +137,7 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
                         "batch_size": len(texts),
                         "lesson_id": self._lesson_id,
                     },
+                    trace_context=deterministic_trace_context(langfuse, self._lesson_id),
                 )
             )
 

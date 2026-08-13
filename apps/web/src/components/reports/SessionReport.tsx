@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useSessionReport } from '@/hooks/useSessionReport';
-import { formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
+import { cesScoreColor, formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
 import type { DnaDimension, LearnerDnaSnapshot } from '@/types/assessment';
 
 interface SessionReportProps {
@@ -165,9 +165,14 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
             Focus
           </span>
-          <span className="text-neutral-900 font-medium text-lg">
+          <span className={`font-medium text-lg ${cesScoreColor(report.ces_score)}`}>
             {formatCesLabel(report.ces_score)}
           </span>
+          {report.ces_score !== null && (
+            <span className="text-neutral-400 text-xs">
+              {Math.round(report.ces_score)}/100
+            </span>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm">

@@ -32,7 +32,7 @@ def build_spec_app() -> FastAPI:
     mini = FastAPI(
         title="HIE Assessment API",
         description=(
-            "Assessment endpoints for TransformED — "
+            "Assessment endpoints for HIE — "
             "quiz submission, teach-back evaluation, session reports, "
             "Learner DNA, and onboarding diagnostic."
         ),

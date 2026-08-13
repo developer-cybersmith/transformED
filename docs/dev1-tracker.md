@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-08-03
+**Last updated:** 2026-08-13
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). **2026-07-23 gap-fix (Story 1-6):** `GET /api/content/lessons/{id}` never actually returned `content` despite the frozen contract promising it since Week 1 — discovered while building Story 3-6 (media signed-URL layer); fixed in Story 1-6.
 **Sprint 2 status:** 21/21 COMPLETE ✅ (2026-07-17, still on `sprint2/phase-b-generation-nodes` — not yet merged to `main`). All 15 pipeline nodes real; `package_builder` (S2-11) + `lesson_ready` WebSocket push (S2-12) landed 2026-07-16; cost ceiling enforcement (S2-13) and the 5-PDF eval harness (S2-14, live run not yet triggered) landed 2026-07-17; Learner Mode tier-aware generation (S2-LM1–LM5) landed 2026-07-17 — `POST /lessons` accepts a `tier` param that drives per-segment slide budgets and outline content-depth framing. Frontend/assessment/tutor teams can migrate off `apps/web/src/mocks/data/lessonPackage.ts` once this branch merges. **2026-07-27 gap-fix (Story 2-25):** a full-repo 360° audit (`docs/reports/sprint2-360-audit-2026-07-27.md`) found the admin panel was 100% unimplemented with no admin/role concept anywhere in the codebase (not the "Sprint 3" work it was tracked as — genuinely absent), the media signed-URL allowlist had 3 structurally-broken bucket entries (`source-pdfs`/`avatar-clips`/`lesson-slides` — each unreachable even for the legitimate owner, zero frontend callers), a stale pipeline docstring, and shared-contract drift (`lesson.ts`/`lesson_package.schema.json` nullability + `tier` required/optional mismatch vs. Pydantic). All 4 fixed in Story 2-25, plus a 5-agent code-review round (fixed a real admin-email case-sensitivity lockout bug it surfaced). The other 21 audit findings belong to Dev2/Dev3/Dev4 and are tracked separately for the cross-team wiring handoff. **2026-07-28 gap-fix (Story 2-28):** Dev 2 reported 48 quiz questions for a segment that should have 3, from a live Refresher-tier run. Root cause was NOT ARQ retries — 18 nodes returned `{**state, ...}`, and since six Phase-1 channels are `operator.add` concatenating reducers, the four nodes running after the fan-in each doubled all six: 2⁴ = 16×, in a single clean run. Fixed at all 18 sites and guarded by an AST scan + e2e assertions (the assertion failed `48 <= 3` before the fix, passes after). **Two consequences worth flagging:** (1) real TTS spend was ~4× inflated, so every existing $3.00/lesson calibration and Langfuse baseline must be re-measured; (2) found while fixing it — `_FAN_OUT_STATE_KEYS` omitted `"tier"`, and because a `Send()` payload *replaces* state, all six Phase-1 nodes read the T2 default regardless of the lesson's real tier, silently disabling the S2-LM3/LM4/LM5 bands for every T1 and T3 lesson. Both now covered by tests that fail on the mutation. Same `{**state, ...}` pattern exists in Dev 4's `modules/tutor/state_machine/graph.py` — handed off, not fixed across the ownership boundary. **2026-07-28 gap-fix (Story 2-31):** closes Dev 2's two remaining reported items plus two findings from the Story 2-28 review. `_fallback_narration()` was returning `{"script": ""}`, discarding narration text sitting in `state["narration_scripts"]` — only the *audio* is missing on the TTS degrade path, not the script — so packages built via that path shipped empty narration. `_index_by_segment_id` used `item[value_key]` and `KeyError`-ed the whole node on one malformed entry, contradicting its own docstring. Cached Phase-1 quiz batches are now rejected on read when the count exceeds the lesson tier's band, so a checkpoint written *before* the 2-28 `tier` fix cannot silently replay T2-sized content into a T1 lesson while the logs show the tier fix working (guard is `n_max`-only — a below-band count is ambiguous against 2-28 AC-8's keep-short-batches rule; residual gap documented in the story). `GET /lessons` now lifts `subject` + `estimated_duration_mins` from the `content` JSONB via PostgREST path selectors instead of `select("*")` — Dev 2 needed both for dashboard cards without an N+1 — with regression assertions proving Story 1-6 AC-7 still holds (zero signing calls, no `content` attached). Embedded-lesson signed-URL expiry raised 1h → 8h. **Not fixed here and must not be reported as fixed:** Dev 2's visible 0:00-quiz-fires-instantly symptom is in `AudioTimeline.tsx` and needs a virtual playback clock — see `docs/dev2-narration-playback-handoff.md`. **2026-07-28 review round (6 adversarial layers) on Story 2-31 — worth reading, because it caught a bug that would have taken the product down:** the first `_LIST_COLUMNS` named `completed_at`, which is a column on `lesson_jobs` and *not* on `lessons`. Under `select("*")` that was harmless; naming it explicitly makes PostgREST reject the whole query, so `GET /lessons` would have failed for every user on every request — and no test could catch it, because all four AC-4 tests mock Supabase and assert the select *string*. Now guarded by a test that parses `_LIST_COLUMNS` against the columns the migrations actually define. The review also showed **AC-3's shipped guard could not catch its own stated hazard**: pre-2-28 checkpoints are all T2-sized (2–3 questions) and T1's `n_max` is 5, so every stale T2 cache passed for exactly the T1 lessons the AC was written about; the count heuristic fired only for T3. Redesigned as a `tier` stamp in the checkpoint *value* — exact rather than inferential, keys still `f"{node}:{section_id}"`, same-tier retry still a free cache hit. Also added a salvage path (a rejected cache plus one transient LLM failure previously shipped a segment with **zero** questions and left the stale checkpoint in place, so every ARQ retry re-rejected and re-billed with no `check_ceiling()` call in that node — though the loop was never actually unbounded: Phase 1 is gated on `check_ceiling()` before dispatch and `_maybe_accumulate_cost` raises at the $3.00 ceiling, so it always terminated. That over-claim was corrected on 2026-07-29 after the Story 2-32 review caught it; the salvage fix stands on the zero-questions correctness defect, which was always the stronger argument), hardened `_index_by_segment_id` against non-dict entries/values, and hardened the list response against untrusted LLM-generated JSONB (a dict-valued `subject` or a `NaN` duration would have 500'd or broken `JSON.parse` for the whole page). Three tests were found passing for the wrong reason and fixed. **Standing lesson: mocked tests on both sides validate the mock, not the contract** — the two worst findings here were both invisible to a green suite.
@@ -72,6 +72,40 @@ against real providers**, so "the seams line up" remains the strongest supportab
 Dev 3's review under the option-B agreement, and Dev 2's one-line `player.machine.ts` change is
 its other half. Dev 1 will not merge #119 unilaterally.
 
+**Story 3-35 — env/config correctness, 2026-08-11 (branch `sprint3/s3-35-env-config-fixes`).**
+Bundled fix for three registered defects sharing one root cause (a documented/templated config
+value disagreeing with the code that actually runs, or existing with zero enforcement): **D62**
+(`LANGFUSE_HOST` template said self-hosted, code default is Cloud), **D31**
+(`NEXT_PUBLIC_API_URL` missing `/api` in `.env.example` and `ci.yml` — High, live in prod, part
+of the Lesson Delivery sprint's L0 prerequisites), and **D48** (`max_daily_spend_per_user_usd`
+deleted — zero enforcing readers ever existed; option (b) taken, not implemented, since a real
+daily-spend control is separately-scoped work). All three closed in
+`docs/DEFECT-REGISTER.md`. RED-then-GREEN verified by actually running the suites (this sandbox
+had neither Python 3.12/`uv` nor `pnpm` preinstalled — both were installed to run real tests
+rather than assume green): 2 new backend tests + 1 new frontend test, plus the two existing
+regression suites the story promises not to break (`test_config_settings.py` 15/15,
+`test_generate_lesson_endpoint.py` 81/81) — all green, unmodified. Full story:
+`docs/stories/3-35-env-config-fixes.md`.
+
+**Story 3-36 — package_builder defensive fixes, 2026-08-11 (branch
+`sprint3/s3-36-package-builder-defensive-fixes`).** D32: `_group_by_segment_id` raw
+`item["data"]` subscript + missing `isinstance` check — real, unfixed defect, now hardened to
+match its sibling `_index_by_segment_id`'s Story 2-31 defensive-skip pattern exactly (all 3
+callers — slides/quiz/jargon — inherit the fix with no call-site changes). 3 new tests
+reproduce all three pre-fix crash types (`AttributeError`/`KeyError`/`TypeError`), RED-confirmed
+then GREEN; full 42-test file re-run, zero regressions. **D33: found already fixed** — `git
+blame` traces the real fix to commit `1c4360b1` (2026-08-04, Story 1-13), a full week before
+this story started, already covered by 3 named tests. The register was simply never updated to
+close it — corrected rather than re-implemented. **Round 2 (real `/bmad-code-review`, 4
+independent agents) found a more severe issue than round 1's own inline review caught:**
+`metadata.total_segments` read the stale planning-time count instead of the real shipped
+count — this story's own D32 fix made that reachable via a new trigger (a segment's only
+slide entry malformed → silently dropped → package claims more segments than it shipped, the
+book-scale 4%-defect shape at segment granularity). Registered and fixed as **D63** in the
+same commit; quiz/jargon content losses also now feed the existing degradation-tracking
+aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full story:
+`docs/stories/3-36-package-builder-defensive-fixes.md`.
+
 ---
 
 ## Quick Status Dashboard
@@ -83,10 +117,10 @@ its other half. Dev 1 will not merge #119 unilaterally.
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 6 | 2 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 14 | 10 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **60** | **45** | **1** | **14** |
+| **Totals** | | **68** | **53** | **1** | **14** |
 
 ---
 
@@ -329,7 +363,11 @@ Redis keys Dev 1 WRITES:
 | Env Var | Default | Meaning |
 |---------|---------|---------|
 | `MAX_LESSON_COST_USD` | `3.00` | Hard ceiling per lesson pipeline run |
-| `MAX_DAILY_SPEND_PER_USER_USD` | `10.00` | Daily per-user AI spend cap |
+
+**`MAX_DAILY_SPEND_PER_USER_USD` removed 2026-08-11 (D48, Story 3-35)** — it had zero
+enforcing readers anywhere in the codebase and looked like a real control while doing
+nothing. Daily per-user spend is not enforced; the per-user generation-concurrency cap
+(`max_concurrent_generations_per_user`) is the only other real spend control.
 
 On breach: downshift to cheapest providers, complete the lesson, flag in admin — **never abort mid-lesson**.
 
@@ -758,6 +796,51 @@ Every node must:
 - [x] **S3-6 Media signed-URL layer** — ✓ 2026-07-23 — added from 2026-07-22 audit (HIGH #3)
   - `apps/api/app/modules/media/router.py` — finish `GET /api/media/signed-url` (was a 501 stub)
   - **AC:** ownership-verified signing (IDOR-safe) for `lesson-audio`/`lesson-images` paths; malformed/unowned paths 404, not 500; backend-only (no frontend player changes — see `docs/stories/3-6-media-signed-url-layer.md`) ✅
+
+- [x] **S3-37 Node 8 narration hard cap — 10,000 chars/lesson** — ✓ 2026-08-12 (branch `sprint3/s3-37-narration-char-cap`, PR not yet opened)
+  - `docs/decisionupdate.md` §8: TTS synthesis cost is 67–73% of total lesson generation cost — the dominant line item against the $3.00/lesson ceiling — and no lesson-wide narration character cap existed anywhere. Cannot live in `narration_generator_node` (Send()-dispatched per-section, no cross-section visibility); enforced in `tts_node` instead, the first point all segments' scripts are available together and immediately before the TTS spend.
+  - `apps/api/app/config.py` *(`settings.max_narration_chars_per_lesson`, default 10,000)*, `apps/api/app/modules/content/pipeline/graph.py` *(`tts_node` computes a running total, truncates the boundary-crossing segment, degrades every later segment through the existing browser-fallback shape — no new shape invented, no paid TTS call for a segment contributing zero narration)*, `apps/api/app/modules/admin/router.py` *(surfaces the cap event)*
+  - **AC:** cap enforced lesson-wide across all segments ✅; boundary segment truncated character-exact, later segments degrade via the existing fallback shape ✅; `node_outputs["narration_cap_applied"]` always written (present even when nothing capped) — no silent truncation ✅; 34 new tests (`test_tts_node.py`, `test_admin_router.py`) ✅ — see `docs/stories/3-37-narration-char-cap.md`
+  - **Verified this session:** full suite 43 failed/1795 passed/85 skipped vs. `main`'s 44 failed/1780 passed/85 skipped (same baseline failures, zero regressions, +15 new passing); ruff/mypy parity with `main`
+
+- [x] **S3-38 tts_node measures REAL audio duration** — ✓ 2026-08-12 (branch `sprint3/s3-38-real-audio-duration`, PR not yet opened)
+  - `package_builder` was guessing slide timing instead of using the actual synthesized audio's real duration. Round 2 review caught a real license defect in the first implementation: it used `mutagen`, mislabeled MIT in this story's own ACs/pyproject comment, but actually GPL-2.0-or-later (verified via `pip show mutagen`, not asserted) — swapped to `tinytag` (genuinely MIT), matching this repo's zero-tolerance stance on license mistakes (same category as the PyMuPDF/AGPL-3.0 ban).
+  - `apps/api/app/modules/content/pipeline/graph.py` *(`tts_node` parses real duration via `tinytag.TinyTag`, `duration_ms` is `None` on the browser-fallback path or when `tinytag` can't parse)*, `apps/api/pyproject.toml` *(`tinytag>=2.3.0,<3.0.0` added)*
+  - **AC:** real synthesized-audio duration replaces estimated slide timing ✅; parse failure degrades explicitly (`duration_ms=None`), never silently wrong ✅; license of the new dependency verified, not assumed ✅; 18 new tests (`test_audio_duration_s3_38.py`) ✅ — see `docs/stories/3-38-real-audio-duration.md`
+  - **Verified this session:** 43 failed/1798 passed/85 skipped vs. `main` baseline, zero regressions; ruff/mypy parity with `main` (after installing the new `tinytag` dependency into the test environment)
+
+- [x] **S3-39 Surface `_get_section_body`'s silent truncation (D46)** — ✓ 2026-08-12 (branch `sprint3/s3-39-surface-section-truncation`, PR not yet opened)
+  - Closes D46. `_get_section_body(max_chars=...)` silently sliced oversized section text with no record anywhere that truncation happened — a smaller-scale instance of the same "reports success while covering a fraction of the input" failure class as the book-scale 4%-of-the-book defect this register exists to name.
+  - `apps/api/app/config.py`, `apps/api/app/modules/content/pipeline/graph.py` *(every truncation now recorded into a `section_truncations` list, persisted and admin-visible — no silent degradation)*
+  - **AC:** every truncation explicitly recorded (section id, original length, kept length) ✅; nothing truncated without a visible trail ✅; 73+49 new/updated tests across `test_phase1_economy_nodes.py`, `test_phase1_checkpoint_idempotency.py`, `test_package_builder_node.py` ✅ — see `docs/stories/3-39-surface-section-truncation.md`
+  - **Verified this session:** 43 failed/1789 passed/85 skipped vs. `main` baseline, zero regressions; ruff/mypy parity with `main`
+  - **D46 stays OPEN** — only the "nothing surfaces it" half is fixed here (now guarded two ways: `truncation_expected` at chapter level, `section_truncations` at per-section level). The root cause (the ~90,000-char LLM-visible window itself) is unchanged and remains open, per D46's own addendum in `docs/DEFECT-REGISTER.md` (already written by this branch's own commits) — do not report D46 as closed
+
+- [x] **S3-40 Langfuse instrumentation audit (env, session semantics, naming)** — ✓ 2026-08-12
+  - Installed `github.com/langfuse/skills`, used it to audit tracing across all providers + the tutor FSM against best-practices.md/sessions.md/environments.md fetched fresh, and against the pinned SDK's real signatures (4.14.3) — not from memory
+  - `apps/api/app/config.py` *(added `langfuse_environment`, validated)*, `apps/api/app/core/langfuse.py` *(wired into client init)*, `apps/api/app/modules/tutor/state_machine/graph.py` *(`_trace_dispatch` fixed — one trace per turn + `propagate_attributes(session_id=...)`, was wrongly forcing a whole session into one ever-growing trace)*, all 5 LLM/embedding/TTS/image providers *(verb-first observation names; TTS/image providers traced for the first time)*, `apps/api/app/modules/content/pipeline/graph.py` *(TTS providers now constructed with `lesson_id`)*
+  - **AC:** fresh docs fetched, not memory ✅; `environment` set and validated ✅; tutor session semantics match Langfuse's documented one-trace-per-turn model ✅; observation names verb-first/model-agnostic ✅; two real (non-mocked) Langfuse Cloud traces fetched back and inspected ✅; 141/141 relevant tests passing, 0 regressions ✅ — see `docs/stories/3-40-langfuse-tracing-audit.md` for the full audit, including gaps explicitly deferred (span/parent hierarchy, `user_id` attribution — both need `parent_span_id`/`user_id` threaded through LangGraph state, a real architecture change out of scope here)
+  - **Not this story:** S3-5's `token_cost_usd` joined-metadata field is separate and still open
+
+- [x] **S3-42 Sarvam text chunking + real WAV decoding (D74)** — ✓ 2026-08-13 (branch `sprint3/s3-42-sarvam-text-chunking`, merged to `main`)
+  - Found live mid-L1: every real narration segment fell through Sarvam → Azure (unconfigured) → browser, even after D67's voice fix. Two compounding, previously-unknown defects in `SarvamTTSProvider._synthesize_inner`: Sarvam's real 500-char/3-item-per-request limits (neither ever respected), and `audio_bytes = response.content` capturing the raw JSON response body instead of the base64-encoded audio inside it — broken since Story 2-8, never caught because every test mocked the provider at the call site
+  - `apps/api/app/providers/tts/sarvam.py` *(`_chunk_narration_text`, `_batched`, `_concatenate_wav_clips` — real PCM-frame WAV concatenation via the stdlib `wave` module)*
+  - **AC:** live end-to-end verified before writing tests (2,406 chars → 5 chunks → 2 batched requests → one valid 130.45s WAV) ✅; 23 tests (15 new + 8 corrected), RED-GREEN verified by reintroducing the old bug ✅ — see `docs/stories/3-42-sarvam-text-chunking.md`
+
+- [x] **S3-43 Demo-readiness fixes: lesson_planner batching + narration cap (D75, D76)** — ✓ 2026-08-13 (branch `sprint3/s3-43-demo-readiness-fixes`)
+  - Stakeholder-demo goal: one real lesson, ≥15 minutes. Two root-caused blockers found via direct investigation, not assumed: **D75** — `lesson_planner_batch_size` (15) equalled `structure_max_sections` (15), so Story 2-16's own batching (built to stop a single large segment-id echo from "collapsing") never actually triggered — confirmed live: two real runs on the same 15-segment chapter returned 5 and 12 segments. The obvious `<=`→`<` fix is a no-op at these defaults (verified by hand); real fix lowers the batch size to 10. **D76** — the 10,000-char narration cap (Story 3-37) was sized against a stale ~1,600 chars/min assumption in `decisionupdate.md`; real measured Sarvam rate is 1,106.6 chars/min, capping every lesson at ~9 minutes. Raised to 17,000 chars (cost re-derived: ~13% of the $3.00 ceiling, cost was never the real constraint)
+  - `apps/api/app/config.py` *(`lesson_planner_batch_size` 15→10, `max_narration_chars_per_lesson` 10,000→17,000)*
+  - **AC:** RED-GREEN verified for both fixes ✅; `tests/integration/test_howto_pipeline_e2e.py`'s own 20-step how-to (already at `structure_max_sections`) now genuinely exercises real batching for the first time, assertion updated accordingly ✅; full repo-wide regression 54 failed/2060 passed/85 skipped — exactly the established pre-existing baseline, zero new failures ✅ — see `docs/stories/3-43-demo-readiness-fixes.md`
+
+- [x] **S3-44 lesson_planner per-batch echo retry (D77)** — ✓ 2026-08-13 (branch `sprint3/s3-44-planner-batch-retry`, merged to `main`)
+  - Found running D75's own fix for real, the first live test of S3-43's Phase 4: two consecutive real demo-generation attempts against the merged D75 fix still failed (`expected 15, got 14`, then `got 12`). Verified live via the real Langfuse trace before writing any code — batching genuinely engaged exactly as D75 designed (one call carrying 10 `segment_id` refs, a second carrying 5); the residual gap is that a real LLM can still occasionally under-echo even a correctly-sized batch
+  - `apps/api/app/modules/content/pipeline/graph.py` *(`_run_planner_batch` retries the SAME batch's own completion up to `_PLANNER_BATCH_MAX_ATTEMPTS=3` times on echo mismatch; a `None` response still raises immediately, unchanged)*
+  - **AC:** RED-GREEN verified via the Edit tool (a fragile string-replace revert script silently failed earlier in this same investigation — caught by diffing, switched method) ✅; both pre-existing guard-preservation tests re-verified to still fire correctly with retries running underneath them ✅; full repo-wide regression 54 failed/2062 passed/85 skipped — established baseline, zero new failures ✅ — see `docs/stories/3-44-planner-batch-retry.md`
+
+- [x] **S3-45 narration cap re-sized to a real cost safety net, not a duration target (D78)** — ✓ 2026-08-13 (branch `sprint3/s3-45-narration-cap-safety-net`)
+  - Found inspecting the first real, fully successful demo lesson produced after D75+D76+D77 (lesson `abe4e438`, an ordinary 29-page/15-section chapter). D76's 17,000-char cap, sized against "a real 15-minute lesson," proved actively harmful on real data: 43,793 real narration chars crossed the cap and zeroed segments 6–14 (9 of 15) — a complete loss of real Sarvam audio for 60% of the lesson (all 9 fell back to browser TTS), while real cost sat at just 29% of the $3.00 ceiling. `package_builder`'s D32/D33 recovery correctly preserved the text (working as designed), but the audio experience was materially degraded
+  - `apps/api/app/config.py` *(`max_narration_chars_per_lesson` 17,000→120,000, re-derived against real cost headroom — ≈$2.40 Sarvam spend = 80% of the $3.00 ceiling — not any duration target)*
+  - **AC:** new `test_production_default_does_not_truncate_a_real_world_sized_lesson` uses the REAL settings default (not a mocked cap) against the exact real per-segment character distribution from lesson `abe4e438` ✅; RED-GREEN verified (failed against 17,000 with the exact predicted zeroing, passed against 120,000) ✅; full repo-wide regression re-baselined on this exact commit: 52 failed/2062 passed/86 skipped before, 52 failed/2063 passed/86 skipped after — zero new failures ✅ — see `docs/stories/3-45-narration-cap-safety-net.md`
 
 ---
 

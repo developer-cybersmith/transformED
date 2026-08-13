@@ -1009,7 +1009,7 @@ def test_http_201_on_success() -> None:
         profile_text=(
             "You tend to learn visually and set clear goals. "
             "This assessment reflects your personal learning preferences, not your intelligence "
-            "or capability. TransformED Learner DNA is not a clinical assessment and does not "
+            "or capability. HIE Learner DNA is not a clinical assessment and does not "
             "diagnose any learning or psychological condition. — Pursuant to DPDP Act 2023."
         ),
         session_count=0,
@@ -1145,4 +1145,42 @@ def test_http_profile_text_no_raw_numeric_scores() -> None:
     assert raw_float_pattern.search(body["profile_text"]) is None, (
         f"AC #9 violated: profile_text contains a raw numeric score. "
         f"Content: {body['profile_text']!r}"
+    )
+
+
+@pytest.mark.unit
+def test_onboarding_router_releases_lock_on_503() -> None:
+    """AC1 (router layer) — D71: When process_onboarding raises HTTPException(503),
+    the router must call redis.delete('user:{user_id}:onboarding_done') to release
+    the idempotency lock so the student can retry.
+
+    This tests the router's `except HTTPException: await redis.delete(onboarding_key)`
+    cleanup at router.py:265 — the layer that actually owns the Redis lock.
+    """
+    from fastapi import HTTPException as FE
+
+    mock_redis = MagicMock()
+    mock_redis.get = AsyncMock(return_value=None)   # no reassessment flag
+    mock_redis.set = AsyncMock(return_value=True)   # SET NX succeeds — lock acquired
+    mock_redis.delete = AsyncMock()                 # spy: must be called with onboarding_key
+
+    with patch("app.core.redis.get_redis", return_value=mock_redis), \
+         patch("app.core.db.get_supabase", return_value=MagicMock()), \
+         patch(
+             "app.modules.assessment.service.process_onboarding",
+             new=AsyncMock(side_effect=FE(status_code=503, detail="retry")),
+         ):
+        response = _client.post(
+            "/api/assessment/onboarding/submit",
+            json={"responses": _make_20_responses()},
+        )
+
+    assert response.status_code == 503, (
+        f"Expected 503 from service, got {response.status_code}: {response.text[:200]}"
+    )
+    mock_redis.delete.assert_called()
+    deleted_keys = [str(c.args[0]) for c in mock_redis.delete.call_args_list]
+    assert any("onboarding_done" in k for k in deleted_keys), (
+        "AC1 FAIL: Redis lock must be deleted when process_onboarding raises HTTPException(503). "
+        f"redis.delete was called with: {deleted_keys}"
     )
