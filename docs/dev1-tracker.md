@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 12 | 8 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 14 | 10 | 0 | 4 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **66** | **51** | **1** | **14** |
+| **Totals** | | **68** | **53** | **1** | **14** |
 
 ---
 
@@ -831,6 +831,16 @@ Every node must:
   - Stakeholder-demo goal: one real lesson, ≥15 minutes. Two root-caused blockers found via direct investigation, not assumed: **D75** — `lesson_planner_batch_size` (15) equalled `structure_max_sections` (15), so Story 2-16's own batching (built to stop a single large segment-id echo from "collapsing") never actually triggered — confirmed live: two real runs on the same 15-segment chapter returned 5 and 12 segments. The obvious `<=`→`<` fix is a no-op at these defaults (verified by hand); real fix lowers the batch size to 10. **D76** — the 10,000-char narration cap (Story 3-37) was sized against a stale ~1,600 chars/min assumption in `decisionupdate.md`; real measured Sarvam rate is 1,106.6 chars/min, capping every lesson at ~9 minutes. Raised to 17,000 chars (cost re-derived: ~13% of the $3.00 ceiling, cost was never the real constraint)
   - `apps/api/app/config.py` *(`lesson_planner_batch_size` 15→10, `max_narration_chars_per_lesson` 10,000→17,000)*
   - **AC:** RED-GREEN verified for both fixes ✅; `tests/integration/test_howto_pipeline_e2e.py`'s own 20-step how-to (already at `structure_max_sections`) now genuinely exercises real batching for the first time, assertion updated accordingly ✅; full repo-wide regression 54 failed/2060 passed/85 skipped — exactly the established pre-existing baseline, zero new failures ✅ — see `docs/stories/3-43-demo-readiness-fixes.md`
+
+- [x] **S3-44 lesson_planner per-batch echo retry (D77)** — ✓ 2026-08-13 (branch `sprint3/s3-44-planner-batch-retry`, merged to `main`)
+  - Found running D75's own fix for real, the first live test of S3-43's Phase 4: two consecutive real demo-generation attempts against the merged D75 fix still failed (`expected 15, got 14`, then `got 12`). Verified live via the real Langfuse trace before writing any code — batching genuinely engaged exactly as D75 designed (one call carrying 10 `segment_id` refs, a second carrying 5); the residual gap is that a real LLM can still occasionally under-echo even a correctly-sized batch
+  - `apps/api/app/modules/content/pipeline/graph.py` *(`_run_planner_batch` retries the SAME batch's own completion up to `_PLANNER_BATCH_MAX_ATTEMPTS=3` times on echo mismatch; a `None` response still raises immediately, unchanged)*
+  - **AC:** RED-GREEN verified via the Edit tool (a fragile string-replace revert script silently failed earlier in this same investigation — caught by diffing, switched method) ✅; both pre-existing guard-preservation tests re-verified to still fire correctly with retries running underneath them ✅; full repo-wide regression 54 failed/2062 passed/85 skipped — established baseline, zero new failures ✅ — see `docs/stories/3-44-planner-batch-retry.md`
+
+- [x] **S3-45 narration cap re-sized to a real cost safety net, not a duration target (D78)** — ✓ 2026-08-13 (branch `sprint3/s3-45-narration-cap-safety-net`)
+  - Found inspecting the first real, fully successful demo lesson produced after D75+D76+D77 (lesson `abe4e438`, an ordinary 29-page/15-section chapter). D76's 17,000-char cap, sized against "a real 15-minute lesson," proved actively harmful on real data: 43,793 real narration chars crossed the cap and zeroed segments 6–14 (9 of 15) — a complete loss of real Sarvam audio for 60% of the lesson (all 9 fell back to browser TTS), while real cost sat at just 29% of the $3.00 ceiling. `package_builder`'s D32/D33 recovery correctly preserved the text (working as designed), but the audio experience was materially degraded
+  - `apps/api/app/config.py` *(`max_narration_chars_per_lesson` 17,000→120,000, re-derived against real cost headroom — ≈$2.40 Sarvam spend = 80% of the $3.00 ceiling — not any duration target)*
+  - **AC:** new `test_production_default_does_not_truncate_a_real_world_sized_lesson` uses the REAL settings default (not a mocked cap) against the exact real per-segment character distribution from lesson `abe4e438` ✅; RED-GREEN verified (failed against 17,000 with the exact predicted zeroing, passed against 120,000) ✅; full repo-wide regression re-baselined on this exact commit: 52 failed/2062 passed/86 skipped before, 52 failed/2063 passed/86 skipped after — zero new failures ✅ — see `docs/stories/3-45-narration-cap-safety-net.md`
 
 ---
 
