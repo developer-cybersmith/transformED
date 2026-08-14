@@ -488,20 +488,72 @@ def test_deep_health_down_when_both_fail(client_factory: ClientFactory) -> None:
 
 
 # ── POST /jobs/{job_id}/retry (Story 3-58, S3-4) ────────────────────────────────
+#
+# MOCK-CONTRACT: every test below asserts real, observable outcomes (real
+# response status/body fields, the exact SQL filter arguments passed to a
+# mocked Supabase client, the exact _job_id string passed to a mocked ARQ
+# pool) — not bare "was this called" checks. No real-dependency (integration)
+# test exists yet for this endpoint end-to-end against real Supabase/ARQ —
+# matching every other endpoint already in this file (list_jobs, get_job,
+# get_cost_report, deep_health), none of which have one either. A real
+# integration test is out of scope for this router's existing test
+# conventions, not a gap this story introduces.
 
 
-def _arq_pool(job_id: str | None = "77777777-7777-7777-7777-777777777777") -> AsyncMock:
-    job = MagicMock()
-    job.job_id = job_id
+def _arq_pool(*, dedup: bool = False, raises: bool = False) -> AsyncMock:
+    """Mock ARQ pool. By default `enqueue_job` succeeds and returns a Job
+    whose `.job_id` echoes back the `_job_id` kwarg it was called with —
+    matching real ARQ semantics (the returned `Job.job_id` IS the id you
+    passed in). `dedup=True` simulates ARQ deduplicating the job (returns
+    None). `raises=True` simulates `enqueue_job` itself raising."""
     pool = AsyncMock()
-    pool.enqueue_job = AsyncMock(return_value=None if job_id is None else job)
+    if raises:
+        pool.enqueue_job = AsyncMock(side_effect=RuntimeError("redis connection reset"))
+    elif dedup:
+        pool.enqueue_job = AsyncMock(return_value=None)
+    else:
+
+        async def _enqueue(*args: Any, **kwargs: Any) -> MagicMock:
+            job = MagicMock()
+            job.job_id = kwargs.get("_job_id")
+            return job
+
+        pool.enqueue_job = AsyncMock(side_effect=_enqueue)
     return pool
 
 
-def _retry_supabase(job_row: dict[str, Any] | None) -> MagicMock:
+def _retry_supabase(
+    job_row: dict[str, Any] | None,
+    concurrent_jobs: list[dict[str, Any]] | None = None,
+) -> MagicMock:
+    """Table-aware Supabase mock for retry_job — `lessons` and `lesson_jobs`
+    get genuinely separate mock objects (not one shared `.table.return_value`),
+    so a test can tell which table an update() call actually targeted. Review
+    finding: the original single-shared-mock version could not distinguish a
+    lessons update from a lesson_jobs update, so a table-name swap bug would
+    have passed every existing test."""
     sb = MagicMock()
-    select_chain = sb.table.return_value.select.return_value.eq.return_value
-    select_chain.maybe_single.return_value.execute.return_value.data = job_row
+    lessons_table = MagicMock()
+    lesson_jobs_table = MagicMock()
+
+    lookup_chain = lesson_jobs_table.select.return_value.eq.return_value.maybe_single.return_value
+    lookup_chain.execute.return_value.data = job_row
+
+    concurrent_chain = (
+        lesson_jobs_table.select.return_value.eq.return_value.neq.return_value.in_.return_value
+    )
+    concurrent_chain.execute.return_value.data = concurrent_jobs or []
+
+    def _table(name: str) -> MagicMock:
+        if name == "lessons":
+            return lessons_table
+        if name == "lesson_jobs":
+            return lesson_jobs_table
+        return MagicMock()
+
+    sb.table.side_effect = _table
+    sb.lessons_table = lessons_table
+    sb.lesson_jobs_table = lesson_jobs_table
     return sb
 
 
@@ -576,6 +628,40 @@ def test_retry_job_409_when_not_failed(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("concurrent_status", ["running", "pending"])
+def test_retry_job_409_when_another_job_for_lesson_is_active(
+    client_factory: ClientFactory, concurrent_status: str
+) -> None:
+    """Review finding (Scale & Load Hunter): without this check, two
+    concurrent retries (or a retry racing the original still-finishing run)
+    both pass the 'failed' check, both enqueue, and content_pipeline.py's
+    unconditional clear_lesson_cost() lets whichever finishes first silently
+    reset the $3.00 ceiling for the other — a real cost-ceiling bypass, not
+    just wasted compute. This test pins the mitigation: reject up front if
+    another job for the same lesson is already active."""
+    job_id = "66666666-6666-6666-6666-666666666666"
+    lesson_id = "lesson-66"
+    sb = _retry_supabase(
+        {
+            "job_id": job_id,
+            "lesson_id": lesson_id,
+            "status": "failed",
+            "lessons": {"user_id": "user-1"},
+        },
+        concurrent_jobs=[{"job_id": "other-job-id", "status": concurrent_status}],
+    )
+    client = client_factory()
+    pool = _arq_pool()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
+        resp = client.post(f"/api/admin/jobs/{job_id}/retry")
+    assert resp.status_code == 409
+    assert "already running or pending" in resp.json()["detail"]
+    pool.enqueue_job.assert_not_awaited()
+    sb.lessons_table.update.assert_not_called()
+    sb.lesson_jobs_table.update.assert_not_called()
+
+
+@pytest.mark.unit
 def test_retry_job_202_happy_path_resets_status_and_enqueues_fresh_job_id(
     client_factory: ClientFactory,
 ) -> None:
@@ -599,21 +685,31 @@ def test_retry_job_202_happy_path_resets_status_and_enqueues_fresh_job_id(
     body = resp.json()
     assert body["lesson_id"] == lesson_id
     assert body["status"] == "pending"
+    # The response's job_id is the DB row id; arq_job_id is the id actually
+    # enqueued with ARQ — the two are never the same value, and only the
+    # latter can be used to look up the running job.
+    assert body["arq_job_id"] != body["job_id"]
 
-    # Both status columns were reset (lessons + lesson_jobs), matching the
-    # initial-creation state generate_chapter_lesson writes.
-    update_calls = list(sb.table.return_value.update.call_args_list)
-    assert any(c.args[0].get("status") == "generating" for c in update_calls), (
-        "lessons.status must be reset to 'generating'"
-    )
-    assert any(c.args[0].get("status") == "pending" for c in update_calls), (
-        "lesson_jobs.status must be reset to 'pending'"
-    )
+    # lessons and lesson_jobs are now genuinely separate mocks (review fix —
+    # a single shared mock could not have caught a table-name swap).
+    lessons_calls = list(sb.lessons_table.update.call_args_list)
+    assert len(lessons_calls) == 1
+    assert lessons_calls[0].args[0] == {"status": "generating"}
+
+    jobs_calls = list(sb.lesson_jobs_table.update.call_args_list)
+    assert len(jobs_calls) == 1
+    assert jobs_calls[0].args[0] == {"status": "pending", "error": None}
+    # The lesson_jobs write must be scoped by job_id (the real primary key),
+    # never lesson_id (no unique constraint — D45 already documents
+    # concurrent duplicate lesson_jobs rows for one lesson as real).
+    sb.lesson_jobs_table.update.return_value.eq.assert_called_once_with("job_id", job_id)
+
     # node_outputs/last_node must never be touched by any update call — that
     # would silently discard the checkpoint-resume state and re-bill
     # already-completed nodes.
-    assert not any("node_outputs" in c.args[0] for c in update_calls)
-    assert not any("last_node" in c.args[0] for c in update_calls)
+    all_payloads = [c.args[0] for c in lessons_calls + jobs_calls]
+    assert not any("node_outputs" in p for p in all_payloads)
+    assert not any("last_node" in p for p in all_payloads)
 
     # The ARQ _job_id must NOT be the bare "pipeline:{lesson_id}" string — a
     # fresh id per retry is what keeps the LangGraph thread_id unique
@@ -622,22 +718,69 @@ def test_retry_job_202_happy_path_resets_status_and_enqueues_fresh_job_id(
     _, kwargs = pool.enqueue_job.call_args
     assert kwargs["_job_id"] != f"pipeline:{lesson_id}"
     assert kwargs["_job_id"].startswith(f"pipeline:{lesson_id}:retry:")
+    assert body["arq_job_id"] == kwargs["_job_id"]
 
 
 @pytest.mark.unit
 def test_retry_job_500_when_arq_deduplicates(client_factory: ClientFactory) -> None:
     job_id = "55555555-5555-5555-5555-555555555555"
+    lesson_id = "lesson-55"
     sb = _retry_supabase(
         {
             "job_id": job_id,
-            "lesson_id": "lesson-55",
+            "lesson_id": lesson_id,
             "status": "failed",
             "lessons": {"user_id": "user-1"},
         }
     )
-    pool = _arq_pool(job_id=None)  # enqueue_job returns None (deduplicated)
+    pool = _arq_pool(dedup=True)  # enqueue_job returns None (deduplicated)
     client = client_factory()
     with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
         resp = client.post(f"/api/admin/jobs/{job_id}/retry")
 
     assert resp.status_code == 500
+    # Must not leave the job silently stuck showing "pending" with nothing
+    # actually enqueued — status is reverted to failed.
+    jobs_calls = list(sb.lesson_jobs_table.update.call_args_list)
+    assert any(c.args[0].get("status") == "failed" for c in jobs_calls), (
+        "lesson_jobs.status must revert to 'failed' when ARQ deduplicates"
+    )
+    lessons_calls = list(sb.lessons_table.update.call_args_list)
+    assert any(c.args[0].get("status") == "failed" for c in lessons_calls), (
+        "lessons.status must revert to 'failed' when ARQ deduplicates"
+    )
+
+
+@pytest.mark.unit
+def test_retry_job_500_when_enqueue_raises(client_factory: ClientFactory) -> None:
+    """Review finding (Edge Case Hunter): enqueue_job can raise, not just
+    return None — e.g. a Redis connection drop mid-call. Before this fix,
+    status was already reset to generating/pending by the time that raises,
+    and nothing caught it — the job would sit forever showing 'pending' with
+    no worker ever picking it up, and future retries would 409 since status
+    is no longer 'failed'."""
+    job_id = "77777777-aaaa-bbbb-cccc-777777777777"
+    lesson_id = "lesson-77"
+    sb = _retry_supabase(
+        {
+            "job_id": job_id,
+            "lesson_id": lesson_id,
+            "status": "failed",
+            "lessons": {"user_id": "user-1"},
+        }
+    )
+    pool = _arq_pool(raises=True)
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
+        resp = client.post(f"/api/admin/jobs/{job_id}/retry")
+
+    assert resp.status_code == 500
+    jobs_calls = list(sb.lesson_jobs_table.update.call_args_list)
+    assert any(c.args[0].get("status") == "failed" for c in jobs_calls), (
+        "lesson_jobs.status must revert to 'failed' when enqueue_job raises, "
+        "not stay stuck at 'pending'"
+    )
+    lessons_calls = list(sb.lessons_table.update.call_args_list)
+    assert any(c.args[0].get("status") == "failed" for c in lessons_calls), (
+        "lessons.status must revert to 'failed' when enqueue_job raises"
+    )

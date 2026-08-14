@@ -147,3 +147,23 @@ same way L1 already is.
 - Explicitly NOT run as part of this story: `pytest tests/evals/test_live_run.py -v
   --run-live-eval` — blocked on Sarvam credits, tracked the same way as L1, not silently skipped
   without saying so.
+
+## Review Findings
+
+Retroactive 8-layer BMAD review (2026-08-14) — the required 6-agent gate was skipped before the
+original merge; run after the fact against `main`.
+
+- [x] [Review][Patch] The boundary test's own claim ("20 real PDF files are produced, each
+  non-empty") was only half-asserted — page-count boundaries were checked, but not the count or
+  non-emptiness the same sentence promised. Added both assertions.
+  [`test_eval_runner.py::test_generated_pdfs_satisfy_their_category_page_count_boundary`]
+- [x] [Review][Patch] `test_extract_page_bounds.py`/`test_extract_text_only_mode.py` silently
+  self-skipping on a stale fixture name (the exact defect this story already found and fixed once)
+  had no guard against recurring — a future rename of any of the 5 named path constants would
+  reintroduce the same silent-skip defect undetected. Added one unconditional (non-`skipif`) test
+  that fails loudly instead. RED-GREEN verified against a deliberately staled constant.
+  [`test_extract_page_bounds.py::test_all_named_eval_fixtures_actually_exist`]
+- [ ] [Review][Dismiss] "20 PDFs produced, no crash" AC — genuinely untested by anything in this
+  diff (the mocked harness test can't exercise the real pipeline). Already disclosed in this
+  story's own "What this story does NOT complete" section; blocked on the same live-run gate as
+  everything else, not a new gap.

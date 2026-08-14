@@ -125,3 +125,23 @@ existing pattern at every other `generation.update()` call site in these files.
   code/mock level: `cost_details` is sent with the correct computed values at every real
   per-call-cost site. The dashboard-level check remains the explicit deferred step once real
   credentials land, consistent with how the earlier Langfuse audit reported this same gap.
+
+## Review Findings
+
+Retroactive 8-layer BMAD review (2026-08-14) — the required 6-agent gate was skipped before the
+original merge; run after the fact against `main`.
+
+- [x] [Review][Patch] The two-call pattern (`generation.update(output=..., usage_details=...)`
+  then a second `generation.update(cost_details=...)`) assumed the SDK merges fields across
+  calls rather than the second call clearing the first's data — never verified. Checked directly
+  against the real installed SDK (`langfuse/_client/attributes.py`): `create_generation_attributes`
+  filters `None`-valued kwargs before `set_attributes()`, which only sets given keys, never clears
+  omitted ones — confirmed safe. Added a premise test pinning this so a future SDK version that
+  changes it fails here, not in production.
+  [`test_langfuse_sdk_contract.py::test_update_call_with_only_cost_details_does_not_null_out_other_fields`]
+- [x] [Review][Patch] No `# MOCK-CONTRACT:` note on the new mock-only tests — added, naming
+  `test_langfuse_sdk_contract.py::test_generation_has_update_with_provider_kwargs` as the
+  real-dependency premise test these mocks stand in for. [`test_s3_5_langfuse_cost_attribution.py`]
+- [ ] [Review][Dismiss] AC's literal "token_cost_usd in metadata" wording vs. the actual
+  `cost_details` implementation — a deliberate, disclosed, justified technical choice (Langfuse's
+  native cost field, matching the other 4 providers' established pattern), not a silent deviation.

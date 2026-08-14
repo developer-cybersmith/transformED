@@ -130,3 +130,42 @@ POST /jobs/{job_id}/retry
 - Cannot exercise this against a real failed job end-to-end without a real pipeline failure to
   retry — verified at the mock level (ARQ, Supabase) matching this router's own existing test
   conventions, same limitation every other endpoint in this file already has.
+
+## Review Findings
+
+Retroactive 8-layer BMAD review (2026-08-14) — the required 6-agent gate was skipped before the
+original merge; run after the fact against `main`. Full findings and triage in the session record;
+this section lists what applied to this story specifically.
+
+- [x] [Review][Patch] `retry_job`'s status-reset write was scoped by `lesson_id` (no unique
+  constraint) instead of `job_id` (the real primary key) — a lesson with more than one
+  `lesson_jobs` row (D45 already documents this as real) could have had an unrelated
+  running/completed job silently reset. [`admin/router.py`, the `lesson_jobs` update in `retry_job`]
+- [x] [Review][Decision] Concurrent retries silently bypass the $3.00 cost ceiling — resolved:
+  quick mitigation (reject if another job for the lesson is active) applied now; full fix
+  (DB-level lock/constraint) registered as **D109**, deferred. [`admin/router.py`]
+- [x] [Review][Patch] `arq_redis.enqueue_job` exceptions (not just a `None` return) were
+  uncaught — status was already reset to generating/pending by that point, leaving the job stuck
+  showing `pending` forever. Now caught, status reverted to `failed`. [`admin/router.py`]
+- [x] [Review][Patch] Response returned the pre-existing `lesson_jobs.job_id`, not the actual ARQ
+  job id enqueued — no way to correlate the response with the running job. Added `arq_job_id`.
+  [`admin/router.py`, `JobRetryResponse`]
+- [x] [Review][Patch] Test mock used one shared `sb.table.return_value` for both `lessons` and
+  `lesson_jobs` — could not have caught a table-name swap bug. Rewritten to table-aware mocks.
+  [`test_admin_router.py`, `_retry_supabase`]
+- [x] [Review][Patch] Happy-path test didn't assert `error: None` was included in the
+  `lesson_jobs` update payload. [`test_admin_router.py`]
+- [x] [Review][Patch] "Unreachable by construction" overclaim on the `job is None` path — softened
+  to name the real (astronomically unlikely, not impossible) reason. [`admin/router.py`]
+- [x] [Review][Patch] No `# MOCK-CONTRACT:` note on the fully-mocked retry tests — added, honestly
+  stating no real-dependency (integration) test exists yet for this endpoint. [`test_admin_router.py`]
+- [x] [Review][Defer] Narrow residual TOCTOU race survives the concurrency mitigation (two retry
+  calls could still both pass the concurrent-check before either write lands) — **D109**,
+  registered in `docs/DEFECT-REGISTER.md`, owner Dev 1, trigger: before real-student launch or if
+  observed in production.
+- [ ] [Review][Dismiss] "Sprint Task Branch Rule violated — stacked branches" — verified false:
+  each branch was genuinely cut from `main`'s actual tip at the time (confirmed via
+  `git status`/`git pull` before each branch). The only real issue is cosmetic: fast-forward
+  merges instead of explicit merge commits, which made the git log read as stacked when it wasn't.
+- [ ] [Review][Dismiss] `lessons(user_id)` selected but unused in `retry_job` — harmless; admin
+  retry has no per-user ownership check by design (an admin operator, not the lesson's owner).

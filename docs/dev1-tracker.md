@@ -799,7 +799,7 @@ Every node must:
     (`.claude/commands/run-evals.md`) is a human judgment call, not something this story
     automates. Both remain the explicit next step once credits return.
 
-- [ ] **S3-2 Prompt iteration from eval results** — ⚠️ BLOCKED, not just unstarted
+- [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
   - Data-driven only: track before/after Langfuse scores; change only prompts that show ≥5% regression or improvement
   - **AC:** At least one node prompt improved; before/after scores committed to Langfuse; no blind prompt edits
@@ -841,12 +841,23 @@ Every node must:
     including a real RED-GREEN proof that reusing the bare `_job_id` fails the fresh-id
     assertion. Zero new regression failures (76/76, byte-for-byte identical failing set vs.
     branch base, verified via throwaway worktree).
-  - **Known, accepted gap, not fixed here:** the failed-job lookup and the status-reset are two
-    separate round-trips with no lock between them — two concurrent retry calls for the same
-    `job_id` could both pass the check. Each gets its own fresh `_job_id`, so the failure mode is
-    two redundant pipeline runs (a cost nuisance), not a `thread_id` collision or data corruption
-    — documented in Story 3-58's Scale & Load §6 as a real, small follow-up, not this story's
-    scope.
+  - **CORRECTED 2026-08-14 (retroactive review):** the line above originally called the
+    concurrent-retry gap "a cost nuisance, not double-billing." **That was wrong.** A retroactive
+    8-layer BMAD review's Scale & Load Hunter traced it through: `content_pipeline.py`'s
+    `clear_lesson_cost()` unconditionally deletes the Redis cost counter the moment *either*
+    concurrent run finishes — so the still-running sibling's next `check_ceiling()` reads `$0` and
+    is permitted to spend up to another full $3.00. A real, silent cost-ceiling bypass, not a
+    nuisance. Mitigated same day: `retry_job` now rejects a retry if another job for the lesson is
+    already running/pending, closing the realistic trigger. The narrow residual race (two retry
+    calls racing the mitigation's own check-then-act) is registered as **D109**, deferred, owner
+    Dev 1. See Story 3-58's Review Findings section for the full list (8 patches applied: the
+    scoping fix, the concurrency mitigation, an uncaught-`enqueue_job`-exception fix, the response
+    `arq_job_id` fix, a test mock-chain fix, a missing test assertion, a wording softening, and a
+    `MOCK-CONTRACT` note). Also closed the same day: a real premise-test gap in Story 3-56 (an
+    unverified assumption about Langfuse's `update()` merge semantics — checked directly against
+    the real SDK source, confirmed safe, pinned with a test) and a recurrence guard in Story 3-57
+    (the exact silent-skip-on-stale-fixture-name defect this story already fixed once, now guarded
+    against happening again unnoticed). Branch `sprint3/s3-56-57-58-review-fixes`.
 
 - [x] **S3-5 Pipeline cost attribution in Langfuse** — ✓ 2026-08-14
   - All pipeline nodes — each Langfuse span must include `token_cost_usd` in metadata
