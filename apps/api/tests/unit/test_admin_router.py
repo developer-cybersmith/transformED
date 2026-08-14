@@ -8,6 +8,7 @@ Mocks: Supabase client, Redis client, JWT auth dependency, and settings
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -484,3 +485,159 @@ def test_deep_health_down_when_both_fail(client_factory: ClientFactory) -> None:
     assert body["status"] == "down"
     assert body["redis"] == "down"
     assert body["supabase"] == "down"
+
+
+# ── POST /jobs/{job_id}/retry (Story 3-58, S3-4) ────────────────────────────────
+
+
+def _arq_pool(job_id: str | None = "77777777-7777-7777-7777-777777777777") -> AsyncMock:
+    job = MagicMock()
+    job.job_id = job_id
+    pool = AsyncMock()
+    pool.enqueue_job = AsyncMock(return_value=None if job_id is None else job)
+    return pool
+
+
+def _retry_supabase(job_row: dict[str, Any] | None) -> MagicMock:
+    sb = MagicMock()
+    select_chain = sb.table.return_value.select.return_value.eq.return_value
+    select_chain.maybe_single.return_value.execute.return_value.data = job_row
+    return sb
+
+
+@contextmanager
+def _arq_override(pool: AsyncMock) -> Iterator[None]:
+    """FastAPI resolves ALL declared dependencies before the endpoint body
+    runs, so retry_job's required `arq_redis: ArqRedis` param must be
+    overridden even for requests that never reach the enqueue call (e.g. the
+    404/409 early-exit paths) — otherwise get_arq_redis's real 503
+    ("Job queue unavailable", no app.state.arq_redis in tests) wins over
+    whatever status the test is actually trying to exercise."""
+    from app.dependencies import get_arq_redis
+    from app.main import app
+
+    app.dependency_overrides[get_arq_redis] = lambda: pool
+    try:
+        yield
+    finally:
+        del app.dependency_overrides[get_arq_redis]
+
+
+@pytest.mark.unit
+def test_retry_job_403_non_admin(client_factory: ClientFactory) -> None:
+    client = client_factory(user=NON_ADMIN_USER)
+    resp = client.post("/api/admin/jobs/11111111-1111-1111-1111-111111111111/retry")
+    assert resp.status_code == 403
+
+
+@pytest.mark.unit
+def test_retry_job_404_malformed_uuid_never_hits_db(client_factory: ClientFactory) -> None:
+    sb = MagicMock()
+    client = client_factory()
+    pool = _arq_pool()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
+        resp = client.post("/api/admin/jobs/does-not-exist/retry")
+    assert resp.status_code == 404
+    sb.table.assert_not_called()
+
+
+@pytest.mark.unit
+def test_retry_job_404_not_found(client_factory: ClientFactory) -> None:
+    sb = _retry_supabase(None)
+    client = client_factory()
+    pool = _arq_pool()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
+        resp = client.post(
+            "/api/admin/jobs/22222222-2222-2222-2222-222222222222/retry"
+        )
+    assert resp.status_code == 404
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("current_status", ["pending", "running", "completed"])
+def test_retry_job_409_when_not_failed(
+    client_factory: ClientFactory, current_status: str
+) -> None:
+    job_id = "33333333-3333-3333-3333-333333333333"
+    sb = _retry_supabase(
+        {
+            "job_id": job_id,
+            "lesson_id": "lesson-1",
+            "status": current_status,
+            "lessons": {"user_id": "user-1"},
+        }
+    )
+    client = client_factory()
+    pool = _arq_pool()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
+        resp = client.post(f"/api/admin/jobs/{job_id}/retry")
+    assert resp.status_code == 409
+    assert current_status in resp.json()["detail"]
+
+
+@pytest.mark.unit
+def test_retry_job_202_happy_path_resets_status_and_enqueues_fresh_job_id(
+    client_factory: ClientFactory,
+) -> None:
+    job_id = "44444444-4444-4444-4444-444444444444"
+    lesson_id = "lesson-44"
+    sb = _retry_supabase(
+        {
+            "job_id": job_id,
+            "lesson_id": lesson_id,
+            "status": "failed",
+            "error": "boom",
+            "lessons": {"user_id": "user-1"},
+        }
+    )
+    pool = _arq_pool()
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
+        resp = client.post(f"/api/admin/jobs/{job_id}/retry")
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["lesson_id"] == lesson_id
+    assert body["status"] == "pending"
+
+    # Both status columns were reset (lessons + lesson_jobs), matching the
+    # initial-creation state generate_chapter_lesson writes.
+    update_calls = list(sb.table.return_value.update.call_args_list)
+    assert any(c.args[0].get("status") == "generating" for c in update_calls), (
+        "lessons.status must be reset to 'generating'"
+    )
+    assert any(c.args[0].get("status") == "pending" for c in update_calls), (
+        "lesson_jobs.status must be reset to 'pending'"
+    )
+    # node_outputs/last_node must never be touched by any update call — that
+    # would silently discard the checkpoint-resume state and re-bill
+    # already-completed nodes.
+    assert not any("node_outputs" in c.args[0] for c in update_calls)
+    assert not any("last_node" in c.args[0] for c in update_calls)
+
+    # The ARQ _job_id must NOT be the bare "pipeline:{lesson_id}" string — a
+    # fresh id per retry is what keeps the LangGraph thread_id unique
+    # regardless of ARQ's own job_try reset behavior on a fresh enqueue.
+    pool.enqueue_job.assert_awaited_once()
+    _, kwargs = pool.enqueue_job.call_args
+    assert kwargs["_job_id"] != f"pipeline:{lesson_id}"
+    assert kwargs["_job_id"].startswith(f"pipeline:{lesson_id}:retry:")
+
+
+@pytest.mark.unit
+def test_retry_job_500_when_arq_deduplicates(client_factory: ClientFactory) -> None:
+    job_id = "55555555-5555-5555-5555-555555555555"
+    sb = _retry_supabase(
+        {
+            "job_id": job_id,
+            "lesson_id": "lesson-55",
+            "status": "failed",
+            "lessons": {"user_id": "user-1"},
+        }
+    )
+    pool = _arq_pool(job_id=None)  # enqueue_job returns None (deduplicated)
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb), _arq_override(pool):
+        resp = client.post(f"/api/admin/jobs/{job_id}/retry")
+
+    assert resp.status_code == 500
