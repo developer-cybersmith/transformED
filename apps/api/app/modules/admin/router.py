@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from app.core.db import get_supabase, rows, single_row
 from app.core.redis import get_redis
-from app.dependencies import AdminUser
+from app.dependencies import AdminUser, ArqRedis
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,12 @@ class CostReport(BaseModel):
     # report may be missing rows and UNDER-reporting real spend. Narrow
     # the period or raise the limit.
     truncated: bool = False
+
+
+class JobRetryResponse(BaseModel):
+    job_id: str
+    lesson_id: str
+    status: str  # always "pending" — the state just written, matching JobSummary's vocabulary
 
 
 class DeepHealthStatus(BaseModel):
@@ -193,6 +199,86 @@ async def get_job(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return _job_row_to_summary(row)
+
+
+@router.post(
+    "/jobs/{job_id}/retry",
+    response_model=JobRetryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Retry a failed pipeline job (admin)",
+)
+async def retry_job(
+    job_id: str,
+    current_user: AdminUser,
+    arq_redis: ArqRedis,
+) -> JobRetryResponse:
+    """Re-enqueue a failed job's pipeline run, resuming from its last checkpoint.
+
+    Story 3-58 (S3-4). Only `failed` jobs are retryable. `content_pipeline_job`
+    takes only `lesson_id` and re-fetches everything else from `lessons`, so
+    retrying never needs to re-validate ownership/chapter/page-span — those
+    were already checked when the lesson was first created.
+
+    `node_outputs`/`last_node` are deliberately NOT touched: `run_pipeline`
+    reads them to resume from the last completed node (CLAUDE.md's checkpoint
+    pattern) — clearing them would silently re-run and re-bill already-paid-for
+    nodes. Only `status` (and `error`, cosmetically) are reset here.
+
+    A fresh ARQ `_job_id` is minted per retry rather than reusing the original
+    `f"pipeline:{lesson_id}"` — content_pipeline.py's own comment on this exact
+    trap: `ctx["job_id"]` alone is not a uniquifier, and reusing it risks a
+    stale/duplicate LangGraph `thread_id` if ARQ's `job_try` counter does not
+    reset the way this story assumes for a job re-enqueued after the original
+    already concluded. A fresh id sidesteps the question entirely.
+    """
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+
+    supabase = get_supabase()
+    resp = (
+        supabase.table("lesson_jobs")
+        .select("*, lessons(user_id)")
+        .eq("job_id", job_id)
+        .maybe_single()
+        .execute()
+    )
+    row = single_row(resp)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    current_status = row["status"]
+    if current_status != "failed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job status is '{current_status}' — only failed jobs can be retried",
+        )
+
+    lesson_id = row["lesson_id"]
+
+    # Reset both status columns to the same state generate_chapter_lesson
+    # writes at initial creation — node_outputs/last_node/cost_usd untouched.
+    supabase.table("lessons").update({"status": "generating"}).eq(
+        "lesson_id", lesson_id
+    ).execute()
+    supabase.table("lesson_jobs").update({"status": "pending", "error": None}).eq(
+        "lesson_id", lesson_id
+    ).execute()
+
+    retry_token = uuid.uuid4().hex[:8]
+    job = await arq_redis.enqueue_job(
+        "content_pipeline_job", lesson_id, _job_id=f"pipeline:{lesson_id}:retry:{retry_token}"
+    )
+    if job is None:
+        # Unreachable by construction (the id above is fresh per call), but
+        # never silently claim a retry that ARQ actually deduplicated away.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to enqueue retry — ARQ deduplicated the job",
+        )
+
+    return JobRetryResponse(job_id=job_id, lesson_id=lesson_id, status="pending")
 
 
 @router.get(

@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 21 | 0 | 2 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 22 | 0 | 1 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **77** | **64** | **1** | **12** |
+| **Totals** | | **77** | **65** | **1** | **11** |
 
 ---
 
@@ -799,10 +799,16 @@ Every node must:
     (`.claude/commands/run-evals.md`) is a human judgment call, not something this story
     automates. Both remain the explicit next step once credits return.
 
-- [ ] **S3-2 Prompt iteration from eval results**
+- [ ] **S3-2 Prompt iteration from eval results** — ⚠️ BLOCKED, not just unstarted
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
   - Data-driven only: track before/after Langfuse scores; change only prompts that show ≥5% regression or improvement
   - **AC:** At least one node prompt improved; before/after scores committed to Langfuse; no blind prompt edits
+  - **Genuinely blocked, not skippable:** this AC's "data-driven only... no blind prompt edits"
+    requires real before/after Langfuse scores, which requires S3-1's live 20-PDF eval run —
+    blocked on Sarvam credits (still `402 insufficient_quota_error`, confirmed live 2026-08-14),
+    same blocker as L1. Unlike S3-1, there is no infrastructure-only partial delivery possible
+    here — the whole premise is real eval data that doesn't exist yet. Revisit once Sarvam
+    credits return and S3-1's live run produces real scores to act on.
 
 - [x] **S3-3 Circuit breaker implementation** — ✓ 2026-06-12 (built ahead of schedule)
   - `apps/api/app/core/circuit_breaker.py`
@@ -810,10 +816,37 @@ Every node must:
   - **Wire into ALL Sprint 2 provider calls immediately — do not wait until Sprint 3**
   - **AC:** `is_circuit_open()` / `record_failure()` / `record_success()` callable by all providers; state persists across restarts via Redis ✅
 
-- [ ] **S3-4 Admin panel: job status, cost tracking, failed jobs**
-  - `apps/api/app/modules/admin/router.py` *(to create)*
+- [x] **S3-4 Admin panel: job status, cost tracking, failed jobs** — ✓ 2026-08-14
+  - `apps/api/app/modules/admin/router.py` *(the tracker's "(to create)" was stale — this file
+    already existed, 295 lines, built across Story 2-25 + this session's own D59(a) fix)*
   - Endpoints: `GET /api/admin/jobs`, `POST /api/admin/jobs/{job_id}/retry`, `GET /api/admin/costs`
   - **AC:** All jobs listable with status + cost; failed jobs retryable via single API call; cost per lesson and per user visible
+  - **Real gap was 1 of 3 endpoints, not the whole router — verified by reading the current code
+    first.** `GET /jobs` (per-lesson `cost_usd` in every `JobSummary`) and `GET /costs`
+    (`by_user` breakdown) already existed and already satisfied their AC clauses. Only
+    `POST /jobs/{job_id}/retry` was missing.
+  - **Retry design, investigated rather than assumed:** `content_pipeline_job` takes only
+    `lesson_id` (re-fetches everything else from `lessons`), so retry never re-validates
+    ownership/chapter/page-span. `node_outputs`/`last_node` are deliberately left untouched —
+    `run_pipeline` reads them to resume from the last completed node
+    (`graph.py:5602`'s own comment confirms this), clearing them would silently re-run and
+    re-bill already-paid-for nodes. A fresh ARQ `_job_id` is minted per retry
+    (`f"pipeline:{lesson_id}:retry:{token}"`, never the bare original) — `content_pipeline.py`'s
+    own comment already names the trap (`ctx["job_id"]` alone is not a uniquifier); reusing the
+    exact original id on a fresh `enqueue_job()` call risked a stale/duplicate LangGraph
+    `thread_id` depending on ARQ's own `job_try` reset semantics, which this story does not
+    depend on either way. Only `failed` jobs are retryable (409 otherwise, naming the actual
+    status). Branch `sprint3/s3-4-admin-panel-job-cost-tracking`, Story 3-58.
+  - Tests: 8 new tests in `test_admin_router.py` (403/404×2/409×3/202/500), RED-GREEN verified —
+    including a real RED-GREEN proof that reusing the bare `_job_id` fails the fresh-id
+    assertion. Zero new regression failures (76/76, byte-for-byte identical failing set vs.
+    branch base, verified via throwaway worktree).
+  - **Known, accepted gap, not fixed here:** the failed-job lookup and the status-reset are two
+    separate round-trips with no lock between them — two concurrent retry calls for the same
+    `job_id` could both pass the check. Each gets its own fresh `_job_id`, so the failure mode is
+    two redundant pipeline runs (a cost nuisance), not a `thread_id` collision or data corruption
+    — documented in Story 3-58's Scale & Load §6 as a real, small follow-up, not this story's
+    scope.
 
 - [x] **S3-5 Pipeline cost attribution in Langfuse** — ✓ 2026-08-14
   - All pipeline nodes — each Langfuse span must include `token_cost_usd` in metadata
