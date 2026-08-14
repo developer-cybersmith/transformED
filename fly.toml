@@ -1,11 +1,12 @@
 # Fly.io configuration for the HIE API + worker.
 # Decision: docs/decisions/ADR-001-india-region-migration-topology.md
 #
-# ONE Fly app, TWO process groups sharing apps/api/Dockerfile (same model as
-# railway.toml's two Railway services from one image). Do NOT split this into
-# two Fly apps -- see ADR-001 §3 for why (duplicated deploy/secrets/image push
-# for zero benefit; the Dockerfile's CMD is already the API command, and the
-# worker already runs by overriding the start command).
+# ONE Fly app, TWO process groups sharing apps/api/Dockerfile (Railway is
+# retired -- railway.toml removed 2026-08-14, this fly.toml is the only
+# deploy config now). Do NOT split this into two Fly apps -- see ADR-001 §3
+# for why (duplicated deploy/secrets/image push for zero benefit; the
+# Dockerfile's CMD is already the API command, and the worker already runs
+# by overriding the start command).
 app = "hie-api"
 primary_region = "bom"          # Mumbai -- matches Supabase's ap-south-1
 
