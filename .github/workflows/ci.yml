@@ -128,8 +128,18 @@ jobs:
             echo "::error::postgres-marked tests SKIPPED — a skipped guard guards nothing (D51)"
             exit 1
           fi
-          if grep -qE "[0-9]+ (xfailed|xpassed|deselected|error)" /tmp/pg-tests.log; then
-            echo "::error::postgres-marked tests xfailed/deselected/errored — that is not verification (D51)"
+          # NOTE: "deselected" deliberately excluded from this check (unlike an
+          # earlier version of this line) -- `-m postgres` ALWAYS reports a
+          # "N deselected" count for every non-postgres-marked test in the
+          # collected set; that's the marker filter working as designed, not a
+          # verification gap. Including it here meant this guard could never
+          # pass on ANY run, ever, since the pipeline always includes non-
+          # postgres tests in the same `tests/integration` collection. Found
+          # 2026-08-14 the first time this step ever ran a real, fully-green
+          # 79/79 pass and still failed on this line. xfailed/xpassed/error
+          # remain checked -- those ARE genuine non-pass outcomes.
+          if grep -qE "[0-9]+ (xfailed|xpassed|error)" /tmp/pg-tests.log; then
+            echo "::error::postgres-marked tests xfailed/xpassed/errored — that is not verification (D51)"
             exit 1
           fi
           # An EXACT count, not a non-zero one. `[0-9]+ passed` still passes green
