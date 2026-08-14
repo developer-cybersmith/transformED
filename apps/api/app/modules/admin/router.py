@@ -87,6 +87,11 @@ class CostReport(BaseModel):
 class JobRetryResponse(BaseModel):
     job_id: str
     lesson_id: str
+    # The real ARQ job id that was actually enqueued (e.g.
+    # "pipeline:{lesson_id}:retry:{token}") — NOT lesson_jobs.job_id above,
+    # which identifies the DB row, not the running ARQ job. Needed to look up
+    # or correlate the retried run.
+    arq_job_id: str
     status: str  # always "pending" — the state just written, matching JobSummary's vocabulary
 
 
@@ -230,6 +235,27 @@ async def retry_job(
     stale/duplicate LangGraph `thread_id` if ARQ's `job_try` counter does not
     reset the way this story assumes for a job re-enqueued after the original
     already concluded. A fresh id sidesteps the question entirely.
+
+    Post-review fixes (BMAD retroactive review, 2026-08-14 — see Story 3-58's
+    Review Findings section):
+    - The status-reset write is scoped by `job_id` (the real primary key), not
+      `lesson_id` (no unique constraint — D45 already documents concurrent
+      duplicate `lesson_jobs` rows for the same lesson as a real scenario).
+      Scoping by `lesson_id` could have silently reset an unrelated running or
+      completed job for the same lesson.
+    - A retry is rejected (409) if another `lesson_jobs` row for the same
+      `lesson_id` is already `running`/`pending` — closes the concurrent-
+      execution window that let `content_pipeline.py`'s unconditional
+      `clear_lesson_cost()` silently bypass the $3.00 ceiling (Scale & Load
+      Hunter finding — the story's own original claim that this was merely
+      "a cost nuisance" was wrong; it is a real ceiling bypass). D109 in
+      `docs/DEFECT-REGISTER.md` covers the narrow residual TOCTOU window this
+      mitigation does not fully close.
+    - `enqueue_job` failure is caught and reverts status to `failed` instead of
+      leaving the job stuck showing `pending` with nothing actually enqueued.
+    - The response returns the real ARQ job id that was enqueued, not the
+      pre-existing `lesson_jobs.job_id` — the latter can't be used to look up
+      or correlate the retried run.
     """
     try:
         uuid.UUID(job_id)
@@ -257,26 +283,71 @@ async def retry_job(
 
     lesson_id = row["lesson_id"]
 
+    # Reject if another job row for this lesson is already active — closes
+    # the concurrent-execution window that let clear_lesson_cost() silently
+    # bypass the cost ceiling (see docstring above, D109).
+    concurrent_resp = (
+        supabase.table("lesson_jobs")
+        .select("job_id")
+        .eq("lesson_id", lesson_id)
+        .neq("job_id", job_id)
+        .in_("status", ["running", "pending"])
+        .execute()
+    )
+    if rows(concurrent_resp):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another job for this lesson is already running or pending — wait for it",
+        )
+
     # Reset both status columns to the same state generate_chapter_lesson
     # writes at initial creation — node_outputs/last_node/cost_usd untouched.
-    supabase.table("lessons").update({"status": "generating"}).eq("lesson_id", lesson_id).execute()
-    supabase.table("lesson_jobs").update({"status": "pending", "error": None}).eq(
+    # Both writes are scoped by job_id (the real primary key on lesson_jobs),
+    # never lesson_id — see docstring.
+    supabase.table("lessons").update({"status": "generating"}).eq(
         "lesson_id", lesson_id
+    ).execute()
+    supabase.table("lesson_jobs").update({"status": "pending", "error": None}).eq(
+        "job_id", job_id
     ).execute()
 
     retry_token = uuid.uuid4().hex[:8]
-    job = await arq_redis.enqueue_job(
-        "content_pipeline_job", lesson_id, _job_id=f"pipeline:{lesson_id}:retry:{retry_token}"
-    )
+    arq_job_id = f"pipeline:{lesson_id}:retry:{retry_token}"
+    try:
+        job = await arq_redis.enqueue_job("content_pipeline_job", lesson_id, _job_id=arq_job_id)
+    except Exception:
+        logger.warning(
+            "retry_job:%s — enqueue_job raised, reverting to failed", job_id, exc_info=True
+        )
+        supabase.table("lesson_jobs").update(
+            {"status": "failed", "error": "Failed to enqueue retry"}
+        ).eq("job_id", job_id).execute()
+        supabase.table("lessons").update({"status": "failed"}).eq(
+            "lesson_id", lesson_id
+        ).execute()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to enqueue retry",
+        ) from None
+
     if job is None:
-        # Unreachable by construction (the id above is fresh per call), but
+        # Not truly unreachable — arq_job_id is fresh per call, which makes a
+        # dedup collision astronomically unlikely, not impossible. Still
         # never silently claim a retry that ARQ actually deduplicated away.
+        supabase.table("lesson_jobs").update(
+            {"status": "failed", "error": "ARQ deduplicated the retry job"}
+        ).eq("job_id", job_id).execute()
+        supabase.table("lessons").update({"status": "failed"}).eq(
+            "lesson_id", lesson_id
+        ).execute()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to enqueue retry — ARQ deduplicated the job",
         )
 
-    return JobRetryResponse(job_id=job_id, lesson_id=lesson_id, status="pending")
+    return JobRetryResponse(
+        job_id=job_id, lesson_id=lesson_id, arq_job_id=job.job_id, status="pending"
+    )
 
 
 @router.get(

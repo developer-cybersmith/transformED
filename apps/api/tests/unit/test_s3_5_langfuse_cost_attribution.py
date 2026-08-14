@@ -14,6 +14,18 @@ LLM cost genuinely splits by token type (input vs output priced differently), so
 `cost_details` should carry BOTH keys, mirroring `usage_details`'s existing
 input/output split — more granular than the single-key pattern the other 4
 providers use (correct there, since none of them have split-rate billing).
+
+# MOCK-CONTRACT: every test here asserts real, observable outcomes (dollar
+# figures independently computed from the same pricing tables, cross-checked
+# against cost_tracker's accumulated value) against a mocked Langfuse client —
+# not bare "was this mock called" checks. The real-dependency premise test
+# covering the SDK contract these mocks stand in for is
+# test_langfuse_sdk_contract.py::test_generation_has_update_with_provider_kwargs,
+# which asserts `cost_details` against the actually-imported `LangfuseGeneration`
+# class. Whether the real Langfuse Cloud API round-trips `cost_details` end to
+# end (as opposed to accepting the local SDK call) remains genuinely unverified —
+# no real LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY exist in this environment yet
+# (Story 3-56's own Verification section states this).
 """
 
 from __future__ import annotations

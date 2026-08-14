@@ -102,6 +102,25 @@ def _missing(*paths: pathlib.Path) -> str:
     return f"fixture(s) absent: {', '.join(absent)}" if absent else ""
 
 
+@pytest.mark.unit
+def test_all_named_eval_fixtures_actually_exist() -> None:
+    """Review finding (Test Coverage, post-S3-1): every bounds test below is
+    `skipif`-gated on one of the 5 named constants above, so a future rename
+    of any of them (the exact defect class S3-1 just hit — 5 constants went
+    stale silently, no failure, only a quieter skip count) makes this whole
+    file's real coverage silently vanish again. This one test is deliberately
+    NOT skipif-gated — it fails loudly, by design, the moment any of the 5
+    named paths goes stale, instead of every other test in this file quietly
+    skipping with no error."""
+    missing = _missing(SHORT_PDF, DENSE_PDF, LONG_PDF, IMAGE_PDF, TABLE_PDF)
+    assert not missing, (
+        f"{missing} — one of this file's 5 named fixture constants is stale. "
+        f"_ensure_eval_pdfs() ran (eval_pdfs/ has SOME files) but not under "
+        f"the name(s) this file expects — update SHORT_PDF/DENSE_PDF/LONG_PDF/"
+        f"IMAGE_PDF/TABLE_PDF to match the current generator output."
+    )
+
+
 def _cli(*args: str) -> subprocess.CompletedProcess[str]:
     """Invoke the extraction subprocess exactly as the pipeline does."""
     return subprocess.run(  # noqa: S603

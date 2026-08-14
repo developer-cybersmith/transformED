@@ -220,7 +220,15 @@ def test_generated_pdfs_satisfy_their_category_page_count_boundary(tmp_path: Pat
 
     written = generate_all(tmp_path)
 
+    # Review finding (AC Completeness): the story's own Verification section
+    # promises "20 real PDF files are produced, each non-empty" — neither half
+    # was previously asserted here (page-count boundaries were checked, but
+    # not the count or non-emptiness the same sentence claims).
+    assert len(written) == 20, f"S3-1 requires exactly 20 PDFs, got {len(written)}"
+
     for name, path in written.items():
+        assert path.stat().st_size > 0, f"{name}: generated PDF must be non-empty"
+
         doc = pdfium.PdfDocument(str(path))
         try:
             n_pages = len(doc)
