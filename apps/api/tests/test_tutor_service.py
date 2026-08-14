@@ -1396,6 +1396,49 @@ def test_parse_signal_nonfinite_behavioral_score_raises() -> None:
 
 
 @pytest.mark.unit
+def test_parse_signal_out_of_range_optional_field_raises() -> None:
+    """SYNC-B range gate: optional float fields outside [0.0, 1.0] → ValueError.
+
+    Story 4-27 froze the wire scale to [0.0, 1.0] for all five signals.
+    _parse_signal must reject values like 1.5 or -0.1 at the entry gate so
+    producer bugs surface immediately rather than being silently clamped by ces.py.
+    """
+    for field in ("quiz_accuracy", "teachback_score", "behavioral_score", "head_pose_score", "blink_rate"):
+        for bad_value in (1.001, -0.001, 99.0, -1.0):
+            payload = {
+                "session_id": "ses-range",
+                "quiz_accuracy": 0.8,
+                "teachback_score": None,
+                "behavioral_score": 1.0,
+                "head_pose_score": 0.7,
+                "blink_rate": 0.5,
+                field: bad_value,
+            }
+            with pytest.raises(ValueError, match=field):
+                _parse_signal(payload)
+
+
+@pytest.mark.unit
+def test_parse_signal_boundary_values_accepted() -> None:
+    """SYNC-B range gate: exact boundary values 0.0 and 1.0 must not raise.
+
+    The valid range is closed [0.0, 1.0] — both endpoints are legal.
+    """
+    for boundary in (0.0, 1.0):
+        payload = {
+            "session_id": "ses-boundary",
+            "quiz_accuracy": boundary,
+            "teachback_score": boundary,
+            "behavioral_score": boundary,
+            "head_pose_score": boundary,
+            "blink_rate": boundary,
+        }
+        result = _parse_signal(payload)
+        assert result.quiz_accuracy == boundary
+        assert result.behavioral_score == boundary
+
+
+@pytest.mark.unit
 def test_compute_ces_behavioral_none_redistributes_not_zero() -> None:
     """AC7: behavioral_score=None → weight redistributed, not treated as 0.0.
 

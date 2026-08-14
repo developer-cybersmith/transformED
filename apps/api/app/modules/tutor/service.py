@@ -77,6 +77,12 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
         # misleading value (NaN→100 = maximally engaged), silently suppressing interventions.
         if not math.isfinite(f):
             raise ValueError(f"attention_signal field {key!r} must be a finite number")
+        # Reject out-of-range: ws.ts SYNC-B freeze (Story 4-27) locks the scale to [0.0, 1.0].
+        # ces.py clamps downstream, but catching here surfaces producer bugs immediately.
+        if f < 0.0 or f > 1.0:
+            raise ValueError(
+                f"attention_signal field {key!r} must be in [0.0, 1.0], got {f!r}"
+            )
         return f
 
     def _optional_float(key: str) -> float | None:
@@ -89,6 +95,12 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
             raise ValueError(f"attention_signal field {key!r} must be numeric or null") from exc
         if not math.isfinite(f):
             raise ValueError(f"attention_signal field {key!r} must be a finite number or null")
+        # Reject out-of-range: ws.ts SYNC-B freeze (Story 4-27) locks the scale to [0.0, 1.0].
+        # ces.py clamps downstream, but catching here surfaces producer bugs immediately.
+        if f < 0.0 or f > 1.0:
+            raise ValueError(
+                f"attention_signal field {key!r} must be in [0.0, 1.0] or null, got {f!r}"
+            )
         return f
 
     return NormalizedSignal(
