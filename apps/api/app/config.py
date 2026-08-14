@@ -76,6 +76,19 @@ class Settings(BaseSettings):
         default="anushka",
         description="Sarvam Bulbul v2 speaker name for narration synthesis",
     )
+    sarvam_narration_pace: float = Field(
+        default=0.85,
+        ge=0.3,
+        le=3.0,
+        description=(
+            "Sarvam Bulbul v2 `pace` parameter for narration synthesis -- controls "
+            "speaking speed (lower is slower; Sarvam's own valid range for bulbul:v2 "
+            "is 0.3-3.0, default 1.0). Sarvam's raw 1.0 default read as 'very fast' in "
+            "real stakeholder playback (D89); 0.85 is a reasoned, moderately-slower "
+            "starting value, not an exact scientifically-derived one -- tune via env "
+            "var without a code change, same as sarvam_voice_id above."
+        ),
+    )
     azure_tts_key: str | None = Field(
         default=None, description="Azure Cognitive Services TTS key — fallback"
     )
@@ -220,16 +233,41 @@ class Settings(BaseSettings):
         default=3.00,
         description="Hard ceiling per lesson pipeline run in USD",
     )
+    # D78 (Story 3-45): D76 raised this 10,000 -> 17,000 sized against "a real
+    # 15-minute lesson" -- a demo illustration, not a real product requirement.
+    # That framing was wrong and actively harmful: the first real successful
+    # generation under D75-D77 (lesson abe4e438, an entirely ordinary 29-page,
+    # 15-section chapter, nowhere near max_chapter_pages=200) produced 43,793
+    # real narration chars and had 9 of 15 segments ZEROED by the 17,000 cap --
+    # a complete loss of real TTS audio for 60% of the lesson -- while real
+    # cost sat at just 29% of the $3.00 ceiling. Lesson length must be driven
+    # by the chapter's real content, not by any duration target; only real
+    # cost may shorten it. Raised 17,000 -> 120,000: sized against
+    # decisionupdate.md section 8's own "TTS is 67-73% of total lesson cost"
+    # claim -- 120,000 chars = ~$2.40 of Sarvam TTS spend (COST_PER_CHAR=
+    # 0.00002) = 80% of the $3.00 ceiling, leaving the remaining 20% for the
+    # LLM + image spend the same ceiling already tracks.
     max_narration_chars_per_lesson: int = Field(
-        default=10000,
+        default=120000,
         ge=1,
         description=(
-            "Node 8 hard cap: max narration chars across all segments combined "
-            "(decisionupdate.md section 8). TTS synthesis cost is proportional to "
-            "character count and is 67-73% of total lesson generation cost, so this "
-            "bounds the dominant cost driver before it's incurred. Enforced in "
-            "tts_node (not narration_generator_node, which is Send()-dispatched "
-            "once per section with no visibility into any other section's output)."
+            "Node 8 SAFETY-NET cap: max narration chars across all segments "
+            "combined (decisionupdate.md section 8). This is a cost backstop, "
+            "NOT a duration target -- lesson length is driven by the chapter's "
+            "real content; only real cost may shorten it. Sized against real "
+            "cost headroom (D78): 120,000 chars = ~$2.40 Sarvam TTS spend = 80% "
+            "of the $3.00/lesson ceiling, leaving 20% for LLM + image spend. "
+            "TTS synthesis cost is proportional to character count and is "
+            "67-73% of total lesson generation cost, so this still bounds the "
+            "dominant cost driver before it's incurred -- but as a pre-emptive "
+            "backstop against a pathological outlier, not a number aimed at any "
+            "particular runtime. The real, dollar-accurate, dynamically-enforced "
+            "bound is app.core.cost_tracker.check_ceiling, checked per-segment "
+            "before every paid TTS call; this cap exists only to stop an "
+            "unbounded burst of spend before that per-segment check can catch "
+            "up. Enforced in tts_node (not narration_generator_node, which is "
+            "Send()-dispatched once per section with no visibility into any "
+            "other section's output)."
         ),
     )
 
@@ -413,6 +451,29 @@ class Settings(BaseSettings):
             "that ceiling."
         ),
     )
+    ces_fatigue_blink_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Blink rate (0-1) below which the signal indicates fatigue. "
+                    "Default 0.3 per Schleicher et al. 2008. "
+                    "Env: CES_FATIGUE_BLINK_THRESHOLD",
+    )
+    ces_fatigue_head_pose_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Head pose score (0-1) below which the signal indicates fatigue. "
+                    "Default 0.3 per Bosch et al. 2015. "
+                    "Env: CES_FATIGUE_HEAD_POSE_THRESHOLD",
+    )
+    ces_fatigue_min_session_seconds: int = Field(
+        default=900,
+        ge=60,
+        description="Minimum session duration in seconds before fatigue can trigger. "
+                    "Default 900 (15 min). Prevents false positives on session startup. "
+                    "Env: CES_FATIGUE_MIN_SESSION_SECONDS",
+    )
 
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
     learner_tier_t1_qa_seconds: int = Field(
@@ -495,16 +556,18 @@ class Settings(BaseSettings):
     )
 
     # ── lesson_planner batching (Story 2-16, RC-3 planner 1:1 brittleness) ─────
-    #
-    # THROWAWAY FIX (local unblock, not yet reviewed by Dev 1 -- see the note
-    # sent 2026-08-12): this used to default to 15, equal to
-    # structure_max_sections, which meant a full-size chapter ALWAYS took the
-    # single-call path and NEVER exercised the batching safety net below --
-    # live-reproduced on a real d2l.pdf chapter: 15 segments sent in one
-    # completion, GPT-4o returned only 10, hard-failing the job. Deliberately
-    # kept BELOW structure_max_sections now so a full chapter is guaranteed to
-    # batch instead of gambling on an unbatched call at a size already shown
-    # to be unreliable.
+    # D75 (Story 3-43): was 15, EQUAL to structure_max_sections (also 15) --
+    # Story 2-16's own comment assumed a chapter coalesced to the max would
+    # still "fit a single planner call" safely. Disproven live: two real runs
+    # on the same chapter returned 5 and 12 segments when 15 were expected
+    # (the exact 44-in/10-out collapse this batching exists to prevent).
+    # Lowered strictly BELOW structure_max_sections so a maximal chapter is
+    # now always genuinely split into multiple smaller, reliable batches
+    # instead of silently taking the single-call path. No documented "safe"
+    # threshold exists -- 10 is a reasoned conservative margin below the
+    # observed-unreliable value of 15, not a proven number. (Independently
+    # reproduced and fixed to the same value on sprint3-master before this
+    # merge -- see D75 in docs/DEFECT-REGISTER.md for the full incident.)
     lesson_planner_batch_size: int = Field(
         default=10,
         gt=0,
@@ -513,8 +576,8 @@ class Settings(BaseSettings):
             "completion. Above this, summaries are split into ordered batches so "
             "the model reliably echoes every segment_id 1:1; at or below it the "
             "planner makes exactly one call (unchanged behaviour). Deliberately "
-            "kept below structure_max_sections so a full-size chapter always "
-            "batches -- see the THROWAWAY FIX note above."
+            "kept below structure_max_sections (D75) so the maximal coalesced "
+            "chapter always batches."
         ),
     )
 

@@ -3,7 +3,7 @@
 
 import type { QuizFeedbackItem, RubricScores } from '@/lib/assessment';
 
-// ── Shared building blocks ────────────────────────────────────────────────
+// â”€â”€ Shared building blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface QuizAnswer {
   question_id: string;
@@ -18,7 +18,7 @@ export interface OnboardingAnswer {
   selected_text: string;
 }
 
-// ── POST /api/assessment/quiz ─────────────────────────────────────────────
+// â”€â”€ POST /api/assessment/quiz â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface QuizSubmission {
   session_id: string;
@@ -38,7 +38,7 @@ export interface QuizResult {
   feedback: QuizFeedbackItem[];
 }
 
-// ── POST /api/assessment/teachback ────────────────────────────────────────
+// â”€â”€ POST /api/assessment/teachback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface TeachbackSubmission {
   session_id: string;
@@ -58,7 +58,7 @@ export interface TeachbackResult {
   feedback: string;
 }
 
-// ── GET /api/assessment/session/{session_id}/report ───────────────────────
+// â”€â”€ GET /api/assessment/session/{session_id}/report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Story 3-30 (learner_dna_snapshot). Label values verified against the actual
 // shipped backend (apps/api/app/modules/assessment/service.py's
@@ -116,14 +116,14 @@ export interface SessionReport {
   // Story 3-30 addition — null when the user has no learner_dna row yet.
   learner_dna_snapshot: LearnerDnaSnapshot | null;
   // Story 2-46 (S3-05) additions — attention timeline chart data. ces_timeline can never
-  // exceed 10 points (D77, docs/DEFECT-REGISTER.md) — the last ~50s of the session at default
+  // exceed 10 points (D109, docs/DEFECT-REGISTER.md) — the last ~50s of the session at default
   // cadence, never the whole session; the chart must present this as a recency window.
   // intervention_events never carries the raw CES value at trigger time (AC-5).
   ces_timeline: { minute: number; ces: number }[] | null;
   intervention_events: { minute: number; type: string }[] | null;
 }
 
-// ── GET /api/assessment/user/dna ──────────────────────────────────────────
+// â”€â”€ GET /api/assessment/user/dna â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface LearnerDNA {
   user_id: string;
@@ -134,7 +134,7 @@ export interface LearnerDNA {
   last_updated: string | null;
 }
 
-// ── POST /api/assessment/onboarding/submit ────────────────────────────────
+// â”€â”€ POST /api/assessment/onboarding/submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface OnboardingDiagnosticSubmission {
   responses: OnboardingAnswer[];

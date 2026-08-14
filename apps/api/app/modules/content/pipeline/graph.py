@@ -1163,15 +1163,27 @@ class _LessonPlanLLM(BaseModel):
     segments: list[_LessonPlanSegmentLLM]
 
 
-# Story 2-13.5 (S2-LM4/S2-LM5): Learner Mode tier -> total-lesson slide-count
-# band. T1 = full depth, T2 = standard (default), T3 = critical-topics-only /
-# refresher. lesson_planner_node allocates this total across segments into a
-# per-segment slide_budget that slide_generator_node reads and respects — it
-# does not re-derive tier logic independently (tracker's own S2-LM4 note).
-_TIER_TOTAL_SLIDE_BAND: dict[str, tuple[int, int]] = {
-    "T1": (20, 25),
-    "T2": (12, 15),
-    "T3": (6, 8),
+# Story 2-13.5 (S2-LM4/S2-LM5), re-derived D87: Learner Mode tier -> a
+# minutes-per-slide RATIO, not a fixed lesson-wide slide COUNT. T1 = full
+# depth (richest pacing), T2 = standard (default), T3 = critical-topics-only
+# / refresher (leanest pacing). lesson_planner_node allocates the resulting
+# total across segments into a per-segment slide_budget that
+# slide_generator_node reads and respects — it does not re-derive tier logic
+# independently (tracker's own S2-LM4 note).
+#
+# D87: a FIXED total (the pre-existing `_TIER_TOTAL_SLIDE_BAND`, T1=(20,25),
+# T2=(12,15), T3=(6,8)) was sized with no visibility into a real
+# structure_max_sections=15 lesson. At 15 segments T2's and T3's totals were
+# already <= the segment count, so D85's proportional-by-duration allocator
+# had nothing left to redistribute — every segment stayed pinned to the
+# structural floor of 1, identical to the bug D85 was built to fix. A ratio
+# that scales with the lesson's REAL total duration (already computed before
+# this runs) fixes the root cause instead of needing re-derivation again the
+# next time segment counts or lesson lengths change.
+_TIER_MINUTES_PER_SLIDE_BAND: dict[str, tuple[float, float]] = {
+    "T1": (0.8, 1.2),
+    "T2": (1.2, 1.8),
+    "T3": (2.0, 3.0),
 }
 # Story 3-28 (AC-4): per-tier MCQ count band for quiz_generator_node.
 # T1 = full-depth comprehension (3-5 Qs), T2 = standard (2-3 Qs),
@@ -1196,37 +1208,62 @@ _TIER_QUIZ_COUNT_BAND: dict[str, tuple[int, int]] = {
 _MIN_SLIDES_PER_SEGMENT = 1
 
 
-def _tier_slide_budget_per_segment(tier: str, segment_count: int) -> tuple[int, int]:
-    """Divide *tier*'s total-lesson slide band evenly across *segment_count*
-    segments, clamped to slide_generator's structural 1-8/segment limits.
+def _tier_slide_budget_per_segment(
+    tier: str, segment_durations_min: list[float]
+) -> list[tuple[int, int]]:
+    """Allocate *tier*'s total-lesson slide band across segments in
+    proportion to each segment's share of the estimated lesson duration,
+    clamped to slide_generator's structural 1-8/segment limits. Returns one
+    (min, max) pair per entry of *segment_durations_min*, in the same order.
+
     Unknown/missing tier values fall back to T2 (matches LessonMetadata.tier's
     own Pydantic default) rather than raising — this is a soft budget hint,
     not a validated contract field.
+
+    D85: previously divided the tier's total band evenly by segment COUNT
+    (a flat `ceil(total / segment_count)` shared by every segment) — fixed
+    to allocate proportionally by duration instead. D87: the total itself
+    now scales with the lesson's real estimated duration via
+    `_TIER_MINUTES_PER_SLIDE_BAND`, instead of being a fixed lesson-wide
+    count sized with no visibility into a real 15-segment lesson (observed
+    live: 15 real segments, narration 1.23-3.48 min, T2 and T3 both still
+    producing one static slide per segment under D85 alone, because their
+    old fixed totals were already <= the segment count). Real per-segment
+    `duration_min` estimates already exist by the time this is called (from
+    the lesson_planner LLM's own structured output) and are used both to
+    compute the total and to allocate it proportionally across segments.
     """
-    total_min, total_max = _TIER_TOTAL_SLIDE_BAND.get(tier, _TIER_TOTAL_SLIDE_BAND[_DEFAULT_TIER])
-    if segment_count <= 0:
-        return (_MIN_SLIDES_PER_SEGMENT, _MIN_SLIDES_PER_SEGMENT)
-    # Both bounds are clamped to the structural 1-8/segment ceiling — a
-    # low-segment-count T1 chapter (e.g. 1 segment, total_min=20) would
-    # otherwise produce per_min=20, above the 8-slide structural limit
-    # slide_generator's own schema can represent (caught during this
-    # story's own dev notes before it shipped, not in a later review round).
-    #
-    # 2026-07-17 review finding (Blind Hunter): per_min used FLOOR division
-    # (total_min // segment_count) with no round-up — for an unevenly
-    # divisible total (e.g. T3's total_min=6 over 5 segments: 6//5=1), the
-    # worst-case actual total (segment_count * per_min) can fall BELOW the
-    # tier's own advertised floor, silently breaking the "T3 = 6-8 slides"
-    # promise. Switched to ceiling division so per-segment minimums always
-    # sum to at least total_min — the tradeoff (confirmed against every
-    # existing test case, all unaffected) is a per-segment band that can run
-    # slightly narrow-but-safe rather than wide-but-under-promised; this is
-    # still a soft heuristic, not an exact allocator (see docstring).
-    per_min = min(
-        _MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, math.ceil(total_min / segment_count))
+    n = len(segment_durations_min)
+    if n <= 0:
+        return []
+    total_duration = sum(segment_durations_min)
+    if total_duration <= 0:
+        # No real duration signal (malformed/all-zero input) -- there is no
+        # basis for a duration-based total, and lesson_planner_node's own
+        # duration_min > 0 guard already rejects this before slide-budget
+        # logic ever runs in practice (confirmed by D85's own test) -- this
+        # is a defensive-only path. Safest lean default: every segment gets
+        # exactly the structural floor, never zero.
+        return [(_MIN_SLIDES_PER_SEGMENT, _MIN_SLIDES_PER_SEGMENT)] * n
+
+    min_per_slide, max_per_slide = _TIER_MINUTES_PER_SLIDE_BAND.get(
+        tier, _TIER_MINUTES_PER_SLIDE_BAND[_DEFAULT_TIER]
     )
-    per_max = max(per_min, min(_MAX_SLIDES_PER_SEGMENT, math.ceil(total_max / segment_count)))
-    return (per_min, per_max)
+    # More minutes/slide -> fewer slides (the lean end); fewer minutes/slide
+    # -> more slides (the rich end) -- hence total_min divides by the LARGER
+    # ratio and total_max divides by the SMALLER one.
+    total_min = total_duration / max_per_slide
+    total_max = total_duration / min_per_slide
+
+    budgets: list[tuple[int, int]] = []
+    for dur in segment_durations_min:
+        share = dur / total_duration
+        seg_min = min(
+            _MAX_SLIDES_PER_SEGMENT, max(_MIN_SLIDES_PER_SEGMENT, round(share * total_min))
+        )
+        seg_max = min(_MAX_SLIDES_PER_SEGMENT, max(seg_min, round(share * total_max)))
+        budgets.append((seg_min, seg_max))
+    return budgets
 
 
 # S2-LM5 (scope confirmed 2026-07-17: outline-only — does NOT extend to
@@ -1265,34 +1302,42 @@ def _planner_system_prompt(tier_framing: str) -> str:
     )
 
 
+_PLANNER_BATCH_MAX_ATTEMPTS = 3
+
+
 async def _run_planner_batch(
     provider: Any,  # noqa: ANN401 — provider type imported locally to avoid a circular import
     model: str,
     batch: list[dict[str, Any]],
     tier_framing: str,
     lesson_id: str,
-    *,
-    max_attempts: int = 3,
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
     Story 2-16 (RC-3): calling the planner one batch at a time keeps each
     structured completion small enough that the model reliably echoes every
     segment_id 1:1 — long single-shot enumerations collapse (44-in/10-out).
-    Same provider/model/prompt as the single-call path. Raises (does not
-    fabricate) when the provider returns no parsed response.
+    Same provider/model/prompt as the single-call path.
 
-    THROWAWAY FIX (2026-08-12, not yet reviewed by Dev 1): live-reproduced
-    that batch size alone does NOT fix segment-dropping — a real d2l.pdf
-    chapter dropped 2/10 AND separately 1/5 segments from correctly-sized
-    batches, despite the prompt already explicitly saying "do not omit"
-    (see _planner_system_prompt). So this now retries the SAME batch, up to
-    max_attempts times, whenever the response doesn't echo back exactly the
-    ids it was given — cheap (only fires on a demonstrated wrong response)
-    and treats the drop as model nondeterminism the outer degrade-not-
-    fabricate guard (in lesson_planner_node) still backstops if every
-    attempt fails."""
-    expected_ids = {s["segment_id"] for s in batch}
+    D77 (Story 3-43 follow-up): even a correctly-sized batch (D75 lowered
+    lesson_planner_batch_size below structure_max_sections so batching
+    always genuinely engages) can still have a real LLM under-echo some
+    segment_ids — confirmed live during two real demo-generation attempts,
+    both with batching correctly engaged (verified via the real Langfuse
+    trace: one call with exactly 10 segment_id refs, one with exactly 5),
+    yet the assembled result still lost 1-3 ids. Retries THIS batch's own
+    completion (not the whole node, not the other already-correct batches)
+    up to _PLANNER_BATCH_MAX_ATTEMPTS times when the response doesn't echo
+    back every input id in this batch exactly once — targets the real
+    observed failure mode directly instead of guessing an even smaller
+    "safe" batch size with no more evidence than D75 already had.
+
+    Still raises (does not fabricate) when the provider returns no parsed
+    response, or when every retry attempt still mismatches — the existing
+    assembled-response guard in lesson_planner_node remains the final
+    backstop either way. (Independently reproduced and fixed on
+    sprint3-master before this merge — see D77 in docs/DEFECT-REGISTER.md.)"""
+    input_ids = {s["segment_id"] for s in batch}
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
@@ -1300,8 +1345,9 @@ async def _run_planner_batch(
         {"role": "system", "content": _planner_system_prompt(tier_framing)},
         {"role": "user", "content": summaries_text},
     ]
+
     last_response: _LessonPlanLLM | None = None
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(1, _PLANNER_BATCH_MAX_ATTEMPTS + 1):
         response: _LessonPlanLLM | None = await provider.complete_structured(
             messages, model, _LessonPlanLLM
         )
@@ -1310,22 +1356,29 @@ async def _run_planner_batch(
             raise RuntimeError(
                 f"lesson_id={lesson_id}: lesson_planner received no parsed LLM response"
             )
+
         response_ids = {seg.segment_id for seg in response.segments}
-        if response_ids == expected_ids and len(response.segments) == len(batch):
+        if response_ids == input_ids and len(response.segments) == len(batch):
             return response
+
         last_response = response
-        outcome = "retrying" if attempt < max_attempts else "giving up, outer guard will reject"
         logger.warning(
-            "[%s] lesson_planner_node: batch of %d summaries returned %d segments "
-            "(attempt %d/%d) — %s",
+            "[%s] lesson_planner_node: batch echo mismatch on attempt %d/%d — "
+            "expected %d ids, got %d ids (missing=%s, unexpected=%s) — retrying this batch",
             lesson_id,
+            attempt,
+            _PLANNER_BATCH_MAX_ATTEMPTS,
             len(batch),
             len(response.segments),
-            attempt,
-            max_attempts,
-            outcome,
+            sorted(input_ids - response_ids),
+            sorted(response_ids - input_ids),
         )
-    assert last_response is not None  # loop always runs >= 1 iteration
+
+    # Exhausted retries — return the last attempt's response and let the
+    # EXISTING assembled-response guard block in lesson_planner_node raise
+    # its own contextual error (unchanged behaviour, just reached after
+    # real retries instead of on the first mismatch).
+    assert last_response is not None  # loop always sets this before falling through
     return last_response
 
 
@@ -1563,21 +1616,24 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # looking up each LLM segment by segment_id, not the reverse.
     llm_segment_by_id = {seg.segment_id: seg for seg in response.segments}
     summary_by_id = {s["segment_id"]: s["summary"] for s in segment_summaries}
-    # S2-LM4: per-segment slide_budget derived from tier + segment count,
-    # attached here so slide_generator_node reads it rather than re-deriving
-    # tier logic independently (tracker's own S2-LM4 note).
-    slide_budget_min, slide_budget_max = _tier_slide_budget_per_segment(
-        tier, len(segment_summaries)
-    )
+    # S2-LM4/D85: per-segment slide_budget derived from tier + each segment's
+    # OWN estimated duration share (not a flat count-based division), attached
+    # here so slide_generator_node reads it rather than re-deriving tier logic
+    # independently (tracker's own S2-LM4 note). Durations are looked up via
+    # the same llm_segment_by_id dict as title/summary above, so this list is
+    # guaranteed to be in segment_summaries' authoritative order (verified by
+    # test_segment_order_follows_input_not_llm_response_order for that dict).
+    segment_durations = [llm_segment_by_id[s["segment_id"]].duration_min for s in segment_summaries]
+    slide_budgets = _tier_slide_budget_per_segment(tier, segment_durations)
     segments_out = [
         {
             "segment_id": s["segment_id"],
             "title": llm_segment_by_id[s["segment_id"]].title.strip(),
             "summary": summary_by_id[s["segment_id"]],
             "duration_min": llm_segment_by_id[s["segment_id"]].duration_min,
-            "slide_budget": {"min": slide_budget_min, "max": slide_budget_max},
+            "slide_budget": {"min": slide_budgets[i][0], "max": slide_budgets[i][1]},
         }
-        for s in segment_summaries
+        for i, s in enumerate(segment_summaries)
     ]
     total_duration_min = sum(seg.duration_min for seg in response.segments)
 

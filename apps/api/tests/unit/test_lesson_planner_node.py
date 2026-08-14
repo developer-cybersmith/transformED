@@ -611,7 +611,14 @@ async def test_segment_order_follows_input_not_llm_response_order() -> None:
 @pytest.mark.asyncio
 async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
     """AC-6/AC-8: omitting state["tier"] entirely must behave exactly as
-    before this story — T2 slide_budget, no tier framing in the prompt."""
+    before this story — T2 slide_budget, no tier framing in the prompt.
+
+    D85+D87: slide_budget is allocated per-segment, proportional to each
+    segment's share of estimated duration (duration_min=4.0/6.0/5.0 from
+    _plan_llm_response's default segments, total=15.0), and the total itself
+    is now duration-scaled via T2's minutes-per-slide ratio (1.2-1.8) rather
+    than a fixed lesson-wide count: total_min=15/1.8=8.33, total_max=15/1.2=12.5.
+    share 4/15 -> (2,3); share 6/15 -> (3,5); share 5/15 -> (3,4)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -624,9 +631,12 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
     ):
         result = await lesson_planner_node(_base_state())  # no "tier" key at all
 
-    for seg in result["lesson_plan"]["segments"]:
-        # T2 band (12,15) / 3 segments -> per_min=4, per_max=5.
-        assert seg["slide_budget"] == {"min": 4, "max": 5}
+    segments = result["lesson_plan"]["segments"]
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 2, "max": 3},
+        {"min": 3, "max": 5},
+        {"min": 3, "max": 4},
+    ]
 
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
@@ -637,7 +647,11 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
 @pytest.mark.asyncio
 async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
     """AC-4/AC-6: T1 -> full-depth prompt framing + a wider per-segment
-    slide_budget than T2's default."""
+    slide_budget than T2's default.
+
+    D85+D87: T1's minutes-per-slide ratio (0.8-1.2), same default durations
+    (4.0/6.0/5.0, total=15.0): total_min=15/1.2=12.5, total_max=15/0.8=18.75.
+    share 4/15 -> (3,5); share 6/15 -> (5,8); share 5/15 -> (4,6)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -650,11 +664,17 @@ async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
     ):
         result = await lesson_planner_node(_base_state(tier="T1"))
 
-    for seg in result["lesson_plan"]["segments"]:
-        # T1 band (20,25) / 3 segments -> per_min=ceil(20/3)=7, per_max=8 (clamped).
-        # per_min uses ceiling division (2026-07-17 review fix, Blind Hunter)
-        # so 3 segments' worst-case total (21) never falls below total_min=20.
-        assert seg["slide_budget"] == {"min": 7, "max": 8}
+    segments = result["lesson_plan"]["segments"]
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 3, "max": 5},
+        {"min": 5, "max": 8},
+        {"min": 4, "max": 6},
+    ]
+    # Every T1 segment still has a wider (or equal, at the structural
+    # ceiling) budget than the equivalent T2 default segment above.
+    t2_defaults = [{"min": 2, "max": 3}, {"min": 3, "max": 5}, {"min": 3, "max": 4}]
+    for t1_seg, t2_seg in zip(segments, t2_defaults, strict=True):
+        assert t1_seg["slide_budget"]["max"] >= t2_seg["max"]
 
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "FULL-DEPTH" in sent_prompt
@@ -665,7 +685,11 @@ async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
 @pytest.mark.asyncio
 async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
     """AC-4/AC-6: T3 -> critical-topics-only/refresher framing + a narrower
-    per-segment slide_budget than T2's default."""
+    per-segment slide_budget than T2's default.
+
+    D85+D87: T3's minutes-per-slide ratio (2.0-3.0), same default durations
+    (4.0/6.0/5.0, total=15.0): total_min=15/3.0=5.0, total_max=15/2.0=7.5.
+    share 4/15 -> (1,2); share 6/15 -> (2,3); share 5/15 -> (2,2)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -678,9 +702,17 @@ async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
     ):
         result = await lesson_planner_node(_base_state(tier="T3"))
 
-    for seg in result["lesson_plan"]["segments"]:
-        # T3 band (6,8) / 3 segments -> per_min=2, per_max=3.
-        assert seg["slide_budget"] == {"min": 2, "max": 3}
+    segments = result["lesson_plan"]["segments"]
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 1, "max": 2},
+        {"min": 2, "max": 3},
+        {"min": 2, "max": 2},
+    ]
+    # Every T3 segment still has a narrower (or equal) budget than the
+    # equivalent T2 default segment above.
+    t2_defaults = [{"min": 2, "max": 3}, {"min": 3, "max": 5}, {"min": 3, "max": 4}]
+    for t3_seg, t2_seg in zip(segments, t2_defaults, strict=True):
+        assert t3_seg["slide_budget"]["max"] <= t2_seg["max"]
 
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" in sent_prompt
@@ -736,42 +768,110 @@ async def test_unknown_tier_value_falls_back_to_t2_budget_and_framing() -> None:
     ):
         result = await lesson_planner_node(_base_state(tier="not-a-real-tier"))
 
-    for seg in result["lesson_plan"]["segments"]:
-        assert seg["slide_budget"] == {"min": 4, "max": 5}  # same as T2 default
+    segments = result["lesson_plan"]["segments"]
+    # Same per-segment values as test_default_tier_produces_t2_slide_budget_and_no_framing.
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 2, "max": 3},
+        {"min": 3, "max": 5},
+        {"min": 3, "max": 4},
+    ]
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
 
 
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_tier_t3_five_segments_never_undercuts_total_min() -> None:
-    """Code review fix (Blind Hunter): with floor division, T3's total_min=6
-    over 5 segments gave per_min=1, allowing a worst-case actual total of 5
-    slides — below the tier's own advertised floor. Ceiling division fixes
-    this: 5 segments * per_min must sum to >= 6."""
-    from app.modules.content.pipeline.graph import lesson_planner_node
+# test_tier_t3_five_segments_never_undercuts_total_min (the 2026-07-17 Blind
+# Hunter ceiling-division fix, later rerouted by D85 to exercise the
+# zero-total-duration fallback path) is REMOVED as of D87, not silently
+# dropped: its entire premise -- "T3 has an advertised lesson-wide total_min
+# of 6 that the fallback must never undercut" -- no longer exists. D87
+# deleted `_TIER_TOTAL_SLIDE_BAND` (the fixed per-tier lesson-wide total)
+# entirely; the zero-duration fallback is now a flat, tier-independent lean
+# floor (see test_slide_budget_zero_total_duration_falls_back_to_lean_floor
+# above), which has no per-tier total to undercut in the first place. The
+# fallback's actual new guarantee -- every segment gets exactly (1,1), never
+# zero, for any tier -- is exactly what that test already covers.
 
-    summaries_5 = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(5)]
-    plan_segments_5 = [
-        {"segment_id": f"sec_{i}", "title": f"Title {i}", "duration_min": 3.0} for i in range(5)
-    ]
-    mock_provider = AsyncMock()
-    mock_provider.complete_structured.return_value = _plan_llm_response(segments=plan_segments_5)
-    sb = _mock_supabase()
 
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
-    ):
-        result = await lesson_planner_node(_base_state(tier="T3", segment_summaries=summaries_5))
+# ── Story 3-46 (D85): slide budget proportional to segment duration ───────────
 
-    total_min_possible = sum(
-        seg["slide_budget"]["min"] for seg in result["lesson_plan"]["segments"]
-    )
-    assert total_min_possible >= 6, (
-        f"worst-case total ({total_min_possible}) undercuts T3's advertised min of 6"
-    )
+# The exact 15 real, measured per-segment durations (minutes) from a real
+# generated lesson that motivated D85 — see docs/stories/3-46-slide-budget-duration.md.
+# Index 8 (3.48) is the largest; index 10 (1.23) is the smallest.
+_D85_REAL_DURATIONS_MIN = [
+    3.29,
+    2.99,
+    3.09,
+    1.37,
+    3.08,
+    2.17,
+    2.35,
+    2.16,
+    3.48,
+    3.28,
+    1.23,
+    3.16,
+    3.42,
+    3.01,
+    2.32,
+]
+
+
+def test_slide_budget_proportional_to_real_d85_durations() -> None:
+    """D85+D87: `_tier_slide_budget_per_segment` must return one (min,max)
+    pair per segment, sized by that segment's share of the lesson's REAL
+    estimated total duration (D87: the total itself now scales via
+    `_TIER_MINUTES_PER_SLIDE_BAND`, not a fixed lesson-wide count) — not a
+    single pair flatly shared by every segment (the pre-D85 bug), and not a
+    total so small it saturates at the structural floor for every segment
+    regardless of duration spread (D85-alone's residual gap for T2/T3 at
+    n=15, fixed by D87).
+
+    Exact values computed and verified by direct execution of the shipped
+    function (not hand math) against the real 15-segment, 40.4-real-minute
+    dataset from lesson `abe4e438`/`1baae6f6` (docs/stories/3-46 and 3-49):
+    idx 8 (3.48 min, the largest) and idx 10 (1.23 min, the smallest)."""
+    from app.modules.content.pipeline.graph import _tier_slide_budget_per_segment
+
+    expected = {
+        "T3": {8: (1, 2), 10: (1, 1)},
+        "T2": {8: (2, 3), 10: (1, 1)},
+        "T1": {8: (3, 4), 10: (1, 2)},
+    }
+    for tier, checks in expected.items():
+        budgets = _tier_slide_budget_per_segment(tier, _D85_REAL_DURATIONS_MIN)
+        assert len(budgets) == 15
+        assert all(1 <= mn <= mx <= 8 for mn, mx in budgets), (tier, budgets)
+        for idx, want in checks.items():
+            assert budgets[idx] == want, (
+                f"{tier} idx {idx}: expected {want}, got {budgets[idx]} (full: {budgets})"
+            )
+        # Every tier must now differentiate the largest segment from the
+        # smallest — the exact property D85 alone could not deliver for
+        # T2/T3 at this real segment count, and the reason D87 exists.
+        assert budgets[8][1] > budgets[10][1], (
+            f"{tier}: largest-duration segment (idx 8) should get a strictly "
+            f"larger max-budget than the smallest-duration segment (idx 10); "
+            f"got {budgets[8]} vs {budgets[10]}"
+        )
+
+
+def test_slide_budget_zero_total_duration_falls_back_to_lean_floor() -> None:
+    """D85 step 4 + D87: when segment_durations_min sums to <= 0
+    (malformed/all-zero input — no real duration signal, already proven
+    unreachable through lesson_planner_node itself since its own
+    duration_min > 0 guard runs first — defensive-only path), there is no
+    basis for a duration-scaled total (D87 removed the fixed lesson-wide
+    total this used to fall back to), so every segment gets exactly the
+    structural floor — never zero, never a fabricated distribution."""
+    from app.modules.content.pipeline.graph import _tier_slide_budget_per_segment
+
+    assert _tier_slide_budget_per_segment("T2", [0.0, 0.0, 0.0]) == [(1, 1)] * 3
+
+    # A single all-zero-duration segment, and a longer all-zero list, must
+    # not raise (ZeroDivisionError or otherwise) either, for any tier.
+    assert _tier_slide_budget_per_segment("T3", [0.0]) == [(1, 1)]
+    assert _tier_slide_budget_per_segment("T1", [0.0] * 7) == [(1, 1)] * 7
 
 
 # ── Story 2-16 (RC-3): planner resilience to high segment counts ──────────────
@@ -852,6 +952,178 @@ async def test_planner_batches_above_threshold_produces_full_plan() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_planner_batches_at_structure_max_sections_boundary() -> None:
+    """D75 (Story 3-43): a chapter coalesced to EXACTLY structure_max_sections
+    (15 segments — the maximal, most common real-world case, since coalescing
+    caps at this value) must genuinely batch under the current default
+    config, not silently take the single-call path. Two real production runs
+    on a 15-segment chapter returned 5 and 12 segments before this fix —
+    proving the single-call path is unreliable at this size. This test uses
+    the REAL settings.structure_max_sections value (not a hardcoded 15) so it
+    stays correct if that default is ever re-tuned."""
+    from app.config import get_settings
+    from app.modules.content.pipeline.graph import (
+        _LessonPlanLLM,
+        _LessonPlanSegmentLLM,
+        lesson_planner_node,
+    )
+
+    n = get_settings().structure_max_sections
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(n)]
+
+    def _batch_response(*args: Any, **kwargs: Any) -> _LessonPlanLLM:
+        messages = args[0]
+        user_text = messages[1]["content"]
+        ids = [
+            line.split("segment_id=")[1].split(":")[0]
+            for line in user_text.splitlines()
+            if "segment_id=" in line
+        ]
+        segs = [
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"Title {sid}", duration_min=3.0)
+            for sid in ids
+        ]
+        return _LessonPlanLLM(
+            title="Full Plan",
+            subject="Subject",
+            objectives=["Obj one", "Obj two"],
+            complexity_level="medium",
+            segments=segs,
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _batch_response
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert mock_provider.complete_structured.call_count > 1, (
+        f"D75: {n} summaries (structure_max_sections) must trigger real batching "
+        "under the default config — a single call at this size is the exact "
+        "shape that collapsed in production (15 expected, 5 or 12 returned)"
+    )
+    plan = result["lesson_plan"]
+    assert plan["total_segments"] == n
+    assert [s["segment_id"] for s in plan["segments"]] == [f"sec_{i}" for i in range(n)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_planner_retries_same_batch_on_echo_mismatch_and_recovers() -> None:
+    """D77 (Story 3-43 follow-up): confirmed live during two real demo-
+    generation attempts that a real LLM can under-echo a batch even when
+    batching is correctly sized (D75) -- retries the SAME batch's completion
+    before giving up, rather than failing the whole node on the first
+    mismatch. This test proves RECOVERY: the first attempt under-echoes,
+    the second attempt is correct, and the node succeeds using the
+    RECOVERED (not the failed) response -- not just that the eventual
+    failure guard still fires (that's test_planner_batched_dropped_id_still_rejected,
+    a permanently-corrupt mock; this one is transient, like the real world)."""
+    from app.modules.content.pipeline.graph import (
+        _LessonPlanLLM,
+        _LessonPlanSegmentLLM,
+        lesson_planner_node,
+    )
+
+    n = 10  # fits in a single batch at the default batch_size (10) -- exercises
+    # the retry path via _run_planner_batch regardless of single-vs-multi-batch.
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(n)]
+
+    call_count = 0
+
+    def _flaky_then_correct(*args: Any, **kwargs: Any) -> _LessonPlanLLM:
+        nonlocal call_count
+        call_count += 1
+        ids = _ids_from_messages(args)
+        if call_count == 1:
+            # First attempt under-echoes by one id -- the real observed
+            # failure mode (14/15, 12/15 in production).
+            ids = ids[:-1]
+        segs = [
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"T {sid}", duration_min=2.0) for sid in ids
+        ]
+        return _LessonPlanLLM(
+            title="Full Plan",
+            subject="Subject",
+            objectives=["Obj one"],
+            complexity_level="medium",
+            segments=segs,
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _flaky_then_correct
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert call_count == 2, "must retry exactly once after the first mismatch, then stop"
+    plan = result["lesson_plan"]
+    assert plan["total_segments"] == n, "the RECOVERED (2nd) response must be used, not rejected"
+    assert [s["segment_id"] for s in plan["segments"]] == [f"sec_{i}" for i in range(n)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_planner_batch_retry_exhausts_and_still_raises_via_existing_guard() -> None:
+    """D77: when EVERY retry attempt still mismatches (a permanently-broken
+    batch, not a transient one), the node must still raise via the existing
+    assembled-response guard -- retries are a recovery attempt, not a
+    weakening of the failure guarantee. Asserts the exact retry ceiling
+    (_PLANNER_BATCH_MAX_ATTEMPTS) is respected, not retried forever."""
+    from app.modules.content.pipeline.graph import (
+        _PLANNER_BATCH_MAX_ATTEMPTS,
+        _LessonPlanLLM,
+        _LessonPlanSegmentLLM,
+        lesson_planner_node,
+    )
+
+    n = 5
+    summaries = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(n)]
+
+    call_count = 0
+
+    def _always_drops_last(*args: Any, **kwargs: Any) -> _LessonPlanLLM:
+        nonlocal call_count
+        call_count += 1
+        ids = _ids_from_messages(args)[:-1]
+        segs = [
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"T {sid}", duration_min=2.0) for sid in ids
+        ]
+        return _LessonPlanLLM(
+            title="Full Plan",
+            subject="Subject",
+            objectives=["Obj one"],
+            complexity_level="medium",
+            segments=segs,
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _always_drops_last
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        pytest.raises(RuntimeError, match="segment count mismatch"),
+    ):
+        await lesson_planner_node(_base_state(segment_summaries=summaries))
+
+    assert call_count == _PLANNER_BATCH_MAX_ATTEMPTS, (
+        f"must attempt exactly {_PLANNER_BATCH_MAX_ATTEMPTS} times, no more, no fewer"
+    )
+    sb.table.return_value.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_planner_batched_dropped_id_still_rejected() -> None:
     """Story 2-16 RC-3 / AC-6: batching does NOT weaken the guard — if a batch
     drops a segment_id, the assembled count mismatch still raises (no fabrication)."""
@@ -925,15 +1197,18 @@ def _make_plan_llm(ids: list[str]) -> Any:
 @pytest.mark.parametrize(
     ("n", "expected_calls"),
     [
-        # Throwaway fix (2026-08-12): default lesson_planner_batch_size is now
-        # 10, not 15 -- boundaries rescaled to match, same intent as before.
-        (10, 1),  # == batch_size -> single call (boundary)
+        (10, 1),  # == batch_size (D75: now 10, was 15) -> single call (boundary)
         (11, 2),  # batch_size + 1 -> 10 + 1 (one-element final batch)
+        (15, 2),  # structure_max_sections (D75's real-world case) -> 10 + 5
         (20, 2),  # exact multiple -> 10 + 10 (no remainder)
     ],
 )
 async def test_planner_batch_boundaries(n: int, expected_calls: int) -> None:
-    """Story 2-16 RC-3: the <= vs > batch_size boundary and remainder handling."""
+    """Story 2-16 RC-3 / D75 (Story 3-43): the <= vs > batch_size boundary and
+    remainder handling, against the current lesson_planner_batch_size=10
+    default (lowered from 15 by D75 so structure_max_sections=15 always
+    genuinely batches — see test_planner_batches_at_structure_max_sections_boundary
+    for why)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     summaries = [{"segment_id": f"sec_{i}", "summary": f"S{i}."} for i in range(n)]

@@ -1187,12 +1187,23 @@ async def generate_chapter_lesson(
         .eq("user_id", user_id)
         .execute()
     )
-    for existing in rows(existing_resp):
+    # D54: `body.force` bypasses ONLY the early-return below — the branch that
+    # hands an existing `generating`/`ready` lesson back as-is instead of a new
+    # one being created. Gate 6 and Gate 7 still run unconditionally after this
+    # block, whether force is set or not. `existing_resp` itself is still
+    # fetched above unconditionally — nothing downstream of this block reads
+    # it, so skipping only the early-return, not the query, is deliberate: it
+    # keeps this diff minimal and leaves the query available if that changes.
+    # The D53 stale-generating `continue` inside the loop becomes moot when
+    # force=True (the loop never runs at all), which is correct: force means
+    # "make a new one regardless," not "decide whether the old one still
+    # counts."
+    for existing in rows(existing_resp) if not body.force else []:
         existing_status = str(existing.get("status") or "")
         if existing_status == "generating" and str(existing.get("created_at") or "") < stale_before:
             # Older than any run can last, so no worker is on it. Fall through
             # and generate a replacement rather than handing the caller a corpse
-            # they have no way to clear (D53; `?force=true` is D54, unbuilt).
+            # they have no way to clear (D53; escape hatch is `force=true`, D54).
             # `created_at` is `timestamptz` rendered ISO-8601 by PostgREST and
             # the cutoff is built the same way, so the string compare is a real
             # time compare — the same property `_latest_lesson` relies on.

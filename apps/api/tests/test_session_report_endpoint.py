@@ -461,12 +461,8 @@ async def test_get_report_ces_breakdown_teachback_zero_when_no_attempts(mock_to_
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_ces_breakdown_attention_zero_when_redis_unavailable(mock_to_thread):
-    """AC 10 (updated): behavioral/head_pose/blink degrade to 0.0 when the
-    `ces_signal_totals` Redis read fails (e.g. Redis unavailable) -- no test
-    here patches app.core.redis.get_redis, so the real one raises
-    (RuntimeError: pool not initialised) and get_session_report must catch it
-    and render the quiz/teachback halves anyway rather than 500."""
+async def test_get_report_ces_breakdown_attention_zero_when_no_redis(mock_to_thread):
+    """AC 10 (S3-42/D108, was D72): behavioral/head_pose/blink are 0.0 when redis=None."""
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(
@@ -700,6 +696,7 @@ def test_http_get_report_returns_200():
         patch("app.modules.assessment.service.asyncio.to_thread") as mock_thread,
         patch("app.modules.assessment.service.get_settings") as mock_get_settings,
         patch("app.core.db.get_supabase") as mock_get_supabase,
+        patch("app.core.redis.get_redis", return_value=None),
     ):
         # Wire async shim
         async def _shim(func, *args, **kwargs):
@@ -1126,3 +1123,98 @@ async def test_report_asyncio_to_thread_called_8_times_on_happy_path():
     assert len(call_log) == 8, (
         f"Expected 8 asyncio.to_thread calls (happy path), got {len(call_log)}"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_dna_snapshot_none_when_learner_dna_execute_returns_raw_none(
+    mock_to_thread,
+):
+    """BLOCKER-1 regression guard (post-impl audit 2026-08-04): learner_dna_snapshot is None
+    when maybe_single().execute() returns None directly (not APIResponse with data=None).
+
+    Supabase-py can return a bare None from maybe_single().execute() in certain edge cases.
+    The guard `if _dna_resp is not None and _dna_resp.data:` short-circuits safely.
+    Without the `is not None` half, this path would raise AttributeError on None.data,
+    crashing the session report for all users who trigger the edge case.
+    """
+    from app.modules.assessment.service import get_session_report
+
+    # Build a minimal mock where n==6 (learner_dna) execute() returns None directly.
+    mock = MagicMock()
+    _cnt = [0]
+
+    def _tbl(name):  # noqa: ANN001,ANN202
+        _cnt[0] += 1
+        n = _cnt[0]
+        m = MagicMock()
+        if n == 1:
+            _ex = m.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _ex.return_value.data = _SESSION_ROW
+        elif n == 2:
+            _ex = m.select.return_value.eq.return_value.maybe_single.return_value.execute
+            _ex.return_value.data = {"tier": "T2"}
+        elif n == 3:
+            m.select.return_value.eq.return_value.execute.return_value.data = []
+        elif n == 4:
+            m.select.return_value.eq.return_value.execute.return_value.data = []
+        elif n == 5:
+            m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
+        elif n == 6:
+            # Story 2-46/S3-05: session_events raw intervention rows query (new since this
+            # test was written) -- harmless empty result, not the subject of this test.
+            m.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = (
+                []
+            )
+        elif n == 7:
+            # BLOCKER-1: execute() itself returns None (not APIResponse(data=None))
+            m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
+                None
+            )
+        return m
+
+    mock.table.side_effect = _tbl
+
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=mock)
+
+    assert result.learner_dna_snapshot is None, (
+        "snapshot must be None when execute() returns None — "
+        "the `is not None` guard in `if _dna_resp is not None and _dna_resp.data:` must hold"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_report_growth_labels_skip_non_dict_payload(mock_to_thread):
+    """BLOCKER-2 regression guard (post-impl audit 2026-08-04): non-dict payload entries in
+    session_events are silently skipped; all growth_labels resolve to None.
+
+    The `isinstance(payload, dict)` guard at service.py ensures corrupted or unexpected
+    JSONB values (strings, ints, booleans, lists) do not crash the report or inject
+    unexpected keys into the delta map. Without the guard, a string payload would pass
+    `evt.get('payload')` as a str, and `str.get('dimension')` would raise AttributeError.
+    """
+    from app.modules.assessment.service import get_session_report
+
+    # Pass a growth_events list where every payload is a non-dict value.
+    corrupted_events = [
+        {"payload": "corrupted_string"},
+        {"payload": 42},
+        {"payload": True},
+        {"payload": None},
+        {"payload": ["wrong", "type"]},
+    ]
+
+    supabase = _build_report_supabase(
+        dna_data=_DNA_ROW,
+        growth_events=corrupted_events,
+    )
+    result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
+
+    assert result.learner_dna_snapshot is not None
+    growth = result.learner_dna_snapshot["growth_labels"]
+    for dim in _ALL_DIMS:
+        assert growth[dim] is None, (
+            f"growth_labels[{dim!r}] must be None when all payloads are non-dict; "
+            f"got {growth[dim]!r}"
+        )

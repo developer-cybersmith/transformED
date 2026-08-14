@@ -1,15 +1,17 @@
 """Tests for S3-42 (D9): per-signal Redis histories and CES breakdown accuracy.
 
 AC1 — process_attention_signal writes per-signal histories in TEACHING state.
-AC2 — None signals do not write to their history.
+AC2 — None signals do not write to their history; ltrim cap enforced.
 AC3 — get_session_report accepts optional redis parameter.
 AC4 — _signal_avg reads from Redis per-signal histories.
 AC5 — Graceful fallback to 0.0 when redis=None or history empty.
 AC6 — Router passes redis=get_redis() to get_session_report.
 AC7 — ces_breakdown behavioral/head_pose/blink non-zero when histories have data.
+Guard (D108, was D72) — get_session_report has no hardcoded 0.0 for behavioral/head_pose/blink.
 """
 from __future__ import annotations
 
+import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -495,3 +497,80 @@ async def test_ltrim_cap_applied_to_per_signal_histories():
             assert stop == _CES_HISTORY_MAX - 1, (
                 f"ltrim stop must be {_CES_HISTORY_MAX - 1} for {k}, got {stop}"
             )
+
+
+# ── Guard (D108, was D72) — no hardcoded 0.0 for behavioral/head_pose/blink ──────
+
+
+@pytest.mark.unit
+def test_ces_breakdown_no_hardcoded_zero_for_behavioral():
+    """Guard (D108): get_session_report source must not contain hardcoded 0.0 for behavioral.
+
+    Fails CI if someone re-introduces the deferred Sprint 2 hardcoded values.
+    """
+    from app.modules.assessment import service as assessment_service
+
+    source = inspect.getsource(assessment_service.get_session_report)
+    assert '"behavioral": 0.0' not in source, (
+        'get_session_report must not hardcode "behavioral": 0.0 — D108 guard'
+    )
+    assert '"head_pose": 0.0' not in source, (
+        'get_session_report must not hardcode "head_pose": 0.0 — D108 guard'
+    )
+    assert '"blink": 0.0' not in source, (
+        'get_session_report must not hardcode "blink": 0.0 — D108 guard'
+    )
+
+
+# ── AC1 (source guards) — per-signal history keys referenced ─────────────────
+
+
+@pytest.mark.unit
+def test_process_attention_signal_source_contains_signal_history_keys():
+    """AC1 (source guard): process_attention_signal must reference all three history keys."""
+    from app.modules.tutor import service as tutor_service
+
+    source = inspect.getsource(tutor_service.process_attention_signal)
+    assert "behavioral_history" in source, (
+        "process_attention_signal must write to behavioral_history Redis key — AC1"
+    )
+    assert "head_pose_history" in source, (
+        "process_attention_signal must write to head_pose_history Redis key — AC1"
+    )
+    assert "blink_history" in source, (
+        "process_attention_signal must write to blink_history Redis key — AC1"
+    )
+    assert "_CES_HISTORY_MAX" in source or "ltrim" in source, (
+        "process_attention_signal must bound history with ltrim/_CES_HISTORY_MAX — AC2"
+    )
+
+
+# ── AC3/AC4/AC5 (source guards) — get_session_report correctness ─────────────
+
+
+@pytest.mark.unit
+def test_get_session_report_reads_all_signal_history_keys():
+    """AC3 (source guard): get_session_report must reference all signal history keys."""
+    from app.modules.assessment import service as assessment_service
+
+    source = inspect.getsource(assessment_service.get_session_report)
+    assert "behavioral_history" in source, "get_session_report must read behavioral_history — AC3"
+    assert "head_pose_history" in source, "get_session_report must read head_pose_history — AC3"
+    assert "blink_history" in source, "get_session_report must read blink_history — AC3"
+
+
+@pytest.mark.unit
+def test_ces_breakdown_uses_settings_weights_not_hardcoded():
+    """AC5 (source guard): get_session_report must use settings.ces_weight_* not literals."""
+    from app.modules.assessment import service as assessment_service
+
+    source = inspect.getsource(assessment_service.get_session_report)
+    assert "ces_weight_behavioral" in source, (
+        "get_session_report must use settings.ces_weight_behavioral — AC5"
+    )
+    assert "ces_weight_head_pose" in source, (
+        "get_session_report must use settings.ces_weight_head_pose — AC5"
+    )
+    assert "ces_weight_blink" in source, (
+        "get_session_report must use settings.ces_weight_blink — AC5"
+    )

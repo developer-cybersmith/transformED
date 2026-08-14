@@ -10,6 +10,7 @@ import { completeSession, createSession } from '@/lib/assessment';
 import type { LessonStatusResponse } from '@/services/upload.service';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
+import { CaptionOverlay } from './CaptionOverlay';
 import { SlideRenderer } from './SlideRenderer';
 import { PlayerControls } from './PlayerControls';
 import { QuizOverlay } from './QuizOverlay';
@@ -223,8 +224,14 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
       {/* AudioTimeline: hidden, drives audio playback + slide sync */}
       <AudioTimeline />
 
-      {/* Slide area — all slides rendered simultaneously; only active is visible */}
-      <div className="relative flex-1">
+      {/* Slide area — all slides rendered simultaneously; only active is visible.
+          min-h-0 is required here (D88): a flex item's default min-height is
+          `auto`, meaning it will NOT shrink below its content's natural height
+          even inside a flex-1 parent -- without this, tall slide content grows
+          this container past the viewport instead of being clipped to it, and
+          SlideRenderer's own overflow-y-auto never gets a bounded height to
+          actually scroll within. */}
+      <div className="relative flex-1 min-h-0">
         {/* Tier badge — persistent, visible regardless of playback state (S2-10).
             Not placed in the "before any slide is active" block below since
             currentSlideId is set almost immediately after mount in real use,
@@ -243,6 +250,11 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             jargon={segment.jargon}
           />
         ))}
+
+        {/* Non-synced caption panel (D90) — shows the current segment's full
+            narration script so students can read along; renders nothing when
+            there's no script (mirrors SlideImage's own pattern). */}
+        <CaptionOverlay script={segment?.narration.script ?? null} />
 
         {/* Lesson metadata shown before any slide is active */}
         {!currentSlideId && (

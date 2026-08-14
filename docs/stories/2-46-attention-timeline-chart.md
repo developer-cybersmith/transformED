@@ -12,8 +12,8 @@ As a student reviewing my session report,
 I want to see how my engagement moved over the session and where a focus check-in happened,
 so that I understand my own attention pattern without being shown a raw, judgmental score.
 
-**Source:** `docs/dev2-sprint-tracker.md` §S3-05 (Sprint 3, P2, "Session Report: Attention Timeline
-Chart") and §S3-06 ("Reports Page" — add: attention timeline chart once MediaPipe/attention data
+**Source:** `docs/dev2-sprint-tracker.md` Â§S3-05 (Sprint 3, P2, "Session Report: Attention Timeline
+Chart") and Â§S3-06 ("Reports Page" — add: attention timeline chart once MediaPipe/attention data
 exists). Unblocked 2026-08-10 once S3-02 (attention monitor) shipped and merged into
 `sprint3-master`.
 
@@ -29,13 +29,13 @@ would be exactly the "reports success while being wrong" shape CLAUDE.md's Scale
 exists to prevent).
 
 **Second finding, discovered while designing the extension — do not re-litigate, it is settled
-by `docs/DEFECT-REGISTER.md` D77 (new, this story):** `session:{id}:ces_history` in Redis is
+by `docs/DEFECT-REGISTER.md` D109 (new, this story):** `session:{id}:ces_history` in Redis is
 `ltrim`'d to the last 10 windows (`tutor/service.py`, `_CES_HISTORY_MAX=10`) and nothing else
 durably stores per-window CES. At the default 5 s cadence that is **the last ~50 seconds of the
 session**, for a session of any length — a 20-minute session and a 50-second session return the
 same 10 stored windows. Persisting the *full* session's CES history durably (a new
 `sessions.ces_timeline` column or a `ces_windows` table, written incrementally) is a bigger,
-separate change and is explicitly **out of scope here** — registered as D77 instead. This story
+separate change and is explicitly **out of scope here** — registered as D109 instead. This story
 exposes the existing, real, capped Redis data and **labels it honestly as a recency window**,
 never implying it covers the whole session. Do not silently present 10 windows as "the session."
 
@@ -90,10 +90,10 @@ diff specifically.
    at all per AC-1, so this is enforced by the contract, not just by convention).
 6. **AC-6 (frontend)** — Explicit, visible degradation, not silence: when `ces_timeline` is
    `None` or has fewer than 2 points, render a small "Not enough data for a timeline yet" message
-   instead of an empty/broken chart — mirroring `formatCesLabel`'s `null → "Not measured"`
+   instead of an empty/broken chart — mirroring `formatCesLabel`'s `null â†’ "Not measured"`
    pattern. When `ces_timeline` has data, the chart must carry a caption stating it covers the
    most recent portion of the session (e.g. "last {window_count} readings"), never implying full-
-   session coverage — this is the D77 degradation surfaced explicitly, not hidden.
+   session coverage — this is the D109 degradation surfaced explicitly, not hidden.
 7. **AC-7 (frontend)** — Responsive: `AttentionChart` uses a fluid/percentage-width container
    (`ResponsiveContainer` from recharts) so it fits `SessionReport.tsx`'s existing `max-w-2xl`
    card grid at any viewport; below a `sm` breakpoint the chart collapses to a simpler view (no
@@ -125,7 +125,7 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
    reached TEACHING for >=25-50s. Largest actually possible: 10 points, 20 events — both hard
    caps, not observed maxima, so there is no "beyond it" case to degrade further.
 2. **Fixed budgets vs. variable input.** The CES-timeline budget (10 windows) is fixed regardless
-   of session length — this is D77, the whole point of this story's scoping decision: rather than
+   of session length — this is D109, the whole point of this story's scoping decision: rather than
    silently truncating a 20-minute session to its last 50 seconds and presenting that as
    complete, AC-6 requires an explicit, visible caption naming the actual window shown. The
    intervention-events budget (`.limit(20)`) is a safety ceiling far above the natural bound
@@ -142,7 +142,7 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
 5. **Inherited caps re-derived?** `_CES_HISTORY_MAX=10` was sized for the CES-window/intervention-
    trigger use case (only the last 2 windows matter for the distraction check) — this story is the
    first consumer that cares about *all 10* for display, and the first to notice that "10" was
-   never meant to answer "how did the whole session go." That mismatch is exactly D77, registered
+   never meant to answer "how did the whole session go." That mismatch is exactly D109, registered
    rather than worked around by quietly asking for more than 10 (which would change tutor/
    service.py's distraction-detection memory footprint for an unrelated feature) or by silently
    presenting 10 as complete (which would be the wrong kind of "fix").
@@ -167,7 +167,7 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
     change caused in `test_session_report_endpoint.py`'s call-count-position-based mock (its
     `_build_report_supabase` builder hardcodes table-call positions; inserting a new call shifted
     everything after it by one) — updated the mock's position mapping and the two exact-call-count
-    assertions (6→7, 7→8). Verified via worktree comparison against pre-story `sprint3-master`:
+    assertions (6â†’7, 7â†’8). Verified via worktree comparison against pre-story `sprint3-master`:
     19/19 pre-existing failures match exactly, zero new regressions.
 - [x] Task 2 (AC: 3): Add `ces_timeline`/`intervention_events` to
   `apps/web/src/types/assessment.ts`'s `SessionReport`, verified field-for-field against the
@@ -259,7 +259,7 @@ See "Senior Developer Review (AI)" below for full detail, dismissed findings, an
 
 - Do NOT present the 10-window `ces_timeline` as if it were the whole session. AC-6's recency
   caption is not optional polish — it is the surfaced-degradation this story's design is built
-  around (D77). A chart with no caption is a silent-truncation defect, not a finished feature.
+  around (D109). A chart with no caption is a silent-truncation defect, not a finished feature.
 - Do NOT add a second Redis read for `ces_timeline` — extend the existing `ces_history_summary`
   read in `get_session_report` to also retain `t`, matching the "process once" principle already
   used elsewhere in this codebase.
@@ -272,7 +272,7 @@ See "Senior Developer Review (AI)" below for full detail, dismissed findings, an
 - Do NOT touch the CES formula, the distraction/fatigue trigger logic, or `_CES_HISTORY_MAX`
   itself — this story is a read-only, additive extension of the report endpoint. Widening
   `_CES_HISTORY_MAX` to "fix" the recency-window limitation is explicitly out of scope (that's
-  D77's real fix, a separate story) and would silently change tutor/service.py's memory
+  D109's real fix, a separate story) and would silently change tutor/service.py's memory
   footprint for an unrelated feature.
 - Do NOT assume `docs/ces-lifecycle-learner-scenarios.md` / `docs/ces-decisions-developer-guide.md`
   (Dev 3's CES reference docs, merged into `sprint3-master` 2026-08-13) are current on exact line
@@ -301,7 +301,7 @@ Remove the worktree (`git worktree remove --force`) when done.
 
 ### References
 
-- [Source: docs/dev2-sprint-tracker.md §S3-05, §S3-06 — original AC text and file locations]
+- [Source: docs/dev2-sprint-tracker.md Â§S3-05, Â§S3-06 — original AC text and file locations]
 - [Source: apps/api/app/modules/assessment/router.py:44-76 — real `SessionReport` model, verified
   live 2026-08-13, not the tracker's description]
 - [Source: apps/api/app/modules/assessment/service.py — `get_session_report`'s existing
@@ -319,7 +319,7 @@ Remove the worktree (`git worktree remove --force`) when done.
 - [Source: apps/web/src/hooks/useSessionReport.ts — SWR-backed data hook, no changes needed]
 - [Source: docs/stories/2-41-ces-indicator.md — sibling Sprint 3 story, "never show the raw
   score" testing convention to follow exactly]
-- [Source: docs/DEFECT-REGISTER.md D77 (new, this story) — the recency-window limitation this
+- [Source: docs/DEFECT-REGISTER.md D109 (new, this story) — the recency-window limitation this
   story must surface, not hide]
 - [Source: docs/SCALE-CONTRACT.md — the six questions answered above]
 
@@ -327,8 +327,8 @@ Remove the worktree (`git worktree remove --force`) when done.
 
 | Date | Change | Author |
 |------|--------|--------|
-| 2026-08-13 | Story created per S3-05 in `docs/dev2-sprint-tracker.md`. Branch `sprint3/s3-05-attention-timeline-chart` off `sprint3-master` (per explicit user instruction — not `main`, since `sprint3-master` carries this session's throwaway merge and reconciliation work this story's dev notes depend on). Blocking-dependency finding (report API lacks timeline/intervention-timestamp data) surfaced during pre-implementation analysis; user chose to extend the backend within this same story rather than deferring or faking the chart. Second finding (Redis `ces_history` caps at 10 windows regardless of session length) registered separately as D77, scoped out of this story. | Dev 2 |
-| 2026-08-13 | All 6 tasks implemented, TDD (RED confirmed before each GREEN). Backend: `ces_timeline`/`intervention_events` added to `get_session_report`/`SessionReport`, reusing the existing `ces_history` Redis read. Frontend: `SessionReport` type extended; `AttentionChart.tsx` built on `recharts@2.15.4` (not `3.10.1` — see Task 3 notes for the real, reproducible bug that made this a correctness choice); two jsdom-gap polyfills added to the shared `src/test/setup.ts` (`ResizeObserver`, scoped `getBoundingClientRect`) reusable by any future chart component; wired into `SessionReport.tsx` after the stat grid, before the DNA snapshot. Backend suite verified via disposable worktree comparison against pre-story `sprint3-master`: 230 failed/52 errors identical on both sides, +10 passed (new tests only) on this branch, zero regressions. Frontend: 79 files/957 tests green, `tsc --noEmit` clean, `eslint` clean. Status → review. | Dev 2 |
+| 2026-08-13 | Story created per S3-05 in `docs/dev2-sprint-tracker.md`. Branch `sprint3/s3-05-attention-timeline-chart` off `sprint3-master` (per explicit user instruction — not `main`, since `sprint3-master` carries this session's throwaway merge and reconciliation work this story's dev notes depend on). Blocking-dependency finding (report API lacks timeline/intervention-timestamp data) surfaced during pre-implementation analysis; user chose to extend the backend within this same story rather than deferring or faking the chart. Second finding (Redis `ces_history` caps at 10 windows regardless of session length) registered separately as D109, scoped out of this story. | Dev 2 |
+| 2026-08-13 | All 6 tasks implemented, TDD (RED confirmed before each GREEN). Backend: `ces_timeline`/`intervention_events` added to `get_session_report`/`SessionReport`, reusing the existing `ces_history` Redis read. Frontend: `SessionReport` type extended; `AttentionChart.tsx` built on `recharts@2.15.4` (not `3.10.1` — see Task 3 notes for the real, reproducible bug that made this a correctness choice); two jsdom-gap polyfills added to the shared `src/test/setup.ts` (`ResizeObserver`, scoped `getBoundingClientRect`) reusable by any future chart component; wired into `SessionReport.tsx` after the stat grid, before the DNA snapshot. Backend suite verified via disposable worktree comparison against pre-story `sprint3-master`: 230 failed/52 errors identical on both sides, +10 passed (new tests only) on this branch, zero regressions. Frontend: 79 files/957 tests green, `tsc --noEmit` clean, `eslint` clean. Status â†’ review. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -337,7 +337,7 @@ Remove the worktree (`git worktree remove --force`) when done.
 1. Verified the blocking-dependency finding by reading the real, current `get_session_report`/`SessionReport` code directly (not the tracker's description) — confirmed no per-window timeline or intervention-timestamp data was exposed, and confirmed the second finding (Redis `ces_history`'s 10-window cap) by reading `tutor/service.py`'s write side. Both surfaced to the user before writing any code; user decided scope for both.
 2. Backend (Task 1): extended the existing `ces_history_summary` Redis-read loop (S3-50/D18) to also retain each entry's timestamp and build `ces_timeline`, rather than adding a second round trip. Added a new, bounded (`.limit(20)`) `session_events` query for raw intervention rows, computing `intervention_events` (`minute`+`type` only, never `ces_at_trigger`) once `started_at` was available. Discovered and fixed 4 test regressions caused by inserting a new DB call into `test_session_report_endpoint.py`'s position-indexed mock builder (a pre-existing fragility in that file, not introduced here, but newly triggered) — updated the mock's call-position mapping and two exact-call-count assertions.
 3. Frontend type (Task 2): `tsc --noEmit` was the only real RED signal for a pure type addition (esbuild strips types without checking, so a runtime test alone wouldn't fail first). Fixed 2 pre-existing `SessionReport` object literals elsewhere in the test suite that broke once the new fields became required.
-4. `AttentionChart.tsx` (Tasks 3-4): built against `recharts@3.10.1` first (the current major version) and hit a real, reproducible bug — `<YAxis>` rendered zero ticks under every configuration tried, traced down to jsdom-environment interactions, not a mistake in my own JSX. Switched to `recharts@2.15.4` (still React-19-compatible) after confirming the same class of issue existed there too, then found and fixed the actual root cause: my own `getBoundingClientRect` polyfill (needed for `<ResponsiveContainer>`) was also inflating recharts' internal tick-label-width-measurement `<span>` elements to a fake 800×400, making every tick look like it overlapped its neighbor and get silently dropped. Scoped the polyfill to `tagName === 'DIV'` only. Both this and a `ResizeObserver` polyfill (jsdom has none) were added to the shared `src/test/setup.ts`, not a local test-file mock, since any future chart component would hit the identical gap.
+4. `AttentionChart.tsx` (Tasks 3-4): built against `recharts@3.10.1` first (the current major version) and hit a real, reproducible bug — `<YAxis>` rendered zero ticks under every configuration tried, traced down to jsdom-environment interactions, not a mistake in my own JSX. Switched to `recharts@2.15.4` (still React-19-compatible) after confirming the same class of issue existed there too, then found and fixed the actual root cause: my own `getBoundingClientRect` polyfill (needed for `<ResponsiveContainer>`) was also inflating recharts' internal tick-label-width-measurement `<span>` elements to a fake 800Ã—400, making every tick look like it overlapped its neighbor and get silently dropped. Scoped the polyfill to `tagName === 'DIV'` only. Both this and a `ResizeObserver` polyfill (jsdom has none) were added to the shared `src/test/setup.ts`, not a local test-file mock, since any future chart component would hit the identical gap.
 5. Wiring (Task 5): mocked `AttentionChart` inside `SessionReport.test.tsx` (it has its own complete test file) so those tests check only `SessionReport`'s own prop-passing and conditional-mount behavior.
 6. Verification (Task 6): used this session's established worktree-comparison pattern (already used twice earlier for unrelated merges) to get an exact pre-existing-failure diff rather than eyeballing pass/fail counts.
 
@@ -348,7 +348,7 @@ Remove the worktree (`git worktree remove --force`) when done.
 - Frontend: 9 new tests (`AttentionChart.test.tsx`), 2 new tests (`SessionReport.test.tsx` wiring), 1 new test (`assessment.test.ts` pass-through), 2 pre-existing fixtures repaired (`__tests__/types/assessment.test.ts`). 79 files/957 tests green. `tsc --noEmit` clean. `eslint` clean on every touched file.
 - New dependency: `recharts@2.15.4` (chosen over the newer `3.10.1` after finding a real bug in it — see Dev Notes/Implementation Plan). Pre-approved by the story itself (AC-4 named a "lightweight chart library... recharts or a canvas-based solution").
 - Two reusable jsdom-gap polyfills added to `apps/web/src/test/setup.ts` for any future chart component: a `ResizeObserver` stub, and a `getBoundingClientRect` override scoped to `<div>` elements only (NOT SVG elements — the scoping is the load-bearing detail; a naive version breaks recharts' own text-measurement machinery).
-- D77 (docs/DEFECT-REGISTER.md, registered before implementation started) is deliberately NOT fixed by this story — `AttentionChart` correctly surfaces the 10-window recency limit via its caption rather than hiding it.
+- D109 (docs/DEFECT-REGISTER.md, registered before implementation started) is deliberately NOT fixed by this story — `AttentionChart` correctly surfaces the 10-window recency limit via its caption rather than hiding it.
 
 ### File List
 
@@ -366,14 +366,14 @@ Remove the worktree (`git worktree remove --force`) when done.
 - `apps/web/src/test/setup.ts` (MODIFIED — `ResizeObserver` polyfill, scoped `getBoundingClientRect` override)
 - `apps/web/package.json` (MODIFIED — added `recharts@2.15.4`)
 - `pnpm-lock.yaml` (MODIFIED — lockfile update for the new dependency)
-- `docs/DEFECT-REGISTER.md` (MODIFIED — registered D77, and separately the D61-D64 reconciliation notes from the prior turn)
+- `docs/DEFECT-REGISTER.md` (MODIFIED — registered D109, and separately the D61-D64 reconciliation notes from the prior turn)
 
 ## Senior Developer Review (AI)
 
-**Date:** 2026-08-13 · **Reviewers:** 8 parallel adversarial layers (Blind Hunter, Edge Case
+**Date:** 2026-08-13 Â· **Reviewers:** 8 parallel adversarial layers (Blind Hunter, Edge Case
 Hunter, Acceptance Auditor, Scale & Load Hunter — the `bmad-code-review` skill's built-ins — plus
 Story Quality, Test Coverage, AC Completeness, and Process Integrity, supplied per CLAUDE.md's
-6-layer gate since the skill only natively covers 2 of the 6 named layers) · **Outcome:** 3
+6-layer gate since the skill only natively covers 2 of the 6 named layers) Â· **Outcome:** 3
 confirmed defects fixed, several test-coverage gaps closed, several findings correctly dismissed
 or deferred as non-issues.
 
@@ -384,7 +384,7 @@ or deferred as non-issues.
    Hunter, Acceptance Auditor). `.limit(20)` alone gives PostgREST no ordering guarantee; once a
    session exceeds the natural bound (reachable today via D64's open, uncapped
    confusion-intervention path), the 20 rows returned would be an arbitrary subset, not "the 20
-   most recent" as the story's own Scale & Load §2 and AC-1 claimed. **Fixed:** added
+   most recent" as the story's own Scale & Load Â§2 and AC-1 claimed. **Fixed:** added
    `.order("created_at", desc=True)` before `.limit(20)`, and reversed the result back to
    chronological order when building `intervention_events` (consistent with `ces_timeline`'s
    oldest-first convention). New test:

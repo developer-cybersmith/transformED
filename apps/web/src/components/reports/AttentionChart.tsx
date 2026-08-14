@@ -55,7 +55,7 @@ function interventionColor(type: string): string {
 /**
  * S3-05 (Story 2-46). Area chart of CES over session time for the session report.
  *
- * D77 (docs/DEFECT-REGISTER.md): `timeline` can only ever hold the last
+ * D109 (docs/DEFECT-REGISTER.md): `timeline` can only ever hold the last
  * _CES_HISTORY_MAX=10 windows -- the last ~50s of the session at default cadence,
  * regardless of how long the session actually ran. This component always labels
  * that honestly as a recency window (AC-6) and never implies full-session coverage.

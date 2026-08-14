@@ -9,7 +9,7 @@ Extends `get_session_report` with two new, additive, nullable SessionReport fiel
       Derived from a new, bounded (.limit(20)) session_events query, using
       sessions.started_at for the same minute-offset math.
 
-D77 (docs/DEFECT-REGISTER.md): ces_timeline can only ever cover the last
+D109 (docs/DEFECT-REGISTER.md): ces_timeline can only ever cover the last
 _CES_HISTORY_MAX=10 windows -- these tests assert that behavior explicitly rather
 than assuming full-session coverage.
 """
@@ -134,7 +134,7 @@ def _patched(
     )
 
 
-# ── ces_timeline ──────────────────────────────────────────────────────────────
+# â”€â”€ ces_timeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.unit
@@ -273,8 +273,8 @@ async def test_ces_timeline_is_none_when_history_empty():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_ces_timeline_capped_at_ten_windows_d77():
-    """D77: ces_timeline can never exceed _CES_HISTORY_MAX=10 entries -- this is the
+async def test_ces_timeline_capped_at_ten_windows_d109():
+    """D109: ces_timeline can never exceed _CES_HISTORY_MAX=10 entries -- this is the
     real, documented recency-window limitation, not a bug to hide."""
     from app.modules.assessment.service import get_session_report
 
@@ -290,7 +290,7 @@ async def test_ces_timeline_capped_at_ten_windows_d77():
     assert len(result.ces_timeline) == 10
 
 
-# ── intervention_events ───────────────────────────────────────────────────────
+# â”€â”€ intervention_events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.unit
@@ -449,7 +449,7 @@ async def test_intervention_events_skips_row_with_missing_created_at():
     assert result.intervention_events == [{"minute": 5.0, "type": "confusion"}]
 
 
-# ── SessionReport model fields ────────────────────────────────────────────────
+# â”€â”€ SessionReport model fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @pytest.mark.unit

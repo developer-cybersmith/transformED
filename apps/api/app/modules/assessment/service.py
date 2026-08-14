@@ -74,7 +74,7 @@ def _score_to_label(score: float) -> str:
     """Convert a numeric rubric sub-score (0-100) to a descriptive label.
 
     Never returns raw floats to students (CLAUDE.md Learner DNA display rules).
-    Thresholds: Exceptional ≥90, Proficient ≥75, Developing ≥60, Emerging ≥40, Beginning <40.
+    Thresholds: Exceptional â‰¥90, Proficient â‰¥75, Developing â‰¥60, Emerging â‰¥40, Beginning <40.
     """
     if score >= 90:
         return "Exceptional"
@@ -100,7 +100,7 @@ def _quiz_accuracy_label(accuracy: float, total: int) -> str | None:
     """Map quiz accuracy to a descriptive label (no raw floats to students).
 
     Returns None when total == 0 — cannot evaluate accuracy with zero questions.
-    Thresholds: Strong ≥80%, Developing ≥60%, Needs Review <60%.
+    Thresholds: Strong â‰¥80%, Developing â‰¥60%, Needs Review <60%.
     """
     if total == 0:
         return None
@@ -785,7 +785,7 @@ def _build_ces_breakdown(
     """Compute the per-signal CES contribution breakdown (D2, S3-46).
 
     Nominal path (teachback_normalised is not None): each signal multiplied by
-    its nominal weight × 100.
+    its nominal weight Ã— 100.
 
     Redistributed path (teachback_normalised is None): the teachback weight is
     spread proportionally across the four remaining signals using
@@ -889,7 +889,7 @@ async def get_session_report(
     tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
-    # BOUNDED: at most 15 segments × 10 questions × 3 retries = 450 rows per session.
+    # BOUNDED: at most 15 segments Ã— 10 questions Ã— 3 retries = 450 rows per session.
     # .limit(500) is a safety ceiling above the natural bound; no quiz session reaches it.
     quiz_resp = await asyncio.to_thread(
         lambda: (
@@ -909,7 +909,7 @@ async def get_session_report(
     quiz_accuracy: float = (correct_count / total_quiz) if total_quiz > 0 else 0.0
 
     # Step 3 — Teachback stats from teachback_attempts
-    # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
+    # BOUNDED: at most one attempt per segment (teach-back has no retry) â†’ max ~15 rows.
     # .limit(50) is a safety ceiling above the natural bound.
     tb_resp = await asyncio.to_thread(
         lambda: (
@@ -1057,7 +1057,7 @@ async def get_session_report(
         }
 
         # Step 9 — session growth events (dna_update) for delta-based growth labels
-        # BOUNDED: one dna_update per segment → at most ~15 rows per session.
+        # BOUNDED: one dna_update per segment â†’ at most ~15 rows per session.
         # .limit(20) is a safety ceiling above the natural bound.
         _events_resp = await asyncio.to_thread(
             lambda: (
@@ -1086,12 +1086,12 @@ async def get_session_report(
     # S3-50 (D18): ces_history_summary — compact engagement trend from Redis ces_history.
     # BOUNDED: lrange reads at most 10 entries (ltrim cap at write time).
     #
-    # S3-05 (Story 2-46) / D77: ces_timeline reuses this SAME read (no second Redis round
+    # S3-05 (Story 2-46) / D109: ces_timeline reuses this SAME read (no second Redis round
     # trip) to also build a chronological [{"minute","ces"}, ...] series for the attention
     # timeline chart. `ces_history` is LPUSH'd (newest-first), so raw order is reversed to get
     # oldest-first. Legacy bare-float entries (no "t") cannot be time-placed and are excluded
     # from ces_timeline, but still counted in ces_history_summary exactly as before this story
-    # (AC-2 non-regression). D77: this can never exceed _CES_HISTORY_MAX=10 entries — the last
+    # (AC-2 non-regression). D109: this can never exceed _CES_HISTORY_MAX=10 entries — the last
     # ~50s of the session at default cadence, regardless of session length. The frontend must
     # present this as a recency window, never as full-session coverage.
     #
@@ -1212,7 +1212,7 @@ async def get_session_report(
     )
 
 
-# ── Onboarding scoring ─────────────────────────────────────────────────────────
+# â”€â”€ Onboarding scoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, float]:
@@ -1228,7 +1228,7 @@ def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, fl
         subdim = QUESTION_SUBDIMENSION_MAP.get(ans.question_id)
         if subdim is None:
             continue
-        normalized = (ans.selected_index / 3) * 100
+        normalized = (ans.selected_index / 3) * 100  # BOUNDED: denominator=3 matches OnboardingAnswer.selected_index le=3
         bucket[subdim].append(normalized)
     return {dim: round(sum(vals) / len(vals), 2) if vals else 0.0 for dim, vals in bucket.items()}
 
@@ -1426,8 +1426,8 @@ async def record_consent(
     """Record a DPDP consent event in the user_consents audit table.
 
     Returns (record_dict, is_new):
-        is_new=True  → a new row was inserted; caller should return HTTP 201.
-        is_new=False → an identical row already exists; caller should return HTTP 200.
+        is_new=True  â†’ a new row was inserted; caller should return HTTP 201.
+        is_new=False â†’ an identical row already exists; caller should return HTTP 200.
 
     NEVER updates users.attention_consent — the DB trigger
     user_consents_sync_attention (migration 20260702000000_dpdp_user_consents.sql)
@@ -1560,7 +1560,7 @@ async def get_learner_dna_data(
             detail="Learner DNA profile not found. Complete the onboarding diagnostic first.",
         )
 
-    # ── Re-assessment flag (non-fatal Redis read) ─────────────────────────────
+    # â”€â”€ Re-assessment flag (non-fatal Redis read) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     reassessment_due: bool = False
     if redis is not None:
         _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
@@ -1581,7 +1581,7 @@ async def get_learner_dna_data(
     }
 
 
-# ── S3-36 (D12) — Intervention event persistence ──────────────────────────────
+# â”€â”€ S3-36 (D12) — Intervention event persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 async def write_intervention_event(

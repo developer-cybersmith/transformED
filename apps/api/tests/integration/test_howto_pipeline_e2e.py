@@ -490,14 +490,27 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
     # package-shape assertion above.
     planner_calls = _LAST_RUN_SPIES.get("planner_segment_ids", [])
     assert planner_calls, "lesson_planner was never invoked — assertion would be vacuous"
+    # D75 (Story 3-43): lesson_planner_batch_size (10) is now strictly below
+    # structure_max_sections (15), so THIS test's own 20-step how-to — which
+    # coalesces to exactly structure_max_sections and was already documented
+    # as exercising "the MAX-count cap" — now genuinely triggers real batching
+    # (10 + 5), the exact scenario Story 2-16 built batching for. A single
+    # call no longer sees every segment_id; the UNION across all calls must.
+    all_ids: list[str] = []
     for ids in planner_calls:
         assert len(ids) == len(set(ids)), (
-            f"lesson_planner prompt lists duplicate segment_ids: {ids} — "
+            f"lesson_planner prompt lists duplicate segment_ids WITHIN one call: {ids} — "
             "segment_summaries was re-appended"
         )
-        assert len(ids) == len(segments), (
-            f"lesson_planner saw {len(ids)} segment_ids for {len(segments)} segments"
-        )
+        all_ids.extend(ids)
+    assert len(all_ids) == len(set(all_ids)), (
+        f"lesson_planner saw the same segment_id across DIFFERENT batched calls: {all_ids} — "
+        "batches must partition segment_summaries, never overlap"
+    )
+    assert len(all_ids) == len(segments), (
+        f"lesson_planner saw {len(all_ids)} segment_ids across {len(planner_calls)} call(s) "
+        f"for {len(segments)} segments — batches must cover every segment exactly once"
+    )
 
     synth = _LAST_RUN_SPIES["synth"]
     assert synth.await_count == len(segments), (

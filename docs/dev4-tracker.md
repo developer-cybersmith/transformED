@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-11 (Story 4-24 — D63 INTERVENING recovery complete: event path + timeout safety net, landed before Dev 2's L6/MediaPipe per the lesson-delivery tracker's ordering rule)
-**Overall status:** 33/41 Completed · 6 Partial · 2 Not Started
+**Last updated:** 2026-08-14 (SYNC-A formally closed by Dev 3; T18 done on Dev 3 side; OpenAI credits refilled — L0 unblocked; PR #138 has Dev 3 approval, pending Dev 1+2)
+**Overall status:** 35/43 Completed · 6 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -20,10 +20,10 @@
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 9 | 9 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 7 | 1 | 6 | 0 |
+| Sprint 4 | Weeks 8–9 | 9 | 3 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **41** | **33** | **6** | **2** |
+| **Total** | | **43** | **35** | **6** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -593,6 +593,30 @@ MAX_DISTRACTION_PER_SESSION=3
     flagged in the story's Dev Notes, not built here (matches the D60 Dev4-builds/Dev2-wires split).
   - **AC MET:** INTERVENING → TEACHING via the event path (pre-existing test, still green) AND via
     the timeout path with no client event sent (new tests) ✅
+
+<!-- CHECK:tutor_router_impl -->
+- [Completed] **Tutor router endpoints: GET /session/{id}/state + POST /session/{id}/intervene (Story 4-26)** ✅ 2026-08-13 (27/27 tests green; 6-layer review passed; merged PR #135 to main)
+  - File: `apps/api/app/modules/tutor/router.py` + `apps/api/tests/test_tutor_router.py`
+  - `GET /api/tutor/session/{session_id}/state` — 5 Redis point lookups (O(1) each); 404 if state key absent; zero-values for missing optional keys; TTL → cooldown_remaining; full Redis failure → 503
+  - `POST /api/tutor/session/{session_id}/intervene` — dispatches FSM event via `dispatch_event`; `force=True` deletes cooldown key only (distraction cap + fatigue-once flag are safety invariants not bypassed); sends `tutor_intervene` WS message directly when transition to INTERVENING occurs (no wait for next attention signal); dispatch_event failure → 503
+  - `InterventionRequest.intervention_type` changed from `str` → `Literal["distraction","fatigue","confusion"]` (closes pre-existing gap flagged in Story 4-14)
+  - `_INTERVENTION_EVENT` map: `distraction→distraction_detected`, `fatigue→fatigue_detected`, `confusion→teachback_failed`
+  - JWT enforced via `CurrentUser` on both handlers; 404 details no longer echo raw session_id
+  - All 6 Scale & Load questions answered in Story 4-26: all Redis reads O(1), no unbounded ops, no silent truncation
+  - **Demo impact:** `POST /intervene` allows scripted demo triggers without live MediaPipe signals; `GET /state` gives admin visibility
+  - **6-layer review:** 4 patches applied (F3/F7/F9/F12); D79–D84 registered in defect register; AC7 spec relaxed to accept `"guard_blocked"`
+  - Story: `docs/stories/4-26-tutor-router-impl.md` · PR: #135 (merged to main 2026-08-13)
+  - **AC MET:** 12/12 ACs verified by 27 unit tests; ruff check + ruff format clean ✅
+
+<!-- CHECK:behavioral_score_syncb -->
+- [Partial] **behavioral_score definition + SYNC-B wire contract freeze (Story 4-27)** ⚠️ PARTIAL — PR #138 open; Dev 3 approved 2026-08-14; pending Dev 1 + Dev 2 GitHub approvals
+  - Story: `docs/stories/4-27-behavioral-score-syncb-freeze.md` · PR: #138 (`sprint4/s4-27-behavioral-score-syncb`)
+  - `behavioral_score` defined as tab-visibility score: `document.visibilityState === 'visible'` → 1.0, hidden → 0.0, API unavailable → null
+  - `packages/shared/types/ws.ts` updated: `behavioral_score`, `head_pose_score`, `blink_rate` changed from `number` to `number | null`; all five fields annotated with `// range: [0.0, 1.0]`; SYNC-B freeze note added
+  - 7 new tests covering partial MediaPipe signal paths; `conftest.py` module-level env var fix
+  - **SYNC-A formally closed 2026-08-14:** Dev 3 verified — `assessment/ces.py` is canonical; `tutor/service.py:compute_ces` is a thin wrapper; CI guard enforces it. T18 also done on Dev 3 side (`sprint3/s3-t18-quiz-accuracy-wire-field` — `QuizResult.quiz_accuracy: float` now explicit)
+  - **Unblocks:** Dev 2 L6 (MediaPipe + consent modal) — signal specs defined and nullable
+  - **⚠️ NOT DONE (why Partial):** `ws.ts` frozen contract — needs Dev 1 + Dev 2 to approve PR #138 on GitHub before merge
 
 <!-- CHECK:threshold_tuning -->
 - [Partial] **Intervention threshold tuning (is CES < 50 right?)** ⚠️ PARTIAL — methodology written; findings pending ≥20 real sessions
