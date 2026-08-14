@@ -107,12 +107,12 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
 def compute_ces(signal: NormalizedSignal) -> float:
     """NormalizedSignal wrapper for the canonical CES formula in assessment/ces.py.
 
-    Formula arithmetic lives exclusively in ``assessment.ces.compute_ces`` (D1).
-    This wrapper preserves the ``NormalizedSignal``-based API used internally by
+    Formula arithmetic lives exclusively in ``assessment.ces.compute_ces`` (D1/D62).
+    This wrapper preserves the NormalizedSignal-based API used internally by
     ``process_attention_signal`` without duplicating the weighted-sum logic.
     """
-    from app.config import get_settings  # noqa: PLC0415
-    from app.modules.assessment.ces import compute_ces as _canonical  # noqa: PLC0415
+    from app.config import get_settings
+    from app.modules.assessment.ces import compute_ces as _canonical
 
     return _canonical(
         quiz_accuracy=signal.quiz_accuracy,

@@ -5,9 +5,11 @@ Story 3-27 — Learner DNA Growth Tracking (delta per dimension per session)
 Test count: 21
 Coverage:
   AC 1  — __all__ exports only record_dna_growth
-  AC 2  — keyword-only signature; positional args raise TypeError
+  AC 2  — keyword-only signature; positional args raise TypeError;
+           iscoroutinefunction asserted (fuse_learner_dna awaits at Step 6 —
+           sync revert would break session-end pipeline with TypeError)
   AC 3  — payload structure: {dimension, old_value, new_value, delta}
-  AC 4  — single bulk insert via asyncio.to_thread
+  AC 4  — single bulk insert via asyncio.to_thread (delegated to write_system_events)
   AC 5  — delta = round(new - old, 4); None when old_value is None
   AC 6  — DB exception → log WARNING, return 0 (non-fatal)
   AC 7  — insert_error truthy → log WARNING, return 0 (non-fatal)
@@ -170,6 +172,9 @@ def test_dunder_all_exports_only_record_dna_growth():
 async def test_positional_args_raise_type_error():
     from app.modules.assessment.dna_growth import record_dna_growth
 
+    assert inspect.iscoroutinefunction(record_dna_growth), (
+        "record_dna_growth must be async — fuse_learner_dna awaits it at Step 6"
+    )
     with pytest.raises(TypeError):
         await record_dna_growth(
             _SESSION_ID,  # positional — should raise
