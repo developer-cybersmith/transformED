@@ -79,18 +79,18 @@ being checked.
 
 | # | Phase | Owner | Status |
 |:--:|---|---|---|
-| **L0** | Unblock spending | **User** | 🧪 Implemented — credits added, D62 (Langfuse 401) fixed |
-| **L1** | One real lesson package exists | Dev 1 | 🧪 Implemented — 1 of 2 required chapter/tier combos done (ch 0 / T3 only); schema validation + full cost/timing capture still outstanding |
-| **L2** | Narration cost + timing truth | Dev 1 | 🧪 Implemented — 2 of 3 items done (cap re-derived twice, slide timing from real audio verified); 3rd item (`_get_section_body` window) only half-fixed, root cause (D46) still open |
-| **L3** | A student plays it in a browser | Dev 1 + Dev 2 | 🧪 Implemented — real playback confirmed by a real person; 4 of 5 real UX defects found live now fixed (D87, D88, D89, D90); only voice expressiveness remains open |
-| **L4** | Quiz + teach-back on a real package | Dev 3 | ⬜ Blocked by L1 |
-| **L5** | CES made feedable | Dev 3 + Dev 4 | ⬜ Not started |
-| **L6** | Attention capture (MediaPipe) | Dev 2 | ⬜ Not started |
-| **L7** | Interventions fire *and recover* | Dev 4 | ⬜ Not started |
+| **L0** | Unblock spending | **User** | ✅ Unblocked — OpenAI credits refilled 2026-08-14 |
+| **L1** | One real lesson package exists | Dev 1 | 🔨 In progress — L0 cleared; Dev 1 can run now |
+| **L2** | Narration cost + timing truth | Dev 1 | 🔨 In progress — T08/T09/T10 startable, T11 now unblocked |
+| **L3** | A student plays it in a browser | Dev 1 + Dev 2 | ⬜ Blocked by L1 (in flight) |
+| **L4** | Quiz + teach-back on a real package | Dev 3 | ⬜ Blocked by L1 (in flight) |
+| **L5** | CES made feedable | Dev 3 + Dev 4 | 🔨 In progress — SYNC-A formally closed (Dev 3 sign-off 2026-08-14); T18 done (sprint3/s3-t18-quiz-accuracy-wire-field); SYNC-B frozen (PR #138, pending Dev 1+2 approval) |
+| **L6** | Attention capture (MediaPipe) | Dev 2 | ⬜ Unblocked by SYNC-B — Dev 2 can start now |
+| **L7** | Interventions fire *and recover* | Dev 4 | 🔨 Implemented — exit criterion pending L6 |
 | **L8** | One student, one complete lesson | All | ⬜ The finish line |
 
-**Totals:** 9 phases · 0 Verified · 4 Implemented (L0–L3, all partial — see each phase's Observed
-result for exactly what's still missing) · 5 Not started.
+**Totals:** 9 phases · 0 Verified · 4 Implemented (L0✅, L1🔨, L5🔨, L7🔨) · 5 Not started.
+**Last updated:** 2026-08-14 (L0 unblocked — credits refilled; SYNC-A formally closed by Dev 3; T18 done).
 
 ---
 
