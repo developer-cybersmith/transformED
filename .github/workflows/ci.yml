@@ -136,7 +136,12 @@ jobs:
           # if a whole test FILE is deleted or loses its marker — which is exactly
           # how the PostgREST half of this suite went un-run in the first place.
           # Removing a postgres test must be a deliberate edit to this number.
-          EXPECTED_PG_TESTS=76
+          # Was 76 -- grown to 79 by migrations/tests landed since (including
+          # the user_notification_preferences RLS policy this exact run
+          # caught test_no_other_table_policy_changed missing). Confirmed
+          # against this run's own real log ("1 failed, 78 passed" = 79
+          # selected), not guessed.
+          EXPECTED_PG_TESTS=79
           if ! grep -qE "\b${EXPECTED_PG_TESTS} passed\b" /tmp/pg-tests.log; then
             echo "::error::expected ${EXPECTED_PG_TESTS} postgres-marked tests to pass; the log disagrees."
             echo "::error::If you added or removed one, update EXPECTED_PG_TESTS in this file deliberately."
