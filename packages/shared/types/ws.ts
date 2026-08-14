@@ -105,10 +105,12 @@ export type AttentionSignalMessage = WsMessage<
      *  null = teach-back skipped or not yet attempted. */
     teachback_score: number | null;
 
-    /** range: [0.0, 1.0] — tab-visibility score (MVP definition).
-     *  1.0 = document.visibilityState === 'visible' (tab in foreground).
-     *  0.0 = tab is hidden (backgrounded, minimised, or visibilityState !== 'visible').
-     *  null = Page Visibility API unavailable (e.g. cross-origin iframe restriction). */
+    /** range: [0.0, 1.0] — normalised composite behavioural-engagement score.
+     *  Computed client-side as (gazeScore + expressionScore + interactionScore) / 3
+     *  using MediaPipe gaze tracking, facial-expression penalties, and page-interaction
+     *  event counts (see useAttentionMonitor.ts → computeBehavioralScore).
+     *  null = MediaPipe failed to initialise entirely (browser restriction or hard
+     *  init failure); the backend redistributes CES weight across remaining signals. */
     behavioral_score: number | null;
 
     /** range: [0.0, 1.0] — normalised head-pose attention score from MediaPipe.
