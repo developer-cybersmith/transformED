@@ -824,7 +824,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Signals with `None` value (MediaPipe frame dropped) do NOT write to their history — no phantom 0.0 entries
   - `assessment/service.py get_session_report`: `_signal_avg(key)` reads `lrange(key, 0, 9)` — BOUNDED at 10 entries (Scale Contract Q4); returns `round(sum/len, 4)` or `0.0`; delegates to `_build_ces_breakdown()` helper with real averages
   - `assessment/router.py`: `redis=get_redis()` passed to `get_session_report`; import tagged `# noqa: PLC0415 — S3-42 (D9)`
-  - Tests: `test_s3_42_ces_breakdown_accuracy.py` — AC1–AC7 runtime + D72 guard + AC1/AC3/AC4/AC5 source-inspection guards
+  - Tests: `test_s3_42_ces_breakdown_accuracy.py` — AC1–AC7 runtime + D108 (was D72) guard + AC1/AC3/AC4/AC5 source-inspection guards
   - AC1 (TEACHING writes), AC1-inverse (non-TEACHING no-write), AC2 (None signals skip), AC3 (signature accepts redis), AC4 (real data breakdown non-zero), AC5 (fallback 0.0), AC6 (router passes redis), AC7 (breakdown values correct), Scale Contract Q4 (ltrim cap)
   - Branch: `sprint3/s3-42-ces-breakdown-accuracy` — merged to main 2026-08-14
 

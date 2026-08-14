@@ -7,7 +7,7 @@ AC4 — _signal_avg reads from Redis per-signal histories.
 AC5 — Graceful fallback to 0.0 when redis=None or history empty.
 AC6 — Router passes redis=get_redis() to get_session_report.
 AC7 — ces_breakdown behavioral/head_pose/blink non-zero when histories have data.
-Guard (D72) — get_session_report source does not hardcode 0.0 for behavioral/head_pose/blink.
+Guard (D108, was D72) — get_session_report has no hardcoded 0.0 for behavioral/head_pose/blink.
 """
 from __future__ import annotations
 
@@ -499,12 +499,12 @@ async def test_ltrim_cap_applied_to_per_signal_histories():
             )
 
 
-# ── Guard (D72) — no hardcoded 0.0 for behavioral/head_pose/blink ─────────────
+# ── Guard (D108, was D72) — no hardcoded 0.0 for behavioral/head_pose/blink ──────
 
 
 @pytest.mark.unit
 def test_ces_breakdown_no_hardcoded_zero_for_behavioral():
-    """Guard (D72): get_session_report source must not contain hardcoded 0.0 for behavioral.
+    """Guard (D108): get_session_report source must not contain hardcoded 0.0 for behavioral.
 
     Fails CI if someone re-introduces the deferred Sprint 2 hardcoded values.
     """
@@ -512,13 +512,13 @@ def test_ces_breakdown_no_hardcoded_zero_for_behavioral():
 
     source = inspect.getsource(assessment_service.get_session_report)
     assert '"behavioral": 0.0' not in source, (
-        'get_session_report must not hardcode "behavioral": 0.0 — D72 guard'
+        'get_session_report must not hardcode "behavioral": 0.0 — D108 guard'
     )
     assert '"head_pose": 0.0' not in source, (
-        'get_session_report must not hardcode "head_pose": 0.0 — D72 guard'
+        'get_session_report must not hardcode "head_pose": 0.0 — D108 guard'
     )
     assert '"blink": 0.0' not in source, (
-        'get_session_report must not hardcode "blink": 0.0 — D72 guard'
+        'get_session_report must not hardcode "blink": 0.0 — D108 guard'
     )
 
 

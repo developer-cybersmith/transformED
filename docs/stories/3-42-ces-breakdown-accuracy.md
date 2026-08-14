@@ -1,4 +1,4 @@
-# Story 3-42: CES Breakdown Accuracy (D72)
+# Story 3-42: CES Breakdown Accuracy (D108, was D72)
 
 ## Story
 
@@ -8,7 +8,7 @@
 
 ## Context
 
-**Defect:** D72 — `get_session_report` in `apps/api/app/modules/assessment/service.py` (lines 797–803) hardcodes `behavioral`, `head_pose`, and `blink` as `0.0` in `ces_breakdown`. The comment reads:
+**Defect:** D108 (was D72) — `get_session_report` in `apps/api/app/modules/assessment/service.py` (lines 797–803) hardcodes `behavioral`, `head_pose`, and `blink` as `0.0` in `ces_breakdown`. The comment reads:
 
 ```python
 # Sprint 2: behavioral/head_pose/blink contributions deferred to Phase 3
@@ -59,7 +59,7 @@ When Redis lists are empty or the keys do not exist (session with no attention s
 ### AC6 — Guard test: source inspection confirms no hardcoded 0.0 for behavioral/head_pose/blink
 A CI-enforceable source scan confirms the pattern `"behavioral": 0.0` (literal zero) does NOT appear in the `get_session_report` implementation block.
 
-### AC7 — DEFECT-REGISTER.md D72 updated to FIXED with guard name
+### AC7 — DEFECT-REGISTER.md D108 (was D72) updated to FIXED with guard name
 
 ## Scale & Load
 
@@ -93,7 +93,7 @@ A CI-enforceable source scan confirms the pattern `"behavioral": 0.0` (literal z
 - [x] RED tests written and failing
 - [x] GREEN implementation passes
 - [x] REFACTOR (no logic changes)
-- [x] DEFECT-REGISTER.md D72 updated to FIXED + guard name
+- [x] DEFECT-REGISTER.md D108 (was D72) updated to FIXED + guard name
 
 ## Status
 

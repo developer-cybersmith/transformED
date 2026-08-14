@@ -452,7 +452,7 @@ async def test_get_report_ces_breakdown_teachback_zero_when_no_attempts(mock_to_
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_get_report_ces_breakdown_attention_zero_when_no_redis(mock_to_thread):
-    """AC 10 (updated S3-42/D72): behavioral, head_pose, blink are 0.0 when redis=None (no signal history)."""
+    """AC 10 (S3-42/D108, was D72): behavioral/head_pose/blink are 0.0 when redis=None."""
     from app.modules.assessment.service import get_session_report
 
     supabase = _build_report_supabase(
