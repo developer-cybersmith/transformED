@@ -79,18 +79,18 @@ being checked.
 
 | # | Phase | Owner | Status |
 |:--:|---|---|---|
-| **L0** | Unblock spending | **User** | ⬜ Not started — **BLOCKING EVERYTHING** |
-| **L1** | One real lesson package exists | Dev 1 | ⬜ Blocked by L0 |
-| **L2** | Narration cost + timing truth | Dev 1 | ⬜ Not started (partly startable now) |
-| **L3** | A student plays it in a browser | Dev 1 + Dev 2 | ⬜ Blocked by L1 |
-| **L4** | Quiz + teach-back on a real package | Dev 3 | ⬜ Blocked by L1 |
-| **L5** | CES made feedable | Dev 3 + Dev 4 | 🔨 In progress — SYNC-A closed; SYNC-B frozen (Story 4-27); T18 (quiz_accuracy fraction) still Dev 3's |
-| **L6** | Attention capture (MediaPipe) | Dev 2 | ⬜ Unblocked by SYNC-B (Story 4-27) — ready to build |
-| **L7** | Interventions fire *and recover* | Dev 4 | 🔨 Implemented — D63 fixed (PR #129), 501 stubs fixed (PR #135), `{**state}` guard widened (PR #129); exit criterion pending L6 |
+| **L0** | Unblock spending | **User** | ✅ Unblocked — OpenAI credits refilled 2026-08-14 |
+| **L1** | One real lesson package exists | Dev 1 | 🔨 In progress — L0 cleared; Dev 1 can run now |
+| **L2** | Narration cost + timing truth | Dev 1 | 🔨 In progress — T08/T09/T10 startable, T11 now unblocked |
+| **L3** | A student plays it in a browser | Dev 1 + Dev 2 | ⬜ Blocked by L1 (in flight) |
+| **L4** | Quiz + teach-back on a real package | Dev 3 | ⬜ Blocked by L1 (in flight) |
+| **L5** | CES made feedable | Dev 3 + Dev 4 | 🔨 In progress — SYNC-A formally closed (Dev 3 sign-off 2026-08-14); T18 done; SYNC-B frozen (PR #138 merged 2026-08-14) |
+| **L6** | Attention capture (MediaPipe) | Dev 2 | ⬜ Unblocked by SYNC-B — Dev 2 can start now |
+| **L7** | Interventions fire *and recover* | Dev 4 | 🔨 Implemented — exit criterion pending L6 |
 | **L8** | One student, one complete lesson | All | ⬜ The finish line |
 
-**Totals:** 9 phases · 0 Verified · 2 Implemented (L5, L7) · 7 Not started.
-**Last updated:** 2026-08-13 (Story 4-27 — SYNC-A closed, SYNC-B frozen, L7 deviations 1/4a/4b/4c fixed).
+**Totals:** 9 phases · 0 Verified · 4 Implemented (L0✅, L1🔨, L5🔨, L7🔨) · 5 Not started.
+**Last updated:** 2026-08-14 (PR #138 merged — SYNC-B fully frozen; all Dev 4 demo work complete pending L6).
 
 ---
 
@@ -157,8 +157,87 @@ them has not.
 ### Discharges
 Story 1-13 AC10 · book-scale Phases 5, 6, 6.5 · Track W W0–W4 (all currently `🧪 Implemented`).
 
-### Observed result
-_Not yet run._
+### Observed result — 2026-08-13, honest partial pass
+
+**Exit criterion NOT fully met** — this ran once, not twice, and at one tier, not two.
+
+- **Book/chapter used:** `780efa51` (d2l.pdf, 1,151 pages, 21 chapters), chapter 0 "Introduction"
+  (29p) — the SAME chapter run three times while D75/D77/D78 were found and fixed live (see
+  `docs/DEFECT-REGISTER.md`). Ch 5 "Builders' Guide" at T1 — the test plan's OTHER required
+  combination — was **never attempted**. Only tier **T3** was generated; T1 was never run.
+- **Real, fully successful generation:** lesson `1baae6f6` (T3, post-D78-fix). `status=ready`,
+  real elapsed **1213.55s (~20.2 min)**. All 15 segments got real `audio_provider=sarvam` — 3
+  segments independently downloaded and validated via a raw `wave`-module read-back (not just
+  trusted from the API): real, non-silent PCM audio, durations matching the package's recorded
+  timestamps to the millisecond. One slide image independently downloaded and confirmed a real
+  1024×1024 PNG.
+- **Schema validation — now run, real pass.** `1baae6f6`'s real package validated against
+  `packages/shared/lesson_package.schema.json` with **zero errors**, checked directly with the
+  `jsonschema` library (2026-08-14). Confirmed the schema is genuinely strict before trusting the
+  result (top-level AND per-`Segment` `required` fields + `additionalProperties: false` — would
+  catch both missing and unexpected fields), not a vacuous pass.
+- **Cost — now recorded, real and precise, from Langfuse (not the DB's own `cost_usd`, which is
+  `0.0000` for this lesson since it predates D86).** Real total: **$1.2500** — 42% of the $3.00
+  ceiling. Real per-node-type breakdown (`response_format`/`name` grouping, 123 real observations):
+
+  | Node / call type | Calls | Total time | Avg/call | Real cost |
+  |---|--:|--:|--:|--:|
+  | `generate-image` (slides) | 15 | 633.4s | 42.2s | $0.3000 |
+  | `synthesize-speech` (Sarvam) | 15 | 173.9s | 11.6s | $0.8916 |
+  | `_NarrationScriptLLM` | 15 | 137.1s | 9.1s | $0.0080 |
+  | `_JargonListLLM` | 15 | 135.4s | 9.0s | $0.0054 |
+  | `_SegmentInterventionsLLM` | 15 | 134.1s | 8.9s | $0.0048 |
+  | `_QuizBatchLLM` | 15 | 133.8s | 8.9s | $0.0048 |
+  | `_SegmentSummaryLLM` | 15 | 80.0s | 5.3s | $0.0032 |
+  | `_SegmentComplexityLLM` | 15 | 63.8s | 4.3s | $0.0035 |
+  | `_SlideDeckLLM` (slide_generator) | 1 | 14.6s | 14.6s | $0.0159 |
+  | `_LessonPlanLLM` (lesson_planner) | 2 | 7.0s | 3.5s | $0.0128 |
+
+  TTS is **71.3%** of real total cost ($0.8916 / $1.2500) — matches `decisionupdate.md`'s
+  "67-73% of total" claim almost exactly, the first time that number has been checked against
+  real data rather than assumed.
+- **Wall-clock — now recorded, real, from Langfuse's own trace-level latency: 935.845s (~15.6
+  min).** (Differs from the ~1213.55s worker-log elapsed time recorded earlier — the ~277s gap is
+  real overhead outside this trace's own observations: Phase A extraction/chunking/embedding and
+  inter-node Supabase checkpoint writes.) **Real finding, not assumed:** `generate-image` calls
+  were checked for overlap by real start/end timestamps and are **fully sequential, zero overlap**
+  — one image at a time, ~40-52s each, back to back. At 633.4s out of 935.845s total trace time,
+  image generation alone is **~68% of this lesson's entire wall-clock**. Phase 1's economy nodes
+  (`_SegmentSummaryLLM` etc.) DO run with real parallelism (their summed latency, 684s, exceeds
+  the trace's own 935.845s total by less than it would if serial — confirmed structurally, not
+  just plausible). **Not fixed here** (out of this specific task's scope, which was to record and
+  measure, not optimize) — but a real, concrete, evidence-backed opportunity: parallelizing
+  `image_generator_node`'s 15 calls the same way Phase 1 already does could plausibly cut total
+  generation time roughly in half.
+- **Real defects found and fixed live during this run** (not assumed, all in
+  `docs/DEFECT-REGISTER.md`): D75 (lesson_planner batch reliability), D76+D78 (narration cap
+  mis-sized then corrected), D77 (per-batch echo retry), D85 (slide-budget allocation, partial —
+  see L3 below), D86 (cost persistence, fixed but not yet exercised on a real run).
+
+**Net: L1's real deliverable exists and is genuinely verified end-to-end for one combination
+(ch 0 / T3), not the two combinations the exit criterion asks for.** The second chapter/tier
+(ch 5 / T1) is still outstanding.
+
+### Second attempt, 2026-08-13 — real external blocker, not a code failure
+
+Attempted the outstanding combination: ch 5 "Builders' Guide" (26p) at T1, lesson `b0a96211`.
+**Result: `status=failed`, and the reason is an operational/billing blocker, not a defect:**
+
+- **Sarvam TTS returned `402 Payment Required`** on every segment — the account is out of
+  credits, the exact same shape as the L0 OpenAI-credits blocker at the start of this sprint.
+  This needs the account topped up before any further real generation is worth attempting.
+- **Azure TTS returned `401 Unauthorized`** — a pre-existing, already-known gap (never fully
+  configured as a real fallback), not something new.
+- With both paid providers down, every segment fell through to the free `browser` fallback.
+- This run also surfaced and led to fixing a real bug in D53's own reaper (D91 — see
+  `docs/DEFECT-REGISTER.md`): an ARQ retry delayed ~32 minutes before being dequeued (a separate,
+  pre-existing event-loop-blocking issue) caused the reaper to mark this lesson `failed` while it
+  was still actually running. Fixed same day; the inconsistent DB state self-resolved when the
+  worker was restarted onto the fixed code.
+
+**Ch 5 / T1 remains outstanding, now blocked externally on Sarvam credits rather than on any
+known code gap.** Retrying before credits are confirmed restored would just re-produce the same
+`402` on every segment.
 
 ---
 
@@ -196,8 +275,33 @@ Measure audio/slide drift across a full real lesson — state the worst-case off
 - **Inherited caps:** the 6,000-char section body was sized pre-book-scale — re-derive it.
 - **Concurrency:** none — single-job path.
 
-### Observed result
-_Not yet run._
+### Observed result — 2026-08-13, two of three items done, one still genuinely open
+
+1. **Narration character cap: done, and re-derived twice on real evidence.** Implemented (D76 at
+   17,000 chars, sized against a demo duration target — later shown live to be actively harmful,
+   zeroing real audio for 9 of 15 segments in lesson `abe4e438`), then corrected (D78, raised to
+   120,000, re-sized against real $3.00-ceiling cost headroom instead of any duration). The
+   re-generated lesson (`1baae6f6`) confirms the fix: all 15 segments kept real Sarvam audio,
+   44,582 real narration chars, cap never engaged.
+2. **Slide timing from measured audio: done and independently verified.** `tts_node` now writes
+   real timestamps (not the old always-empty `[]`). Verified directly, not assumed: downloaded 3
+   real MP3/WAV segments from lesson `1baae6f6` and read them back with Python's `wave` module —
+   real measured durations matched the package's recorded `timestamps` to the **millisecond**
+   (e.g. 197.6714739s measured vs 197.671s recorded) on every segment checked.
+3. **`_get_section_body` silent truncation: only half-fixed, and this half is NOT closed.** The
+   "nothing surfaces it" problem is fixed (L2c) — a truncation now writes an explicit,
+   persisted record instead of a bare `logger.warning`. **The root cause — the ~90,000-char
+   LLM-visible window itself (`structure_max_sections=15 × max_chars=6000`) — is unchanged and
+   still open**, registered as D46, and it fired live during the `1baae6f6` run
+   (`section_11_1-5-The-Road-to-Deep-Learning body truncated to 6000 chars (was 10174)`).
+   **This item must not be reported as done — only its symptom-visibility half is.**
+
+### End-to-end test result
+Not run as a standalone deliverable, but strongly implied by item 2's verification above: real
+measured audio duration matched the package's own recorded slide-sync timestamp to within
+milliseconds on every segment checked (3 of 15) — no formal "worst-case offset in seconds"
+figure has been computed across a full lesson, but nothing found so far suggests measurable
+drift exists once real audio duration (not a word-count estimate) drives the timestamp.
 
 ---
 
@@ -220,8 +324,72 @@ A person watches a full lesson start to finish and the audio matches the slides.
 `_EMBEDDED_MEDIA_EXPIRY_S` (defined `modules/content/router.py:139`, used `:632`/`:639`) signs URLs once at fetch with **no auto-refresh**; `/api/media/signed-url` exists but has zero frontend callers. A
 student who pauses past the window loses audio with only a manual Retry to recover.
 
-### Observed result
-_Not yet run._
+### Observed result — 2026-08-13, real pass, real bugs found — not a clean exit yet
+
+**This actually happened** — not simulated. Started `apps/web`'s dev server pointed at the real
+local API (had to override `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_WS_URL`, which default to a
+different port than this environment's real API — a real config gap worth fixing, not just a
+one-off override). Also found and worked around two real access-control gaps blocking this
+specific verification, neither a player bug: (a) the beta-access allowlist (`APPROVED_EMAILS`,
+maintained as **two separately-synced copies**, `apps/api/.env` and `apps/web/.env` per
+`proxy.ts`'s own comment) didn't include the test account; (b) the lesson's `lessons.user_id`
+belonged to a different seed account than the one actually logging in via Google OAuth, so the
+router's ownership check (`lesson.get("user_id") != user_id` → 404) blocked access until the row
+was reassigned.
+
+**Audio plays and matches narration** — confirmed directly by a real person (not assumed):
+*"yes im able to see the lesson and listen to the narration as well."*
+
+**Real UX defects found by that same real playback, not hypothetical:**
+1. **Slide overflow — root-caused, not yet fixed.** `apps/web/src/app/lesson/[id]/layout.tsx`
+   uses `min-h-screen` (can grow) instead of a fixed height, and `Player.tsx`'s slide container
+   is missing `min-h-0` — a classic flexbox bug where a tall slide grows the whole page past the
+   viewport instead of scrolling inside its own box (which `SlideRenderer.tsx` already supports
+   but never gets the chance to use). Two-line CSS fix identified, not yet applied.
+2. **1 slide per segment — mechanism fixed (D85), but the actual symptom persists.** Root cause:
+   `_tier_slide_budget_per_segment` divided each tier's fixed total-lesson slide band evenly by
+   segment count. At 15 segments, T2 and T3 both collapsed to exactly 1 slide/segment regardless
+   of narration length (1.23–3.48 real minutes, same single static slide). Fixed the ALLOCATION
+   to be duration-proportional (D85, merged) — but re-verified against the real 15-segment
+   dataset and found T2/T3 **still** produce 1 slide/segment, because both tiers' total slide
+   band is `<=` the segment count, so there's nothing to proportionally redistribute. Only T1
+   (wider band) actually differentiates now. **The tier band values themselves still need
+   re-derivation — flagged to the user, awaiting a decision, not yet actioned.**
+3. **Narration speed too fast — root-caused, not yet fixed.** Sarvam Bulbul v2 supports a `pace`
+   parameter (verified against Sarvam's real API docs, default 1.0, range 0.3–3.0); our provider
+   code never sends it, so every lesson synthesizes at the raw default. Fix identified (send an
+   explicit slower `pace`, e.g. 0.85), not yet applied.
+4. **No captions.** Confirmed zero caption/subtitle code anywhere in the frontend. The full
+   narration script text is already in the package (`narration.script`) — a static always-visible
+   caption overlay is straightforward; word-synced captions are NOT possible yet, since the
+   Sarvam integration deliberately returns empty word-level timestamps.
+5. **Voice expressiveness ("highs, lows, pauses")** — no simple fix identified. Bulbul v2's
+   `pitch` param is a static offset, not dynamic variation; real expressiveness control
+   (`temperature`) only exists on Bulbul v3, which this integration doesn't use and hasn't been
+   verified as available on the current API key.
+
+**Net: the exit criterion — "a person watches a full lesson start to finish and the audio matches
+the slides" — is not yet a clean pass.** Audio genuinely plays and matches narration content, but
+the visual/pacing experience has real, identified defects (2 fixed at the mechanism level with a
+residual gap, 3 not yet fixed at all). Signed-URL auto-refresh (the known risk above) was not
+separately stress-tested (session was short enough not to hit the expiry window).
+
+### Update, 2026-08-13 — 4 of the 5 defects above are now fixed
+
+- Item 1 (slide overflow) — **fixed, D88.**
+- Item 2 (D85 slide-budget-per-tier) — **fixed, D87.**
+- Item 3 (narration pace) — **fixed, D89.**
+- Item 4 (captions) — **fixed, D90.**
+- Item 5 (voice expressiveness) — **still open**, no simple fix identified (see D89's own entry
+  in `docs/DEFECT-REGISTER.md`).
+
+## Handoff — real lesson_ids available for Dev2/3/4 testing
+
+| lesson_id | Chapter / tier | Status | Notes |
+|---|---|---|---|
+| `1baae6f6-20cf-4cbd-a72d-c76408a9056e` | ch 0 "Introduction" / T3 | `ready` | The one to use. Post-D78 fix — all 15 segments real Sarvam audio, independently verified (downloaded + validated with `wave`). Currently owned by `aplahoti1295@gmail.com` (real Google account) after a manual reassignment this session — reassign again if a different test account needs it. |
+| `abe4e438-052f-48d9-818f-590e3a42b2bb` | ch 0 "Introduction" / T3 | `ready`, superseded | Pre-D78 — 9 of 15 segments degraded to browser-fallback audio (no real TTS). Keep only as a reference for what the D76→D78 defect looked like; don't use for real testing. |
+| `b0a96211-15cf-41eb-8642-3c4d570a1c9f` | ch 5 "Builders' Guide" / T1 | `failed` | Blocked on Sarvam credits (D91's entry has the full story). Useful only if someone wants a real example of a failed-lesson state for error-handling UI testing. |
 
 ---
 

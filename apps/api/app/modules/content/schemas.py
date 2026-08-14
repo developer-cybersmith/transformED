@@ -38,6 +38,20 @@ class GenerateLessonRequest(BaseModel):
 
     tier: str = DEFAULT_TIER
 
+    # D54: bypasses ONLY Gate 5's idempotency short-circuit in
+    # `generate_chapter_lesson` — the 200-with-existing-lesson response returned
+    # when a `generating`/`ready` lesson already exists for the same
+    # (chapter_id, tier, user_id). When `force=True`, that branch is skipped
+    # entirely and a new `lessons` row is always created and enqueued, exactly
+    # as if no existing lesson had been found. It does NOT bypass Gate 6 (the
+    # catastrophe/page-span gate) or Gate 7 (per-user concurrency) — both are
+    # independent safety/cost controls and still apply unconditionally, so a
+    # `force=true` request can still 422 on an oversized chapter or 429 at the
+    # concurrency cap. A normal body field (not a query param) to match this
+    # endpoint's existing all-fields-in-the-body convention, which `tier`
+    # already establishes.
+    force: bool = False
+
     @field_validator("tier")
     @classmethod
     def _tier_must_be_known(cls, value: str) -> str:

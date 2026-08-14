@@ -1073,7 +1073,7 @@ def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, fl
         subdim = QUESTION_SUBDIMENSION_MAP.get(ans.question_id)
         if subdim is None:
             continue
-        normalized = (ans.selected_index / 3) * 100
+        normalized = (ans.selected_index / 3) * 100  # BOUNDED: denominator=3 matches OnboardingAnswer.selected_index le=3
         bucket[subdim].append(normalized)
     return {dim: round(sum(vals) / len(vals), 2) if vals else 0.0 for dim, vals in bucket.items()}
 

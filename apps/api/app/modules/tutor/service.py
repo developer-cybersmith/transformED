@@ -107,8 +107,8 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
 def compute_ces(signal: NormalizedSignal) -> float:
     """NormalizedSignal wrapper for the canonical CES formula in assessment/ces.py.
 
-    Formula arithmetic lives exclusively in ``assessment.ces.compute_ces`` (D1).
-    This wrapper preserves the ``NormalizedSignal``-based API used internally by
+    Formula arithmetic lives exclusively in ``assessment.ces.compute_ces`` (D1/D62).
+    This wrapper preserves the NormalizedSignal-based API used internally by
     ``process_attention_signal`` without duplicating the weighted-sum logic.
 
     SYNC-A resolved (Story 4-27, 2026-08-13): ``assessment/ces.py`` is the single
@@ -117,8 +117,8 @@ def compute_ces(signal: NormalizedSignal) -> float:
     ``test_s3_53_ces_production_closure.py``) enforces this: any second formula
     definition fails the build.
     """
-    from app.config import get_settings  # noqa: PLC0415
-    from app.modules.assessment.ces import compute_ces as _canonical  # noqa: PLC0415
+    from app.config import get_settings
+    from app.modules.assessment.ces import compute_ces as _canonical
 
     return _canonical(
         quiz_accuracy=signal.quiz_accuracy,
@@ -610,6 +610,82 @@ async def process_attention_signal(
                         ):
                             try:
                                 from app.core.websocket import manager  # noqa: PLC0415
+
+                                await manager.send(
+                                    session_id,
+                                    {
+                                        "type": "tutor_intervene",
+                                        "payload": {
+                                            "session_id": session_id,
+                                            "type": "fatigue",
+                                            "message": fatigue_msg,
+                                        },
+                                    },
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "tutor_intervene (fatigue) delivery failed for %s",
+                                    session_id,
+                                )
+
+    # ── Fatigue trigger (D7, S3-45) ──────────────────────────────────────────
+    # Only evaluate when TEACHING and no intervention already dispatched this signal.
+    # Primary: blink+head_pose both below thresholds for 2 consecutive windows AND
+    #   session duration >= ces_fatigue_min_session_seconds.
+    # Exhaustion fallback: all three MediaPipe signals None AND duration floor met.
+    # Once-per-session: _can_intervene_fatigue checks tutor_fatigue_fired:{session_id}.
+    if state_raw == "TEACHING" and not intervention_dispatched:
+        import time as _time  # noqa: PLC0415
+
+        session_start_ts_raw = await redis.get(f"session:{session_id}:session_start_ts")
+        if session_start_ts_raw is not None:
+            try:
+                duration_s = _time.time() - float(session_start_ts_raw)
+            except (TypeError, ValueError):
+                duration_s = 0.0
+            if duration_s >= settings.ces_fatigue_min_session_seconds:
+                # BOUNDED: end=1 → at most 2 entries (AC12 / CLAUDE.md unbounded-query rule)
+                blink_hist = await cast(
+                    "Awaitable[list[Any]]",
+                    redis.lrange(f"session:{session_id}:blink_history", 0, 1),
+                )
+                hp_hist = await cast(
+                    "Awaitable[list[Any]]",
+                    redis.lrange(f"session:{session_id}:head_pose_history", 0, 1),
+                )
+                primary_trigger = (
+                    len(blink_hist) >= 2
+                    and all(float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist)
+                    and len(hp_hist) >= 2
+                    and all(float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist)
+                )
+                exhaustion_fallback = (
+                    normalized.blink_rate is None
+                    and normalized.head_pose_score is None
+                    and normalized.behavioral_score is None
+                )
+                if primary_trigger or exhaustion_fallback:
+                    from app.modules.tutor.state_machine.graph import _can_intervene_fatigue
+
+                    if await _can_intervene_fatigue(session_id):
+                        logger.info(
+                            "[tutor:%s] fatigue trigger (primary=%s exhaustion=%s)"
+                            " — dispatching fatigue_detected",
+                            session_id,
+                            primary_trigger,
+                            exhaustion_fallback,
+                        )
+                        seg_msgs = await _segment_intervention_messages(session_id, redis)
+                        fatigue_result = await dispatch_event(
+                            session_id,
+                            "fatigue_detected",
+                            payload={"intervention_messages": seg_msgs},
+                        )
+                        intervention_dispatched = True
+                        fatigue_msg = fatigue_result.get("intervention_message")
+                        if fatigue_result.get("current_state") == "INTERVENING" and fatigue_msg:
+                            try:
+                                from app.core.websocket import manager
 
                                 await manager.send(
                                     session_id,

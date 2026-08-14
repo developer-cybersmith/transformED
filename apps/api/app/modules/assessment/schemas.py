@@ -7,9 +7,10 @@ Neither imports the other — both import from here to avoid circular imports.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "QuizAnswer",
@@ -48,9 +49,27 @@ class SessionCreate(BaseModel):
     default, so a client sending any of those three is silently ignored rather
     than trusted — asserted by
     `test_user_id_comes_from_the_jwt_and_is_never_accepted_from_the_client`.
+    D97 (was D79): min_length=1 ensures empty string returns 422 rather than reaching the DB
+    with a cast-to-UUID error that would produce 500.
     """
 
-    lesson_id: str
+    lesson_id: str = Field(min_length=1)
+
+    @field_validator("lesson_id", mode="before")
+    @classmethod
+    def lesson_id_must_be_uuid(cls, v: object) -> str:
+        """D104 (was D94): reject non-UUID strings before the Postgres cast.
+
+        Without this, a typo like "x" passes Pydantic validation and causes a
+        500 from the DB with no actionable message for the caller.
+        """
+        try:
+            return str(uuid.UUID(str(v)))  # normalises to lowercase RFC 4122
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(
+                f"lesson_id must be a valid UUID "
+                f"(e.g. '123e4567-e89b-12d3-a456-426614174000'), got: {v!r}"
+            ) from exc
 
 
 class SessionCreated(BaseModel):
@@ -95,6 +114,16 @@ class TeachbackSubmission(BaseModel):
     response_text: str = Field(
         min_length=1, max_length=4000, description="Student's typed teach-back response"
     )
+
+    @field_validator("response_text")
+    @classmethod
+    def response_text_not_blank(cls, v: str) -> str:
+        # D98 (was D80): min_length=1 counts characters, not content — a single space passes.
+        # Strip first so "   " is treated as empty and returned as 422, not forwarded
+        # to grade_teachback as substantively empty content that silently burns tokens.
+        if not v.strip():
+            raise ValueError("response_text must not be blank or whitespace-only")
+        return v
 
 
 class TeachbackResult(BaseModel):

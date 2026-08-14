@@ -4,6 +4,10 @@ Tests for Story 3-26 — Learner DNA Profile Text Generation (GPT-4o-mini).
 Test count: 29
 ACs covered: 1-19
 
+AC 8 note: test_positional_args_raise_type_error asserts iscoroutinefunction(refresh_dna_profile)
+  so an accidental async→sync revert is caught immediately. Dev 4 awaits this function in the
+  WebSocket handler — sync would deadlock the event loop. (Post-impl audit 2026-08-04)
+
 Modules under test:
   - app.modules.assessment.dna_profile  (refresh_dna_profile)
   - app.modules.assessment.prompts      (LEARNER_DNA_PROFILE_PROMPT, _dim_descriptor,
@@ -115,8 +119,18 @@ def test_dunder_all_exports_only_refresh_dna_profile():
 
 @pytest.mark.unit
 def test_positional_args_raise_type_error():
+    """AC 8: All parameters are keyword-only and the function is async (awaitable).
+    Explicitly asserts iscoroutinefunction so a future accidental `async def` → `def`
+    revert is caught immediately rather than via an obscure downstream failure.
+    Dev 4 awaits this function in the WebSocket handler — sync would deadlock the event loop.
+    """
+    import inspect  # noqa: PLC0415
+
     from app.modules.assessment.dna_profile import refresh_dna_profile
 
+    assert inspect.iscoroutinefunction(refresh_dna_profile), (
+        "refresh_dna_profile must be async — Dev 4 awaits it in the WebSocket handler"
+    )
     with pytest.raises(TypeError):
         refresh_dna_profile("u1", _all_dims(), 1, MagicMock(), _settings())  # type: ignore[call-arg]
 

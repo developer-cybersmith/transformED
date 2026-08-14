@@ -611,7 +611,14 @@ async def test_segment_order_follows_input_not_llm_response_order() -> None:
 @pytest.mark.asyncio
 async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
     """AC-6/AC-8: omitting state["tier"] entirely must behave exactly as
-    before this story — T2 slide_budget, no tier framing in the prompt."""
+    before this story — T2 slide_budget, no tier framing in the prompt.
+
+    D85+D87: slide_budget is allocated per-segment, proportional to each
+    segment's share of estimated duration (duration_min=4.0/6.0/5.0 from
+    _plan_llm_response's default segments, total=15.0), and the total itself
+    is now duration-scaled via T2's minutes-per-slide ratio (1.2-1.8) rather
+    than a fixed lesson-wide count: total_min=15/1.8=8.33, total_max=15/1.2=12.5.
+    share 4/15 -> (2,3); share 6/15 -> (3,5); share 5/15 -> (3,4)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -624,9 +631,12 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
     ):
         result = await lesson_planner_node(_base_state())  # no "tier" key at all
 
-    for seg in result["lesson_plan"]["segments"]:
-        # T2 band (12,15) / 3 segments -> per_min=4, per_max=5.
-        assert seg["slide_budget"] == {"min": 4, "max": 5}
+    segments = result["lesson_plan"]["segments"]
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 2, "max": 3},
+        {"min": 3, "max": 5},
+        {"min": 3, "max": 4},
+    ]
 
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
@@ -637,7 +647,11 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
 @pytest.mark.asyncio
 async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
     """AC-4/AC-6: T1 -> full-depth prompt framing + a wider per-segment
-    slide_budget than T2's default."""
+    slide_budget than T2's default.
+
+    D85+D87: T1's minutes-per-slide ratio (0.8-1.2), same default durations
+    (4.0/6.0/5.0, total=15.0): total_min=15/1.2=12.5, total_max=15/0.8=18.75.
+    share 4/15 -> (3,5); share 6/15 -> (5,8); share 5/15 -> (4,6)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -650,11 +664,17 @@ async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
     ):
         result = await lesson_planner_node(_base_state(tier="T1"))
 
-    for seg in result["lesson_plan"]["segments"]:
-        # T1 band (20,25) / 3 segments -> per_min=ceil(20/3)=7, per_max=8 (clamped).
-        # per_min uses ceiling division (2026-07-17 review fix, Blind Hunter)
-        # so 3 segments' worst-case total (21) never falls below total_min=20.
-        assert seg["slide_budget"] == {"min": 7, "max": 8}
+    segments = result["lesson_plan"]["segments"]
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 3, "max": 5},
+        {"min": 5, "max": 8},
+        {"min": 4, "max": 6},
+    ]
+    # Every T1 segment still has a wider (or equal, at the structural
+    # ceiling) budget than the equivalent T2 default segment above.
+    t2_defaults = [{"min": 2, "max": 3}, {"min": 3, "max": 5}, {"min": 3, "max": 4}]
+    for t1_seg, t2_seg in zip(segments, t2_defaults, strict=True):
+        assert t1_seg["slide_budget"]["max"] >= t2_seg["max"]
 
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "FULL-DEPTH" in sent_prompt
@@ -665,7 +685,11 @@ async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
 @pytest.mark.asyncio
 async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
     """AC-4/AC-6: T3 -> critical-topics-only/refresher framing + a narrower
-    per-segment slide_budget than T2's default."""
+    per-segment slide_budget than T2's default.
+
+    D85+D87: T3's minutes-per-slide ratio (2.0-3.0), same default durations
+    (4.0/6.0/5.0, total=15.0): total_min=15/3.0=5.0, total_max=15/2.0=7.5.
+    share 4/15 -> (1,2); share 6/15 -> (2,3); share 5/15 -> (2,2)."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -678,9 +702,17 @@ async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
     ):
         result = await lesson_planner_node(_base_state(tier="T3"))
 
-    for seg in result["lesson_plan"]["segments"]:
-        # T3 band (6,8) / 3 segments -> per_min=2, per_max=3.
-        assert seg["slide_budget"] == {"min": 2, "max": 3}
+    segments = result["lesson_plan"]["segments"]
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 1, "max": 2},
+        {"min": 2, "max": 3},
+        {"min": 2, "max": 2},
+    ]
+    # Every T3 segment still has a narrower (or equal) budget than the
+    # equivalent T2 default segment above.
+    t2_defaults = [{"min": 2, "max": 3}, {"min": 3, "max": 5}, {"min": 3, "max": 4}]
+    for t3_seg, t2_seg in zip(segments, t2_defaults, strict=True):
+        assert t3_seg["slide_budget"]["max"] <= t2_seg["max"]
 
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" in sent_prompt
@@ -736,42 +768,110 @@ async def test_unknown_tier_value_falls_back_to_t2_budget_and_framing() -> None:
     ):
         result = await lesson_planner_node(_base_state(tier="not-a-real-tier"))
 
-    for seg in result["lesson_plan"]["segments"]:
-        assert seg["slide_budget"] == {"min": 4, "max": 5}  # same as T2 default
+    segments = result["lesson_plan"]["segments"]
+    # Same per-segment values as test_default_tier_produces_t2_slide_budget_and_no_framing.
+    assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 2, "max": 3},
+        {"min": 3, "max": 5},
+        {"min": 3, "max": 4},
+    ]
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
 
 
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_tier_t3_five_segments_never_undercuts_total_min() -> None:
-    """Code review fix (Blind Hunter): with floor division, T3's total_min=6
-    over 5 segments gave per_min=1, allowing a worst-case actual total of 5
-    slides — below the tier's own advertised floor. Ceiling division fixes
-    this: 5 segments * per_min must sum to >= 6."""
-    from app.modules.content.pipeline.graph import lesson_planner_node
+# test_tier_t3_five_segments_never_undercuts_total_min (the 2026-07-17 Blind
+# Hunter ceiling-division fix, later rerouted by D85 to exercise the
+# zero-total-duration fallback path) is REMOVED as of D87, not silently
+# dropped: its entire premise -- "T3 has an advertised lesson-wide total_min
+# of 6 that the fallback must never undercut" -- no longer exists. D87
+# deleted `_TIER_TOTAL_SLIDE_BAND` (the fixed per-tier lesson-wide total)
+# entirely; the zero-duration fallback is now a flat, tier-independent lean
+# floor (see test_slide_budget_zero_total_duration_falls_back_to_lean_floor
+# above), which has no per-tier total to undercut in the first place. The
+# fallback's actual new guarantee -- every segment gets exactly (1,1), never
+# zero, for any tier -- is exactly what that test already covers.
 
-    summaries_5 = [{"segment_id": f"sec_{i}", "summary": f"Summary {i}."} for i in range(5)]
-    plan_segments_5 = [
-        {"segment_id": f"sec_{i}", "title": f"Title {i}", "duration_min": 3.0} for i in range(5)
-    ]
-    mock_provider = AsyncMock()
-    mock_provider.complete_structured.return_value = _plan_llm_response(segments=plan_segments_5)
-    sb = _mock_supabase()
 
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
-    ):
-        result = await lesson_planner_node(_base_state(tier="T3", segment_summaries=summaries_5))
+# ── Story 3-46 (D85): slide budget proportional to segment duration ───────────
 
-    total_min_possible = sum(
-        seg["slide_budget"]["min"] for seg in result["lesson_plan"]["segments"]
-    )
-    assert total_min_possible >= 6, (
-        f"worst-case total ({total_min_possible}) undercuts T3's advertised min of 6"
-    )
+# The exact 15 real, measured per-segment durations (minutes) from a real
+# generated lesson that motivated D85 — see docs/stories/3-46-slide-budget-duration.md.
+# Index 8 (3.48) is the largest; index 10 (1.23) is the smallest.
+_D85_REAL_DURATIONS_MIN = [
+    3.29,
+    2.99,
+    3.09,
+    1.37,
+    3.08,
+    2.17,
+    2.35,
+    2.16,
+    3.48,
+    3.28,
+    1.23,
+    3.16,
+    3.42,
+    3.01,
+    2.32,
+]
+
+
+def test_slide_budget_proportional_to_real_d85_durations() -> None:
+    """D85+D87: `_tier_slide_budget_per_segment` must return one (min,max)
+    pair per segment, sized by that segment's share of the lesson's REAL
+    estimated total duration (D87: the total itself now scales via
+    `_TIER_MINUTES_PER_SLIDE_BAND`, not a fixed lesson-wide count) — not a
+    single pair flatly shared by every segment (the pre-D85 bug), and not a
+    total so small it saturates at the structural floor for every segment
+    regardless of duration spread (D85-alone's residual gap for T2/T3 at
+    n=15, fixed by D87).
+
+    Exact values computed and verified by direct execution of the shipped
+    function (not hand math) against the real 15-segment, 40.4-real-minute
+    dataset from lesson `abe4e438`/`1baae6f6` (docs/stories/3-46 and 3-49):
+    idx 8 (3.48 min, the largest) and idx 10 (1.23 min, the smallest)."""
+    from app.modules.content.pipeline.graph import _tier_slide_budget_per_segment
+
+    expected = {
+        "T3": {8: (1, 2), 10: (1, 1)},
+        "T2": {8: (2, 3), 10: (1, 1)},
+        "T1": {8: (3, 4), 10: (1, 2)},
+    }
+    for tier, checks in expected.items():
+        budgets = _tier_slide_budget_per_segment(tier, _D85_REAL_DURATIONS_MIN)
+        assert len(budgets) == 15
+        assert all(1 <= mn <= mx <= 8 for mn, mx in budgets), (tier, budgets)
+        for idx, want in checks.items():
+            assert budgets[idx] == want, (
+                f"{tier} idx {idx}: expected {want}, got {budgets[idx]} (full: {budgets})"
+            )
+        # Every tier must now differentiate the largest segment from the
+        # smallest — the exact property D85 alone could not deliver for
+        # T2/T3 at this real segment count, and the reason D87 exists.
+        assert budgets[8][1] > budgets[10][1], (
+            f"{tier}: largest-duration segment (idx 8) should get a strictly "
+            f"larger max-budget than the smallest-duration segment (idx 10); "
+            f"got {budgets[8]} vs {budgets[10]}"
+        )
+
+
+def test_slide_budget_zero_total_duration_falls_back_to_lean_floor() -> None:
+    """D85 step 4 + D87: when segment_durations_min sums to <= 0
+    (malformed/all-zero input — no real duration signal, already proven
+    unreachable through lesson_planner_node itself since its own
+    duration_min > 0 guard runs first — defensive-only path), there is no
+    basis for a duration-scaled total (D87 removed the fixed lesson-wide
+    total this used to fall back to), so every segment gets exactly the
+    structural floor — never zero, never a fabricated distribution."""
+    from app.modules.content.pipeline.graph import _tier_slide_budget_per_segment
+
+    assert _tier_slide_budget_per_segment("T2", [0.0, 0.0, 0.0]) == [(1, 1)] * 3
+
+    # A single all-zero-duration segment, and a longer all-zero list, must
+    # not raise (ZeroDivisionError or otherwise) either, for any tier.
+    assert _tier_slide_budget_per_segment("T3", [0.0]) == [(1, 1)]
+    assert _tier_slide_budget_per_segment("T1", [0.0] * 7) == [(1, 1)] * 7
 
 
 # ── Story 2-16 (RC-3): planner resilience to high segment counts ──────────────

@@ -256,7 +256,7 @@ async def submit_onboarding_diagnostic(
     # Re-assessment bypass: if the re-assessment flag is set, the user is allowed to
     # resubmit the onboarding form. Delete the idempotency key so SET NX succeeds below.
     try:
-        if await redis.get(reassessment_key) is not None:
+        if await redis.get(reassessment_key) == "1":
             await redis.delete(onboarding_key)
     except Exception as exc:
         logger.debug("Re-assessment bypass check failed (non-fatal): %s", exc)

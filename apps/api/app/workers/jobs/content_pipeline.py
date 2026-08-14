@@ -43,7 +43,7 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         Exception: Any unhandled error causes ARQ to mark the job as failed and
                    retry up to ``WorkerSettings.max_tries`` times.
     """
-    from app.core.cost_tracker import clear_lesson_cost
+    from app.core.cost_tracker import clear_lesson_cost, get_cost
     from app.core.db import get_supabase, single_row
     from app.modules.content.pipeline.graph import run_pipeline
 
@@ -134,12 +134,31 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         # persisted to lessons.content by package_builder (S2-11).
         from datetime import datetime
 
-        supabase.table("lesson_jobs").update(
-            {
-                "status": "completed",
-                "completed_at": datetime.now(tz=UTC).isoformat(),
-            }
-        ).eq("lesson_id", lesson_id).execute()
+        # D86: lesson_jobs.cost_usd (numeric(10,4), initial_schema.sql) was
+        # never written by anything — clear_lesson_cost()'s own docstring
+        # promises "the cost has been persisted to the DB" before the Redis
+        # key is deleted below, but that persistence step was never built.
+        # Read the REAL accumulated Redis total here, BEFORE clear_lesson_cost
+        # deletes it, and fold it into this SAME completion write (no second
+        # DB round trip). A Redis read failure must degrade — never crash an
+        # otherwise-successful pipeline run over a secondary tracking concern
+        # — matching _update_lesson_status's own try/except-and-degrade below.
+        completion_payload: dict[str, Any] = {
+            "status": "completed",
+            "completed_at": datetime.now(tz=UTC).isoformat(),
+        }
+        try:
+            current_cost = await get_cost(lesson_id)
+            completion_payload["cost_usd"] = round(current_cost, 4)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to read accumulated cost for lesson_id=%s; cost_usd left unset",
+                lesson_id,
+            )
+
+        supabase.table("lesson_jobs").update(completion_payload).eq(
+            "lesson_id", lesson_id
+        ).execute()
 
         # CROSS-TEAM NOTE (2026-07-13, flagged to Dev 1 — this file's owner):
         # GET /api/content/lessons/{id} (router.py) reads lessons.status, NOT
@@ -272,17 +291,60 @@ async def _update_lesson_status(
     lesson_id: str,
     status: str,
     error: str | None = None,
+    cost_usd: float | None = None,
 ) -> None:
-    """Update lesson_jobs.status (and optionally error), and mirror onto
-    lessons.status — GET /api/content/lessons/{id} (router.py) reads lessons,
-    not lesson_jobs, so both must be kept in sync (CROSS-TEAM NOTE 2026-07-13,
-    flagged to Dev 1: confirmed via live testing that lessons.status was never
-    written here at all, so the polling endpoint could never report anything
-    but the initial 'generating', for any lesson, success or failure)."""
+    """Update lesson_jobs.status (and optionally error/cost_usd), and mirror
+    onto lessons.status — GET /api/content/lessons/{id} (router.py) reads
+    lessons, not lesson_jobs, so both must be kept in sync (CROSS-TEAM NOTE
+    2026-07-13, flagged to Dev 1: confirmed via live testing that
+    lessons.status was never written here at all, so the polling endpoint
+    could never report anything but the initial 'generating', for any lesson,
+    success or failure).
+
+    D86: every path that marks a lesson job "failed" must also persist
+    whatever real Redis-accumulated cost had built up before the failure —
+    not 0, and not silently absent. When *cost_usd* isn't passed explicitly,
+    fetch it here (once, only for the 'failed' status — the 'running'
+    transition has no accumulated cost yet and a cost read there would be
+    pure waste). A Redis read failure degrades to leaving cost_usd unset
+    rather than raising: this is a secondary tracking concern and must never
+    break the primary status write below (matches the try/except-and-degrade
+    pattern this function already applies to its own Supabase writes).
+
+    D91: the 'running' transition also writes lesson_jobs.started_at — the
+    REAL moment this attempt began executing, not lessons.created_at (when
+    the row was inserted, before the job was even enqueued). D53's reaper
+    used created_at as its only staleness signal, which conflates queue-wait
+    time with run time: a job that sits queued for a while before a worker
+    picks it up gets less real run-time budget than arq_job_timeout_s before
+    being reaped, even though it may still be genuinely alive and working.
+    Observed live: a real job whose retry was delayed ~32 minutes before ARQ
+    even dequeued it got reaped while still actually running, leaving
+    lessons.status='failed' and lesson_jobs.status='running' inconsistent.
+    Every retry attempt overwrites started_at with ITS OWN start time, which
+    is correct — a fresh attempt deserves a fresh staleness clock, not the
+    original row's creation time or an earlier attempt's start."""
+    if status == "failed" and cost_usd is None:
+        try:
+            from app.core.cost_tracker import get_cost
+
+            cost_usd = await get_cost(lesson_id)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to read accumulated cost for lesson_id=%s; cost_usd left unset",
+                lesson_id,
+            )
+
     try:
         payload: dict[str, Any] = {"status": status}
         if error:
             payload["error"] = error[:2000]  # Truncate to avoid DB column overflow
+        if cost_usd is not None:
+            payload["cost_usd"] = round(cost_usd, 4)
+        if status == "running":
+            from datetime import datetime
+
+            payload["started_at"] = datetime.now(tz=UTC).isoformat()
 
         supabase.table("lesson_jobs").update(payload).eq("lesson_id", lesson_id).execute()
     except Exception:  # noqa: BLE001

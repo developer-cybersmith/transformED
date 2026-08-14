@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-13 (Story 4-27 — behavioral_score defined (tab-visibility, 0.0/1.0); ws.ts SYNC-B frozen; 7 new tests; SYNC-A formally closed; L5+L7 tracker updated)
-**Overall status:** 34/43 Completed · 7 Partial · 2 Not Started
+**Last updated:** 2026-08-14 (PR #138 merged — Story 4-27 complete; SYNC-B frozen; behavioral_score JSDoc corrected to composite MediaPipe signal; all Dev 4 demo tasks complete)
+**Overall status:** 36/43 Completed · 5 Partial · 2 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -20,10 +20,10 @@
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 9 | 9 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 9 | 2 | 7 | 0 |
+| Sprint 4 | Weeks 8–9 | 9 | 4 | 5 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **43** | **34** | **7** | **2** |
+| **Total** | | **43** | **36** | **5** | **2** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -609,16 +609,13 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC MET:** 12/12 ACs verified by 27 unit tests; ruff check + ruff format clean ✅
 
 <!-- CHECK:behavioral_score_syncb -->
-- [Partial] **behavioral_score definition + SYNC-B wire contract freeze (Story 4-27)** ⚠️ PARTIAL — code done, PR open; not yet merged to main
-  - Story: `docs/stories/4-27-behavioral-score-syncb-freeze.md` · Branch: `sprint4/s4-27-behavioral-score-syncb`
-  - `behavioral_score` defined as tab-visibility score: `document.visibilityState === 'visible'` → 1.0, hidden → 0.0, API unavailable → null
-  - `packages/shared/types/ws.ts` updated: `behavioral_score`, `head_pose_score`, `blink_rate` changed from `number` to `number | null`; all five fields annotated with `// range: [0.0, 1.0]`; SYNC-B freeze note added
-  - 7 new tests covering partial MediaPipe signal paths through `_parse_signal` + `compute_ces` (behavioral=None, all-MediaPipe-None, non-finite rejection)
-  - `conftest.py` fixed: env vars now set at module level (not just in fixture) so Settings() instantiation at collection time succeeds
-  - `service.py:compute_ces` docstring updated with SYNC-A resolution note (2026-08-13)
-  - SYNC-A formally closed: `assessment/ces.py` is canonical; CI guard `test_ces_formula_defined_in_one_place` enforces it
-  - **Unblocks:** Dev 2 L6 (MediaPipe) — all three signal specs are now defined and nullable
-  - **⚠️ NOT DONE (why Partial):** awaiting PR review by all 4 devs (`ws.ts` is a frozen contract — CLAUDE.md §Interface Contracts)
+- [Completed] **behavioral_score definition + SYNC-B wire contract freeze (Story 4-27)** ✅ 2026-08-14 (PR #138 merged to dev4-demo; all 4 devs approved)
+  - Story: `docs/stories/4-27-behavioral-score-syncb-freeze.md` · PR: #138 (merged)
+  - `behavioral_score` defined as normalised composite engagement score: (gazeScore + expressionScore + interactionScore) / 3 from MediaPipe. null = MediaPipe hard init failure. JSDoc corrected after Dev 2 review (initial tab-visibility definition was wrong — D55 evidence)
+  - `packages/shared/types/ws.ts`: `behavioral_score`, `head_pose_score`, `blink_rate` changed from `number` to `number | null`; all five fields annotated with `// range: [0.0, 1.0]`; SYNC-B freeze note added
+  - 7 new tests covering partial MediaPipe signal paths through `_parse_signal` + `compute_ces`; `conftest.py` module-level env var fix
+  - **SYNC-A formally closed 2026-08-14:** `assessment/ces.py` is canonical; `tutor/service.py:compute_ces` is a thin wrapper; CI guard enforces it
+  - **Unblocks:** Dev 2 L6 (MediaPipe + consent modal) — all signal specs defined, nullable, and frozen
 
 <!-- CHECK:threshold_tuning -->
 - [Partial] **Intervention threshold tuning (is CES < 50 right?)** ⚠️ PARTIAL — methodology written; findings pending ≥20 real sessions

@@ -249,9 +249,15 @@ badge_label are HTML-entity-escaped before the label appears in the prompt strin
   - [x] 3.21 `test_refresh_dna_profile_badge_labels_row_not_found_uses_empty`
   - [x] 3.22 `test_no_openai_import_in_dna_profile` (AST scan — checks top-level PyPI `openai` only, allows `app.providers.llm.openai`)
   - [x] 3.23 `test_no_hardcoded_model_string_in_dna_profile` (AST scan)
+  - [x] 3.24 `test_learner_dna_profile_prompt_content` — AC 2: asserts IQ/EQ/SQ prohibition, second-person rule, no DPDP text in prompt body (R3, post-review)
+  - [x] 3.25 `test_build_prompt_sanitizes_newlines_in_badge_labels` — AC 18: newlines in badge_labels replaced with space before HTML escape (R4, post-review)
+  - [x] 3.26 `test_dim_descriptor_boundary_55_is_developing` — AC 3: exact lower boundary of 'developing' band (R10, post-review)
+  - [x] 3.27 `test_dim_descriptor_boundary_35_is_building` — AC 3: exact lower boundary of 'building' band (R10, post-review)
+  - [x] 3.28 `test_refresh_dna_profile_provider_constructor_failure_returns_none` — AC 10: constructor inside try/except; constructor exception → non-fatal, return None (R1, post-review)
+  - [x] 3.29 `test_refresh_dna_profile_upsert_error_field_raises_503` — AC 11: upsert_resp.error truthy → HTTPException(503), separate from exception path (R2, post-review)
 
 - [x] Task 4: Run full test suite — AC 19 — ✓ 2026-07-06
-  - [x] 4.1 `pytest -m unit tests/test_dna_profile.py` → 29/29 passed (post-review: 23 original + 6 new)
+  - [x] 4.1 `pytest -m unit tests/test_dna_profile.py` → 29/29 passed (post-impl audit 2026-08-04: 29/29 confirmed, AC 8 iscoroutinefunction assertion added to test_positional_args_raise_type_error)
   - [x] 4.2 Full suite `pytest -m unit` → 506 passed, 0 new regressions (29 pre-existing failures in Dev4 modules unrelated to Task 4)
 
 ---
@@ -391,12 +397,16 @@ def test_no_hardcoded_model_string_in_dna_profile():
     assert "gpt-4o" not in src, "Hardcoded model string found in dna_profile.py"
 ```
 
-### Critical: generate_dna_profile_text must call get_settings()
+### Critical: generate_dna_profile_text uses settings parameter (Option B — Review R12)
+> **NOTE:** The original Dev Notes specified `get_settings()` called internally. Code review
+> R12 resolved to **Option B**: `settings: Any` is an explicit parameter passed by the caller
+> (`refresh_dna_profile` forwards `settings=settings`). This eliminates the dead
+> `get_settings()` import inside the function and makes the dependency explicit.
+
 ```python
-# CORRECT — settings.llm_mini is resolved at call time
-async def generate_dna_profile_text(*, dims, session_count, badge_labels, provider):
-    settings = get_settings()  # ← existing import at top of prompts.py
-    ...
+# CORRECT (Option B — final implementation after Review R12)
+async def generate_dna_profile_text(*, dims, session_count, badge_labels, provider, settings):
+    # settings passed by caller — do NOT call get_settings() here
     llm_text = await provider.complete(messages=messages, model=settings.llm_mini)
 ```
 
@@ -501,7 +511,9 @@ the caller decides frequency.
 
 - 3 new functions + 1 constant added to `prompts.py`: `LEARNER_DNA_PROFILE_PROMPT`, `_dim_descriptor()`, `build_dna_profile_prompt()`, `generate_dna_profile_text()`. Reuses existing `DPDP_DISCLAIMER` — not redefined.
 - `dna_profile.py` created: single exported function `refresh_dna_profile()`. `OpenAILLMProvider` at module level (not local) for test patchability. `fastapi` and `prompts` imports remain local to avoid circular import risk.
-- 23 unit tests, all GREEN. AST scans verify no PyPI `openai` imports and no hardcoded model strings.
+- **Design change from Dev Notes (R12 Option B):** `generate_dna_profile_text()` accepts `settings: Any` as an explicit parameter (caller passes `settings=settings`). It does NOT call `get_settings()` internally. Dev Notes "Critical" block updated to reflect this.
+- 29 unit tests (23 original + 6 post-review: R1 constructor test, R2 upsert-error test, R3 prompt-content test, R4 newline test, R10 two boundary tests), all GREEN.
+- Post-impl audit (2026-08-04): AC 8 `iscoroutinefunction(refresh_dna_profile)` assertion added to `test_positional_args_raise_type_error`. 6 post-review tests documented as tasks 3.24–3.29. Dev Notes "Critical" block corrected for Option B. Tracker branch note corrected.
 - 500 existing tests still pass. 29 pre-existing failures all in Dev 4 modules (missing `langgraph`, missing env vars) — none introduced by this story.
 
 ### File List
@@ -510,7 +522,7 @@ the caller decides frequency.
 |------|--------|
 | `apps/api/app/modules/assessment/prompts.py` | MODIFY — add LEARNER_DNA_PROFILE_PROMPT + 3 functions |
 | `apps/api/app/modules/assessment/dna_profile.py` | CREATE |
-| `apps/api/tests/test_dna_profile.py` | CREATE |
+| `apps/api/tests/test_dna_profile.py` | CREATE (29 tests) |
 
 ### Change Log
 
@@ -519,6 +531,7 @@ the caller decides frequency.
 | 2026-07-06 | Story created — Sprint 3 Task 4 |
 | 2026-07-06 | Implementation complete — Tasks 1-4 done, 23 tests GREEN, status → review |
 | 2026-07-06 | Code review BLOCKERs addressed (R1-R11 + Option B) — 29 tests GREEN, 0 regressions, status → done |
+| 2026-08-04 | Post-impl audit remediation — AC 8 iscoroutinefunction assertion added; tasks 3.24–3.29 documented; Dev Notes Option B block corrected; tracker branch note corrected; validation report at `docs/reports/sprint3-task4-bmad-validation-report.md` |
 
 ---
 
@@ -555,3 +568,30 @@ the caller decides frequency.
 - [x] [Review][Defer] R13: IDOR — `refresh_dna_profile` has no caller-identity guard; service-role client bypasses RLS — deferred, internal API contract (Dev 4 owns JWT auth, user_id from JWT-decoded sub)
 - [x] [Review][Defer] R14: dims NaN/Inf not validated before `_dim_descriptor` comparisons — deferred, upstream fusion (`dna_fusion.py`) is the validation boundary, not in AC scope
 - [x] [Review][Defer] R15: AST hardcoded-model scan covers only `dna_profile.py`, not `prompts.py` — deferred, behavioral test (test 15) already catches this regression path
+
+---
+
+## Post-Implementation Audit (2026-08-04)
+
+**Audit branch:** `sprint3-task4-dev3`
+**Auditor:** adversarial BMAD audit
+**All findings verified against actual code, tests, story, and git history.**
+
+### Gaps Found and Resolved
+
+| # | Severity | Gap | Finding | Resolution |
+|---|----------|-----|---------|------------|
+| F1 | MEDIUM | AC 8: `test_positional_args_raise_type_error` missing `inspect.iscoroutinefunction` assertion | Dev 4 awaits `refresh_dna_profile()` in the WebSocket handler. A silent `async def`→`def` revert would pass all 29 tests; only the event loop would deadlock in production. | Added `assert inspect.iscoroutinefunction(refresh_dna_profile)` with explanatory message to the test. |
+| F2 | LOW | Dev Notes "Critical" block shows old `get_settings()` pattern | Review R12 changed to Option B (settings as parameter), but Dev Notes still showed `settings = get_settings()` inside the function. Documentation contradicted implementation. | Replaced "Critical: generate_dna_profile_text must call get_settings()" block with Option B note and corrected code snippet. |
+| F3 | LOW | Tracker says "PR pending" for `dev3-sprint3-task4` | Commit `54d4ec2` (tip of `dev3-sprint3-task4`) is an ancestor of `master-sprint3-dev3`; code was merged into `main` before `master-sprint3-dev3` was created. Stale status. | Updated tracker entry: branch note corrected from "PR pending" to actual merge status. |
+| F4 | LOW | 6 post-review tests (R1-R4, R10) absent from task checklist | Tests exist and pass; only noted in Task 4.1 summary line. Story task list had entries 3.1–3.23 only; 29 total tests but 23 entries. | Added tasks 3.24–3.29 with test names, AC references, and review item tags. |
+
+### Validation Results (Post-Remediation)
+
+| Check | Result |
+|-------|--------|
+| `pytest tests/test_dna_profile.py` | **29/29 PASSED** |
+| `ruff check` (all 3 Task 4 files) | **0 errors** |
+| `inspect.iscoroutinefunction(refresh_dna_profile)` | `True` |
+| All 19 ACs verified against code | **19/19 SATISFIED** |
+| Production logic changed | **None** |

@@ -308,7 +308,7 @@ def test_get_cost_report_aggregates_by_user(client_factory: ClientFactory) -> No
     # here anymore (see test_get_cost_report_filters_server_side below for
     # that behavior).
     sb = MagicMock()
-    chain = sb.table.return_value.select.return_value.gte.return_value
+    chain = sb.table.return_value.select.return_value.gte.return_value.limit.return_value
     chain.execute.return_value.data = [
         {"cost_usd": 1.0, "lesson_id": "l1", "lessons": {"user_id": "u1"}},
         {"cost_usd": 2.0, "lesson_id": "l2", "lessons": {"user_id": "u1"}},
@@ -322,6 +322,7 @@ def test_get_cost_report_aggregates_by_user(client_factory: ClientFactory) -> No
     assert body["total_cost_usd"] == pytest.approx(8.0)
     assert body["lessons_processed"] == 3
     assert "by_provider" not in body
+    assert body["truncated"] is False
     by_user = {row["user_id"]: row["cost_usd"] for row in body["by_user"]}
     assert by_user == {"u1": pytest.approx(3.0), "u2": pytest.approx(5.0)}
 
@@ -333,7 +334,7 @@ def test_get_cost_report_filters_server_side_via_inner_join(client_factory: Clie
     not fetched unbounded and filtered in Python."""
     sb = MagicMock()
     select_chain = sb.table.return_value.select
-    chain = select_chain.return_value.gte.return_value
+    chain = select_chain.return_value.gte.return_value.limit.return_value
     chain.execute.return_value.data = []
     client = client_factory()
     with patch("app.modules.admin.router.get_supabase", return_value=sb):
@@ -345,13 +346,68 @@ def test_get_cost_report_filters_server_side_via_inner_join(client_factory: Clie
 
 
 @pytest.mark.unit
+def test_get_cost_report_applies_row_limit(client_factory: ClientFactory) -> None:
+    """D59(a): the query must carry `.limit(_COST_REPORT_ROW_LIMIT)` after
+    `.gte(...)` — this is the fix for the previously-unbounded materialise-every-
+    row-for-the-period query flagged in docs/DEFECT-REGISTER.md."""
+    from app.modules.admin.router import _COST_REPORT_ROW_LIMIT
+
+    sb = MagicMock()
+    gte_chain = sb.table.return_value.select.return_value.gte
+    gte_chain.return_value.limit.return_value.execute.return_value.data = []
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/costs", params={"period": "today"})
+    assert resp.status_code == 200
+    gte_chain.return_value.limit.assert_called_once_with(_COST_REPORT_ROW_LIMIT)
+
+
+@pytest.mark.unit
+def test_get_cost_report_not_truncated_when_under_limit(client_factory: ClientFactory) -> None:
+    """D59(a): fewer rows than the limit -> truncated=False (the common,
+    real-scale case today)."""
+    sb = MagicMock()
+    chain = sb.table.return_value.select.return_value.gte.return_value.limit.return_value
+    chain.execute.return_value.data = [
+        {"cost_usd": 1.0, "lesson_id": "l1", "lessons": {"user_id": "u1"}},
+    ]
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/costs", params={"period": "today"})
+    assert resp.status_code == 200
+    assert resp.json()["truncated"] is False
+
+
+@pytest.mark.unit
+def test_get_cost_report_truncated_when_row_limit_hit(client_factory: ClientFactory) -> None:
+    """D59(a): exactly `_COST_REPORT_ROW_LIMIT` rows returned -> truncated=True,
+    the explicit surfaced-degradation signal (never a silent drop) that more
+    rows may exist beyond the fetch limit and the report may under-report
+    real spend."""
+    from app.modules.admin.router import _COST_REPORT_ROW_LIMIT
+
+    sb = MagicMock()
+    chain = sb.table.return_value.select.return_value.gte.return_value.limit.return_value
+    chain.execute.return_value.data = [
+        {"cost_usd": 1.0, "lesson_id": f"l{i}", "lessons": {"user_id": "u1"}}
+        for i in range(_COST_REPORT_ROW_LIMIT)
+    ]
+    client = client_factory()
+    with patch("app.modules.admin.router.get_supabase", return_value=sb):
+        resp = client.get("/api/admin/costs", params={"period": "today"})
+    assert resp.status_code == 200
+    assert resp.json()["truncated"] is True
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("period", ["this_week", "this_month"])
 def test_get_cost_report_boundary_periods_do_not_error(
     client_factory: ClientFactory, period: str
 ) -> None:
     """Story 2-25 code review: this_week/this_month had zero test coverage."""
     sb = MagicMock()
-    sb.table.return_value.select.return_value.gte.return_value.execute.return_value.data = []
+    chain = sb.table.return_value.select.return_value.gte.return_value.limit.return_value
+    chain.execute.return_value.data = []
     client = client_factory()
     with patch("app.modules.admin.router.get_supabase", return_value=sb):
         resp = client.get("/api/admin/costs", params={"period": period})

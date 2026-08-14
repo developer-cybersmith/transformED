@@ -76,6 +76,19 @@ class Settings(BaseSettings):
         default="anushka",
         description="Sarvam Bulbul v2 speaker name for narration synthesis",
     )
+    sarvam_narration_pace: float = Field(
+        default=0.85,
+        ge=0.3,
+        le=3.0,
+        description=(
+            "Sarvam Bulbul v2 `pace` parameter for narration synthesis -- controls "
+            "speaking speed (lower is slower; Sarvam's own valid range for bulbul:v2 "
+            "is 0.3-3.0, default 1.0). Sarvam's raw 1.0 default read as 'very fast' in "
+            "real stakeholder playback (D89); 0.85 is a reasoned, moderately-slower "
+            "starting value, not an exact scientifically-derived one -- tune via env "
+            "var without a code change, same as sarvam_voice_id above."
+        ),
+    )
     azure_tts_key: str | None = Field(
         default=None, description="Azure Cognitive Services TTS key — fallback"
     )
@@ -437,6 +450,29 @@ class Settings(BaseSettings):
             "shape D63 exists to close, via a different route). 3600 leaves a wide margin below "
             "that ceiling."
         ),
+    )
+    ces_fatigue_blink_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Blink rate (0-1) below which the signal indicates fatigue. "
+                    "Default 0.3 per Schleicher et al. 2008. "
+                    "Env: CES_FATIGUE_BLINK_THRESHOLD",
+    )
+    ces_fatigue_head_pose_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Head pose score (0-1) below which the signal indicates fatigue. "
+                    "Default 0.3 per Bosch et al. 2015. "
+                    "Env: CES_FATIGUE_HEAD_POSE_THRESHOLD",
+    )
+    ces_fatigue_min_session_seconds: int = Field(
+        default=900,
+        ge=60,
+        description="Minimum session duration in seconds before fatigue can trigger. "
+                    "Default 900 (15 min). Prevents false positives on session startup. "
+                    "Env: CES_FATIGUE_MIN_SESSION_SECONDS",
     )
 
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────

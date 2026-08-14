@@ -276,6 +276,36 @@ async def test_sarvam_429_insufficient_quota_is_not_retried() -> None:
     assert mock_client.post.call_count == 1, "insufficient_quota_error must NOT be retried"
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sarvam_synthesize_request_includes_configured_pace() -> None:
+    """D89: a real stakeholder reported narration speed as "very fast" in
+    real playback -- Sarvam's raw `pace` default (1.0) was never overridden.
+    The real synthesize request payload must include the configured
+    `sarvam_narration_pace` value as `"pace"`."""
+    from app.providers.tts.sarvam import SarvamTTSProvider
+
+    mock_response = _make_sarvam_json_response(num_clips=1, frames_per_clip=10)
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.return_value.sarvam_api_key = "test-key"
+        mock_settings.return_value.sarvam_narration_pace = 0.85
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = SarvamTTSProvider()
+        await provider.synthesize("Hello world", "anushka")
+
+    assert mock_client.post.call_count == 1
+    sent_json = mock_client.post.call_args.kwargs["json"]
+    assert sent_json["pace"] == 0.85
+
+
 # ---------------------------------------------------------------------------
 # AzureTTSProvider
 # ---------------------------------------------------------------------------

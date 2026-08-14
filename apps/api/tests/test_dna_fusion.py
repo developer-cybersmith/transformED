@@ -2,11 +2,12 @@
 Unit tests for apps/api/app/modules/assessment/dna_fusion.py
 Story 3-25 — Learner DNA Fusion Formula
 
-Test count: 29
+Test count: 30
 Coverage:
   AC 2  — __all__ exports only fuse_learner_dna
-  AC 3  — keyword-only signature; positional args raise TypeError
-  AC 4  — _apply_ema: formula, None old, clamping, rounding
+  AC 3  — keyword-only async signature; positional args raise TypeError;
+           iscoroutinefunction asserted explicitly (Dev 4 awaits it — sync deadlocks)
+  AC 4  — _apply_ema: formula, None old, clamping, rounding (4 d.p.)
   AC 5-13 — _compute_signals: all 9 dimensions, neutral defaults, direction
   AC 14 — ended_at=None → return None
   AC 15 — user_id mismatch → HTTPException(404)
@@ -14,8 +15,9 @@ Coverage:
   AC 17 — DB failure (upsert) → HTTPException(503)
   AC 18 — quiz/teachback/events read failure → non-fatal, use neutral
   AC 19 — learner_dna row not found → neutral old values, still upserts
-  AC 20 — upsert increments session_count
-  AC 21 — dna_ema_retain in Settings
+  AC 20 — upsert increments session_count; badge_labels/profile_text absent from payload
+  AC 21 — dna_ema_retain = Field(default=0.7, ge=0.0, le=1.0) in Settings;
+           bounds violations raise pydantic.ValidationError
   AC 22,23 — no forbidden imports, no hardcoded EMA weights (AST)
   AC 24 — returns exactly 9 dimension keys
 """
@@ -23,7 +25,6 @@ Coverage:
 from __future__ import annotations
 
 import ast
-import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -96,7 +97,9 @@ def _supabase_mock(
             tbl.select.return_value.eq.return_value.execute.return_value = _resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp(event_rows)
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp(
+                event_rows
+            )
 
         elif name == "learner_dna":
             select_chain = tbl.select.return_value
@@ -146,13 +149,15 @@ def test_dunder_all_exports_only_fuse_learner_dna():
 
 
 @pytest.mark.unit
-def test_positional_args_raise_type_error():
+@pytest.mark.asyncio
+async def test_positional_args_raise_type_error():
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
+    assert inspect.iscoroutinefunction(fuse_learner_dna), (
+        "fuse_learner_dna must be async — Dev 4 awaits it in the WebSocket handler"
+    )
     with pytest.raises(TypeError):
-        asyncio.get_event_loop().run_until_complete(
-            fuse_learner_dna("uid", "sid", MagicMock(), _settings())
-        )
+        await fuse_learner_dna("uid", "sid", MagicMock(), _settings())
 
 
 # ── AC 4: _apply_ema ──────────────────────────────────────────────────────────
@@ -416,6 +421,22 @@ def test_dna_ema_retain_in_settings():
     assert s_default.dna_ema_retain == pytest.approx(0.7, abs=0.0001)
 
 
+@pytest.mark.unit
+def test_config_dna_ema_retain_constraints():
+    """AC 21: Settings.dna_ema_retain = Field(default=0.7, ge=0.0, le=1.0).
+    Verifies both valid boundary values and that out-of-range inputs raise
+    pydantic.ValidationError so constraint regressions are caught immediately.
+    """
+    import pydantic  # noqa: PLC0415
+
+    assert _settings(retain=0.0).dna_ema_retain == pytest.approx(0.0, abs=0.0001)
+    assert _settings(retain=1.0).dna_ema_retain == pytest.approx(1.0, abs=0.0001)
+    with pytest.raises(pydantic.ValidationError):
+        _settings(retain=-0.1)  # violates ge=0.0
+    with pytest.raises(pydantic.ValidationError):
+        _settings(retain=1.1)  # violates le=1.0
+
+
 # ── AC 20 + 24: happy path → 9 dims returned, session_count incremented ─────
 
 
@@ -462,6 +483,8 @@ async def test_async_happy_path_returns_9_dimension_dict():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_session_count_incremented():
+    """AC20: session_count is incremented atomically via RPC, not in the upsert payload.
+    D93 (was D74) fix: Python-side read-modify-write replaced by server-side atomic UPDATE."""
     from app.modules.assessment.dna_fusion import fuse_learner_dna
 
     session_row = {"session_id": "s1", "user_id": "u1", "ended_at": "2026-07-03T10:00:00"}
@@ -491,7 +514,16 @@ async def test_async_session_count_incremented():
 
     await fuse_learner_dna(user_id="u1", session_id="s1", supabase=supabase, settings=_settings())
     assert len(upsert_calls) == 1
-    assert upsert_calls[0].get("session_count") == 4  # 3 + 1
+    # session_count must NOT be in the upsert payload — atomic RPC handles the increment
+    assert "session_count" not in upsert_calls[0], (
+        f"session_count found in upsert payload: {upsert_calls[0]}. "
+        "D93 (was D74): use increment_learner_dna_session_count RPC instead."
+    )
+    # RPC must have been called to atomically increment the counter
+    supabase.rpc.assert_called_once_with(
+        "increment_learner_dna_session_count",
+        {"p_user_id": "u1"},
+    )
 
 
 # ── AC 17: upsert DB failure → 503 ──────────────────────────────────────────

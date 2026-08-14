@@ -118,7 +118,18 @@ API_ROOT = Path(__file__).resolve().parents[2]
 MODULES_DIR = API_ROOT / "app" / "modules"
 
 # Request-path file names. See SCOPE in the module docstring.
-REQUEST_PATH_FILENAMES = ("router.py", "service.py")
+# D78: dna_fusion / dna_growth / ces* / dna_profile are called from request-path
+# service.py handlers and must be covered by the unbounded-query guard.
+# D103 (Story 3-55, renumbered from D93 on merge): dna_fusion.py explicitly added here.
+REQUEST_PATH_FILENAMES = (
+    "router.py",
+    "service.py",
+    "dna_fusion.py",
+    "dna_growth.py",
+    "ces.py",
+    "ces_baseline.py",
+    "dna_profile.py",
+)
 
 # Supabase-py table selectors.
 _TABLE_SELECTORS = frozenset({"table", "from_"})
@@ -379,13 +390,12 @@ def _unbounded_selects(source: str) -> list[str]:
 #
 # Do NOT add an entry to make a build green. Fix the query or register the defect.
 _KNOWN_UNBOUNDED: dict[str, set[str]] = {
-    # D59 · Dev 1 · admin cost report materialises EVERY lesson_jobs row joined to
-    # lessons for the period, then groups in Python because PostgREST has no
-    # server-side GROUP BY. Fine at 23 lessons; it is the admin panel's own
-    # Sprint 3 task (S3-4) that will make it real.
-    "admin/router.py": {
-        "lesson_jobs.select('cost_usd, lesson_id, lessons!inner(user_id, created_at)')"
-    },
+    # D59(a) closed — Story 3-51 added `.limit(_COST_REPORT_ROW_LIMIT)` +
+    # a surfaced `truncated` flag to admin/router.py's cost report query.
+    # Entry removed, not left in place: an allow-listed query that is now
+    # actually bounded would be the "matches existing accepted pattern"
+    # ratchet CLAUDE.md's binding rule 6 names, not a real fix.
+    #
     # D59 · Dev 3 · analytics selects every session id for a user with no bound.
     # Grows without limit as a student uses the product — the definition of a
     # read that is fine in testing and wrong in production.
@@ -416,6 +426,25 @@ def test_request_path_modules_are_where_we_think_they_are() -> None:
         assert f"{module}/router.py" in names, f"scan does not reach {module}/router.py"
     assert "assessment/service.py" in names, "the service layer is in scope, not just routers"
     assert "analytics/service.py" in names
+    assert "assessment/dna_fusion.py" in names, (
+        "D103: dna_fusion.py is on the request path but not in CI scanner scope — "
+        "add 'dna_fusion.py' to REQUEST_PATH_FILENAMES"
+    )
+
+
+@pytest.mark.unit
+def test_dna_fusion_is_in_scan_scope() -> None:
+    """D103 (AC8, was D93) — dna_fusion.py must appear in request_path_modules() output.
+
+    Named test required by Story 3-55 AC8. If dna_fusion.py is removed from
+    REQUEST_PATH_FILENAMES, this test fails before any new unbounded SELECT in
+    dna_fusion.py can silently escape the CI scanner.
+    """
+    names = {p.relative_to(MODULES_DIR).as_posix() for p in request_path_modules()}
+    assert "assessment/dna_fusion.py" in names, (
+        "D103: dna_fusion.py is on the request path but not in CI scanner scope — "
+        "add 'dna_fusion.py' to REQUEST_PATH_FILENAMES"
+    )
 
 
 @pytest.mark.unit
