@@ -11,7 +11,7 @@ on:
   push:
     branches: [main, dev, 'book-scale/**']
   pull_request:
-    branches: [main, dev, 'book-scale/integration']
+    branches: [main, dev, 'book-scale/integration', 'dev4-demo']
 
 jobs:
   api:
