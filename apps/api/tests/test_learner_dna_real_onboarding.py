@@ -34,12 +34,25 @@ _USER_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 def _build_real_onboarding_responses(selected_index: int = 3) -> list[OnboardingAnswer]:
     """20 OnboardingAnswer objects with real question_ids (c1-c8, e1-e5, s1-s7)."""
     questions = [
-        ("c1", "cognitive"), ("c2", "cognitive"), ("c3", "cognitive"), ("c4", "cognitive"),
-        ("c5", "cognitive"), ("c6", "cognitive"), ("c7", "cognitive"), ("c8", "cognitive"),
-        ("e1", "emotional"), ("e2", "emotional"), ("e3", "emotional"),
-        ("e4", "emotional"), ("e5", "emotional"),
-        ("s1", "self_direction"), ("s2", "self_direction"), ("s3", "self_direction"),
-        ("s4", "self_direction"), ("s5", "self_direction"), ("s6", "self_direction"),
+        ("c1", "cognitive"),
+        ("c2", "cognitive"),
+        ("c3", "cognitive"),
+        ("c4", "cognitive"),
+        ("c5", "cognitive"),
+        ("c6", "cognitive"),
+        ("c7", "cognitive"),
+        ("c8", "cognitive"),
+        ("e1", "emotional"),
+        ("e2", "emotional"),
+        ("e3", "emotional"),
+        ("e4", "emotional"),
+        ("e5", "emotional"),
+        ("s1", "self_direction"),
+        ("s2", "self_direction"),
+        ("s3", "self_direction"),
+        ("s4", "self_direction"),
+        ("s5", "self_direction"),
+        ("s6", "self_direction"),
         ("s7", "self_direction"),
     ]
     return [
@@ -72,6 +85,7 @@ def _build_supabase_process_onboarding(
     # Call 2 — learner_dna upsert
     dna_table = MagicMock()
     if capture_upsert is not None:
+
         def _spy_upsert(data: dict[str, Any], **kwargs: Any) -> MagicMock:
             capture_upsert.update(data)
             m = MagicMock()
@@ -140,9 +154,7 @@ def test_compute_dimension_scores_maps_real_question_ids() -> None:
     responses = _build_real_onboarding_responses(selected_index=3)
     scores = _compute_dimension_scores(responses)
 
-    assert len(scores) == 9, (
-        f"Expected 9 sub-dimensions, got {len(scores)}: {list(scores.keys())}"
-    )
+    assert len(scores) == 9, f"Expected 9 sub-dimensions, got {len(scores)}: {list(scores.keys())}"
     assert scores["pattern_recognition"] == 100.0, (
         f"c1,c5,c8 at index 3 → (3/3)×100=100.0 each → mean=100.0; "
         f"got {scores['pattern_recognition']}"
@@ -151,16 +163,13 @@ def test_compute_dimension_scores_maps_real_question_ids() -> None:
         f"c2,c3,c7 at index 3 → mean=100.0; got {scores['logical_deduction']}"
     )
     assert scores["persistence"] == 100.0, (
-        f"e2 at index 3 is the only persistence question → mean=100.0; "
-        f"got {scores['persistence']}"
+        f"e2 at index 3 is the only persistence question → mean=100.0; got {scores['persistence']}"
     )
     for dim in ALL_NINE_DIMENSIONS:
         assert dim in scores, f"Missing sub-dimension key: {dim!r}"
     # P8: all 9 dimension values must equal 100.0 when selected_index=3
     for dim, score in scores.items():
-        assert score == 100.0, (
-            f"Expected 100.0 for {dim!r} with all selected_index=3; got {score}"
-        )
+        assert score == 100.0, f"Expected 100.0 for {dim!r} with all selected_index=3; got {score}"
     # P5: validate [0, 100] range to guard against denominator regression
     assert all(0.0 <= v <= 100.0 for v in scores.values()), (
         f"Score out of valid range [0, 100]: {scores}"
@@ -240,7 +249,8 @@ async def test_process_onboarding_upsert_row_contains_all_nine_dimensions(
     )
     # P7: user_id must be stored in the upsert row
     assert captured_upsert.get("user_id") == _USER_UUID, (
-        f"user_id missing or wrong in learner_dna upsert row; got: {captured_upsert.get('user_id')!r}"
+        f"user_id missing or wrong in learner_dna upsert row; "
+        f"got: {captured_upsert.get('user_id')!r}"
     )
 
 
@@ -250,16 +260,14 @@ async def test_process_onboarding_upsert_row_contains_all_nine_dimensions(
 
 
 @pytest.mark.unit
-def test_dpdp_disclaimer_uses_hie_not_transformED() -> None:
+def test_dpdp_disclaimer_uses_hie_not_transformed() -> None:
     """AC4: D72 guard — DPDP_DISCLAIMER must contain 'HIE', not 'TransformED'."""
     from app.modules.assessment.prompts import DPDP_DISCLAIMER
 
     assert "TransformED" not in DPDP_DISCLAIMER, (
         "D72 regression: DPDP_DISCLAIMER still contains 'TransformED'. Replace with 'HIE'."
     )
-    assert "HIE" in DPDP_DISCLAIMER, (
-        "DPDP_DISCLAIMER does not contain the brand name 'HIE'."
-    )
+    assert "HIE" in DPDP_DISCLAIMER, "DPDP_DISCLAIMER does not contain the brand name 'HIE'."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -346,7 +354,8 @@ async def test_onboarding_result_has_no_raw_dimension_scores(
             "Only badge_labels, profile_text, session_count are allowed (CLAUDE.md)."
         )
     # P2: exhaustive field check — no undeclared 4th field (e.g. raw_scores) may leak
-    assert set(type(result).model_fields.keys()) == {"badge_labels", "profile_text", "session_count"}, (
+    expected_fields = {"badge_labels", "profile_text", "session_count"}
+    assert set(type(result).model_fields.keys()) == expected_fields, (
         f"OnboardingResult has unexpected fields: {set(type(result).model_fields.keys())}. "
         "Only badge_labels, profile_text, session_count are allowed."
     )
@@ -368,16 +377,16 @@ def test_compute_dimension_scores_missing_dimension_returns_zero() -> None:
 
     scores = _compute_dimension_scores(responses)
 
-    assert "persistence" in scores, "persistence key must still be present (from ALL_NINE_DIMENSIONS)"
+    assert "persistence" in scores, (
+        "persistence key must still be present (from ALL_NINE_DIMENSIONS)"
+    )
     assert scores["persistence"] == 0.0, (
         f"persistence should be 0.0 when e2 is absent, got {scores['persistence']}"
     )
     # P3: verify all 8 non-persistence dims are unaffected by removing e2
     for dim, score in scores.items():
         if dim != "persistence":
-            assert score == 100.0, (
-                f"Removing e2 should not affect {dim!r}; got {score}"
-            )
+            assert score == 100.0, f"Removing e2 should not affect {dim!r}; got {score}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -396,14 +405,12 @@ def test_compute_badge_labels_empty_when_all_scores_below_threshold() -> None:
 
     for dim, score in scores.items():
         assert score == 0.0, (
-            f"Expected 0.0 for {dim!r} with selected_index=0; "
-            f"formula: (0/3)×100=0.0; got {score}"
+            f"Expected 0.0 for {dim!r} with selected_index=0; formula: (0/3)×100=0.0; got {score}"
         )
 
     labels = _compute_badge_labels(scores)
     assert labels == [], (
-        f"Expected no badges when all scores=0.0 (threshold={BADGE_THRESHOLD}), "
-        f"got: {labels!r}"
+        f"Expected no badges when all scores=0.0 (threshold={BADGE_THRESHOLD}), got: {labels!r}"
     )
 
 
@@ -413,7 +420,7 @@ def test_compute_badge_labels_empty_when_all_scores_below_threshold() -> None:
 
 
 @pytest.mark.unit
-def test_onboarding_system_prompt_uses_hie_not_transformED() -> None:
+def test_onboarding_system_prompt_uses_hie_not_transformed() -> None:
     """AC9: D72 guard — ONBOARDING_PROFILE_SYSTEM_PROMPT must contain 'HIE',
     not 'TransformED'."""
     from app.modules.assessment.prompts import ONBOARDING_PROFILE_SYSTEM_PROMPT

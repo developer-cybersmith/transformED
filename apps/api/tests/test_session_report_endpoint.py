@@ -13,7 +13,8 @@ Covers:
   - AC 7: ces_breakdown has exactly 5 keys
   - AC 8: ces_breakdown["quiz"] formula
   - AC 9: ces_breakdown["teachback"] formula
-  - AC 10: behavioral/head_pose/blink always 0.0
+  - AC 10: behavioral/head_pose/blink averaged from session:{id}:ces_signal_totals
+    (0.0 when Redis unavailable or no attention signals were ever recorded)
   - AC 11: interventions_count from session_events
   - AC 12: duration_minutes from timestamps
   - AC 13: completed_at as ISO string or None
@@ -138,8 +139,11 @@ def _build_report_supabase(
       3. quiz_attempts      — .execute()      → data list
       4. teachback_attempts — .execute()      → data list
       5. session_events     — count query     → .count (intervention_triggered)
-      6. learner_dna        — .maybe_single() → dna_data   (Story 3-30)
-      7. session_events     — .execute()      → growth_events (dna_update;
+      6. session_events     — .execute()      → [] (raw intervention rows, Story 2-46/S3-05 —
+         attention timeline chart's intervention_events; empty here since no test in this
+         file exercises that field's content, see test_s3_05_attention_timeline_chart.py)
+      7. learner_dna        — .maybe_single() → dna_data   (Story 3-30)
+      8. session_events     — .execute()      → growth_events (dna_update;
          only when dna_data is not None)
 
     tier_data default (_NO_TIER_ROW sentinel) → {"tier": "T2"}.
@@ -183,10 +187,16 @@ def _build_report_supabase(
                 intervention_count
             )
         elif n == 6:
+            # session_events — raw intervention rows (Story 2-46/S3-05, .limit() bounded)
+            m_exec = (
+                m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute
+            )
+            m_exec.return_value.data = []
+        elif n == 7:
             # learner_dna — maybe_single (Story 3-30)
             m_exec = m.select.return_value.eq.return_value.maybe_single.return_value.execute
             m_exec.return_value.data = dna_data
-        elif n == 7:
+        elif n == 8:
             # session_events dna_update — two .eq() filters → data list of payloads
             m.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = (
                 growth_events
@@ -468,6 +478,8 @@ async def test_get_report_ces_breakdown_attention_zero_when_no_redis(mock_to_thr
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_get_report_interventions_count_from_session_events(mock_to_thread):
     """AC 11: interventions_count = COUNT(*) from session_events.
 
@@ -642,10 +654,11 @@ async def test_get_report_both_404_paths_return_identical_detail(mock_to_thread)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_report_asyncio_to_thread_called_6_times_when_no_dna():
-    """AC 9 (Story 3-30): 6 asyncio.to_thread calls when learner_dna row is absent.
+async def test_get_report_asyncio_to_thread_called_7_times_when_no_dna():
+    """AC 9 (Story 3-30): 7 asyncio.to_thread calls when learner_dna row is absent.
 
-    Call order: sessions + lessons + quiz + teachback + events_count + learner_dna.
+    Call order: sessions + lessons + quiz + teachback + events_count +
+    events_intervention_rows (Story 2-46/S3-05) + learner_dna.
     """
     from unittest.mock import patch
 
@@ -670,7 +683,7 @@ async def test_get_report_asyncio_to_thread_called_6_times_when_no_dna():
             supabase=supabase,
         )
 
-    assert len(call_log) == 6, f"Expected 6 asyncio.to_thread calls (no DNA), got {len(call_log)}"
+    assert len(call_log) == 7, f"Expected 7 asyncio.to_thread calls (no DNA), got {len(call_log)}"
 
 
 # ── HTTP-layer tests ──────────────────────────────────────────────────────────
@@ -1077,11 +1090,11 @@ async def test_report_quiz_accuracy_label_developing_at_exact_60_percent(mock_to
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_report_asyncio_to_thread_called_7_times_on_happy_path():
-    """AC 9: exactly 7 asyncio.to_thread calls on happy path.
+async def test_report_asyncio_to_thread_called_8_times_on_happy_path():
+    """AC 9: exactly 8 asyncio.to_thread calls on happy path.
 
-    Call order: sessions + lessons + quiz + teachback + events_count
-    + learner_dna + events_dna_update.
+    Call order: sessions + lessons + quiz + teachback + events_count +
+    events_intervention_rows (Story 2-46/S3-05) + learner_dna + events_dna_update.
     """
     from unittest.mock import patch
 
@@ -1107,8 +1120,8 @@ async def test_report_asyncio_to_thread_called_7_times_on_happy_path():
             supabase=supabase,
         )
 
-    assert len(call_log) == 7, (
-        f"Expected 7 asyncio.to_thread calls (happy path), got {len(call_log)}"
+    assert len(call_log) == 8, (
+        f"Expected 8 asyncio.to_thread calls (happy path), got {len(call_log)}"
     )
 
 
@@ -1148,6 +1161,12 @@ async def test_report_dna_snapshot_none_when_learner_dna_execute_returns_raw_non
         elif n == 5:
             m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
         elif n == 6:
+            # Story 2-46/S3-05: session_events raw intervention rows query (new since this
+            # test was written) -- harmless empty result, not the subject of this test.
+            _eq = m.select.return_value.eq.return_value.eq.return_value
+            _chain = _eq.order.return_value.limit.return_value.execute
+            _chain.return_value.data = []
+        elif n == 7:
             # BLOCKER-1: execute() itself returns None (not APIResponse(data=None))
             m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
                 None

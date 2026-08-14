@@ -92,15 +92,16 @@ def _supabase_mock(
                 sessions_exec.return_value = _resp(session_row)
 
         elif name == "quiz_attempts":
-            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp(quiz_rows)
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _resp(quiz_rows)
 
         elif name == "teachback_attempts":
-            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp(tb_rows)
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp(
-                event_rows
-            )
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _resp(event_rows)
 
         elif name == "learner_dna":
             select_chain = tbl.select.return_value
@@ -572,9 +573,8 @@ async def test_async_data_read_failure_is_non_fatal():
             )
             sessions_exec.return_value = _resp(session_row)
         elif name in ("quiz_attempts", "teachback_attempts", "session_events"):
-            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.side_effect = Exception(
-                "DB read failed"
-            )
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.side_effect = Exception("DB read failed")
         elif name == "learner_dna":
             dna_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
             dna_exec.return_value = _resp(None)

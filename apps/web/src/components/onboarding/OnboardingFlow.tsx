@@ -282,7 +282,9 @@ export function OnboardingFlow() {
     return (
         <div className="mx-auto w-full max-w-xl">
             <div className="mb-8 text-center">
-                <span className="text-xl font-bold text-[var(--accent-primary)]">TransformED AI</span>
+                <span className="text-xl font-bold text-[var(--accent-primary)]">
+                    HIEIQ<span className="text-primary">.AI</span>
+                </span>
                 <h1 className="mt-3 font-serif text-2xl font-semibold text-neutral-900">
                     Learner DNA Assessment
                 </h1>

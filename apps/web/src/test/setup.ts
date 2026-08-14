@@ -52,6 +52,55 @@ if (BlobProto && typeof BlobProto.stream !== 'function' && typeof ReadableStream
     };
 }
 
+// ── ResizeObserver polyfill (jsdom gap) ──────────────────────────────────────
+// jsdom has no ResizeObserver; recharts' <ResponsiveContainer> (used by
+// AttentionChart, Story 2-46/S3-05) depends on one to measure its container and
+// render at a real size. Without this, every chart measures 0x0 and silently
+// renders nothing, so a test asserting on chart content would fail for a reason
+// entirely unrelated to the component under test. Reports a fixed, realistic
+// size synchronously so charts render immediately in tests. Feature-detected,
+// same pattern as the Blob polyfill below.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+    class MockResizeObserver {
+        private readonly callback: ResizeObserverCallback;
+        constructor(callback: ResizeObserverCallback) {
+            this.callback = callback;
+        }
+        observe(target: Element) {
+            const rect = { width: 800, height: 400 } as DOMRectReadOnly;
+            this.callback(
+                [{ target, contentRect: rect } as ResizeObserverEntry],
+                this as unknown as ResizeObserver,
+            );
+        }
+        unobserve() {}
+        disconnect() {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+}
+
+// recharts' <ResponsiveContainer> also reads its own wrapper <div>'s
+// getBoundingClientRect() directly (not only via the observer entry) --
+// jsdom's default all-zero rect produces the same silent-empty-chart problem
+// the polyfill above exists to prevent. Scoped to DIV specifically: recharts
+// ALSO creates temporary, invisible <span> elements to measure tick-label
+// text width for its overlap-avoidance algorithm -- faking those to a large
+// size makes every label look like it overlaps, which silently drops nearly
+// all axis ticks with no error of any kind (found building AttentionChart,
+// Story 2-46/S3-05 -- Y-axis ticks rendered zero, X-axis rendered only one).
+// SVG elements (<text>, <g>, ...) are untouched too, purely because they are
+// never DIVs -- no separate check needed.
+{
+    const original = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+        const rect = original.call(this);
+        if (rect.width === 0 && rect.height === 0 && this.tagName === 'DIV') {
+            return { ...rect, width: 800, height: 400, right: 800, bottom: 400 } as DOMRect;
+        }
+        return rect;
+    };
+}
+
 // `@/lib/api`'s request interceptor constructs a Supabase browser client on
 // every call; `createBrowserClient` throws on an undefined url. These are the
 // same placeholder values `ci.yml` uses for the web build. Set before any test

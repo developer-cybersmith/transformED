@@ -29,7 +29,16 @@ beforeEach(() => {
   // run and passes in isolation. `stubGlobal` uses defineProperty and works
   // regardless of the existing descriptor.
   vi.stubGlobal('WebSocket', FakeWebSocket);
-  usePlayerStore.setState({ tutorState: 'IDLE', wsSendControl: null });
+  usePlayerStore.setState({
+    tutorState: 'IDLE',
+    wsSendControl: null,
+    wsSendAttentionSignal: null,
+    status: 'IDLE',
+    activeIntervention: null,
+    cesScore: null,
+    currentSegmentIndex: 0,
+    audioPositionMs: 0,
+  });
   getSessionMock.mockReset();
   getSessionMock.mockResolvedValue({ data: { session: { access_token: 'fake-token' } } });
 });
@@ -110,8 +119,6 @@ describe('useLessonSocket', () => {
   });
 
   it.each([
-    ['tutor_intervene', { session_id: 'sess_1', type: 'distraction', message: 'hi' }],
-    ['ces_update', { session_id: 'sess_1', ces: 0.5, window_index: 1 }],
     ['attention_ack', { session_id: 'sess_1', ces: 0.5 }],
     ['lesson_ready', { session_id: 'sess_1', lesson_id: 'lsn_1', lesson: {} }],
     ['generation_progress', { session_id: 'sess_1', lesson_id: 'lsn_1', node: 'x', progress: 1, message: 'x' }],
@@ -123,6 +130,162 @@ describe('useLessonSocket', () => {
 
     expect(() => act(() => latestFake().simulateMessage({ type, payload }))).not.toThrow();
     expect(usePlayerStore.getState().tutorState).toBe('IDLE');
+  });
+
+  it('dispatches a tutor_intervene message into the player store (S3-03 AC-2)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    const payload = { session_id: 'sess_1', type: 'confusion', message: 'Let me re-explain...' };
+    act(() => latestFake().simulateMessage({ type: 'tutor_intervene', payload }));
+
+    expect(usePlayerStore.getState().activeIntervention).toEqual(payload);
+    // AC-7: this path must never touch playback/status or any other player field.
+    expect(usePlayerStore.getState().status).toBe('IDLE');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+    expect(usePlayerStore.getState().audioPositionMs).toBe(0);
+    expect(usePlayerStore.getState().tutorState).toBe('IDLE');
+  });
+
+  it('ignores a tutor_intervene for a different session_id (stale message from an abandoned session, review fix)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'tutor_intervene',
+        payload: { session_id: 'sess_OTHER', type: 'confusion', message: 'x' },
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('does not throw and does not set activeIntervention on a malformed tutor_intervene (missing type/message, review fix)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    expect(() =>
+      act(() =>
+        latestFake().simulateMessage({
+          type: 'tutor_intervene',
+          payload: { session_id: 'sess_1' },
+        }),
+      ),
+    ).not.toThrow();
+
+    expect(usePlayerStore.getState().activeIntervention).toBeNull();
+  });
+
+  it('dispatches a ces_update message into the player store (S3-04 AC-2)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.62, window_index: 3 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBe(0.62);
+    // AC-2: this path must never touch playback/status.
+    expect(usePlayerStore.getState().status).toBe('IDLE');
+  });
+
+  it('ignores a ces_update for a different session_id (stale message from an abandoned session)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_OTHER', ces: 0.9, window_index: 1 },
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['a string', '0.5'],
+    ['negative', -0.1],
+    ['above 1', 1.1],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('rejects a ces value that is %s (review fix)', async (_label, badValue) => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: badValue, window_index: 1 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBeNull();
+  });
+
+  it('rejects an out-of-order ces_update (lower window_index than one already applied, review fix)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.5, window_index: 5 },
+      }),
+    );
+    expect(usePlayerStore.getState().cesScore).toBe(0.5);
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.9, window_index: 2 },
+      }),
+    );
+
+    // Stale, lower window_index must not overwrite the newer score.
+    expect(usePlayerStore.getState().cesScore).toBe(0.5);
+  });
+
+  it('accepts a later ces_update with a higher window_index', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.5, window_index: 5 },
+      }),
+    );
+    act(() =>
+      latestFake().simulateMessage({
+        type: 'ces_update',
+        payload: { session_id: 'sess_1', ces: 0.9, window_index: 6 },
+      }),
+    );
+
+    expect(usePlayerStore.getState().cesScore).toBe(0.9);
   });
 
   it('degrades gracefully (status closed, no socket) when the Supabase session lookup rejects', async () => {
@@ -183,5 +346,60 @@ describe('useLessonSocket', () => {
 
     expect(usePlayerStore.getState().wsSendControl).toBe(secondSendControl);
     expect(usePlayerStore.getState().wsSendControl).not.toBeNull();
+  });
+
+  it('registers wsSendAttentionSignal into the player store once the socket connects, and it forwards to the real socket (S3-02)', async () => {
+    renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull());
+
+    const msg = {
+      type: 'attention_signal' as const,
+      payload: {
+        session_id: 'sess_1',
+        quiz_accuracy: null,
+        teachback_score: null,
+        behavioral_score: 0.8,
+        head_pose_score: 0.9,
+        blink_rate: 14,
+      },
+    };
+    act(() => usePlayerStore.getState().wsSendAttentionSignal!(msg));
+
+    expect(latestFake().sentMessages).toContain(JSON.stringify(msg));
+  });
+
+  it('clears wsSendAttentionSignal in the player store on unmount (S3-02)', async () => {
+    const { unmount } = renderHook(() => useLessonSocket('sess_1'));
+
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull());
+
+    unmount();
+
+    expect(usePlayerStore.getState().wsSendAttentionSignal).toBeNull();
+  });
+
+  it('a stale instance unmounting after a fresher instance has taken over does not clobber wsSendAttentionSignal (S3-02)', async () => {
+    const first = renderHook(() => useLessonSocket('sess_1'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => latestFake().simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull());
+    const firstSend = usePlayerStore.getState().wsSendAttentionSignal;
+
+    renderHook(() => useLessonSocket('sess_2'));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    act(() => FakeWebSocket.instances[1].simulateOpen());
+    await waitFor(() => expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBe(firstSend));
+    const secondSend = usePlayerStore.getState().wsSendAttentionSignal;
+
+    first.unmount();
+
+    expect(usePlayerStore.getState().wsSendAttentionSignal).toBe(secondSend);
+    expect(usePlayerStore.getState().wsSendAttentionSignal).not.toBeNull();
   });
 });

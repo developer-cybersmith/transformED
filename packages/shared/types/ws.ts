@@ -1,6 +1,6 @@
-﻿// Sprint 0 interface contract â€” frozen
+﻿// Sprint 0 interface contract — frozen
 // WebSocket discriminated union types for HIE.
-// Covers all messages defined in PRD Â§16.
+// Covers all messages defined in PRD §16.
 
 import type { LessonPackage } from './lesson';
 
@@ -29,7 +29,7 @@ export interface WsMessage<T extends string, P> {
 }
 
 // ---------------------------------------------------------------------------
-// Server â†’ Client messages
+// Server → Client messages
 // ---------------------------------------------------------------------------
 
 /** Lesson generation completed; full package delivered to client. */
@@ -80,7 +80,7 @@ export type ErrorMessage = WsMessage<
 >;
 
 // ---------------------------------------------------------------------------
-// Client â†’ Server messages
+// Client → Server messages
 // ---------------------------------------------------------------------------
 
 /**

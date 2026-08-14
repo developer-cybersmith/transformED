@@ -1,10 +1,11 @@
 {
   "$comment": "Book-scale API, v1. Frozen for Dev 2's Track W (SYNC-1). The W0 contract CI job compares this against the live FastAPI schema and must fail when they diverge. GET shapes are ADDITIVE ONLY across versions \u2014 W1 and W2 are built against them, so a field may be added but never removed or renamed. See real_example for the provenance and current staleness of the captured payloads.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "captured": "2026-08-04",
-  "source": "Story 1-11 (book-scale Phase 3.5); extended by Story 1-14 (book-scale Phase 6, AC23)",
+  "source": "Story 1-11 (book-scale Phase 3.5); extended by Story 1-14 (book-scale Phase 6, AC23); extended by D54 (force-regenerate)",
   "base": "/api/content",
   "changelog": {
+    "1.2.0": "D54 (Story 3-50, 2026-08-13). ADDED to GenerateLessonRequest: force (bool, default false) — bypasses ONLY Gate 5's idempotency short-circuit in generate_chapter_lesson, letting a caller force a fresh lesson even when a generating/ready one already exists for the same (chapter_id, tier, user_id). Does NOT bypass Gate 6 (page-span catastrophe gate) or Gate 7 (per-user concurrency cap) — both still apply unconditionally. Field existed in the live schema since D54 shipped; this contract update only catches up the frozen doc (found by the Contract CI job once it started actually running).",
     "1.1.0": "Story 1-14 / Phase 6. ADDED: POST /books/{book_id}/chapters/{chapter_id}/lessons and the LessonGenerationResponse + GenerateLessonRequest schemas. ADDED to ChapterResponse: lesson_count, latest_lesson. CHANGED (annotation only, no shape change): the two 1.0.0 annotations on ChapterResponse.lesson_id and .has_lesson asserting they were permanently null and permanently false until Phase 6 are DELETED \u2014 they were true only while nothing in the system could write a lesson, and are now false statements. Both fields are now derived from the embedded `lessons` relation rather than from the scalar `chapters.lesson_id` column, which is dead (see DEFECT-REGISTER D44). NO GET RESPONSE SHAPE REGRESSED: every 1.0.0 field is still present with the same type.",
     "1.0.0": "Story 1-11 / Phase 3.5. GET /books, GET /books/{book_id}, GET /books/{book_id}/chapters."
   },
@@ -123,7 +124,8 @@
     },
     "GenerateLessonRequest": {
       "added_in": "1.1.0",
-      "tier": "string, optional, default T2 \u2014 must be one of T1 | T2 | T3"
+      "tier": "string, optional, default T2 \u2014 must be one of T1 | T2 | T3",
+      "force": "boolean, optional, default false, added_in 1.2.0 (D54) \u2014 bypasses ONLY the idempotency short-circuit (Gate 5); Gate 6 (page-span) and Gate 7 (concurrency cap) still apply unconditionally"
     },
     "LessonGenerationResponse": {
       "added_in": "1.1.0",

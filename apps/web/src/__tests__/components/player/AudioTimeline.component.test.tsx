@@ -1,8 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, act } from '@testing-library/react';
+import { render, fireEvent, act, waitFor } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/server';
+import { API_BASE } from '@/test/handlers';
 import { AudioTimeline } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
+
+// Origin must match test/setup.ts's NEXT_PUBLIC_SUPABASE_URL for
+// parseSignedUrl's origin check (review finding) to accept this fixture.
+const SIGNED_AUDIO_URL =
+  'http://localhost:54321/storage/v1/object/sign/lesson-audio/lesson-1/seg-0.mp3?token=expired-token';
+
+function loadLessonWithSignedAudioUrl() {
+  const lesson = structuredClone(mockLessonPackage);
+  lesson.segments[0].narration.audio_url = SIGNED_AUDIO_URL;
+  usePlayerStore.getState().loadLesson(lesson);
+}
 
 let playMock: ReturnType<typeof vi.fn>;
 let pauseMock: ReturnType<typeof vi.fn>;
@@ -184,11 +198,6 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
   });
 
   it('absorbs a pending seek via processTimeUpdate instead of setting .currentTime on a nonexistent real element', () => {
-    // status must be PLAYING for the seek to actually move currentSlideId --
-    // processTimeUpdate itself no-ops otherwise (same guard the real-audio
-    // path is already subject to: a seek while paused updates audioPositionMs
-    // immediately via requestSeek(), but slide sync only catches up once
-    // playback resumes).
     const lessonWithScriptOnly = {
       ...mockLessonPackage,
       segments: [
@@ -203,6 +212,44 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
 
     act(() => {
       usePlayerStore.getState().requestSeek(40000); // into seg_0's sl_0_1 range (35000-92000)
+    });
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().seekRequestMs).toBeNull();
+  });
+
+  it('bug fix: a seek while PAUSED moves the slide immediately (real audio) -- previously stuck on the pre-seek slide until playback resumed and a native timeupdate caught up', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PAUSED', currentSegmentIndex: 0, currentSlideId: 'sl_0_0' });
+
+    render(<AudioTimeline />);
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(40000); // into sl_0_1's range (35000-92000)
+    });
+
+    // No 'timeupdate' event fired -- processTimeUpdate's own status==='PLAYING'
+    // guard would reject this while PAUSED, so this only passes via the new
+    // status-independent syncSlideToPosition call.
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().seekRequestMs).toBeNull();
+  });
+
+  it('bug fix: a seek while PAUSED moves the slide immediately (script-only virtual clock)', () => {
+    const lessonWithScriptOnly = {
+      ...mockLessonPackage,
+      segments: [
+        { ...mockLessonPackage.segments[0], narration: { ...mockLessonPackage.segments[0].narration, audio_url: '' } },
+        ...mockLessonPackage.segments.slice(1),
+      ],
+    };
+    usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
+    usePlayerStore.setState({ status: 'PAUSED', currentSegmentIndex: 0, currentSlideId: 'sl_0_0', quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(40000);
     });
 
     expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
@@ -405,13 +452,15 @@ describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
     expect(usePlayerStore.getState().isBuffering).toBe(false);
   });
 
-  it('sets audioError(true) on the "error" event', () => {
+  it('sets audioError(true) on the "error" event once the automatic re-sign attempt fails (Story 2-45 -- the attempt is async, so this no longer happens synchronously)', async () => {
     usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
     const { container } = render(<AudioTimeline />);
 
     fireEvent.error(container.querySelector('audio')!);
 
-    expect(usePlayerStore.getState().audioError).toBe(true);
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
   });
 
   it('does not attach an error-triggering src at all for a hasAudio === false segment (degrade path unaffected)', () => {
@@ -457,6 +506,172 @@ describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
     rerender(<AudioTimeline />);
 
     expect(playMock).toHaveBeenCalled();
+  });
+});
+
+describe('AudioTimeline — automatic per-asset re-sign (Story 2-45)', () => {
+  it('swaps in the fresh signed URL, never sets audioError, and resumes playback (calls .play() again), when the automatic re-sign succeeds', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () =>
+        HttpResponse.json({ signed_url: 'https://project.supabase.co/fresh-signed-mp3', expires_in: 3600 }),
+      ),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    playMock.mockClear(); // drop the initial-mount play() call
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(container.querySelector('audio')!.getAttribute('src')).toContain('fresh-signed-mp3');
+    });
+    expect(usePlayerStore.getState().audioError).toBe(false);
+    // Review fix: the remounted <audio> element must actually be told to
+    // play, not just receive the fresh src -- the play/pause effect's own
+    // deps didn't previously include the resign, so this call never fired.
+    expect(playMock).toHaveBeenCalled();
+  });
+
+  it('does not flip audioError for the new segment when a stale failed re-sign for an already-departed segment resolves late (race, review fix)', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+    let resolveSignedUrl: (() => void) | null = null;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, async () => {
+        await new Promise<void>((resolve) => {
+          resolveSignedUrl = resolve;
+        });
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    // Wait for the re-sign request to actually be in flight.
+    await waitFor(() => {
+      expect(resolveSignedUrl).not.toBeNull();
+    });
+
+    // Student advances to segment 1 while segment 0's re-sign is still pending.
+    // advanceSegment() resets audioError -- the healthy new segment starts clean.
+    act(() => {
+      usePlayerStore.getState().advanceSegment();
+    });
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+    expect(usePlayerStore.getState().audioError).toBe(false);
+
+    // Now let the stale re-sign for the abandoned segment 0 resolve with failure.
+    await act(async () => {
+      resolveSignedUrl?.();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // Segment 1 has nothing wrong with it -- audioError must stay false.
+    expect(usePlayerStore.getState().audioError).toBe(false);
+  });
+
+  it('attempts the automatic re-sign at most once per segment — a later error on the same segment goes straight to audioError without a second network call', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(1);
+
+    // Simulate the error firing again on the same (still-failing) segment,
+    // independent of the manual Retry button, e.g. a second decode error.
+    act(() => {
+      usePlayerStore.getState().setAudioError(false);
+    });
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(1);
+  });
+
+  it('does not attempt a re-sign for a segment whose audio_url is not a Supabase signed-url shape', async () => {
+    // mockLessonPackage's default audio_url ('/What-Is-SQL-Injection.mp3') does
+    // not match the signed-url shape parseSignedUrl expects.
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ signed_url: 'https://project.supabase.co/fresh', expires_in: 3600 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(0);
+  });
+
+  it('resets the attempt-guard on a manual retry, so a genuinely new asset for the same segment gets its own automatic attempt (AC4, review fix)', async () => {
+    loadLessonWithSignedAudioUrl();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    const { container } = render(<AudioTimeline />);
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(1);
+
+    // Manual retry (Player.tsx's handleRetryAudio): a full-lesson refetch
+    // delivers a fresh signed URL for the same segment_id, then retryAudio()
+    // is called. Simulate the refetch by updating the store directly.
+    act(() => {
+      usePlayerStore.setState((state) => ({
+        lesson: state.lesson
+          ? {
+              ...state.lesson,
+              segments: state.lesson.segments.map((s, i) =>
+                i === 0 ? { ...s, narration: { ...s.narration, audio_url: SIGNED_AUDIO_URL } } : s,
+              ),
+            }
+          : state.lesson,
+      }));
+      usePlayerStore.getState().retryAudio();
+    });
+    expect(usePlayerStore.getState().audioError).toBe(false);
+
+    // The "new" asset expires too -- without the fix, the guard would still
+    // remember segment_id "seg-0" as already-attempted from before the
+    // retry, and this would skip straight to audioError with no 2nd call.
+    fireEvent.error(container.querySelector('audio')!);
+
+    await waitFor(() => {
+      expect(usePlayerStore.getState().audioError).toBe(true);
+    });
+    expect(signedUrlCallCount).toBe(2);
   });
 });
 
@@ -736,6 +951,53 @@ describe('AudioTimeline — SpeechSynthesis fallback (S2-34)', () => {
 
     expect(cancelMock).toHaveBeenCalled();
     expect(utteranceCtor).toHaveBeenCalledWith(lesson.segments[1].narration.script);
+  });
+
+  it('bug fix: a seek within the SAME segment cancels and restarts the utterance (the Web Speech API cannot be seeked to an arbitrary position, unlike a real <audio> element)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+    flushSpeakTimeout();
+    cancelMock.mockClear();
+    speakMock.mockClear();
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(40000); // still segment 0 -- segment_id is unchanged
+    });
+    flushSpeakTimeout();
+
+    // Without the fix, spokenSegmentIdRef still matched (segment_id unchanged),
+    // so this comparison would take the resume() branch and never cancel/respeak
+    // -- the narration would just keep going from wherever it already was.
+    expect(cancelMock).toHaveBeenCalled();
+    expect(speakMock).toHaveBeenCalledTimes(1);
+    expect(utteranceCtor).toHaveBeenLastCalledWith(lesson.segments[0].narration.script);
+  });
+
+  it('bug fix: a seek while PAUSED still cancels the stale utterance (so it does not silently keep speaking on resume)', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    const { rerender } = render(<AudioTimeline />);
+    flushSpeakTimeout();
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED' });
+    });
+    rerender(<AudioTimeline />);
+    cancelMock.mockClear();
+
+    act(() => {
+      usePlayerStore.getState().requestSeek(10000);
+    });
+    rerender(<AudioTimeline />);
+
+    expect(cancelMock).toHaveBeenCalled();
   });
 
   it('cancels immediately when the segment changes even while PAUSED, not deferred to the next PLAYING transition (AC-6 review fix)', () => {

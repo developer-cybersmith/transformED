@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/server';
+import { API_BASE } from '@/test/handlers';
 import type { Slide, JargonEntry } from '@hie/shared/types/lesson';
 import { SlideRenderer } from '@/components/player/SlideRenderer';
 
@@ -114,24 +117,149 @@ describe('SlideRenderer — image handling', () => {
     expect(screen.queryByTestId('slide-image')).toBeNull();
   });
 
-  it('swaps to fallback_image_url on image error', () => {
+  it('swaps to fallback_image_url on image error, after an automatic re-sign attempt fails (Story 2-45 -- no signed-url endpoint mocked here, so the attempt fails and falls through)', async () => {
     render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
     const img = screen.getByTestId('slide-image') as HTMLImageElement;
     expect(img.src).toContain('slide_0.jpg');
 
     fireEvent.error(img);
 
-    expect(img.src).toContain('slide_0_fallback.jpg');
+    await waitFor(() => {
+      expect((screen.getByTestId('slide-image') as HTMLImageElement).src).toContain('slide_0_fallback.jpg');
+    });
   });
 
-  it('shows placeholder when fallback also errors', () => {
+  it('shows placeholder when fallback also errors', async () => {
     render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
     const img = screen.getByTestId('slide-image') as HTMLImageElement;
 
-    fireEvent.error(img);        // primary → fallback
-    fireEvent.error(img);        // fallback → placeholder
+    fireEvent.error(img); // primary errors -> automatic re-sign attempt (fails, no endpoint mocked) -> fallback
+
+    await waitFor(() => {
+      expect((screen.getByTestId('slide-image') as HTMLImageElement).src).toContain('slide_0_fallback.jpg');
+    });
+
+    fireEvent.error(screen.getByTestId('slide-image')); // fallback errors -> placeholder (already attempted, no second re-sign)
 
     expect(screen.getByTestId('slide-image-placeholder')).toBeDefined();
     expect(screen.queryByTestId('slide-image')).toBeNull();
+  });
+
+  it('swaps in a fresh signed URL and does not fall back, when the automatic re-sign succeeds (Story 2-45)', async () => {
+    const signedSlide: Slide = {
+      ...mockSlide,
+      slide_id: 'sl_signed',
+      // Origin must match test/setup.ts's NEXT_PUBLIC_SUPABASE_URL for
+      // parseSignedUrl's origin check (review finding) to accept this fixture.
+      image_url:
+        'http://localhost:54321/storage/v1/object/sign/lesson-images/lesson-1/slide-0.jpg?token=expired',
+    };
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () =>
+        HttpResponse.json({ signed_url: 'https://project.supabase.co/fresh-signed-jpg', expires_in: 3600 }),
+      ),
+    );
+
+    render(<SlideRenderer slide={signedSlide} isActive jargon={[]} />);
+    const img = screen.getByTestId('slide-image') as HTMLImageElement;
+
+    fireEvent.error(img);
+
+    await waitFor(() => {
+      expect((screen.getByTestId('slide-image') as HTMLImageElement).src).toContain('fresh-signed-jpg');
+    });
+    expect(screen.queryByTestId('slide-image-placeholder')).toBeNull();
+  });
+
+  it('does not attempt a re-sign for an image_url that is not a Supabase signed-url shape', async () => {
+    // mockSlide's default image_url does not match the signed-url shape.
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ signed_url: 'https://project.supabase.co/fresh', expires_in: 3600 });
+      }),
+    );
+
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    fireEvent.error(screen.getByTestId('slide-image'));
+
+    await waitFor(() => {
+      expect((screen.getByTestId('slide-image') as HTMLImageElement).src).toContain('slide_0_fallback.jpg');
+    });
+    expect(signedUrlCallCount).toBe(0);
+  });
+
+  it('attempts the automatic re-sign at most once for a real signed-url-shaped primary — a second error after falling back to fallback does not re-trigger (AC4, review fix)', async () => {
+    // Test Coverage gap (review finding): the pre-existing "shows placeholder
+    // when fallback also errors" test never used a signed-url-shaped
+    // primary, so it could not distinguish "the guard worked" from "the URL
+    // never matched the shape at all". This uses a real signed-url-shaped
+    // primary and pins the network-call count.
+    const signedSlide: Slide = {
+      ...mockSlide,
+      slide_id: 'sl_signed_guard',
+      image_url: 'http://localhost:54321/storage/v1/object/sign/lesson-images/lesson-1/slide-guard.jpg?token=expired',
+    };
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    render(<SlideRenderer slide={signedSlide} isActive jargon={[]} />);
+    fireEvent.error(screen.getByTestId('slide-image')); // primary errors -> real re-sign attempt (fails) -> fallback
+
+    await waitFor(() => {
+      expect((screen.getByTestId('slide-image') as HTMLImageElement).src).toContain('slide_0_fallback.jpg');
+    });
+    expect(signedUrlCallCount).toBe(1);
+
+    fireEvent.error(screen.getByTestId('slide-image')); // fallback errors -> placeholder, no second attempt
+
+    expect(screen.getByTestId('slide-image-placeholder')).toBeDefined();
+    expect(signedUrlCallCount).toBe(1);
+  });
+
+  it('resets the attempt-guard when the SAME slide gets a genuinely new image_url (e.g. a content refresh) — the new asset gets its own automatic attempt (review fix)', async () => {
+    const initialSlide: Slide = {
+      ...mockSlide,
+      slide_id: 'sl_refresh',
+      image_url: 'http://localhost:54321/storage/v1/object/sign/lesson-images/lesson-1/before.jpg?token=old',
+    };
+    let signedUrlCallCount = 0;
+    server.use(
+      http.get(`${API_BASE}/media/signed-url`, () => {
+        signedUrlCallCount += 1;
+        return HttpResponse.json({ detail: 'Storage object not found' }, { status: 404 });
+      }),
+    );
+
+    const { rerender } = render(<SlideRenderer slide={initialSlide} isActive jargon={[]} />);
+    fireEvent.error(screen.getByTestId('slide-image'));
+
+    await waitFor(() => {
+      expect((screen.getByTestId('slide-image') as HTMLImageElement).src).toContain('slide_0_fallback.jpg');
+    });
+    expect(signedUrlCallCount).toBe(1);
+
+    // Same slide_id, genuinely new image_url -- simulates a lesson content
+    // refresh replacing this slide's image without SlideRenderer's own key
+    // (slide_id) changing.
+    const refreshedSlide: Slide = {
+      ...initialSlide,
+      image_url: 'http://localhost:54321/storage/v1/object/sign/lesson-images/lesson-1/after.jpg?token=new',
+    };
+    rerender(<SlideRenderer slide={refreshedSlide} isActive jargon={[]} />);
+    fireEvent.error(screen.getByTestId('slide-image'));
+
+    // Without the fix, the stale attemptedResignRef from "before.jpg" would
+    // survive the rerender and this would skip straight to the fallback
+    // with no second network call.
+    await waitFor(() => {
+      expect(signedUrlCallCount).toBe(2);
+    });
   });
 });

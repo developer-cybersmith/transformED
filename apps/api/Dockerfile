@@ -19,8 +19,13 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /build
 
-# Copy dependency manifest first for layer caching
-COPY pyproject.toml ./
+# Copy dependency manifest first for layer caching.
+# Paths are relative to the build CONTEXT, which is the repo root -- fly.toml
+# lives there, and Fly always builds with the directory containing the config
+# it deploys as the context. Do not shorten these back to bare paths; that
+# silently assumed a context of apps/api/ and broke every real deploy attempt
+# (2026-08-14) with "COPY app/ ./app/: not found".
+COPY apps/api/pyproject.toml ./
 
 # Create a virtual environment and install deps into it
 RUN uv venv /opt/venv
@@ -30,7 +35,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN uv pip install --no-cache ".[dev]" 2>/dev/null || uv pip install --no-cache .
 
 # Copy application source
-COPY app/ ./app/
+COPY apps/api/app/ ./app/
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime

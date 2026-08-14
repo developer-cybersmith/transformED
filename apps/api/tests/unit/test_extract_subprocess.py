@@ -102,6 +102,83 @@ def _run_extract(
     )
 
 
+# ── extract_text_only: TOC parsing (review fix, D63) ──────────────────────────
+
+
+class _FakeDest:
+    """Mirrors pypdfium2.PdfDest's REAL API: get_index() only, no attributes."""
+
+    def __init__(self, page_index: int | None) -> None:
+        self._page_index = page_index
+
+    def get_index(self) -> int | None:
+        return self._page_index
+
+
+class _FakeBookmark:
+    """Mirrors pypdfium2.PdfBookmark's REAL API: get_title()/get_dest()/.level.
+
+    Deliberately has NO `.page_index`/`.title` attributes -- a regression back
+    to attribute access must fail this test with the same AttributeError
+    production would raise, not silently pass the way a loose MagicMock would
+    (which is exactly how the original bug shipped untested).
+    """
+
+    def __init__(self, level: int, title: str, page_index: int | None) -> None:
+        self.level = level
+        self._title = title
+        self._page_index = page_index
+
+    def get_title(self) -> str:
+        return self._title
+
+    def get_dest(self) -> _FakeDest | None:
+        if self._page_index is None:
+            return None
+        return _FakeDest(self._page_index)
+
+
+def _run_extract_text_only(
+    monkeypatch: pytest.MonkeyPatch, *, toc: list[_FakeBookmark]
+) -> dict[str, Any]:
+    n = 3
+    pdfium_pages = [MagicMock(name=f"pdfium_page_{i}") for i in range(n)]
+    pdfium_doc = MagicMock(name="pdfium_doc")
+    pdfium_doc.__len__.return_value = n
+    pdfium_doc.__getitem__.side_effect = lambda i: pdfium_pages[i]
+    pdfium_doc.get_toc.return_value = toc
+    fake_pdfium = MagicMock(name="pypdfium2")
+    fake_pdfium.PdfDocument = MagicMock(return_value=pdfium_doc)
+
+    monkeypatch.setattr(es, "_page_text", MagicMock(return_value="text"))
+
+    with patch.dict(sys.modules, {"pypdfium2": fake_pdfium}):
+        return es.extract_text_only("fake.pdf")
+
+
+class TestExtractTextOnlyToc:
+    def test_resolves_page_index_via_get_dest_not_an_attribute(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = _run_extract_text_only(
+            monkeypatch,
+            toc=[_FakeBookmark(level=0, title="Chapter 1", page_index=2)],
+        )
+        assert result["toc"] == [{"level": 0, "title": "Chapter 1", "page_index": 2}]
+
+    def test_skips_a_bookmark_with_an_unresolvable_destination(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = _run_extract_text_only(
+            monkeypatch,
+            toc=[
+                _FakeBookmark(level=0, title="Broken", page_index=None),
+                _FakeBookmark(level=0, title="Chapter 2", page_index=1),
+            ],
+        )
+        assert result["toc"] == [{"level": 0, "title": "Chapter 2", "page_index": 1}]
+
+
 # ── AC-2: _group_table_runs (pure function) ───────────────────────────────────
 
 

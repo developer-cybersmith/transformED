@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pathlib
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,32 +26,39 @@ def _make_20_responses() -> list[dict[str, Any]]:
     """Build 20 valid OnboardingAnswer-compatible dicts."""
     rows: list[dict[str, Any]] = []
     for i in range(1, 9):
-        rows.append({
-            "question_id": f"c{i}",
-            "dimension": "cognitive",
-            "selected_index": 2,
-            "selected_text": "Option 2",
-        })
+        rows.append(
+            {
+                "question_id": f"c{i}",
+                "dimension": "cognitive",
+                "selected_index": 2,
+                "selected_text": "Option 2",
+            }
+        )
     for i in range(1, 6):
-        rows.append({
-            "question_id": f"e{i}",
-            "dimension": "emotional",
-            "selected_index": 2,
-            "selected_text": "Option 2",
-        })
+        rows.append(
+            {
+                "question_id": f"e{i}",
+                "dimension": "emotional",
+                "selected_index": 2,
+                "selected_text": "Option 2",
+            }
+        )
     for i in range(1, 8):
-        rows.append({
-            "question_id": f"s{i}",
-            "dimension": "self_direction",
-            "selected_index": 2,
-            "selected_text": "Option 2",
-        })
+        rows.append(
+            {
+                "question_id": f"s{i}",
+                "dimension": "self_direction",
+                "selected_index": 2,
+                "selected_text": "Option 2",
+            }
+        )
     return rows
 
 
 def _make_onboarding_answers():
     """Return OnboardingAnswer objects matching _make_20_responses()."""
     from app.modules.assessment.schemas import OnboardingAnswer
+
     return [OnboardingAnswer(**r) for r in _make_20_responses()]
 
 
@@ -63,7 +70,8 @@ def _supabase_insert_ok():
 
     table = MagicMock()
     table.insert.return_value.execute.return_value = resp
-    table.delete.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(error=None)
+    delete_chain = table.delete.return_value.eq.return_value.in_.return_value
+    delete_chain.execute.return_value = MagicMock(error=None)
     table.upsert.return_value.execute.return_value = MagicMock(error=None, data=[{"user_id": "u1"}])
 
     supabase = MagicMock()
@@ -91,18 +99,26 @@ async def test_onboarding_llm_failure_raises_503_for_router_cleanup():
     supabase = _supabase_insert_ok()
     answers = _make_onboarding_answers()
 
-    with patch("app.modules.assessment.service.asyncio.to_thread", new_callable=AsyncMock) as mock_thread, \
-         patch("app.modules.assessment.service.generate_onboarding_profile", new_callable=AsyncMock) as mock_gen, \
-         patch("app.modules.assessment.service.OpenAILLMProvider"):
+    with (
+        patch(
+            "app.modules.assessment.service.asyncio.to_thread", new_callable=AsyncMock
+        ) as mock_thread,
+        patch(
+            "app.modules.assessment.service.generate_onboarding_profile",
+            new_callable=AsyncMock,
+        ) as mock_gen,
+        patch("app.modules.assessment.service.OpenAILLMProvider"),
+    ):
         # to_thread: first call = insert (success), second call = rollback delete
         mock_thread.side_effect = [
-            MagicMock(error=None, data=[{}]),   # Step 3 insert succeeds
-            MagicMock(error=None),              # Step 4 rollback delete
+            MagicMock(error=None, data=[{}]),  # Step 3 insert succeeds
+            MagicMock(error=None),  # Step 4 rollback delete
         ]
         mock_gen.side_effect = Exception("openai: rate limit exceeded")
 
         with pytest.raises(HTTPException) as exc_info:
             from app.modules.assessment.service import process_onboarding
+
             await process_onboarding(
                 responses=answers,
                 user_id="user-001",
@@ -124,9 +140,16 @@ async def test_onboarding_llm_failure_returns_503():
     supabase = _supabase_insert_ok()
     answers = _make_onboarding_answers()
 
-    with patch("app.modules.assessment.service.asyncio.to_thread", new_callable=AsyncMock) as mock_thread, \
-         patch("app.modules.assessment.service.generate_onboarding_profile", new_callable=AsyncMock) as mock_gen, \
-         patch("app.modules.assessment.service.OpenAILLMProvider"):
+    with (
+        patch(
+            "app.modules.assessment.service.asyncio.to_thread", new_callable=AsyncMock
+        ) as mock_thread,
+        patch(
+            "app.modules.assessment.service.generate_onboarding_profile",
+            new_callable=AsyncMock,
+        ) as mock_gen,
+        patch("app.modules.assessment.service.OpenAILLMProvider"),
+    ):
         mock_thread.side_effect = [
             MagicMock(error=None, data=[{}]),
             MagicMock(error=None),
@@ -135,6 +158,7 @@ async def test_onboarding_llm_failure_returns_503():
 
         with pytest.raises(HTTPException) as exc_info:
             from app.modules.assessment.service import process_onboarding
+
             await process_onboarding(
                 responses=answers,
                 user_id="user-002",
@@ -158,18 +182,19 @@ async def test_onboarding_llm_failure_deletes_orphaned_rows():
     delete_mock = MagicMock()
     delete_mock.eq.return_value.in_.return_value.execute.return_value = MagicMock(error=None)
 
-    rollback_resp = AsyncMock(return_value=None)
-
-    called_args: list[Any] = []
-
     async def fake_to_thread(fn, *args, **kwargs):
         result = fn()
         # Capture delete calls to assert on them
         return result
 
-    with patch("app.modules.assessment.service.asyncio.to_thread", side_effect=fake_to_thread), \
-         patch("app.modules.assessment.service.generate_onboarding_profile", new_callable=AsyncMock) as mock_gen, \
-         patch("app.modules.assessment.service.OpenAILLMProvider"):
+    with (
+        patch("app.modules.assessment.service.asyncio.to_thread", side_effect=fake_to_thread),
+        patch(
+            "app.modules.assessment.service.generate_onboarding_profile",
+            new_callable=AsyncMock,
+        ) as mock_gen,
+        patch("app.modules.assessment.service.OpenAILLMProvider"),
+    ):
         mock_gen.side_effect = Exception("llm failed")
 
         # Wire supabase so the delete call is trackable
@@ -178,6 +203,7 @@ async def test_onboarding_llm_failure_deletes_orphaned_rows():
 
         with pytest.raises(HTTPException):
             from app.modules.assessment.service import process_onboarding
+
             await process_onboarding(
                 responses=answers,
                 user_id="user-003",
@@ -227,15 +253,24 @@ async def test_onboarding_retry_after_llm_failure_succeeds():
     async def fake_to_thread(fn, *args, **kwargs):
         return fn()
 
-    with patch("app.modules.assessment.service.asyncio.to_thread", side_effect=fake_to_thread), \
-         patch("app.modules.assessment.service.generate_onboarding_profile", side_effect=llm_fail_then_succeed), \
-         patch("app.modules.assessment.service.OpenAILLMProvider"), \
-         patch("app.modules.assessment.service.capture_event"), \
-         patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True):
-
+    with (
+        patch("app.modules.assessment.service.asyncio.to_thread", side_effect=fake_to_thread),
+        patch(
+            "app.modules.assessment.service.generate_onboarding_profile",
+            side_effect=llm_fail_then_succeed,
+        ),
+        patch("app.modules.assessment.service.OpenAILLMProvider"),
+        patch("app.modules.assessment.service.capture_event"),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
         # First call — must fail with 503
         with pytest.raises(HTTPException) as exc_info:
             from app.modules.assessment.service import process_onboarding
+
             await process_onboarding(
                 responses=answers,
                 user_id="user-004",
@@ -265,12 +300,9 @@ def test_dpdp_disclaimer_uses_hie():
     from app.modules.assessment.prompts import DPDP_DISCLAIMER
 
     assert "TransformED" not in DPDP_DISCLAIMER, (
-        "DPDP_DISCLAIMER still contains stale brand 'TransformED'. "
-        "Replace with 'HIE'."
+        "DPDP_DISCLAIMER still contains stale brand 'TransformED'. Replace with 'HIE'."
     )
-    assert "HIE" in DPDP_DISCLAIMER, (
-        "DPDP_DISCLAIMER does not contain the new brand name 'HIE'."
-    )
+    assert "HIE" in DPDP_DISCLAIMER, "DPDP_DISCLAIMER does not contain the new brand name 'HIE'."
 
 
 @pytest.mark.unit

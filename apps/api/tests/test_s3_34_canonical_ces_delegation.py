@@ -302,9 +302,7 @@ def test_ac10_tutor_service_imports_canonical():
         "from app.modules.assessment.ces import compute_ces" in source
         or "from app.modules.assessment import ces" in source
     )
-    assert has_import, (
-        "tutor/service.py must import compute_ces from app.modules.assessment.ces"
-    )
+    assert has_import, "tutor/service.py must import compute_ces from app.modules.assessment.ces"
 
 
 @pytest.mark.unit
@@ -327,16 +325,19 @@ def test_ac10_tutor_service_has_no_independent_weighted_sum():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("quiz,tb,beh,hp,blink,label", [
-    (0.8, 0.6, 0.7, 0.9, 0.3, "all_present"),
-    (None, 0.6, 0.7, 0.9, 0.3, "quiz_none"),
-    (0.8, None, 0.7, 0.9, 0.3, "teachback_none"),
-    (None, None, 0.7, 0.9, 0.3, "both_academic_none"),
-    (None, None, None, None, None, "all_none"),
-    (0.0, 0.0, 0.0, 0.0, 0.0, "all_zero"),
-    (1.0, 1.0, 1.0, 1.0, 1.0, "all_one"),
-    (0.5, 0.5, 0.5, 0.5, 0.5, "mid_values"),
-])
+@pytest.mark.parametrize(
+    "quiz,tb,beh,hp,blink,label",
+    [
+        (0.8, 0.6, 0.7, 0.9, 0.3, "all_present"),
+        (None, 0.6, 0.7, 0.9, 0.3, "quiz_none"),
+        (0.8, None, 0.7, 0.9, 0.3, "teachback_none"),
+        (None, None, 0.7, 0.9, 0.3, "both_academic_none"),
+        (None, None, None, None, None, "all_none"),
+        (0.0, 0.0, 0.0, 0.0, 0.0, "all_zero"),
+        (1.0, 1.0, 1.0, 1.0, 1.0, "all_one"),
+        (0.5, 0.5, 0.5, 0.5, 0.5, "mid_values"),
+    ],
+)
 def test_ac11_delegation_identical_results(quiz, tb, beh, hp, blink, label):
     """AC11: assessment.ces.compute_ces and the canonical path agree to within 1e-9.
 
@@ -371,8 +372,14 @@ def test_ac12_no_forbidden_imports_in_ces_py():
     source = _CES_PY.read_text(encoding="utf-8")
     tree = ast.parse(source)
     forbidden = {
-        "supabase", "openai", "posthog", "httpx", "requests",
-        "asyncio", "aiohttp", "redis",
+        "supabase",
+        "openai",
+        "posthog",
+        "httpx",
+        "requests",
+        "asyncio",
+        "aiohttp",
+        "redis",
     }
     found = []
     for node in ast.walk(tree):

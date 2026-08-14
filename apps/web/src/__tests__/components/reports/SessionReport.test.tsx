@@ -10,6 +10,15 @@ vi.mock('@/hooks/useSessionReport', () => ({
   useSessionReport: useSessionReportMock,
 }));
 
+// AttentionChart (Story 2-46/S3-05) is tested on its own in AttentionChart.test.tsx --
+// mocked here so these tests check SessionReport's OWN behavior (does it pass the
+// right props, does it mount/omit conditionally) without pulling in real recharts.
+vi.mock('@/components/reports/AttentionChart', () => ({
+  AttentionChart: ({ timeline }: { timeline: unknown }) => (
+    <div data-testid="mock-attention-chart" data-has-timeline={timeline !== null} />
+  ),
+}));
+
 const FULL_REPORT = {
   session_id: 'sess_1',
   user_id: 'user_1',
@@ -27,6 +36,8 @@ const FULL_REPORT = {
   quiz_correct_count: 3,
   quiz_accuracy_label: 'Strong' as const,
   learner_dna_snapshot: null,
+  ces_timeline: [{ minute: 0, ces: 60 }, { minute: 1, ces: 75 }],
+  intervention_events: [{ minute: 1, type: 'distraction' }],
 };
 
 beforeEach(() => {
@@ -283,5 +294,50 @@ describe('SessionReport', () => {
     const { container } = render(<SessionReport sessionId="sess_1" />);
 
     expect(container.textContent).not.toMatch(/Invalid Date/);
+  });
+
+  it('mounts AttentionChart after the stat grid and before the DNA snapshot when ces_timeline is present (Story 2-46/S3-05)', () => {
+    useSessionReportMock.mockReturnValue({
+      report: {
+        ...FULL_REPORT,
+        learner_dna_snapshot: {
+          dimension_labels: Object.fromEntries(
+            ['pattern_recognition', 'logical_deduction', 'processing_speed', 'frustration_tolerance',
+             'persistence', 'help_seeking', 'goal_orientation', 'curiosity_index', 'study_independence']
+              .map((d) => [d, 'Proficient'])
+          ),
+          growth_labels: Object.fromEntries(
+            ['pattern_recognition', 'logical_deduction', 'processing_speed', 'frustration_tolerance',
+             'persistence', 'help_seeking', 'goal_orientation', 'curiosity_index', 'study_independence']
+              .map((d) => [d, null])
+          ),
+        },
+      },
+      isLoading: false,
+      error: undefined,
+    });
+
+    const { container } = render(<SessionReport sessionId="sess_1" />);
+
+    const chart = screen.getByTestId('mock-attention-chart');
+    expect(chart.getAttribute('data-has-timeline')).toBe('true');
+
+    const dna = screen.getByTestId('dna-snapshot-section');
+    const chartIndex = Array.from(container.querySelectorAll('*')).indexOf(chart);
+    const dnaIndex = Array.from(container.querySelectorAll('*')).indexOf(dna);
+    expect(chartIndex).toBeGreaterThan(-1);
+    expect(chartIndex).toBeLessThan(dnaIndex);
+  });
+
+  it('omits AttentionChart entirely (not an empty card) when ces_timeline is null', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, ces_timeline: null, intervention_events: null },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    expect(screen.queryByTestId('mock-attention-chart')).toBeNull();
   });
 });

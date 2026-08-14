@@ -304,9 +304,7 @@ async def retry_job(
     # writes at initial creation — node_outputs/last_node/cost_usd untouched.
     # Both writes are scoped by job_id (the real primary key on lesson_jobs),
     # never lesson_id — see docstring.
-    supabase.table("lessons").update({"status": "generating"}).eq(
-        "lesson_id", lesson_id
-    ).execute()
+    supabase.table("lessons").update({"status": "generating"}).eq("lesson_id", lesson_id).execute()
     supabase.table("lesson_jobs").update({"status": "pending", "error": None}).eq(
         "job_id", job_id
     ).execute()
@@ -322,9 +320,7 @@ async def retry_job(
         supabase.table("lesson_jobs").update(
             {"status": "failed", "error": "Failed to enqueue retry"}
         ).eq("job_id", job_id).execute()
-        supabase.table("lessons").update({"status": "failed"}).eq(
-            "lesson_id", lesson_id
-        ).execute()
+        supabase.table("lessons").update({"status": "failed"}).eq("lesson_id", lesson_id).execute()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to enqueue retry",
@@ -337,9 +333,7 @@ async def retry_job(
         supabase.table("lesson_jobs").update(
             {"status": "failed", "error": "ARQ deduplicated the retry job"}
         ).eq("job_id", job_id).execute()
-        supabase.table("lessons").update({"status": "failed"}).eq(
-            "lesson_id", lesson_id
-        ).execute()
+        supabase.table("lessons").update({"status": "failed"}).eq("lesson_id", lesson_id).execute()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to enqueue retry — ARQ deduplicated the job",

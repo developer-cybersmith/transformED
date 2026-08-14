@@ -1335,7 +1335,8 @@ async def _run_planner_batch(
     Still raises (does not fabricate) when the provider returns no parsed
     response, or when every retry attempt still mismatches — the existing
     assembled-response guard in lesson_planner_node remains the final
-    backstop either way."""
+    backstop either way. (Independently reproduced and fixed on
+    sprint3-master before this merge — see D77 in docs/DEFECT-REGISTER.md.)"""
     input_ids = {s["segment_id"] for s in batch}
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch

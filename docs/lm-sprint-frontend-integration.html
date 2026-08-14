@@ -1,0 +1,1497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LM Sprint — Frontend Integration Guide (Dev 2)</title>
+<style>
+/* ─── Token layer ─────────────────────────────────────────────────────────── */
+:root {
+  --bg:          #FAFAF9;
+  --surface:     #F3F4F4;
+  --surface2:    #EAEBEB;
+  --accent:      #0F766E;
+  --accent-dim:  #D1FAE5;
+  --text:        #1C1917;
+  --text-2:      #57534E;
+  --text-3:      #A8A29E;
+  --border:      #E5E7EB;
+  --code-bg:     #F0F9F8;
+  --code-border: #A7F3D0;
+  --warn-bg:     #FFFBEB;
+  --warn-border: #FCD34D;
+  --warn-text:   #92400E;
+  --err-bg:      #FEF2F2;
+  --err-border:  #FECACA;
+  --err-text:    #991B1B;
+  --info-bg:     #EFF6FF;
+  --info-border: #BFDBFE;
+  --info-text:   #1E40AF;
+  --get:         #15803D;
+  --get-bg:      #DCFCE7;
+  --post:        #1D4ED8;
+  --post-bg:     #DBEAFE;
+  --sidebar-w:   248px;
+  --radius:      6px;
+  --mono:        'Fira Code', 'Cascadia Code', 'JetBrains Mono', ui-monospace, 'Courier New', monospace;
+  --sans:        -apple-system, 'Segoe UI', 'Inter', system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:          #111110;
+    --surface:     #1C1B19;
+    --surface2:    #252422;
+    --accent:      #14B8A6;
+    --accent-dim:  #134E4A;
+    --text:        #F5F5F4;
+    --text-2:      #A8A29E;
+    --text-3:      #57534E;
+    --border:      #2D2C2A;
+    --code-bg:     #0D2B28;
+    --code-border: #1E4D48;
+    --warn-bg:     #1C1505;
+    --warn-border: #92400E;
+    --warn-text:   #FCD34D;
+    --err-bg:      #1A0808;
+    --err-border:  #991B1B;
+    --err-text:    #FCA5A5;
+    --info-bg:     #0A1628;
+    --info-border: #1E3A70;
+    --info-text:   #93C5FD;
+    --get:         #4ADE80;
+    --get-bg:      #14532D;
+    --post:        #93C5FD;
+    --post-bg:     #1E3A8A;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:          #111110;
+  --surface:     #1C1B19;
+  --surface2:    #252422;
+  --accent:      #14B8A6;
+  --accent-dim:  #134E4A;
+  --text:        #F5F5F4;
+  --text-2:      #A8A29E;
+  --text-3:      #57534E;
+  --border:      #2D2C2A;
+  --code-bg:     #0D2B28;
+  --code-border: #1E4D48;
+  --warn-bg:     #1C1505;
+  --warn-border: #92400E;
+  --warn-text:   #FCD34D;
+  --err-bg:      #1A0808;
+  --err-border:  #991B1B;
+  --err-text:    #FCA5A5;
+  --info-bg:     #0A1628;
+  --info-border: #1E3A70;
+  --info-text:   #93C5FD;
+  --get:         #4ADE80;
+  --get-bg:      #14532D;
+  --post:        #93C5FD;
+  --post-bg:     #1E3A8A;
+}
+:root[data-theme="light"] {
+  --bg:          #FAFAF9;
+  --surface:     #F3F4F4;
+  --surface2:    #EAEBEB;
+  --accent:      #0F766E;
+  --accent-dim:  #D1FAE5;
+  --text:        #1C1917;
+  --text-2:      #57534E;
+  --text-3:      #A8A29E;
+  --border:      #E5E7EB;
+  --code-bg:     #F0F9F8;
+  --code-border: #A7F3D0;
+  --warn-bg:     #FFFBEB;
+  --warn-border: #FCD34D;
+  --warn-text:   #92400E;
+  --err-bg:      #FEF2F2;
+  --err-border:  #FECACA;
+  --err-text:    #991B1B;
+  --info-bg:     #EFF6FF;
+  --info-border: #BFDBFE;
+  --info-text:   #1E40AF;
+  --get:         #15803D;
+  --get-bg:      #DCFCE7;
+  --post:        #1D4ED8;
+  --post-bg:     #DBEAFE;
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 15px; scroll-behavior: smooth; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────────────────────── */
+nav {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  padding: 20px 0 40px;
+  flex-shrink: 0;
+  scrollbar-width: thin;
+}
+nav .nav-logo {
+  padding: 0 16px 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+nav .nav-logo .brand {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+nav .nav-logo .doc-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 2px;
+  line-height: 1.3;
+}
+nav .nav-group-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 14px 16px 4px;
+}
+nav a {
+  display: block;
+  padding: 5px 16px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+nav a:hover { color: var(--accent); background: var(--accent-dim); border-left-color: var(--accent); }
+nav a.sub { padding-left: 28px; font-size: 12px; }
+
+/* ─── Main ────────────────────────────────────────────────────────────────── */
+main {
+  flex: 1;
+  max-width: 900px;
+  padding: 40px 48px 80px;
+  min-width: 0;
+}
+
+/* ─── Doc header ─────────────────────────────────────────────────────────── */
+.doc-header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 28px;
+  margin-bottom: 36px;
+}
+.doc-header .badge-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-family: var(--mono);
+}
+.badge-teal  { background: var(--accent-dim); color: var(--accent); }
+.badge-warn  { background: var(--warn-bg);    color: var(--warn-text); border: 1px solid var(--warn-border); }
+.badge-info  { background: var(--info-bg);    color: var(--info-text); border: 1px solid var(--info-border); }
+.doc-header h1 { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1.25; text-wrap: balance; }
+.doc-header .subtitle {
+  font-size: 15px;
+  color: var(--text-2);
+  margin-top: 8px;
+  max-width: 640px;
+  line-height: 1.5;
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.meta-item label { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; display: block; }
+.meta-item span  { font-size: 13px; font-weight: 600; color: var(--text); }
+
+/* ─── Section headings ────────────────────────────────────────────────────── */
+section { margin-bottom: 52px; }
+h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin-bottom: 18px;
+  scroll-margin-top: 24px;
+}
+h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 24px 0 10px;
+  scroll-margin-top: 24px;
+}
+h4 {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-2);
+  margin: 18px 0 8px;
+}
+p { margin-bottom: 12px; }
+p:last-child { margin-bottom: 0; }
+strong { color: var(--text); font-weight: 600; }
+
+/* ─── Endpoint badge ─────────────────────────────────────────────────────── */
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 12px 0 16px;
+}
+.method {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+  font-family: var(--mono);
+}
+.method.get  { background: var(--get-bg);  color: var(--get); }
+.method.post { background: var(--post-bg); color: var(--post); }
+.endpoint .path {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  color: var(--text);
+  font-weight: 500;
+}
+.endpoint .desc {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-left: auto;
+}
+
+/* ─── Code blocks ─────────────────────────────────────────────────────────── */
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+  margin: 12px 0 16px;
+  color: var(--text);
+}
+code:not(pre code) {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+.lang-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: -6px;
+  margin-top: 16px;
+  font-family: var(--mono);
+}
+
+/* ─── Tables ──────────────────────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; margin: 12px 0 20px; border-radius: var(--radius); border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface2);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  color: var(--text);
+}
+tr:last-child td { border-bottom: none; }
+tr:nth-child(even) td { background: var(--surface); }
+td code:not(pre code) { font-size: 11.5px; }
+.td-new { color: var(--accent); font-weight: 600; }
+.td-opt  { color: var(--text-3); font-style: italic; }
+
+/* ─── Callouts ────────────────────────────────────────────────────────────── */
+.callout {
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 14px 0;
+  font-size: 13.5px;
+  border-left: 3px solid;
+  line-height: 1.6;
+}
+.callout-warn  { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-text); }
+.callout-err   { background: var(--err-bg);  border-color: var(--err-border);  color: var(--err-text); }
+.callout-info  { background: var(--info-bg); border-color: var(--info-border); color: var(--info-text); }
+.callout-teal  { background: var(--accent-dim); border-color: var(--accent);  color: var(--text); }
+.callout strong { font-weight: 700; }
+
+/* ─── Field table (new fields) ────────────────────────────────────────────── */
+.field-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 10px 0;
+  overflow: hidden;
+}
+.field-card .field-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.field-card .field-name .field-type {
+  font-weight: 400;
+  color: var(--text-2);
+  margin-left: 2px;
+}
+.field-card .field-name .field-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 100px;
+  margin-left: auto;
+}
+.field-card .field-name .field-badge.new { background: var(--accent-dim); color: var(--accent); }
+.field-card .field-name .field-badge.lm3 { background: var(--post-bg); color: var(--post); }
+.field-card .field-body {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.field-card .field-body strong { color: var(--text); }
+
+/* ─── Steps ────────────────────────────────────────────────────────────────── */
+.steps { display: flex; flex-direction: column; gap: 0; margin: 14px 0 20px; }
+.step {
+  display: flex;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.step:last-child { border-bottom: none; }
+.step-num {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 1px;
+}
+.step-body h4 { margin: 0 0 4px; font-size: 13.5px; color: var(--text); }
+.step-body p  { font-size: 13px; color: var(--text-2); margin: 0; }
+
+/* ─── Checklist ────────────────────────────────────────────────────────────── */
+.checklist { list-style: none; margin: 12px 0; display: flex; flex-direction: column; gap: 6px; }
+.checklist li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--text);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+}
+.checklist li .chk {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  margin-top: 2px;
+}
+.checklist li.done .chk {
+  background: var(--accent);
+  border-color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 10px;
+}
+.checklist .chk-label { flex: 1; line-height: 1.4; }
+.checklist .chk-label .story-tag {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  background: var(--accent-dim);
+  color: var(--accent);
+  padding: 0 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+/* ─── Mermaid ─────────────────────────────────────────────────────────────── */
+pre.mermaid {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-family: var(--sans);
+  text-align: center;
+  padding: 20px;
+}
+
+/* ─── Section divider ────────────────────────────────────────────────────── */
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 40px 0;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 780px) {
+  nav { display: none; }
+  main { padding: 24px 20px 60px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+<!-- ─── Sidebar Navigation ─────────────────────────────────────────────────── -->
+<nav>
+  <div class="nav-logo">
+    <div class="brand">TransformED AI</div>
+    <div class="doc-title">LM Sprint — Frontend Integration Guide</div>
+  </div>
+
+  <div class="nav-group-label">Overview</div>
+  <a href="#overview">What Changed</a>
+  <a href="#integration-order">Integration Order</a>
+  <a href="#env-setup">Environment Setup</a>
+  <a href="#auth">Authentication</a>
+
+  <div class="nav-group-label">Story 3-28</div>
+  <a href="#s3-28">Variable Quiz Counts</a>
+  <a class="sub" href="#s3-28-lesson-package">LessonPackage Impact</a>
+  <a class="sub" href="#s3-28-quiz-submit">Quiz Submission</a>
+  <a class="sub" href="#s3-28-checklist">Story Checklist</a>
+
+  <div class="nav-group-label">Stories 3-29 + 3-30</div>
+  <a href="#session-report">Session Report Endpoint</a>
+  <a class="sub" href="#session-report-schema">Full Response Schema</a>
+  <a class="sub" href="#session-report-new-fields">New Fields (3-29)</a>
+  <a class="sub" href="#dna-snapshot-field">DNA Snapshot (3-30)</a>
+  <a class="sub" href="#session-report-flow">Frontend Flow</a>
+  <a class="sub" href="#session-report-errors">Error Handling</a>
+  <a class="sub" href="#session-report-checklist">Story Checklist</a>
+
+  <div class="nav-group-label">Story 3-31</div>
+  <a href="#reassessment">Re-Assessment Prompt</a>
+  <a class="sub" href="#dna-endpoint">GET /user/dna</a>
+  <a class="sub" href="#reassessment-flow">Re-Assessment Flow</a>
+  <a class="sub" href="#onboarding-resubmit">Onboarding Re-Submit</a>
+  <a class="sub" href="#reassessment-checklist">Story Checklist</a>
+
+  <div class="nav-group-label">Reference</div>
+  <a href="#ts-types">TypeScript Types</a>
+  <a href="#errors">Error Reference</a>
+  <a href="#pitfalls">Common Pitfalls</a>
+  <a href="#final-checklist">Final Checklist</a>
+</nav>
+
+<!-- ─── Main Content ────────────────────────────────────────────────────────── -->
+<main>
+
+<!-- ── Doc Header ──────────────────────────────────────────────────────────── -->
+<div class="doc-header">
+  <div class="badge-row">
+    <span class="badge badge-teal">LM Sprint</span>
+    <span class="badge badge-info">Stories 3-28 → 3-31</span>
+    <span class="badge badge-warn">Dev 2 — Frontend Wiring</span>
+  </div>
+  <h1>Learner Mode Sprint — Frontend Integration Guide</h1>
+  <p class="subtitle">
+    Complete wiring reference for connecting the Next.js 14 frontend to all backend
+    APIs delivered in the Learner Mode sprint. Covers every new endpoint, changed response
+    shape, error state, and integration flow.
+  </p>
+  <div class="meta-grid">
+    <div class="meta-item"><label>Branch merged</label><span>master-learner-mode-sprint-dev3</span></div>
+    <div class="meta-item"><label>Stories</label><span>3-28, 3-29, 3-30, 3-31</span></div>
+    <div class="meta-item"><label>Tests</label><span>114 / 114 green</span></div>
+    <div class="meta-item"><label>Dev 2 owner</label><span>Quiz player, Report UI, DNA display</span></div>
+    <div class="meta-item"><label>DB migration</label><span>20260714020000_add_lesson_tier</span></div>
+    <div class="meta-item"><label>Date</label><span>2026-07-23</span></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="overview">
+<h2>What Changed in the LM Sprint</h2>
+
+<p>The Learner Mode sprint added four stories to Dev 3's backend, all of which require frontend wiring. The table below maps each story to its frontend impact at a glance.</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Story</th><th>Title</th><th>Type of change</th><th>Frontend impact</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>3-28</code></td>
+      <td>Tier-Aware Quiz Question Count</td>
+      <td>Pipeline (no new endpoint)</td>
+      <td>Quiz player must handle 1–5 questions per segment (was always 1)</td>
+    </tr>
+    <tr>
+      <td><code>3-29</code></td>
+      <td>Session Report Contextualised by Tier</td>
+      <td>Response schema additive extension</td>
+      <td>5 new fields on <code>GET /session/{id}/report</code> — tier, label, quiz counts, accuracy label</td>
+    </tr>
+    <tr>
+      <td><code>3-30</code></td>
+      <td>Session Report Learner DNA Snapshot</td>
+      <td>Response schema additive extension</td>
+      <td>New optional <code>learner_dna_snapshot</code> field on the same report endpoint</td>
+    </tr>
+    <tr>
+      <td><code>3-31</code></td>
+      <td>Re-Assessment Prompt After 10 Sessions</td>
+      <td>New <code>bool</code> field on DNA endpoint</td>
+      <td><code>reassessment_due</code> flag on <code>GET /user/dna</code> — show re-assessment prompt when <code>true</code></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-teal">
+  <strong>Additive contract guarantee:</strong> All changes are strictly additive — no existing field was removed, renamed, or had its type changed. You will not get TypeScript compile errors from existing API calls.
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="integration-order">
+<h2>Integration Order</h2>
+
+<p>Wire these in order — later items depend on the display surfaces built earlier.</p>
+
+<div class="steps">
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Confirm DB migration applied (blocker)</h4>
+      <p>Story 3-29 reads <code>lessons.tier</code>. Verify migration <code>20260714020000_add_lesson_tier.sql</code> is applied in your Supabase project. Session report calls will silently degrade to <code>tier="T2"</code> if the column doesn't exist — there's no 500 error — but the tier field will always say Standard regardless of the lesson. Confirm with Dev 1.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Update TypeScript types for <code>SessionReport</code></h4>
+      <p>Add the 6 new fields (Stories 3-29 + 3-30) to your local <code>SessionReport</code> interface. See the TypeScript section below for the exact definitions.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>Update quiz player to handle N questions</h4>
+      <p>Story 3-28 — <code>Segment.quiz</code> is still <code>QuizQuestion[]</code> (no TS change needed), but the array length is now 1–5 instead of always 1. Update the player component and submission logic.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h4>Wire enhanced Session Report display (Stories 3-29 + 3-30)</h4>
+      <p>Extend the report page to display tier label, quiz counts, accuracy label, and the DNA snapshot dimension/growth labels.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <h4>Wire re-assessment prompt on DNA profile page (Story 3-31)</h4>
+      <p>Check <code>reassessment_due</code> on <code>GET /user/dna</code> and show the prompt. Wire the "Take Assessment" CTA to the onboarding form, which now works as a re-submission when the flag is set.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="env-setup">
+<h2>Environment Setup</h2>
+
+<h3>Environment Variables</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Variable</th><th>Example</th><th>Used for</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>NEXT_PUBLIC_API_URL</code></td><td><code>https://api.transformed.app</code></td><td>Base URL for all REST calls</td></tr>
+    <tr><td><code>NEXT_PUBLIC_SUPABASE_URL</code></td><td><code>https://xyz.supabase.co</code></td><td>Supabase client (for auth)</td></tr>
+    <tr><td><code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code></td><td><code>eyJ…</code></td><td>Supabase client (for auth)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>No new environment variables are needed for the LM sprint. All new features use the same API base URL.</p>
+
+<div class="callout callout-info">
+  <strong>Local dev:</strong> FastAPI runs on <code>http://localhost:8000</code>. Set <code>NEXT_PUBLIC_API_URL=http://localhost:8000/api</code> in <code>.env.local</code>.
+</div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="auth">
+<h2>Authentication</h2>
+
+<p>Every assessment endpoint requires a valid Supabase JWT in the <code>Authorization</code> header. There are no anonymous endpoints.</p>
+
+<div class="lang-label">typescript — lib/api.ts pattern</div>
+<pre>import { createClient } from '@/lib/supabase/client'
+
+async function apiRequest&lt;T&gt;(path: string, init?: RequestInit): Promise&lt;T&gt; {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+
+  if (!session) throw new Error('Not authenticated')
+
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+      ...init?.headers,
+    },
+  })
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw Object.assign(new Error(body.detail ?? res.statusText), { status: res.status })
+  }
+  return res.json() as Promise&lt;T&gt;
+}</pre>
+
+<div class="callout callout-warn">
+  <strong>Token expiry:</strong> Supabase JWTs expire after 1 hour. Always call <code>supabase.auth.getSession()</code> immediately before any API call — it refreshes the token automatically. Never cache the access_token across page navigations.
+</div>
+</section>
+
+<hr class="section-divider">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="s3-28">
+<h2>Story 3-28 — Variable Quiz Counts</h2>
+
+<p>The <code>quiz_generator_node</code> now produces tier-aware question batches per segment. <strong>No new API endpoint</strong> — the change manifests in the <code>LessonPackage</code> already delivered via the generation WebSocket.</p>
+
+<h3 id="s3-28-lesson-package">LessonPackage Impact</h3>
+
+<p><code>Segment.quiz: QuizQuestion[]</code> was already typed as an array (frozen contract — no change). The difference is that new lessons will have multiple questions per segment:</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Tier</th><th>Label</th><th>Questions per segment</th><th>Previous behaviour</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>T1</code></td><td>Full-Depth</td><td>3–5 questions</td><td rowspan="3" style="vertical-align:middle;color:var(--text-2);">Always exactly 1</td></tr>
+    <tr><td><code>T2</code></td><td>Standard</td><td>2–3 questions</td></tr>
+    <tr><td><code>T3</code></td><td>Refresher</td><td>1–2 questions</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-warn">
+  <strong>Question ID format changed:</strong> Previously <code>quiz_{segment_id}</code> (one per segment). Now <code>quiz_{segment_id}_0</code>, <code>quiz_{segment_id}_1</code>, … (0-indexed). The IDs come from the LessonPackage — never hardcode the old format. If you display or log question IDs, expect the underscore suffix.
+</div>
+
+<h3>Question ID Pattern</h3>
+<div class="lang-label">example question IDs from API</div>
+<pre>// T2 lesson, segment "intro_cell_biology", 2 questions generated
+segment.quiz[0].question_id  // "quiz_intro_cell_biology_0"
+segment.quiz[1].question_id  // "quiz_intro_cell_biology_1"</pre>
+
+<h3 id="s3-28-quiz-submit">Quiz Submission — Handle Multiple Questions</h3>
+
+<p>The submission endpoint accepts an array of answers — all questions for a segment are submitted in a single call. The schema has not changed; only the expected array length changes.</p>
+
+<div class="endpoint">
+  <span class="method post">POST</span>
+  <span class="path">/api/assessment/quiz</span>
+  <span class="desc">Submit all quiz answers for one segment</span>
+</div>
+
+<h4>Request body</h4>
+<div class="lang-label">typescript</div>
+<pre>interface QuizSubmission {
+  session_id:  string   // UUID of the active session
+  lesson_id:   string   // UUID of the lesson
+  segment_id:  string   // segment being quizzed
+  answers: QuizAnswer[] // one entry per question shown — min 1, max 50
+}
+
+interface QuizAnswer {
+  question_id:      string  // exact question_id from LessonPackage
+  response_index:   number  // 0-based selected option (must be ≥ 0)
+  response_time_ms: number  // ms from question display to selection (default 0)
+}</pre>
+
+<h4>Response body (<code>QuizResult</code>)</h4>
+<div class="lang-label">typescript</div>
+<pre>interface QuizResult {
+  session_id:       string
+  score:            number  // 0.0 – 100.0 (percentage correct)
+  correct_count:    number
+  total_count:      number
+  ces_contribution: number  // 0–35.0 pts — forward to Dev 4 WebSocket signal
+  feedback:         Array&lt;{
+    question_id: string
+    is_correct:  boolean
+    explanation: string
+  }&gt;
+}</pre>
+
+<h4>Validation rules enforced server-side</h4>
+<ul style="margin:8px 0 12px 20px;font-size:13.5px;line-height:1.8;color:var(--text-2);">
+  <li><code>response_index</code> must be ≥ 0 — negative values return <strong>HTTP 422</strong></li>
+  <li><code>response_time_ms</code> must be ≥ 0 — negative values return <strong>HTTP 422</strong></li>
+  <li><code>answers</code> array: min 1, max 50 — empty array returns <strong>HTTP 422</strong></li>
+  <li>Unknown <code>question_id</code> returns <strong>HTTP 422</strong> (detail does NOT expose valid ID list)</li>
+  <li>Session must belong to the authenticated user — mismatch returns <strong>HTTP 403</strong></li>
+</ul>
+
+<h4>Frontend implementation</h4>
+<div class="lang-label">typescript — quiz player pattern</div>
+<pre>// Collect all answers for a segment and submit in one shot
+async function submitSegmentQuiz(
+  sessionId: string,
+  lessonId: string,
+  segment: Segment,
+  selectedIndices: Map&lt;string, number&gt;,    // questionId → selectedIndex
+  responseTimes: Map&lt;string, number&gt;,      // questionId → ms
+) {
+  const answers = segment.quiz.map(q => ({
+    question_id:      q.question_id,
+    response_index:   selectedIndices.get(q.question_id) ?? 0,
+    response_time_ms: responseTimes.get(q.question_id) ?? 0,
+  }))
+
+  return apiRequest&lt;QuizResult&gt;('/assessment/quiz', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, lesson_id: lessonId,
+                           segment_id: segment.segment_id, answers }),
+  })
+}</pre>
+
+<div class="callout callout-info">
+  <strong>CES wiring:</strong> Pass <code>QuizResult.ces_contribution</code> to Dev 4's attention signal via WebSocket. Do not multiply by 100 again — the value is already on the 0–35.0 point scale.
+</div>
+
+<h3 id="s3-28-checklist">Story 3-28 Integration Checklist</h3>
+<ul class="checklist">
+  <li><div class="chk"></div><span class="chk-label">Quiz player iterates <code>segment.quiz</code> as an array (not assumes length 1) <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">All questions in a segment displayed before user can submit <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Submit includes one <code>QuizAnswer</code> per question shown <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label"><code>response_time_ms</code> measured per-question from display time <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label"><code>ces_contribution</code> forwarded to Dev 4 WebSocket signal <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Question ID display/logging uses value from LessonPackage (not hardcoded) <span class="story-tag">3-28</span></span></li>
+</ul>
+</section>
+
+<hr class="section-divider">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="session-report">
+<h2>Stories 3-29 + 3-30 — Enhanced Session Report</h2>
+
+<p>The session report endpoint now returns tier context (Story 3-29) and a Learner DNA snapshot (Story 3-30). Both are additive — the 10 original fields are unchanged.</p>
+
+<div class="endpoint">
+  <span class="method get">GET</span>
+  <span class="path">/api/assessment/session/{session_id}/report</span>
+  <span class="desc">Final report for a completed session</span>
+</div>
+
+<h4>Path parameter</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Param</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>session_id</code></td><td>string (UUID)</td><td>UUID of the completed session</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>Headers</h4>
+<pre>Authorization: Bearer &lt;supabase_jwt&gt;</pre>
+
+<h3 id="session-report-schema">Full Response Schema (after LM Sprint)</h3>
+
+<div class="lang-label">typescript</div>
+<pre>interface SessionReport {
+  // ── Original fields (Sprint 1) — unchanged ──────────────────────────────
+  session_id:         string
+  user_id:            string
+  lesson_id:          string
+  ces_score:          number        // 0.0 – 100.0 (from sessions.ces_final, Dev 4 writes)
+  ces_breakdown: {
+    quiz:             number        // 0 – 35.0 pts
+    teachback:        number        // 0 – 25.0 pts
+    behavioral:       number        // always 0.0 in MVP
+    head_pose:        number        // always 0.0 in MVP
+    blink:            number        // always 0.0 in MVP
+  }
+  interventions_count: number       // count of intervention_triggered events
+  quiz_score:         number | null // 0-100 percentage, null if no quiz attempts
+  teachback_score:    number | null // 0-100, null if no teachback attempts
+  duration_minutes:   number        // 0.0 if session has no ended_at yet
+  completed_at:       string | null // ISO 8601 datetime or null
+
+  // ── Story 3-29 — Tier context fields (NEW) ─────────────────────────────
+  tier:               'T1' | 'T2' | 'T3'  // from lessons.tier
+  tier_label:         string               // 'Full-Depth' | 'Standard' | 'Refresher'
+  quiz_total_questions: number             // absolute count of quiz_attempts rows
+  quiz_correct_count: number               // absolute count where is_correct=true
+  quiz_accuracy_label: 'Strong' | 'Developing' | 'Needs Review' | null
+  //   null        → no quiz questions attempted (quiz_total_questions === 0)
+  //   'Strong'    → accuracy ≥ 80%
+  //   'Developing'→ 60% ≤ accuracy &lt; 80%
+  //   'Needs Review'→ accuracy &lt; 60%
+
+  // ── Story 3-30 — Learner DNA snapshot (NEW) ────────────────────────────
+  learner_dna_snapshot: LearnerDnaSnapshot | null
+  // null when user has no learner_dna row yet (before onboarding)
+}</pre>
+
+<h3 id="session-report-new-fields">New Fields — Story 3-29</h3>
+
+<div class="field-card">
+  <div class="field-name">tier <span class="field-type">: 'T1' | 'T2' | 'T3'</span><span class="field-badge new">NEW 3-29</span></div>
+  <div class="field-body">Learner tier for this session. Fetched from <code>lessons.tier</code>. Defaults to <code>'T2'</code> if the lesson row is missing or tier is unrecognised. Use this to display tier-appropriate copy (e.g., "Full-Depth Session").</div>
+</div>
+<div class="field-card">
+  <div class="field-name">tier_label <span class="field-type">: string</span><span class="field-badge new">NEW 3-29</span></div>
+  <div class="field-body">Human-readable tier name. Always one of <strong>'Full-Depth'</strong>, <strong>'Standard'</strong>, or <strong>'Refresher'</strong>. Display directly — no mapping required.</div>
+</div>
+<div class="field-card">
+  <div class="field-name">quiz_total_questions <span class="field-type">: number</span><span class="field-badge new">NEW 3-29</span></div>
+  <div class="field-body">Total number of quiz questions attempted this session. For a T1 lesson with 5 segments at 4 questions each this would be 20. Use alongside <code>quiz_correct_count</code> to display "<strong>12 / 20 correct</strong>" rather than just a percentage.</div>
+</div>
+<div class="field-card">
+  <div class="field-name">quiz_correct_count <span class="field-type">: number</span><span class="field-badge new">NEW 3-29</span></div>
+  <div class="field-body">Count of correctly answered questions. Always ≤ <code>quiz_total_questions</code>.</div>
+</div>
+<div class="field-card">
+  <div class="field-name">quiz_accuracy_label <span class="field-type">: 'Strong' | 'Developing' | 'Needs Review' | null</span><span class="field-badge new">NEW 3-29</span></div>
+  <div class="field-body">
+    Descriptive label for quiz performance. <strong>null</strong> when no questions were attempted.<br><br>
+    <strong>Never show raw <code>quiz_score</code> percentages to students</strong> — use this label instead (DPDP + CLAUDE.md Learner DNA display rules). <code>quiz_score</code> is retained for Dev 4's CES computation, not for display.
+  </div>
+</div>
+
+<h3 id="dna-snapshot-field">New Field — Story 3-30: Learner DNA Snapshot</h3>
+
+<div class="field-card">
+  <div class="field-name">learner_dna_snapshot <span class="field-type">: LearnerDnaSnapshot | null</span><span class="field-badge lm3">NEW 3-30</span></div>
+  <div class="field-body">
+    Present when the user has a <code>learner_dna</code> row (i.e., completed onboarding). <strong>null</strong> for first-session users who have not yet completed onboarding.
+    <br><br>
+    Contains two sub-maps, both keyed on the same 9 dimension names:
+    <ul style="margin-top:8px;margin-left:16px;line-height:1.9;font-size:13px;">
+      <li><strong>dimension_labels</strong> — current descriptive label per dimension (never raw floats)</li>
+      <li><strong>growth_labels</strong> — directional change in this session (or <code>null</code> if no prior session)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="lang-label">typescript — LearnerDnaSnapshot shape</div>
+<pre>type DimensionName =
+  | 'pattern_recognition'
+  | 'logical_deduction'
+  | 'processing_speed'
+  | 'frustration_tolerance'
+  | 'persistence'
+  | 'help_seeking'
+  | 'goal_orientation'
+  | 'curiosity_index'
+  | 'study_independence'
+
+type DimensionLabel = 'Beginning' | 'Developing' | 'Proficient' | 'Advanced'
+type GrowthLabel    = 'Improving' | 'Stable' | 'Declining' | null
+
+interface LearnerDnaSnapshot {
+  dimension_labels: Record&lt;DimensionName, DimensionLabel&gt;
+  growth_labels:    Record&lt;DimensionName, GrowthLabel&gt;
+}</pre>
+
+<h4>Label ranges (dimension_labels)</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Label</th><th>Underlying score range</th><th>Display meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Beginning</strong></td><td>0 – 25</td><td>Early-stage — encourage, not alarm</td></tr>
+    <tr><td><strong>Developing</strong></td><td>25 – 50</td><td>Building foundations</td></tr>
+    <tr><td><strong>Proficient</strong></td><td>50 – 75</td><td>Solid understanding</td></tr>
+    <tr><td><strong>Advanced</strong></td><td>75 – 100</td><td>Strong command</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>Growth label values (growth_labels)</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Value</th><th>Meaning</th><th>Display suggestion</th></tr></thead>
+  <tbody>
+    <tr><td><code>'Improving'</code></td><td>EMA delta &gt; 2.0 points this session</td><td>↑ Improving</td></tr>
+    <tr><td><code>'Stable'</code></td><td>|delta| ≤ 2.0 points</td><td>→ Stable</td></tr>
+    <tr><td><code>'Declining'</code></td><td>delta &lt; -2.0 points</td><td>↓ Needs attention</td></tr>
+    <tr><td><code>null</code></td><td>No prior session data (first session) or dimension skipped</td><td>— (omit growth indicator)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-err">
+  <strong>Do not display raw dimension scores to students.</strong> The backend never returns numeric floats via <code>learner_dna_snapshot</code> — only descriptive labels. If you need to show "progress" use only <code>dimension_labels</code> and <code>growth_labels</code>. This is a DPDP Act 2023 compliance requirement (CLAUDE.md).
+</div>
+
+<h3 id="session-report-flow">Frontend Flow — Session Report Page</h3>
+
+<pre class="mermaid">
+sequenceDiagram
+  participant FE as Next.js (App Router)
+  participant API as FastAPI /assessment
+  participant DB as Supabase DB
+
+  FE->>FE: Session ends (WebSocket: SESSION_END)
+  FE->>API: GET /session/{id}/report\nAuthorization: Bearer JWT
+  API->>DB: SELECT sessions (ownership check)
+  DB-->>API: session row
+  API->>DB: SELECT lessons.tier
+  DB-->>API: tier data
+  API->>DB: SELECT quiz_attempts
+  DB-->>API: quiz rows
+  API->>DB: SELECT teachback_attempts
+  DB-->>API: teachback rows
+  API->>DB: COUNT session_events (interventions)
+  DB-->>API: count
+  API->>DB: SELECT learner_dna (9 dimensions)
+  DB-->>API: dna row (or null)
+  API->>DB: SELECT session_events (dna_update)
+  DB-->>API: growth events
+  API-->>FE: 200 SessionReport (16 fields)
+  FE->>FE: Render report page
+</pre>
+
+<h4>Loading and retry behaviour</h4>
+<div class="steps">
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Show skeleton immediately</h4>
+      <p>Display a report skeleton on navigation. The API has 6 DB calls — expect 300–800 ms latency on cold Supabase connections.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Retry once on 5xx</h4>
+      <p>Retry the report fetch once after 2 seconds on HTTP 500/503. Do not retry on 404 (session not found — navigate to dashboard instead).</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>Handle null DNA snapshot gracefully</h4>
+      <p><code>learner_dna_snapshot</code> is <code>null</code> for first-session users. Render the DNA section only if the value is non-null.</p>
+    </div>
+  </div>
+</div>
+
+<div class="lang-label">typescript — fetching the session report</div>
+<pre>async function fetchSessionReport(sessionId: string): Promise&lt;SessionReport&gt; {
+  return apiRequest&lt;SessionReport&gt;(`/assessment/session/${sessionId}/report`)
+}
+
+// Usage in a Server Component or React Query
+const report = await fetchSessionReport(sessionId)
+
+// Render tier context
+&lt;p&gt;{report.tier_label} Session&lt;/p&gt;  // 'Full-Depth Session'
+
+// Render quiz counts (never show quiz_score raw)
+&lt;p&gt;{report.quiz_correct_count} / {report.quiz_total_questions} correct&lt;/p&gt;
+&lt;Badge label={report.quiz_accuracy_label ?? 'No questions'} /&gt;
+
+// Render DNA snapshot (conditionally)
+{report.learner_dna_snapshot && (
+  &lt;DnaSnapshotCard snapshot={report.learner_dna_snapshot} /&gt;
+)}</pre>
+
+<h3 id="session-report-errors">Error Handling</h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>HTTP status</th><th>When</th><th>Frontend action</th></tr></thead>
+  <tbody>
+    <tr><td><code>200</code></td><td>Success</td><td>Render report</td></tr>
+    <tr><td><code>401</code></td><td>Missing or invalid JWT</td><td>Redirect to <code>/login</code></td></tr>
+    <tr><td><code>404</code></td><td>Session not found <em>or</em> belongs to another user (SEC-006 — same message for both)</td><td>Show "Session not found" and navigate to dashboard. Never prompt retry.</td></tr>
+    <tr><td><code>500</code></td><td>Unexpected server error</td><td>Show error state, offer retry once after 2 s</td></tr>
+    <tr><td><code>503</code></td><td>DB unavailable</td><td>Show "Report temporarily unavailable" — retry after 5 s up to 3 times</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-warn">
+  <strong>SEC-006:</strong> The backend returns HTTP 404 (not 403) when a session belongs to a different user. Never distinguish "not found" from "not yours" in the UI — always show the same "session not found" message.
+</div>
+
+<h3 id="session-report-checklist">Stories 3-29 + 3-30 Integration Checklist</h3>
+<ul class="checklist">
+  <li><div class="chk"></div><span class="chk-label">DB migration <code>20260714020000_add_lesson_tier.sql</code> confirmed applied <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Local <code>SessionReport</code> type updated with 5 new tier fields + <code>learner_dna_snapshot</code> <span class="story-tag">3-29 3-30</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Report page shows <code>tier_label</code> (e.g., "Full-Depth Session") <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Report page shows absolute counts: "{correct} / {total} correct" <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label"><code>quiz_accuracy_label</code> displayed (never raw <code>quiz_score</code> float) <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">DNA snapshot section hidden when <code>learner_dna_snapshot === null</code> <span class="story-tag">3-30</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">All 9 dimension labels displayed — no numeric scores shown to student <span class="story-tag">3-30</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Growth labels (↑ ↓ →) shown; null growth labels render as no indicator <span class="story-tag">3-30</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Retry once on 5xx; 404 navigates to dashboard without retry <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Skeleton shown while report loads (6 DB calls ≈ 300–800 ms) <span class="story-tag">3-29</span></span></li>
+</ul>
+</section>
+
+<hr class="section-divider">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="reassessment">
+<h2>Story 3-31 — Re-Assessment Prompt After 10 Sessions</h2>
+
+<p>After every 10th completed session, the backend sets a Redis flag (<code>user:{id}:reassessment_due = "1"</code>). The frontend must check this flag via the DNA endpoint and prompt the student to redo the 20-question diagnostic.</p>
+
+<h3 id="dna-endpoint">GET /api/assessment/user/dna — New Field</h3>
+
+<div class="endpoint">
+  <span class="method get">GET</span>
+  <span class="path">/api/assessment/user/dna</span>
+  <span class="desc">Current user's Learner DNA profile</span>
+</div>
+
+<p>This endpoint existed before the LM sprint. Story 3-31 adds one field: <code>reassessment_due</code>.</p>
+
+<div class="lang-label">typescript — LearnerDNA response (updated)</div>
+<pre>interface LearnerDNA {
+  user_id:           string
+  badge_labels:      string[]      // e.g. ['Pattern Thinker', 'Self-Starter']
+  profile_text:      string | null // descriptive profile + DPDP disclaimer
+  session_count:     number        // total sessions completed (EMA blended)
+  last_updated:      string | null // ISO 8601 datetime
+  reassessment_due:  boolean       // ← NEW in Story 3-31
+  // true every 10th session (10, 20, 30, …) until the diagnostic is re-submitted
+}</pre>
+
+<h4>When is <code>reassessment_due</code> true?</h4>
+<ul style="margin:8px 0 12px 20px;font-size:13.5px;line-height:1.9;color:var(--text-2);">
+  <li>Set to <code>true</code> when <code>session_count</code> reaches a multiple of 10 (10, 20, 30, …)</li>
+  <li>Set by <code>fuse_learner_dna()</code> immediately after the 10th session ends</li>
+  <li>Persists as <code>true</code> until the student re-submits the onboarding diagnostic</li>
+  <li>Returns <code>false</code> when Redis is unavailable (safe default — no false positives)</li>
+</ul>
+
+<h4>Error states for <code>GET /user/dna</code></h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>HTTP status</th><th>When</th><th>Frontend action</th></tr></thead>
+  <tbody>
+    <tr><td><code>200</code></td><td>Success</td><td>Render DNA profile; check <code>reassessment_due</code></td></tr>
+    <tr><td><code>401</code></td><td>Missing or invalid JWT</td><td>Redirect to <code>/login</code></td></tr>
+    <tr><td><code>404</code></td><td>User has not completed onboarding diagnostic yet</td><td>Redirect to onboarding flow — do not show empty profile</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="reassessment-flow">Re-Assessment Prompt Flow</h3>
+
+<pre class="mermaid">
+sequenceDiagram
+  participant FE as Next.js (Dashboard / DNA Page)
+  participant API as FastAPI /assessment
+  participant Redis as Railway Redis
+  participant DB as Supabase DB
+
+  FE->>API: GET /user/dna
+  API->>DB: SELECT learner_dna row
+  DB-->>API: row (session_count=10)
+  API->>Redis: GET user:{id}:reassessment_due
+  Redis-->>API: "1"
+  API-->>FE: 200 { reassessment_due: true, ... }
+
+  FE->>FE: Show re-assessment prompt banner/modal
+  note over FE: "Your learning profile is due for a refresh!"
+
+  FE-->>FE: User clicks "Take Assessment"
+  FE->>FE: Navigate to /onboarding
+
+  FE->>API: POST /onboarding/submit { responses: [...] }
+  API->>Redis: GET reassessment_due → "1" exists
+  API->>Redis: DELETE onboarding_done (allows resubmit)
+  API->>Redis: SET onboarding_done = "1" (NX)
+  API->>DB: Upsert learner_dna (new profile)
+  API->>Redis: DELETE reassessment_due (clears flag)
+  API-->>FE: 201 OnboardingResult
+
+  FE->>FE: Navigate to updated DNA profile page
+  FE->>API: GET /user/dna
+  API-->>FE: 200 { reassessment_due: false, ... }
+</pre>
+
+<h4>UI guidance</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Element</th><th>Recommendation</th></tr></thead>
+  <tbody>
+    <tr><td>Prompt type</td><td>Dismissible banner on the DNA profile page or dashboard. Not a blocking modal — student can dismiss and continue using the app.</td></tr>
+    <tr><td>Heading copy</td><td>"Your Learner Profile is Ready for a Refresh" — avoid "re-assessment" jargon</td></tr>
+    <tr><td>Body copy</td><td>"You've completed 10 sessions. Take the 20-question diagnostic again to update your Learner DNA for more accurate personalisation."</td></tr>
+    <tr><td>CTA</td><td>"Update My Profile" — links to the onboarding form at <code>/onboarding</code></td></tr>
+    <tr><td>Dismiss behaviour</td><td>Store dismiss in <code>localStorage</code> keyed on <code>session_count</code> — so it re-appears after the 20th session even if they dismissed at 10.</td></tr>
+    <tr><td>After completion</td><td>Invalidate the <code>GET /user/dna</code> cache/SWR key — <code>reassessment_due</code> will now be <code>false</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="onboarding-resubmit">Onboarding Re-Submission</h3>
+
+<p>The <code>POST /api/assessment/onboarding/submit</code> endpoint handles both first-time submission and re-assessment re-submission transparently. The frontend code path is identical — the backend detects the <code>reassessment_due</code> flag and clears the idempotency lock automatically.</p>
+
+<div class="endpoint">
+  <span class="method post">POST</span>
+  <span class="path">/api/assessment/onboarding/submit</span>
+  <span class="desc">First-time or re-assessment diagnostic submission</span>
+</div>
+
+<div class="lang-label">typescript — request body</div>
+<pre>interface OnboardingDiagnosticSubmission {
+  responses: OnboardingAnswer[]  // exactly 20 answers (min_length=20, max_length=20)
+}
+
+interface OnboardingAnswer {
+  question_id:     string
+  dimension:       'cognitive' | 'emotional' | 'self_direction'
+  selected_index:  number       // 0–3 (Pydantic: ge=0, le=3)
+  selected_text:   string
+  response_time_ms?: number     // optional; ≥ 0 if provided
+}</pre>
+
+<div class="lang-label">typescript — response body (201 Created)</div>
+<pre>interface OnboardingResult {
+  badge_labels:  string[]       // e.g. ['Pattern Thinker', 'Self-Starter']
+  profile_text:  string         // descriptive profile + DPDP Act 2023 disclaimer
+  session_count: number         // always 0 for first-time; carries over for re-assessment
+}</pre>
+
+<h4>Error handling for onboarding submit</h4>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>HTTP status</th><th>When</th><th>Frontend action</th></tr></thead>
+  <tbody>
+    <tr><td><code>201</code></td><td>Successful submission (first-time or re-assessment)</td><td>Navigate to DNA profile page; invalidate cache</td></tr>
+    <tr><td><code>409 Conflict</code></td><td>Already submitted onboarding <em>and</em> <code>reassessment_due</code> is NOT set (idempotency lock)</td><td>Show "You've already completed the diagnostic" and link to their profile</td></tr>
+    <tr><td><code>401</code></td><td>Invalid JWT</td><td>Redirect to <code>/login</code></td></tr>
+    <tr><td><code>422</code></td><td>Validation error (e.g., not exactly 20 responses, <code>selected_index</code> out of range)</td><td>Show form validation error — check response <code>detail</code> for field-level info</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-info">
+  <strong>First-time vs re-assessment:</strong> Both use the same frontend form and the same API call. The difference is invisible to the frontend — the backend handles idempotency internally. When <code>reassessment_due</code> is <code>true</code>, the backend unlocks the form automatically before the student submits.
+</div>
+
+<h3 id="reassessment-checklist">Story 3-31 Integration Checklist</h3>
+<ul class="checklist">
+  <li><div class="chk"></div><span class="chk-label"><code>LearnerDNA</code> interface updated to include <code>reassessment_due: boolean</code> <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">DNA profile page or dashboard checks <code>reassessment_due</code> after fetching <code>GET /user/dna</code> <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Re-assessment prompt is dismissible and non-blocking <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Dismiss state stored in <code>localStorage</code> keyed on <code>session_count</code> (re-appears at 20th, 30th, …) <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">"Update My Profile" CTA navigates to <code>/onboarding</code> form <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">After 201 from <code>/onboarding/submit</code>: invalidate <code>/user/dna</code> cache, navigate to DNA page <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">409 on onboarding submit shows friendly "already done" message (not generic error) <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label"><code>reassessment_due: false</code> displayed correctly after re-assessment is submitted <span class="story-tag">3-31</span></span></li>
+</ul>
+</section>
+
+<hr class="section-divider">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="ts-types">
+<h2>TypeScript Types — Complete LM Sprint Additions</h2>
+
+<p>Drop these into your local <code>src/types/assessment.ts</code> (or wherever you keep API types). These extend the pre-existing types without replacing them.</p>
+
+<div class="lang-label">typescript — src/types/assessment.ts (additions only)</div>
+<pre>// ── Story 3-29 + 3-30: Session report additions ────────────────────────────
+
+type LessonTier        = 'T1' | 'T2' | 'T3'
+type TierLabel         = 'Full-Depth' | 'Standard' | 'Refresher'
+type QuizAccuracyLabel = 'Strong' | 'Developing' | 'Needs Review'
+
+type DimensionName =
+  | 'pattern_recognition'
+  | 'logical_deduction'
+  | 'processing_speed'
+  | 'frustration_tolerance'
+  | 'persistence'
+  | 'help_seeking'
+  | 'goal_orientation'
+  | 'curiosity_index'
+  | 'study_independence'
+
+type DimensionLabel = 'Beginning' | 'Developing' | 'Proficient' | 'Advanced'
+type GrowthLabel    = 'Improving' | 'Stable' | 'Declining'
+
+interface LearnerDnaSnapshot {
+  dimension_labels: Record&lt;DimensionName, DimensionLabel&gt;
+  growth_labels:    Record&lt;DimensionName, GrowthLabel | null&gt;
+}
+
+interface SessionReport {
+  // original fields (unchanged)
+  session_id:          string
+  user_id:             string
+  lesson_id:           string
+  ces_score:           number
+  ces_breakdown:       Record&lt;'quiz' | 'teachback' | 'behavioral' | 'head_pose' | 'blink', number&gt;
+  interventions_count: number
+  quiz_score:          number | null
+  teachback_score:     number | null
+  duration_minutes:    number
+  completed_at:        string | null
+  // Story 3-29 additions
+  tier:                LessonTier
+  tier_label:          TierLabel
+  quiz_total_questions: number
+  quiz_correct_count:  number
+  quiz_accuracy_label: QuizAccuracyLabel | null
+  // Story 3-30 addition
+  learner_dna_snapshot: LearnerDnaSnapshot | null
+}
+
+// ── Story 3-31: DNA profile addition ─────────────────────────────────────
+
+interface LearnerDNA {
+  user_id:          string
+  badge_labels:     string[]
+  profile_text:     string | null
+  session_count:    number
+  last_updated:     string | null
+  reassessment_due: boolean          // ← NEW in Story 3-31
+}</pre>
+</section>
+
+<hr class="section-divider">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="errors">
+<h2>Error Reference</h2>
+
+<p>All error responses follow FastAPI's standard shape:</p>
+<div class="lang-label">json — error response body</div>
+<pre>{ "detail": "Human-readable error message" }
+
+// Validation errors (422) have an expanded shape:
+{
+  "detail": [
+    { "loc": ["body", "answers", 0, "response_index"],
+      "msg": "Input should be greater than or equal to 0",
+      "type": "greater_than_equal" }
+  ]
+}</pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Code</th><th>Message pattern</th><th>Dev 2 action</th></tr></thead>
+  <tbody>
+    <tr><td><code>401</code></td><td>Unauthorized</td><td>Redirect to login; clear local auth state</td></tr>
+    <tr><td><code>403</code></td><td>Session does not belong to this lesson</td><td>Show generic error, do not expose detail; IDOR guard</td></tr>
+    <tr><td><code>404</code></td><td>Session not found. / Learner DNA profile not found. Complete the onboarding diagnostic first.</td><td>Route-specific handling (see per-endpoint tables above)</td></tr>
+    <tr><td><code>409</code></td><td>Onboarding diagnostic has already been submitted for this account.</td><td>Show "already done" message; link to /profile/dna</td></tr>
+    <tr><td><code>422</code></td><td>Validation error (see detail array)</td><td>Map <code>detail[].loc</code> to form field errors where possible</td></tr>
+    <tr><td><code>500</code></td><td>Internal server error</td><td>Generic error toast; retry once after 2 s</td></tr>
+    <tr><td><code>503</code></td><td>Could not update learner profile. / Could not read session data.</td><td>Retry up to 3× with 5 s backoff</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<hr class="section-divider">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="pitfalls">
+<h2>Common Pitfalls</h2>
+
+<div class="callout callout-err">
+  <strong>Pitfall 1: Assuming quiz.length === 1.</strong> Any hardcoded check like <code>if (segment.quiz.length === 1)</code> or accessing <code>segment.quiz[0]</code> directly without guard will break on T1/T2 lessons. Always iterate <code>segment.quiz</code>.
+</div>
+
+<div class="callout callout-err">
+  <strong>Pitfall 2: Displaying <code>quiz_score</code> to the student.</strong> <code>quiz_score</code> is a raw float (0–100) retained for Dev 4's CES computation. Show <code>quiz_accuracy_label</code> ("Strong", "Developing", "Needs Review") instead. DPDP compliance requirement.
+</div>
+
+<div class="callout callout-err">
+  <strong>Pitfall 3: Showing raw DNA dimension numbers.</strong> The snapshot gives you <code>dimension_labels</code> (strings). Never expose the underlying 0–100 floats; they're not in the response shape at all — but don't add them. CLAUDE.md Learner DNA display rules.
+</div>
+
+<div class="callout callout-warn">
+  <strong>Pitfall 4: Blocking on <code>reassessment_due</code>.</strong> The prompt must be dismissible. Never block lesson playback or navigation because re-assessment is due — students choose when to take it.
+</div>
+
+<div class="callout callout-warn">
+  <strong>Pitfall 5: Caching JWT across navigations.</strong> Supabase tokens expire after 1 hour. Always call <code>supabase.auth.getSession()</code> inline before API calls — it auto-refreshes. Stale tokens will get 401 with no useful error shown.
+</div>
+
+<div class="callout callout-warn">
+  <strong>Pitfall 6: Dismissing reassessment_due based on boolean alone.</strong> Store the dismiss state keyed on <code>session_count</code> (not just a single boolean in localStorage). Otherwise dismissing at session 10 silently suppresses the prompt at session 20.
+</div>
+
+<div class="callout callout-info">
+  <strong>Note: DNA snapshot null for new users.</strong> <code>learner_dna_snapshot</code> is <code>null</code> when the user has no <code>learner_dna</code> row (before onboarding). Render the DNA section conditionally — <code>report.learner_dna_snapshot !== null</code> — to avoid null-pointer errors.
+</div>
+
+<div class="callout callout-info">
+  <strong>Note: growth_labels can be null per-dimension.</strong> First-session users (or dimensions with no prior data) will have <code>null</code> growth labels. Render a dash or no growth indicator — not "Stable" — for null values.
+</div>
+
+<div class="callout callout-info">
+  <strong>Note: tier defaults to T2 when lessons row is missing.</strong> If a session references a lesson that no longer has a lessons row, the backend returns <code>tier="T2"</code> and <code>tier_label="Standard"</code> silently. The frontend will always receive a valid, non-null tier.
+</div>
+
+<div class="callout callout-info">
+  <strong>Note: DB migration is a blocker for tier display.</strong> If <code>20260714020000_add_lesson_tier.sql</code> hasn't been applied, <code>lessons.tier</code> doesn't exist and the backend degrades to T2 default for every session. Verify with Dev 1 that the migration is applied before demoing tier-contextualised reports.
+</div>
+</section>
+
+<hr class="section-divider">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<section id="final-checklist">
+<h2>Final Integration Checklist</h2>
+
+<p>Use this before marking the LM Sprint frontend work as done. Every item maps to a tested backend AC.</p>
+
+<h3>Environment and Setup</h3>
+<ul class="checklist">
+  <li><div class="chk"></div><span class="chk-label">Migration <code>20260714020000_add_lesson_tier.sql</code> applied in dev + staging Supabase project</span></li>
+  <li><div class="chk"></div><span class="chk-label">TypeScript types updated — <code>SessionReport</code> (6 new fields), <code>LearnerDNA</code> (<code>reassessment_due</code>)</span></li>
+  <li><div class="chk"></div><span class="chk-label">Auth helper calls <code>getSession()</code> per-request, not from cache</span></li>
+</ul>
+
+<h3>Story 3-28 — Variable Quiz Player</h3>
+<ul class="checklist">
+  <li><div class="chk"></div><span class="chk-label">Quiz player renders all questions in <code>segment.quiz[]</code> (not just index 0) <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Quiz submission sends one <code>QuizAnswer</code> per question, all in one POST call <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label"><code>response_time_ms</code> measured per-question; <code>response_index ≥ 0</code> always <span class="story-tag">3-28</span></span></li>
+  <li><div class="chk"></div><span class="chk-label"><code>ces_contribution</code> from quiz result forwarded to Dev 4 WebSocket attention signal <span class="story-tag">3-28</span></span></li>
+</ul>
+
+<h3>Stories 3-29 + 3-30 — Enhanced Session Report</h3>
+<ul class="checklist">
+  <li><div class="chk"></div><span class="chk-label">Report page shows <code>tier_label</code> ("Full-Depth / Standard / Refresher Session") <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Absolute quiz counts shown: "{quiz_correct_count} / {quiz_total_questions}" <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label"><code>quiz_accuracy_label</code> shown as badge/pill; raw <code>quiz_score</code> float never shown to student <span class="story-tag">3-29</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">DNA snapshot section conditionally rendered (null → hidden) <span class="story-tag">3-30</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">All 9 dimension labels displayed with <code>DimensionLabel</code> strings only — no floats <span class="story-tag">3-30</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Growth indicators shown for non-null growth labels; null renders as "—" or hidden <span class="story-tag">3-30</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Loading skeleton shown while report fetches; retry once on 5xx; 404 → dashboard <span class="story-tag">3-29</span></span></li>
+</ul>
+
+<h3>Story 3-31 — Re-Assessment Prompt</h3>
+<ul class="checklist">
+  <li><div class="chk"></div><span class="chk-label">DNA profile page fetches <code>GET /user/dna</code> and checks <code>reassessment_due</code> <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Prompt banner shown when <code>reassessment_due === true</code> <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Prompt is dismissible; dismiss stored in <code>localStorage</code> keyed on <code>session_count</code> <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">"Update My Profile" CTA navigates to <code>/onboarding</code> form <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">Same onboarding form + API call used for first-time and re-assessment (no special casing) <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">After 201 from <code>/onboarding/submit</code>: invalidate DNA cache, navigate to DNA page <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">409 on onboarding shows "already submitted" message — not a generic error toast <span class="story-tag">3-31</span></span></li>
+  <li><div class="chk"></div><span class="chk-label">After re-assessment, <code>GET /user/dna</code> returns <code>reassessment_due: false</code> — prompt hidden <span class="story-tag">3-31</span></span></li>
+</ul>
+
+<div class="callout callout-teal" style="margin-top:28px;">
+  <strong>Handoff contacts:</strong> Dev 3 (tannmayygupta) owns all endpoints in this document. Dev 4 owns <code>fuse_learner_dna()</code> wiring (call it with <code>redis=get_redis()</code> — required for the reassessment flag to be set). For DB migration questions, contact Dev 1. For frozen shared types (<code>packages/shared/</code>), changes require a 4-dev PR review.
+</div>
+</section>
+
+</main>
+
+<script>
+// Light/dark toggle support (responds to data-theme on :root set by the viewer)
+const observer = new MutationObserver(() => {});
+observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+// Highlight active nav link on scroll
+const headings = document.querySelectorAll('h2[id], h3[id]');
+const navLinks  = document.querySelectorAll('nav a[href^="#"]');
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(a => a.style.color = '');
+      const link = document.querySelector(`nav a[href="#${e.target.id}"]`);
+      if (link) { link.style.color = 'var(--accent)'; link.style.borderLeftColor = 'var(--accent)'; }
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+headings.forEach(h => io.observe(h));
+</script>
+</body>
+</html>

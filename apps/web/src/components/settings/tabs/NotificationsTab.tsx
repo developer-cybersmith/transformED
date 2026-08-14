@@ -1,35 +1,39 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Toggle } from "../Toggle";
-import { settingsService } from "@/services/settings.service";
-import type { NotificationSettings } from "@/mocks/data/users";
+import { useNotificationPreferences, type NotificationPreferences } from "@/hooks/useNotificationPreferences";
+
+const TOGGLES: Array<{
+    key: keyof NotificationPreferences;
+    label: string;
+    description: string;
+}> = [
+    {
+        key: "session_report_email",
+        label: "Session Report",
+        description: "Get an email summary after each lesson session.",
+    },
+    {
+        key: "lesson_ready_email",
+        label: "Lesson Ready",
+        description: "Get notified when your personalized lesson is ready.",
+    },
+    {
+        key: "weekly_progress_email",
+        label: "Weekly Progress",
+        description: "Receive a weekly summary of your learning journey.",
+    },
+    {
+        key: "streak_reminders",
+        label: "Streak Reminders",
+        description: "Helpful nudges to keep your daily streak alive.",
+    },
+];
 
 export function NotificationsTab() {
-    const [settings, setSettings] = useState<NotificationSettings | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
+    const { preferences, isLoading, updatePreference } = useNotificationPreferences();
 
-    useEffect(() => {
-        let cancelled = false;
-        settingsService.getNotifications().then((response) => {
-            if (cancelled) return;
-            setSettings(response.data);
-            setIsLoading(false);
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
-    function updateSetting<K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) {
-        const previous = settings;
-        setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
-        settingsService.updateNotifications({ [key]: value } as Partial<NotificationSettings>).catch(() => {
-            setSettings(previous);
-        });
-    }
-
-    if (isLoading || !settings) {
+    if (isLoading) {
         return (
             <div className="flex w-full max-w-3xl items-center justify-center pt-24 pb-24 text-sm text-neutral-400">
                 Loading notification settings…
@@ -45,31 +49,23 @@ export function NotificationsTab() {
             </div>
 
             <div className="flex flex-col rounded-2xl border border-neutral-100 bg-white overflow-hidden shadow-sm">
-
-                <div className="flex items-center justify-between p-5 border-b border-neutral-100">
-                    <div className="flex flex-col gap-1">
-                        <span className="font-medium text-neutral-900">Lesson Ready</span>
-                        <span className="text-sm text-neutral-500">Get notified when your personalized lesson is ready.</span>
+                {TOGGLES.map(({ key, label, description }, index) => (
+                    <div
+                        key={key}
+                        className={`flex items-center justify-between p-5 ${
+                            index < TOGGLES.length - 1 ? "border-b border-neutral-100" : ""
+                        }`}
+                    >
+                        <div className="flex flex-col gap-1">
+                            <span className="font-medium text-neutral-900">{label}</span>
+                            <span className="text-sm text-neutral-500">{description}</span>
+                        </div>
+                        <Toggle
+                            enabled={preferences[key]}
+                            onChange={(value) => updatePreference(key, value)}
+                        />
                     </div>
-                    <Toggle enabled={settings.lessonReady} onChange={(v) => updateSetting("lessonReady", v)} />
-                </div>
-
-                <div className="flex items-center justify-between p-5 border-b border-neutral-100">
-                    <div className="flex flex-col gap-1">
-                        <span className="font-medium text-neutral-900">Weekly Progress</span>
-                        <span className="text-sm text-neutral-500">Receive a weekly summary of your learning journey.</span>
-                    </div>
-                    <Toggle enabled={settings.weeklyProgress} onChange={(v) => updateSetting("weeklyProgress", v)} />
-                </div>
-
-                <div className="flex items-center justify-between p-5">
-                    <div className="flex flex-col gap-1">
-                        <span className="font-medium text-neutral-900">Streak Reminders</span>
-                        <span className="text-sm text-neutral-500">Helpful nudges to keep your daily streak alive.</span>
-                    </div>
-                    <Toggle enabled={settings.streakReminders} onChange={(v) => updateSetting("streakReminders", v)} />
-                </div>
-
+                ))}
             </div>
         </div>
     );

@@ -23,7 +23,9 @@ from unittest.mock import MagicMock
 
 import jwt as pyjwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
+import app.dependencies as dependencies_module
 from app.config import get_settings
 from app.core.rate_limit import _get_user_key
 
@@ -115,6 +117,37 @@ def test_unauthenticated_or_forged_tokens_fall_back_to_ip(label: str, token: str
     """The fallback must survive — it is correct for callers with no usable
     identity. What was wrong was reaching it with a VALID token."""
     assert _get_user_key(_request(token)) == "203.0.113.7", label
+
+
+@pytest.mark.unit
+def test_an_es256_token_keys_the_bucket_by_user_not_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D64: the same regression class as D52, one signing scheme later.
+
+    Supabase projects that migrated to asymmetric "JWT Signing Keys" issue
+    ES256 tokens. `dependencies.get_current_user` branches on `alg` and
+    verifies these via JWKS; before this fix, `_get_user_key`'s OWN separate
+    decode hardcoded `algorithms=["HS256"]` only, so every ES256 token raised
+    `InvalidAlgorithmError`, was swallowed by the bare `except`, and fell back
+    to the shared IP bucket -- reopening exactly what D52 closed.
+    """
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    now = int(time.time())
+    claims = {
+        "aud": "authenticated",
+        "role": "authenticated",
+        "sub": SUB,
+        "iat": now,
+        "exp": now + 3600,
+    }
+    token = pyjwt.encode(claims, private_key, algorithm="ES256")
+
+    fake_signing_key = MagicMock()
+    fake_signing_key.key = private_key.public_key()
+    fake_jwks_client = MagicMock()
+    fake_jwks_client.get_signing_key_from_jwt.return_value = fake_signing_key
+    monkeypatch.setattr(dependencies_module, "_get_jwks_client", lambda settings: fake_jwks_client)
+
+    assert _get_user_key(_request(token)) == f"user:{SUB}"
 
 
 @pytest.mark.unit

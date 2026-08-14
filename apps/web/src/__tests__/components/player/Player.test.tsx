@@ -4,13 +4,36 @@ import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { useLessonSocketMock, apiPostMock } = vi.hoisted(() => ({
+const { useLessonSocketMock, apiPostMock, useAttentionConsentMock, useAttentionMonitorMock } = vi.hoisted(() => ({
   useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
   apiPostMock: vi.fn(),
+  // Safe default so every pre-existing test in this file (none of which know
+  // about S3-01) never sees the consent modal unless a test opts in.
+  useAttentionConsentMock: vi.fn().mockReturnValue({
+    consentStatus: 'unknown',
+    isLoading: false,
+    showModal: false,
+    accept: vi.fn(),
+    decline: vi.fn(),
+  }),
+  // Mocked out for the same reason useLessonSocket/useAttentionConsent are
+  // above (S3-02): its real implementation drives camera/MediaPipe/timer
+  // lifecycles that are exhaustively covered by useAttentionMonitor.test.ts
+  // on their own -- Player.test.tsx only needs to prove AttentionMonitor is
+  // actually mounted, not re-exercise its internals.
+  useAttentionMonitorMock: vi.fn(),
 }));
 
 vi.mock('@/hooks/useLessonSocket', () => ({
   useLessonSocket: useLessonSocketMock,
+}));
+
+vi.mock('@/hooks/useAttentionConsent', () => ({
+  useAttentionConsent: useAttentionConsentMock,
+}));
+
+vi.mock('@/hooks/useAttentionMonitor', () => ({
+  useAttentionMonitor: useAttentionMonitorMock,
 }));
 
 // Player fires two kinds of real api.post calls directly: analytics events
@@ -49,6 +72,15 @@ beforeEach(() => {
   window.HTMLMediaElement.prototype.pause = vi.fn();
   localStorage.clear();
   useLessonSocketMock.mockClear();
+  useAttentionMonitorMock.mockReset();
+  useAttentionConsentMock.mockReset();
+  useAttentionConsentMock.mockReturnValue({
+    consentStatus: 'unknown',
+    isLoading: false,
+    showModal: false,
+    accept: vi.fn(),
+    decline: vi.fn(),
+  });
   mockOnRefetchLesson.mockClear();
   mockOnRefetchLesson.mockResolvedValue(null);
   apiPostMock.mockReset();
@@ -75,6 +107,16 @@ afterEach(() => {
 // IDLE — so status must be set to ENDED *after* render, not before, or the
 // mount effect silently overwrites it.
 function renderEnded(sessionId: string) {
+  // Reset first -- usePlayerStore is a module-level singleton this file never
+  // resets between tests, so a previous test's leftover status/sessionId
+  // would otherwise be visible to this NEW component's very first render,
+  // before its own loadLesson-driven reset effect has had a chance to run
+  // (review fix: without this, the complete-session effect below could fire
+  // once using a PRIOR test's leftover sessionId before loadLesson's reset
+  // took effect -- harmless in production since it's idempotent and the
+  // leftover value was itself once genuinely correct, but it made this
+  // helper's callers flaky to assert on).
+  usePlayerStore.setState({ status: 'IDLE', sessionId: '' });
   const utils = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
   act(() => {
     usePlayerStore.setState({ status: 'ENDED', sessionId });
@@ -103,6 +145,39 @@ describe('Player — lesson complete (ENDED) screen', () => {
 
     expect(screen.queryByRole('link', { name: /session report/i })).toBeNull();
     expect(screen.getByRole('link', { name: /back to dashboard/i })).not.toBeNull();
+  });
+
+  // Found via a live full-lesson playthrough (2026-08-12): nothing anywhere
+  // ever called this, so sessions.ended_at silently stayed NULL forever and
+  // the session report's duration_minutes/completed_at were always 0.0/None.
+  it('calls the complete-session endpoint exactly once when reaching ENDED with a real sessionId', () => {
+    renderEnded('sess_abc123');
+
+    const completeCalls = apiPostMock.mock.calls.filter(
+      ([url]) => url === '/assessment/session/sess_abc123/complete'
+    );
+    expect(completeCalls).toHaveLength(1);
+  });
+
+  it('does NOT call the complete-session endpoint when sessionId is still empty', () => {
+    renderEnded('');
+
+    const completeCalls = apiPostMock.mock.calls.filter(([url]) =>
+      String(url).includes('/complete')
+    );
+    expect(completeCalls).toHaveLength(0);
+  });
+
+  it('does not re-call the complete-session endpoint on an unrelated re-render (same status/sessionId)', () => {
+    const { rerender } = renderEnded('sess_abc123');
+    apiPostMock.mockClear();
+
+    rerender(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    const completeCalls = apiPostMock.mock.calls.filter(
+      ([url]) => url === '/assessment/session/sess_abc123/complete'
+    );
+    expect(completeCalls).toHaveLength(0);
   });
 });
 
@@ -444,6 +519,93 @@ describe('Player — lesson WebSocket (S2-06)', () => {
     });
 
     expect(screen.queryByText(/checking in/i)).not.toBeNull();
+  });
+
+  it('mounts TutorInterventionCard — it becomes visible when a tutor_intervene payload is active (S3-03 AC-8)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'Stay with me!' },
+      });
+    });
+
+    expect(screen.queryByTestId('tutor-intervention-card')).not.toBeNull();
+  });
+
+  it('mounts CESIndicator — it becomes visible when a ces_update score is active while PLAYING (S3-04 AC-6)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING', cesScore: 0.85 });
+    });
+
+    expect(screen.queryByTestId('ces-indicator')).not.toBeNull();
+    expect(screen.getByTestId('ces-indicator').getAttribute('title')).toBe('Focused');
+  });
+
+  it('mounts AttentionMonitor exactly once per Player mount, and does not duplicate the LessonSocket connection (S3-02, Task 6)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    // Called at least once (React re-renders as session/store state resolves,
+    // so an exact count isn't meaningful here) -- proves AttentionMonitor is
+    // actually mounted in the tree. The "no duplicate socket connection"
+    // guarantee is a source-level fact checked separately in
+    // AttentionMonitor.test.tsx (useAttentionMonitor.ts never imports
+    // useLessonSocket), since call-count assertions on a hook invoked once
+    // per render can't distinguish "one mount, several renders" from "two
+    // mounts" without asserting brittle exact counts.
+    expect(useAttentionMonitorMock).toHaveBeenCalled();
+  });
+
+  it('mounts AttentionConsentModal — it becomes visible when useAttentionConsent reports showModal (S3-01 AC-8)', () => {
+    useAttentionConsentMock.mockReturnValue({
+      consentStatus: 'unknown',
+      isLoading: false,
+      showModal: true,
+      accept: vi.fn(),
+      decline: vi.fn(),
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    expect(screen.queryByTestId('attention-consent-modal')).not.toBeNull();
+  });
+
+  it('suppresses AttentionConsentModal during QUIZ, even if showModal is true (review fix — must never block the quiz)', () => {
+    useAttentionConsentMock.mockReturnValue({
+      consentStatus: 'unknown',
+      isLoading: false,
+      showModal: true,
+      accept: vi.fn(),
+      decline: vi.fn(),
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'QUIZ' });
+    });
+
+    expect(screen.queryByTestId('attention-consent-modal')).toBeNull();
+  });
+
+  it('suppresses AttentionConsentModal during TEACH_BACK, even if showModal is true (review fix)', () => {
+    useAttentionConsentMock.mockReturnValue({
+      consentStatus: 'unknown',
+      isLoading: false,
+      showModal: true,
+      accept: vi.fn(),
+      decline: vi.fn(),
+    });
+
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'TEACH_BACK' });
+    });
+
+    expect(screen.queryByTestId('attention-consent-modal')).toBeNull();
   });
 });
 

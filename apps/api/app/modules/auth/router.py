@@ -212,7 +212,11 @@ async def patch_notifications(
     - Read query uses .maybe_single() — satisfies test_unbounded_queries.py.
     - TOCTOU: last-writer-wins on concurrent PATCHes; acceptable for preferences.
     """
-    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.core.db import (  # lazy — prevents circular import at module load
+        get_supabase,
+        rows,
+        single_row,
+    )
 
     supabase = get_supabase()
     user_id: str = str(current_user["sub"])
@@ -230,8 +234,9 @@ async def patch_notifications(
                 .execute()
             )
         )
+        existing_row = single_row(read_resp)
         current_prefs: dict[str, bool] = (
-            dict(read_resp.data) if read_resp.data else dict(_NOTIF_DEFAULTS)
+            dict(existing_row) if existing_row else dict(_NOTIF_DEFAULTS)
         )
     except Exception as exc:  # noqa: BLE001
         # Do NOT fall back to defaults here — merging defaults over the user's stored
@@ -275,7 +280,8 @@ async def patch_notifications(
     # Guard: upsert may have committed but returned no RETURNING rows (client config or
     # version difference).  Raise distinctly so the caller knows the write succeeded but
     # the read-back failed — avoids IndexError and misleading "Failed to update" message.
-    if not upsert_resp.data:
+    upsert_rows = rows(upsert_resp)
+    if not upsert_rows:
         logger.error(
             "notifications: upsert returned empty response for user=%s — "
             "row was likely written; client configuration may suppress RETURNING",
@@ -285,7 +291,7 @@ async def patch_notifications(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve updated notification preferences",
         )
-    row = upsert_resp.data[0]
+    row = upsert_rows[0]
 
     # timestamptz is returned as a datetime object by supabase-py; use .isoformat() to
     # produce a T-separated ISO 8601 string rather than the space-separated str() default.
