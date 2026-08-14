@@ -116,10 +116,12 @@ def test_dead_v2_api_is_absent() -> None:
 
 @pytest.mark.unit
 def test_generation_has_update_with_provider_kwargs() -> None:
-    """Providers call generation.update(output=, usage_details=, level=, status_message=)."""
+    """Providers call generation.update(output=, usage_details=, cost_details=, level=,
+    status_message=). cost_details added for Story 3-56 (S3-5) — the field 6 providers
+    now rely on to report real per-call dollar cost on the span itself."""
     assert hasattr(LangfuseGeneration, "update")
     params = inspect.signature(LangfuseGeneration.update).parameters
-    for kwarg in ("output", "usage_details", "level", "status_message"):
+    for kwarg in ("output", "usage_details", "cost_details", "level", "status_message"):
         assert kwarg in params, f"LangfuseGeneration.update lost kwarg '{kwarg}'"
 
 
