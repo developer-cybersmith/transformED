@@ -135,11 +135,11 @@ def _supabase_mock_fusion(
             chain = tbl.select.return_value.eq.return_value.maybe_single.return_value
             chain.execute.return_value = _resp(session_row)
         elif name == "quiz_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp([])
         elif name == "teachback_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp([])
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp([])
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = _resp([])
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp([])
         elif name == "learner_dna":
             chain = tbl.select.return_value.eq.return_value.maybe_single.return_value
             chain.execute.return_value = _resp(dna_row)
