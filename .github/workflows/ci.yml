@@ -59,6 +59,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
@@ -139,6 +140,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
@@ -154,6 +156,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
@@ -167,9 +170,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose -- root package.json pins
+      # "packageManager": "pnpm@9.15.9", which corepack already reads. Passing
+      # both an explicit version AND a packageManager-pinned version is a
+      # pnpm/action-setup v4 hard error ("Multiple versions of pnpm
+      # specified"), which is why this job has been failing before a single
+      # real step ran.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -294,6 +301,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
