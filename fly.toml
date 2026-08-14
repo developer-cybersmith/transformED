@@ -41,7 +41,7 @@ primary_region = "bom"          # Mumbai -- matches Supabase's ap-south-1
 
 [checks.api]
   type = "http"
-  path = "/health"              # apps/api/app/main.py:178 -- already implemented,
-  interval = "30s"               # already used by railway.toml today
+  path = "/health"              # apps/api/app/main.py:178 -- already implemented
+  interval = "30s"
   timeout = "10s"
   processes = ["api"]           # worker has no HTTP port to check
