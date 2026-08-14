@@ -64,13 +64,13 @@ def _supabase_mock(
             ) = _make_resp(session_row)
 
         elif name == "quiz_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(quiz_rows)
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _make_resp(quiz_rows)
 
         elif name == "teachback_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(tb_rows)
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _make_resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = (
                 _make_resp(event_rows)
             )
 
