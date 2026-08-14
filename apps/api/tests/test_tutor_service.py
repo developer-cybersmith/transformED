@@ -285,9 +285,7 @@ async def test_cooldown_blocks_dispatch(mocker) -> None:
     D6: the guard is now _can_intervene_distraction (Lua) — no separate redis.exists call.
     We simulate the guard returning False (as it would when in cooldown or at the cap).
     """
-    _, mock_dispatch = _setup(
-        mocker, lrange_vals=["0.1", "0.2"], threshold=0.5, can_dispatch=False
-    )
+    _, mock_dispatch = _setup(mocker, lrange_vals=["0.1", "0.2"], threshold=0.5, can_dispatch=False)
 
     from app.modules.tutor.service import process_attention_signal
 
@@ -1415,7 +1413,13 @@ def test_parse_signal_out_of_range_optional_field_raises() -> None:
     _parse_signal must reject values like 1.5 or -0.1 at the entry gate so
     producer bugs surface immediately rather than being silently clamped by ces.py.
     """
-    for field in ("quiz_accuracy", "teachback_score", "behavioral_score", "head_pose_score", "blink_rate"):
+    for field in (
+        "quiz_accuracy",
+        "teachback_score",
+        "behavioral_score",
+        "head_pose_score",
+        "blink_rate",
+    ):
         for bad_value in (1.001, -0.001, 99.0, -1.0):
             payload = {
                 "session_id": "ses-range",
@@ -1558,7 +1562,7 @@ def test_compute_ces_partial_mediapipe_via_tutor_wrapper() -> None:
         teachback_score=None,
         behavioral_score=None,  # absent — tab API unavailable
         head_pose_score=0.8,
-        blink_rate=None,        # absent — MediaPipe not yet initialised
+        blink_rate=None,  # absent — MediaPipe not yet initialised
     )
 
     expected = canonical(

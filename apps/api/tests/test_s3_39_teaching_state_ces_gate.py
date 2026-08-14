@@ -86,7 +86,7 @@ async def test_ces_history_written_in_teaching_state():
             return_value={"current_state": "TEACHING"},
         ),
     ):
-        result = await process_attention_signal("ses-39t", _signal("ses-39t"))
+        await process_attention_signal("ses-39t", _signal("ses-39t"))
 
     lpush_called_for_history = any(
         "ces_history" in str(call) for call in redis.lpush.call_args_list
@@ -109,7 +109,7 @@ async def test_ces_history_not_written_in_intervening_state():
         patch("app.config.get_settings", return_value=settings),
         patch("app.modules.tutor.service._quiz_deadline_expired", return_value=False),
     ):
-        result = await process_attention_signal("ses-39i", _signal("ses-39i"))
+        await process_attention_signal("ses-39i", _signal("ses-39i"))
 
     lpush_called_for_history = any(
         "ces_history" in str(call) for call in redis.lpush.call_args_list

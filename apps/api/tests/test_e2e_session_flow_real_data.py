@@ -99,7 +99,12 @@ def _build_real_lesson_package() -> dict:
                         "question_id": _QUESTION_ID_0,
                         "type": "mcq",
                         "question": "What does thermodynamics study?",
-                        "options": ["Sound waves", "Energy and heat", "Light refraction", "Magnetism"],
+                        "options": [
+                            "Sound waves",
+                            "Energy and heat",
+                            "Light refraction",
+                            "Magnetism",
+                        ],
                         "correct_index": 1,
                         "explanation": "Thermodynamics is the study of energy, heat, and work.",
                         "difficulty": "easy",
@@ -110,7 +115,9 @@ def _build_real_lesson_package() -> dict:
                         "question": "Which law says energy cannot be created or destroyed?",
                         "options": ["Zeroth law", "First law", "Second law", "Third law"],
                         "correct_index": 1,
-                        "explanation": "The First Law of Thermodynamics states conservation of energy.",
+                        "explanation": (
+                            "The First Law of Thermodynamics states conservation of energy."
+                        ),
                         "difficulty": "medium",
                     },
                     {
@@ -119,7 +126,9 @@ def _build_real_lesson_package() -> dict:
                         "question": "What is entropy a measure of?",
                         "options": ["Order", "Disorder", "Pressure", "Volume"],
                         "correct_index": 1,
-                        "explanation": "Entropy is a measure of disorder in a thermodynamic system.",
+                        "explanation": (
+                            "Entropy is a measure of disorder in a thermodynamic system."
+                        ),
                         "difficulty": "hard",
                     },
                 ],
@@ -207,7 +216,8 @@ def _build_supabase_create_session(
     mock = MagicMock()
 
     lessons_mock = MagicMock()
-    lessons_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = lesson_data
+    lessons_chain = lessons_mock.select.return_value.eq.return_value.maybe_single.return_value
+    lessons_chain.execute.return_value.data = lesson_data
 
     sessions_mock = MagicMock()
     sessions_mock.insert.return_value.execute.return_value.data = insert_data
@@ -230,10 +240,12 @@ def _build_supabase_quiz(
     mock = MagicMock()
 
     session_mock = MagicMock()
-    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
+    session_chain = session_mock.select.return_value.eq.return_value.maybe_single.return_value
+    session_chain.execute.return_value.data = session_data
 
     lesson_mock = MagicMock()
-    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = lesson_data
+    lesson_chain = lesson_mock.select.return_value.eq.return_value.maybe_single.return_value
+    lesson_chain.execute.return_value.data = lesson_data
 
     count_resp = MagicMock()
     count_resp.count = count
@@ -262,13 +274,16 @@ def _build_supabase_teachback(
     mock = MagicMock()
 
     session_mock = MagicMock()
-    session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_data
+    session_chain = session_mock.select.return_value.eq.return_value.maybe_single.return_value
+    session_chain.execute.return_value.data = session_data
 
     lesson_mock = MagicMock()
-    lesson_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = lesson_data
+    lesson_chain = lesson_mock.select.return_value.eq.return_value.maybe_single.return_value
+    lesson_chain.execute.return_value.data = lesson_data
 
     count_mock = MagicMock()
-    count_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = attempt_count
+    count_chain = count_mock.select.return_value.eq.return_value.eq.return_value
+    count_chain.execute.return_value.count = attempt_count
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = []
@@ -301,37 +316,48 @@ def _build_supabase_session_report(
 
     # 1 — sessions (maybe_single)
     sessions_mock = MagicMock()
-    sessions_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = session_row
+    sessions_chain = sessions_mock.select.return_value.eq.return_value.maybe_single.return_value
+    sessions_chain.execute.return_value.data = session_row
 
     # 2 — lessons (tier, maybe_single)
     lessons_mock = MagicMock()
-    lessons_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {"tier": "T2"}
+    lessons_chain = lessons_mock.select.return_value.eq.return_value.maybe_single.return_value
+    lessons_chain.execute.return_value.data = {"tier": "T2"}
 
     # 3 — quiz_attempts (.select().eq().limit().execute())
     quiz_mock = MagicMock()
-    quiz_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = quiz_rows
+    quiz_chain = quiz_mock.select.return_value.eq.return_value.limit.return_value
+    quiz_chain.execute.return_value.data = quiz_rows
 
     # 4 — teachback_attempts (.select().eq().limit().execute())
     tb_mock = MagicMock()
-    tb_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = teachback_rows
+    tb_chain = tb_mock.select.return_value.eq.return_value.limit.return_value
+    tb_chain.execute.return_value.data = teachback_rows
 
     # 5 — session_events (interventions, count="exact": .select().eq().eq().execute())
     interventions_resp = MagicMock()
     interventions_resp.count = interventions_count
     interventions_mock = MagicMock()
-    interventions_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value = interventions_resp
+    interventions_chain = interventions_mock.select.return_value.eq.return_value.eq.return_value
+    interventions_chain.execute.return_value = interventions_resp
 
     # 6 — session_events raw intervention rows (Story 2-46/S3-05, .order().limit() bounded)
     intervention_rows_mock = MagicMock()
-    intervention_rows_mock.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+    _ir_eq = intervention_rows_mock.select.return_value.eq.return_value.eq.return_value
+    intervention_rows_chain = _ir_eq.order.return_value.limit.return_value
+    intervention_rows_chain.execute.return_value.data = []
 
     # 7 — learner_dna (maybe_single)
     dna_mock = MagicMock()
-    dna_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = dna_data
+    dna_chain = dna_mock.select.return_value.eq.return_value.maybe_single.return_value
+    dna_chain.execute.return_value.data = dna_data
 
     # 8 — session_events (dna_update: .select().eq().eq().limit().execute())
     dna_events_mock = MagicMock()
-    dna_events_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    dna_events_chain = (
+        dna_events_mock.select.return_value.eq.return_value.eq.return_value.limit.return_value
+    )
+    dna_events_chain.execute.return_value.data = []
 
     mock.table.side_effect = [
         sessions_mock,

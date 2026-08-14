@@ -1163,9 +1163,9 @@ async def test_report_dna_snapshot_none_when_learner_dna_execute_returns_raw_non
         elif n == 6:
             # Story 2-46/S3-05: session_events raw intervention rows query (new since this
             # test was written) -- harmless empty result, not the subject of this test.
-            m.select.return_value.eq.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = (
-                []
-            )
+            _eq = m.select.return_value.eq.return_value.eq.return_value
+            _chain = _eq.order.return_value.limit.return_value.execute
+            _chain.return_value.data = []
         elif n == 7:
             # BLOCKER-1: execute() itself returns None (not APIResponse(data=None))
             m.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (

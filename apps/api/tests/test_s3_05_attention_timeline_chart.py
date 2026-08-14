@@ -13,22 +13,23 @@ D109 (docs/DEFECT-REGISTER.md): ces_timeline can only ever cover the last
 _CES_HISTORY_MAX=10 windows -- these tests assert that behavior explicitly rather
 than assuming full-session coverage.
 """
+
 from __future__ import annotations
 
 import json
 import math
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-_SETTINGS_KWARGS = dict(
-    ces_weight_quiz=0.35,
-    ces_weight_teachback=0.25,
-    ces_weight_behavioral=0.20,
-    ces_weight_head_pose=0.12,
-    ces_weight_blink=0.08,
-)
+_SETTINGS_KWARGS = {
+    "ces_weight_quiz": 0.35,
+    "ces_weight_teachback": 0.25,
+    "ces_weight_behavioral": 0.20,
+    "ces_weight_head_pose": 0.12,
+    "ces_weight_blink": 0.08,
+}
 
 _STARTED_AT_ISO = "2026-08-12T10:00:00+00:00"
 _STARTED_AT_UNIX = datetime.fromisoformat(_STARTED_AT_ISO).timestamp()
@@ -154,7 +155,10 @@ async def test_ces_timeline_computed_chronologically_from_same_redis_read():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=redis,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=redis,
         )
 
     assert result.ces_timeline == [
@@ -164,7 +168,10 @@ async def test_ces_timeline_computed_chronologically_from_same_redis_read():
     ]
     # AC-2 non-regression: ces_history_summary is untouched by this extension.
     assert result.ces_history_summary == {
-        "mean": 70.0, "min": 60.0, "max": 80.0, "window_count": 3,
+        "mean": 70.0,
+        "min": 60.0,
+        "max": 80.0,
+        "window_count": 3,
     }
 
 
@@ -191,7 +198,10 @@ async def test_ces_timeline_excludes_legacy_bare_float_entries_but_summary_still
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=redis,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=redis,
         )
 
     assert result.ces_timeline == [{"minute": 1.0, "ces": 80.0}]
@@ -226,7 +236,10 @@ async def test_ces_history_rejects_non_finite_values_instead_of_producing_invali
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=redis,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=redis,
         )
 
     assert result.ces_timeline == [
@@ -249,7 +262,10 @@ async def test_ces_timeline_is_none_when_redis_unavailable():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     assert result.ces_timeline is None
@@ -265,7 +281,10 @@ async def test_ces_timeline_is_none_when_history_empty():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=redis,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=redis,
         )
 
     assert result.ces_timeline is None
@@ -284,13 +303,16 @@ async def test_ces_timeline_capped_at_ten_windows_d109():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=redis,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=redis,
         )
 
     assert len(result.ces_timeline) == 10
 
 
-# â”€â”€ intervention_events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── intervention_events ───────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -314,7 +336,10 @@ async def test_intervention_events_computed_with_minute_and_type():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     assert result.intervention_events == [
@@ -331,12 +356,17 @@ async def test_intervention_events_query_orders_by_created_at_desc_before_limiti
     20 rows, not an arbitrary subset, once a session exceeds the natural bound (D64)."""
     from app.modules.assessment.service import get_session_report
 
-    rows = [{"created_at": "2026-08-12T10:03:00+00:00", "payload": {"intervention_type": "distraction"}}]
+    rows = [
+        {"created_at": "2026-08-12T10:03:00+00:00", "payload": {"intervention_type": "distraction"}}
+    ]
     supabase, redis, patches = _patched(redis=None, intervention_rows=rows)
 
     with patches[0], patches[1], patches[2], patches[3]:
         await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     intervention_query = supabase._captured["intervention_query"]
@@ -352,14 +382,19 @@ async def test_intervention_events_is_none_when_started_at_missing():
     from app.modules.assessment.service import get_session_report
 
     session_row_no_started_at = {**_SESSION_ROW, "started_at": None}
-    rows = [{"created_at": "2026-08-12T10:03:00+00:00", "payload": {"intervention_type": "distraction"}}]
+    rows = [
+        {"created_at": "2026-08-12T10:03:00+00:00", "payload": {"intervention_type": "distraction"}}
+    ]
     supabase, redis, patches = _patched(
         redis=None, intervention_rows=rows, session_row=session_row_no_started_at
     )
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     assert result.intervention_events is None
@@ -379,7 +414,10 @@ async def test_intervention_events_degrades_to_none_when_query_raises():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     assert result.intervention_events is None
@@ -402,7 +440,10 @@ async def test_intervention_events_never_includes_ces_at_trigger():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     for event in result.intervention_events:
@@ -420,7 +461,10 @@ async def test_intervention_events_is_none_when_no_interventions():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     assert result.intervention_events is None
@@ -443,7 +487,10 @@ async def test_intervention_events_skips_row_with_missing_created_at():
 
     with patches[0], patches[1], patches[2], patches[3]:
         result = await get_session_report(
-            session_id="ses-timeline-1", user_id="usr-1", supabase=supabase, redis=None,
+            session_id="ses-timeline-1",
+            user_id="usr-1",
+            supabase=supabase,
+            redis=None,
         )
 
     assert result.intervention_events == [{"minute": 5.0, "type": "confusion"}]

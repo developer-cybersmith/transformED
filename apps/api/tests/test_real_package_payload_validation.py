@@ -27,6 +27,7 @@ from app.modules.assessment.service import grade_quiz, grade_teachback
 
 # ── Schema path ───────────────────────────────────────────────────────────────
 
+
 def _schema_path() -> pathlib.Path:
     # Resolve to absolute at call time — __file__ may be relative at import time.
     return (
@@ -35,6 +36,7 @@ def _schema_path() -> pathlib.Path:
         / "shared"
         / "lesson_package.schema.json"
     )
+
 
 # ── Real UUID IDs matching real pipeline output ───────────────────────────────
 
@@ -110,7 +112,12 @@ def _build_real_lesson_package() -> dict:
                         "question_id": _QUESTION_ID_0,
                         "type": "mcq",
                         "question": "What does thermodynamics study?",
-                        "options": ["Sound waves", "Energy and heat", "Light refraction", "Magnetism"],
+                        "options": [
+                            "Sound waves",
+                            "Energy and heat",
+                            "Light refraction",
+                            "Magnetism",
+                        ],
                         "correct_index": 1,
                         "explanation": "Thermodynamics is the study of energy, heat, and work.",
                         "difficulty": "easy",
@@ -121,7 +128,9 @@ def _build_real_lesson_package() -> dict:
                         "question": "Which law says energy cannot be created or destroyed?",
                         "options": ["Zeroth law", "First law", "Second law", "Third law"],
                         "correct_index": 1,
-                        "explanation": "The First Law of Thermodynamics states conservation of energy.",
+                        "explanation": (
+                            "The First Law of Thermodynamics states conservation of energy."
+                        ),
                         "difficulty": "medium",
                     },
                     {
@@ -130,7 +139,9 @@ def _build_real_lesson_package() -> dict:
                         "question": "What is entropy a measure of?",
                         "options": ["Order", "Disorder", "Pressure", "Volume"],
                         "correct_index": 1,
-                        "explanation": "Entropy is a measure of disorder in a thermodynamic system.",
+                        "explanation": (
+                            "Entropy is a measure of disorder in a thermodynamic system."
+                        ),
                         "difficulty": "hard",
                     },
                 ],
@@ -237,7 +248,8 @@ def _build_supabase_teachback(
     lesson_ex.return_value.data = lesson_data
 
     count_mock = MagicMock()
-    count_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = attempt_count
+    count_chain = count_mock.select.return_value.eq.return_value.eq.return_value
+    count_chain.execute.return_value.count = attempt_count
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = []
@@ -417,7 +429,8 @@ async def test_session_chain_uuid_ids_quiz_and_teachback(mock_to_thread) -> None
 
 @pytest.mark.unit
 async def test_segment_not_found_uuid_lesson_id_in_error(mock_to_thread) -> None:
-    """AC5: When segment_id is absent from the real package, 404 detail contains the UUID lesson_id."""
+    """AC5: When segment_id is absent from the real package, 404 detail contains the
+    UUID lesson_id."""
     from fastapi import HTTPException
 
     supabase = _build_supabase_quiz(

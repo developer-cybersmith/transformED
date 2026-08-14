@@ -259,9 +259,7 @@ async def retry_job(
 
     # Reset both status columns to the same state generate_chapter_lesson
     # writes at initial creation — node_outputs/last_node/cost_usd untouched.
-    supabase.table("lessons").update({"status": "generating"}).eq(
-        "lesson_id", lesson_id
-    ).execute()
+    supabase.table("lessons").update({"status": "generating"}).eq("lesson_id", lesson_id).execute()
     supabase.table("lesson_jobs").update({"status": "pending", "error": None}).eq(
         "lesson_id", lesson_id
     ).execute()

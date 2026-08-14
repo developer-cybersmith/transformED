@@ -133,7 +133,7 @@ def test_session_create_validates_uuid_format() -> None:
         "not-a-uuid",
         "x",
         "123",
-        "00000000-0000-0000-0000-00000000000",   # too short (35 chars)
+        "00000000-0000-0000-0000-00000000000",  # too short (35 chars)
         "00000000-0000-0000-0000-0000000000000",  # too long (37 chars)
         "gggggggg-gggg-gggg-gggg-gggggggggggg",  # invalid hex chars
     ]

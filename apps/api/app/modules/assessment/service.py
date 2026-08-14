@@ -754,6 +754,7 @@ async def compute_ces_from_session_aggregates(
     # Use _CES_HISTORY_MAX-1 as the stop index so this is self-enforced, not
     # dependent solely on the write-side invariant from tutor/service.py.
     from app.modules.tutor.service import _CES_HISTORY_MAX  # noqa: PLC0415
+
     raw_entries: list[str] = await redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
 
     windows: list[float] = []
@@ -973,9 +974,7 @@ async def get_session_report(
         )
         intervention_rows: list[dict[str, Any]] = rows(intervention_rows_resp)
     except Exception:  # noqa: BLE001
-        logger.warning(
-            "intervention rows fetch failed for session=%s", session_id, exc_info=True
-        )
+        logger.warning("intervention rows fetch failed for session=%s", session_id, exc_info=True)
         intervention_rows = []
 
     # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
@@ -1105,9 +1104,7 @@ async def get_session_report(
     ces_timeline: list[dict[str, float]] | None = None
     if redis is not None:
         try:
-            raw_history: list[str] = await redis.lrange(
-                f"session:{session_id}:ces_history", 0, 9
-            )
+            raw_history: list[str] = await redis.lrange(f"session:{session_id}:ces_history", 0, 9)
             ces_vals: list[float] = []
             timeline_points: list[dict[str, float]] = []
             started_at_unix = started_at.timestamp() if started_at is not None else None
@@ -1228,7 +1225,8 @@ def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, fl
         subdim = QUESTION_SUBDIMENSION_MAP.get(ans.question_id)
         if subdim is None:
             continue
-        normalized = (ans.selected_index / 3) * 100  # BOUNDED: denominator=3 matches OnboardingAnswer.selected_index le=3
+        # BOUNDED: denominator=3 matches OnboardingAnswer.selected_index le=3
+        normalized = (ans.selected_index / 3) * 100
         bucket[subdim].append(normalized)
     return {dim: round(sum(vals) / len(vals), 2) if vals else 0.0 for dim, vals in bucket.items()}
 
@@ -1329,13 +1327,16 @@ async def process_onboarding(
         if _question_ids:  # supabase-py drops IN([]) filter for empty list in some versions
             try:
                 del_resp = await asyncio.to_thread(
-                    lambda: supabase.table("onboarding_responses")
+                    lambda: (
+                        supabase.table("onboarding_responses")
                         .delete()
                         .eq("user_id", user_id)
                         .in_("question_id", _question_ids)
                         .execute()
+                    )
                 )
-                if getattr(del_resp, "error", None):  # supabase signals errors via resp.error, not exceptions
+                # supabase signals errors via resp.error, not exceptions
+                if getattr(del_resp, "error", None):
                     logger.warning(
                         "onboarding: rollback of onboarding_responses failed user=%s error=%s — "
                         "user may need manual cleanup to retry",
@@ -1344,14 +1345,14 @@ async def process_onboarding(
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "onboarding: rollback of onboarding_responses failed user=%s (network/client error) — "
-                    "user may need manual cleanup to retry",
+                    "onboarding: rollback of onboarding_responses failed user=%s "
+                    "(network/client error) — user may need manual cleanup to retry",
                     user_id,
                 )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Profile generation temporarily unavailable — please retry.",
-        )
+        ) from None
 
     # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
     dna_row: dict[str, Any] = {
@@ -1377,21 +1378,25 @@ async def process_onboarding(
         if _question_ids:
             try:
                 del_resp5 = await asyncio.to_thread(
-                    lambda: supabase.table("onboarding_responses")
+                    lambda: (
+                        supabase.table("onboarding_responses")
                         .delete()
                         .eq("user_id", user_id)
                         .in_("question_id", _question_ids)
                         .execute()
+                    )
                 )
                 if getattr(del_resp5, "error", None):
                     logger.warning(
-                        "onboarding: step5 rollback of onboarding_responses failed user=%s error=%s",
+                        "onboarding: step5 rollback of onboarding_responses failed "
+                        "user=%s error=%s",
                         user_id,
                         str(del_resp5.error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "onboarding: step5 rollback of onboarding_responses failed user=%s (network error)",
+                    "onboarding: step5 rollback of onboarding_responses failed "
+                    "user=%s (network error)",
                     user_id,
                 )
         raise HTTPException(
@@ -1470,13 +1475,15 @@ async def record_consent(
         if "duplicate" in err_str or "unique" in err_str or "23505" in err_str:
             # Idempotent path — row exists; fetch and return it.
             existing_resp = await asyncio.to_thread(
-                lambda: supabase.table("user_consents")
-                .select("id, user_id, consent_type, policy_version, consented_at")
-                .eq("user_id", user_id)
-                .eq("consent_type", consent_type)
-                .eq("policy_version", policy_version)
-                .limit(1)
-                .execute()
+                lambda: (
+                    supabase.table("user_consents")
+                    .select("id, user_id, consent_type, policy_version, consented_at")
+                    .eq("user_id", user_id)
+                    .eq("consent_type", consent_type)
+                    .eq("policy_version", policy_version)
+                    .limit(1)
+                    .execute()
+                )
             )
             existing_rows: list[dict[str, Any]] = getattr(existing_resp, "data", None) or []
             if existing_rows:
@@ -1610,9 +1617,7 @@ async def write_intervention_event(
                 "message_key": message_key,
             },
         }
-        await asyncio.to_thread(
-            lambda: supabase.table("session_events").insert(row).execute()
-        )
+        await asyncio.to_thread(lambda: supabase.table("session_events").insert(row).execute())
     except Exception as exc:  # noqa: BLE001
         _safe_sid = str(session_id).replace("\n", " ").replace("\r", " ")
         logger.error(

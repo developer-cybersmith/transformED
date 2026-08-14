@@ -103,9 +103,7 @@ def _build_dense_text_long_paragraphs() -> bytes:
     for page in range(12):
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 14)
-        pdf.cell(
-            0, 10, text=f"Long-form Chapter - Page {page + 1}", new_x="LMARGIN", new_y="NEXT"
-        )
+        pdf.cell(0, 10, text=f"Long-form Chapter - Page {page + 1}", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", size=10)
         pdf.multi_cell(0, 5, text=_LOREM * 14, new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
@@ -120,9 +118,7 @@ def _build_dense_text_short_paragraphs() -> bytes:
         pdf.cell(0, 10, text=f"Fragments - Page {page + 1}", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", size=10)
         for i in range(10):
-            pdf.multi_cell(
-                0, 5, text=f"{i + 1}. {_LOREM[:80]}", new_x="LMARGIN", new_y="NEXT"
-            )
+            pdf.multi_cell(0, 5, text=f"{i + 1}. {_LOREM[:80]}", new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
 
@@ -136,9 +132,7 @@ def _build_dense_text_with_headers() -> bytes:
         pdf.cell(0, 10, text=f"Structured Chapter - Page {page + 1}", new_x="LMARGIN", new_y="NEXT")
         for sub in range(4):
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(
-                0, 8, text=f"{page + 1}.{sub + 1} Subsection", new_x="LMARGIN", new_y="NEXT"
-            )
+            pdf.cell(0, 8, text=f"{page + 1}.{sub + 1} Subsection", new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Helvetica", size=10)
             pdf.multi_cell(0, 5, text=_LOREM, new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
@@ -237,8 +231,11 @@ def _build_image_heavy_small() -> bytes:
             y = 25 + (slot // 2) * 60
             pdf.image(img, x=x, y=y, w=85, h=50)
         pdf.multi_cell(
-            0, 6, text="Figure captions describe the illustrations above.",
-            new_x="LMARGIN", new_y="NEXT",
+            0,
+            6,
+            text="Figure captions describe the illustrations above.",
+            new_x="LMARGIN",
+            new_y="NEXT",
         )
     return bytes(pdf.output())
 
@@ -267,9 +264,11 @@ def _build_image_heavy_captioned() -> bytes:
         pdf.set_y(130)
         pdf.set_font("Helvetica", size=9)
         pdf.multi_cell(
-            0, 5,
+            0,
+            5,
             text=f"Figure {page + 1}: {_LOREM * 3}",
-            new_x="LMARGIN", new_y="NEXT",
+            new_x="LMARGIN",
+            new_y="NEXT",
         )
     return bytes(pdf.output())
 

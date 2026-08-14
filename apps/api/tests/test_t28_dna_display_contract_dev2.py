@@ -29,7 +29,6 @@ from starlette.testclient import TestClient
 from app.dependencies import get_current_user, get_settings
 from app.modules.assessment.prompts import DPDP_DISCLAIMER, ONBOARDING_PROFILE_SYSTEM_PROMPT
 from app.modules.assessment.router import router
-from app.modules.assessment.schemas import OnboardingResult
 
 # ── Shared constants ───────────────────────────────────────────────────────────
 
@@ -76,8 +75,9 @@ def _badge_contains_banned_term(label: str, banned_term: str) -> bool:
     "sequential" does not match "eq". Multi-word phrases like "intelligence
     quotient" are matched as a complete phrase.
     """
-    pattern = r'\b' + re.escape(banned_term) + r'\b'
+    pattern = r"\b" + re.escape(banned_term) + r"\b"
     return bool(re.search(pattern, label.lower()))
+
 
 # Valid DNA service-layer return dict — includes all nine dimension fields to prove AC1.
 # The real get_learner_dna_data() never includes these (query selects only 5 columns), but
@@ -150,6 +150,7 @@ _ONBOARDING_RESULT_DICT: dict = {
 
 # ── FastAPI test apps ──────────────────────────────────────────────────────────
 
+
 async def _fake_user() -> dict:
     return {"sub": "user-001", "email": "test@example.com"}
 
@@ -170,8 +171,9 @@ _client = TestClient(_app, raise_server_exceptions=False)
 
 # ── AC3 / AC4 — Source-level brand guards ─────────────────────────────────────
 
+
 @pytest.mark.unit
-def test_dpdp_disclaimer_uses_hie_not_transformED() -> None:
+def test_dpdp_disclaimer_uses_hie_not_transformed() -> None:
     """AC3: DPDP_DISCLAIMER must use 'HIE Learner DNA', never 'TransformED'.
 
     D72 was confirmed live (2026-08-13) and fixed in Story 3-54. This test
@@ -194,7 +196,7 @@ def test_dpdp_disclaimer_contains_statutory_text() -> None:
 
 
 @pytest.mark.unit
-def test_onboarding_system_prompt_uses_hie_not_transformED() -> None:
+def test_onboarding_system_prompt_uses_hie_not_transformed() -> None:
     """AC4: ONBOARDING_PROFILE_SYSTEM_PROMPT must use 'HIE', never 'TransformED'.
 
     D72 regression guard — the LLM system prompt tells the model to mention the
@@ -210,6 +212,7 @@ def test_onboarding_system_prompt_uses_hie_not_transformED() -> None:
 
 
 # ── AC8 / AC9 / AC10 / AC1 / AC7 / AC5 — GET /user/dna ──────────────────────
+
 
 @pytest.mark.unit
 def test_get_dna_returns_200_for_user_with_row() -> None:
@@ -228,7 +231,8 @@ def test_get_dna_returns_200_for_user_with_row() -> None:
     ):
         resp = _client.get("/api/assessment/user/dna")
     assert resp.status_code == 200, (
-        f"AC8: expected 200 for authenticated user with a DNA row. Got {resp.status_code}: {resp.text}"
+        f"AC8: expected 200 for authenticated user with a DNA row. "
+        f"Got {resp.status_code}: {resp.text}"
     )
 
 
@@ -251,8 +255,14 @@ def test_get_dna_response_shape_matches_learnerdna_schema() -> None:
 
     assert resp.status_code == 200
     body = resp.json()
-    for required_field in ("user_id", "badge_labels", "profile_text", "session_count",
-                           "reassessment_due", "last_updated"):
+    for required_field in (
+        "user_id",
+        "badge_labels",
+        "profile_text",
+        "session_count",
+        "reassessment_due",
+        "last_updated",
+    ):
         assert required_field in body, (
             f"AC10: required field '{required_field}' missing from GET /user/dna response. "
             f"Dev 2 depends on this field for the DNA profile card."
@@ -357,12 +367,18 @@ def test_get_dna_badge_labels_contain_no_iq_eq_sq_language() -> None:
     row_with_all_badges = {
         **_FULL_DNA_ROW,
         "badge_labels": [
-            "Pattern Thinker", "Goal Setter", "Persistent Learner",
-            "Curious Explorer", "Collaborative Mind", "Self-Directed",
-            "Resilient Learner", "Fast Processor", "Logical Thinker",
-            "Technique Mastery",   # contains 'iq' substring — must NOT be flagged
+            "Pattern Thinker",
+            "Goal Setter",
+            "Persistent Learner",
+            "Curious Explorer",
+            "Collaborative Mind",
+            "Self-Directed",
+            "Resilient Learner",
+            "Fast Processor",
+            "Logical Thinker",
+            "Technique Mastery",  # contains 'iq' substring — must NOT be flagged
             "Sequential Thinker",  # contains 'eq' substring — must NOT be flagged
-            "Unique Learner",      # contains 'iq' substring — must NOT be flagged
+            "Unique Learner",  # contains 'iq' substring — must NOT be flagged
         ],
     }
     with (
@@ -384,9 +400,9 @@ def test_get_dna_badge_labels_contain_no_iq_eq_sq_language() -> None:
     for label in badge_labels:
         for banned_term in _BANNED_BADGE_TERMS:
             assert not _badge_contains_banned_term(label, banned_term), (
-                f"AC5 violated: badge_label '{label}' contains banned clinical term '{banned_term}' "
-                f"(whole-word match). CLAUDE.md §Learner DNA rules prohibit IQ/EQ/SQ language in "
-                f"any student-facing label."
+                f"AC5 violated: badge_label '{label}' contains banned clinical term "
+                f"'{banned_term}' (whole-word match). CLAUDE.md §Learner DNA rules prohibit "
+                f"IQ/EQ/SQ language in any student-facing label."
             )
 
 
@@ -452,6 +468,7 @@ def test_get_dna_profile_text_uses_hie_brand() -> None:
 
 # ── AC2 / AC6 / AC5 — POST /onboarding/submit ────────────────────────────────
 
+
 @pytest.mark.unit
 def test_onboarding_response_has_no_raw_dimension_scores() -> None:
     """AC2: POST /onboarding/submit response must not expose raw numeric dimension values.
@@ -467,8 +484,8 @@ def test_onboarding_response_has_no_raw_dimension_scores() -> None:
     # Real-mechanism coverage: service-layer tests verify OnboardingResult never carries these.
     """
     mock_redis = AsyncMock()
-    mock_redis.get.return_value = None   # No reassessment flag
-    mock_redis.set.return_value = True   # Lock acquired successfully
+    mock_redis.get.return_value = None  # No reassessment flag
+    mock_redis.set.return_value = True  # Lock acquired successfully
     mock_redis.delete.return_value = None
 
     with (
@@ -554,11 +571,13 @@ def test_onboarding_badge_labels_contain_no_iq_eq_sq_language() -> None:
         for banned_term in _BANNED_BADGE_TERMS:
             assert not _badge_contains_banned_term(label, banned_term), (
                 f"AC5 violated: onboarding badge_label '{label}' contains banned term "
-                f"'{banned_term}' (whole-word). CLAUDE.md §Learner DNA rules prohibit IQ/EQ/SQ language."
+                f"'{banned_term}' (whole-word). CLAUDE.md §Learner DNA rules prohibit "
+                f"IQ/EQ/SQ language."
             )
 
 
 # ── P7: Redis failure + valid DNA row — GET /user/dna degrades gracefully ────
+
 
 @pytest.mark.unit
 def test_get_dna_returns_200_when_redis_unavailable_but_dna_row_exists() -> None:
@@ -597,6 +616,7 @@ def test_get_dna_returns_200_when_redis_unavailable_but_dna_row_exists() -> None
 
 # ── P8: Empty badge_labels — GET /user/dna ───────────────────────────────────
 
+
 @pytest.mark.unit
 def test_get_dna_returns_200_with_empty_badge_labels() -> None:
     """P8: GET /user/dna must return 200 with badge_labels=[] when no badges earned.
@@ -629,6 +649,7 @@ def test_get_dna_returns_200_with_empty_badge_labels() -> None:
 
 
 # ── DN-1 resolved: profile_text=None — valid null state for Dev 2 ─────────
+
 
 @pytest.mark.unit
 def test_get_dna_returns_200_when_profile_text_is_null() -> None:
@@ -663,13 +684,16 @@ def test_get_dna_returns_200_when_profile_text_is_null() -> None:
         f"Got {resp.status_code}: {resp.text}"
     )
     body = resp.json()
-    assert "profile_text" in body, "DN-1: profile_text key must be present in response (even if null)."
+    assert "profile_text" in body, (
+        "DN-1: profile_text key must be present in response (even if null)."
+    )
     assert body["profile_text"] is None, (
         "DN-1: profile_text must be returned as null (not omitted or coerced to empty string)."
     )
 
 
 # ── DN-2 resolved: forward guard — no nested dimension container ──────────────
+
 
 @pytest.mark.unit
 def test_get_dna_response_has_no_dimensions_container_key() -> None:

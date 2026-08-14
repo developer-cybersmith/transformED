@@ -145,9 +145,7 @@ def test_an_es256_token_keys_the_bucket_by_user_not_ip(monkeypatch: pytest.Monke
     fake_signing_key.key = private_key.public_key()
     fake_jwks_client = MagicMock()
     fake_jwks_client.get_signing_key_from_jwt.return_value = fake_signing_key
-    monkeypatch.setattr(
-        dependencies_module, "_get_jwks_client", lambda settings: fake_jwks_client
-    )
+    monkeypatch.setattr(dependencies_module, "_get_jwks_client", lambda settings: fake_jwks_client)
 
     assert _get_user_key(_request(token)) == f"user:{SUB}"
 

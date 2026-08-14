@@ -24,6 +24,7 @@ INSERT-first idempotency pattern (L2-1 fix):
   "duplicate key"), it falls back to a SELECT of the existing row. This is atomically
   correct — a SELECT-then-INSERT pattern would race under concurrent requests.
 """
+
 from __future__ import annotations
 
 import asyncio

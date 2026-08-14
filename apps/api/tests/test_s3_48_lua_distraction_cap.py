@@ -92,9 +92,7 @@ def test_can_intervene_distraction_source_no_separate_exists_get():
     assert "redis.exists(" not in src, (
         "_can_intervene_distraction must not call redis.exists separately"
     )
-    assert "redis.get(" not in src, (
-        "_can_intervene_distraction must not call redis.get separately"
-    )
+    assert "redis.get(" not in src, "_can_intervene_distraction must not call redis.get separately"
 
 
 def test_no_non_atomic_two_step_in_can_intervene_distraction():
@@ -295,10 +293,10 @@ def test_intervening_node_source_uses_nx_for_cooldown():
 def test_intervening_node_source_uses_nx_for_fatigue():
     """AC 9 (atomicity fix): _can_intervene_fatigue in service.py uses SET-NX for
     tutor_fatigue_fired; intervening_node does NOT re-write it (it's already set)."""
-    from app.modules.tutor.state_machine.graph import intervening_node
-
     # _can_intervene_fatigue in graph.py must own the SET-NX for tutor_fatigue_fired
     import app.modules.tutor.state_machine.graph as _graph  # noqa: PLC0415
+    from app.modules.tutor.state_machine.graph import intervening_node
+
     guard_src = inspect.getsource(_graph._can_intervene_fatigue)  # noqa: SLF001
     assert "tutor_fatigue_fired" in guard_src, (
         "_can_intervene_fatigue must reference tutor_fatigue_fired key"

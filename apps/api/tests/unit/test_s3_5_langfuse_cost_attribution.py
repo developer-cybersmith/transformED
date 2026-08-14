@@ -115,9 +115,7 @@ async def test_complete_structured_records_cost_details_matching_priced_rates() 
 
     langfuse, generation = _working_langfuse_client()
     client = MagicMock()
-    client.beta.chat.completions.parse = AsyncMock(
-        return_value=_structured_response(2000, 1000)
-    )
+    client.beta.chat.completions.parse = AsyncMock(return_value=_structured_response(2000, 1000))
 
     mod = "app.providers.llm.openai"
     with (

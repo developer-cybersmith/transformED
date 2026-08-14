@@ -135,9 +135,7 @@ async def test_init_session_state_writes_session_start_ts_to_redis():
         await _init_session_state("sess-001")
 
     ts_calls = [
-        c
-        for c in mock_redis.set.call_args_list
-        if "session:sess-001:session_start_ts" in str(c)
+        c for c in mock_redis.set.call_args_list if "session:sess-001:session_start_ts" in str(c)
     ]
     assert len(ts_calls) == 1, f"Expected 1 session_start_ts SET, got {len(ts_calls)}"
     args, kwargs = ts_calls[0]
@@ -163,9 +161,7 @@ async def test_init_session_state_session_start_ts_has_86400_ttl():
         await _init_session_state("sess-002")
 
     ts_calls = [
-        c
-        for c in mock_redis.set.call_args_list
-        if "session:sess-002:session_start_ts" in str(c)
+        c for c in mock_redis.set.call_args_list if "session:sess-002:session_start_ts" in str(c)
     ]
     assert len(ts_calls) == 1
     args, kwargs = ts_calls[0]
@@ -331,7 +327,9 @@ async def test_fatigue_detected_dispatched_after_15_minute_floor_with_low_blink_
         result = await process_attention_signal("sess-001", _NORMAL_SIGNAL)
 
     fatigue_calls = [c for c in mock_dispatch.call_args_list if "fatigue_detected" in str(c)]
-    assert len(fatigue_calls) == 1, "fatigue_detected must be dispatched exactly once after 15-min floor"
+    assert len(fatigue_calls) == 1, (
+        "fatigue_detected must be dispatched exactly once after 15-min floor"
+    )
     assert result.intervention_dispatched is True
 
 
@@ -643,9 +641,7 @@ def test_blink_history_lrange_uses_end_index_1_not_minus_1():
     assert "head_pose_history" in src
     # lrange with -1 on either history is unbounded and prohibited by AC12 / CLAUDE.md rule
     bad = re.compile(r"lrange.*(?:blink_history|head_pose_history).*-1")
-    assert not bad.search(src), (
-        "lrange for fatigue histories must use bounded end index 1, not -1"
-    )
+    assert not bad.search(src), "lrange for fatigue histories must use bounded end index 1, not -1"
 
 
 # ── AC 13: session_start_ts missing -> fail-closed ───────────────────────────

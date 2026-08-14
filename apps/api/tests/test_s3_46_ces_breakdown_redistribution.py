@@ -14,6 +14,7 @@ import pytest
 
 # ── Settings mock ─────────────────────────────────────────────────────────────
 
+
 def _settings(
     *,
     quiz: float = 0.35,
@@ -42,6 +43,7 @@ _BLINK_N = 0.4
 
 # ── AC 1: function is importable as a module-level name ───────────────────────
 
+
 @pytest.mark.unit
 def test_function_is_importable():
     """AC 1: _build_ces_breakdown importable from assessment.service."""
@@ -51,6 +53,7 @@ def test_function_is_importable():
 
 
 # ── AC 2 & 11: Nominal path — all 5 expected contributions, 4dp rounding ─────
+
 
 @pytest.mark.unit
 def test_nominal_path_quiz_contribution():
@@ -160,6 +163,7 @@ def test_nominal_path_full_dict():
 
 # ── AC 3, 4, 11: Redistributed path when teachback_normalised=None ────────────
 
+
 @pytest.mark.unit
 def test_redistributed_path_quiz_contribution():
     """AC 3: quiz = quiz_accuracy * (ces_weight_quiz / remaining) * 100 when teachback=None."""
@@ -250,9 +254,7 @@ def test_redistributed_path_blink_contribution():
         blink_avg=_BLINK_N,
         settings=s,
     )
-    assert result["blink"] == pytest.approx(
-        round(_BLINK_N * (0.08 / remaining) * 100, 4), rel=1e-4
-    )
+    assert result["blink"] == pytest.approx(round(_BLINK_N * (0.08 / remaining) * 100, 4), rel=1e-4)
 
 
 @pytest.mark.unit
@@ -278,6 +280,7 @@ def test_redistributed_path_full_dict():
 
 # ── AC 5: remaining = 1.0 - ces_weight_teachback ─────────────────────────────
 
+
 @pytest.mark.unit
 def test_redistributed_factor_uses_settings_weight():
     """AC 5: redistribution factor = 1.0 - ces_weight_teachback (env-var tunable)."""
@@ -299,6 +302,7 @@ def test_redistributed_factor_uses_settings_weight():
 
 # ── AC 6: degenerate guard — remaining <= 0 → all zeros ──────────────────────
 
+
 @pytest.mark.unit
 def test_degenerate_guard_remaining_zero():
     """AC 6: if ces_weight_teachback >= 1.0, return all zeros (no divide-by-zero)."""
@@ -318,6 +322,7 @@ def test_degenerate_guard_remaining_zero():
 
 
 # ── AC 7: output keys are exactly the 5 CES signals ──────────────────────────
+
 
 @pytest.mark.unit
 def test_output_keys_exactly_five_nominal():
@@ -355,6 +360,7 @@ def test_output_keys_exactly_five_redistributed():
 
 # ── AC 8: get_session_report delegates to _build_ces_breakdown ────────────────
 
+
 @pytest.mark.unit
 def test_get_session_report_delegates_to_helper():
     """AC 8: get_session_report source must call _build_ces_breakdown, not inline the formula."""
@@ -367,6 +373,7 @@ def test_get_session_report_delegates_to_helper():
 
 
 # ── AC 11: rounding to 4 decimal places ──────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_rounding_to_4dp_nominal():
@@ -405,6 +412,7 @@ def test_rounding_to_4dp_redistributed():
 
 
 # ── AC 12: teachback_normalised=None when teachback_count=0 (integration) ─────
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -514,11 +522,13 @@ def _build_minimal_supabase(*, quiz_rows: list, tb_rows: list) -> MagicMock:
         elif n == 3:
             # quiz_attempts: .select(...).eq(...).limit(500).execute()
             _s.return_value.data = quiz_rows
-            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = quiz_rows
+            _lim = m.select.return_value.eq.return_value.limit.return_value.execute
+            _lim.return_value.data = quiz_rows
         elif n == 4:
             # teachback_attempts: .select(...).eq(...).limit(50).execute()
             _s.return_value.data = tb_rows
-            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = tb_rows
+            _lim = m.select.return_value.eq.return_value.limit.return_value.execute
+            _lim.return_value.data = tb_rows
         elif n == 5:
             _s2.return_value.count = 0
         elif n == 6:
@@ -526,7 +536,8 @@ def _build_minimal_supabase(*, quiz_rows: list, tb_rows: list) -> MagicMock:
         elif n == 7:
             # session_events/dna_update: .select(...).eq(...).eq(...).limit(20).execute()
             _s2.return_value.data = []
-            m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+            _lim2 = m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute
+            _lim2.return_value.data = []
         return m
 
     mock.table.side_effect = _table

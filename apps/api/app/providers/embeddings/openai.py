@@ -175,7 +175,9 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
                 _safe_trace(generation.end)
 
     async def _maybe_accumulate_cost(
-        self, total_tokens: int, generation: Any | None = None  # noqa: ANN401
+        self,
+        total_tokens: int,
+        generation: Any | None = None,  # noqa: ANN401
     ) -> None:
         if self._lesson_id is None:
             return

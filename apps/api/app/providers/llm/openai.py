@@ -362,9 +362,7 @@ class OpenAILLMProvider(LLMProvider):
         # is visible on the span itself, not just in cost_tracker's Redis total.
         if generation is not None:
             _safe_trace(
-                lambda: generation.update(
-                    cost_details={"input": input_cost, "output": output_cost}
-                )
+                lambda: generation.update(cost_details={"input": input_cost, "output": output_cost})
             )
 
         from app.core.cost_tracker import accumulate_cost, check_ceiling  # lazy to avoid circular

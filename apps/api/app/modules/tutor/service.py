@@ -80,9 +80,7 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
         # Reject out-of-range: ws.ts SYNC-B freeze (Story 4-27) locks the scale to [0.0, 1.0].
         # ces.py clamps downstream, but catching here surfaces producer bugs immediately.
         if f < 0.0 or f > 1.0:
-            raise ValueError(
-                f"attention_signal field {key!r} must be in [0.0, 1.0], got {f!r}"
-            )
+            raise ValueError(f"attention_signal field {key!r} must be in [0.0, 1.0], got {f!r}")
         return f
 
     def _optional_float(key: str) -> float | None:
@@ -293,8 +291,8 @@ async def start_session(session_id: str) -> None:
 # TutorInterventionCard.tsx's dismiss (30s auto-dismiss and manual x) only cleared local React
 # state, never told the server, so every session's FIRST intervention permanently stuck the FSM in
 # INTERVENING — useAttentionMonitor.ts's flushWindow gates on `tutorStateRef.current ===
-# 'TEACHING'`, so CES monitoring silently died for the rest of the session. TutorInterventionCard.tsx
-# sends this event on dismiss.
+# 'TEACHING'`, so CES monitoring silently died for the rest of the session.
+# TutorInterventionCard.tsx sends this event on dismiss.
 _CLIENT_DRIVABLE_EVENTS = frozenset(
     {
         "segment_complete",
@@ -462,17 +460,11 @@ async def process_attention_signal(
             await redis.lpush(
                 f"session:{session_id}:behavioral_history", normalized.behavioral_score
             )
-            await redis.ltrim(
-                f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1
-            )
+            await redis.ltrim(f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1)
             await redis.expire(f"session:{session_id}:behavioral_history", _CES_WINDOW_TTL)  # D64
         if normalized.head_pose_score is not None:
-            await redis.lpush(
-                f"session:{session_id}:head_pose_history", normalized.head_pose_score
-            )
-            await redis.ltrim(
-                f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1
-            )
+            await redis.lpush(f"session:{session_id}:head_pose_history", normalized.head_pose_score)
+            await redis.ltrim(f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1)
             await redis.expire(f"session:{session_id}:head_pose_history", _CES_WINDOW_TTL)  # D64
         if normalized.blink_rate is not None:
             await redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate)
@@ -584,9 +576,7 @@ async def process_attention_signal(
                                 },
                             )
                         except Exception:
-                            logger.exception(
-                                "tutor_intervene delivery failed for %s", session_id
-                            )
+                            logger.exception("tutor_intervene delivery failed for %s", session_id)
 
     # ── Fatigue trigger (D7, S3-45) ──────────────────────────────────────────
     # Only evaluate when TEACHING and no intervention already dispatched this signal.
@@ -622,13 +612,9 @@ async def process_attention_signal(
                 )
                 primary_trigger = (
                     len(blink_hist) >= 2
-                    and all(
-                        float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist
-                    )
+                    and all(float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist)
                     and len(hp_hist) >= 2
-                    and all(
-                        float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist
-                    )
+                    and all(float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist)
                 )
                 exhaustion_fallback = (
                     normalized.blink_rate is None
@@ -656,87 +642,9 @@ async def process_attention_signal(
                         )
                         intervention_dispatched = True
                         fatigue_msg = fatigue_result.get("intervention_message")
-                        if (
-                            fatigue_result.get("current_state") == "INTERVENING" and fatigue_msg
-                        ):
-                            try:
-                                from app.core.websocket import manager  # noqa: PLC0415
-
-                                await manager.send(
-                                    session_id,
-                                    {
-                                        "type": "tutor_intervene",
-                                        "payload": {
-                                            "session_id": session_id,
-                                            "type": "fatigue",
-                                            "message": fatigue_msg,
-                                        },
-                                    },
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "tutor_intervene (fatigue) delivery failed for %s",
-                                    session_id,
-                                )
-
-    # ── Fatigue trigger (D7, S3-45) ──────────────────────────────────────────
-    # Only evaluate when TEACHING and no intervention already dispatched this signal.
-    # Primary: blink+head_pose both below thresholds for 2 consecutive windows AND
-    #   session duration >= ces_fatigue_min_session_seconds.
-    # Exhaustion fallback: all three MediaPipe signals None AND duration floor met.
-    # Once-per-session: _can_intervene_fatigue checks tutor_fatigue_fired:{session_id}.
-    if state_raw == "TEACHING" and not intervention_dispatched:
-        import time as _time  # noqa: PLC0415
-
-        session_start_ts_raw = await redis.get(f"session:{session_id}:session_start_ts")
-        if session_start_ts_raw is not None:
-            try:
-                duration_s = _time.time() - float(session_start_ts_raw)
-            except (TypeError, ValueError):
-                duration_s = 0.0
-            if duration_s >= settings.ces_fatigue_min_session_seconds:
-                # BOUNDED: end=1 → at most 2 entries (AC12 / CLAUDE.md unbounded-query rule)
-                blink_hist = await cast(
-                    "Awaitable[list[Any]]",
-                    redis.lrange(f"session:{session_id}:blink_history", 0, 1),
-                )
-                hp_hist = await cast(
-                    "Awaitable[list[Any]]",
-                    redis.lrange(f"session:{session_id}:head_pose_history", 0, 1),
-                )
-                primary_trigger = (
-                    len(blink_hist) >= 2
-                    and all(float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist)
-                    and len(hp_hist) >= 2
-                    and all(float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist)
-                )
-                exhaustion_fallback = (
-                    normalized.blink_rate is None
-                    and normalized.head_pose_score is None
-                    and normalized.behavioral_score is None
-                )
-                if primary_trigger or exhaustion_fallback:
-                    from app.modules.tutor.state_machine.graph import _can_intervene_fatigue
-
-                    if await _can_intervene_fatigue(session_id):
-                        logger.info(
-                            "[tutor:%s] fatigue trigger (primary=%s exhaustion=%s)"
-                            " — dispatching fatigue_detected",
-                            session_id,
-                            primary_trigger,
-                            exhaustion_fallback,
-                        )
-                        seg_msgs = await _segment_intervention_messages(session_id, redis)
-                        fatigue_result = await dispatch_event(
-                            session_id,
-                            "fatigue_detected",
-                            payload={"intervention_messages": seg_msgs},
-                        )
-                        intervention_dispatched = True
-                        fatigue_msg = fatigue_result.get("intervention_message")
                         if fatigue_result.get("current_state") == "INTERVENING" and fatigue_msg:
                             try:
-                                from app.core.websocket import manager
+                                from app.core.websocket import manager  # noqa: PLC0415
 
                                 await manager.send(
                                     session_id,

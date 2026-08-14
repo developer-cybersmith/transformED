@@ -668,14 +668,11 @@ def _make_fallback_supabase(*, lesson_id: str | None, content: dict | None = Non
 
     def _table(name: str) -> MagicMock:
         t = MagicMock()
+        chain = t.select.return_value.eq.return_value.maybe_single.return_value.execute
         if name == "sessions":
-            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
-                {"lesson_id": lesson_id} if lesson_id else None
-            )
+            chain.return_value.data = {"lesson_id": lesson_id} if lesson_id else None
         elif name == "lessons":
-            t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = (
-                {"content": content} if content is not None else None
-            )
+            chain.return_value.data = {"content": content} if content is not None else None
         return t
 
     sb.table.side_effect = _table
@@ -718,7 +715,9 @@ async def test_g14_fallback_populates_the_cache_for_the_next_read(mocker):
     await _seed_learner_tier("sess-g14")
 
     set_calls = [
-        c for c in mock_redis.set.call_args_list if c.args and c.args[0] == "lesson_package:sess-g14"
+        c
+        for c in mock_redis.set.call_args_list
+        if c.args and c.args[0] == "lesson_package:sess-g14"
     ]
     assert len(set_calls) == 1, "the fetched package must be written back under the same cache key"
     assert json.loads(set_calls[0].args[1]) == pkg_content
