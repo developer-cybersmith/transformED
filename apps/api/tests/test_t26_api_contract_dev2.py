@@ -83,7 +83,7 @@ _denied_client = TestClient(_denied_app, raise_server_exceptions=False)
 
 # ── Valid payload templates ───────────────────────────────────────────────────
 
-_VALID_SESSION_PAYLOAD = {"lesson_id": "lesson-001"}
+_VALID_SESSION_PAYLOAD = {"lesson_id": "123e4567-e89b-12d3-a456-426614174000"}
 
 _VALID_QUIZ_PAYLOAD = {
     "session_id": "sess-001",
@@ -155,7 +155,7 @@ def test_sessions_extra_user_id_body_not_rejected(monkeypatch) -> None:
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post(
             "/api/assessment/sessions",
-            json={"lesson_id": "lesson-001", "user_id": "attacker-id"},
+            json={"lesson_id": "123e4567-e89b-12d3-a456-426614174000", "user_id": "attacker-id"},
         )
 
     assert resp.status_code == 201, (
@@ -189,7 +189,7 @@ def test_user_id_body_field_never_trusted(monkeypatch) -> None:
     with patch("app.core.db.get_supabase", return_value=MagicMock()):
         resp = _client.post(
             "/api/assessment/sessions",
-            json={"lesson_id": "lesson-001", "user_id": "attacker-id"},
+            json={"lesson_id": "123e4567-e89b-12d3-a456-426614174000", "user_id": "attacker-id"},
         )
 
     assert resp.status_code == 201

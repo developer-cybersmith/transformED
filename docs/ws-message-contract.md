@@ -209,8 +209,9 @@ may arrive before or after any FSM/ack frame. Do not assume a global message ord
 - any other processing exception → caught and logged (`websocket.py:281`).
 
 In all three cases the socket stays open but the client gets **silence** — no `attention_ack`, no `error`.
-**Dev 2 must not block awaiting an ack after every signal.** (Note: scores are type-checked but **not**
-range-validated — any finite float is accepted; there is no out-of-range rejection.)
+**Dev 2 must not block awaiting an ack after every signal.** (Note: scores are type-checked, finiteness-checked,
+**and** range-validated — any value outside `[0.0, 1.0]` raises `ValueError` and is dropped silently at the
+same layer as NaN/Inf, per the SYNC-B scale freeze in `ws.ts` — Story 4-27, 2026-08-14.)
 
 ## Connection lifecycle — first connect vs reconnect
 

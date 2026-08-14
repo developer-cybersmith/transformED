@@ -128,20 +128,20 @@ def _supabase_mock(
                 tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
             ) = _resp(session_row)
         elif name == "quiz_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp(
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp(
                 quiz_rows if quiz_rows is not None else []
             )
         elif name == "teachback_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp(
+            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp(
                 tb_rows if tb_rows is not None else []
             )
         elif name == "session_events":
             if events_raises:
-                tbl.select.return_value.eq.return_value.limit.return_value.execute.side_effect = (
+                tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.side_effect = (
                     Exception("session_events DB down")
                 )
             else:
-                tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
+                tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = (
                     _resp(event_rows)
                 )
             # Wire INSERT chain so write_system_events (called by record_dna_growth in Step 6)
