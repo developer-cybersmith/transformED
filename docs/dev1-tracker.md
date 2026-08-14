@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 20 | 0 | 3 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 21 | 0 | 2 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **77** | **63** | **1** | **13** |
+| **Totals** | | **77** | **64** | **1** | **12** |
 
 ---
 
@@ -768,10 +768,36 @@ Every node must:
 
 > **Goal:** Production quality — eval harness at scale, full observability, admin panel live.
 
-- [ ] **S3-1 Eval harness expanded to 20 PDFs**
+- [x] **S3-1 Eval harness expanded to 20 PDFs** — ✓ 2026-08-14
   - `apps/api/tests/evals/`
   - Cover all failure modes: dense text, table-heavy, image-heavy, short (≤10 pages), long (≥100 pages)
   - **AC:** All 20 PDFs produce valid `LessonPackage`; no pipeline crash; scores tracked in Langfuse
+  - **Harness capability delivered; live run + human-review gate NOT run — see below.** 4 real,
+    meaningfully-distinct variants per category (not lazy duplicates): short gets 1/3/10-page +
+    sparse (testing the ≤10p boundary itself), long gets 100/150/250/400-page (testing the ≥100p
+    boundary at real scale, capped at 400 deliberately — this harness is for cheap/frequent
+    regression-catching, not exhaustive scale testing, that's L1's job), dense_text/table_heavy/
+    image_heavy each get 4 variants stressing a different real edge (long vs. short paragraphs,
+    wide vs. tall tables, captioned vs. grid images). Added a guard test keeping `_EVAL_PDF_KEYS`
+    (runner.py) and `_GENERATORS` (generate_eval_pdfs.py) in sync — two independently-edited lists
+    of the same names is exactly the drift pattern CLAUDE.md's binding rule 5 already names.
+  - **Real hidden coupling found and fixed:** `test_extract_page_bounds.py` and
+    `test_extract_text_only_mode.py` referenced the OLD 5 fixture filenames directly and
+    self-skipped (no failure, no error) when the rename removed them — caught only by diffing the
+    skip count against the branch's true baseline (85→110 skipped), not by the test run itself
+    going red. Repointed all 5 constants at the equivalent new-named variant; `LONG_PDF` had no
+    exact-120-page match among the new variants, repointed to `long_150page.pdf` with `LONG_PAGES`
+    updated to match (every assertion already reads the constant, not a hardcoded 120 — a rename,
+    not a semantic change, confirmed by running the affected tests). Branch
+    `sprint3/s3-1-eval-harness-20-pdfs`, Story 3-57.
+  - Tests: new drift-guard + page-count-boundary tests in `test_eval_runner.py`, RED-GREEN
+    verified. Zero new regression failures (76/76, byte-for-byte identical failing set vs. branch
+    base, verified via throwaway worktree).
+  - **Not yet done, stated up front in the story:** the actual live run
+    (`pytest tests/evals/test_live_run.py --run-live-eval`) is blocked on Sarvam credits (same
+    402 as L1, confirmed live). The PRD's "15 of 20 PDFs rated useful to a student" gate
+    (`.claude/commands/run-evals.md`) is a human judgment call, not something this story
+    automates. Both remain the explicit next step once credits return.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
