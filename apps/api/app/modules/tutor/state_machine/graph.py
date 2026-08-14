@@ -118,6 +118,13 @@ class TutorMachineState(TypedDict, total=False):
     intervention_type: str | None
     intervention_message: str | None  # pre-generated message selected at intervention time
     error: str | None
+    # NOTE (mypy fix, no behavior change): these two are read via state.get(...) in
+    # intervening_node below but no caller currently populates them on dispatch_event's
+    # input_state (see service.py's distraction_detected/fatigue_detected dispatch calls) —
+    # write_intervention_event today always receives window_index=0 / ces_at_trigger=0.0.
+    # Flagged separately; not fixed here (out of scope for a type-annotation pass).
+    window_index: int
+    last_ces: float
 
 
 # ── Guard functions ───────────────────────────────────────────────────────────
@@ -228,7 +235,7 @@ async def teaching_node(state: TutorMachineState) -> TutorMachineState:
 async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     """INTERVENING state: overlay intervention is displayed."""
     session_id = state.get("session_id", "")
-    intervention_type = state.get("intervention_type", "distraction")
+    intervention_type = state.get("intervention_type") or "distraction"
     logger.info("[tutor:%s] → INTERVENING (type=%s)", session_id, intervention_type)
 
     import time as _time  # noqa: PLC0415
@@ -316,7 +323,7 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
     try:
         import time as _time  # noqa: PLC0415
 
-        from app.core.redis import get_redis  # type: ignore[import]  # noqa: PLC0415
+        from app.core.redis import get_redis  # noqa: PLC0415
 
         redis = get_redis()
         qa_raw = await redis.get(f"session:{session_id}:qa_phase_seconds")

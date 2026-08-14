@@ -885,8 +885,9 @@ async def get_session_report(
                 .execute()
             )
         )
-        if _tier_resp.data and _tier_resp.data.get("tier") in _TIER_LABELS:
-            tier = _tier_resp.data["tier"]
+        _tier_row = single_row(_tier_resp)
+        if _tier_row and _tier_row.get("tier") in _TIER_LABELS:
+            tier = _tier_row["tier"]
     tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
@@ -1049,10 +1050,10 @@ async def get_session_report(
             .execute()
         )
     )
-    if _dna_resp is not None and _dna_resp.data:
+    _dna_row = single_row(_dna_resp)
+    if _dna_row:
         _dim_labels: dict[str, str] = {
-            dim: _score_to_label(float(_dna_resp.data.get(dim) or 0.0))
-            for dim in ALL_NINE_DIMENSIONS
+            dim: _score_to_label(float(_dna_row.get(dim) or 0.0)) for dim in ALL_NINE_DIMENSIONS
         }
 
         # Step 9 — session growth events (dna_update) for delta-based growth labels
@@ -1069,7 +1070,7 @@ async def get_session_report(
             )
         )
         _delta_map: dict[str, float | None] = {}
-        for evt in _events_resp.data or []:
+        for evt in rows(_events_resp):
             payload = evt.get("payload")
             if not isinstance(payload, dict):
                 continue
@@ -1336,12 +1337,13 @@ async def process_onboarding(
                     )
                 )
                 # supabase signals errors via resp.error, not exceptions
-                if getattr(del_resp, "error", None):
+                _del_resp_error = getattr(del_resp, "error", None)
+                if _del_resp_error:
                     logger.warning(
                         "onboarding: rollback of onboarding_responses failed user=%s error=%s — "
                         "user may need manual cleanup to retry",
                         user_id,
-                        str(del_resp.error).replace("\n", " "),
+                        str(_del_resp_error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
@@ -1386,12 +1388,13 @@ async def process_onboarding(
                         .execute()
                     )
                 )
-                if getattr(del_resp5, "error", None):
+                _del_resp5_error = getattr(del_resp5, "error", None)
+                if _del_resp5_error:
                     logger.warning(
                         "onboarding: step5 rollback of onboarding_responses failed "
                         "user=%s error=%s",
                         user_id,
-                        str(del_resp5.error).replace("\n", " "),
+                        str(_del_resp5_error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(

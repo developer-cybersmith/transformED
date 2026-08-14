@@ -255,11 +255,14 @@ async def _delete_intervention_deadline_if_expired(session_id: str, redis: Redis
     import time as _time  # noqa: PLC0415
 
     try:
-        result = await redis.eval(
-            _DELETE_IF_EXPIRED_SCRIPT,
-            1,
-            f"session:{session_id}:intervention_deadline_at",
-            str(int(_time.time())),
+        result = await cast(
+            "Awaitable[str]",
+            redis.eval(
+                _DELETE_IF_EXPIRED_SCRIPT,
+                1,
+                f"session:{session_id}:intervention_deadline_at",
+                str(int(_time.time())),
+            ),
         )
         return bool(result)
     except Exception:  # noqa: BLE001
@@ -457,18 +460,36 @@ async def process_attention_signal(
         # Only written when the signal is not None (MediaPipe may drop frames — S3-38 D13).
         # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
         if normalized.behavioral_score is not None:
-            await redis.lpush(
-                f"session:{session_id}:behavioral_history", normalized.behavioral_score
+            await cast(
+                "Awaitable[int]",
+                redis.lpush(
+                    f"session:{session_id}:behavioral_history", normalized.behavioral_score
+                ),
             )
-            await redis.ltrim(f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1)
+            await cast(
+                "Awaitable[str]",
+                redis.ltrim(f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1),
+            )
             await redis.expire(f"session:{session_id}:behavioral_history", _CES_WINDOW_TTL)  # D64
         if normalized.head_pose_score is not None:
-            await redis.lpush(f"session:{session_id}:head_pose_history", normalized.head_pose_score)
-            await redis.ltrim(f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1)
+            await cast(
+                "Awaitable[int]",
+                redis.lpush(f"session:{session_id}:head_pose_history", normalized.head_pose_score),
+            )
+            await cast(
+                "Awaitable[str]",
+                redis.ltrim(f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1),
+            )
             await redis.expire(f"session:{session_id}:head_pose_history", _CES_WINDOW_TTL)  # D64
         if normalized.blink_rate is not None:
-            await redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate)
-            await redis.ltrim(f"session:{session_id}:blink_history", 0, _CES_HISTORY_MAX - 1)
+            await cast(
+                "Awaitable[int]",
+                redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate),
+            )
+            await cast(
+                "Awaitable[str]",
+                redis.ltrim(f"session:{session_id}:blink_history", 0, _CES_HISTORY_MAX - 1),
+            )
             await redis.expire(f"session:{session_id}:blink_history", _CES_WINDOW_TTL)  # D64
 
         # Bug fix: nothing anywhere ever sent the frozen `ces_update` message

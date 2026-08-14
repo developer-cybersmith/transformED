@@ -308,8 +308,8 @@ async def _fetch_and_cache_lesson_package(session_id: str) -> dict[str, Any] | N
         import asyncio
         import json as _json  # noqa: PLC0415
 
-        from app.core.db import get_supabase  # type: ignore[import]
-        from app.core.redis import get_redis  # type: ignore[import]
+        from app.core.db import get_supabase, single_row
+        from app.core.redis import get_redis
 
         supabase = get_supabase()
 
@@ -321,7 +321,7 @@ async def _fetch_and_cache_lesson_package(session_id: str) -> dict[str, Any] | N
                 .maybe_single()
                 .execute()
             )
-            session_row = session_resp.data if session_resp else None
+            session_row = single_row(session_resp)
             lesson_id = (session_row or {}).get("lesson_id")
             if not lesson_id:
                 return None
@@ -332,7 +332,7 @@ async def _fetch_and_cache_lesson_package(session_id: str) -> dict[str, Any] | N
                 .maybe_single()
                 .execute()
             )
-            lesson_row = lesson_resp.data if lesson_resp else None
+            lesson_row = single_row(lesson_resp)
             content = (lesson_row or {}).get("content")
             return content if isinstance(content, dict) else None
 
@@ -373,8 +373,8 @@ async def _seed_learner_tier(session_id: str) -> None:
     try:
         import json as _json  # noqa: PLC0415
 
-        from app.core.redis import get_redis  # type: ignore[import]
-        from app.modules.tutor.service import qa_phase_seconds as _qa  # type: ignore[import]
+        from app.core.redis import get_redis
+        from app.modules.tutor.service import qa_phase_seconds as _qa
 
         _redis = get_redis()
         raw_pkg = await _redis.get(f"lesson_package:{session_id}")
@@ -435,9 +435,9 @@ async def _handle_session_start(session_id: str, payload: dict[str, Any] | None 
     tier = (payload or {}).get("learner_tier")
     if isinstance(tier, str) and tier in _VALID_TIERS:
         try:
-            from app.core.redis import get_redis  # type: ignore[import]  # noqa: PLC0415
+            from app.core.redis import get_redis  # noqa: PLC0415
             from app.modules.tutor.service import (
-                qa_phase_seconds as _qa,  # type: ignore[import]  # noqa: PLC0415
+                qa_phase_seconds as _qa,  # noqa: PLC0415
             )
 
             redis = get_redis()
