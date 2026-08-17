@@ -159,7 +159,24 @@ export function AudioTimeline() {
       const audio = audioRef.current;
       if (!audio) return;
       if (status === 'PLAYING') {
-        audio.play().catch(() => {});
+        // Review fix: exitTeachBack() on the LAST segment sets status back to
+        // PLAYING and relies on this effect to "resume" playback so the real
+        // <audio> `ended` event fires again and drives handleEnded() ->
+        // endLesson() (see exitTeachBack's own comment). But by the time
+        // teach-back runs, this segment's audio has typically already reached
+        // its natural end -- and per the HTML media spec, calling .play() on
+        // an element whose playback position is already at/past its end
+        // SEEKS BACK TO THE START as part of the play steps, i.e. it replays
+        // the whole segment from 0 instead of firing `ended` again. For a
+        // single-segment lesson this is indistinguishable from "the lesson
+        // restarted" (confirmed live in a real browser). Mirror the
+        // virtual-clock path's own already-quizzed handling below: drive
+        // handleEnded() directly instead of replaying audio that already ran.
+        if (audio.ended) {
+          handleEnded();
+        } else {
+          audio.play().catch(() => {});
+        }
       } else {
         audio.pause();
       }
