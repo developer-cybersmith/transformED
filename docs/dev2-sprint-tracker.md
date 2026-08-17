@@ -1751,7 +1751,12 @@ Fire PostHog events for every significant action:
 
 ### S4-06 — Fold My Library into My Books
 **Priority:** P2 — ad-hoc, live product decision 2026-08-17 (not originally scheduled Sprint 4 scope)
-**Status:** ✅ DONE (2026-08-17)
+**Status:** ✅ DONE (2026-08-17) — **⏳ PENDING MERGE.** Branch `sprint4/s4-06-merge-library-into-books`
+pushed to origin (`9044eb7`), code + 6-agent review complete, all suites green. **No PR opened yet
+— merge later per user instruction 2026-08-17.** Pick up from here: open a PR (target `main` or a
+`sprint4-master` first, per this repo's established sprint-master-branch pattern), tag Dev 1 on the
+`content/router.py`/`schemas.py` diff (their module, explicit approved exception) and all 4 devs on
+the `docs/contracts/book-api.v1.json` 1.2.0→1.3.0 bump per this tracker's own §18 protocol.
 **Files:** `apps/api/app/modules/content/router.py`, `schemas.py` (Dev 1's module — explicit user-approved
 exception, same precedent as `docs/handoffs/dev2-backend-changes-handoff-2026-08-14.md`),
 `apps/web/src/components/dashboard/books/ChapterRow.tsx`, `apps/web/src/services/books.service.ts`,
