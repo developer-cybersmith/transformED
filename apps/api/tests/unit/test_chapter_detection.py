@@ -275,3 +275,182 @@ def test_gate_rejects_non_monotonic_starts() -> None:
         DetectedChapter("B", 10, 19, 1, "toc"),
     ]
     assert not passes_gate(bad, page_count=100, page_texts=[""] * 100, contents=set())
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# D115/D116 (2026-08-15) — "Evading EDR" by Matt Hand (No Starch Press), 315
+# pages, a real user upload whose chapter-opener titles are typeset AFTER the
+# body paragraph on each page, not before it. Rung `toc` was silently rejected
+# by rule 6 (title-hit-rate) despite a 100%-correct 27-entry outline, because
+# `title_present()` and the extraction truncation both only ever looked at the
+# first 400 characters of a page. Fixed via `title_present`'s opt-in
+# `tail_window`, `extract_text_only`'s opt-in `tail_chars`, and two
+# `filter.py`/`text.py` gaps this same book exposed. Captured fixture is real
+# TOC metadata (titles/page positions — factual, not the book's copyrighted
+# prose) plus real page text; the PDF itself is commercially licensed and is
+# not committed.
+# ════════════════════════════════════════════════════════════════════════════
+_EVADING_EDR_CHAPTERS = (
+    "1. EDR-Chitecture",
+    "2. Function-Hooking DLLs",
+    "3. Process- and Thread-Creation Notifications",
+    "4. Object Notifications",
+    "5. Image-Load and Registry Notifications",
+    "6. Filesystem Minifilter Drivers",
+    "7. Network Filter Drivers",
+    "8. Event Tracing for Windows",
+    "9. Scanners",
+    "10. Antimalware Scan Interface",
+    "11. Early Launch Antimalware Drivers",
+    "12. Microsoft-Windows-Threat-Intelligence",
+    "13. Case Study: A Detection-Aware Attack",
+)
+
+
+@pytest.mark.unit
+def test_evading_edr_resolves_via_the_outline_not_the_font_fallback() -> None:
+    """Before the D115/D116 fix this fell through toc -> heading/contents ->
+    font, landing on font's untuned, garbled output. Pins the fix at the level
+    that actually matters: which rung wins, not just the final count."""
+    res = run("evading-edr")
+    assert res.rung == "toc"
+    assert res.raw_count == 27
+
+
+@pytest.mark.unit
+def test_evading_edr_all_thirteen_numbered_chapters_are_present_and_ordered() -> None:
+    res = run("evading-edr")
+    numbered = [c for c in res.chapters if c.title in _EVADING_EDR_CHAPTERS]
+    assert [c.title for c in numbered] == list(_EVADING_EDR_CHAPTERS)
+
+
+@pytest.mark.unit
+def test_evading_edr_every_numbered_chapter_carries_its_title_on_its_start_page() -> None:
+    """The load-bearing assertion: rule 6 accepted these because the wider
+    tail-aware search actually found each title on its page, not because the
+    gate was weakened."""
+    doc = load("evading-edr")
+    res = run("evading-edr")
+    for c in res.chapters:
+        if c.title in _EVADING_EDR_CHAPTERS:
+            assert title_present(doc["page_heads"][c.page_start], c.title, tail_window=400), (
+                f"chapter {c.title!r} title not found on its own start page"
+            )
+
+
+@pytest.mark.unit
+def test_evading_edr_junk_front_and_back_matter_is_dropped() -> None:
+    res = run("evading-edr")
+    kept_norm = {c.title.strip().lower() for c in res.chapters}
+    for junk in ("cover", "back cover", "title page", "brief contents", "contents in detail"):
+        assert junk not in kept_norm, f"{junk!r} survived the filter"
+    assert not any(t.startswith("praise for") for t in kept_norm)
+
+
+@pytest.mark.unit
+def test_evading_edr_leading_introduction_is_dropped_as_front_matter() -> None:
+    """D117. `introduction` is still NOT in filter.py's exact-title blocklist
+    (D2L's real, pinned Chapter 1 is also bare "Introduction" — blocking it
+    there would silently drop a real chapter). Instead
+    `drop_leading_unnumbered_front_matter` looks at title SHAPE: 13 of this
+    book's 14 kept titles carry an explicit leading chapter number
+    ("1. EDR-Chitecture", ...), well past the 70% threshold, so the one
+    leading unnumbered entry ("Introduction", before the numbered run starts)
+    is treated as front matter and dropped — landing on exactly 13, matching
+    what the book itself claims."""
+    res = run("evading-edr")
+    kept = [c.title for c in res.chapters]
+    assert kept == list(_EVADING_EDR_CHAPTERS)
+    assert len(res.chapters) == 13
+
+
+class TestDropLeadingUnnumberedFrontMatter:
+    """Direct, synthetic, fixture-free unit tests for D117's boundary
+    conditions — the two fixture-based tests above prove it works on real
+    books; these pin the exact rule."""
+
+    @pytest.mark.unit
+    def test_drops_a_leading_unnumbered_entry_above_the_threshold(self) -> None:
+        from app.modules.content.chapter_detection.filter import (
+            drop_leading_unnumbered_front_matter,
+        )
+        from app.modules.content.chapter_detection.types import DetectedChapter
+
+        chapters = [
+            DetectedChapter("Introduction", 0, 4, 0, "toc"),
+            *(
+                DetectedChapter(f"{i}. Topic {i}", 5 + i, 9 + i, i, "toc")
+                for i in range(1, 6)  # 5 numbered -> 5/6 = 83% >= 70%
+            ),
+        ]
+        out = drop_leading_unnumbered_front_matter(chapters)
+        assert [c.title for c in out] == [f"{i}. Topic {i}" for i in range(1, 6)]
+        assert [c.chapter_index for c in out] == [0, 1, 2, 3, 4]
+
+    @pytest.mark.unit
+    def test_leaves_an_unnumbered_book_untouched_below_the_threshold(self) -> None:
+        from app.modules.content.chapter_detection.filter import (
+            drop_leading_unnumbered_front_matter,
+        )
+        from app.modules.content.chapter_detection.types import DetectedChapter
+
+        # Only 1 of 6 numbered -> 17%, well under 70%.
+        chapters = [
+            DetectedChapter("Introduction", 0, 4, 0, "toc"),
+            DetectedChapter("1. Topic", 5, 9, 1, "toc"),
+            *(
+                DetectedChapter(f"Topic {c}", 10 + i, 14 + i, 2 + i, "toc")
+                for i, c in enumerate("ABCD")
+            ),
+        ]
+        out = drop_leading_unnumbered_front_matter(chapters)
+        assert [c.title for c in out] == [c.title for c in chapters]
+
+    @pytest.mark.unit
+    def test_only_drops_the_leading_run_not_a_mid_sequence_unnumbered_entry(self) -> None:
+        from app.modules.content.chapter_detection.filter import (
+            drop_leading_unnumbered_front_matter,
+        )
+        from app.modules.content.chapter_detection.types import DetectedChapter
+
+        chapters = [
+            DetectedChapter("1. First", 0, 4, 0, "toc"),
+            DetectedChapter("Interlude", 5, 9, 1, "toc"),  # mid-sequence, must survive
+            DetectedChapter("2. Second", 10, 14, 2, "toc"),
+            DetectedChapter("3. Third", 15, 19, 3, "toc"),
+        ]
+        out = drop_leading_unnumbered_front_matter(chapters)
+        assert [c.title for c in out] == ["1. First", "Interlude", "2. Second", "3. Third"]
+
+    @pytest.mark.unit
+    def test_empty_input_does_not_crash(self) -> None:
+        from app.modules.content.chapter_detection.filter import (
+            drop_leading_unnumbered_front_matter,
+        )
+
+        assert drop_leading_unnumbered_front_matter([]) == []
+
+    @pytest.mark.unit
+    def test_all_unnumbered_is_untouched_not_emptied(self) -> None:
+        """No numbered entry at all -> `any(numbered)` is False -> the whole
+        list is returned as-is, never emptied to nothing."""
+        from app.modules.content.chapter_detection.filter import (
+            drop_leading_unnumbered_front_matter,
+        )
+        from app.modules.content.chapter_detection.types import DetectedChapter
+
+        chapters = [DetectedChapter("Introduction", 0, 4, 0, "toc")]
+        assert drop_leading_unnumbered_front_matter(chapters) == chapters
+
+
+@pytest.mark.unit
+def test_d2l_leading_introduction_is_not_touched_by_the_numbered_title_heuristic() -> None:
+    """The regression-safety half of D117: D2L's real Chapter 1 is ALSO bare
+    "Introduction", and every other D2L chapter title is unnumbered too (0 of
+    21 kept titles carry a leading chapter number) — so the 70% threshold is
+    never reached and D2L's chapter list must be byte-identical to before
+    this filter existed."""
+    res = run("d2l")
+    kept = [c.title for c in res.chapters]
+    assert kept[0] == "Introduction"
+    assert res.chapters[0].page_start == 40  # unchanged from the pinned toc page_index

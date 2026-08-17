@@ -20,7 +20,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from .filter import drop_non_content
+from .filter import drop_leading_unnumbered_front_matter, drop_non_content
 from .gate import contents_like_pages, passes_gate
 from .rungs import merge_r2_r3, r1_outline, r4_font_signals, r5_whole_document
 from .types import DetectedChapter, DetectionResult, Rung
@@ -69,6 +69,14 @@ def detect_chapters(
         # catch are contents pages carrying a genuine chapter title
         # ("ELECTRIC CHARGES AND FIELDS"), which no blocklist removes.
         kept = drop_non_content(candidates)
+        if not kept:
+            return None
+        # D117: a second, narrower filter pass — drop a LEADING run of
+        # unnumbered entries (e.g. "Introduction") only when the rest of the
+        # kept list is clearly numbered-chapter style ("1. X", "2. Y", ...).
+        # Runs before the gate for the same reason drop_non_content does: the
+        # gate judges the teachable list, not the raw candidates.
+        kept = drop_leading_unnumbered_front_matter(kept)
         if not kept:
             return None
         if not passes_gate(kept, page_count=page_count, page_texts=page_texts, contents=contents):
