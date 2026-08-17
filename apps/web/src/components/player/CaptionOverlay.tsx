@@ -20,8 +20,24 @@ export function CaptionOverlay({ script }: CaptionOverlayProps) {
   return (
     <div
       data-testid="caption-overlay"
+      // Review fix (2026-08-17), two bugs stacked on the same root cause --
+      // this element's own overflow-y-auto scroll was completely unreachable:
+      // (1) this div used to also carry `pointer-events-none`, which blocks
+      //     ALL mouse/wheel interaction with the element outright.
+      // (2) even with pointer-events restored, SmoothScroll.tsx's global
+      //     Lenis instance hijacks wheel events for the whole document by
+      //     default -- SlideRenderer.tsx (the sibling component sharing this
+      //     same slide-area container) already carries `data-lenis-prevent`
+      //     for exactly this reason; CaptionOverlay never got it.
+      // Verified live against a real deployed lesson: a real narration
+      // segment clipped 390 of 616px (~63%) of its own text with NO way to
+      // read the rest -- no scroll, no keyboard path (plain non-focusable
+      // div). Silently dropping most of "so students can read along" content
+      // is the exact class of bug this app treats as unacceptable at the
+      // content-pipeline level; it applies here too.
+      data-lenis-prevent
       className="absolute bottom-0 inset-x-0 z-10 max-h-[30%] overflow-y-auto overscroll-y-contain
-                 bg-black/60 backdrop-blur-sm px-5 py-3 pointer-events-none"
+                 bg-black/60 backdrop-blur-sm px-5 py-3"
     >
       <p className="text-neutral-100 text-sm leading-relaxed text-center max-w-3xl mx-auto">
         {script}
