@@ -8,7 +8,7 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-08-17 (**S4-07 CaptionOverlay unreachable-scroll fix shipped** — real live production bug found via manual Playwright browser verification, `pointer-events-none` + missing `data-lenis-prevent` stacked to make the caption panel's own overflow scroll completely unreachable. See §13.) — previously 2026-08-11 (**S3-09 Signed-URL auto-refresh + DEFER-012 (D63) register entry shipped** — Story 2-45, ad-hoc off the Lesson Delivery Tracker's L3 known risk, not a scheduled Sprint 3 item; branch cut from `sprint3-master` since `main` doesn't yet have S3-01–S3-04. `AudioTimeline`/`SlideRenderer` now auto re-sign an expired asset once before falling back to the existing manual Retry/placeholder path. 920 web tests passing. See §12.) — previously 2026-08-06 (**S3-01 Attention Consent Modal shipped** — Story 2-42, 3-agent review passed, all 3 decision-needed + 12 patch findings resolved; switched to the real `POST /api/assessment/consent` endpoint (Story 3-32) after it landed on `main` mid-review, closing **D29**. **S3-04 CES Indicator confirmed shipped** — Story 2-41 (this file had drifted; it was done alongside S3-03 but never updated below). `sprint3-master` synced with `main` (also picked up **D18**/**D30** closures) and pushed. Sprint 3 is now 3/10 done — see §12.) — previously 2026-08-03 (S3-03 TutorInterventionCard shipped — Story 2-40, 3-agent review passed, 9 patches applied. See §12.) — previously 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
+| **Last Updated** | 2026-08-17 (**S4-08 lesson-restart-after-teachback fix shipped** — user-reported live bug: `exitTeachBack()` resuming PLAYING on an already-ended last-segment `<audio>` element replayed it from 0 per the HTML media spec, indistinguishable from the lesson restarting. See §13.) — previously 2026-08-17 (**S4-07 CaptionOverlay unreachable-scroll fix shipped** — real live production bug found via manual Playwright browser verification, `pointer-events-none` + missing `data-lenis-prevent` stacked to make the caption panel's own overflow scroll completely unreachable. See §13.) — previously 2026-08-11 (**S3-09 Signed-URL auto-refresh + DEFER-012 (D63) register entry shipped** — Story 2-45, ad-hoc off the Lesson Delivery Tracker's L3 known risk, not a scheduled Sprint 3 item; branch cut from `sprint3-master` since `main` doesn't yet have S3-01–S3-04. `AudioTimeline`/`SlideRenderer` now auto re-sign an expired asset once before falling back to the existing manual Retry/placeholder path. 920 web tests passing. See §12.) — previously 2026-08-06 (**S3-01 Attention Consent Modal shipped** — Story 2-42, 3-agent review passed, all 3 decision-needed + 12 patch findings resolved; switched to the real `POST /api/assessment/consent` endpoint (Story 3-32) after it landed on `main` mid-review, closing **D29**. **S3-04 CES Indicator confirmed shipped** — Story 2-41 (this file had drifted; it was done alongside S3-03 but never updated below). `sprint3-master` synced with `main` (also picked up **D18**/**D30** closures) and pushed. Sprint 3 is now 3/10 done — see §12.) — previously 2026-08-03 (S3-03 TutorInterventionCard shipped — Story 2-40, 3-agent review passed, 9 patches applied. See §12.) — previously 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
 | **Active Sprint** | Sprint 3 — Weeks 6–7 (6/9 done — S3-01, S3-02, S3-03, S3-04, S3-07, S3-09; **note:** this row's "Total Tasks" in §1 has read 10 since before an earlier correction, and now 9 S3-numbered items (S3-01–S3-09) exist in this file after S3-09 was added as an ad-hoc item — a pre-existing count discrepancy, not fully resolved by this update, left flagged rather than silently resolved) |
 | **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is now end-to-end functional; D18/D29/D30 all closed 2026-08-04/05** · Sprint 3 IN PROGRESS (6/9 — S3-01, S3-02, S3-03, S3-04, S3-07, S3-09 done; S3-05/S3-06 unblocked now that S3-02 shipped; S3-08 not started) — **corrected 2026-08-11: S3-09 (signed-URL auto-refresh + DEFER-012/D63) added and shipped same day, ad-hoc off the Lesson Delivery Tracker rather than originally-scheduled Sprint 3 scope** |
 
@@ -54,9 +54,9 @@
 | Sprint 1 | Weeks 2–3 | 14 | **14** | 0 | **0** |
 | Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 (9 accounted for after S3-09 added — see header note) | **6** | 0 | **3** |
-| Sprint 4 | Weeks 8–9 | 9 (+1 ad-hoc: S4-07; S4-06 reserved, pending merge on its own branch — see note above) | **1** | 0 | **8** |
+| Sprint 4 | Weeks 8–9 | 10 (+2 ad-hoc: S4-07, S4-08; S4-06 reserved, pending merge on its own branch — see note above) | **2** | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **57** | **34** | **0** | **23** |
+| **Total** | **10 weeks** | **58** | **35** | **0** | **23** |
 
 > **Tracker correction (2026-08-06):** this file had drifted from reality on two points. (1) **S3-04 (CES Indicator)** was shipped alongside S3-03 (Story 2-41, same review pass, both merged to `sprint3-master`) but §12's entry and the dashboard above were never updated — corrected now. (2) **S3-01 (Attention Consent Modal)** shipped today as **Story 2-42**: 3-agent review found 3 decision-needed + 10 patch findings; mid-review, Dev 3's real **Story 3-32** (`POST /api/assessment/consent`) landed on `main` and closed **D29** — the consent write was switched from the tracker's originally-specified `PATCH /api/users/consent` (which never existed) to the real endpoint. `sprint3-master` was then synced with `main` (picking up D18/D29/D30, all now closed) and both S3-01's branch and the sync were merged in — 827/827 web tests, `tsc`/`eslint` clean. **S3-02 (AttentionMonitor) is now unblocked** — its only real dependency (consent gate + D29) is resolved.
 >
@@ -1776,6 +1776,37 @@ together. Added a regression test asserting `pointer-events-none` never returns 
 real overflow/pointer-events cascade, so this directly encodes the fix rather than re-deriving it).
 5/5 `CaptionOverlay.test.tsx` tests pass; full suite 80 files / 966 tests, `tsc --noEmit` and
 targeted `eslint` clean.
+
+### S4-08 — Fix lesson "restarting" after quiz + teach-back on the last segment (live bug)
+**Priority:** P0 — student-facing, breaks lesson completion for any single-segment (or last-segment)
+lesson
+**Status:** ✅ DONE (2026-08-17)
+**Files:** `apps/web/src/components/player/AudioTimeline.tsx`,
+`apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx`
+
+Reported directly by the user testing locally end-to-end: completing a 1/1-segment lesson's quiz +
+teach-back caused the lesson to visibly restart from the beginning instead of ending. Root cause:
+`exitTeachBack()` (`player.machine.ts`) resumes `status: 'PLAYING'` on the last segment, relying on
+its own documented comment ("audio resumes... handleEnded fires endLesson when it finishes") — but
+by teach-back time the segment's real `<audio>` element has already reached its natural end, and
+per the HTML media spec, calling `.play()` on an already-ended element **seeks back to position 0**
+as part of the play steps, replaying the whole segment instead of firing `ended` again. On a
+single-segment lesson this is indistinguishable from the entire lesson looping back to the start.
+The virtual-clock (no-audio) path already had an equivalent fix for its own version of this exact
+problem (`AudioTimeline.tsx`'s S2-33 tick effect explicitly checks `alreadyQuizzed` and calls
+`handleEnded()` manually) — the real-`<audio>` path never got the matching fix. Fixed by checking
+`audio.ended` before calling `.play()`; if already ended, call `handleEnded()` directly instead
+(which correctly resolves to `endLesson()` once the quiz has fired, exactly like the virtual-clock
+path). Added 2 regression tests: one reproducing the exact bug scenario (asserts `handleEnded()`
+fires and `.play()` is never called), one guarding against an over-broad fix that skips `.play()`
+based on quiz-fired state rather than `audio.ended`. Full suite 80 files / 968 tests, `tsc --noEmit`
+and targeted `eslint` clean.
+
+**Not yet investigated in this pass:** the same test session surfaced 6 `connection rejected (400
+Bad Request)` log lines for the tutor WebSocket — confirmed as `MAX_RECONNECT_ATTEMPTS = 5` (+1
+initial attempt) retrying a single underlying handshake failure with exponential backoff, not 6
+separate incidents (`lib/ws/lessonSocket.ts`). Root cause of the initial rejection is a separate,
+open investigation — see the next entry once resolved.
 
 ---
 
