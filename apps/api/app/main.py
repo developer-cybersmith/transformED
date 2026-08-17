@@ -21,6 +21,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import JSONResponse, Response
 
 from app.config import get_settings
 from app.core.langfuse import get_langfuse
@@ -136,6 +138,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning("Langfuse flush failed - some traces may be lost", exc_info=True)
 
 
+class UnhandledExceptionMiddleware(BaseHTTPMiddleware):
+    """Converts any exception that escapes routing/dependencies into a clean 500 JSON response.
+
+    MUST be registered BEFORE CORSMiddleware in create_app() (i.e. added first, so
+    CORSMiddleware wraps it and still runs on the response this middleware returns) --
+    Starlette's ServerErrorMiddleware, which is what would otherwise handle this
+    (both the framework default AND any handler registered via
+    ``app.add_exception_handler(Exception, ...)`` -- Starlette special-cases the bare
+    ``Exception`` class and routes it to ServerErrorMiddleware, not ExceptionMiddleware),
+    sits OUTSIDE CORSMiddleware in the stack and never has its response pass back
+    through CORS header injection.
+
+    Confirmed empirically (not assumed): with no fix, an unhandled exception reached
+    the browser as an opaque "No 'Access-Control-Allow-Origin' header" CORS failure,
+    masking the real 500 -- e.g. a transient httpx.RemoteProtocolError talking to
+    Supabase's PostgREST over HTTP/2 inside POST /api/assessment/sessions. A handler
+    registered for a SPECIFIC exception subclass (not bare Exception) does route
+    through ExceptionMiddleware/CORS correctly, but that only covers exception types
+    someone thought to register in advance -- this middleware is the general
+    catch-all so ANY unanticipated exception still reaches the client as a proper,
+    CORS-correct 500 instead of a confusing browser-side CORS error.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            logger.error(
+                "Unhandled exception on %s %s", request.method, request.url.path, exc_info=True
+            )
+            try:
+                sentry_sdk.capture_exception(exc)
+            except Exception:
+                logger.warning("sentry_sdk.capture_exception failed", exc_info=True)
+            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
 def create_app() -> FastAPI:
     """Construct and configure the FastAPI application."""
     settings = get_settings()
@@ -150,6 +189,12 @@ def create_app() -> FastAPI:
     )
 
     # ── Middleware ────────────────────────────────────────────────────────────
+    # UnhandledExceptionMiddleware MUST be added BEFORE CORSMiddleware -- see
+    # its own docstring for why (Starlette's ServerErrorMiddleware, which would
+    # otherwise handle an unhandled exception, sits outside CORSMiddleware and
+    # never gets CORS headers applied to its response).
+    app.add_middleware(UnhandledExceptionMiddleware)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
