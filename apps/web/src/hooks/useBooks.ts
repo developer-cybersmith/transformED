@@ -18,7 +18,7 @@ interface UseBookResult {
     error: unknown;
 }
 
-// Client-side for the same reason as useLibrary -- api.ts's auth interceptor
+// Client-side for the same reason as useDashboard -- api.ts's auth interceptor
 // only reads the Supabase session in the browser, so an RSC calling this would
 // send no Authorization header and 401.
 export function useBooks(): UseBooksResult {
@@ -26,7 +26,7 @@ export function useBooks(): UseBooksResult {
     const pollingStartedAtRef = useRef<number | null>(null);
 
     // Keyed by user id so a cache entry can never leak across accounts in a
-    // shared browser tab (same rule as useLibrary/useDashboard).
+    // shared browser tab (same rule as useDashboard).
     const { data, error, isLoading } = useSWR<BookResponse[]>(
         user ? `books:${user.id}` : null,
         () => booksService.listBooks(),

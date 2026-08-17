@@ -76,6 +76,7 @@ export const CHAPTERS_21: ChapterResponse[] = [
             has_lesson: false,
             lesson_count: 0,
             latest_lesson: null,
+            lessons: [],
         } satisfies ChapterResponse;
     }),
 ];

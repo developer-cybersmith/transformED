@@ -72,6 +72,15 @@ export interface ChapterResponse {
     lesson_count: number;
     /** Added in 1.1.0. null exactly when lesson_count is 0. */
     latest_lesson: LatestLesson | null;
+    /**
+     * Added in 1.3.0 (Story 2-47). EVERY lesson for this chapter (all tiers,
+     * all states), newest-first. [] (never absent) when lesson_count is 0.
+     * Capped at 20 entries server-side as a safety ceiling — lesson_count
+     * keeps reporting the true total even past the cap, so `lesson_count >
+     * lessons.length` is possible and means "more exist than shown", not an
+     * inconsistency to paper over.
+     */
+    lessons: LatestLesson[];
 }
 
 /**

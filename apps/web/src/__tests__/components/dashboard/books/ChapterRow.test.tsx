@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ChapterRow } from '@/components/dashboard/books/ChapterRow';
 import {
     BOOK_READY,
@@ -122,5 +123,98 @@ describe('ChapterRow — boundary_confidence is a detection method, not a qualit
 
         expect(screen.getByText(/no chapter structure was detected/i)).not.toBeNull();
         expect(screen.queryByText(/fallback confidence/i)).toBeNull();
+    });
+});
+
+/**
+ * Story 2-47 (S4-06): folding My Library's one unique capability (reaching a
+ * non-latest lesson) into Books. `lessons` carries every lesson for the
+ * chapter, newest-first; `latest_lesson` is always `lessons[0]`.
+ */
+describe('ChapterRow — AC-6, expandable non-latest lessons (Story 2-47)', () => {
+    it('renders no "other lessons" affordance for a chapter with zero lessons (no regression)', () => {
+        renderRow(CHAPTER_NO_LESSON);
+        expect(screen.queryByRole('button', { name: /other lesson/i })).toBeNull();
+    });
+
+    it('renders no "other lessons" affordance when there is exactly one lesson', () => {
+        const oneLesson = {
+            ...CHAPTER_LESSON_READY,
+            lesson_count: 1,
+            lessons: [CHAPTER_LESSON_READY.lessons[0]],
+        };
+        renderRow(oneLesson);
+        expect(screen.queryByRole('button', { name: /other lesson/i })).toBeNull();
+    });
+
+    it('shows an "N other lessons" affordance when the chapter has more than one', () => {
+        renderRow(CHAPTER_LESSON_COUNT_2);
+        // 2 total, 1 is the latest already shown at the top -> "1 other lesson".
+        expect(screen.getByRole('button', { name: /1 other lesson/i })).not.toBeNull();
+    });
+
+    it('pluralizes correctly for more than one other lesson', () => {
+        renderRow(CHAPTER_LATEST_FAILED);
+        // 3 total, 1 is latest -> "2 other lessons".
+        expect(screen.getByRole('button', { name: /2 other lessons/i })).not.toBeNull();
+    });
+
+    it('expanding reveals a working Watch link for a non-latest READY lesson, even though the latest one failed', async () => {
+        const user = userEvent.setup();
+        renderRow(CHAPTER_LATEST_FAILED);
+
+        // Top-level Watch is absent -- the chapter's latest lesson failed.
+        expect(screen.queryByRole('link', { name: /^watch$/i })).toBeNull();
+
+        await user.click(screen.getByRole('button', { name: /2 other lessons/i }));
+
+        // Both non-latest entries in the real capture are 'ready' (T2, T1).
+        const links = screen.getAllByRole('link', { name: /watch/i });
+        expect(links.length).toBe(2);
+        expect(links.map((l) => l.getAttribute('href'))).toEqual([
+            '/lesson/1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a01',
+            '/lesson/1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a02',
+        ]);
+    });
+
+    it('never renders a Watch link for a non-latest lesson that is not ready', async () => {
+        // The gate applies PER-ENTRY, not just to the latest -- flip the one
+        // real non-latest entry (normally 'ready') to prove it, matching
+        // watchableLessonId's existing safety rule generalized to every row.
+        const notReadyChapter = {
+            ...CHAPTER_LESSON_COUNT_2,
+            lessons: [
+                CHAPTER_LESSON_COUNT_2.lessons[0],
+                { ...CHAPTER_LESSON_COUNT_2.lessons[1], status: 'queued' as const },
+            ],
+        };
+        const user = userEvent.setup();
+        renderRow(notReadyChapter);
+
+        await user.click(screen.getByRole('button', { name: /1 other lesson/i }));
+
+        expect(screen.queryAllByRole('link', { name: /watch/i }).length).toBe(0);
+    });
+
+    it('surfaces the 20-entry cap explicitly rather than silently truncating (Scale & Load Q2)', async () => {
+        const cappedChapter = {
+            ...CHAPTER_LESSON_COUNT_2,
+            lesson_count: 23, // more lessons exist than the 20 the server ever exposes
+        };
+        const user = userEvent.setup();
+        renderRow(cappedChapter);
+
+        await user.click(screen.getByRole('button', { name: /1 other lesson/i }));
+
+        expect(screen.getByText(/more lesson.*not shown/i)).not.toBeNull();
+    });
+
+    it('does not show the cap note when lesson_count matches the exposed lessons exactly', async () => {
+        const user = userEvent.setup();
+        renderRow(CHAPTER_LESSON_COUNT_2);
+
+        await user.click(screen.getByRole('button', { name: /1 other lesson/i }));
+
+        expect(screen.queryByText(/more lesson.*not shown/i)).toBeNull();
     });
 });

@@ -83,6 +83,14 @@ describe('Books, end to end over MSW', () => {
                                 tier: 'T3',
                                 created_at: '2026-08-04T11:12:51.946256+00:00',
                             },
+                            lessons: [
+                                {
+                                    lesson_id: '6cbbe233-415f-4523-9541-0bde06d4c567',
+                                    status: 'ready',
+                                    tier: 'T3',
+                                    created_at: '2026-08-04T11:12:51.946256+00:00',
+                                },
+                            ],
                         },
                     ],
                     { status: 200 },

@@ -1,6 +1,10 @@
+---
+baseline_commit: c06ed81
+---
+
 # Story 2.47: Fold My Library into My Books (S4-06)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -133,47 +137,98 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 2, 3 — backend): Extend `_row_to_chapter_response` to serialize the full
+- [x] Task 1 (AC: 1, 2, 3 — backend): Extend `_row_to_chapter_response` to serialize the full
   (capped, newest-first) lessons list; bump the frozen contract.
-  - [ ] 1.1 RED: test that a chapter fixture with lessons across multiple tiers/states returns all
+  - [x] 1.1 RED: test that a chapter fixture with lessons across multiple tiers/states returns all
     of them in `lessons`, newest-first order; a >20-lesson fixture returns exactly 20 (newest) with
     `lesson_count` still reporting the true total; a zero-lesson chapter returns `lessons: []`, not
     `null`; existing `latest_lesson`/`lesson_count`/`has_lesson` tests still pass unmodified with no
-    fixture changes.
-  - [ ] 1.2 GREEN: implement in `content/router.py`. Reuse the existing embed — do not add a second
-    Supabase call. Add the `# BOUNDED:` comment per Scale & Load Q2/Q5.
-  - [ ] 1.3 Bump `docs/contracts/book-api.v1.json` version + changelog entry for the new field.
-- [ ] Task 2 (AC: 5): Add `lessons: LatestLesson[]` to `ChapterResponse` in
+    fixture changes. Confirmed RED: 3 failures (2 new tests + the deliberate shape-set update).
+  - [x] 1.2 GREEN: implemented `_all_lessons()` in `content/router.py`, reusing the existing embed
+    (no second Supabase call) — mirrors `_latest_lesson`'s status-mapping and newest-first sort
+    exactly, capped at the new `_MAX_LESSONS_EXPOSED = 20` module constant with a `# BOUNDED`-style
+    comment citing Scale & Load Q2/Q5/D59. Added `lessons: list[LatestLesson]` to `ChapterResponse`
+    (`content/schemas.py`) via `Field(default_factory=list)`. All 39 tests in
+    `test_book_endpoints.py` pass.
+  - [x] 1.3 Bumped `docs/contracts/book-api.v1.json` to 1.3.0 with a changelog entry and the new
+    `ChapterResponse.lessons` field documented. Verified live: booted uvicorn locally and ran
+    `.github/scripts/check_book_contract.py` against the real `/openapi.json` — 13 comparisons, no
+    divergence.
+- [x] Task 2 (AC: 5): Add `lessons: LatestLesson[]` to `ChapterResponse` in
   `apps/web/src/services/books.service.ts`, verified field-for-field against the real (just-
   changed) Python model.
-  - [ ] 2.1 RED: `tsc --noEmit` / a runtime pass-through test confirming the field is required and
-    typed correctly (a pure type addition may not fail at runtime under esbuild's type-stripping —
-    verify with `tsc` first, matching Story 2-46's own precedent for this exact situation).
-  - [ ] 2.2 GREEN: implement.
-- [ ] Task 3 (AC: 6): `ChapterRow.tsx` — expandable "N other lessons" section for
+  - [x] 2.1 RED: found a REAL, more interesting RED than a bare `tsc` type gap — this repo's
+    `test/contract.ts` has a provenance guard (`assertExampleMatchesSchema`) that throws at
+    *import time* if `docs/contracts/book-api.v1.json`'s `schemas.ChapterResponse` and its
+    `real_example` payloads don't carry the exact same field set. Adding `lessons` to the schema
+    block alone (Task 1.3) without updating `real_example` would have reddened every test that
+    imports `@/test/fixtures` — confirmed this is exactly what the guard is for.
+  - [x] 2.2 GREEN: added `lessons: LatestLesson[]` to `ChapterResponse` (`books.service.ts`),
+    `ContractChapter` (`test/fixtures.ts`), and validated each `lessons[]` entry against the
+    `LatestLesson` schema in the provenance guard itself. Populated `real_example`'s `lessons`
+    arrays: each chapter's real captured `latest_lesson` is kept verbatim as `lessons[0]`; the
+    additional entries a `lesson_count` of 2/3 implies were never individually captured in the
+    original 2026-08-04 live gate (only the aggregate count + latest were recorded) — added as
+    clearly-labeled SYNTHETIC entries (`note_1_3_0` in the contract JSON), matching this file's own
+    established precedent for `TOO_LARGE_CHAPTER`/`RATE_LIMITED_CHAPTER`. Fixed 3 manually-
+    constructed `ChapterResponse`/`ContractChapter` literals that needed the new field
+    (`books.fixtures.ts`'s `CHAPTERS_21` synthesis, `TOO_LARGE_CHAPTER`, and one MSW mock response
+    in `books-msw.integration.test.tsx`). `tsc --noEmit` clean; 8 files / 102 tests passing
+    (`contract.test.ts`'s 29 tests confirm the provenance guard didn't throw).
+- [x] Task 3 (AC: 6): `ChapterRow.tsx` — expandable "N other lessons" section for
   `chapter.lessons.length > 1`, each entry gated the same `status === 'ready'` rule as today's
   single Watch button, generalized per-entry.
-  - [ ] 3.1 RED: tests — `lessons.length <= 1` renders identically to today (no regression); `> 1`
-    shows the expandable affordance; each non-latest, `ready` entry gets its own working Watch
-    link; a non-latest `failed`/`generating` entry never renders a Watch link (mirrors
-    `watchableLessonId`'s existing safety test, generalized).
-  - [ ] 3.2 GREEN: implement. If the 20-entry cap (AC-2) is ever hit, surface it explicitly (e.g. a
-    "showing the most recent 20" note) rather than silently truncating with no indication — Scale
-    & Load Q2.
-- [ ] Task 4 (AC: 7, 8, 9): Delete the Library feature; redirect all cross-links to `/books`;
+  - [x] 3.1 RED: 4 new tests confirmed failing before implementation (0/1-lesson no-affordance,
+    >1 shows "N other lessons" toggle with correct pluralization, expanding reveals working Watch
+    links for non-latest READY entries even when the latest one failed, a non-latest non-ready
+    entry never gets a link). Used the real captured fixtures directly
+    (`CHAPTER_LESSON_COUNT_2`/`CHAPTER_LATEST_FAILED`, now carrying real `lessons` arrays from
+    Task 2) rather than inventing new ones.
+  - [x] 3.2 GREEN: implemented. `otherLessons = chapter.lessons.slice(1)` (lessons[0] is always the
+    same lesson as latest_lesson, both derived server-side by the identical newest-first sort) —
+    toggle button + expandable `<ul>`, each entry gated by a new `isWatchable()` helper generalizing
+    `watchableLessonId`'s rule. The 20-entry cap surfacing IS implemented: an explicit "N more
+    lessons not shown" line renders whenever `lesson_count > lessons.length`, per Scale & Load Q2 —
+    not deferred.
+  - [x] 3.3 Verified: 21/21 tests passing (15 pre-existing + 6 new), `tsc --noEmit` clean, `pnpm
+    lint` 0 errors (32 pre-existing warnings, none in touched files).
+- [x] Task 4 (AC: 7, 8, 9): Delete the Library feature; redirect all cross-links to `/books`;
   remove the nav entry; verify zero dead references.
-  - [ ] 4.1 Delete `app/(dashboard)/library/`, `hooks/useLibrary.ts`, `services/library.service.ts`,
-    `components/library/LibraryView.tsx`, and their test files. Remove `libraryService` from
-    `services/index.ts` and `/library` mocks from `mocks/api/`.
-  - [ ] 4.2 Remove "My Library" from `Sidebar.tsx`'s `mainNavItems`; update its test.
-  - [ ] 4.3 Redirect `RecentLessons.tsx`'s "View All" to `/books` (verify `ContinueLearningCard.tsx`
-    and `QuickActions.tsx` directly — update only if they actually link to `/library`); update
-    their tests.
-  - [ ] 4.4 Grep-verify zero remaining hits for `useLibrary|libraryService|LibraryView|/library`
-    across `apps/web/src`.
-- [ ] Task 5 (AC: 10): Full suites green. Backend: `ruff check .`, `ruff format --check .`,
+  - [x] 4.1 Deleted `app/(dashboard)/library/` (page+layout), `hooks/useLibrary.ts`,
+    `services/library.service.ts`, `components/library/LibraryView.tsx`, `mocks/api/library.ts`,
+    and all 4 dedicated test files, via `git rm`. Removed the `libraryService`/`libraryApi`
+    barrel exports from `services/index.ts`/`mocks/api/index.ts`.
+  - [x] 4.2 Removed "My Library" from `Sidebar.tsx`'s `mainNavItems`; updated `Sidebar.test.tsx`'s
+    href-list assertion.
+  - [x] 4.3 Redirected to `/books`: `RecentLessons.tsx`'s "View All", `ContinueLearningCard.tsx`'s
+    "View Path" (both verified directly, both did link to `/library`), and `QuickActions.tsx`'s
+    whole "My Library" card — renamed to "My Books" (icon, title, description, href) rather than
+    leaving a stale "Library" label pointing at Books, since this one is a self-contained branded
+    card, not a generic "View All" button. Updated `RecentLessons.test.tsx`/
+    `ContinueLearningCard.test.tsx`/`Sidebar.test.tsx`/`TopUtilityBar.test.tsx` (the last one found
+    during full-suite verification, not caught by the initial grep — its mobile-nav-menu test
+    asserted a "my library" link by role name). Also fixed 3 `proxy.test.ts` path arrays
+    (`/library` was listed as an example protected/ungated path in 3 separate describe blocks —
+    replaced with `/books` where that didn't already appear, removed otherwise) and one
+    explanatory comment in `proxy.ts` itself (accuracy only, the deny-list needed no functional
+    change). Also updated 2 pre-existing comments in `useDashboard.ts`/`useBooks.ts` and one in
+    `lessonStatusPoll.ts` that cross-referenced `useLibrary.ts` by name for "see this file for the
+    full rationale" — made self-contained instead of pointing at a deleted file.
+  - [x] 4.4 Grep-verified zero remaining hits for `useLibrary|libraryService|LibraryView|libraryApi`
+    across `apps/web/src`. (The handful of remaining `/library`-string and "library" hits are my
+    own explanatory Story 2-47 comments documenting the removal — not dead references.)
+- [x] Task 5 (AC: 10): Full suites green. Backend: `ruff check .`, `ruff format --check .`,
   `mypy app`, and the gating test suite (worktree-baseline comparison against pre-story `main`,
   net-new failures = 0). Frontend: `pnpm test`, `tsc --noEmit`, `eslint` — all clean.
+  - Backend: `ruff check .` — All checks passed (0 errors, repo-wide). `ruff format --check .` —
+    226 files already formatted. `mypy app` — Success, 0 issues in 83 source files. Gating suite
+    (`tests/unit tests/integration -m "not postgres"`): **1182 passed, 0 failed, 6 skipped, 79
+    deselected** — exactly +2 over the pre-story baseline (the two new Task 1 tests), zero
+    regressions.
+  - Frontend: `pnpm test` — **76 files / 946 tests passing**, 0 failed (was 80 files / 965 tests
+    before this story: -4 files from Task 4's library test deletions, net -19 tests after
+    accounting for the +6 new `ChapterRow` tests added in Task 3). `tsc --noEmit` clean. `pnpm
+    lint` — 0 errors, 32 pre-existing warnings (none in any file this story touched).
 
 ## Dev Notes
 
@@ -205,3 +260,98 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
   rules (D59 cited, not closed, by this story).
 - `docs/SCALE-CONTRACT.md` — full text of the six questions this story's Scale & Load section
   answers.
+
+## Dev Agent Record
+
+### Completion Notes
+
+Implemented end-to-end via strict RED→GREEN TDD, task by task, per the story's own Tasks/Subtasks
+sequence (all 5 marked `[x]` above with quantified evidence per task). Summary:
+
+- **Backend (AC-1, AC-2, AC-3):** Added `ChapterResponse.lessons: list[LatestLesson]` — every
+  lesson for the chapter, newest-first, capped at a new `_MAX_LESSONS_EXPOSED = 20` safety ceiling
+  (router.py). This is additive-only against the frozen `docs/contracts/book-api.v1.json` (bumped
+  1.2.0 → 1.3.0). No new query: the existing `_CHAPTER_COLUMNS` embed already fetched every lesson
+  row per chapter; `_row_to_chapter_response` previously discarded all but the newest. `lesson_count`
+  continues to report the true total even past the 20-cap, so the cap never silently hides how many
+  lessons actually exist (Scale & Load Q2).
+- **Frontend (AC-4 through AC-8):** `ChapterRow.tsx` gained an expandable disclosure listing
+  `chapter.lessons.slice(1)` (the non-latest lessons), each with a Watch link gated by the same
+  `isWatchable` rule already used for `latest_lesson` (ready status only — a failed latest lesson
+  must never make a ready earlier lesson look inaccessible), and an explicit "N more lessons not
+  shown" line when `lesson_count > lessons.length` — satisfying the no-silent-truncation rule from
+  the Scale & Load section rather than deferring it.
+- **Library removal (AC-9):** Deleted the entire `/library` route, its service, hook, component,
+  mock, and all 4 of their test files. Fixed every cross-reference: `Sidebar.tsx` nav item removed;
+  `RecentLessons.tsx`/`ContinueLearningCard.tsx` "View All"/"View Path" now point at `/books`;
+  `QuickActions.tsx`'s "My Library" card renamed to "My Books" (icon, title, description, href) —
+  a considered judgment call to avoid leaving a stale "Library"-branded card pointing at Books;
+  `proxy.ts`/`proxy.test.ts` path arrays and comments updated; stale cross-file comments in
+  `useDashboard.ts`, `useBooks.ts`, `lessonStatusPoll.ts` made self-contained. One gap missed by
+  targeted grep (`TopUtilityBar.test.tsx`'s mobile-nav "my library" role-name assertion) was only
+  caught by running the full test suite — recorded as an explicit lesson in Task 4's notes.
+- **Verification (AC-10):** Backend gating suite 1182 passed / 0 failed / 6 skipped (+2 net over
+  the pre-story baseline, zero regressions); `ruff check`, `ruff format --check`, `mypy app` all
+  clean. Frontend 76 files / 946 tests passing, 0 failed; `tsc --noEmit` and `pnpm lint` clean.
+- **Judgment calls made, all documented inline in the relevant task notes above:** (1) the 20-entry
+  cap is a new safety ceiling, not a claim that D59 (the underlying unbounded embed) is closed —
+  explicitly called out in Dev Notes to avoid conflating the two in review; (2) the cap-surfacing
+  UI note was initially drafted as "deferred" then implemented instead, since deferring would
+  contradict this codebase's own no-silent-truncation rule; (3) `QuickActions.tsx`'s card was
+  renamed rather than left with a stale label, going slightly beyond a literal "redirect the href"
+  reading of the task.
+- **No user corrections occurred during implementation** — the story was executed autonomously
+  per the `bmad-dev-story` workflow after the single authorizing instruction; all fixes recorded in
+  "Errors and fixes" above (provenance-guard proactive check, a self-caught double-render test bug,
+  a stale `.next/` build-cache false-positive, and the `TopUtilityBar.test.tsx` gap) were self-caught
+  during the TDD/verification cycle, not user-reported.
+
+### File List
+
+**Modified:**
+- `apps/api/app/modules/content/router.py`
+- `apps/api/app/modules/content/schemas.py`
+- `apps/api/tests/unit/test_book_endpoints.py`
+- `docs/contracts/book-api.v1.json`
+- `apps/web/src/test/fixtures.ts`
+- `apps/web/src/__tests__/fixtures/books.fixtures.ts`
+- `apps/web/src/services/books.service.ts`
+- `apps/web/src/services/index.ts`
+- `apps/web/src/mocks/api/index.ts`
+- `apps/web/src/__tests__/app/books/books-msw.integration.test.tsx`
+- `apps/web/src/components/dashboard/books/ChapterRow.tsx`
+- `apps/web/src/__tests__/components/dashboard/books/ChapterRow.test.tsx`
+- `apps/web/src/components/dashboard/shell/Sidebar.tsx`
+- `apps/web/src/__tests__/components/dashboard/shell/Sidebar.test.tsx`
+- `apps/web/src/__tests__/components/dashboard/shell/TopUtilityBar.test.tsx`
+- `apps/web/src/components/dashboard/sections/RecentLessons.tsx`
+- `apps/web/src/__tests__/components/dashboard/sections/RecentLessons.test.tsx`
+- `apps/web/src/components/dashboard/sections/ContinueLearningCard.tsx`
+- `apps/web/src/__tests__/components/dashboard/sections/ContinueLearningCard.test.tsx`
+- `apps/web/src/components/dashboard/sections/QuickActions.tsx`
+- `apps/web/src/hooks/useBooks.ts`
+- `apps/web/src/hooks/useDashboard.ts`
+- `apps/web/src/lib/lessonStatusPoll.ts`
+- `apps/web/src/app/(dashboard)/books/layout.tsx`
+- `apps/web/src/proxy.ts`
+- `apps/web/src/__tests__/proxy.test.ts`
+- `docs/stories/2-47-merge-library-into-books.md`
+
+**Deleted:**
+- `apps/web/src/app/(dashboard)/library/page.tsx`
+- `apps/web/src/app/(dashboard)/library/layout.tsx`
+- `apps/web/src/hooks/useLibrary.ts`
+- `apps/web/src/services/library.service.ts`
+- `apps/web/src/components/library/LibraryView.tsx`
+- `apps/web/src/mocks/api/library.ts`
+- `apps/web/src/__tests__/app/library/page.test.tsx`
+- `apps/web/src/__tests__/hooks/useLibrary.test.ts`
+- `apps/web/src/__tests__/services/library.service.test.ts`
+- `apps/web/src/__tests__/components/library/LibraryView.test.tsx`
+
+## Change Log
+
+| Date | Change | Author |
+|------|--------|--------|
+| 2026-08-17 | Story drafted and committed alone (`c06ed81`), per BMAD Pre-Implementation Checklist. | Dev 2 (Claude) |
+| 2026-08-17 | Tasks 1–5 implemented via RED→GREEN TDD: backend `lessons` field + 20-entry cap, frontend expandable disclosure UI, full `/library` removal, all cross-references fixed. Status → review. | Dev 2 (Claude) |

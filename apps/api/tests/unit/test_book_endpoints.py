@@ -387,6 +387,9 @@ def test_list_chapters_returns_the_documented_shape() -> None:
         # `>=`: an extra key here is a contract change Dev 2 must review.
         "lesson_count",
         "latest_lesson",
+        # Story 2-47 (S4-06) AC-1 — every lesson for the chapter, not just the
+        # newest. Reviewed and added deliberately, same discipline as above.
+        "lessons",
     }
     assert body[0]["chapter_id"] == FAKE_CHAPTER_ID
     assert body[0]["chapter_index"] == 0
@@ -534,6 +537,48 @@ def test_list_chapters_latest_lesson_is_newest_when_the_newer_arrives_first() ->
 
     assert body[0]["lesson_count"] == 2
     assert body[0]["latest_lesson"] == newer
+
+
+@pytest.mark.unit
+def test_list_chapters_lessons_field_lists_every_lesson_newest_first() -> None:
+    """AC-1 (Story 2-47): `lessons` carries every lesson for the chapter, not
+    just the newest — newest-first, status-mapped the same way `latest_lesson`
+    already is (DB `generating` -> API `running`)."""
+    older = _lesson(
+        "33333333-3333-3333-3333-333333333333", tier="T1", created_at="2026-08-01T09:00:00Z"
+    )
+    newer = _lesson(
+        FAKE_LESSON_ID, tier="T3", status="generating", created_at="2026-08-03T18:30:00Z"
+    )
+    rows = [{**CHAPTER_ROWS[0], "lessons": [older, newer]}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lessons"] == [{**newer, "status": "running"}, older]
+    # Unrelated chapter with zero lessons still returns an empty list, not null.
+    assert body[1]["lessons"] == []
+
+
+@pytest.mark.unit
+def test_list_chapters_lessons_field_capped_at_20_newest_lesson_count_unaffected() -> None:
+    """AC-2 (Story 2-47, Scale & Load): the exposed `lessons` list is capped at
+    20 (newest-first) as a safety ceiling — `lesson_count` still reports the
+    TRUE total past the cap, so the discrepancy is visible in the data, not
+    hidden."""
+    lessons = [
+        _lesson(f"lesson-{i:02d}", tier="T1", created_at=f"2026-08-01T{i:02d}:00:00Z")
+        for i in range(23)
+    ]
+    rows = [{**CHAPTER_ROWS[0], "lessons": lessons}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lesson_count"] == 23, "the TRUE total, not the capped list length"
+    assert len(body[0]["lessons"]) == 20
+    # Newest-first: created_at desc means lesson-22 down to lesson-03 survive.
+    assert [item["lesson_id"] for item in body[0]["lessons"]] == [
+        f"lesson-{i:02d}" for i in range(22, 2, -1)
+    ]
 
 
 @pytest.mark.unit

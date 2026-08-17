@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { UploadCloud, Library, ArrowUpRight } from "lucide-react";
+import { UploadCloud, BookOpen, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 
 const actions = [
@@ -15,13 +15,16 @@ const actions = [
         href: "/upload",
     },
     {
-        id: "library",
-        title: "My Library",
-        description: "Access your 12 processed materials.",
-        icon: Library,
+        // Story 2-47 (S4-06): was "My Library" / "/library" -- Library's one
+        // unique capability (reaching a non-latest lesson) folded into Books,
+        // and the standalone page removed. This card points at Books now.
+        id: "books",
+        title: "My Books",
+        description: "Browse your uploaded books and chapters.",
+        icon: BookOpen,
         color: "text-purple-500",
         bg: "bg-purple-50 border-purple-100",
-        href: "/library",
+        href: "/books",
     },
     // "Reports" removed 2026-07-29 (Sprint 2 audit finding) -- it pointed at
     // "/reports", which has never been a real route (the real route is

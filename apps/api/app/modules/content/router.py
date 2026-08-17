@@ -86,6 +86,19 @@ _TRUNCATION_WARN_PAGES: int = 40
 # not seconds, so a short retry would just burn the client's rate-limit budget.
 _CONCURRENCY_RETRY_AFTER_S: int = 60
 
+# Story 2-47 (S4-06): safety ceiling on ChapterResponse.lessons, NOT a derived
+# natural bound -- the realistic range is 1-3 (one per tier; the UI has no path
+# to `force=true` regeneration), but D54's idempotency check only blocks a
+# retry while an existing (chapter_id, tier) lesson is generating/ready, so a
+# repeatedly-failing tier can accumulate one row per retry with no hard cap
+# found anywhere in this flow. The underlying `_CHAPTER_COLUMNS` embed itself
+# has no query-level `.limit()` either (D59, pre-existing, not fixed here) --
+# this cap is applied in Python after the fetch so this story does not make
+# that gap worse by shipping an unbounded list to the client. `lesson_count`
+# is computed from the UNCAPPED list and still reports the true total past
+# this cap.
+_MAX_LESSONS_EXPOSED: int = 20
+
 
 # ── Response models ───────────────────────────────────────────────────────────
 
@@ -454,6 +467,30 @@ def _latest_lesson(lessons: list[dict[str, Any]]) -> LatestLesson | None:
     )
 
 
+def _all_lessons(lessons: list[dict[str, Any]]) -> list[LatestLesson]:
+    """Every lesson for the chapter, newest-first, capped at `_MAX_LESSONS_EXPOSED`.
+
+    Story 2-47 (S4-06). Same rows `_latest_lesson` above already receives — no
+    second query. Sorted newest-first by `created_at` (same string-sort
+    property `_latest_lesson` relies on: ISO-8601 timestamptz sorts correctly
+    as a string, and a missing value sorts first so a malformed row is never
+    mistaken for the newest). Rows missing a `lesson_id` are skipped, matching
+    `_latest_lesson`'s own defensive check.
+    """
+    mapped = [
+        LatestLesson(
+            lesson_id=str(row["lesson_id"]),
+            status=_map_status(str(row.get("status") or "generating")),
+            tier=str(row.get("tier") or ""),
+            created_at=str(row["created_at"]) if row.get("created_at") else None,
+        )
+        for row in lessons
+        if row.get("lesson_id")
+    ]
+    mapped.sort(key=lambda lesson: lesson.created_at or "", reverse=True)
+    return mapped[:_MAX_LESSONS_EXPOSED]
+
+
 def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
     """Build one chapter card, with its lesson link sourced from `lessons`.
 
@@ -480,6 +517,7 @@ def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
         has_lesson=bool(lessons),
         lesson_count=len(lessons),
         latest_lesson=latest,
+        lessons=_all_lessons(lessons),
     )
 
 
