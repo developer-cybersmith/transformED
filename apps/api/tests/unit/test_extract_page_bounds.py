@@ -196,7 +196,9 @@ def test_extract_pdf_signature_matches_the_contract() -> None:
 @pytest.mark.unit
 def test_extract_text_only_signature_matches_the_contract() -> None:
     """Bounds go AFTER Story 1-10's front_pages/head_chars — those callers pass
-    them positionally."""
+    them positionally. `tail_chars` (D115/D116, 2026-08-15) is trailing and
+    KEYWORD-ONLY specifically so it cannot shift any existing positional call
+    site — asserted here, not just hoped."""
     import inspect
 
     from app.modules.content.pipeline.nodes import extract_subprocess as es
@@ -208,10 +210,13 @@ def test_extract_text_only_signature_matches_the_contract() -> None:
         "head_chars",
         "page_start",
         "page_end",
+        "tail_chars",
     ]
     assert (params[1].default, params[2].default) == (0, 0)
     assert params[3].default is None
     assert params[4].default is None
+    assert params[5].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params[5].default == 0
 
 
 # ── AC3 — backward compatibility (the highest-value test in this file) ────────
