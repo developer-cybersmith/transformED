@@ -28,15 +28,14 @@ export function useDashboard(): UseDashboardResult {
     user ? `dashboard:${user.id}` : null,
     () => dashboardService.getDashboard(),
     {
-      // S2-27 review fix -- see useLibrary.ts's identical comment for the
-      // full rationale: SWR's polling loop silently stops revalidating once
+      // S2-27 review fix: SWR's polling loop silently stops revalidating once
       // an error is cached, only recovering on tab refocus/network reconnect
       // unless shouldRetryOnError lets SWR's own backoff-retry clear it first.
       shouldRetryOnError: true,
-      // Same rationale as useLibrary.ts -- DashboardData has no pre-computed
-      // "processing" bucket, so check continueLearning and recentLessons
-      // directly. Also stops after MAX_POLL_DURATION_MS regardless (review
-      // fix) -- see useLibrary.ts's identical comment.
+      // DashboardData has no pre-computed "processing" bucket, so check
+      // continueLearning and recentLessons directly. Also stops after
+      // MAX_POLL_DURATION_MS regardless (review fix) -- see
+      // lib/lessonStatusPoll.ts's nextPollInterval.
       refreshInterval: (dashboardData) =>
         nextPollInterval(
           Boolean(

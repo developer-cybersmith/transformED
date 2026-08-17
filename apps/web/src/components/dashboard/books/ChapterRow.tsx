@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { Play, Loader2, AlertCircle } from "lucide-react";
-import { watchableLessonId, type ChapterResponse } from "@/services/books.service";
+import { Play, Loader2, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { isLessonWatchable, watchableLessonId, type ChapterResponse } from "@/services/books.service";
 import { ChapterGenerateControl } from "./ChapterGenerateControl";
 
 // W2 shipped Generate DISABLED with a stated reason, because nothing behind it
@@ -17,6 +18,10 @@ export const PAGE_RANGE_EXPLANATION =
 
 function lessonCountLabel(count: number): string {
     return count === 1 ? "1 lesson" : `${count} lessons`;
+}
+
+function otherLessonsLabel(count: number): string {
+    return count === 1 ? "1 other lesson" : `${count} other lessons`;
 }
 
 interface ChapterRowProps {
@@ -34,6 +39,22 @@ export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
     const latest = chapter.latest_lesson;
     const isGenerating = latest?.status === "queued" || latest?.status === "running";
     const pageSpan = chapter.page_end - chapter.page_start + 1;
+
+    // Story 2-47 (S4-06): `lessons[0]` is always the same lesson as
+    // `latest_lesson` (both derived server-side by the same newest-first
+    // sort) -- everything after it is the "other lessons" a standalone
+    // Library page used to be the only way to reach.
+    const otherLessons = chapter.lessons.slice(1);
+    // Review fix (Story 2-47 /bmad-code-review): the affordance's own label
+    // must use `lesson_count - 1` (the TRUE total minus the one already shown
+    // as `latest`), not `otherLessons.length` -- `lessons` is capped at 20
+    // server-side, so a chapter with 23 lessons would otherwise read "19
+    // other lessons" instead of the true 22, undercounting silently before
+    // the disclosure is even expanded. `lessons.length` is a floor so a
+    // count that is somehow smaller than what's actually rendered never
+    // undersells the list.
+    const otherLessonsCount = Math.max(chapter.lesson_count - 1, otherLessons.length);
+    const [expanded, setExpanded] = useState(false);
 
     return (
         // flex-wrap + basis-full lets ChapterGenerateControl contribute a
@@ -57,7 +78,59 @@ export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
                             latest: {latest.status} · {latest.tier}
                         </span>
                     )}
+
+                    {otherLessonsCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setExpanded((prev) => !prev)}
+                            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+                            aria-expanded={expanded}
+                        >
+                            {otherLessonsLabel(otherLessonsCount)}
+                            {expanded ? (
+                                <ChevronUp className="h-3.5 w-3.5" />
+                            ) : (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                            )}
+                        </button>
+                    )}
                 </div>
+
+                {expanded && otherLessons.length > 0 && (
+                    <ul className="mt-2 flex flex-col gap-1.5 border-l-2 border-neutral-100 pl-3">
+                        {otherLessons.map((lesson) => (
+                            <li
+                                key={lesson.lesson_id}
+                                className="flex items-center justify-between gap-3 text-xs text-neutral-500"
+                            >
+                                <span>
+                                    {lesson.tier} · {lesson.status}
+                                </span>
+                                {isLessonWatchable(lesson) && (
+                                    <Link
+                                        href={`/lesson/${lesson.lesson_id}`}
+                                        className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-200"
+                                    >
+                                        <Play className="h-3 w-3" />
+                                        Watch
+                                    </Link>
+                                )}
+                            </li>
+                        ))}
+                        {/* Scale & Load Q2: the server caps `lessons` at 20 (a
+                            safety ceiling, not a natural bound -- see
+                            content/router.py's _MAX_LESSONS_EXPOSED) but
+                            `lesson_count` still reports the true total. Never
+                            let that discrepancy pass silently. */}
+                        {chapter.lesson_count > chapter.lessons.length && (
+                            <li className="text-xs italic text-neutral-400">
+                                {chapter.lesson_count - chapter.lessons.length} more lesson
+                                {chapter.lesson_count - chapter.lessons.length === 1 ? "" : "s"} not
+                                shown.
+                            </li>
+                        )}
+                    </ul>
+                )}
 
                 <p className="mt-1 text-xs text-neutral-500" title={PAGE_RANGE_EXPLANATION}>
                     PDF pages {chapter.page_start}–{chapter.page_end} (0-based index) · {pageSpan} pages
