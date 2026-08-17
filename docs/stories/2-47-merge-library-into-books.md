@@ -4,7 +4,7 @@ baseline_commit: c06ed81
 
 # Story 2.47: Fold My Library into My Books (S4-06)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -119,14 +119,19 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
 3. **Scope of every limit.** The new 20-entry cap is per-chapter, per-request (computed fresh on
    every `GET .../chapters` call) — no shared bucket, no cross-user or cross-instance state.
 4. **Which reads/writes are unbounded?** **Pre-existing, not introduced here, but newly relevant:**
-   the `_CHAPTER_COLUMNS` embed's `lessons!lessons_chapter_id_fkey(...)` side has no `.limit()` —
-   already flagged in the codebase's own comment as D59. Before this story, the unbounded fetch was
-   truncated down to exactly one row (`latest_lesson`) before ever reaching the client, so the lack
-   of a query-level limit was invisible to callers. **This story is the first to expose more of
-   that same unbounded read to the client** (as a list, not just a count), which is exactly why
-   AC-2's application-level cap exists — the underlying D59 gap is not fixed here (that's a
-   separate, pre-existing defect with its own owner), but this story must not make it *worse* by
-   shipping an unbounded list to the frontend on top of an unbounded read from Postgres.
+   the `_CHAPTER_COLUMNS` embed's `lessons!lessons_chapter_id_fkey(...)` side has no `.limit()`.
+   **Correction (2026-08-17, `/bmad-code-review`, Scale & Load Hunter):** this was originally
+   cited here as tracked under D59 — verified FALSE. D59 (`docs/DEFECT-REGISTER.md`) covers only
+   `admin/router.py` (closed) and `analytics/service.py` (Dev 3's, open); it never named
+   `content/router.py`. A new, correctly-scoped entry, **D115**, was opened for this gap and the
+   CI guard's marker-scoping blind spot that let it through unflagged (see the Review Findings
+   section below). Before this story, the unbounded fetch was truncated down to exactly one row
+   (`latest_lesson`) before ever reaching the client, so the lack of a query-level limit was
+   invisible to callers. **This story is the first to expose more of that same unbounded read to
+   the client** (as a list, not just a count), which is exactly why AC-2's application-level cap
+   exists — the underlying D115 gap is not fixed here (that's a separate, pre-existing defect with
+   its own owner, Dev 1), but this story must not make it *worse* by shipping an unbounded list to
+   the frontend on top of an unbounded read from Postgres.
 5. **Inherited caps re-derived?** The 20-entry cap is a **new** cap, sized against this story's own
    realistic range (typical 1-3, "no UI path to force many more"), not inherited from anywhere —
    documented here, in code as a `# BOUNDED:` comment, rather than a bare magic number.
@@ -147,7 +152,8 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
   - [x] 1.2 GREEN: implemented `_all_lessons()` in `content/router.py`, reusing the existing embed
     (no second Supabase call) — mirrors `_latest_lesson`'s status-mapping and newest-first sort
     exactly, capped at the new `_MAX_LESSONS_EXPOSED = 20` module constant with a `# BOUNDED`-style
-    comment citing Scale & Load Q2/Q5/D59. Added `lessons: list[LatestLesson]` to `ChapterResponse`
+    comment citing Scale & Load Q2/Q5 (originally D59, corrected to **D115** 2026-08-17 — see
+    Review Findings). Added `lessons: list[LatestLesson]` to `ChapterResponse`
     (`content/schemas.py`) via `Field(default_factory=list)`. All 39 tests in
     `test_book_endpoints.py` pass.
   - [x] 1.3 Bumped `docs/contracts/book-api.v1.json` to 1.3.0 with a changelog entry and the new
@@ -230,6 +236,140 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
     accounting for the +6 new `ChapterRow` tests added in Task 3). `tsc --noEmit` clean. `pnpm
     lint` — 0 errors, 32 pre-existing warnings (none in any file this story touched).
 
+### Review Findings
+
+_BMAD 6-agent adversarial code review, 2026-08-17 (Blind Hunter, Edge Case Hunter, Acceptance
+Auditor, Scale & Load Hunter [mandatory], Story Quality, Test Coverage, AC Completeness, Process
+Integrity). Branch diff `main..sprint4/s4-06-merge-library-into-books`. 1 decision-needed, 9
+patch, 0 defer, 5 dismissed as noise/accepted-pattern._
+
+- [x] [Review][Decision] Frozen contract ships fabricated/synthetic `lessons` example data —
+  **Resolved 2026-08-17: accepted as-is.** User decision: keep the disclosed synthetic entries —
+  `docs/contracts/book-api.v1.json`'s `real_example`, `note_1_3_0` explicitly discloses that the
+  non-latest `lessons[]` entries for the two real captured chapters are synthetic (invented, not
+  pulled from a live capture), because no per-entry data existed for a `lesson_count` of 2–3
+  before this story. This is transparently disclosed, not hidden — but it means format
+  assumptions (timestamp precision, tier casing, status vocabulary for older/failed rows) in a
+  file whose stated purpose is to be a real-capture ground truth are currently unverified against
+  the live database. Team must decide: accept synthetic examples here as-is, or require a fresh
+  real multi-lesson capture before merge.
+- [x] [Review][Patch] Unbounded embedded `lessons` read is mis-cited under the wrong D59 entry and
+  invisible to the CI guard that exists to catch it [apps/api/app/modules/content/router.py:89-100,
+  1030-1044] — Scale & Load Hunter (mandatory layer) confirmed empirically: `docs/DEFECT-REGISTER.md`'s
+  actual D59 entry covers `admin/router.py` (closed) and `analytics/service.py` (Dev 3's, open)
+  only, never `content/router.py`/`_CHAPTER_COLUMNS`. Running `test_unbounded_queries.py`'s
+  `_unbounded_selects()` against the real file returns `[]` — the `# BOUNDED: <= 80 rows...`
+  marker written to justify the outer `chapters` count also blankets the embedded `lessons`
+  relation the adjacent comment admits is unbounded, a marker-scoping blind spot in the CI guard
+  itself. Reachable input: a single user retrying a failing tier accumulates >20 lesson rows on
+  one chapter in ~75 minutes at the stated per-user rate limit (faster across N replicas, per
+  D49's `memory://` default).
+  **Fixed 2026-08-17.** Opened `docs/DEFECT-REGISTER.md` **D115** (correctly scoped to
+  `content/router.py`'s embedded `lessons` read and the CI guard's marker-scoping blind spot),
+  corrected every D59 citation to D115 in `router.py`'s comments and this story's own Scale & Load
+  / Dev Notes sections. The underlying query-level fix remains deferred under D115, owner Dev 1 —
+  not fixed by this story, as intended; the CI guard's marker-scoping blind spot is noted in
+  D115's own Enforcement column as what closing it requires.
+- [x] [Review][Patch] "N other lessons" toggle button undercounts before it is even expanded
+  [apps/web/src/components/dashboard/books/ChapterRow.tsx — `otherLessonsLabel(otherLessons.length)`]
+  — the label is derived from `chapter.lessons.slice(1).length` (capped at 19 max, since `lessons`
+  itself is capped at 20 server-side), not from the true `chapter.lesson_count - 1`. Example: true
+  `lesson_count = 23` → button reads "19 other lessons" when 22 actually exist. The existing
+  "surfaces the 20-entry cap explicitly" test does not catch this because it overrides
+  `lesson_count` on a fixture whose `lessons` array is still small, never constructing a real
+  20-item array. Fix: derive the button label from `chapter.lesson_count - 1`, not
+  `otherLessons.length`; add a test with a genuine 20-item `lessons` array and a `lesson_count`
+  past it.
+  **Fixed 2026-08-17.** Button label now derives from `Math.max(chapter.lesson_count - 1,
+  otherLessons.length)`. Added a dedicated regression test plus rebuilt the "surfaces the 20-entry
+  cap" test to use a real 20-item `lessons` array instead of a bare `lesson_count` override.
+- [x] [Review][Patch] `latest_lesson`/`lessons[0]` invariant is asserted only in a comment, not
+  guaranteed or tested [apps/api/app/modules/content/router.py — `_latest_lesson`, `_all_lessons`]
+  — the two functions independently filter and sort the same rows with no shared tiebreak key; a
+  row with the newest `created_at` but a missing `lesson_id`, or two rows tied on `created_at`
+  (plausible under the same rapid failed-retry pattern the 20-cap itself worries about), can make
+  `_latest_lesson` and `_all_lessons(...)[0]` diverge, which `ChapterRow.tsx` hard-codes as always
+  equal (`otherLessons = chapter.lessons.slice(1)`). Fix: derive `_latest_lesson` from
+  `_all_lessons(lessons)[0]` as the single source of truth, add an explicit secondary sort key
+  (e.g. `lesson_id`) to break `created_at` ties deterministically, and add a backend test asserting
+  `body[0]["latest_lesson"] == body[0]["lessons"][0]`.
+  **Fixed 2026-08-17.** `_latest_lesson` is now `_all_lessons(lessons)[0] if ... else None` —
+  single source of truth, correct-by-construction. Sort key extended to `(created_at, lesson_id)`
+  for a deterministic tiebreak. `_row_to_chapter_response` now computes `_all_lessons` once and
+  reuses it for both `latest_lesson` and `lessons` (also removes a duplicate sort). Added
+  `test_list_chapters_latest_lesson_always_equals_lessons_first_entry`, which additionally proves
+  the fix improves behavior: a newest-but-malformed row now correctly falls back to the newest
+  VALID lesson instead of `latest_lesson` going null while `lessons` still had a usable entry.
+- [x] [Review][Patch] `QuickActions.tsx`'s "My Library"→"My Books" rename has zero test coverage
+  [apps/web/src/components/dashboard/sections/QuickActions.tsx] — no `QuickActions.test.tsx`
+  exists anywhere in the repo, despite the Dev Agent Record calling this a deliberate,
+  non-mechanical change (icon, title, description, and href all changed). Add a test asserting the
+  new title, icon, and `href="/books"`.
+  **Fixed 2026-08-17.** Added `QuickActions.test.tsx` — 4 tests covering the Upload PDF card's
+  href, the My Books title/href/absence of "My Library" text, the updated description, and an
+  exact-count assertion (2 cards) against a stray reintroduced third card.
+- [x] [Review][Patch] AC-9's "zero dead references" grep does not actually return zero, and
+  nothing guards against regression — 5 files still contain the literal `/library`/`"library"`
+  substring in self-referential removal comments: `apps/web/src/components/dashboard/sections/RecentLessons.tsx`,
+  `.../ContinueLearningCard.tsx`, `.../QuickActions.tsx`, plus two the story's own Task 4.4
+  verification missed — `apps/web/src/components/dashboard/shell/TopUtilityBar.tsx` (a stale
+  comment listing "Dashboard/Library/Upload/Reports") and `apps/web/src/app/(dashboard)/books/page.tsx`
+  (a comment referencing the now-deleted `library/page.tsx` by path). No CI guard enforces this
+  going forward (FIXED-UNGUARDED per Defect Register binding rule 7). Fix: reword all such
+  comments to avoid the literal substring, and consider adding a small grep-based unit test so a
+  future PR can't silently reintroduce a dead reference.
+  **Fixed 2026-08-17.** Reworded all 5 comments to drop the literal quoted `/library` substring
+  and the bare "Library" nav-item mention, while keeping the historical "this used to be Library"
+  context. Added `__tests__/guards/no-library-references.test.ts` — a source-scan guard (matching
+  AC-9's own grep pattern exactly) that now runs on every `pnpm test`, closing the FIXED-UNGUARDED
+  gap.
+- [x] [Review][Patch] `ChapterRow.tsx`'s new `isWatchable()` duplicates rather than reuses
+  `books.service.ts`'s existing `watchableLessonId` gating rule [apps/web/src/components/dashboard/books/ChapterRow.tsx]
+  — if that rule is ever extended (e.g. an entitlement check), only the top-level Watch button
+  would pick it up; the "other lessons" list would silently keep the old, narrower rule. Fix:
+  extract the "is this lesson watchable" predicate into `books.service.ts` once, and have both
+  call sites use it.
+  **Fixed 2026-08-17.** Extracted `isLessonWatchable()` into `books.service.ts`; `watchableLessonId`
+  and `ChapterRow.tsx`'s per-entry gate both call it now — one rule, one place to extend it.
+- [x] [Review][Patch] Missing edge-case tests around the 20-entry cap [apps/api/tests/unit/test_book_endpoints.py,
+  apps/web/src/__tests__/components/dashboard/books/ChapterRow.test.tsx] — no test at the exact
+  20/21-item boundary (only tested at 23, well past it), no frontend test rendering a realistic
+  near-cap (20-item) `lessons` array, and no test covering a malformed row missing `lesson_id`
+  mixed into the list passed to `_all_lessons`. Add these three cases.
+  **Fixed 2026-08-17.** Added backend tests for exactly-20 (all survive, uncapped), exactly-21
+  (drops only the single oldest), and a malformed row missing `lesson_id` (skipped, not surfaced,
+  `lesson_count` still counts it). Added a frontend test rendering a real 20-item `lessons` array
+  (folded into the rebuilt "surfaces the 20-entry cap" test above).
+- [x] [Review][Patch] AC-2's required `# BOUNDED:`-tagged comment format wasn't used
+  [apps/api/app/modules/content/router.py — `_MAX_LESSONS_EXPOSED`] — the comment is descriptive
+  prose without the literal `# BOUNDED:` tag this file already uses elsewhere (e.g. on
+  `_CHAPTER_COLUMNS`'s query). No CI consequence (the guard only scans `.select()` chains, not
+  plain list slices), but worth aligning for consistency. Low priority.
+  **Fixed 2026-08-17.** Added a literal `# BOUNDED: output capped at 20 entries...` line to
+  `_MAX_LESSONS_EXPOSED`'s comment, alongside the D115 correction.
+- [x] [Review][Patch] Sprint tracker and contract-change notification gaps — this story (S4-06)
+  is not yet listed in `docs/dev2-sprint-tracker.md`, and the tracker's own "interface contract
+  changes: immediately flag to all 4 devs before merging" protocol wasn't followed for the
+  `book-api.v1.json` 1.2.0→1.3.0 bump (the story's Dev Notes only commit to flagging Dev 1). Add
+  an S4-06 entry to the tracker, and tag all 4 devs (not just Dev 1) on the contract change when
+  the PR is opened.
+  **Fixed 2026-08-17 (partially — one part is a PR-time action).** Added an S4-06 entry to
+  `docs/dev2-sprint-tracker.md` §13 with the dashboard/header updated. Tagging all 4 devs on the
+  contract-change PR itself cannot be done until the PR exists — carried forward as an explicit
+  next step (see the end-of-review summary), not silently dropped.
+
+_Dismissed as noise or already-accepted pattern (5): "mock-only assertion" claim against the two
+new backend tests (they assert real `TestClient` HTTP response bodies against a mocked Supabase
+boundary — this codebase's established, accepted unit-test pattern, not a new violation); AC-3/AC-5
+"partial" coverage of the literal `"1.3.0"` version string and the TS interface beyond `tsc`
+(same rigor level as prior additive contract bumps, not a gap this story introduced); the `lessons`
+field's per-request over-fetch of full generation/failure history (status/tier/timestamp only, no
+content — acceptable given the story's own stated realistic range of 1–3 and its explicit Scale &
+Load discussion); no `maxItems` constraint in the JSON schema for the cap (nice-to-have hardening,
+not a defect); AC-7/AC-10 "no explicit test assertion" findings (deletion and CI-tool cleanliness
+are inherently structural/build-level facts, not something a unit-test assertion covers, and no
+different from this codebase's standard practice elsewhere)._
+
 ## Dev Notes
 
 - **Read the actual current files before touching them** — `ChapterRow.tsx`, `books.service.ts`,
@@ -239,10 +379,11 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
   (same pattern as the earlier `sprint3-master` backend excursion — see
   `docs/handoffs/dev2-backend-changes-handoff-2026-08-14.md` for the established precedent and
   tone). Flag the diff to Dev 1 in the PR description.
-- **D59 is a real, pre-existing, separate defect** (unbounded `lessons` embed in
-  `_CHAPTER_COLUMNS`) — this story's AC-2 cap prevents this story from making D59 worse, but does
-  **not** close D59 itself (that would mean adding a real query-level bound or pagination to the
-  embed, a bigger change with its own owner). Do not conflate the two in review.
+- **D115 (originally mis-cited here as D59, corrected 2026-08-17) is a real, pre-existing,
+  separate defect** (unbounded `lessons` embed in `_CHAPTER_COLUMNS`) — this story's AC-2 cap
+  prevents this story from making D115 worse, but does **not** close D115 itself (that would mean
+  adding a real query-level bound or pagination to the embed, a bigger change with its own owner,
+  Dev 1). Do not conflate the two in review.
 - **CI is now fully real** (`docs/DEFECT-REGISTER.md` D110–D114, 2026-08-14): `ruff`, `ruff
   format`, and `mypy` all gate the `api` job for real now, and a broken postgres-migration-guard
   bug (D114) that silently never passed is also fixed. Run all three locally before pushing —
@@ -257,7 +398,8 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
 - CLAUDE.md: Team Ownership table (`content/router.py` = Dev 1; this story is an approved,
   explicit exception), Frozen Interface Contracts (`docs/contracts/book-api.v1.json` — additive
   GET-shape changes only), Scale Contract (six questions, answered above), Defect Register binding
-  rules (D59 cited, not closed, by this story).
+  rules (D115 cited, not closed, by this story — originally mis-cited as D59, corrected
+  2026-08-17).
 - `docs/SCALE-CONTRACT.md` — full text of the six questions this story's Scale & Load section
   answers.
 
@@ -293,9 +435,15 @@ sequence (all 5 marked `[x]` above with quantified evidence per task). Summary:
 - **Verification (AC-10):** Backend gating suite 1182 passed / 0 failed / 6 skipped (+2 net over
   the pre-story baseline, zero regressions); `ruff check`, `ruff format --check`, `mypy app` all
   clean. Frontend 76 files / 946 tests passing, 0 failed; `tsc --noEmit` and `pnpm lint` clean.
+  **Re-verified after the 2026-08-17 code review's 9 patch fixes:** backend 1186 passed / 0 failed
+  / 6 skipped (+4 net — the review's boundary/invariant/malformed-row tests), `ruff`/`ruff
+  format`/`mypy` still clean. Frontend 78 files / 952 tests passing, 0 failed (+2 files —
+  `QuickActions.test.tsx`, the `no-library-references` guard — +6 tests net), `tsc --noEmit`
+  clean.
 - **Judgment calls made, all documented inline in the relevant task notes above:** (1) the 20-entry
-  cap is a new safety ceiling, not a claim that D59 (the underlying unbounded embed) is closed —
-  explicitly called out in Dev Notes to avoid conflating the two in review; (2) the cap-surfacing
+  cap is a new safety ceiling, not a claim that D115 (originally mis-cited as D59, corrected
+  2026-08-17) — the underlying unbounded embed — is closed; explicitly called out in Dev Notes to
+  avoid conflating the two in review; (2) the cap-surfacing
   UI note was initially drafted as "deferred" then implemented instead, since deferring would
   contradict this codebase's own no-silent-truncation rule; (3) `QuickActions.tsx`'s card was
   renamed rather than left with a stale label, going slightly beyond a literal "redirect the href"
@@ -336,6 +484,16 @@ sequence (all 5 marked `[x]` above with quantified evidence per task). Summary:
 - `apps/web/src/proxy.ts`
 - `apps/web/src/__tests__/proxy.test.ts`
 - `docs/stories/2-47-merge-library-into-books.md`
+- `docs/DEFECT-REGISTER.md` (code-review fix: new **D115** entry, correcting the D59 mis-citation)
+- `docs/dev2-sprint-tracker.md` (code-review fix: added S4-06 entry)
+- `apps/web/src/components/dashboard/shell/TopUtilityBar.tsx` (code-review fix: stale Library
+  comment reworded)
+- `apps/web/src/app/(dashboard)/books/page.tsx` (code-review fix: stale `library/page.tsx`
+  comment reworded)
+
+**Added (code-review fixes, 2026-08-17):**
+- `apps/web/src/__tests__/components/dashboard/sections/QuickActions.test.tsx`
+- `apps/web/src/__tests__/guards/no-library-references.test.ts`
 
 **Deleted:**
 - `apps/web/src/app/(dashboard)/library/page.tsx`
@@ -355,3 +513,4 @@ sequence (all 5 marked `[x]` above with quantified evidence per task). Summary:
 |------|--------|--------|
 | 2026-08-17 | Story drafted and committed alone (`c06ed81`), per BMAD Pre-Implementation Checklist. | Dev 2 (Claude) |
 | 2026-08-17 | Tasks 1–5 implemented via RED→GREEN TDD: backend `lessons` field + 20-entry cap, frontend expandable disclosure UI, full `/library` removal, all cross-references fixed. Status → review. | Dev 2 (Claude) |
+| 2026-08-17 | 6-agent adversarial code review (`/bmad-code-review`): 1 decision-needed (accepted synthetic contract data as-is), 9 patch findings applied — corrected D59→**D115** register mis-citation, fixed an "N other lessons" undercount bug, unified `latest_lesson`/`lessons[0]` via a single source of truth with a deterministic tiebreak, added `QuickActions.test.tsx`, closed AC-9's dead-reference gap with a new source-scan guard test, deduplicated the Watch-gate predicate, added 4 boundary/edge-case tests, added a literal `# BOUNDED:` tag, and added an S4-06 tracker entry. Backend 1186/0 failed, frontend 78 files/952 tests. Status → done. | Dev 2 (Claude) |

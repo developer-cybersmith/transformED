@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Play, Loader2, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
-import { watchableLessonId, type ChapterResponse, type LatestLesson } from "@/services/books.service";
+import { isLessonWatchable, watchableLessonId, type ChapterResponse } from "@/services/books.service";
 import { ChapterGenerateControl } from "./ChapterGenerateControl";
 
 // W2 shipped Generate DISABLED with a stated reason, because nothing behind it
@@ -22,16 +22,6 @@ function lessonCountLabel(count: number): string {
 
 function otherLessonsLabel(count: number): string {
     return count === 1 ? "1 other lesson" : `${count} other lessons`;
-}
-
-/**
- * Story 2-47 (S4-06): the same Watch-gate rule `watchableLessonId` applies to
- * `latest_lesson`, generalized to EVERY entry in `lessons` -- a non-latest
- * lesson that failed or is still generating must never earn a Watch link
- * either.
- */
-function isWatchable(lesson: LatestLesson): boolean {
-    return lesson.status === "ready";
 }
 
 interface ChapterRowProps {
@@ -55,6 +45,15 @@ export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
     // sort) -- everything after it is the "other lessons" a standalone
     // Library page used to be the only way to reach.
     const otherLessons = chapter.lessons.slice(1);
+    // Review fix (Story 2-47 /bmad-code-review): the affordance's own label
+    // must use `lesson_count - 1` (the TRUE total minus the one already shown
+    // as `latest`), not `otherLessons.length` -- `lessons` is capped at 20
+    // server-side, so a chapter with 23 lessons would otherwise read "19
+    // other lessons" instead of the true 22, undercounting silently before
+    // the disclosure is even expanded. `lessons.length` is a floor so a
+    // count that is somehow smaller than what's actually rendered never
+    // undersells the list.
+    const otherLessonsCount = Math.max(chapter.lesson_count - 1, otherLessons.length);
     const [expanded, setExpanded] = useState(false);
 
     return (
@@ -80,14 +79,14 @@ export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
                         </span>
                     )}
 
-                    {otherLessons.length > 0 && (
+                    {otherLessonsCount > 0 && (
                         <button
                             type="button"
                             onClick={() => setExpanded((prev) => !prev)}
                             className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
                             aria-expanded={expanded}
                         >
-                            {otherLessonsLabel(otherLessons.length)}
+                            {otherLessonsLabel(otherLessonsCount)}
                             {expanded ? (
                                 <ChevronUp className="h-3.5 w-3.5" />
                             ) : (
@@ -107,7 +106,7 @@ export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
                                 <span>
                                     {lesson.tier} · {lesson.status}
                                 </span>
-                                {isWatchable(lesson) && (
+                                {isLessonWatchable(lesson) && (
                                     <Link
                                         href={`/lesson/${lesson.lesson_id}`}
                                         className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-200"

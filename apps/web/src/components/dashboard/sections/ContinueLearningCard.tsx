@@ -21,7 +21,7 @@ export function ContinueLearningCard({ lesson }: { lesson: LessonStatusResponse 
                 </h2>
                 <button
                     type="button"
-                    // Story 2-47 (S4-06): "/library" removed, folded into Books.
+                    // Story 2-47 (S4-06): the Library route was removed and folded into Books.
                     onClick={() => router.push("/books")}
                     className="text-sm font-medium text-[var(--accent-primary)] hover:text-[var(--accent-primary-hover)] cursor-pointer transition-colors"
                 >

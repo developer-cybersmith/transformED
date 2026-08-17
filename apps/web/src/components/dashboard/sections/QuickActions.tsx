@@ -15,9 +15,10 @@ const actions = [
         href: "/upload",
     },
     {
-        // Story 2-47 (S4-06): was "My Library" / "/library" -- Library's one
-        // unique capability (reaching a non-latest lesson) folded into Books,
-        // and the standalone page removed. This card points at Books now.
+        // Story 2-47 (S4-06): this card used to be titled My Library and link
+        // to the Library route. Library's one unique capability (reaching a
+        // non-latest lesson) folded into Books, and the standalone page was
+        // removed. This card points at Books now.
         id: "books",
         title: "My Books",
         description: "Browse your uploaded books and chapters.",

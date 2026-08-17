@@ -197,16 +197,28 @@ describe('ChapterRow — AC-6, expandable non-latest lessons (Story 2-47)', () =
     });
 
     it('surfaces the 20-entry cap explicitly rather than silently truncating (Scale & Load Q2)', async () => {
+        // A REAL 20-item `lessons` array (the server's actual cap), with
+        // `lesson_count` past it -- not a bare `lesson_count` override on a
+        // 2-item array, which would let the review-fixed undercount bug pass
+        // silently (see the dedicated undercount test below for that case).
+        const twentyLessons = Array.from({ length: 20 }, (_, i) => ({
+            ...CHAPTER_LESSON_COUNT_2.lessons[0],
+            lesson_id: `lesson-${i}`,
+        }));
         const cappedChapter = {
             ...CHAPTER_LESSON_COUNT_2,
             lesson_count: 23, // more lessons exist than the 20 the server ever exposes
+            lessons: twentyLessons,
         };
         const user = userEvent.setup();
         renderRow(cappedChapter);
 
-        await user.click(screen.getByRole('button', { name: /1 other lesson/i }));
+        await user.click(screen.getByRole('button', { name: /22 other lessons/i }));
 
-        expect(screen.getByText(/more lesson.*not shown/i)).not.toBeNull();
+        expect(screen.getByText(/3 more lessons not shown/i)).not.toBeNull();
+        // All 19 rendered non-latest rows (20 lessons minus the latest) are
+        // present, not silently dropped in favor of just the note.
+        expect(screen.getAllByRole('listitem').length).toBeGreaterThanOrEqual(19);
     });
 
     it('does not show the cap note when lesson_count matches the exposed lessons exactly', async () => {
@@ -216,5 +228,23 @@ describe('ChapterRow — AC-6, expandable non-latest lessons (Story 2-47)', () =
         await user.click(screen.getByRole('button', { name: /1 other lesson/i }));
 
         expect(screen.queryByText(/more lesson.*not shown/i)).toBeNull();
+    });
+
+    it('review fix: the affordance label counts from the TRUE lesson_count, not the capped lessons array (previously undercounted)', () => {
+        // Bug this test catches: deriving the button label from
+        // `otherLessons.length` (max 19, since `lessons` is capped at 20)
+        // instead of `lesson_count - 1` silently undercounts -- e.g. reading
+        // "19 other lessons" when 22 actually exist. Reproduces with a small
+        // `lessons` array and a `lesson_count` far past the cap, which is
+        // exactly the shape a capped server response can produce.
+        const chapter = {
+            ...CHAPTER_LESSON_COUNT_2,
+            lesson_count: 23,
+            lessons: [CHAPTER_LESSON_COUNT_2.lessons[0]], // only 1 entry shipped
+        };
+        renderRow(chapter);
+
+        expect(screen.getByRole('button', { name: /22 other lessons/i })).not.toBeNull();
+        expect(screen.queryByRole('button', { name: /^0 other lessons$/i })).toBeNull();
     });
 });

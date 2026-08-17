@@ -582,6 +582,84 @@ def test_list_chapters_lessons_field_capped_at_20_newest_lesson_count_unaffected
 
 
 @pytest.mark.unit
+def test_list_chapters_lessons_field_exactly_20_returns_all_uncapped() -> None:
+    """Review fix (Story 2-47 /bmad-code-review): boundary test at exactly the
+    cap — 20 lessons must all survive, not 19 (off-by-one under) or 20 minus
+    the newest (wrong end trimmed)."""
+    lessons = [
+        _lesson(f"lesson-{i:02d}", tier="T1", created_at=f"2026-08-01T{i:02d}:00:00Z")
+        for i in range(20)
+    ]
+    rows = [{**CHAPTER_ROWS[0], "lessons": lessons}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lesson_count"] == 20
+    assert len(body[0]["lessons"]) == 20
+    assert [item["lesson_id"] for item in body[0]["lessons"]] == [
+        f"lesson-{i:02d}" for i in range(19, -1, -1)
+    ]
+
+
+@pytest.mark.unit
+def test_list_chapters_lessons_field_exactly_21_drops_only_the_single_oldest() -> None:
+    """Review fix: one lesson past the cap must drop exactly the oldest one —
+    `lesson-00` — and nothing else."""
+    lessons = [
+        _lesson(f"lesson-{i:02d}", tier="T1", created_at=f"2026-08-01T{i:02d}:00:00Z")
+        for i in range(21)
+    ]
+    rows = [{**CHAPTER_ROWS[0], "lessons": lessons}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lesson_count"] == 21
+    ids = [item["lesson_id"] for item in body[0]["lessons"]]
+    assert len(ids) == 20
+    assert "lesson-00" not in ids, "the single oldest lesson must be the one dropped"
+    assert ids == [f"lesson-{i:02d}" for i in range(20, 0, -1)]
+
+
+@pytest.mark.unit
+def test_list_chapters_lessons_skips_a_row_missing_lesson_id() -> None:
+    """Review fix: a malformed row with no `lesson_id` must be skipped from
+    `lessons`, not surfaced as a phantom entry, and must not throw."""
+    malformed = {"status": "ready", "tier": "T1", "created_at": "2026-08-05T00:00:00Z"}
+    valid = _lesson(FAKE_LESSON_ID, tier="T2", created_at="2026-08-01T00:00:00Z")
+    rows = [{**CHAPTER_ROWS[0], "lessons": [malformed, valid]}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lessons"] == [valid]
+    # lesson_count counts EVERY embedded row including malformed ones — it is
+    # the true total, not the post-filter count (matches the cap semantics).
+    assert body[0]["lesson_count"] == 2
+
+
+@pytest.mark.unit
+def test_list_chapters_latest_lesson_always_equals_lessons_first_entry() -> None:
+    """Review fix (Story 2-47 /bmad-code-review, Edge Case Hunter): `latest_lesson`
+    must be derived from the same sort as `lessons`, not computed independently —
+    otherwise a row with the newest `created_at` but no `lesson_id` could make
+    `latest_lesson` and `lessons[0]` diverge (previously: `latest_lesson` fell
+    through to None entirely in this exact case, even though a valid older
+    lesson existed)."""
+    newest_but_malformed = {
+        "status": "ready",
+        "tier": "T3",
+        "created_at": "2026-08-05T00:00:00Z",
+    }
+    valid = _lesson(FAKE_LESSON_ID, tier="T1", created_at="2026-08-01T00:00:00Z")
+    rows = [{**CHAPTER_ROWS[0], "lessons": [newest_but_malformed, valid]}, CHAPTER_ROWS[1]]
+    sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=rows)
+    body = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters").json()
+
+    assert body[0]["lessons"] == [valid]
+    assert body[0]["latest_lesson"] == valid, "must fall back to the newest VALID lesson"
+    assert body[0]["latest_lesson"] == body[0]["lessons"][0]
+
+
+@pytest.mark.unit
 def test_list_chapters_of_an_own_book_with_no_chapters_is_empty_200() -> None:
     sb = _make_supabase_mock(book_row=BOOK_ROW, chapter_rows=[])
     resp = _get(sb, f"/api/content/books/{FAKE_BOOK_ID}/chapters")

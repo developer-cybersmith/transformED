@@ -92,11 +92,15 @@ _CONCURRENCY_RETRY_AFTER_S: int = 60
 # retry while an existing (chapter_id, tier) lesson is generating/ready, so a
 # repeatedly-failing tier can accumulate one row per retry with no hard cap
 # found anywhere in this flow. The underlying `_CHAPTER_COLUMNS` embed itself
-# has no query-level `.limit()` either (D59, pre-existing, not fixed here) --
-# this cap is applied in Python after the fetch so this story does not make
-# that gap worse by shipping an unbounded list to the client. `lesson_count`
-# is computed from the UNCAPPED list and still reports the true total past
-# this cap.
+# has no query-level `.limit()` either -- D115, pre-existing, not fixed here.
+# (This was mis-cited as D59 in the original story draft; D59 covers
+# admin/router.py and analytics/service.py only, never this file -- corrected
+# 2026-08-17 by the story's own /bmad-code-review.) This cap is applied in
+# Python after the fetch so this story does not make that gap worse by
+# shipping an unbounded list to the client. `lesson_count` is computed from
+# the UNCAPPED list and still reports the true total past this cap.
+# BOUNDED: output capped at 20 entries here in Python (post-fetch slice); the
+# underlying query itself is still unbounded -- see D115 above.
 _MAX_LESSONS_EXPOSED: int = 20
 
 
@@ -438,44 +442,23 @@ def _embedded_lessons(value: Any) -> list[dict[str, Any]]:  # noqa: ANN401 — e
     return [row for row in value if isinstance(row, dict)]
 
 
-def _latest_lesson(lessons: list[dict[str, Any]]) -> LatestLesson | None:
-    """Pick the newest lesson by `created_at`, or None.
-
-    PostgREST does not order embedded rows for us, so the ordering happens here.
-    `created_at` is `timestamptz NOT NULL DEFAULT now()` and PostgREST renders it
-    ISO-8601, which sorts correctly as a string; a missing value sorts first so a
-    malformed row can never win the max().
-    """
-    if not lessons:
-        return None
-    newest = max(lessons, key=lambda row: str(row.get("created_at") or ""))
-    lesson_id = newest.get("lesson_id")
-    if not lesson_id:
-        return None
-    # `_map_status`, not the raw column. `lessons.status` is the DB vocabulary
-    # ('generating'|'ready'|'failed'); every lesson-facing response in this API
-    # speaks the CLIENT vocabulary ('queued'|'running'|'ready'|'failed') — see
-    # `LessonStatusResponse` and `_row_to_status_response`. Returning the raw
-    # value here would hand Dev 2 'generating' from the chapter card and
-    # 'running' from `GET /lessons` for the same lesson, so a status switch
-    # matching on 'running' silently falls through on chapter cards only.
-    return LatestLesson(
-        lesson_id=str(lesson_id),
-        status=_map_status(str(newest.get("status") or "generating")),
-        tier=str(newest.get("tier") or ""),
-        created_at=str(newest["created_at"]) if newest.get("created_at") else None,
-    )
-
-
 def _all_lessons(lessons: list[dict[str, Any]]) -> list[LatestLesson]:
     """Every lesson for the chapter, newest-first, capped at `_MAX_LESSONS_EXPOSED`.
 
-    Story 2-47 (S4-06). Same rows `_latest_lesson` above already receives — no
-    second query. Sorted newest-first by `created_at` (same string-sort
-    property `_latest_lesson` relies on: ISO-8601 timestamptz sorts correctly
-    as a string, and a missing value sorts first so a malformed row is never
-    mistaken for the newest). Rows missing a `lesson_id` are skipped, matching
-    `_latest_lesson`'s own defensive check.
+    Story 2-47 (S4-06). Rows missing a `lesson_id` are skipped entirely — a
+    malformed row can never be mistaken for the newest, nor silently occupy a
+    slot in the exposed list. Sorted newest-first by `(created_at, lesson_id)`:
+    `created_at` is `timestamptz NOT NULL DEFAULT now()` and PostgREST renders
+    it ISO-8601, which sorts correctly as a string; `lesson_id` is an explicit
+    secondary key so two rows tied on `created_at` (plausible under the same
+    rapid failed-retry pattern `_MAX_LESSONS_EXPOSED`'s own comment describes)
+    sort deterministically instead of depending on Python's sort stability
+    plus whatever order PostgREST happened to return them in. Review fix
+    (Story 2-47 `/bmad-code-review`, 2026-08-17): `_latest_lesson` below is
+    now DERIVED from this list's first element, rather than computed
+    independently — two functions computing "the newest lesson" over the same
+    rows with different defensive-filtering rules is exactly how `latest_lesson`
+    and `lessons[0]` could silently diverge from each other.
     """
     mapped = [
         LatestLesson(
@@ -487,8 +470,22 @@ def _all_lessons(lessons: list[dict[str, Any]]) -> list[LatestLesson]:
         for row in lessons
         if row.get("lesson_id")
     ]
-    mapped.sort(key=lambda lesson: lesson.created_at or "", reverse=True)
+    mapped.sort(key=lambda lesson: (lesson.created_at or "", lesson.lesson_id), reverse=True)
     return mapped[:_MAX_LESSONS_EXPOSED]
+
+
+def _latest_lesson(lessons: list[dict[str, Any]]) -> LatestLesson | None:
+    """The newest lesson, or None — always `_all_lessons(lessons)[0]`.
+
+    Single source of truth (see `_all_lessons`'s docstring for why this used
+    to be a second, independent implementation and what that risked). Note
+    this reads correctly even though `_all_lessons` caps its return value at
+    `_MAX_LESSONS_EXPOSED`: the cap is applied AFTER the newest-first sort, so
+    the newest lesson is always at index 0 regardless of how many total rows
+    exist — capping only ever drops the OLDEST entries.
+    """
+    all_lessons = _all_lessons(lessons)
+    return all_lessons[0] if all_lessons else None
 
 
 def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
@@ -505,7 +502,11 @@ def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
     only lesson is `failed` must not render a Watch button that 404s the player.
     """
     lessons = _embedded_lessons(chapter.get("lessons"))
-    latest = _latest_lesson(lessons)
+    # Computed once, not via _latest_lesson(lessons) + _all_lessons(lessons)
+    # separately -- both derive from the same sort, and `latest_lesson` is
+    # guaranteed to equal `lessons[0]` by construction (see _all_lessons).
+    all_lessons = _all_lessons(lessons)
+    latest = all_lessons[0] if all_lessons else None
     return ChapterResponse(
         chapter_id=str(chapter["chapter_id"]),
         chapter_index=int(chapter["chapter_index"]),
@@ -517,7 +518,7 @@ def _row_to_chapter_response(chapter: dict[str, Any]) -> ChapterResponse:
         has_lesson=bool(lessons),
         lesson_count=len(lessons),
         latest_lesson=latest,
-        lessons=_all_lessons(lessons),
+        lessons=all_lessons,
     )
 
 
@@ -1032,7 +1033,8 @@ async def list_book_chapters(
     # cannot produce more than 80 chapter rows, and the 8-book Phase 1 corpus
     # measured 20-53. A `.limit()` here would silently truncate a legitimate
     # chapter list — the exact failure this endpoint exists to prevent.
-    # The embedded `lessons` side is NOT bounded by that argument — see D59.
+    # The embedded `lessons` side is NOT bounded by that argument — see D115
+    # (mis-cited as D59 in the original story draft; corrected 2026-08-17).
     # BOUNDED: <= 80 rows, enforced by the chapter-detection gate (4-80 entries).
     resp = (
         supabase.table("chapters")

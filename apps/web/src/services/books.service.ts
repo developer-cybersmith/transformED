@@ -91,9 +91,23 @@ export interface ChapterResponse {
  * non-null `lesson_id`; linking to it produces a button that 404s the player.
  * Returns the lesson id that is safe to open, or null.
  */
+/**
+ * Single source of truth for "is this lesson safe to link to" -- a lesson
+ * that failed or is still generating must never earn a Watch link, whether
+ * it is the chapter's `latest_lesson` or one of the non-latest entries in
+ * `lessons` (Story 2-47 / S4-06). Extracted during that story's
+ * `/bmad-code-review` after `ChapterRow.tsx` shipped a second, independent
+ * copy of this exact rule -- if this gate is ever extended (e.g. an
+ * entitlement check), a duplicate copy would silently keep the old, narrower
+ * rule for every non-latest entry.
+ */
+export function isLessonWatchable(lesson: Pick<LatestLesson, 'status'> | null | undefined): boolean {
+    return lesson != null && lesson.status === 'ready';
+}
+
 export function watchableLessonId(chapter: Pick<ChapterResponse, 'latest_lesson'>): string | null {
     const latest = chapter.latest_lesson;
-    return latest != null && latest.status === 'ready' ? latest.lesson_id : null;
+    return latest != null && isLessonWatchable(latest) ? latest.lesson_id : null;
 }
 
 /**
