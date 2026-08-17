@@ -8,7 +8,7 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-08-17 (**S4-08 lesson-restart-after-teachback fix shipped** — user-reported live bug: `exitTeachBack()` resuming PLAYING on an already-ended last-segment `<audio>` element replayed it from 0 per the HTML media spec, indistinguishable from the lesson restarting. See §13.) — previously 2026-08-17 (**S4-07 CaptionOverlay unreachable-scroll fix shipped** — real live production bug found via manual Playwright browser verification, `pointer-events-none` + missing `data-lenis-prevent` stacked to make the caption panel's own overflow scroll completely unreachable. See §13.) — previously 2026-08-11 (**S3-09 Signed-URL auto-refresh + DEFER-012 (D63) register entry shipped** — Story 2-45, ad-hoc off the Lesson Delivery Tracker's L3 known risk, not a scheduled Sprint 3 item; branch cut from `sprint3-master` since `main` doesn't yet have S3-01–S3-04. `AudioTimeline`/`SlideRenderer` now auto re-sign an expired asset once before falling back to the existing manual Retry/placeholder path. 920 web tests passing. See §12.) — previously 2026-08-06 (**S3-01 Attention Consent Modal shipped** — Story 2-42, 3-agent review passed, all 3 decision-needed + 12 patch findings resolved; switched to the real `POST /api/assessment/consent` endpoint (Story 3-32) after it landed on `main` mid-review, closing **D29**. **S3-04 CES Indicator confirmed shipped** — Story 2-41 (this file had drifted; it was done alongside S3-03 but never updated below). `sprint3-master` synced with `main` (also picked up **D18**/**D30** closures) and pushed. Sprint 3 is now 3/10 done — see §12.) — previously 2026-08-03 (S3-03 TutorInterventionCard shipped — Story 2-40, 3-agent review passed, 9 patches applied. See §12.) — previously 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
+| **Last Updated** | 2026-08-17 (**S4-09 CaptionOverlay redesigned to one-line-at-a-time captions** — direct user feedback after S4-07: no word-level TTS timing exists, so lines are split ~10 words at a time and timed proportionally to character count within the segment's known duration; verified live advancing correctly during real playback. See §13.) — previously 2026-08-17 (**S4-08 lesson-restart-after-teachback fix shipped** — user-reported live bug: `exitTeachBack()` resuming PLAYING on an already-ended last-segment `<audio>` element replayed it from 0 per the HTML media spec, indistinguishable from the lesson restarting. See §13.) — previously 2026-08-17 (**S4-07 CaptionOverlay unreachable-scroll fix shipped** — real live production bug found via manual Playwright browser verification, `pointer-events-none` + missing `data-lenis-prevent` stacked to make the caption panel's own overflow scroll completely unreachable. See §13.) — previously 2026-08-11 (**S3-09 Signed-URL auto-refresh + DEFER-012 (D63) register entry shipped** — Story 2-45, ad-hoc off the Lesson Delivery Tracker's L3 known risk, not a scheduled Sprint 3 item; branch cut from `sprint3-master` since `main` doesn't yet have S3-01–S3-04. `AudioTimeline`/`SlideRenderer` now auto re-sign an expired asset once before falling back to the existing manual Retry/placeholder path. 920 web tests passing. See §12.) — previously 2026-08-06 (**S3-01 Attention Consent Modal shipped** — Story 2-42, 3-agent review passed, all 3 decision-needed + 12 patch findings resolved; switched to the real `POST /api/assessment/consent` endpoint (Story 3-32) after it landed on `main` mid-review, closing **D29**. **S3-04 CES Indicator confirmed shipped** — Story 2-41 (this file had drifted; it was done alongside S3-03 but never updated below). `sprint3-master` synced with `main` (also picked up **D18**/**D30** closures) and pushed. Sprint 3 is now 3/10 done — see §12.) — previously 2026-08-03 (S3-03 TutorInterventionCard shipped — Story 2-40, 3-agent review passed, 9 patches applied. See §12.) — previously 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
 | **Active Sprint** | Sprint 3 — Weeks 6–7 (6/9 done — S3-01, S3-02, S3-03, S3-04, S3-07, S3-09; **note:** this row's "Total Tasks" in §1 has read 10 since before an earlier correction, and now 9 S3-numbered items (S3-01–S3-09) exist in this file after S3-09 was added as an ad-hoc item — a pre-existing count discrepancy, not fully resolved by this update, left flagged rather than silently resolved) |
 | **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is now end-to-end functional; D18/D29/D30 all closed 2026-08-04/05** · Sprint 3 IN PROGRESS (6/9 — S3-01, S3-02, S3-03, S3-04, S3-07, S3-09 done; S3-05/S3-06 unblocked now that S3-02 shipped; S3-08 not started) — **corrected 2026-08-11: S3-09 (signed-URL auto-refresh + DEFER-012/D63) added and shipped same day, ad-hoc off the Lesson Delivery Tracker rather than originally-scheduled Sprint 3 scope** |
 
@@ -54,9 +54,9 @@
 | Sprint 1 | Weeks 2–3 | 14 | **14** | 0 | **0** |
 | Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
 | Sprint 3 | Weeks 6–7 | 10 (9 accounted for after S3-09 added — see header note) | **6** | 0 | **3** |
-| Sprint 4 | Weeks 8–9 | 10 (+2 ad-hoc: S4-07, S4-08; S4-06 reserved, pending merge on its own branch — see note above) | **2** | 0 | **8** |
+| Sprint 4 | Weeks 8–9 | 11 (+3 ad-hoc: S4-07, S4-08, S4-09; S4-06 reserved, pending merge on its own branch — see note above) | **3** | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **58** | **35** | **0** | **23** |
+| **Total** | **10 weeks** | **59** | **36** | **0** | **23** |
 
 > **Tracker correction (2026-08-06):** this file had drifted from reality on two points. (1) **S3-04 (CES Indicator)** was shipped alongside S3-03 (Story 2-41, same review pass, both merged to `sprint3-master`) but §12's entry and the dashboard above were never updated — corrected now. (2) **S3-01 (Attention Consent Modal)** shipped today as **Story 2-42**: 3-agent review found 3 decision-needed + 10 patch findings; mid-review, Dev 3's real **Story 3-32** (`POST /api/assessment/consent`) landed on `main` and closed **D29** — the consent write was switched from the tracker's originally-specified `PATCH /api/users/consent` (which never existed) to the real endpoint. `sprint3-master` was then synced with `main` (picking up D18/D29/D30, all now closed) and both S3-01's branch and the sync were merged in — 827/827 web tests, `tsc`/`eslint` clean. **S3-02 (AttentionMonitor) is now unblocked** — its only real dependency (consent gate + D29) is resolved.
 >
@@ -1805,8 +1805,50 @@ and targeted `eslint` clean.
 **Not yet investigated in this pass:** the same test session surfaced 6 `connection rejected (400
 Bad Request)` log lines for the tutor WebSocket — confirmed as `MAX_RECONNECT_ATTEMPTS = 5` (+1
 initial attempt) retrying a single underlying handshake failure with exponential backoff, not 6
-separate incidents (`lib/ws/lessonSocket.ts`). Root cause of the initial rejection is a separate,
-open investigation — see the next entry once resolved.
+separate incidents (`lib/ws/lessonSocket.ts`). Root cause of the initial rejection was never
+reproduced despite multiple full end-to-end attempts (same `--reload` backend, real frontend,
+signed in, same lesson) — the WS connected cleanly every time. Still open, unresolved. A related,
+real bug WAS found and fixed the same session — see PR #142 (`fix/cors-headers-on-unhandled-errors`,
+merged 2026-08-17): unhandled backend exceptions (e.g. a transient httpx.RemoteProtocolError talking
+to Supabase) were reaching the browser as opaque CORS failures instead of clean 500s, because
+Starlette's ServerErrorMiddleware sits outside CORSMiddleware. Not this file's own task (backend/
+shared infra, `apps/api/app/main.py`) — noted here for cross-reference only.
+
+### S4-09 — Redesign CaptionOverlay: YouTube/Netflix-style one-line captions (product request)
+**Priority:** P1 — direct user feedback after S4-07 shipped: "I don't want the entire caption at
+once, I want captions like how YouTube or other platforms provide subtitles, per the line that is
+narrating."
+**Status:** ✅ DONE (2026-08-17)
+**Files:** `apps/web/src/components/player/CaptionOverlay.tsx`,
+`apps/web/src/__tests__/components/player/CaptionOverlay.test.tsx`
+
+Replaced S4-07's "whole segment script, scrollable" caption panel with one-line-at-a-time captions
+that advance as narration plays, matching standard subtitle UX. **Hard constraint, unchanged from
+D90's original note:** there is no word/sentence-level timing anywhere in this pipeline —
+`NarrationTimestamp` (`packages/shared/types/lesson.ts`) is per-SLIDE, not per-word, and Sarvam TTS
+returns no word-level timestamps at all. A frame-perfect, word-highlighted sync (true YouTube
+auto-caption behaviour) is NOT achievable without that backend/TTS work — flagged as a separate,
+larger follow-up, same as before.
+
+What this ships without any new data: `splitScriptIntoCaptionLines()` chunks the script into
+~10-word lines (broadcast-subtitle convention); `activeCaptionLineIndex()` estimates each line's
+time window by allocating the segment's known total duration (`audioDurationMs`) proportionally to
+each line's character count (a closer proxy for spoken duration than a flat per-line split, since
+narration lines vary a lot in length) and picks whichever line's window contains the current
+`audioPositionMs`. This is an approximation, not real sync — pacing/pauses/emphasis all shift true
+timing — but it tracks actual playback position and re-aligns at every segment boundary rather than
+compounding drift. Falls back to line 0 whenever `audioDurationMs` isn't known yet (e.g. before a
+real `<audio>` element's `loadedmetadata` fires) rather than showing nothing.
+
+Verified live in a real browser (Playwright, local dev + local backend, real lesson): caption
+correctly advanced from "Hey there! Today, we're diving into a really interesting topic" at 0:00 to
+"architecture that includes various components such as the agent service," at 0:22 during real
+playback — single short line, no scroll needed. The S4-07 scroll-reachability fix
+(`pointer-events`/`data-lenis-prevent`) is kept as a defensive fallback in case a line ever wraps,
+though it should rarely if ever trigger now that lines are short. 18/18
+`CaptionOverlay.test.tsx` tests pass (both new pure-function unit tests for the line-splitting/
+sync-index logic, and component-level tests asserting only one line renders at a time and it
+advances correctly). Full suite 80 files / 981 tests, `tsc --noEmit` and targeted `eslint` clean.
 
 ---
 
