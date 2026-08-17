@@ -31,8 +31,16 @@ jobs:
           # push landed in between).
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # Pinned 2026-08-17: "latest" (0.4.83) fails every deploy from this
+      # runner with "Error: Authenticate: token validation error" against a
+      # deploy-scoped token that works fine locally on 0.4.77 and via a
+      # direct `flyctl deploy` from a dev machine -- confirmed a flyctl
+      # regression, not a bad token (same token, same secret, only the
+      # flyctl version differs between the failing and working case).
       - name: Install flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
+        with:
+          version: 0.4.77
 
       # fly.toml (repo root) declares app = "hie-api" with both the api and
       # worker process groups -- one deploy covers both (ADR-001 sec3). Run
