@@ -91,10 +91,15 @@ export interface LearnerDnaSnapshot {
 // rendered as a raw number -- always bucket it through `formatTeachbackLabel` first (PRD: no
 // rubric score shown to students in Phase 1). `segment_id` is an internal identifier, not
 // display text -- render "Segment {index + 1}" using the array's position instead, which is
-// already chronological (backend orders by created_at).
+// already chronological (backend orders by created_at). `score` is nullable -- verified against
+// the real shipped backend (apps/api/app/modules/assessment/router.py's TeachbackDetail): the
+// underlying `teachback_attempts.score` column has no NOT NULL constraint
+// (supabase/migrations/20260611000000_initial_schema.sql:210), so a `null` here is a real,
+// reachable shape, not just defensive typing -- formatTeachbackLabel already accepts
+// `number | null`.
 export interface TeachbackDetail {
   segment_id: string;
-  score: number;
+  score: number | null;
   feedback_praise: string | null;
   feedback_correction: string | null;
   concepts_hit: string[];

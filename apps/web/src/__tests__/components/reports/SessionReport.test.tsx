@@ -495,4 +495,32 @@ describe('SessionReport', () => {
     expect(chartIndex).toBeLessThan(detailIndex);
     expect(detailIndex).toBeLessThan(dnaIndex);
   });
+
+  it('does not crash on a null per-attempt score (real, reachable shape — teachback_attempts.score has no NOT NULL constraint) and still renders a descriptive label', () => {
+    useSessionReportMock.mockReturnValue({
+      report: {
+        ...FULL_REPORT,
+        teachback_details: [
+          {
+            segment_id: 'seg_003',
+            score: null,
+            feedback_praise: null,
+            feedback_correction: null,
+            concepts_hit: [],
+            concepts_missed: [],
+            attempt_number: 1,
+          },
+        ],
+      },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    const section = screen.getByTestId('teachback-detail-section');
+    expect(section.textContent).toMatch(/Segment 1/);
+    // formatTeachbackLabel(null) -> "No teach-back this session" -- reused as-is, not a crash.
+    expect(section.textContent).toMatch(/No teach-back this session/);
+  });
 });
