@@ -59,6 +59,7 @@ from pydantic import BaseModel
 # Single source of truth for the Learner Mode tier default (also used by
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
 from app.core.db import rows, single_row
+from app.core.langfuse import traced_node
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
@@ -225,6 +226,7 @@ def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:  # no
     )
 
 
+@traced_node("extract_node")
 async def extract_node(state: PipelineState) -> PipelineState:
     """Node 1: Extract raw text, font blocks, and images from the source PDF.
 
@@ -541,6 +543,7 @@ async def extract_node(state: PipelineState) -> PipelineState:
     }
 
 
+@traced_node("structure_node")
 async def structure_node(state: PipelineState) -> PipelineState:
     """Node 2: Detect chapter/section/topic boundaries using font metadata + LLM validation."""
     from app.config import get_settings
@@ -710,6 +713,7 @@ def _existing_chunks_for_chapter(
         offset += page_size
 
 
+@traced_node("chunk_node")
 async def chunk_node(state: PipelineState) -> PipelineState:
     """Node 3: Split sections into token-bounded chunks and write to Supabase.
 
@@ -893,6 +897,7 @@ _MAX_EMBED_BATCH_ITEMS = 2048
 _MAX_EMBED_INPUT_TOKENS = 8000  # safety margin under the ~8191-token model cap
 
 
+@traced_node("embed_node")
 async def embed_node(state: PipelineState) -> PipelineState:
     """Node 4: Generate vector embeddings for all chunks and store in pgvector.
 
@@ -1382,6 +1387,7 @@ async def _run_planner_batch(
     return last_response
 
 
+@traced_node("lesson_planner_node")
 async def lesson_planner_node(state: PipelineState) -> PipelineState:
     """Node 5 (Phase 2 Premium, Story 2-6/S2-7): generate a structured lesson
     plan from Phase 1's segment summaries.
@@ -1684,6 +1690,7 @@ class _SlideDeckLLM(BaseModel):
 _MAX_SLIDES_PER_SEGMENT = 8
 
 
+@traced_node("slide_generator_node")
 async def slide_generator_node(state: PipelineState) -> PipelineState:
     """Node 6 (Story 2-7/S2-8): generate a slide deck from Story 2-6's lesson
     plan.
@@ -2370,6 +2377,7 @@ def _summary_is_valid_shape(cached: dict[str, Any]) -> bool:
     return isinstance(summary, str) and bool(summary.strip()) and len(summary.split()) <= 100
 
 
+@traced_node("summarise_segment_node")
 async def summarise_segment_node(state: PipelineState) -> PipelineState:
     """Node 7 (Story 2-1 AC-1): generate a 2-3 sentence, <=100 word summary
     for one section. Send()-dispatched once per section (see AC-0) — this is
@@ -2531,6 +2539,7 @@ def _quiz_batch_is_valid_shape(cached: dict[str, Any]) -> bool:
     return all(isinstance(q, dict) and _quiz_data_is_valid_shape(q) for q in questions)
 
 
+@traced_node("quiz_generator_node")
 async def quiz_generator_node(state: PipelineState) -> PipelineState:
     """Node 8 (Story 2-1 AC-3, extended Story 3-28): generate N MCQs for one section.
 
@@ -2931,6 +2940,7 @@ def _complexity_is_valid_shape(cached: dict[str, Any]) -> bool:
     return isinstance(sensitivity, (int, float)) and 0.0 <= float(sensitivity) <= 1.0
 
 
+@traced_node("segment_complexity_node")
 async def segment_complexity_node(state: PipelineState) -> PipelineState:
     """Node 9 (Story 2-1 AC-2): score one section's reading complexity.
 
@@ -3068,6 +3078,7 @@ def _valid_jargon_checkpoint(cached: dict[str, Any]) -> bool:
     )
 
 
+@traced_node("jargon_extractor_node")
 async def jargon_extractor_node(state: PipelineState) -> PipelineState:
     """Node 10 (Story 2-1 AC-4): extract jargon/technical terms for one section.
 
@@ -3240,6 +3251,7 @@ def _valid_interventions_checkpoint(cached: dict[str, Any]) -> bool:
     )
 
 
+@traced_node("intervention_messages_node")
 async def intervention_messages_node(state: PipelineState) -> PipelineState:
     """Node 11 (Story 2-1 AC-5 — CRITICAL): pre-generate intervention messages
     for one section. Send()-dispatched once per section (see AC-0).
@@ -3394,6 +3406,7 @@ def _narration_is_valid_shape(cached: dict[str, Any]) -> bool:
     return isinstance(script, str) and bool(script.strip())
 
 
+@traced_node("narration_generator_node")
 async def narration_generator_node(state: PipelineState) -> PipelineState:
     """Node 12 (Story 2-1 AC-6): write a narration script for one section.
 
@@ -3870,6 +3883,7 @@ def _apply_narration_char_cap(
     }
 
 
+@traced_node("tts_node")
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
     Sarvam -> Azure -> Browser Speech fallback chain.
@@ -4318,6 +4332,7 @@ def _crop_to_16_9(image_bytes: bytes) -> bytes:
         return image_bytes
 
 
+@traced_node("image_generator_node")
 async def image_generator_node(state: PipelineState) -> PipelineState:
     """Node 14 (Story 2-9/S2-10): generate an illustrative image per slide via
     a GPT Image 1 Mini -> Imagen 4 Fast -> text-only fallback chain.
@@ -4649,6 +4664,7 @@ def _build_teachback_prompt(title: Any, jargon_entries: list[dict[str, Any]]) ->
     return f"In your own words, explain what you learned about {clean_title}."
 
 
+@traced_node("package_builder_node")
 async def package_builder_node(state: PipelineState) -> PipelineState:
     """Node 15 (Story 2-11/S2-11): assemble all prior node outputs into a
     schema-validated LessonPackage, write it to `lessons`, and mark the
