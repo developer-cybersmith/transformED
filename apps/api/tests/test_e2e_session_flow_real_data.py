@@ -311,9 +311,9 @@ def _build_supabase_session_report(
     quiz_mock = MagicMock()
     quiz_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = quiz_rows
 
-    # 4 — teachback_attempts (.select().eq().limit().execute())
+    # 4 — teachback_attempts (.select().eq().order().limit().execute()) — Story 2-48
     tb_mock = MagicMock()
-    tb_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = teachback_rows
+    tb_mock.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = teachback_rows
 
     # 5 — session_events (interventions, count="exact": .select().eq().eq().execute())
     interventions_resp = MagicMock()
