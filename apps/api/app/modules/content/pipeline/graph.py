@@ -4287,7 +4287,12 @@ def _crop_to_16_9(image_bytes: bytes) -> bytes:
     from PIL import Image
 
     try:
-        img = Image.open(BytesIO(image_bytes))
+        # Explicit `Image.Image` annotation, not inferred: Image.open() returns
+        # the narrower ImageFile.ImageFile, but Image.crop() returns the base
+        # Image.Image -- reassigning img = img.crop(...) below would otherwise
+        # be a real mypy type-narrowing violation (assigning a broader type to
+        # a variable mypy inferred as the narrower one).
+        img: Image.Image = Image.open(BytesIO(image_bytes))
         w, h = img.size
         if w * _TARGET_ASPECT_H == h * _TARGET_ASPECT_W:
             return image_bytes  # already exact 16:9 -- no-op, no re-encode
