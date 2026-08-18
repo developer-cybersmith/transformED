@@ -15,7 +15,7 @@ from __future__ import annotations
 import functools
 import logging
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
 from langfuse import Langfuse
@@ -104,12 +104,10 @@ def deterministic_trace_context(langfuse: Langfuse, seed: str | None) -> TraceCo
     return TraceContext(trace_id=trace_id)
 
 
-_State = TypeVar("_State")
+_NodeFn = TypeVar("_NodeFn", bound=Callable[..., Coroutine[Any, Any, Any]])
 
 
-def traced_node(
-    node_name: str, *, seed_key: str = "lesson_id"
-) -> Callable[[Callable[[_State], Awaitable[_State]]], Callable[[_State], Awaitable[_State]]]:
+def traced_node(node_name: str, *, seed_key: str = "lesson_id") -> Callable[[_NodeFn], _NodeFn]:
     """Wrap a LangGraph node coroutine with a Langfuse span (D69, node-level half).
 
     D69 (docs/DEFECT-REGISTER.md): every provider call across an N-node
@@ -139,14 +137,24 @@ def traced_node(
     Never raises and never changes the wrapped node's return value or
     exceptions -- an observability failure must never break the pipeline
     (this file's own established contract, `safe_trace`).
+
+    Typed via a whole-callable `TypeVar(bound=Callable[..., Coroutine[...]])`
+    (this file's `app.core.retry.with_retry` established the pattern) rather
+    than decomposing the signature into `Callable[[_State], Awaitable[_State]]`
+    and reconstructing it -- LangGraph's `add_node` overloads are generic over
+    a `NodeInputT` bound to `TypedDictLikeV1 | TypedDictLikeV2 | ...`, and a
+    reconstructed `Callable[[X], Awaitable[X]]` type failed every overload at
+    `graph.py`'s `add_node()` call sites even though it was structurally
+    identical to the undecorated node's own type; returning the original
+    function's exact inferred type via the bound TypeVar (not a rebuilt one)
+    resolves it.
     """
 
-    def decorator(
-        fn: Callable[[_State], Awaitable[_State]],
-    ) -> Callable[[_State], Awaitable[_State]]:
+    def decorator(fn: _NodeFn) -> _NodeFn:
         @functools.wraps(fn)
-        async def wrapper(state: _State) -> _State:
-            seed = state.get(seed_key) if isinstance(state, dict) else None  # type: ignore[attr-defined]
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            state = args[0] if args else kwargs.get("state")
+            seed = state.get(seed_key) if isinstance(state, dict) else None
             langfuse = get_langfuse()
             trace_context = deterministic_trace_context(langfuse, seed)
             span = safe_trace(
@@ -157,7 +165,7 @@ def traced_node(
                 )
             )
             try:
-                return await fn(state)
+                return await fn(*args, **kwargs)
             except Exception as exc:
                 if span is not None:
                     error_message = str(exc)
@@ -167,6 +175,6 @@ def traced_node(
                 if span is not None:
                     safe_trace(span.end)
 
-        return wrapper
+        return wrapper  # type: ignore[return-value]
 
     return decorator
