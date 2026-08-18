@@ -38,13 +38,69 @@ from app.providers.base import ImageProvider
 logger = logging.getLogger(__name__)
 
 _PROVIDER_KEY = "imagen"
+# D121 (2026-08-18) — OPEN, NOT FIXED, flagged not silently patched: Google's
+# own docs (ai.google.dev/gemini-api/docs/imagen, fetched 2026-08-18) state
+# plainly "Imagen models are deprecated and will shut down on August 17,
+# 2026" — i.e. AS OF YESTERDAY relative to this finding, this exact endpoint
+# (imagen-4.0-fast-generate-001) returns HARD ERRORS, not a future warning.
+# Google's recommended replacement (Gemini 2.5/3.1 Flash Image, "Nano
+# Banana") is explicitly "not a simple model-ID swap... different generation
+# interface, accepts more input types and charges by output resolution" —
+# this needs a real migration, not a one-line endpoint change, and is a
+# "Locked Technology Stack" (CLAUDE.md) decision requiring sign-off, not
+# something to change unilaterally here. Until migrated, this fallback tier
+# of the GPT Image -> Imagen -> text-only chain is effectively DEAD: every
+# call trips the circuit breaker on repeated hard failures and every slide
+# that reaches this tier degrades straight to text-only. See
+# docs/DEFECT-REGISTER.md D121.
 _IMAGEN_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-fast-generate-001:predict"
 )
 
 # Imagen 4 Fast pricing (USD per image) — documented placeholder, not a
 # verified invoiced rate (same caveat as OpenAIImageProvider's estimate).
+# Also now moot per D121 above until this provider is migrated.
 COST_PER_IMAGE = 0.015
+
+# D118 (2026-08-17): translates the same pixel-dimension `size` strings
+# OpenAIImageProvider takes into Imagen's own `aspectRatio` request
+# parameter (documented API field: "1:1", "3:4", "4:3", "9:16", "16:9" —
+# confirmed 2026-08-18 against ai.google.dev's own Imagen docs). Before this,
+# `size` was accepted for interface compatibility only and silently
+# discarded, so this fallback provider always returned a square 1:1 image
+# regardless of what the caller asked for.
+#
+# D122 (2026-08-18): this was originally a hardcoded {size: ratio} dict, and
+# by this point it had ALREADY silently gone stale twice in one day — once
+# when D120 corrected OpenAIImageProvider's real sizes out from under it,
+# and it would have happened a THIRD time the moment graph.py's
+# `_SLIDE_IMAGE_SIZE` moved to gpt-image-2's "1280x720". Replaced with a
+# computed nearest-match: parse whatever "WxH" string the caller actually
+# sends, compute its real ratio, and pick Imagen's closest enum value by
+# numeric distance. This cannot go stale — there is no size-specific table
+# left to forget to update.
+_IMAGEN_ASPECT_RATIOS: dict[str, float] = {
+    "1:1": 1.0,
+    "3:4": 3 / 4,
+    "4:3": 4 / 3,
+    "9:16": 9 / 16,
+    "16:9": 16 / 9,
+}
+_DEFAULT_ASPECT_RATIO = "1:1"
+
+
+def _closest_aspect_ratio(size: str) -> str:
+    """ "WxH" -> Imagen's nearest valid `aspectRatio` enum value.
+
+    Falls back to `_DEFAULT_ASPECT_RATIO` on anything unparseable — this is
+    the FALLBACK provider; a malformed size degrading to square (wrong
+    shape, right content) beats failing the whole slide."""
+    try:
+        w_str, h_str = size.lower().split("x")
+        ratio = int(w_str) / int(h_str)
+    except (ValueError, ZeroDivisionError):
+        return _DEFAULT_ASPECT_RATIO
+    return min(_IMAGEN_ASPECT_RATIOS, key=lambda k: abs(_IMAGEN_ASPECT_RATIOS[k] - ratio))
 
 
 class ImagenProvider(ImageProvider):
@@ -85,9 +141,15 @@ class ImagenProvider(ImageProvider):
 
         Args:
             prompt: Natural-language description.
-            size:   Accepted for ImageProvider interface compatibility;
-                    Imagen 4 Fast's predict endpoint does not take an
-                    explicit size parameter in this request shape.
+            size:   Any "WxH" pixel-dimension string, same contract as
+                    OpenAIImageProvider. Imagen 4 Fast's predict endpoint
+                    takes an `aspectRatio` request parameter, not raw pixel
+                    dimensions — translated via `_closest_aspect_ratio`
+                    (D118, made size-agnostic in D122). An unparseable size
+                    string falls back to `_DEFAULT_ASPECT_RATIO` ("1:1")
+                    rather than raising — this is the FALLBACK provider, and
+                    a request for a landscape image degrading to square
+                    (correct content, wrong shape) beats a total failure.
 
         Returns:
             ``data:image/png;base64,<...>``.
@@ -116,7 +178,7 @@ class ImagenProvider(ImageProvider):
                     # Same name as openai_image.py's primary observation
                     # (verb-first, provider-agnostic per Langfuse naming
                     # guidance) — `model="imagen-4-fast"` vs
-                    # `"gpt-image-1-mini"` distinguishes primary vs fallback.
+                    # `"gpt-image-2"` distinguishes primary vs fallback.
                     name="generate-image",
                     as_type="generation",
                     model="imagen-4-fast",
@@ -132,11 +194,15 @@ class ImagenProvider(ImageProvider):
             # looks odd.
             sanitized: SanitizedHTTPError | None = None
 
+            aspect_ratio = _closest_aspect_ratio(size)
             async with httpx.AsyncClient(timeout=30.0) as client:
                 try:
                     response = await client.post(
                         f"{_IMAGEN_URL}?key={self._api_key}",
-                        json={"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}},
+                        json={
+                            "instances": [{"prompt": prompt}],
+                            "parameters": {"sampleCount": 1, "aspectRatio": aspect_ratio},
+                        },
                     )
                     response.raise_for_status()
                 except httpx.HTTPError as exc:

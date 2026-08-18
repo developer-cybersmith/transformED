@@ -4,7 +4,7 @@ baseline_commit: c3b7b52
 
 # Story 2.48: Session Report — Teach-Back Summary Detail (S3-06)
 
-Status: in-progress
+Status: done
 
 ## Story
 
@@ -51,12 +51,15 @@ UI must never print a raw number for it, exactly like the existing Focus/Teach-B
 
 1. **AC-1 (backend)** — `SessionReport` (`apps/api/app/modules/assessment/router.py`) gains one
    new, additive, nullable field: `teachback_details: list[TeachbackDetail] | None`, where
-   `TeachbackDetail` is a new Pydantic model with fields `segment_id: str`, `score: int`,
+   `TeachbackDetail` is a new Pydantic model with fields `segment_id: str`, `score: int | None`,
    `feedback_praise: str | None`, `feedback_correction: str | None`,
    `concepts_hit: list[str]`, `concepts_missed: list[str]`, `attempt_number: int` — matching
    `teachback_attempts`'s real columns verbatim
    (`supabase/migrations/20260611000000_initial_schema.sql:205-217`), per Defect Register binding
-   rule 4. `None` (not `[]`) when the student did no teach-back this session (mirrors the existing
+   rule 4. **`score` is nullable, corrected during implementation** (Dev 3, PR #145) from this
+   AC's original `int` draft — the real column has no `NOT NULL` constraint, so `int | None` is the
+   accurate shape, not `int`; the frontend type was widened to match (see Change Log). `None` (not
+   `[]`) for the whole list when the student did no teach-back this session (mirrors the existing
    `teachback_score: None` / `ces_timeline: None` "no data" convention already used in this same
    model) — never conflate "no teach-back happened" with "teach-back happened with zero detail."
 2. **AC-2 (backend)** — `get_session_report`'s Step 3 (`service.py:916-923`) extends its existing
@@ -137,7 +140,10 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
    teach-back retries, the natural bound would grow and `.limit(50)` would need re-deriving —
    noted here so a future change to retry behavior does not silently inherit this cap without
    reconsidering it (same spirit as Story 2-46's D109 finding, though no defect is registered here
-   since the cap is not currently reachable).
+   since the cap is not currently reachable). **Confirmed by Dev 3 during implementation:** the
+   "no retry" bound isn't just convention — a real `uq_teachback_attempt` UNIQUE constraint on
+   `(session_id, segment_id, attempt_number)` enforces it at the DB level, so the natural bound is
+   DB-guaranteed, not just application-level discipline that could silently drift.
 3. **Scope of every limit.** `.limit(50)` is per-request (one `get_session_report` call for one
    session) — no shared-bucket or per-instance risk, identical scope to the existing quiz/teachback
    queries in the same function.
@@ -154,15 +160,20 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
 
 ## Tasks / Subtasks
 
-- [~] Task 1 (AC: 1, 2, 3, 4 — backend): Add `TeachbackDetail` model, extend `SessionReport` with
+- [x] Task 1 (AC: 1, 2, 3, 4 — backend): Add `TeachbackDetail` model, extend `SessionReport` with
   `teachback_details`, extend the existing `teachback_attempts` query's `.select()`/`.order()`,
-  build the list in `get_session_report`. **NOT implemented in this session** — per explicit
-  team-boundary instruction, Dev 2 does not touch `apps/api` at all. Handed off instead: full spec
-  written up in `docs/handoffs/dev2-to-dev3-teachback-detail-handoff-2026-08-18.md` for Dev 3 to
-  implement. Frontend (Tasks 2-3 below) is built against that same contract so it can wire up with
-  zero changes once Dev 3 ships it.
-  - [ ] 1.1 RED — blocked, owned by Dev 3.
-  - [ ] 1.2 GREEN — blocked, owned by Dev 3.
+  build the list in `get_session_report`. **Implemented by Dev 3**, not this session — per
+  explicit team-boundary instruction, Dev 2 does not touch `apps/api` at all. Handed off via
+  `docs/handoffs/dev2-to-dev3-teachback-detail-handoff-2026-08-18.md`; Dev 3 shipped it in PR #145
+  (branch `sprint3/s3-06-teachback-detail`, merged into `main` 2026-08-18), matching the handoff
+  spec closely with one correct deviation (`score: int | None`, not `int` — see AC-1). Dev 3's own
+  Scale & Load pass added one detail this story's original analysis didn't have: retakes are
+  bounded not just by "teach-back has no retry" convention but by a real `uq_teachback_attempt`
+  UNIQUE constraint on `(session_id, segment_id, attempt_number)`, so the `.limit(50)` ceiling has
+  a DB-enforced floor under it, not just an application-level assumption.
+  - [x] 1.1 RED — Dev 3's `tests/test_s2_48_teachback_detail.py` (10 tests, all 8 of their ACs).
+  - [x] 1.2 GREEN — merged, full `apps/api` CI green (lint, mypy, tests) after 2 follow-up
+    mechanical fixes for `ruff` E501/I001 violations in the new mock-chain test lines.
 - [x] Task 2 (AC: 5): Add `TeachbackDetail` interface and `teachback_details` field to
   `apps/web/src/types/assessment.ts`'s `SessionReport`, verified field-for-field against the
   handoff spec (Task 1 is not live yet, so this is against the agreed contract, not a running
@@ -186,11 +197,12 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
   - [x] 3.2 GREEN: implemented `TeachbackDetailSection` (extracted component, matching
     `DnaSnapshotSection`'s existing pattern) and mounted it in `SessionReport.tsx`. All 24 tests in
     `SessionReport.test.tsx` pass.
-- [x] Task 4 (AC: 9, frontend portion only): `apps/web` suite green (78 files / 977 tests, zero
-  regressions vs. pre-story baseline — no worktree comparison needed since no pre-existing test was
-  modified beyond the 2 required fixture updates in Task 2); `tsc --noEmit` clean; `eslint` clean on
-  every touched file. **Backend portion of AC-9 (full `apps/api` suite) not run — blocked on Task
-  1, owned by Dev 3.**
+- [x] Task 4 (AC: 9): `apps/web` suite green (78 files / 977 tests, zero regressions vs. pre-story
+  baseline); `tsc --noEmit` clean; `eslint` clean on every touched file. Widened
+  `TeachbackDetail.score` to `number | null` after Task 1 shipped with the nullable shape, adding
+  one new test for the null-score render path (25 tests total in `SessionReport.test.tsx`).
+  Backend portion (Task 1): Dev 3's full `apps/api` CI green (lint, mypy, tests) on PR #145 before
+  merge.
 
 ## Dev Notes
 
@@ -256,7 +268,8 @@ the pre-story baseline, and diff the failure sets. Remove the worktree
 |------|--------|--------|
 | 2026-08-18 | Story created per S3-06 in `docs/dev2-sprint-tracker.md` (teach-back-detail half only — the attention-timeline half already shipped as Story 2-46/S3-05). Branch `sprint3/s3-06-teachback-detail` off `main`. Pre-implementation analysis confirmed the real `get_session_report`/`teachback_attempts` gap (aggregate-only `score` selected; richer per-attempt columns already persisted but never exposed) directly against live code, following the identical investigative pattern and resolution precedent already accepted for Story 2-46. | Dev 2 |
 | 2026-08-18 | Mid-implementation, explicit team-boundary instruction received: Dev 2 does not touch/run `apps/api` at all going forward (tightens the Story-2-46-era precedent of a flagged direct cross-module edit). Task 1 (backend) re-scoped from "implement directly" to "hand off" — wrote `docs/handoffs/dev2-to-dev3-teachback-detail-handoff-2026-08-18.md` with the full spec (new `TeachbackDetail` model, extended `SessionReport` field, exact query change) for Dev 3. Implemented Tasks 2-3 (frontend type + rendering) against that same agreed contract so the frontend is ready to wire up the moment Dev 3 ships Task 1, with zero frontend changes needed at that point. Status → in-progress (not review — Task 1 is still open). | Dev 2 |
-| 2026-08-18 | Dev 3 shipped Task 1 (PR #145, branch `sprint3/s3-06-teachback-detail`) — matches the handoff spec closely, with one deliberate, correct deviation: `score: int \| None` instead of the spec's `score: int`, because the real `teachback_attempts.score` column carries no `NOT NULL` constraint. **Branch-name collision:** Dev 3 pushed to the exact same branch name this story had already been using (`sprint3/s3-06-teachback-detail`), force-overwriting this story's own commits on origin (nothing lost — recovered from the local clone). Re-pushed the frontend half as a new branch, `sprint3/s3-06-teachback-detail-fe`, and widened `apps/web/src/types/assessment.ts`'s `TeachbackDetail.score` to `number \| null` to match Dev 3's real, verified-correct shape, adding a test for the null-score render path. Flagged both the CI lint failures and the branch-naming gap to Dev 3 via PR comment. **Two separate story files now exist at this same path** (this one, and Dev 3's own version committed on PR #145) — to be reconciled into one when the two branches merge; not resolved yet, intentionally deferred rather than guessed at. | Dev 2 |
+| 2026-08-18 | Dev 3 shipped Task 1 (PR #145, branch `sprint3/s3-06-teachback-detail`) — matches the handoff spec closely, with one deliberate, correct deviation: `score: int \| None` instead of the spec's `score: int`, because the real `teachback_attempts.score` column carries no `NOT NULL` constraint. **Branch-name collision:** Dev 3 pushed to the exact same branch name this story had already been using (`sprint3/s3-06-teachback-detail`), force-overwriting this story's own commits on origin (nothing lost — recovered from the local clone). Re-pushed the frontend half as a new branch, `sprint3/s3-06-teachback-detail-fe`, and widened `apps/web/src/types/assessment.ts`'s `TeachbackDetail.score` to `number \| null` to match Dev 3's real, verified-correct shape, adding a test for the null-score render path. Flagged both the CI lint failures and the branch-naming gap to Dev 3 via PR comment. **Two separate story files now existed at this same path** (this one, and Dev 3's own version committed on PR #145). | Dev 2 |
+| 2026-08-18 | PR #145 approved and merged into `main` after Dev 3 fixed the flagged `ruff` E501/I001 lint failures (2 follow-up mechanical commits, no logic changes — verified by diffing before/after). This flipped PR #146 (the frontend branch) to a real `add/add` conflict on this exact story file, as expected. Resolved by reconciling into one canonical story doc: kept this file's comprehensive structure, corrected AC-1's `score` type to `int \| None`, folded in Dev 3's `uq_teachback_attempt` UNIQUE-constraint Scale & Load finding, marked Task 1 complete with Dev 3's attribution, merged the File List and Completion Notes across both halves, and set Status → `done`. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -266,21 +279,29 @@ the pre-story baseline, and diff the failure sets. Remove the worktree
 2. Received an explicit instruction not to touch `apps/api` at all. Re-scoped Task 1 from direct implementation to a written handoff spec for Dev 3, matching what would have been implemented (same model shape, same query change, same ordering rationale) so nothing is lost, only who implements it.
 3. Implemented Task 2 (frontend type contract) against the handoff spec exactly, so the TypeScript shape and the requested Python shape are identical field-for-field. Confirmed RED via `tsc --noEmit` (TS2739 on the two pre-existing `SessionReport` fixtures), then GREEN.
 4. Implemented Task 3 (rendering) as a new `TeachbackDetailSection`, mirroring `DnaSnapshotSection`'s existing extracted-component pattern in the same file. Wrote all 5 new tests first (RED — confirmed failing via `getByTestId` not found), then implemented to GREEN.
-5. Ran the full `apps/web` suite (978 tests → 977 after 1 rename, all passing pre- and post-change with no regressions), `tsc --noEmit`, and `eslint` on every touched file — all clean. Did not run any `apps/api` command per the team-boundary instruction; Task 1/AC-9's backend portion is explicitly left open for Dev 3.
+5. Ran the full `apps/web` suite, `tsc --noEmit`, and `eslint` on every touched file — all clean. Did not run any `apps/api` command per the team-boundary instruction; Task 1's backend implementation was owned entirely by Dev 3.
+6. Dev 3 shipped Task 1 in PR #145 with their own story-first commit at this same file path (a branch-naming collision — see Change Log). Reconciled into this single canonical story file after both halves landed: folded in Dev 3's `score: int | None` correction and their `uq_teachback_attempt` Scale & Load finding, widened the frontend `TeachbackDetail.score` type to `number | null` to match, and added a test for the null-score render path.
 
 ### Completion Notes
 
-- AC-1 through AC-4 (backend): **not implemented** — handed off to Dev 3 via `docs/handoffs/dev2-to-dev3-teachback-detail-handoff-2026-08-18.md`, which contains the exact model, field list, and query change needed.
-- AC-5 through AC-8 (frontend): fully implemented and tested against the handoff spec's agreed contract. Once Dev 3 ships Task 1, re-verify AC-5's "field-for-field against the real Python model" against the actual shipped code (not just this spec) before closing the story.
-- AC-9: frontend portion satisfied (78 files / 977 tests green, `tsc --noEmit` clean, `eslint` clean). Backend portion open.
-- The real `GET /api/assessment/session/{id}/report` will not actually return `teachback_details` until Dev 3 ships Task 1 — until then, the new `SessionReport.tsx` section will simply never render in production (real API responses omit the key entirely, which JSON-decodes as `undefined`, not `null`; `report.teachback_details && ...` correctly treats `undefined` the same as `null|[]` and stays hidden — verified this is safe, not just assumed).
-- Status intentionally left at `in-progress`, not `review` — this story is not done until Task 1 lands.
+- AC-1 through AC-4 (backend): implemented by Dev 3, PR #145, merged into `main` 2026-08-18.
+- AC-5 through AC-8 (frontend): implemented against the handoff spec; `TeachbackDetail.score` widened to `number | null` post-merge to match the real shipped shape (Dev 3's correction).
+- AC-9: backend — Dev 3's full `apps/api` CI green (lint, mypy, tests) before merge, `tests/test_s2_48_teachback_detail.py` (10 tests). Frontend — full `apps/web` suite green, `tsc --noEmit` clean, `eslint` clean on every touched file (25 tests in `SessionReport.test.tsx`, 12 in `assessment.test.ts`, 1 pass-through in `lib/assessment.test.ts`).
+- `GET /api/assessment/session/{id}/report` now returns `teachback_details` for real — the frontend section renders live, not just against a mocked hook.
+- Status: `done`. Both halves merged, contract verified field-for-field against the real shipped Python model, not just the handoff spec.
 
 ### File List
 
+Backend (Dev 3, PR #145):
+- `apps/api/app/modules/assessment/router.py` (MODIFIED — new `TeachbackDetail` model, `teachback_details` field on `SessionReport`)
+- `apps/api/app/modules/assessment/service.py` (MODIFIED — widened `teachback_attempts` `.select()`, added `.order("created_at")`, builds `teachback_details`)
+- `apps/api/tests/test_s2_48_teachback_detail.py` (NEW — 10 tests)
+- `apps/api/tests/test_s3_46_ces_breakdown_redistribution.py`, `apps/api/tests/test_s3_47_formula_applied_signal_coverage.py`, `apps/api/tests/test_e2e_session_flow_real_data.py` (MODIFIED — mock chain updated for the new `.order()` call)
+
+Frontend (Dev 2):
 - `docs/handoffs/dev2-to-dev3-teachback-detail-handoff-2026-08-18.md` (NEW — backend spec for Dev 3, Task 1)
-- `apps/web/src/types/assessment.ts` (MODIFIED — new `TeachbackDetail` interface, `teachback_details` field on `SessionReport`)
+- `apps/web/src/types/assessment.ts` (MODIFIED — new `TeachbackDetail` interface, `teachback_details` field on `SessionReport`, `score` widened to `number | null` post-merge)
 - `apps/web/src/__tests__/types/assessment.test.ts` (MODIFIED — 2 pre-existing fixtures updated, 1 new `TeachbackDetail` type-shape test)
 - `apps/web/src/__tests__/lib/assessment.test.ts` (MODIFIED — 1 new pass-through test)
 - `apps/web/src/components/reports/SessionReport.tsx` (MODIFIED — new `TeachbackDetailSection`, mounted after `AttentionChart`/before `DnaSnapshotSection`)
-- `apps/web/src/__tests__/components/reports/SessionReport.test.tsx` (MODIFIED — fixture extended, 6 new tests)
+- `apps/web/src/__tests__/components/reports/SessionReport.test.tsx` (MODIFIED — fixture extended, 7 new tests including the null-score case)

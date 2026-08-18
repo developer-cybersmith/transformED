@@ -22,7 +22,7 @@
 | Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A, evaluation candidate) | |
 | TTS | **Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. |
 | Avatar | **HeyGen cached intro/outro (~$0/lesson)** | No live HeyGen per lesson |
-| Image | **GPT Image 1 Mini → Imagen 4 Fast → text-only** | DALL-E 3 DEAD (shut down May 2026). |
+| Image | **GPT Image 2 → Imagen 4 Fast → text-only** | DALL-E 3 DEAD (shut down May 2026). GPT Image 1 Mini migrated to GPT Image 2 2026-08-18 (D122) — 1 Mini itself retires 2026-12-01. **Imagen 4 Fast is DEAD as of 2026-08-17 (D121, OPEN)** — its endpoint returns hard errors; the fallback tier is presently non-functional pending a migration decision (Gemini Flash Image, dropping the fallback tier, or a different vendor). |
 | Embeddings | **text-embedding-3-small** | Chunk content: embed at ingestion only, never regenerate. Phase 2 RAG tutor embeds student questions at query time — this is permitted. |
 | OCR | **Tesseract** (in-container) | Azure Doc Intelligence removed |
 | PDF | **pypdfium2 + pdftext + pdfplumber (table detection only) + docling (table markdown)** | PyMuPDF/fitz BANNED — AGPL-3.0. pypdfium2 (Apache 2.0) for text + rendering; pdftext (Apache 2.0) for font/layout metadata; pdfplumber (MIT) retained only to trigger docling on table pages |

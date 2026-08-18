@@ -103,7 +103,10 @@ class ImageProvider(ABC):
 
         Args:
             prompt: Natural-language image description.
-            size:   Dimensions string, e.g. ``"1024x1024"``, ``"1792x1024"``.
+            size:   Dimensions string, e.g. ``"1024x1024"``, ``"1536x1024"``.
+                    Valid values are PROVIDER-SPECIFIC (see each
+                    implementation's `ImageSize`/mapping) — this base
+                    interface does not itself constrain them.
 
         Returns:
             A URL pointing to the generated image.  May be a temporary CDN URL
