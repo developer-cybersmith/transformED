@@ -42,6 +42,8 @@ export interface ContractChapter {
     has_lesson: boolean;
     lesson_count: number;
     latest_lesson: ContractLatestLesson | null;
+    /** Added in contract 1.3.0 (Story 2-47). Every lesson, newest-first, capped at 20. */
+    lessons: ContractLatestLesson[];
 }
 
 const example = contract.real_example as unknown as {
@@ -71,6 +73,14 @@ example['GET /books/{book_id}/chapters'].forEach((c, i) => {
             `real_example["GET /books/{book_id}/chapters"][${i}].latest_lesson`
         );
     }
+    // Story 2-47 (S4-06): every entry in `lessons` is the same LatestLesson shape.
+    c.lessons.forEach((lesson, j) =>
+        assertExampleMatchesSchema(
+            'LatestLesson',
+            lesson,
+            `real_example["GET /books/{book_id}/chapters"][${i}].lessons[${j}]`
+        )
+    );
 });
 
 export const BOOKS: ContractBook[] = example['GET /books'];
@@ -106,6 +116,7 @@ export const TOO_LARGE_CHAPTER: ContractChapter = {
     has_lesson: false,
     lesson_count: 0,
     latest_lesson: null,
+    lessons: [],
 };
 
 /** A chapter whose owning user already has 3 lessons generating → 429 + Retry-After. */

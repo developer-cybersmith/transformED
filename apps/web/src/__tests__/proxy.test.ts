@@ -72,7 +72,8 @@ afterEach(() => {
 });
 
 describe('proxy — beta access gate (APPROVED_EMAILS)', () => {
-  const PROTECTED_PATHS = ['/dashboard', '/library', '/upload', '/settings', '/onboarding', '/lesson/lsn_123'];
+  // Story 2-47 (S4-06): /library removed, replaced with /books (real route).
+  const PROTECTED_PATHS = ['/dashboard', '/books', '/upload', '/settings', '/onboarding', '/lesson/lsn_123'];
 
   it.each(PROTECTED_PATHS)('redirects %s to /pending-approval when the email is not on the allowlist', async (path) => {
     vi.stubEnv('APPROVED_EMAILS', 'someone-else@example.com');
@@ -145,7 +146,8 @@ describe('proxy — beta access gate (APPROVED_EMAILS)', () => {
 });
 
 describe('middleware — protected route coverage', () => {
-  const PROTECTED_PATHS = ['/dashboard', '/library', '/upload', '/settings', '/onboarding', '/lesson/lsn_123', '/books', '/books/dfea46ac-1c6e-401a-a936-269eedd3e5d9'];
+  // Story 2-47 (S4-06): /library removed -- /books already covers this array.
+  const PROTECTED_PATHS = ['/dashboard', '/upload', '/settings', '/onboarding', '/lesson/lsn_123', '/books', '/books/dfea46ac-1c6e-401a-a936-269eedd3e5d9'];
   const PUBLIC_PATHS = ['/', '/signin', '/signup', '/auth/callback'];
 
   it.each(PROTECTED_PATHS)('redirects %s to /signin when there is no session', async (path) => {
@@ -192,7 +194,8 @@ describe('middleware — onboarding gate (learner_dna)', () => {
   // W2 AC8: /books is onboarding-gated. One entry covers both the list and the
   // detail route because pathRequiresOnboarding matches on exact segments.
   const GATED_PATHS = ['/lesson/lsn_123', '/upload', '/books', '/books/dfea46ac-1c6e-401a-a936-269eedd3e5d9'];
-  const UNGATED_PATHS = ['/dashboard', '/onboarding', '/library', '/settings'];
+  // Story 2-47 (S4-06): /library removed.
+  const UNGATED_PATHS = ['/dashboard', '/onboarding', '/settings'];
 
   it.each(GATED_PATHS)('redirects %s to /onboarding when the user has no learner_dna row', async (path) => {
     updateSessionMock.mockResolvedValue({

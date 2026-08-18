@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .text import CONTENTS_HDR_RE, SECTION_ROW_RE, title_present
+from .text import CONTENTS_HDR_RE, SECTION_ROW_RE, TITLE_TAIL_WINDOW, title_present
 from .types import DetectedChapter
 
 MIN_SPAN = 3
@@ -93,10 +93,16 @@ def passes_gate(
     if len(chapters) > 1 and any(c.page_span > MAX_SHARE * page_count for c in chapters):
         return False
 
-    # 6 — most starts carry their title
+    # 6 — most starts carry their title. tail_window=TITLE_TAIL_WINDOW (D115)
+    # also searches the last TITLE_TAIL_WINDOW chars of the start page, for
+    # publishers whose chapter-opener title is emitted after the body text
+    # rather than before it. A strictly wider search than the original
+    # head-only check, so it can only raise the hit count, never lower it —
+    # every rung this widening could affect was already at or above the floor.
     hits = sum(
         1
         for c in chapters
-        if c.page_start < len(page_texts) and title_present(page_texts[c.page_start], c.title)
+        if c.page_start < len(page_texts)
+        and title_present(page_texts[c.page_start], c.title, tail_window=TITLE_TAIL_WINDOW)
     )
     return hits / len(chapters) >= MIN_TITLE_HIT_RATE

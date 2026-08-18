@@ -1,10 +1,11 @@
 {
   "$comment": "Book-scale API, v1. Frozen for Dev 2's Track W (SYNC-1). The W0 contract CI job compares this against the live FastAPI schema and must fail when they diverge. GET shapes are ADDITIVE ONLY across versions \u2014 W1 and W2 are built against them, so a field may be added but never removed or renamed. See real_example for the provenance and current staleness of the captured payloads.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "captured": "2026-08-04",
-  "source": "Story 1-11 (book-scale Phase 3.5); extended by Story 1-14 (book-scale Phase 6, AC23); extended by D54 (force-regenerate)",
+  "source": "Story 1-11 (book-scale Phase 3.5); extended by Story 1-14 (book-scale Phase 6, AC23); extended by D54 (force-regenerate); extended by Story 2-47 (S4-06, Library-into-Books)",
   "base": "/api/content",
   "changelog": {
+    "1.3.0": "Story 2-47 (S4-06, 2026-08-17). ADDED to ChapterResponse: lessons (list of LatestLesson, newest-first) — every lesson for the chapter, not just the newest (latest_lesson, unchanged, stays as-is). Derived from the SAME embedded `lessons` rows the endpoint already fetches for lesson_count/latest_lesson — no new query. Capped at 20 entries (newest-first) as a safety ceiling, not a natural bound (see the story's Scale & Load section) — lesson_count continues to report the true total even past the cap. Folds My Library's one unique capability (reaching a non-latest lesson) into My Books; the standalone Library page is removed in the same story.",
     "1.2.0": "D54 (Story 3-50, 2026-08-13). ADDED to GenerateLessonRequest: force (bool, default false) — bypasses ONLY Gate 5's idempotency short-circuit in generate_chapter_lesson, letting a caller force a fresh lesson even when a generating/ready one already exists for the same (chapter_id, tier, user_id). Does NOT bypass Gate 6 (page-span catastrophe gate) or Gate 7 (per-user concurrency cap) — both still apply unconditionally. Field existed in the live schema since D54 shipped; this contract update only catches up the frozen doc (found by the Contract CI job once it started actually running).",
     "1.1.0": "Story 1-14 / Phase 6. ADDED: POST /books/{book_id}/chapters/{chapter_id}/lessons and the LessonGenerationResponse + GenerateLessonRequest schemas. ADDED to ChapterResponse: lesson_count, latest_lesson. CHANGED (annotation only, no shape change): the two 1.0.0 annotations on ChapterResponse.lesson_id and .has_lesson asserting they were permanently null and permanently false until Phase 6 are DELETED \u2014 they were true only while nothing in the system could write a lesson, and are now false statements. Both fields are now derived from the embedded `lessons` relation rather than from the scalar `chapters.lesson_id` column, which is dead (see DEFECT-REGISTER D44). NO GET RESPONSE SHAPE REGRESSED: every 1.0.0 field is still present with the same type.",
     "1.0.0": "Story 1-11 / Phase 3.5. GET /books, GET /books/{book_id}, GET /books/{book_id}/chapters."
@@ -113,7 +114,8 @@
       "lesson_id": "string (uuid) | null \u2014 the MOST RECENT lesson generated from this chapter, by created_at. Derived from the embedded `lessons` relation, NOT from the chapters.lesson_id column, which is dead (DEFECT-REGISTER D44). null when the chapter has no lessons, which is the normal state.",
       "has_lesson": "boolean \u2014 true when AT LEAST ONE lesson exists for this chapter in ANY state, including 'failed'. Derived from the same embedded relation. Do NOT use it alone to decide whether to render a Watch button \u2014 read latest_lesson.status, or a chapter whose only lesson failed will link to a player that 404s.",
       "lesson_count": "integer \u2014 added in 1.1.0. Number of lessons generated from this chapter across all tiers and all states. 0, never null.",
-      "latest_lesson": "LatestLesson | null \u2014 added in 1.1.0. The newest lesson by created_at, or null when lesson_count is 0."
+      "latest_lesson": "LatestLesson | null \u2014 added in 1.1.0. The newest lesson by created_at, or null when lesson_count is 0.",
+      "lessons": "LatestLesson[] \u2014 added in 1.3.0 (Story 2-47). EVERY lesson for this chapter (all tiers, all states), newest-first. [] (never null) when lesson_count is 0. Capped at 20 entries as a safety ceiling \u2014 lesson_count keeps reporting the true total even past the cap, so a client can detect the discrepancy rather than assume completeness."
     },
     "LatestLesson": {
       "added_in": "1.1.0",
@@ -143,6 +145,7 @@
     "source": "Story 1-14 AC20 live gate \u2014 real 1,151-page book (Dive into Deep Learning), real Supabase project, real API. Not hand-written.",
     "book": "d2l.pdf, 1,151 pages, 21 detected chapters, ingested in 90.3 s",
     "note": "The chapter shown carries TWO lessons at different tiers on one chapter \u2014 the case the dead scalar `chapters.lesson_id` could never express, and the reason `lesson_count` and `latest_lesson` exist. `latest_lesson.status` is the CLIENT vocabulary (queued|running|ready|failed), mapped from the DB's generating|ready|failed \u2014 gate the Watch button on it, never on `has_lesson`.",
+    "note_1_3_0": "Story 2-47 added `lessons` (every lesson per chapter) to ChapterResponse. The 2026-08-04 capture only ever recorded the AGGREGATE lesson_count and the single latest_lesson per chapter \u2014 no per-entry data exists for the other lessons a lesson_count of 2 or 3 implies. Rather than re-run the live gate, the non-latest entries below are clearly-marked SYNTHETIC (older created_at, plausible tier/status), matching this file's own established precedent for TOO_LARGE_CHAPTER/RATE_LIMITED_CHAPTER just below. Each chapter's `latest_lesson` entry IS the real captured one, unchanged, always first (newest-first).",
     "GET /books": [
       {
         "book_id": "9c66fab7-817c-4b8e-bd59-d1ded445bf65",
@@ -185,7 +188,27 @@
           "status": "failed",
           "tier": "T3",
           "created_at": "2026-08-04T10:56:55.490815+00:00"
-        }
+        },
+        "lessons": [
+          {
+            "lesson_id": "f02bd2ef-e293-450e-b813-01aa99de34d5",
+            "status": "failed",
+            "tier": "T3",
+            "created_at": "2026-08-04T10:56:55.490815+00:00"
+          },
+          {
+            "lesson_id": "1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a01",
+            "status": "ready",
+            "tier": "T2",
+            "created_at": "2026-08-04T10:20:00.000000+00:00"
+          },
+          {
+            "lesson_id": "1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a02",
+            "status": "ready",
+            "tier": "T1",
+            "created_at": "2026-08-04T09:45:00.000000+00:00"
+          }
+        ]
       },
       {
         "chapter_id": "6f9c4b64-eb79-4aa9-bc16-bc5fff610509",
@@ -202,7 +225,21 @@
           "status": "running",
           "tier": "T3",
           "created_at": "2026-08-04T11:12:51.946256+00:00"
-        }
+        },
+        "lessons": [
+          {
+            "lesson_id": "6cbbe233-415f-4523-9541-0bde06d4c567",
+            "status": "running",
+            "tier": "T3",
+            "created_at": "2026-08-04T11:12:51.946256+00:00"
+          },
+          {
+            "lesson_id": "2b2b2b2b-2b2b-4b2b-8b2b-2b2b2b2b2b01",
+            "status": "ready",
+            "tier": "T2",
+            "created_at": "2026-08-04T10:30:00.000000+00:00"
+          }
+        ]
       },
       {
         "chapter_id": "645dcb9a-ddde-438a-8fb4-0d609fbf2fa8",
@@ -214,7 +251,8 @@
         "lesson_id": null,
         "has_lesson": false,
         "lesson_count": 0,
-        "latest_lesson": null
+        "latest_lesson": null,
+        "lessons": []
       }
     ],
     "verified_against_real_postgrest": {

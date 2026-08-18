@@ -58,7 +58,8 @@ describe('TopUtilityBar — mobile nav (Sidebar is hidden lg:flex with no other 
     await user.click(screen.getByRole('button', { name: /toggle navigation menu/i }));
 
     expect(screen.getByRole('link', { name: /dashboard/i })).not.toBeNull();
-    expect(screen.getByRole('link', { name: /my library/i })).not.toBeNull();
+    // Story 2-47 (S4-06): "My Library" removed, folded into "My Books".
+    expect(screen.getByRole('link', { name: /my books/i })).not.toBeNull();
     expect(screen.getByRole('link', { name: /upload pdf/i })).not.toBeNull();
     expect(screen.getByRole('link', { name: /reports/i })).not.toBeNull();
     expect(screen.getByRole('link', { name: /settings/i })).not.toBeNull();
@@ -82,9 +83,9 @@ describe('TopUtilityBar — mobile nav (Sidebar is hidden lg:flex with no other 
     render(<TopUtilityBar />);
 
     await user.click(screen.getByRole('button', { name: /toggle navigation menu/i }));
-    await user.click(screen.getByRole('link', { name: /my library/i }));
+    await user.click(screen.getByRole('link', { name: /my books/i }));
 
-    await waitFor(() => expect(screen.queryByRole('link', { name: /my library/i })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('link', { name: /my books/i })).toBeNull());
   });
 
   it('calls logout and closes when Sign Out is clicked', async () => {

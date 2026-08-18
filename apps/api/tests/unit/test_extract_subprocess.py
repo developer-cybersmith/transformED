@@ -179,6 +179,75 @@ class TestExtractTextOnlyToc:
         assert result["toc"] == [{"level": 0, "title": "Chapter 2", "page_index": 1}]
 
 
+# ── D115/D116 (2026-08-15): tail_chars truncation ─────────────────────────────
+
+
+def _run_text_only_with_page_text(
+    monkeypatch: pytest.MonkeyPatch, page_text: str, **kwargs: Any
+) -> str:
+    """Two pages: page 0 is inside front_pages=1 (returned in full, ignored by
+    the assertion), page 1 is past it and eligible for truncation -- a single
+    page can never exercise the truncation branch, since `truncate` requires
+    front_pages > 0 while the branch itself requires the RELATIVE page index
+    to be >= front_pages, which page 0 can never satisfy."""
+    pdfium_pages = [MagicMock(name="pdfium_page_0"), MagicMock(name="pdfium_page_1")]
+    pdfium_doc = MagicMock(name="pdfium_doc")
+    pdfium_doc.__len__.return_value = 2
+    pdfium_doc.__getitem__.side_effect = lambda i: pdfium_pages[i]
+    pdfium_doc.get_toc.return_value = []
+    fake_pdfium = MagicMock(name="pypdfium2")
+    fake_pdfium.PdfDocument = MagicMock(return_value=pdfium_doc)
+
+    monkeypatch.setattr(es, "_page_text", MagicMock(side_effect=["front matter", page_text]))
+
+    with patch.dict(sys.modules, {"pypdfium2": fake_pdfium}):
+        result = es.extract_text_only("fake.pdf", front_pages=1, head_chars=10, **kwargs)
+    return result["page_texts"][1]
+
+
+class TestTailChars:
+    @pytest.mark.unit
+    def test_default_zero_is_byte_identical_to_head_only_truncation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        page = "0123456789" + "x" * 400 + "TARGET"
+        assert _run_text_only_with_page_text(monkeypatch, page) == page[:10]
+
+    @pytest.mark.unit
+    def test_tail_chars_appends_the_page_tail_after_the_head(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        page = "0123456789" + "x" * 400 + "TARGET"
+        out = _run_text_only_with_page_text(monkeypatch, page, tail_chars=6)
+        assert out.startswith(page[:10])
+        assert out.endswith("TARGET")
+
+    @pytest.mark.unit
+    def test_tail_chars_never_inflates_a_page_shorter_than_head_plus_tail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """head_chars=10, tail_chars=10 -> the inflection point is 20 chars. A
+        15-char page must come back no longer than head_chars alone (10) --
+        NOT grown past its own length by naive, unconditional head+tail
+        concatenation, which is exactly the bug an earlier draft of this fix
+        had (D115/D116): text[:10]+text[-10:] on a 15-char page would have
+        produced up to 20 chars, 5 MORE than the source. Falling back to
+        head-only truncation in this band is the accepted trade-off -- no
+        worse than the pre-existing contract, never worse than the source."""
+        page = "0123456789ABCDE"  # 15 chars: > head_chars(10), < 10+10
+        out = _run_text_only_with_page_text(monkeypatch, page, tail_chars=10)
+        assert len(out) <= len(page)
+        assert out == page[:10]
+
+    @pytest.mark.unit
+    def test_tail_chars_zero_page_exactly_at_head_chars_is_unaffected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        page = "0123456789"  # exactly head_chars(10) long
+        out = _run_text_only_with_page_text(monkeypatch, page, tail_chars=10)
+        assert out == page
+
+
 # ── AC-2: _group_table_runs (pure function) ───────────────────────────────────
 
 
