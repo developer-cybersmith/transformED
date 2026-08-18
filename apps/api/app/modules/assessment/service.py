@@ -844,7 +844,8 @@ async def get_session_report(
         HTTPException 404: Session belongs to a different user (SEC-006 — no 403
             to prevent enumeration).
     """
-    from app.modules.assessment.router import SessionReport, TeachbackDetail  # lazy — avoids circular import
+    # lazy import — avoids circular import between service.py and router.py
+    from app.modules.assessment.router import SessionReport, TeachbackDetail
 
     # Step 1 — Validate session ownership and fetch all needed columns in one query
     session_resp = await asyncio.to_thread(
@@ -913,7 +914,7 @@ async def get_session_report(
     # Step 3 — Teachback stats from teachback_attempts
     # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
     # .limit(50) is a safety ceiling above the natural bound.
-    # Story 2-48: widened select to include detail columns; .order("created_at") for stable ordering.
+    # Story 2-48: widened select to include detail columns; .order("created_at") for ordering.
     tb_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")

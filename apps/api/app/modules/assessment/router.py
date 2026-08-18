@@ -38,7 +38,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["assessment"])
 
 # Re-export for backward compatibility — tests and other modules import from here.
-__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult", "TeachbackSubmission", "TeachbackResult", "TeachbackDetail"]
+__all__ = [
+    "QuizAnswer",
+    "QuizSubmission",
+    "QuizResult",
+    "TeachbackSubmission",
+    "TeachbackResult",
+    "TeachbackDetail",
+]
 
 
 class TeachbackDetail(BaseModel):
