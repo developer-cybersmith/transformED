@@ -107,6 +107,136 @@ async def test_happy_path_openai_success_produces_flat_slide_images() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_d118_requests_a_widescreen_size_not_the_old_default_square() -> None:
+    """D118: the player renders slide images with object-contain in a wide
+    panel, sized from the image's own intrinsic ratio — a 1024x1024 square
+    request produced a small square block marooned in a wide panel, visually
+    indistinguishable from a fixed crop even though no CSS ever cropped it.
+    Every provider call must now ask for a landscape size."""
+    from app.modules.content.pipeline.graph import _SLIDE_IMAGE_SIZE, image_generator_node
+
+    assert _SLIDE_IMAGE_SIZE != "1024x1024", "must not silently regress to the old square default"
+
+    mock_openai_provider = AsyncMock()
+    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        await image_generator_node(_base_state(slides=[SLIDES[0]]))
+
+    assert mock_openai_provider.generate.call_args.kwargs.get("size") == _SLIDE_IMAGE_SIZE
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_d118_imagen_fallback_also_requests_the_widescreen_size() -> None:
+    """The fallback provider must receive the SAME size the primary was asked
+    for, not silently revert to square when GPT Image fails."""
+    from app.modules.content.pipeline.graph import _SLIDE_IMAGE_SIZE, image_generator_node
+
+    mock_openai_provider = AsyncMock()
+    mock_openai_provider.generate.side_effect = RuntimeError("GPT Image down")
+    mock_imagen_provider = AsyncMock()
+    mock_imagen_provider.generate.return_value = _FAKE_DATA_URI
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
+        patch("app.providers.image.imagen.ImagenProvider", return_value=mock_imagen_provider),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        await image_generator_node(_base_state(slides=[SLIDES[0]]))
+
+    assert mock_imagen_provider.generate.call_args.kwargs.get("size") == _SLIDE_IMAGE_SIZE
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_d118_cost_accumulated_matches_the_size_actually_requested() -> None:
+    """The cost lookup must key on the size actually used
+    (_SLIDE_IMAGE_SIZE), not a stale hardcoded "1024x1024" — the real
+    landscape size is priced higher than square; a stale literal would
+    under-report real spend against the $3.00/lesson cost ceiling. Asserted
+    dynamically against COST_PER_IMAGE[_SLIDE_IMAGE_SIZE], not a literal
+    dollar figure, so this test can't silently drift from reality the way
+    D120 found the constant itself had (see graph.py's own D120 comment)."""
+    from app.modules.content.pipeline.graph import _SLIDE_IMAGE_SIZE, image_generator_node
+    from app.providers.image.openai_image import COST_PER_IMAGE
+
+    mock_openai_provider = AsyncMock()
+    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    sb = _mock_supabase()
+    mock_accumulate = AsyncMock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
+        patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
+    ):
+        await image_generator_node(_base_state(slides=[SLIDES[0]]))
+
+    mock_accumulate.assert_called_once_with(FAKE_LESSON_ID, COST_PER_IMAGE[_SLIDE_IMAGE_SIZE])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_d118_uploaded_bytes_are_actually_cropped_to_exact_16_9() -> None:
+    """Proves _crop_to_16_9 is really wired into the node's upload path, not
+    just correct in isolation — uses a REAL square PNG (unlike the other
+    tests' opaque _FAKE_DATA_URI, which isn't valid image data and would
+    make the crop step silently no-op via its degrade-on-error path)."""
+    import base64 as b64
+    from io import BytesIO
+
+    from PIL import Image
+
+    from app.modules.content.pipeline.graph import image_generator_node
+
+    square = BytesIO()
+    Image.new("RGB", (1024, 1024), color=(10, 20, 30)).save(square, format="PNG")
+    real_square_data_uri = f"data:image/png;base64,{b64.b64encode(square.getvalue()).decode()}"
+
+    mock_openai_provider = AsyncMock()
+    mock_openai_provider.generate.return_value = real_square_data_uri
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider",
+            return_value=mock_openai_provider,
+        ),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        await image_generator_node(_base_state(slides=[SLIDES[0]]))
+
+    uploaded_bytes = sb.storage.from_.return_value.upload.call_args.kwargs["file"]
+    uploaded_w, uploaded_h = Image.open(BytesIO(uploaded_bytes)).size
+    assert uploaded_w * 9 == uploaded_h * 16, (
+        f"{uploaded_w}x{uploaded_h} uploaded to storage is not exact 16:9"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_openai_failure_falls_back_to_imagen() -> None:
     """AC-2: GPT Image raises -> Imagen is tried and succeeds."""
     from app.modules.content.pipeline.graph import image_generator_node
