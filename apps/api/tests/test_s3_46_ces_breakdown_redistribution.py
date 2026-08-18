@@ -516,9 +516,8 @@ def _build_minimal_supabase(*, quiz_rows: list, tb_rows: list) -> MagicMock:
             _s.return_value.data = quiz_rows
             m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = quiz_rows
         elif n == 4:
-            # teachback_attempts: .select(...).eq(...).limit(50).execute()
-            _s.return_value.data = tb_rows
-            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = tb_rows
+            # teachback_attempts: .select(...).eq(...).order(...).limit(50).execute() — Story 2-48
+            m.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = tb_rows
         elif n == 5:
             _s2.return_value.count = 0
         elif n == 6:
