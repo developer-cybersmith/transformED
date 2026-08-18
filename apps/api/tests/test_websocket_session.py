@@ -105,54 +105,46 @@ async def test_b2_session_start_dispatch_failure_does_not_raise(mocker):
 
 
 @pytest.mark.unit
-async def test_c1_g2_cooldown_active_blocks_intervention(mocker):
+async def test_c1_g2_cooldown_active_blocks_intervention():
     mock_redis = AsyncMock()
-    mock_redis.exists = AsyncMock(return_value=1)  # in cooldown
-    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    mock_redis.eval = AsyncMock(return_value=b"cooldown")
 
     mock_settings = MagicMock()
     mock_settings.max_distraction_per_session = 3
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
 
     from app.modules.tutor.state_machine.graph import _can_intervene_distraction
 
-    result = await _can_intervene_distraction("sess-003")
+    result = await _can_intervene_distraction("sess-003", mock_redis, mock_settings)
 
     assert result is False
 
 
 @pytest.mark.unit
-async def test_c2_g2_no_cooldown_below_max_allows_intervention(mocker):
+async def test_c2_g2_no_cooldown_below_max_allows_intervention():
     mock_redis = AsyncMock()
-    mock_redis.exists = AsyncMock(return_value=0)  # not in cooldown
-    mock_redis.get = AsyncMock(return_value="1")  # count = 1, below max of 3
-    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    mock_redis.eval = AsyncMock(return_value=b"ok")
 
     mock_settings = MagicMock()
     mock_settings.max_distraction_per_session = 3
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
 
     from app.modules.tutor.state_machine.graph import _can_intervene_distraction
 
-    result = await _can_intervene_distraction("sess-003")
+    result = await _can_intervene_distraction("sess-003", mock_redis, mock_settings)
 
     assert result is True
 
 
 @pytest.mark.unit
-async def test_c3_g2_at_max_count_blocks_intervention(mocker):
+async def test_c3_g2_at_max_count_blocks_intervention():
     mock_redis = AsyncMock()
-    mock_redis.exists = AsyncMock(return_value=0)  # not in cooldown
-    mock_redis.get = AsyncMock(return_value="3")  # count == max of 3 → must block
-    mocker.patch("app.core.redis.get_redis", return_value=mock_redis)
+    mock_redis.eval = AsyncMock(return_value=b"max_reached")
 
     mock_settings = MagicMock()
     mock_settings.max_distraction_per_session = 3
-    mocker.patch("app.config.get_settings", return_value=mock_settings)
 
     from app.modules.tutor.state_machine.graph import _can_intervene_distraction
 
-    result = await _can_intervene_distraction("sess-003")
+    result = await _can_intervene_distraction("sess-003", mock_redis, mock_settings)
 
     assert result is False
 
