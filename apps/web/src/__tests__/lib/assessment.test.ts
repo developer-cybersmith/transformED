@@ -51,6 +51,28 @@ describe('getSessionReport', () => {
     expect(result.ces_timeline).toEqual(responseData.ces_timeline);
     expect(result.intervention_events).toEqual(responseData.intervention_events);
   });
+
+  it('passes through teachback_details unchanged (Story 2-48/S3-06)', async () => {
+    const responseData = {
+      session_id: 'sess_abc123',
+      teachback_details: [
+        {
+          segment_id: 'seg_001',
+          score: 85,
+          feedback_praise: 'Nice work.',
+          feedback_correction: null,
+          concepts_hit: ['mitochondria'],
+          concepts_missed: [],
+          attempt_number: 1,
+        },
+      ],
+    };
+    apiGetMock.mockResolvedValue({ data: responseData });
+
+    const result = await getSessionReport('sess_abc123');
+
+    expect(result.teachback_details).toEqual(responseData.teachback_details);
+  });
 });
 
 describe('submitQuiz', () => {

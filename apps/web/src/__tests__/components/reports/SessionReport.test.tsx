@@ -38,7 +38,30 @@ const FULL_REPORT = {
   learner_dna_snapshot: null,
   ces_timeline: [{ minute: 0, ces: 60 }, { minute: 1, ces: 75 }],
   intervention_events: [{ minute: 1, type: 'distraction' }],
+  teachback_details: null,
 };
+
+// Story 2-48 (S3-06) fixtures — per-segment teach-back detail.
+const TEACHBACK_DETAILS_FIXTURE = [
+  {
+    segment_id: 'seg_001',
+    score: 85,
+    feedback_praise: 'Great explanation of mitochondria.',
+    feedback_correction: null,
+    concepts_hit: ['mitochondria', 'ATP'],
+    concepts_missed: [],
+    attempt_number: 1,
+  },
+  {
+    segment_id: 'seg_002',
+    score: 45,
+    feedback_praise: null,
+    feedback_correction: 'Remember that photosynthesis happens in the chloroplast, not the nucleus.',
+    concepts_hit: [],
+    concepts_missed: ['chloroplast', 'photosynthesis location'],
+    attempt_number: 1,
+  },
+];
 
 beforeEach(() => {
   useSessionReportMock.mockReset();
@@ -339,5 +362,165 @@ describe('SessionReport', () => {
     render(<SessionReport sessionId="sess_1" />);
 
     expect(screen.queryByTestId('mock-attention-chart')).toBeNull();
+  });
+
+  // ── Story 2-48 (S3-06) — teach-back summary detail ──────────────────────────
+
+  it('omits the teach-back detail section entirely when teachback_details is null', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, teachback_details: null },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    expect(screen.queryByTestId('teachback-detail-section')).toBeNull();
+  });
+
+  it('omits the teach-back detail section entirely when teachback_details is an empty array', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, teachback_details: [] },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    expect(screen.queryByTestId('teachback-detail-section')).toBeNull();
+  });
+
+  it('renders one entry per segment, in array order, labelled by position not raw segment_id', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, teachback_details: TEACHBACK_DETAILS_FIXTURE },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    const section = screen.getByTestId('teachback-detail-section');
+    expect(section.textContent).toMatch(/Segment 1/);
+    expect(section.textContent).toMatch(/Segment 2/);
+    expect(section.textContent).not.toMatch(/seg_001/);
+    expect(section.textContent).not.toMatch(/seg_002/);
+  });
+
+  it('buckets each entry\'s score through formatTeachbackLabel — never the raw number', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, teachback_details: TEACHBACK_DETAILS_FIXTURE },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    const section = screen.getByTestId('teachback-detail-section');
+    expect(section.textContent).toMatch(/Strong grasp/); // 85 -> Strong grasp
+    expect(section.textContent).toMatch(/Needs another look/); // 45 -> Needs another look
+    // Raw scores (85, 45) must never appear as bare numbers anywhere in the section.
+    expect(section.textContent).not.toMatch(/\b85\b/);
+    expect(section.textContent).not.toMatch(/\b45\b/);
+  });
+
+  it('renders feedback_praise and feedback_correction independently — each omitted only when null, not replaced by placeholder text', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, teachback_details: TEACHBACK_DETAILS_FIXTURE },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    const section = screen.getByTestId('teachback-detail-section');
+    expect(section.textContent).toMatch(/Great explanation of mitochondria\./);
+    expect(section.textContent).toMatch(
+      /Remember that photosynthesis happens in the chloroplast, not the nucleus\./
+    );
+    expect(section.textContent).not.toMatch(/No feedback/i);
+  });
+
+  it('renders concept chips only when the array is non-empty', () => {
+    useSessionReportMock.mockReturnValue({
+      report: { ...FULL_REPORT, teachback_details: TEACHBACK_DETAILS_FIXTURE },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    // Segment 1: concepts_hit populated, concepts_missed empty.
+    expect(screen.getByTestId('teachback-concepts-hit-0')).not.toBeNull();
+    expect(screen.queryByTestId('teachback-concepts-missed-0')).toBeNull();
+    // Segment 2: concepts_hit empty, concepts_missed populated.
+    expect(screen.queryByTestId('teachback-concepts-hit-1')).toBeNull();
+    expect(screen.getByTestId('teachback-concepts-missed-1')).not.toBeNull();
+
+    const section = screen.getByTestId('teachback-detail-section');
+    expect(section.textContent).toMatch(/mitochondria/);
+    expect(section.textContent).toMatch(/chloroplast/);
+  });
+
+  it('mounts the teach-back detail section after AttentionChart and before the DNA snapshot', () => {
+    useSessionReportMock.mockReturnValue({
+      report: {
+        ...FULL_REPORT,
+        teachback_details: TEACHBACK_DETAILS_FIXTURE,
+        learner_dna_snapshot: {
+          dimension_labels: Object.fromEntries(
+            ['pattern_recognition', 'logical_deduction', 'processing_speed', 'frustration_tolerance',
+             'persistence', 'help_seeking', 'goal_orientation', 'curiosity_index', 'study_independence']
+              .map((d) => [d, 'Proficient'])
+          ),
+          growth_labels: Object.fromEntries(
+            ['pattern_recognition', 'logical_deduction', 'processing_speed', 'frustration_tolerance',
+             'persistence', 'help_seeking', 'goal_orientation', 'curiosity_index', 'study_independence']
+              .map((d) => [d, null])
+          ),
+        },
+      },
+      isLoading: false,
+      error: undefined,
+    });
+
+    const { container } = render(<SessionReport sessionId="sess_1" />);
+
+    const chart = screen.getByTestId('mock-attention-chart');
+    const detail = screen.getByTestId('teachback-detail-section');
+    const dna = screen.getByTestId('dna-snapshot-section');
+    const all = Array.from(container.querySelectorAll('*'));
+    const chartIndex = all.indexOf(chart);
+    const detailIndex = all.indexOf(detail);
+    const dnaIndex = all.indexOf(dna);
+    expect(chartIndex).toBeLessThan(detailIndex);
+    expect(detailIndex).toBeLessThan(dnaIndex);
+  });
+
+  it('does not crash on a null per-attempt score (real, reachable shape — teachback_attempts.score has no NOT NULL constraint) and still renders a descriptive label', () => {
+    useSessionReportMock.mockReturnValue({
+      report: {
+        ...FULL_REPORT,
+        teachback_details: [
+          {
+            segment_id: 'seg_003',
+            score: null,
+            feedback_praise: null,
+            feedback_correction: null,
+            concepts_hit: [],
+            concepts_missed: [],
+            attempt_number: 1,
+          },
+        ],
+      },
+      isLoading: false,
+      error: undefined,
+    });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    const section = screen.getByTestId('teachback-detail-section');
+    expect(section.textContent).toMatch(/Segment 1/);
+    // formatTeachbackLabel(null) -> "No teach-back this session" -- reused as-is, not a crash.
+    expect(section.textContent).toMatch(/No teach-back this session/);
   });
 });

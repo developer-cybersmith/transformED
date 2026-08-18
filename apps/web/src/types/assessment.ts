@@ -86,6 +86,27 @@ export interface LearnerDnaSnapshot {
   growth_labels: Record<DnaDimension, DnaGrowthLabel | null>;
 }
 
+// Story 2-48 (S3-06) addition — per-segment teach-back detail. `score` is sent raw over the
+// wire (same pattern as the existing session-level `teachback_score`) but must never be
+// rendered as a raw number -- always bucket it through `formatTeachbackLabel` first (PRD: no
+// rubric score shown to students in Phase 1). `segment_id` is an internal identifier, not
+// display text -- render "Segment {index + 1}" using the array's position instead, which is
+// already chronological (backend orders by created_at). `score` is nullable -- verified against
+// the real shipped backend (apps/api/app/modules/assessment/router.py's TeachbackDetail): the
+// underlying `teachback_attempts.score` column has no NOT NULL constraint
+// (supabase/migrations/20260611000000_initial_schema.sql:210), so a `null` here is a real,
+// reachable shape, not just defensive typing -- formatTeachbackLabel already accepts
+// `number | null`.
+export interface TeachbackDetail {
+  segment_id: string;
+  score: number | null;
+  feedback_praise: string | null;
+  feedback_correction: string | null;
+  concepts_hit: string[];
+  concepts_missed: string[];
+  attempt_number: number;
+}
+
 export interface SessionReport {
   session_id: string;
   user_id: string;
@@ -121,6 +142,9 @@ export interface SessionReport {
   // intervention_events never carries the raw CES value at trigger time (AC-5).
   ces_timeline: { minute: number; ces: number }[] | null;
   intervention_events: { minute: number; type: string }[] | null;
+  // Story 2-48 (S3-06) addition — null when the student did no teach-back this session
+  // (same "no data" convention as teachback_score/ces_timeline above, never [] for "none").
+  teachback_details: TeachbackDetail[] | null;
 }
 
 // â”€â”€ GET /api/assessment/user/dna â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
