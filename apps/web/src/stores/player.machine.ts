@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { LessonPackage } from '@hie/shared/types/lesson';
-import type { TutorState } from '@hie/shared/types/ws';
+import type { TutorState, TutorInterveneMessage, AttentionSignalMessage } from '@hie/shared/types/ws';
 import type { LocalControlOut } from '@/lib/ws/wireTypes';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 
@@ -60,6 +60,11 @@ export interface PlayerStore {
   /** Playback rate multiplier; default 1.0. */
   playbackRate: number;
   tutorState: TutorState;
+  /** Most recent tutor_intervene payload; null when no intervention is active.
+   *  A new one REPLACES the current one (no queue) — see setActiveIntervention. */
+  activeIntervention: TutorInterveneMessage['payload'] | null;
+  /** Most recent ces_update value; null when no score has been received yet. */
+  cesScore: number | null;
   /** segment_id values for segments where quiz has already fired this forward
    *  traversal. Not cleared on seek backward — quiz only re-fires on first
    *  forward crossing per session. */
@@ -68,6 +73,12 @@ export interface PlayerStore {
    *  Lets non-component code (AudioTimeline's plain functions) send a
    *  LocalControlOut without holding a direct reference to the socket. */
   wsSendControl: ((msg: LocalControlOut) => void) | null;
+  /** Registered by useLessonSocket once connected; null while disconnected.
+   *  Lets AttentionMonitor (S3-02) send an AttentionSignalMessage over the
+   *  single shared LessonSocket without useLessonSocket being called a
+   *  second time (which would open a second WebSocket connection) — same
+   *  reasoning as wsSendControl above. */
+  wsSendAttentionSignal: ((msg: AttentionSignalMessage) => void) | null;
   /** True while the current segment's <audio> element is stalled/buffering. */
   isBuffering: boolean;
   /** True after the current segment's <audio> element fires a load/decode error. */
@@ -104,7 +115,12 @@ export interface PlayerStore {
   exitTeachBack: () => void;
   endLesson: () => void;
   setTutorState: (s: TutorState) => void;
+  /** Sets/replaces (or clears with null) the active tutor_intervene payload (S3-03). */
+  setActiveIntervention: (payload: TutorInterveneMessage['payload'] | null) => void;
+  /** Sets/clears (with null) the most recent CES score (S3-04). */
+  setCesScore: (score: number | null) => void;
   setWsSendControl: (fn: ((msg: LocalControlOut) => void) | null) => void;
+  setWsSendAttentionSignal: (fn: ((msg: AttentionSignalMessage) => void) | null) => void;
   setBuffering: (b: boolean) => void;
   setAudioError: (b: boolean) => void;
   /** Clears audioError and increments audioRetryCount to force AudioTimeline's <audio> to remount. */
@@ -132,8 +148,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   seekRequestMs: null,
   playbackRate: 1.0,
   tutorState: 'IDLE',
+  activeIntervention: null,
+  cesScore: null,
   quizFiredForSegment: new Set<string>(),
   wsSendControl: null,
+  wsSendAttentionSignal: null,
   isBuffering: false,
   audioError: false,
   audioRetryCount: 0,
@@ -158,6 +177,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       seekRequestMs: null,
       playbackRate: 1.0,
       tutorState: 'IDLE',
+      activeIntervention: null,
+      cesScore: null,
       quizFiredForSegment: new Set<string>(),
       isBuffering: false,
       audioError: false,
@@ -190,7 +211,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   setSessionId: (id) => {
-    set({ sessionId: id });
+    // Review fix: a mid-lesson session re-mint (D18 retry path) must not let a
+    // card tied to the old session linger under the new one.
+    set({ sessionId: id, activeIntervention: null });
   },
 
   clearSeekRequest: () => {
@@ -242,7 +265,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!segment) return;
     const next = new Set(quizFiredForSegment);
     next.add(segment.segment_id);
-    set({ status: 'QUIZ', quizFiredForSegment: next });
+    // cesScore cleared here (review fix, S3-04): PLAYING can resume minutes
+    // later after quiz/teach-back, and the old score/band must not reappear
+    // stale before a fresh ces_update arrives.
+    set({ status: 'QUIZ', quizFiredForSegment: next, cesScore: null });
     // Immediate, not throttled — audio is paused for the quiz so no further
     // updateAudioPosition ticks will fire to flush this update; closing the
     // tab here must not lose it (would re-fire an already-answered quiz).
@@ -288,15 +314,28 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         // fatal, the lesson still ends normally.
       }
     }
-    set({ status: 'ENDED' });
+    // Review fix: a stale card must not survive into the lesson-complete screen.
+    set({ status: 'ENDED', activeIntervention: null });
   },
 
   setTutorState: (s) => {
     set({ tutorState: s });
   },
 
+  setActiveIntervention: (payload) => {
+    set({ activeIntervention: payload });
+  },
+
+  setCesScore: (score) => {
+    set({ cesScore: score });
+  },
+
   setWsSendControl: (fn) => {
     set({ wsSendControl: fn });
+  },
+
+  setWsSendAttentionSignal: (fn) => {
+    set({ wsSendAttentionSignal: fn });
   },
 
   setBuffering: (b) => {

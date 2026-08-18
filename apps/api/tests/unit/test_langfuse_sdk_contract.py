@@ -116,10 +116,12 @@ def test_dead_v2_api_is_absent() -> None:
 
 @pytest.mark.unit
 def test_generation_has_update_with_provider_kwargs() -> None:
-    """Providers call generation.update(output=, usage_details=, level=, status_message=)."""
+    """Providers call generation.update(output=, usage_details=, cost_details=, level=,
+    status_message=). cost_details added for Story 3-56 (S3-5) — the field 6 providers
+    now rely on to report real per-call dollar cost on the span itself."""
     assert hasattr(LangfuseGeneration, "update")
     params = inspect.signature(LangfuseGeneration.update).parameters
-    for kwarg in ("output", "usage_details", "level", "status_message"):
+    for kwarg in ("output", "usage_details", "cost_details", "level", "status_message"):
         assert kwarg in params, f"LangfuseGeneration.update lost kwarg '{kwarg}'"
 
 
@@ -127,6 +129,55 @@ def test_generation_has_update_with_provider_kwargs() -> None:
 def test_generation_has_end() -> None:
     """Providers call generation.end() in a finally block on every path."""
     assert hasattr(LangfuseGeneration, "end")
+
+
+@pytest.mark.unit
+def test_update_call_with_only_cost_details_does_not_null_out_other_fields() -> None:
+    """Review finding (Blind Hunter, post-S3-56): providers/llm/openai.py and
+    providers/embeddings/openai.py call generation.update() TWICE per request —
+    once with output/usage_details (in the main call site), once more with only
+    cost_details (in _maybe_accumulate_cost). This assumes the SDK MERGES fields
+    across successive update() calls rather than the second call overwriting the
+    observation's prior state. Verified directly against the real installed SDK,
+    not assumed: LangfuseObservationWrapper.update() builds its OTel span
+    attributes via create_generation_attributes(), which the real source
+    (langfuse/_client/attributes.py) filters to `{k: v for k, v in attrs.items()
+    if v is not None}` BEFORE calling `self._otel_span.set_attributes(...)` — a
+    kwarg omitted from a given update() call is None, gets filtered out of that
+    call's attribute dict entirely, and OTel's set_attributes() only sets the
+    keys actually present, never clearing keys it wasn't given. This test pins
+    that specific filtering behavior so a future SDK version that stops
+    filtering None values (making the second update() call actually null out
+    output/usage_details) fails here, not silently in production."""
+    from langfuse._client.attributes import create_generation_attributes
+
+    first_call = create_generation_attributes(
+        output="the answer", usage_details={"input": 100, "output": 50}
+    )
+    second_call = create_generation_attributes(cost_details={"input": 0.01, "output": 0.02})
+
+    # observation_type defaults to the same constant ("generation") on every
+    # call regardless of which other kwargs are passed -- a real, harmless
+    # overlap (both calls agree on the value, so setting it twice changes
+    # nothing on the span). Every OTHER overlapping key would be a real
+    # clobbering risk.
+    first_keys = set(first_call.keys())
+    second_keys = set(second_call.keys())
+    unsafe_overlap = (first_keys & second_keys) - {"langfuse.observation.type"}
+    assert not unsafe_overlap, (
+        f"second update() call's attributes overlap the first call's keys "
+        f"beyond the shared constant observation_type ({unsafe_overlap}) -- a "
+        f"real overlap could mean the second call clobbers data the first call "
+        f"set, defeating the two-call pattern _maybe_accumulate_cost relies on."
+    )
+    # The second call must carry NO trace of output/usage_details at all (not
+    # even a None placeholder) -- that's the actual mechanism that keeps the
+    # first call's data safe when OTel merges both attribute sets onto the
+    # same span.
+    assert not any("output" in k or "usage_details" in k for k in second_keys)
+    assert any("cost_details" in k for k in second_keys), (
+        "cost_details must produce a real attribute key"
+    )
     assert callable(LangfuseGeneration.end)
 
 

@@ -1,0 +1,15 @@
+# apps/api/Dockerfile only needs apps/api/pyproject.toml and apps/api/app/ --
+# everything else in this monorepo is dead weight in the build context (was
+# 3.6 GB / 131k files before this file existed: apps/web's node_modules alone
+# is 613 MB). Exclude by default, then allow back in only what the Dockerfile
+# actually COPYs.
+*
+
+# Docker requires every intermediate directory level to be explicitly
+# un-ignored too -- re-including a nested path alone does not implicitly
+# un-ignore its parents.
+!apps
+!apps/api
+!apps/api/pyproject.toml
+!apps/api/app
+!apps/api/app/**

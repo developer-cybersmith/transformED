@@ -1157,19 +1157,21 @@ def test_onboarding_router_releases_lock_on_503() -> None:
     This tests the router's `except HTTPException: await redis.delete(onboarding_key)`
     cleanup at router.py:265 — the layer that actually owns the Redis lock.
     """
-    from fastapi import HTTPException as FE
+    from fastapi import HTTPException as HttpExc
 
     mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)   # no reassessment flag
-    mock_redis.set = AsyncMock(return_value=True)   # SET NX succeeds — lock acquired
-    mock_redis.delete = AsyncMock()                 # spy: must be called with onboarding_key
+    mock_redis.get = AsyncMock(return_value=None)  # no reassessment flag
+    mock_redis.set = AsyncMock(return_value=True)  # SET NX succeeds — lock acquired
+    mock_redis.delete = AsyncMock()  # spy: must be called with onboarding_key
 
-    with patch("app.core.redis.get_redis", return_value=mock_redis), \
-         patch("app.core.db.get_supabase", return_value=MagicMock()), \
-         patch(
-             "app.modules.assessment.service.process_onboarding",
-             new=AsyncMock(side_effect=FE(status_code=503, detail="retry")),
-         ):
+    with (
+        patch("app.core.redis.get_redis", return_value=mock_redis),
+        patch("app.core.db.get_supabase", return_value=MagicMock()),
+        patch(
+            "app.modules.assessment.service.process_onboarding",
+            new=AsyncMock(side_effect=HttpExc(status_code=503, detail="retry")),
+        ),
+    ):
         response = _client.post(
             "/api/assessment/onboarding/submit",
             json={"responses": _make_20_responses()},

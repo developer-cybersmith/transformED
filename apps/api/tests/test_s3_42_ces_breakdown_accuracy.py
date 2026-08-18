@@ -9,14 +9,13 @@ AC6 — Router passes redis=get_redis() to get_session_report.
 AC7 — ces_breakdown behavioral/head_pose/blink non-zero when histories have data.
 Guard (D108, was D72) — get_session_report has no hardcoded 0.0 for behavioral/head_pose/blink.
 """
+
 from __future__ import annotations
 
 import inspect
-import json
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -65,19 +64,22 @@ async def test_per_signal_histories_written_in_teaching_state():
             new_callable=AsyncMock,
             return_value={"current_state": "TEACHING"},
         ),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35,
-            ces_weight_teachback=0.25,
-            ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12,
-            ces_weight_blink=0.08,
-            ces_threshold=50.0,
-            ces_cadence_seconds=5,
-            max_distraction_interventions=3,
-            ces_fatigue_min_session_seconds=900,
-            ces_fatigue_blink_threshold=0.3,
-            ces_fatigue_head_pose_threshold=0.3,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+                ces_threshold=50.0,
+                ces_cadence_seconds=5,
+                max_distraction_interventions=3,
+                ces_fatigue_min_session_seconds=900,
+                ces_fatigue_blink_threshold=0.3,
+                ces_fatigue_head_pose_threshold=0.3,
+            ),
+        ),
     ):
         await process_attention_signal("ses-42", _attention_payload())
 
@@ -108,19 +110,22 @@ async def test_per_signal_histories_not_written_outside_teaching():
             new_callable=AsyncMock,
             return_value={"current_state": "QUIZZING"},
         ),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35,
-            ces_weight_teachback=0.25,
-            ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12,
-            ces_weight_blink=0.08,
-            ces_threshold=50.0,
-            ces_cadence_seconds=5,
-            max_distraction_interventions=3,
-            ces_fatigue_min_session_seconds=900,
-            ces_fatigue_blink_threshold=0.3,
-            ces_fatigue_head_pose_threshold=0.3,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+                ces_threshold=50.0,
+                ces_cadence_seconds=5,
+                max_distraction_interventions=3,
+                ces_fatigue_min_session_seconds=900,
+                ces_fatigue_blink_threshold=0.3,
+                ces_fatigue_head_pose_threshold=0.3,
+            ),
+        ),
     ):
         await process_attention_signal("ses-42b", _attention_payload())
 
@@ -148,23 +153,24 @@ async def test_none_behavioral_signal_skips_history_write():
             new_callable=AsyncMock,
             return_value={"current_state": "TEACHING"},
         ),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35,
-            ces_weight_teachback=0.25,
-            ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12,
-            ces_weight_blink=0.08,
-            ces_threshold=50.0,
-            ces_cadence_seconds=5,
-            max_distraction_interventions=3,
-            ces_fatigue_min_session_seconds=900,
-            ces_fatigue_blink_threshold=0.3,
-            ces_fatigue_head_pose_threshold=0.3,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+                ces_threshold=50.0,
+                ces_cadence_seconds=5,
+                max_distraction_interventions=3,
+                ces_fatigue_min_session_seconds=900,
+                ces_fatigue_blink_threshold=0.3,
+                ces_fatigue_head_pose_threshold=0.3,
+            ),
+        ),
     ):
-        await process_attention_signal(
-            "ses-42c", _attention_payload(behavioral=None)
-        )
+        await process_attention_signal("ses-42c", _attention_payload(behavioral=None))
 
     lpush_keys = [str(c.args[0]) for c in redis.lpush.call_args_list]
     assert not any("behavioral_history" in k for k in lpush_keys), (
@@ -187,23 +193,24 @@ async def test_none_head_pose_signal_skips_history_write():
             new_callable=AsyncMock,
             return_value={"current_state": "TEACHING"},
         ),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35,
-            ces_weight_teachback=0.25,
-            ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12,
-            ces_weight_blink=0.08,
-            ces_threshold=50.0,
-            ces_cadence_seconds=5,
-            max_distraction_interventions=3,
-            ces_fatigue_min_session_seconds=900,
-            ces_fatigue_blink_threshold=0.3,
-            ces_fatigue_head_pose_threshold=0.3,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+                ces_threshold=50.0,
+                ces_cadence_seconds=5,
+                max_distraction_interventions=3,
+                ces_fatigue_min_session_seconds=900,
+                ces_fatigue_blink_threshold=0.3,
+                ces_fatigue_head_pose_threshold=0.3,
+            ),
+        ),
     ):
-        await process_attention_signal(
-            "ses-42d", _attention_payload(head_pose=None)
-        )
+        await process_attention_signal("ses-42d", _attention_payload(head_pose=None))
 
     lpush_keys = [str(c.args[0]) for c in redis.lpush.call_args_list]
     assert not any("head_pose_history" in k for k in lpush_keys), (
@@ -219,6 +226,7 @@ async def test_none_head_pose_signal_skips_history_write():
 async def test_get_session_report_accepts_redis_param():
     """AC3: get_session_report signature accepts redis kwarg without error."""
     import inspect
+
     from app.modules.assessment.service import get_session_report
 
     sig = inspect.signature(get_session_report)
@@ -233,7 +241,7 @@ async def test_get_session_report_accepts_redis_param():
 @pytest.mark.asyncio
 async def test_signal_avg_reads_from_redis_histories():
     """AC4: when redis has per-signal history entries, ces_breakdown reflects them."""
-    from app.modules.assessment.service import _build_ces_breakdown, get_session_report
+    from app.modules.assessment.service import _build_ces_breakdown
 
     # Minimal supabase mock for get_session_report
     supabase = MagicMock()
@@ -246,11 +254,12 @@ async def test_signal_avg_reads_from_redis_histories():
         "ended_at": "2026-08-12T10:30:00+00:00",
     }
     # sessions query
-    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
+    select_chain = supabase.table.return_value.select.return_value.eq.return_value
+    select_chain.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
     # lessons tier query
     tier_resp = MagicMock()
     tier_resp.data = {"tier": "T2"}
-    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
+    select_chain.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
 
     # Redis mock — behavioral_history = [0.8, 0.6], head_pose = [0.7], blink = [0.5]
     redis = AsyncMock()
@@ -270,18 +279,20 @@ async def test_signal_avg_reads_from_redis_histories():
     # and patch DB calls to return minimal valid responses
     with (
         patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35,
-            ces_weight_teachback=0.25,
-            ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12,
-            ces_weight_blink=0.08,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+            ),
+        ),
         patch("app.core.db.rows", return_value=[]),
         patch("app.core.db.single_row", return_value=session_row),
     ):
         # Directly test _build_ces_breakdown with real averages
-        from app.config import get_settings
         settings = MagicMock(
             ces_weight_quiz=0.35,
             ces_weight_teachback=0.25,
@@ -347,7 +358,6 @@ async def test_build_ces_breakdown_defaults_zero_for_absent_redis():
 @pytest.mark.unit
 def test_router_passes_redis_to_get_session_report():
     """AC6: router.py get_session_report_endpoint imports get_redis and passes redis kwarg."""
-    import ast
     import pathlib
 
     router_src = pathlib.Path(
@@ -416,23 +426,24 @@ async def test_none_blink_rate_signal_skips_history_write():
             new_callable=AsyncMock,
             return_value={"current_state": "TEACHING"},
         ),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35,
-            ces_weight_teachback=0.25,
-            ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12,
-            ces_weight_blink=0.08,
-            ces_threshold=50.0,
-            ces_cadence_seconds=5,
-            max_distraction_interventions=3,
-            ces_fatigue_min_session_seconds=900,
-            ces_fatigue_blink_threshold=0.3,
-            ces_fatigue_head_pose_threshold=0.3,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+                ces_threshold=50.0,
+                ces_cadence_seconds=5,
+                max_distraction_interventions=3,
+                ces_fatigue_min_session_seconds=900,
+                ces_fatigue_blink_threshold=0.3,
+                ces_fatigue_head_pose_threshold=0.3,
+            ),
+        ),
     ):
-        await process_attention_signal(
-            "ses-42f", _attention_payload(blink=None)
-        )
+        await process_attention_signal("ses-42f", _attention_payload(blink=None))
 
     lpush_keys = [str(c.args[0]) for c in redis.lpush.call_args_list]
     assert not any("blink_history" in k for k in lpush_keys), (
@@ -462,19 +473,22 @@ async def test_ltrim_cap_applied_to_per_signal_histories():
             new_callable=AsyncMock,
             return_value={"current_state": "TEACHING"},
         ),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35,
-            ces_weight_teachback=0.25,
-            ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12,
-            ces_weight_blink=0.08,
-            ces_threshold=50.0,
-            ces_cadence_seconds=5,
-            max_distraction_interventions=3,
-            ces_fatigue_min_session_seconds=900,
-            ces_fatigue_blink_threshold=0.3,
-            ces_fatigue_head_pose_threshold=0.3,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+                ces_threshold=50.0,
+                ces_cadence_seconds=5,
+                max_distraction_interventions=3,
+                ces_fatigue_min_session_seconds=900,
+                ces_fatigue_blink_threshold=0.3,
+                ces_fatigue_head_pose_threshold=0.3,
+            ),
+        ),
     ):
         await process_attention_signal("ses-42g", _attention_payload())
 

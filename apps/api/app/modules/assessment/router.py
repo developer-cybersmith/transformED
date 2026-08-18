@@ -26,6 +26,7 @@ from app.modules.assessment.schemas import (
     QuizAnswer,
     QuizResult,
     QuizSubmission,
+    SessionCompleted,
     SessionCreate,
     SessionCreated,
     TeachbackResult,
@@ -37,7 +38,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["assessment"])
 
 # Re-export for backward compatibility — tests and other modules import from here.
-__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult", "TeachbackSubmission", "TeachbackResult"]
+__all__ = [
+    "QuizAnswer",
+    "QuizSubmission",
+    "QuizResult",
+    "TeachbackSubmission",
+    "TeachbackResult",
+    "TeachbackDetail",
+]
+
+
+class TeachbackDetail(BaseModel):
+    """Per-attempt teach-back detail — mirrors teachback_attempts columns verbatim."""
+
+    segment_id: str
+    score: int | None = None
+    feedback_praise: str | None = None
+    feedback_correction: str | None = None
+    concepts_hit: list[str] = []
+    concepts_missed: list[str] = []
+    attempt_number: int = 1
 
 
 class SessionReport(BaseModel):
@@ -71,6 +91,15 @@ class SessionReport(BaseModel):
     # nothing to the client. Rename to intervention_events_count in a future non-frozen-
     # contract release (requires 4-dev PR review per CLAUDE.md §16).
     intervention_messages_used: int = 0
+    # S3-05 (Story 2-46) — attention timeline chart data. NOT the same field the S3-53 note
+    # above proposes renaming `intervention_messages_used` to (`intervention_events_count`,
+    # a count) — this is a LIST of {"minute","type"} points for the chart's vertical markers.
+    # Never includes `ces_at_trigger` (present in the underlying session_events payload) —
+    # enforced in service.py, not just by convention (AC-5).
+    ces_timeline: list[dict[str, float]] | None = None
+    intervention_events: list[dict[str, Any]] | None = None
+    # Story 2-48 — per-attempt teach-back detail; None when session had no teach-back
+    teachback_details: list[TeachbackDetail] | None = None
 
 
 class LearnerDNA(BaseModel):
@@ -115,6 +144,32 @@ async def create_session_endpoint(
         supabase=get_supabase(),
     )
     return SessionCreated(**created)
+
+
+@router.post(
+    "/session/{session_id}/complete",
+    response_model=SessionCompleted,
+    summary="Mark a session as ended — writes sessions.ended_at",
+)
+async def complete_session_endpoint(
+    session_id: str,
+    current_user: CurrentUser,
+) -> SessionCompleted:
+    """Call exactly once when the player reaches its terminal ENDED status.
+
+    Idempotent — see `complete_session`'s docstring in service.py. Without
+    this, `sessions.ended_at` never gets written by anything, and the session
+    report's `duration_minutes`/`completed_at` silently stay 0.0/None forever.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import complete_session
+
+    completed = await complete_session(
+        session_id=session_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
+    return SessionCompleted(**completed)
 
 
 @router.post(

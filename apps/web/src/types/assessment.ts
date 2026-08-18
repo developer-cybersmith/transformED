@@ -3,7 +3,7 @@
 
 import type { QuizFeedbackItem, RubricScores } from '@/lib/assessment';
 
-// ── Shared building blocks ────────────────────────────────────────────────
+// â”€â”€ Shared building blocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface QuizAnswer {
   question_id: string;
@@ -18,7 +18,7 @@ export interface OnboardingAnswer {
   selected_text: string;
 }
 
-// ── POST /api/assessment/quiz ─────────────────────────────────────────────
+// â”€â”€ POST /api/assessment/quiz â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface QuizSubmission {
   session_id: string;
@@ -38,7 +38,7 @@ export interface QuizResult {
   feedback: QuizFeedbackItem[];
 }
 
-// ── POST /api/assessment/teachback ────────────────────────────────────────
+// â”€â”€ POST /api/assessment/teachback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface TeachbackSubmission {
   session_id: string;
@@ -58,7 +58,7 @@ export interface TeachbackResult {
   feedback: string;
 }
 
-// ── GET /api/assessment/session/{session_id}/report ───────────────────────
+// â”€â”€ GET /api/assessment/session/{session_id}/report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Story 3-30 (learner_dna_snapshot). Label values verified against the actual
 // shipped backend (apps/api/app/modules/assessment/service.py's
@@ -84,6 +84,27 @@ export type DnaGrowthLabel = 'Improving' | 'Stable' | 'Needs Attention';
 export interface LearnerDnaSnapshot {
   dimension_labels: Record<DnaDimension, DnaDimensionLabel>;
   growth_labels: Record<DnaDimension, DnaGrowthLabel | null>;
+}
+
+// Story 2-48 (S3-06) addition — per-segment teach-back detail. `score` is sent raw over the
+// wire (same pattern as the existing session-level `teachback_score`) but must never be
+// rendered as a raw number -- always bucket it through `formatTeachbackLabel` first (PRD: no
+// rubric score shown to students in Phase 1). `segment_id` is an internal identifier, not
+// display text -- render "Segment {index + 1}" using the array's position instead, which is
+// already chronological (backend orders by created_at). `score` is nullable -- verified against
+// the real shipped backend (apps/api/app/modules/assessment/router.py's TeachbackDetail): the
+// underlying `teachback_attempts.score` column has no NOT NULL constraint
+// (supabase/migrations/20260611000000_initial_schema.sql:210), so a `null` here is a real,
+// reachable shape, not just defensive typing -- formatTeachbackLabel already accepts
+// `number | null`.
+export interface TeachbackDetail {
+  segment_id: string;
+  score: number | null;
+  feedback_praise: string | null;
+  feedback_correction: string | null;
+  concepts_hit: string[];
+  concepts_missed: string[];
+  attempt_number: number;
 }
 
 export interface SessionReport {
@@ -115,9 +136,18 @@ export interface SessionReport {
   quiz_accuracy_label: 'Strong' | 'Developing' | 'Needs Review' | null;
   // Story 3-30 addition — null when the user has no learner_dna row yet.
   learner_dna_snapshot: LearnerDnaSnapshot | null;
+  // Story 2-46 (S3-05) additions — attention timeline chart data. ces_timeline can never
+  // exceed 10 points (D109, docs/DEFECT-REGISTER.md) — the last ~50s of the session at default
+  // cadence, never the whole session; the chart must present this as a recency window.
+  // intervention_events never carries the raw CES value at trigger time (AC-5).
+  ces_timeline: { minute: number; ces: number }[] | null;
+  intervention_events: { minute: number; type: string }[] | null;
+  // Story 2-48 (S3-06) addition — null when the student did no teach-back this session
+  // (same "no data" convention as teachback_score/ces_timeline above, never [] for "none").
+  teachback_details: TeachbackDetail[] | null;
 }
 
-// ── GET /api/assessment/user/dna ──────────────────────────────────────────
+// â”€â”€ GET /api/assessment/user/dna â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface LearnerDNA {
   user_id: string;
@@ -128,7 +158,7 @@ export interface LearnerDNA {
   last_updated: string | null;
 }
 
-// ── POST /api/assessment/onboarding/submit ────────────────────────────────
+// â”€â”€ POST /api/assessment/onboarding/submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface OnboardingDiagnosticSubmission {
   responses: OnboardingAnswer[];

@@ -23,6 +23,9 @@ __all__ = [
     "OnboardingResult",
     "ConsentCreate",
     "ConsentRecord",
+    "SessionCreate",
+    "SessionCreated",
+    "SessionCompleted",
 ]
 
 
@@ -78,6 +81,18 @@ class SessionCreated(BaseModel):
     session_id: str
     lesson_id: str
     started_at: str | None = None
+
+
+class SessionCompleted(BaseModel):
+    """Response body for `POST /session/{session_id}/complete`.
+
+    `ended_at` always comes from the DB — either the value this call just
+    wrote, or an earlier call's value if the session was already completed
+    (idempotent — see `complete_session`'s docstring).
+    """
+
+    session_id: str
+    ended_at: str
 
 
 class QuizAnswer(BaseModel):

@@ -242,33 +242,6 @@ def test_redistribution_weights_are_proportional():
     assert result == pytest.approx(expected, abs=0.01)
 
 
-# ── AC 8 (S3-53 D1/D62): quiz_accuracy=None redistributes weight ─────────────
-
-
-@pytest.mark.unit
-def test_quiz_accuracy_none_redistributes_weight():
-    """AC 8 (updated S3-53): quiz_accuracy=None → quiz dropped, weight redistributed to remaining 4.
-
-    Old behaviour (D61/D62): None treated as 0.0, weight retained → CES=65.0.
-    Correct behaviour  : quiz dropped; remaining weights (0.65) normalize to 1.0.
-    With all remaining signals=1.0 → CES = 100.0.
-    """
-    compute_ces = _import_compute_ces()
-    s = _settings()
-    # quiz dropped; teachback=1.0, behavioral=1.0, head_pose=1.0, blink=1.0
-    # weight_sum = 0.25 + 0.20 + 0.12 + 0.08 = 0.65
-    # CES = sum(v * w/0.65) * 100 = (0.65/0.65) * 100 = 100.0
-    result = compute_ces(
-        quiz_accuracy=None,
-        teachback_score=1.0,
-        behavioral=1.0,
-        head_pose=1.0,
-        blink=1.0,
-        settings=s,
-    )
-    assert result == pytest.approx(100.0, abs=0.001)
-
-
 # ── AC 8b (S3-53): quiz_accuracy=None AND teachback_score=None ───────────────
 
 

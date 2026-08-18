@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useSessionReport } from '@/hooks/useSessionReport';
 import { cesScoreColor, formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
-import type { DnaDimension, LearnerDnaSnapshot } from '@/types/assessment';
+import { AttentionChart } from '@/components/reports/AttentionChart';
+import type { DnaDimension, LearnerDnaSnapshot, TeachbackDetail } from '@/types/assessment';
 
 interface SessionReportProps {
   sessionId: string;
@@ -57,6 +58,74 @@ function DnaSnapshotSection({ snapshot }: { snapshot: LearnerDnaSnapshot }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Story 2-48 (S3-06) — per-segment teach-back detail. `entry.score` is bucketed through
+// `formatTeachbackLabel` (same helper the aggregate Teach-Back tile uses) and never printed
+// raw -- PRD: no rubric score shown to students in Phase 1. `segment_id` is an internal
+// identifier, never shown -- the array's index (already chronological, per the backend's
+// `.order("created_at")`) is used for the display label instead.
+function TeachbackDetailSection({ details }: { details: TeachbackDetail[] }) {
+  return (
+    <div
+      data-testid="teachback-detail-section"
+      className="flex flex-col gap-4 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm"
+    >
+      <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+        Teach-Back Detail
+      </span>
+      {details.map((entry, index) => (
+        <div
+          key={`${entry.segment_id}-${entry.attempt_number}`}
+          data-testid={`teachback-detail-item-${index}`}
+          className="flex flex-col gap-1.5 border-t border-neutral-100 pt-4 first:border-t-0 first:pt-0"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-neutral-900 text-sm font-medium">Segment {index + 1}</span>
+            <span className="text-neutral-500 text-sm">{formatTeachbackLabel(entry.score)}</span>
+          </div>
+          {entry.feedback_praise && (
+            <p className="text-neutral-700 text-sm">{entry.feedback_praise}</p>
+          )}
+          {entry.feedback_correction && (
+            <p className="text-neutral-700 text-sm">{entry.feedback_correction}</p>
+          )}
+          {entry.concepts_hit.length > 0 && (
+            <div
+              data-testid={`teachback-concepts-hit-${index}`}
+              className="flex flex-wrap items-center gap-1.5"
+            >
+              <span className="text-neutral-400 text-xs uppercase tracking-wide">Hit</span>
+              {entry.concepts_hit.map((concept) => (
+                <span
+                  key={concept}
+                  className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs"
+                >
+                  {concept}
+                </span>
+              ))}
+            </div>
+          )}
+          {entry.concepts_missed.length > 0 && (
+            <div
+              data-testid={`teachback-concepts-missed-${index}`}
+              className="flex flex-wrap items-center gap-1.5"
+            >
+              <span className="text-neutral-400 text-xs uppercase tracking-wide">Missed</span>
+              {entry.concepts_missed.map((concept) => (
+                <span
+                  key={concept}
+                  className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-xs"
+                >
+                  {concept}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -187,6 +256,17 @@ export function SessionReport({ sessionId }: SessionReportProps) {
           </span>
         </div>
       </div>
+
+      {report.ces_timeline !== null && (
+        <AttentionChart
+          timeline={report.ces_timeline}
+          interventions={report.intervention_events}
+        />
+      )}
+
+      {report.teachback_details && report.teachback_details.length > 0 && (
+        <TeachbackDetailSection details={report.teachback_details} />
+      )}
 
       {report.learner_dna_snapshot && (
         <DnaSnapshotSection snapshot={report.learner_dna_snapshot} />

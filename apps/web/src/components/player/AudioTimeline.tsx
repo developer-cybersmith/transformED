@@ -1,7 +1,8 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { usePlayerStore } from '@/stores/player.machine';
+import { refreshSignedUrl } from '@/lib/media/refreshSignedUrl';
 
 // Moved to lib/binarySearch.ts so stores/player.machine.ts (session-restore
 // slide resolution) can use it without a component → store → component cycle.
@@ -59,12 +60,61 @@ export function processTimeUpdate(ms: number): void {
   }
 }
 
+/**
+ * Bug fix: moves currentSlideId to whatever slide covers `ms`, independent
+ * of playback status. A deliberate seek (the progress bar is usable while
+ * PAUSED/IDLE too, per PlayerControls' canSeek) must move the visible slide
+ * immediately -- processTimeUpdate's own per-tick sync is deliberately
+ * gated on status === 'PLAYING' (so a paused lesson doesn't drift), which
+ * previously meant a paused seek updated audioPositionMs optimistically
+ * (player.machine.ts's requestSeek) but left the slide showing the pre-seek
+ * position until the student resumed playback and a native 'timeupdate'
+ * event eventually caught up. Never touches audioPositionMs/quiz state --
+ * purely a visual slide sync. Exported for unit testing.
+ */
+export function syncSlideToPosition(ms: number): void {
+  const { lesson, currentSegmentIndex, currentSlideId, setCurrentSlide } = usePlayerStore.getState();
+  if (!lesson) return;
+  const segment = lesson.segments[currentSegmentIndex];
+  if (!segment) return;
+  const { timestamps } = segment.narration;
+  if (timestamps.length === 0) return;
+  const idx = binarySearchTimestamps(timestamps, ms);
+  const targetSlideId = timestamps[idx].slide_id;
+  if (targetSlideId !== currentSlideId) {
+    setCurrentSlide(targetSlideId);
+  }
+}
+
 export function AudioTimeline() {
   const audioRef = useRef<HTMLAudioElement>(null);
   // Tracks which segment_id the current/last SpeechSynthesis utterance was
   // started for, so a status-only re-render (PAUSED -> PLAYING) resumes
   // instead of restarting narration from the beginning (S2-34 AC-5, AC-8).
   const spokenSegmentIdRef = useRef<string | null>(null);
+  // Bug fix: the Web Speech API has no way to seek an in-progress utterance
+  // to an arbitrary position -- unlike a real <audio> element, there's no
+  // per-word/per-character timing to jump to. Without this, a seek moved the
+  // slide/time (via processTimeUpdate/syncSlideToPosition) but the SPOKEN
+  // narration just kept going from wherever it already was, completely
+  // disconnected from what the student now sees. Bumped on every seek while
+  // hasScript is true; the SpeechSynthesis effect below treats a nonce
+  // change the same as a segment change (cancel + restart), which is the
+  // best available approximation without word-level alignment data -- it
+  // restarts from the beginning of the script rather than leaving stale,
+  // desynced narration playing indefinitely.
+  const [speechResyncNonce, setSpeechResyncNonce] = useState(0);
+
+  // Story 2-45: a successful automatic per-asset re-sign overrides the
+  // store's (expired) audio_url for exactly the segment it was resolved
+  // for. Keyed by segment_id so a segment change naturally invalidates a
+  // stale override without an explicit reset.
+  const [resignedAudio, setResignedAudio] = useState<{ segmentId: string; url: string } | null>(null);
+  // AC4: at most one automatic re-sign attempt per segment_id, ever -- a Set
+  // keyed by segment_id needs no manual reset; a new segment_id is
+  // automatically a fresh key. Persists across renders (ref, not state)
+  // since attempting is a one-time side effect, not something to re-render on.
+  const attemptedResignRef = useRef<Set<string>>(new Set());
 
   const status = usePlayerStore((s) => s.status);
   const lesson = usePlayerStore((s) => s.lesson);
@@ -74,10 +124,17 @@ export function AudioTimeline() {
   const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
+  // Story 2-45: prefer a successfully re-signed URL for THIS segment over
+  // the store's (possibly expired) one -- never the reverse, so a resign
+  // that resolved for a since-departed segment can't leak onto a new one.
+  const effectiveAudioUrl =
+    resignedAudio && segment && resignedAudio.segmentId === segment.segment_id
+      ? resignedAudio.url
+      : segment?.narration.audio_url;
   // Empty string is a real, reachable value now — a per-asset server-side
   // signing failure degrades just that one asset (Story 1-6/1-7), it doesn't
   // fail the whole lesson. There's nothing to play; don't attempt to.
-  const hasAudio = Boolean(segment?.narration.audio_url);
+  const hasAudio = Boolean(effectiveAudioUrl);
   // Story 2-31 (backend) recovers the real script into a segment that still
   // has no playable audio -- narration.script alone changes nothing on screen
   // unless something drives processTimeUpdate for it (S2-33's virtual clock,
@@ -102,7 +159,24 @@ export function AudioTimeline() {
       const audio = audioRef.current;
       if (!audio) return;
       if (status === 'PLAYING') {
-        audio.play().catch(() => {});
+        // Review fix: exitTeachBack() on the LAST segment sets status back to
+        // PLAYING and relies on this effect to "resume" playback so the real
+        // <audio> `ended` event fires again and drives handleEnded() ->
+        // endLesson() (see exitTeachBack's own comment). But by the time
+        // teach-back runs, this segment's audio has typically already reached
+        // its natural end -- and per the HTML media spec, calling .play() on
+        // an element whose playback position is already at/past its end
+        // SEEKS BACK TO THE START as part of the play steps, i.e. it replays
+        // the whole segment from 0 instead of firing `ended` again. For a
+        // single-segment lesson this is indistinguishable from "the lesson
+        // restarted" (confirmed live in a real browser). Mirror the
+        // virtual-clock path's own already-quizzed handling below: drive
+        // handleEnded() directly instead of replaying audio that already ran.
+        if (audio.ended) {
+          handleEnded();
+        } else {
+          audio.play().catch(() => {});
+        }
       } else {
         audio.pause();
       }
@@ -118,7 +192,40 @@ export function AudioTimeline() {
     // advance/quiz logic handleEnded uses immediately instead of leaving the
     // lesson stuck here forever.
     if (status === 'PLAYING') handleEnded();
-  }, [status, currentSegmentIndex, hasAudio, hasScript, audioRetryCount]);
+    // resignedAudio's url (Story 2-45, review fix): a successful automatic
+    // re-sign changes effectiveAudioUrl/hasAudio for a segment that was
+    // already `hasAudio === true` before AND after (an expired URL is still
+    // non-empty, so is a fresh one) -- neither of those already-covered
+    // deps changes, so without this the remounted <audio> element would sit
+    // loaded-and-paused forever with no .play() call, exactly the class of
+    // bug this effect's own comment already documents for the retry case.
+  }, [status, currentSegmentIndex, hasAudio, hasScript, audioRetryCount, resignedAudio?.url]);
+
+  // Story 2-45 AC4 (review fix): a manual retry (Player.tsx's
+  // handleRetryAudio, which always refetches the whole lesson -- fresh
+  // signed URLs for every asset -- before calling retryAudio()) delivers a
+  // genuinely new asset for the CURRENT segment_id. Clear that segment's
+  // attempt-guard and any now-stale local override so, if this new asset
+  // later expires too, it gets its own automatic re-sign attempt instead of
+  // skipping straight to setAudioError because the old segment_id was
+  // already marked "attempted" before the retry ever happened. Runs on
+  // mount too (audioRetryCount starts at 0) -- harmless no-op there.
+  useEffect(() => {
+    if (!segment) return;
+    attemptedResignRef.current.delete(segment.segment_id);
+    // Deliberately synchronous -- this clears a stale one-off override in
+    // response to a manual-retry EVENT (audioRetryCount changing), not on
+    // every render; it is a no-op (bails via Object.is) on every render
+    // where resignedAudio doesn't already belong to the current segment,
+    // so the "cascading renders" concern the rule generally guards against
+    // does not apply here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setResignedAudio((prev) => (prev && prev.segmentId === segment.segment_id ? null : prev));
+    // segment_id is the intended identity here, not the whole segment
+    // object or effectiveAudioUrl -- this must run exactly once per manual
+    // retry, not on every render that happens to recompute those.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioRetryCount]);
 
   // Virtual playback clock (S2-33): a segment with a recovered narration script
   // but no playable audio (Story 2-31's degrade path) still needs *something*
@@ -235,13 +342,20 @@ export function AudioTimeline() {
       return;
     }
 
-    // A new segment (or first entry into virtual-clock mode for it) -- stop
-    // whatever was playing/paused before, unconditional on status. AC-6
-    // requires cancel() on segment change regardless of PLAYING/PAUSED/QUIZ
-    // etc.; previously this only happened lazily on the next PLAYING
-    // transition, leaving a stale segment's utterance merely paused
-    // indefinitely if the segment changed while not PLAYING (review fix).
-    if (spokenSegmentIdRef.current !== segment.segment_id) {
+    // Bug fix: includes speechResyncNonce so a seek (which bumps the nonce
+    // without changing segment_id) is treated the same as a new segment --
+    // otherwise this comparison would never notice a seek at all, and the
+    // narration would just keep speaking from wherever it already was.
+    const speechKey = `${segment.segment_id}:${speechResyncNonce}`;
+
+    // A new segment (or first entry into virtual-clock mode for it, or a
+    // seek) -- stop whatever was playing/paused before, unconditional on
+    // status. AC-6 requires cancel() on segment change regardless of
+    // PLAYING/PAUSED/QUIZ etc.; previously this only happened lazily on the
+    // next PLAYING transition, leaving a stale segment's utterance merely
+    // paused indefinitely if the segment changed while not PLAYING (review
+    // fix).
+    if (spokenSegmentIdRef.current !== speechKey) {
       synth.cancel();
       spokenSegmentIdRef.current = null;
     }
@@ -260,7 +374,7 @@ export function AudioTimeline() {
       return;
     }
 
-    if (spokenSegmentIdRef.current === segment.segment_id) {
+    if (spokenSegmentIdRef.current === speechKey) {
       synth.resume();
       return;
     }
@@ -270,7 +384,6 @@ export function AudioTimeline() {
     // (notably Chrome) that can silently drop the new utterance (review
     // fix). Cleanup clears the pending call if the effect re-runs (e.g. a
     // rapid subsequent segment change) or unmounts before it fires.
-    const segmentId = segment.segment_id;
     const script = segment.narration.script;
     const rate = usePlayerStore.getState().playbackRate;
     const timeoutId = window.setTimeout(() => {
@@ -284,15 +397,16 @@ export function AudioTimeline() {
       // as an error or affect the lesson (review fix).
       utterance.onerror = () => {};
       synth.speak(utterance);
-      spokenSegmentIdRef.current = segmentId;
+      spokenSegmentIdRef.current = speechKey;
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
     // segment_id (not the whole segment object) is the intended dependency
     // per AC-8 -- re-running only when the segment actually changes, not on
-    // a re-render that happens to recreate the segment object.
+    // a re-render that happens to recreate the segment object. speechResyncNonce
+    // added for the seek bug fix above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [segment?.segment_id, hasAudio, hasScript, status]);
+  }, [segment?.segment_id, hasAudio, hasScript, status, speechResyncNonce]);
 
   // Stop any in-progress/paused utterance on unmount (S2-34 AC-7). Also
   // resets spokenSegmentIdRef -- without this, a React StrictMode dev
@@ -313,6 +427,10 @@ export function AudioTimeline() {
   // by applying it directly via processTimeUpdate instead (S2-33 AC-5).
   useEffect(() => {
     if (seekRequestMs === null) return;
+    // Bug fix: sync the slide immediately, regardless of status -- see
+    // syncSlideToPosition's own doc comment for why processTimeUpdate alone
+    // (below, or via the next native 'timeupdate' event) isn't enough.
+    syncSlideToPosition(seekRequestMs);
     if (hasAudio) {
       const audio = audioRef.current;
       if (audio) {
@@ -320,6 +438,16 @@ export function AudioTimeline() {
       }
     } else if (hasScript) {
       processTimeUpdate(seekRequestMs);
+      // Bug fix: the Web Speech API can't be seeked to an arbitrary position
+      // (see speechResyncNonce's own doc comment) -- bump the nonce so the
+      // SpeechSynthesis effect below restarts the utterance instead of
+      // leaving it speaking on, completely disconnected from the new
+      // slide/time position. Deliberately synchronous -- this responds to a
+      // seek EVENT (seekRequestMs changing), not a per-render loop; same
+      // justification as this file's other eslint-disabled setState-in-effect
+      // calls.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSpeechResyncNonce((n) => n + 1);
     }
     usePlayerStore.getState().clearSeekRequest();
   }, [seekRequestMs, hasAudio, hasScript]);
@@ -357,6 +485,42 @@ export function AudioTimeline() {
     // Only a real mid-load/decode failure on a segment that DID have a src —
     // the hasAudio === false degrade path never renders a src attribute at
     // all, so this can't double-fire alongside that fallback.
+    //
+    // Story 2-45 AC2/AC4: before surfacing audioError (which hands recovery
+    // to the manual Retry button), try exactly one automatic per-asset
+    // re-sign -- most failures here are a signed URL that expired while the
+    // student was away, not a genuinely dead asset. `void` — this is a
+    // fire-and-forget attempt from a synchronous DOM event; a slow/failed
+    // resign still falls through to setAudioError below in the same tick.
+    const seg = segment;
+    const expiredUrl = seg?.narration.audio_url;
+    if (seg && expiredUrl && !attemptedResignRef.current.has(seg.segment_id)) {
+      attemptedResignRef.current.add(seg.segment_id);
+      void refreshSignedUrl(expiredUrl).then((fresh) => {
+        if (fresh) {
+          // Currency is enforced downstream by effectiveAudioUrl's own
+          // segmentId comparison -- a resign that resolves after the
+          // student has moved on is simply never read.
+          setResignedAudio({ segmentId: seg.segment_id, url: fresh });
+          return;
+        }
+        // Re-sign itself failed (network/404/malformed) -- fall through to
+        // the existing, already-surfaced manual-recovery path, but ONLY if
+        // `seg` is still the current segment (review fix). Without this
+        // check, a resign that started for segment N and resolves late --
+        // after the student has advanced past N, manually retried N (a
+        // fresh attempt is now in flight for N under a clean slate), or a
+        // different lesson has loaded entirely -- would flip audioError to
+        // true for whatever segment/lesson is current NOW, even though it
+        // has nothing wrong with it.
+        const current = usePlayerStore.getState();
+        const stillCurrent = current.lesson?.segments[current.currentSegmentIndex]?.segment_id === seg.segment_id;
+        if (stillCurrent) {
+          current.setAudioError(true);
+        }
+      });
+      return;
+    }
     usePlayerStore.getState().setAudioError(true);
   }
 
@@ -406,10 +570,13 @@ export function AudioTimeline() {
     // key includes audioRetryCount — forces remount on segment change AND on
     // retryAudio(), resetting src + currentTime so a failed load is re-attempted
     // from scratch rather than relying on the browser's own retry behavior.
+    // Also includes resignedAudio's url (Story 2-45): a successful automatic
+    // re-sign needs the same forced remount, not a bare src mutation, for
+    // the browser to reliably start loading the fresh URL.
     <audio
-      key={`${segment.segment_id}-${audioRetryCount}`}
+      key={`${segment.segment_id}-${audioRetryCount}-${resignedAudio?.url ?? 'orig'}`}
       ref={audioRef}
-      src={hasAudio ? segment.narration.audio_url : undefined}
+      src={hasAudio ? effectiveAudioUrl : undefined}
       preload="metadata"
       onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}

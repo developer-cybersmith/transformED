@@ -64,15 +64,16 @@ def _supabase_mock(
             ) = _make_resp(session_row)
 
         elif name == "quiz_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(quiz_rows)
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _make_resp(quiz_rows)
 
         elif name == "teachback_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _make_resp(tb_rows)
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _make_resp(tb_rows)
 
         elif name == "session_events":
-            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
-                _make_resp(event_rows)
-            )
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _make_resp(event_rows)
 
         elif name == "learner_dna":
             # Read side — maybe_single
@@ -226,7 +227,8 @@ def test_compute_signals_mixed_real_session_all_nine_dims() -> None:
         f"10_000ms < _FAST_RESPONSE_MS({_FAST_RESPONSE_MS}) → clamped 100.0; "
         f"got {sigs['processing_speed']}"
     )
-    # P7: pin spec's concrete values (66.67, 25.0, 75.0, 75.0, 60.0) so cap constant changes are caught
+    # P7: pin spec's concrete values (66.67, 25.0, 75.0, 75.0, 60.0) so cap constant
+    # changes are caught
     assert sigs["frustration_tolerance"] == pytest.approx(66.67, rel=1e-2), (
         f"1 intervention / cap({_INTERVENTION_CAP}) = (1-1/3)*100 = 66.67; "
         f"got {sigs['frustration_tolerance']}"
@@ -620,7 +622,8 @@ async def test_fuse_learner_dna_redis_reassessment_flag_at_session_10(
     }, f"Expected 9 dimension keys; got {set(result.keys())}"
 
     expected_key = f"user:{_USER_UUID}:reassessment_due"
-    # P10: plain assert_called_once_with (no trailing comma-tuple — failure message was silently dropped)
+    # P10: plain assert_called_once_with (no trailing comma-tuple — failure message
+    # was silently dropped)
     mock_redis.set.assert_called_once_with(expected_key, "1")
 
     # P3: verify periodic recurrence — session_count=19→20 also fires the flag.

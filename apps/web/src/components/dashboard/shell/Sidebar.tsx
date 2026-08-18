@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { LayoutDashboard, Library, BookOpen, UploadCloud, PieChart, Settings, LogOut, UserCircle } from "lucide-react";
+import { LayoutDashboard, BookOpen, UploadCloud, PieChart, Settings, LogOut, UserCircle } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,7 +12,6 @@ import { useAuth } from "@/contexts/AuthContext";
 export const mainNavItems = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "My Books", href: "/books", icon: BookOpen },
-    { name: "My Library", href: "/library", icon: Library },
     { name: "Upload PDF", href: "/upload", icon: UploadCloud },
     { name: "Reports", href: "/reports", icon: PieChart },
 ];

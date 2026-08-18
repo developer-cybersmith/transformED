@@ -128,22 +128,18 @@ def _supabase_mock(
                 tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
             ) = _resp(session_row)
         elif name == "quiz_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp(
-                quiz_rows if quiz_rows is not None else []
-            )
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _resp(quiz_rows if quiz_rows is not None else [])
         elif name == "teachback_attempts":
-            tbl.select.return_value.eq.return_value.execute.return_value = _resp(
-                tb_rows if tb_rows is not None else []
-            )
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            _lim.execute.return_value = _resp(tb_rows if tb_rows is not None else [])
         elif name == "session_events":
+            _lim = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            events_exec = _lim.execute
             if events_raises:
-                tbl.select.return_value.eq.return_value.limit.return_value.execute.side_effect = (
-                    Exception("session_events DB down")
-                )
+                events_exec.side_effect = Exception("session_events DB down")
             else:
-                tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = (
-                    _resp(event_rows)
-                )
+                events_exec.return_value = _resp(event_rows)
             # Wire INSERT chain so write_system_events (called by record_dna_growth in Step 6)
             # returns a clean response. Without this, MagicMock().error is truthy and
             # write_system_events logs "0 events written" and silently returns 0 in every test.

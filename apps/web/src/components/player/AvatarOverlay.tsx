@@ -120,7 +120,7 @@ export function AvatarOverlay({ lesson }: AvatarOverlayProps) {
           the lesson (review fix). */}
       {staticUrl && !staticFailed && status !== 'IDLE' && status !== 'ENDED' && (
         <div
-          className="absolute bottom-6 left-6 z-10 w-16 h-16 rounded-full overflow-hidden border-2 border-white/20"
+          className="absolute bottom-6 left-6 z-10 w-16 h-16 rounded-full overflow-hidden border-2 border-neutral-200 shadow-sm"
           data-testid="avatar-static"
         >
           <img

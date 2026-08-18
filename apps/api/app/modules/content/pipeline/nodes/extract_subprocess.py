@@ -18,7 +18,12 @@ Usage::
         <pdf_path> <img_dir> <ocr_threshold> [page_start] [page_end]
 
     python -m app.modules.content.pipeline.nodes.extract_subprocess \\
-        --text-only <pdf_path> [front_pages] [head_chars] [page_start] [page_end]
+        --text-only <pdf_path> [front_pages] [head_chars] [page_start] [page_end] \\
+        [--tail-chars N]
+
+``--tail-chars`` (D115/D116, 2026-08-15) is a named flag, valid in any position —
+it is stripped out of argv before the positional args above are parsed, so it can
+never collide with them. 0 (unset) reproduces the pre-existing contract exactly.
 
 ``page_start``/``page_end`` (Story 1-12) are **0-based and INCLUSIVE**, matching
 ``DetectedChapter`` and ``chapters.page_start/page_end``. Both omitted = whole
@@ -709,6 +714,8 @@ def extract_text_only(
     head_chars: int = 0,
     page_start: int | None = None,
     page_end: int | None = None,
+    *,
+    tail_chars: int = 0,
 ) -> dict[str, Any]:
     """Per-page text + the PDF outline. Nothing else.
 
@@ -754,6 +761,19 @@ def extract_text_only(
         page_end:    last page to extract, 0-based INCLUSIVE, ABSOLUTE. Both
                      omitted = the whole document. Supplying only one, or a
                      range outside the document, raises `ValueError` — never clamped.
+        tail_chars:  KEYWORD-ONLY (Story D115/D116, 2026-08-15). On a page that
+                     gets truncated to `head_chars`, also keep the LAST
+                     `tail_chars` characters, appended after the head slice.
+                     0 (default) = no tail, byte-identical to the pre-existing
+                     contract. Exists because some publishers emit a chapter's
+                     decorative "N / TITLE" opener AFTER the body paragraph in
+                     text order, so it lands past `head_chars` and was
+                     otherwise discarded before detection ever ran. Bounded and
+                     fixed-size like `head_chars` — never proportional to page
+                     length — and a genuine widening of what a book-scale
+                     ingest's per-page payload can cost: only applied when
+                     `len(text) > head_chars + tail_chars` specifically so a
+                     page shorter than that never grows past its own length.
 
     Returns:
         ``{"page_count": int, "extracted_page_count": int, "page_offset": int,
@@ -777,13 +797,20 @@ def extract_text_only(
 
         toc: list[dict[str, Any]] = []
         for item in pdf_doc.get_toc():
-            page_index = item.page_index
+            # PdfBookmark has no `.page_index`/`.title` attributes -- the page
+            # index lives on the PdfDest returned by get_dest(), and the title
+            # is read via get_title(). Both dest and its index can be None (an
+            # unresolvable destination), which is a normal bookmark shape, not
+            # an error (review fix, D63 -- reached only by a real PDF with an
+            # outline; every local fixture has none, so this path was untested).
+            dest = item.get_dest()
+            page_index = dest.get_index() if dest is not None else None
             if page_index is None:
                 continue  # bookmark with an unresolvable destination
             toc.append(
                 {
                     "level": int(item.level),
-                    "title": (item.title or "").strip(),
+                    "title": (item.get_title() or "").strip(),
                     "page_index": int(page_index),
                 }
             )
@@ -798,7 +825,17 @@ def extract_text_only(
                 # comparison uses the RELATIVE position, not the absolute index.
                 # Unbounded, start_idx is 0 and the two coincide.
                 if truncate and (page_idx - start_idx) >= front_pages:
-                    text = text[:head_chars]
+                    # Only append a tail slice when it doesn't already overlap
+                    # the head slice — otherwise a page just over head_chars
+                    # long would come back LONGER than before truncation
+                    # (e.g. a 450-char page with head_chars=400,
+                    # tail_chars=400 would wrongly grow to ~850 chars instead
+                    # of shrinking). D115/D116 fix, verified against this
+                    # exact edge case.
+                    if tail_chars > 0 and len(text) > head_chars + tail_chars:
+                        text = text[:head_chars] + "\n" + text[-tail_chars:]
+                    else:
+                        text = text[:head_chars]
                 page_texts.append(text)
             finally:
                 # Same per-page cache discipline as extract_pdf (AC-3, Story 2-0):
@@ -817,18 +854,40 @@ def extract_text_only(
 
 
 _TEXT_ONLY_FLAG = "--text-only"
+_TAIL_CHARS_FLAG = "--tail-chars"
 
 _USAGE = (
     "Usage: extract_subprocess <pdf_path> <img_dir> <ocr_threshold> [page_start] [page_end]\n"
     "       extract_subprocess --text-only <pdf_path> [front_pages] [head_chars] "
-    "[page_start] [page_end]\n"
+    "[page_start] [page_end] [--tail-chars N]\n"
     "       page_start/page_end are 0-based and INCLUSIVE; supply both or neither.\n"
+    "       --tail-chars is a named flag (any position) -- see extract_text_only's "
+    "tail_chars kwarg.\n"
 )
 
 
 def _optional_int(argv: list[str], index: int) -> int | None:
     """Parse an optional positional int argument; None when not supplied."""
     return int(argv[index]) if len(argv) > index else None
+
+
+def _extract_named_int_flag(argv: list[str], flag: str) -> tuple[list[str], int]:
+    """Strip `flag value` out of argv (any position), return (remaining argv, value).
+
+    MUST run before positional parsing (`_optional_int` etc.) — appending a
+    named flag at the end without first removing it would land it in one of
+    the existing positional slots (`page_start`/`page_end`) and raise
+    `ValueError` on every call, not just ones that pass the flag (D115/D116).
+    Returns 0 when the flag is absent, matching every other "0 = no-op" default
+    in this module.
+    """
+    if flag not in argv:
+        return argv, 0
+    i = argv.index(flag)
+    if i + 1 >= len(argv):
+        raise ValueError(f"{flag} requires a value")
+    value = int(argv[i + 1])
+    return argv[:i] + argv[i + 2 :], value
 
 
 def main() -> None:
@@ -844,25 +903,31 @@ def main() -> None:
     value and the document's page count — it is never clamped.
     """
     try:
-        if len(sys.argv) >= 3 and sys.argv[1] == _TEXT_ONLY_FLAG:  # noqa: PLR2004
-            front = int(sys.argv[3]) if len(sys.argv) > 3 else 0  # noqa: PLR2004
-            head = int(sys.argv[4]) if len(sys.argv) > 4 else 0  # noqa: PLR2004
-            text_start = _optional_int(sys.argv, 5)
-            text_end = _optional_int(sys.argv, 6)
+        argv, tail_chars = _extract_named_int_flag(list(sys.argv), _TAIL_CHARS_FLAG)
+
+        if len(argv) >= 3 and argv[1] == _TEXT_ONLY_FLAG:  # noqa: PLR2004
+            front = int(argv[3]) if len(argv) > 3 else 0  # noqa: PLR2004
+            head = int(argv[4]) if len(argv) > 4 else 0  # noqa: PLR2004
+            text_start = _optional_int(argv, 5)
+            text_end = _optional_int(argv, 6)
             sys.stdout.write(
-                json.dumps(extract_text_only(sys.argv[2], front, head, text_start, text_end))
+                json.dumps(
+                    extract_text_only(
+                        argv[2], front, head, text_start, text_end, tail_chars=tail_chars
+                    )
+                )
             )
             return
 
-        if len(sys.argv) < 4:  # noqa: PLR2004
+        if len(argv) < 4:  # noqa: PLR2004
             sys.stderr.write(_USAGE)
             sys.exit(1)
 
-        pdf_path_arg = sys.argv[1]
-        img_dir_arg = sys.argv[2]
-        threshold_arg = int(sys.argv[3])
-        page_start_arg = _optional_int(sys.argv, 4)
-        page_end_arg = _optional_int(sys.argv, 5)
+        pdf_path_arg = argv[1]
+        img_dir_arg = argv[2]
+        threshold_arg = int(argv[3])
+        page_start_arg = _optional_int(argv, 4)
+        page_end_arg = _optional_int(argv, 5)
 
         result = extract_pdf(pdf_path_arg, img_dir_arg, threshold_arg, page_start_arg, page_end_arg)
         sys.stdout.write(json.dumps(result))

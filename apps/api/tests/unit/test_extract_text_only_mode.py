@@ -142,10 +142,10 @@ def test_legacy_three_argument_contract_is_unchanged() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.skipif(not (EVAL_PDFS / "short.pdf").exists(), reason="eval fixture absent")
+@pytest.mark.skipif(not (EVAL_PDFS / "short_3page.pdf").exists(), reason="eval fixture absent")
 def test_text_only_handles_a_script_generated_pdf_with_no_outline() -> None:
     """The repo's own fixtures have zero bookmarks — Phase 1 flagged this. The mode
     must return an empty toc rather than fail."""
-    out = run_text_only(EVAL_PDFS / "short.pdf")
+    out = run_text_only(EVAL_PDFS / "short_3page.pdf")
     assert out["toc"] == []
     assert out["page_count"] >= 1

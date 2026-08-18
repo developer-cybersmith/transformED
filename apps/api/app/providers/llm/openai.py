@@ -159,7 +159,9 @@ class OpenAILLMProvider(LLMProvider):
                             },
                         )
                     )
-                await self._maybe_accumulate_cost(model, prompt_tokens, completion_tokens)
+                await self._maybe_accumulate_cost(
+                    model, prompt_tokens, completion_tokens, generation=generation
+                )
 
             return content
 
@@ -248,7 +250,9 @@ class OpenAILLMProvider(LLMProvider):
                             },
                         )
                     )
-                await self._maybe_accumulate_cost(model, prompt_tokens, completion_tokens)
+                await self._maybe_accumulate_cost(
+                    model, prompt_tokens, completion_tokens, generation=generation
+                )
 
             return parsed
 
@@ -263,7 +267,11 @@ class OpenAILLMProvider(LLMProvider):
                 _safe_trace(generation.end)
 
     async def _maybe_accumulate_cost(
-        self, model: str, input_tokens: int | None, output_tokens: int | None
+        self,
+        model: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        generation: Any | None = None,  # noqa: ANN401
     ) -> None:
         """Accumulate cost for the current lesson if a lesson_id is set.
 
@@ -344,7 +352,18 @@ class OpenAILLMProvider(LLMProvider):
                 output_tokens,
             )
 
-        cost = (safe_input / 1000 * pricing["input"]) + (safe_output / 1000 * pricing["output"])
+        input_cost = safe_input / 1000 * pricing["input"]
+        output_cost = safe_output / 1000 * pricing["output"]
+        cost = input_cost + output_cost
+
+        # S3-5: mirror usage_details' input/output split onto Langfuse's own
+        # cost_details field, the same field the other 4 priced providers
+        # (Sarvam, Azure TTS, Imagen, GPT Image) already use — so this number
+        # is visible on the span itself, not just in cost_tracker's Redis total.
+        if generation is not None:
+            _safe_trace(
+                lambda: generation.update(cost_details={"input": input_cost, "output": output_cost})
+            )
 
         from app.core.cost_tracker import accumulate_cost, check_ceiling  # lazy to avoid circular
 

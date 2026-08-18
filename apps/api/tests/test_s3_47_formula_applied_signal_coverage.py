@@ -46,11 +46,12 @@ def _build_supabase(*, tb_rows: list, quiz_rows: list | None = None) -> MagicMoc
         elif n == 3:
             # quiz_attempts: .select(...).eq(...).limit(500).execute()
             _s.return_value.data = quiz_rows
-            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = quiz_rows
+            _qlim = m.select.return_value.eq.return_value.limit.return_value
+            _qlim.execute.return_value.data = quiz_rows
         elif n == 4:
-            # teachback_attempts: .select(...).eq(...).limit(50).execute()
-            _s.return_value.data = tb_rows
-            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = tb_rows
+            # teachback_attempts: .select(...).eq(...).order(...).limit(50).execute()
+            _tord = m.select.return_value.eq.return_value.order.return_value
+            _tord.limit.return_value.execute.return_value.data = tb_rows
         elif n == 5:
             _s2.return_value.count = 0
         elif n == 6:
@@ -58,7 +59,8 @@ def _build_supabase(*, tb_rows: list, quiz_rows: list | None = None) -> MagicMoc
         elif n == 7:
             # session_events/dna_update: .select(...).eq(...).eq(...).limit(20).execute()
             _s2.return_value.data = []
-            m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+            _dlim = m.select.return_value.eq.return_value.eq.return_value.limit.return_value
+            _dlim.execute.return_value.data = []
         return m
 
     mock.table.side_effect = _table
@@ -146,9 +148,7 @@ def test_formula_applied_is_literal_type():
     hints = typing.get_type_hints(SessionReport)
     fa_type = hints["formula_applied"]
     origin = typing.get_origin(fa_type)
-    assert origin is typing.Literal, (
-        f"formula_applied should be Literal, got {fa_type!r}"
-    )
+    assert origin is typing.Literal, f"formula_applied should be Literal, got {fa_type!r}"
 
 
 # ── AC 8: signal_coverage is int type ─────────────────────────────────────────

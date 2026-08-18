@@ -1335,7 +1335,8 @@ async def _run_planner_batch(
     Still raises (does not fabricate) when the provider returns no parsed
     response, or when every retry attempt still mismatches — the existing
     assembled-response guard in lesson_planner_node remains the final
-    backstop either way."""
+    backstop either way. (Independently reproduced and fixed on
+    sprint3-master before this merge — see D77 in docs/DEFECT-REGISTER.md.)"""
     input_ids = {s["segment_id"] for s in batch}
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
@@ -4135,8 +4136,42 @@ async def tts_node(state: PipelineState) -> PipelineState:
     return {"audio_assets": audio_assets_out, "progress_pct": 86.0}
 
 
+#: D118 (2026-08-17). The player renders every slide image with `object-contain`
+#: inside a wide (`w-full`, `max-h-[38vh]`) panel — see
+#: `apps/web/src/components/player/SlideRenderer.tsx` — sized from the
+#: image's own INTRINSIC ratio, never cropped by CSS. The provider was
+#: originally never asked for anything but a 1:1 square, so every slide
+#: rendered as a small square block marooned in a wide panel: not actually
+#: cropped, but visually indistinguishable from a fixed square cutout,
+#: which is exactly what students reported.
+#:
+#: HISTORY, kept because it explains why `_crop_to_16_9` still exists below
+#: even though the primary provider no longer needs it:
+#:   - D118 first set this to "1792x1024" (DALL-E 3's landscape size).
+#:   - D120 (2026-08-18) corrected it to "1536x1024" — gpt-image-1-mini's
+#:     REAL landscape preset; "1792x1024" is an invalid `size` for that
+#:     model and would have failed every call. Neither "1792x1024" (7:4)
+#:     nor "1536x1024" (3:2) is exactly 16:9, hence `_crop_to_16_9`.
+#:   - D122 (2026-08-18, same day): migrated the primary provider from
+#:     gpt-image-1-mini to gpt-image-2 — decided by the team, not a side
+#:     effect of a bug fix; see openai_image.py's module docstring for the
+#:     full rationale (gpt-image-1-mini retires 2026-12-01 regardless).
+#:     gpt-image-2 supports genuinely custom/arbitrary sizes (confirmed:
+#:     max edge <=3840px, both edges multiples of 16px, long:short ratio
+#:     <=3:1, total pixels 655,360-8,294,400), so this constant is now
+#:     "1280x720" — EXACT 16:9 (1280*9 == 720*16), a named "1k_wide_16:9"
+#:     preset in gpt-image-2's own resolution taxonomy, not just a value
+#:     that happens to satisfy the constraints.
+#:
+#: `_crop_to_16_9` is now a NO-OP on the primary path (the image already
+#: arrives exact 16:9) and exists purely as a safety net for whatever the
+#: fallback provider returns — currently Imagen (D121: presently
+#: non-functional, its own migration undecided) or any future replacement.
+_SLIDE_IMAGE_SIZE = "1280x720"
+
+
 async def _generate_image_with_fallback(
-    lesson_id: str, slide_id: str, prompt: str
+    lesson_id: str, slide_id: str, prompt: str, *, size: str = _SLIDE_IMAGE_SIZE
 ) -> tuple[str | None, str]:
     """Try GPT Image 1 Mini, then Imagen 4 Fast, then text-only — never raises
     (Story 2-9 AC-2). Returns (data_uri_or_None, provider_used_for_logging).
@@ -4144,7 +4179,7 @@ async def _generate_image_with_fallback(
     from app.providers.image.openai_image import OpenAIImageProvider
 
     try:
-        data_uri = await OpenAIImageProvider(lesson_id).generate(prompt)
+        data_uri = await OpenAIImageProvider(lesson_id).generate(prompt, size=size)
         if data_uri:
             return data_uri, "gpt_image"
         logger.warning(
@@ -4164,7 +4199,7 @@ async def _generate_image_with_fallback(
     from app.providers.image.imagen import ImagenProvider
 
     try:
-        data_uri = await ImagenProvider(lesson_id).generate(prompt)
+        data_uri = await ImagenProvider(lesson_id).generate(prompt, size=size)
         if data_uri:
             return data_uri, "imagen"
         logger.warning(
@@ -4206,6 +4241,83 @@ def _decode_data_uri(data_uri: str) -> bytes:
     return base64.b64decode(encoded, validate=True)
 
 
+_TARGET_ASPECT_W, _TARGET_ASPECT_H = 16, 9
+
+
+def _crop_to_16_9(image_bytes: bytes) -> bytes:
+    """Center-crop to an EXACT 16:9 aspect ratio. D118 follow-up.
+
+    As of D122 (2026-08-18), `_SLIDE_IMAGE_SIZE = "1280x720"` is EXACT 16:9
+    (1280*9 == 720*16), so this is a NO-OP on the primary provider's output
+    — the no-op path below (`w * H == h * W`) returns the bytes unchanged
+    without ever touching PIL. This function earns its keep on the FALLBACK
+    provider instead: Imagen's `aspectRatio="16:9"` request (see imagen.py's
+    `_closest_aspect_ratio`) presumably returns a genuinely different pixel
+    size than GPT Image's exact 1280x720 -- unverifiable against a live call
+    in this environment (and moot for now: this fallback tier is itself
+    currently non-functional, see D121) -- so the two providers were never
+    guaranteed to agree with EACH OTHER on exact pixel dimensions, only on
+    "approximately 16:9."
+
+    HISTORY, kept because it explains why this function exists at all: the
+    ORIGINAL primary size (D118's "1792x1024", then D120's corrected
+    "1536x1024") was never exactly 16:9 -- 1536x1024 (3:2) needed a 15.6%
+    height trim (1536x864) to reach exact 16:9, and that real, non-trivial
+    crop is what D122's migration to gpt-image-2 (genuinely custom sizes)
+    eliminated for the primary path.
+
+    Rather than hardcode either provider's specific output size (which would
+    silently drift the moment either provider's API changes — as
+    `_SLIDE_IMAGE_SIZE` itself already did twice in one day, D118 -> D120 ->
+    D122), this introspects whatever the ACTUAL returned image dimensions
+    are and crops to the nearest exact 16:9 that fits inside them —
+    deterministic and provider-agnostic, so it stays correct regardless of
+    which provider (or provider generation) supplies the bytes. Never
+    upscales, never pads.
+
+    Never raises: a corrupt/unopenable image degrades to the ORIGINAL bytes
+    unchanged (still uploadable, just not guaranteed exact 16:9) rather than
+    failing the whole slide over a cosmetic normalization step — consistent
+    with AC-11's "one bad slide degrades only that slide" contract, applied
+    one level more conservatively here (a crop failure doesn't even degrade
+    the slide, only the guarantee).
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        # Explicit `Image.Image` annotation, not inferred: Image.open() returns
+        # the narrower ImageFile.ImageFile, but Image.crop() returns the base
+        # Image.Image -- reassigning img = img.crop(...) below would otherwise
+        # be a real mypy type-narrowing violation (assigning a broader type to
+        # a variable mypy inferred as the narrower one).
+        img: Image.Image = Image.open(BytesIO(image_bytes))
+        w, h = img.size
+        if w * _TARGET_ASPECT_H == h * _TARGET_ASPECT_W:
+            return image_bytes  # already exact 16:9 -- no-op, no re-encode
+        if w * _TARGET_ASPECT_H > h * _TARGET_ASPECT_W:
+            # wider than 16:9 -> crop width, keep full height
+            new_w = round(h * _TARGET_ASPECT_W / _TARGET_ASPECT_H)
+            x0 = (w - new_w) // 2
+            img = img.crop((x0, 0, x0 + new_w, h))
+        else:
+            # taller than 16:9 -> crop height, keep full width
+            new_h = round(w * _TARGET_ASPECT_H / _TARGET_ASPECT_W)
+            y0 = (h - new_h) // 2
+            img = img.crop((0, y0, w, y0 + new_h))
+        out = BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "image_generator_node: _crop_to_16_9 could not process image bytes, "
+            "uploading the provider's original output unchanged",
+            exc_info=True,
+        )
+        return image_bytes
+
+
 async def image_generator_node(state: PipelineState) -> PipelineState:
     """Node 14 (Story 2-9/S2-10): generate an illustrative image per slide via
     a GPT Image 1 Mini -> Imagen 4 Fast -> text-only fallback chain.
@@ -4228,6 +4340,7 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     from app.core.cost_tracker import accumulate_cost, check_ceiling
     from app.core.db import get_supabase
     from app.providers.image.imagen import COST_PER_IMAGE as IMAGEN_COST_PER_IMAGE
+    from app.providers.image.openai_image import _DEFAULT_COST_PER_IMAGE
     from app.providers.image.openai_image import COST_PER_IMAGE as GPT_IMAGE_COST_PER_IMAGE
 
     lesson_id = state["lesson_id"]
@@ -4329,6 +4442,15 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                     # successful upload — matching tts_node's pattern, where
                     # the TTS providers don't self-accumulate cost either.
                     image_bytes = _decode_data_uri(data_uri)
+                    # D118 follow-up, D122: GPT Image's primary output is now
+                    # exact 16:9 natively (gpt-image-2, "1280x720") so this is
+                    # a no-op on that path — it still matters for whatever
+                    # the fallback provider (Imagen, D121) returns, whose
+                    # actual pixel size for aspectRatio="16:9" is unverified.
+                    # Normalizing here guarantees every uploaded slide image
+                    # is provably the same exact ratio regardless of which
+                    # provider produced it.
+                    image_bytes = _crop_to_16_9(image_bytes)
                     image_path = f"{lesson_id}/{slide_id}.png"
                     supabase.storage.from_("lesson-images").upload(
                         path=image_path,
@@ -4337,8 +4459,15 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                     )
                     image_url = image_path
 
+                    # D118/D122: must key on the SIZE ACTUALLY REQUESTED
+                    # (_SLIDE_IMAGE_SIZE) via the SAME default the provider
+                    # module itself uses (_DEFAULT_COST_PER_IMAGE) — a
+                    # locally hardcoded fallback here (e.g. a stale
+                    # "1024x1024" key, D120's real bug) would silently
+                    # under-report real spend against the cost ceiling the
+                    # moment the two files' assumptions diverged again.
                     cost = (
-                        GPT_IMAGE_COST_PER_IMAGE.get("1024x1024", 0.02)
+                        GPT_IMAGE_COST_PER_IMAGE.get(_SLIDE_IMAGE_SIZE, _DEFAULT_COST_PER_IMAGE)
                         if provider_used == "gpt_image"
                         else IMAGEN_COST_PER_IMAGE
                     )

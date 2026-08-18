@@ -7,6 +7,7 @@ import type {
   TeachbackSubmission,
   TeachbackResult,
   SessionReport,
+  TeachbackDetail,
   LearnerDNA,
   OnboardingDiagnosticSubmission,
   OnboardingResult,
@@ -130,6 +131,9 @@ describe('assessment types', () => {
       quiz_correct_count: 3,
       quiz_accuracy_label: 'Strong',
       learner_dna_snapshot: null,
+      ces_timeline: null,
+      intervention_events: null,
+      teachback_details: null,
     };
     expect(report.duration_minutes).toBe(18);
     expect(Object.keys(report)).not.toContain('duration_seconds');
@@ -153,10 +157,53 @@ describe('assessment types', () => {
       quiz_correct_count: 0,
       quiz_accuracy_label: null,
       learner_dna_snapshot: null,
+      ces_timeline: null,
+      intervention_events: null,
+      teachback_details: null,
     };
     expect(Object.keys(report.ces_breakdown).sort()).toEqual(
       ['behavioral', 'blink', 'head_pose', 'quiz', 'teachback']
     );
+  });
+
+  it('SessionReport.teachback_details is a per-segment array with score never pre-labelled — array position implies segment order, not raw segment_id', () => {
+    const detail: TeachbackDetail = {
+      segment_id: 'seg_003',
+      score: 85,
+      feedback_praise: 'Great explanation of mitochondria.',
+      feedback_correction: null,
+      concepts_hit: ['mitochondria', 'ATP'],
+      concepts_missed: [],
+      attempt_number: 1,
+    };
+    const report: SessionReport = {
+      session_id: 'sess_001',
+      user_id: 'user_001',
+      lesson_id: 'lesson_001',
+      ces_score: 72,
+      ces_breakdown: { quiz: 28.0, teachback: 20.0, behavioral: 0.0, head_pose: 0.0, blink: 0.0 },
+      interventions_count: 0,
+      quiz_score: 0.75,
+      teachback_score: 85,
+      duration_minutes: 18,
+      completed_at: null,
+      tier: 'T2',
+      tier_label: 'Standard',
+      quiz_total_questions: 4,
+      quiz_correct_count: 3,
+      quiz_accuracy_label: 'Strong',
+      learner_dna_snapshot: null,
+      ces_timeline: null,
+      intervention_events: null,
+      teachback_details: [detail],
+    };
+    expect(report.teachback_details).toHaveLength(1);
+    expect(report.teachback_details?.[0].feedback_correction).toBeNull();
+    expect(report.teachback_details?.[0].concepts_missed).toEqual([]);
+    // score is present on the wire (same pattern as the session-level teachback_score) but
+    // rendering code must never print it raw -- that rule is enforced by a SessionReport
+    // component test, not by the type itself.
+    expect(typeof detail.score).toBe('number');
   });
 
   it('TeachbackResult.rubric_scores is descriptive string labels (accuracy/completeness/clarity) — not raw numeric sub-scores', () => {

@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC
 from enum import StrEnum
 from typing import Any, TypedDict, cast
 
@@ -117,6 +118,13 @@ class TutorMachineState(TypedDict, total=False):
     intervention_type: str | None
     intervention_message: str | None  # pre-generated message selected at intervention time
     error: str | None
+    # NOTE (mypy fix, no behavior change): these two are read via state.get(...) in
+    # intervening_node below but no caller currently populates them on dispatch_event's
+    # input_state (see service.py's distraction_detected/fatigue_detected dispatch calls) —
+    # write_intervention_event today always receives window_index=0 / ces_at_trigger=0.0.
+    # Flagged separately; not fixed here (out of scope for a type-annotation pass).
+    window_index: int
+    last_ces: float
 
 
 # ── Guard functions ───────────────────────────────────────────────────────────
@@ -156,7 +164,7 @@ async def _can_intervene_distraction(  # noqa: ANN401
         return False
 
 
-async def _can_intervene_fatigue(session_id: str, redis: Any = None) -> bool:
+async def _can_intervene_fatigue(session_id: str, redis: Any = None) -> bool:  # noqa: ANN401
     """Gate for fatigue — checks cooldown THEN sets the once-per-session flag atomically.
 
     PRD §10: a 2-minute cooldown applies after ANY intervention (distraction or fatigue).
@@ -227,7 +235,7 @@ async def teaching_node(state: TutorMachineState) -> TutorMachineState:
 async def intervening_node(state: TutorMachineState) -> TutorMachineState:
     """INTERVENING state: overlay intervention is displayed."""
     session_id = state.get("session_id", "")
-    intervention_type = state.get("intervention_type", "distraction")
+    intervention_type = state.get("intervention_type") or "distraction"
     logger.info("[tutor:%s] → INTERVENING (type=%s)", session_id, intervention_type)
 
     import time as _time  # noqa: PLC0415
@@ -315,7 +323,7 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
     try:
         import time as _time  # noqa: PLC0415
 
-        from app.core.redis import get_redis  # type: ignore[import]  # noqa: PLC0415
+        from app.core.redis import get_redis  # noqa: PLC0415
 
         redis = get_redis()
         qa_raw = await redis.get(f"session:{session_id}:qa_phase_seconds")
@@ -369,7 +377,6 @@ async def session_end_node(state: TutorMachineState) -> TutorMachineState:
 
 async def route_from_teaching(state: TutorMachineState) -> str:
     """Decide next node from TEACHING based on the incoming event + guards."""
-    session_id = state.get("session_id", "")
     event = state.get("event", "")
 
     if event == "distraction_detected":
@@ -714,7 +721,7 @@ async def _read_state(session_id: str) -> str | None:
 # ── S3-35 (D3) — Session finalization ────────────────────────────────────────
 
 
-async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> None:
+async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> None:  # noqa: ANN401
     """Write ces_final and ended_at to the sessions table at SESSION_END.
 
     Called via asyncio.create_task from session_end_node — fire-and-forget.
@@ -725,12 +732,10 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
     BOUNDED: lrange 0..9 reads at most _CES_HISTORY_MAX=10 entries.
     """
     import json  # noqa: PLC0415
-    from datetime import datetime, timezone  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
 
     try:
-        history_raw: list[str] = await redis.lrange(
-            f"session:{session_id}:ces_history", 0, 9
-        )
+        history_raw: list[str] = await redis.lrange(f"session:{session_id}:ces_history", 0, 9)
         values: list[float] = []
         for raw in history_raw:
             try:
@@ -745,7 +750,7 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
         # Empty history → None (distinguishable from zero engagement).
         # numeric(5,2) column accepts NULL; 0.0 would incorrectly signal "student scored zero".
         ces_final: float | None = round(sum(values) / len(values), 2) if values else None
-        ended_at = datetime.now(tz=timezone.utc).isoformat()
+        ended_at = datetime.now(tz=UTC).isoformat()
 
         await asyncio.to_thread(
             lambda: (
@@ -762,12 +767,14 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
             ended_at,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "[tutor:%s] _finalize_session DB write failed: %s", session_id, exc
-        )
+        logger.error("[tutor:%s] _finalize_session DB write failed: %s", session_id, exc)
         try:
             import sentry_sdk  # noqa: PLC0415
 
             sentry_sdk.capture_exception(exc)
         except Exception:  # noqa: BLE001
-            pass
+            # Best-effort error reporting only — the primary failure is already
+            # logged above, so a Sentry capture failure here is not actionable.
+            logger.debug(
+                "[tutor:%s] sentry_sdk.capture_exception failed", session_id, exc_info=True
+            )

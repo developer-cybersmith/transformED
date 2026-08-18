@@ -8,9 +8,9 @@
 | **Owner** | Developer 2 (Dell) |
 | **Domain** | Frontend · Product Experience · Lesson Player · WebSocket Client |
 | **PRD Version** | 1.0 Final — 10 June 2026 |
-| **Last Updated** | 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
-| **Active Sprint** | Sprint 2 — Weeks 4–5 (10/10 original tasks done, +8 additional stories shipped — all Dev 2 scope) |
-| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is not yet end-to-end functional; see audit note below** |
+| **Last Updated** | 2026-08-17 (**S4-09 CaptionOverlay redesigned to one-line-at-a-time captions** — direct user feedback after S4-07: no word-level TTS timing exists, so lines are split ~10 words at a time and timed proportionally to character count within the segment's known duration; verified live advancing correctly during real playback. See §13.) — previously 2026-08-17 (**S4-08 lesson-restart-after-teachback fix shipped** — user-reported live bug: `exitTeachBack()` resuming PLAYING on an already-ended last-segment `<audio>` element replayed it from 0 per the HTML media spec, indistinguishable from the lesson restarting. See §13.) — previously 2026-08-17 (**S4-07 CaptionOverlay unreachable-scroll fix shipped** — real live production bug found via manual Playwright browser verification, `pointer-events-none` + missing `data-lenis-prevent` stacked to make the caption panel's own overflow scroll completely unreachable. See §13.) — previously 2026-08-17 (**S4-06 Fold My Library into My Books shipped** — ad-hoc off a live product decision, not scheduled Sprint 4 scope; full BMAD flow with 6-agent review, see §13. Backend touches Dev 1's `content/router.py`/`schemas.py` under an explicit user-approved exception.) — previously 2026-08-11 (**S3-09 Signed-URL auto-refresh + DEFER-012 (D63) register entry shipped** — Story 2-45, ad-hoc off the Lesson Delivery Tracker's L3 known risk, not a scheduled Sprint 3 item; branch cut from `sprint3-master` since `main` doesn't yet have S3-01–S3-04. `AudioTimeline`/`SlideRenderer` now auto re-sign an expired asset once before falling back to the existing manual Retry/placeholder path. 920 web tests passing. See §12.) — previously 2026-08-06 (**S3-01 Attention Consent Modal shipped** — Story 2-42, 3-agent review passed, all 3 decision-needed + 12 patch findings resolved; switched to the real `POST /api/assessment/consent` endpoint (Story 3-32) after it landed on `main` mid-review, closing **D29**. **S3-04 CES Indicator confirmed shipped** — Story 2-41 (this file had drifted; it was done alongside S3-03 but never updated below). `sprint3-master` synced with `main` (also picked up **D18**/**D30** closures) and pushed. Sprint 3 is now 3/10 done — see §12.) — previously 2026-08-03 (S3-03 TutorInterventionCard shipped — Story 2-40, 3-agent review passed, 9 patches applied. See §12.) — previously 2026-07-29 (D27: `/signin` Suspense-boundary fix shipped — the app's first-ever successful production build. **S2-34** (browser SpeechSynthesis fallback, last tier of the TTS fallback chain) shipped: story-first commit, TDD implementation, 3-agent adversarial code review, 7 patches applied. **PR #114 merged `sprint2-master` into `main`** — S2-11 through S2-15, S2-34, and this file's own tracker updates are now all on `main` alongside the previously-direct-to-`main` S2-26/S2-33. `main` and `sprint2-master` are fully in sync as of this merge. **Cross-team Sprint 2 completion audit run same day — see note below; Dev 2's own scope is done, but the assessment path is blocked cross-team by D18.**) |
+| **Active Sprint** | Sprint 3 — Weeks 6–7 (6/9 done — S3-01, S3-02, S3-03, S3-04, S3-07, S3-09; **note:** this row's "Total Tasks" in §1 has read 10 since before an earlier correction, and now 9 S3-numbered items (S3-01–S3-09) exist in this file after S3-09 was added as an ad-hoc item — a pre-existing count discrepancy, not fully resolved by this update, left flagged rather than silently resolved) |
+| **Overall Status** | Sprint 0 COMPLETE · Sprint 1 COMPLETE (14/14) · Sprint 2 (Dev 2 scope) COMPLETE (10/10 + 8 additional stories) — **cross-team Sprint 2 is now end-to-end functional; D18/D29/D30 all closed 2026-08-04/05** · Sprint 3 IN PROGRESS (6/9 — S3-01, S3-02, S3-03, S3-04, S3-07, S3-09 done; S3-05/S3-06 unblocked now that S3-02 shipped; S3-08 not started) — **corrected 2026-08-11: S3-09 (signed-URL auto-refresh + DEFER-012/D63) added and shipped same day, ad-hoc off the Lesson Delivery Tracker rather than originally-scheduled Sprint 3 scope** |
 
 ---
 
@@ -53,11 +53,13 @@
 | Sprint 0 | Week 1 | 8 | **8** | 0 | 0 |
 | Sprint 1 | Weeks 2–3 | 14 | **14** | 0 | **0** |
 | Sprint 2 | Weeks 4–5 | 10 (+7 additional) | **17** | 0 | **0** |
-| Sprint 3 | Weeks 6–7 | 10 | 0 | 0 | **10** |
-| Sprint 4 | Weeks 8–9 | 8 | 0 | 0 | **8** |
+| Sprint 3 | Weeks 6–7 | 10 (9 accounted for after S3-09 added — see header note) | **6** | 0 | **3** |
+| Sprint 4 | Weeks 8–9 | 12 (+4 ad-hoc: S4-06, S4-07, S4-08, S4-09) | **4** | 0 | **8** |
 | Launch | Week 10 | 5 | 0 | 0 | **5** |
-| **Total** | **10 weeks** | **55** | **29** | **0** | **26** |
+| **Total** | **10 weeks** | **60** | **37** | **0** | **23** |
 
+> **Tracker correction (2026-08-06):** this file had drifted from reality on two points. (1) **S3-04 (CES Indicator)** was shipped alongside S3-03 (Story 2-41, same review pass, both merged to `sprint3-master`) but §12's entry and the dashboard above were never updated — corrected now. (2) **S3-01 (Attention Consent Modal)** shipped today as **Story 2-42**: 3-agent review found 3 decision-needed + 10 patch findings; mid-review, Dev 3's real **Story 3-32** (`POST /api/assessment/consent`) landed on `main` and closed **D29** — the consent write was switched from the tracker's originally-specified `PATCH /api/users/consent` (which never existed) to the real endpoint. `sprint3-master` was then synced with `main` (picking up D18/D29/D30, all now closed) and both S3-01's branch and the sync were merged in — 827/827 web tests, `tsc`/`eslint` clean. **S3-02 (AttentionMonitor) is now unblocked** — its only real dependency (consent gate + D29) is resolved.
+>
 > **Sprint 0 complete.** Sprint 1: only AvatarOverlay (blocked on schema sign-off) and upload/library/dashboard real-API wiring (blocked on Dev 1's Supabase implementation) remain. Codebase audit (2026-07-02) found S2-01 and S2-02 already implemented in commit `5c2b5c5` (2026-07-01) — QuizModal was shipped under the name **`QuizOverlay.tsx`** instead, plus an unplanned `PlayerControls.tsx` (seek bar, skip ±10s, speed control) shipped alongside. Both `QuizOverlay.tsx` and `TeachBackModal.tsx` had further wiring committed 2026-07-02 (`78b2646`) that adds live scoring feedback display. The same audit found **S1-07 (Real WebSocket Client) was falsely marked done** on 2026-06-29 — it has since been genuinely implemented via a BMAD story (`_bmad-output/implementation-artifacts/1-07-websocket-client.md`), including a real bug (resending `session_start` on reconnect would have forced CHECKING_IN/QUIZZING back to TEACHING) caught by an independent validation pass before implementation. A follow-up frontend security/bug audit (S1-13) found and fixed a real auth-guard gap in `middleware.ts` — `/library`, `/upload`, `/onboarding`, and `/lesson/[id]` were all completely unauthenticated. S1-14 then cleaned up 5 stale pre-existing test failures uncovered along the way. **All of the above (S1-07, S1-13, S1-14) is merged to `main` and pushed (`a4ca1d3`)** — working branches deleted, nothing left in flight.
 >
 > **UI/UX redesign (S1-15 → S1-18) complete as of 2026-07-03.** Brand recolor, hero rebuild, and a sitewide typography/consistency pass are merged to `main`. Sprint 1 remainder (AvatarOverlay, upload/library/dashboard real-API wiring) and Sprint 2 items resume from here.
@@ -150,9 +152,10 @@ apps/web/src/components/
 │   ├── QuizOverlay.tsx                     ✅ DONE — shipped 2026-07-01 (renamed from planned QuizModal), further edits in progress uncommitted
 │   ├── TeachBackModal.tsx                  ✅ DONE — shipped 2026-07-01, further edits in progress uncommitted
 │   ├── PlayerControls.tsx                  ✅ DONE — not in original plan; seek bar, ±10s skip, speed control
-│   ├── TutorInterventionCard.tsx           ✗ Sprint 3 — slides in from right
-│   ├── AttentionMonitor.tsx                ✗ Sprint 3 — MediaPipe WASM
-│   └── CESIndicator.tsx                   ✗ Sprint 3 — subtle score display
+│   ├── TutorInterventionCard.tsx           ✅ DONE 2026-08-03 — S3-03 (Story 2-40)
+│   ├── CESIndicator.tsx                    ✅ DONE 2026-08-03 — S3-04 (Story 2-41)
+│   ├── AttentionConsentModal.tsx           ✅ DONE 2026-08-06 — S3-01 (Story 2-42)
+│   └── AttentionMonitor.tsx                ✗ Sprint 3 — MediaPipe WASM, next up
 ├── lesson/
 │   └── InteractivePlayer.tsx               ✓ EXISTS — STUB, replace with PlayerLoader S1
 ├── library/
@@ -505,7 +508,7 @@ Public routes (no auth check):
 **Responsibility:** Single-session report for a completed lesson session: quiz accuracy, teach-back outcome (as a label, never a raw score), CES (as a label), engagement summary, "Study Again" link. Note: the static `/reports` (no session id) — a separate, unbuilt, cross-session "learning progression" page already referenced by Sidebar/QuickActions nav — is NOT this page and remains out of scope/unbuilt.
 
 ### `/settings` — User Settings
-**Status:** ✓ Tabs exist (Profile, Account, Learning, Privacy, Notifications), Sprint 3: notifications real data  
+**Status:** ✓ Tabs exist (Profile, Account, Learning, Privacy, Notifications) — Notifications now wired to real data (S3-07, ✅ done); Profile/Learning/Privacy tabs remain mock-backed, not yet scoped to a story.  
 **Responsibility:** Profile management, notification preferences, privacy settings (attention consent toggle), account deletion.
 
 ### `/pricing` — Pricing Page
@@ -559,9 +562,10 @@ Public routes (no auth check):
 | Quiz overlay (planned as QuizModal) | `components/player/QuizOverlay.tsx` | ✓ DONE 2026-07-01 |
 | Teach-back modal | `components/player/TeachBackModal.tsx` | ✓ DONE 2026-07-01 |
 | Player controls (unplanned addition) | `components/player/PlayerControls.tsx` | ✓ DONE 2026-07-01 |
-| Tutor intervention card | `components/player/TutorInterventionCard.tsx` | ✗ Sprint 3 |
-| Attention monitor | `components/player/AttentionMonitor.tsx` | ✗ Sprint 3 |
-| CES indicator | `components/player/CESIndicator.tsx` | ✗ Sprint 3 |
+| Tutor intervention card | `components/player/TutorInterventionCard.tsx` | ✅ DONE 2026-08-03 |
+| CES indicator | `components/player/CESIndicator.tsx` | ✅ DONE 2026-08-03 |
+| Attention consent modal | `components/player/AttentionConsentModal.tsx` | ✅ DONE 2026-08-06 |
+| Attention monitor | `components/player/AttentionMonitor.tsx` | ✅ DONE 2026-08-10 |
 
 ### Onboarding (Sprint 2)
 | Component | File | Status |
@@ -1502,43 +1506,47 @@ Implements the last tier of CLAUDE.md's TTS fallback chain (Sarvam Bulbul v2 →
 ---
 
 ## 12. Sprint 3 — MediaPipe + CES + Tutor UI
-**Period:** Weeks 6–7 | **Status:** 🔲 NOT STARTED  
-**Dependency:** Dev 4 WebSocket server delivering `tutor_intervene` and `ces_update` messages
+**Period:** Weeks 6–7 | **Status:** 🟡 IN PROGRESS (3/8 done — S3-01, S3-03, S3-04)  
+**Dependency:** Dev 4 WebSocket server delivering `tutor_intervene` and `ces_update` messages — this now works for S3-03/S3-04 (both built and shipped against the frozen `ws.ts` contract; live end-to-end delivery depends on Dev 4's tutor FSM, tracked as D30 — **CLOSED 2026-08-04**)
 
 ---
 
-### S3-01 — Attention Consent Modal
+### S3-01 — Attention Consent Modal — ✓ DONE 2026-08-06
 **Priority:** P0 — must exist before camera access  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/components/player/AttentionConsentModal.tsx`
+**Status:** ✅ DONE 2026-08-06 — Story `2-42-attention-consent-modal.md`, branch `sprint3/s3-01-attention-consent-modal`, 3-agent review passed (3 decision-needed resolved, 12 patch findings applied). Merged into `sprint3-master`.  
+**Files:** `src/components/player/AttentionConsentModal.tsx`, `src/hooks/useAttentionConsent.ts`, `src/lib/assessment.ts` (added `recordConsent()`)
 
-Show once on first lesson start. Explains: webcam used for attention monitoring, only 5 aggregate numbers sent (never video), student can decline. Consent stored in Supabase `users.attention_consent = true`.
+Shown once per account (Supabase-consent-status + a localStorage dismissal key gate *visibility only*; the security decision always re-reads Supabase, never the local key — AC-4). Explains: webcam used for attention monitoring, only 5 aggregate numbers sent (never video), student can decline. Suppressed during `QUIZ`/`TEACH_BACK` (same `audioError`-exclusion pattern already in `Player.tsx`) so a slow consent read can never block those screens.
+
+**Corrected from this doc's original spec:** the pseudo-code below assumed a `PATCH /api/users/consent` endpoint that turned out to never exist. What actually shipped, once Dev 3's real **Story 3-32** endpoint landed on `main` mid-review:
 
 ```typescript
-// On lesson start:
-if (!user.attention_consent) {
+// On lesson start (status !== 'QUIZ'/'TEACH_BACK'):
+if (consentStatus !== 'accepted' && !dismissed) {
   show ConsentModal
-  // if accepted: set attention_consent = true via PATCH /api/users/consent
-  //              → initialize AttentionMonitor
-  // if declined: skip AttentionMonitor entirely, lesson plays normally
+  // if accepted: POST /api/assessment/consent { consent_type: 'attention_tracking', policy_version }
+  //              → DB trigger syncs users.attention_consent = true → future AttentionMonitor may initialize
+  // if declined: no API call (schema has no "declined" value) — local dismissal key only, lesson plays normally
 }
 ```
 
-**CRITICAL SECURITY CONSTRAINT:** `AttentionMonitor` must never be initialized without `users.attention_consent === true`. Consent state must be loaded from Supabase, not localStorage.
+**CRITICAL SECURITY CONSTRAINT — still holds:** `AttentionMonitor` (S3-02) must never be initialized without a fresh Supabase read confirming `users.attention_consent === true`. This story's hook is exactly that read path; it must never be replaced by a `localStorage` check.
 
 **Acceptance criteria:**
-- [ ] Consent modal shown exactly once (on first lesson)
-- [ ] If declined: no camera permission requested, AttentionMonitor never initialized
-- [ ] Consent state persisted to `users.attention_consent` in Supabase
-- [ ] PATCH call fires to update `attention_consent` on acceptance
-- [ ] Declining consent does not degrade lesson quality in any way
+- [x] Consent modal shown exactly once (on first lesson, per-account, via localStorage dismissal key)
+- [x] If declined: no camera permission requested, AttentionMonitor never initialized (nothing to gate yet — S3-02 not built; guarded structurally by a source-level test that no camera/MediaPipe API is referenced anywhere in this story's code)
+- [x] Consent state persisted server-side — via `public.user_consents` (Story 3-32), not a bare boolean PATCH as originally scoped
+- [x] ~~PATCH call fires~~ `POST /api/assessment/consent` fires to record consent on acceptance
+- [x] Declining consent does not degrade lesson quality in any way
+
+**Known gaps, deliberately deferred (see story's Review Findings + `docs/deferred-work.md` DEFER-003–005):** decline leaves no server-side audit trail (schema has no "declined" value — accepted as-is); no ARIA modal semantics (shared gap with other modals, not unique to this one); the hook's Supabase mock shape isn't premise-tested against the real client (shared gap with `proxy.ts`'s own tests).
 
 ---
 
-### S3-02 — AttentionMonitor Component (MediaPipe)
+### S3-02 — AttentionMonitor Component (MediaPipe) — ✓ DONE 2026-08-10
 **Priority:** P0  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/components/player/AttentionMonitor.tsx`, `src/hooks/useAttentionMonitor.ts`
+**Status:** ✅ DONE 2026-08-10 — Story `2-44-attention-monitor.md`, branch `sprint3/s3-02-attention-monitor` (cut from `sprint3-master`, not `main` — hard dependency on Story 2-42's consent hook). 8-layer adversarial review passed (1 decision resolved, 21 patches applied — most consequential: AC-1's `tutorState` gate was never actually implemented, and a head-pose yaw/pitch axis extraction bug, both confirmed by multiple independent reviewers and fixed). Full `apps/web` suite: 906 tests passing.  
+**Files created:** `src/components/player/AttentionMonitor.tsx`, `src/hooks/useAttentionMonitor.ts`, `src/lib/attention/signalMath.ts`
 
 ```
 MediaPipe Face Landmarker WASM → 30fps local processing (never sent)
@@ -1575,9 +1583,9 @@ MediaPipe Face Landmarker WASM → 30fps local processing (never sent)
 
 ---
 
-### S3-03 — TutorInterventionCard Component
+### S3-03 — TutorInterventionCard Component — ✓ DONE 2026-08-03
 **Priority:** P0  
-**Status:** 🔲 NOT STARTED  
+**Status:** ✅ DONE 2026-08-03 — Story `2-40-tutor-intervention-card.md`, branch `sprint3/s3-03-tutor-intervention-card`, 3-agent review passed (9 patches applied). Built against mock WS events per the frozen `ws.ts` contract. **Update 2026-08-06:** all three cross-team blockers on real end-to-end delivery are now closed — D30 (Dev 4's tutor FSM tests) closed 2026-08-03, D18 (session creation) closed 2026-08-04, D29 (DPDP consent) closed 2026-08-05. Nothing known is blocking a live test of this component anymore.  
 **Files to create:** `src/components/player/TutorInterventionCard.tsx`
 
 Receives `TutorInterveneMessage` from `LessonSocket`. Slides in from the right side of the player. Three types:
@@ -1598,35 +1606,37 @@ socket.on('tutor_intervene', (msg: TutorInterveneMessage) => {
 Audio does NOT pause for interventions — card is non-blocking. User dismisses manually or it auto-dismisses after 30s.
 
 **Acceptance criteria:**
-- [ ] Card slides in from right with 200ms ease animation
-- [ ] Dismisses on button click or after 30s timeout
-- [ ] Audio continues playing during intervention
-- [ ] Three visual variants (distraction / confusion / fatigue)
-- [ ] NEVER shows while `store.status === 'TEACH_BACK'` — guard at render level
+- [x] Card slides in from right with 200ms ease animation
+- [x] Dismisses on button click or after 30s timeout
+- [x] Audio continues playing during intervention
+- [x] Three visual variants (distraction / confusion / fatigue)
+- [x] NEVER shows while `store.status === 'TEACH_BACK'` — guard at render level
 
 ---
 
-### S3-04 — CES Indicator
+### S3-04 — CES Indicator — ✓ DONE 2026-08-03
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/components/player/CESIndicator.tsx`
+**Status:** ✅ DONE 2026-08-03 — Story `2-41-ces-indicator.md`, branch `sprint3/s3-04-ces-indicator`, 3-agent review passed. Shipped in the same review pass as S3-03; this entry was never updated at the time — corrected 2026-08-06.  
+**Files:** `src/components/player/CESIndicator.tsx`
 
 Subtle, non-intrusive. Shows engagement level as a colored dot or subtle progress arc in the player corner. Updates every 5 seconds from `ces_update` WebSocket message.
 
-Show as qualitative label: `ces < 0.4 → "Low"`, `0.4–0.7 → "Engaged"`, `> 0.7 → "Focused"`. Never show the raw float to the student.
+Shows as qualitative label: `ces < 0.4 → "Low"`, `0.4–0.7 → "Engaged"`, `> 0.7 → "Focused"`. Never shows the raw float to the student.
 
 **Acceptance criteria:**
-- [ ] Updates on `ces_update` message receipt
-- [ ] Shows qualitative label, not raw CES float
-- [ ] Does not distract from lesson content (max 40px dimension)
-- [ ] Hidden when `store.status !== 'PLAYING'`
+- [x] Updates on `ces_update` message receipt
+- [x] Shows qualitative label, not raw CES float
+- [x] Does not distract from lesson content (max 40px dimension)
+- [x] Hidden when `store.status !== 'PLAYING'`
 
 ---
 
 ### S3-05 — Session Report: Attention Timeline Chart
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/components/reports/AttentionChart.tsx`
+**Status:** ✓ DONE 2026-08-13. Story `2-46-attention-timeline-chart.md`, branch `sprint3/s3-05-attention-timeline-chart` off `sprint3-master`. All 6 tasks/ACs done, TDD throughout. 8-layer adversarial code review (`/bmad-code-review`) found 3 real defects — missing `.order()` on a new bounded query (row order was undefined once the natural bound is exceeded), missing exception handling around it, and unguarded `float()` parsing of Redis values that could break the whole report page's JSON on a stray `nan`/`inf` — all fixed with new tests; several minor test-coverage gaps deferred (`docs/stories/deferred-work.md`). Backend 230 failed/52 errors identical to pre-story baseline (worktree-verified) + new tests all passing; frontend 79 files/958 tests green, `tsc`/`eslint` clean. **Not yet run against a real browser/camera end-to-end session** — built and tested against fixture data (the live-signal caveat below still applies until that happens).  
+**Files:** `src/components/reports/AttentionChart.tsx` (new), `src/components/reports/SessionReport.tsx` (wired), plus a backend extension to `GET /api/session/{id}/report` (`ces_timeline`, `intervention_events` — see story for why this crossed into Dev 3's module).
+
+**Scope decision (2026-08-13):** the real report API had no per-window timeline or intervention-timestamp data at all — extended it within this same story (user decision) rather than deferring or faking the chart. Also found: Redis `ces_history` caps at the last 10 windows regardless of session length (~50s at default cadence) — registered as **D109** (`docs/DEFECT-REGISTER.md`; originally allocated D77, renumbered on the 2026-08-13 merge of `main` into `sprint3-master` after colliding with `main`'s own, already-closed D77), explicitly out of scope here; the chart surfaces this honestly via a recency caption instead of implying full-session coverage.
 
 Area chart of CES over session time. X-axis: minutes. Y-axis: 0–1 (but shown as Low/Med/High labels). Marks interventions as vertical lines.
 
@@ -1642,19 +1652,19 @@ Use a lightweight chart library (recharts or a canvas-based solution) — no D3 
 
 ### S3-06 — Reports Page
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED  
+**Status:** 🟡 PARTIAL — 2026-08-18. Attention timeline chart shipped separately as Story 2-46/S3-05 (done). Teach-back summary detail: frontend half done, backend half handed off to Dev 3 (blocked, not started).  
 **Files:** `src/app/reports/[sessionId]/page.tsx`, `src/components/reports/SessionReport.tsx` (route corrected 2026-07-04 during S2-04 — expand v1 from Sprint 2, not `src/app/reports/page.tsx`)
 
-Add: Attention timeline chart (once MediaPipe/attention data exists), teach-back summary detail. Note: "quiz accuracy by segment" is not buildable as scoped — the real backend's `GET /api/assessment/session/{id}/report` only returns one session-level `quiz_score`, no per-segment breakdown (see S2-04 Dev Notes) — would need a new/extended Dev 3 endpoint first.
+Teach-back summary detail: Story `2-48-teachback-summary-detail.md`, branch `sprint3/s3-06-teachback-detail`. The real report endpoint already reads `teachback_attempts` but only selects the aggregate `score` — the richer per-attempt columns (`feedback_praise`, `feedback_correction`, `concepts_hit`, `concepts_missed`) are already persisted and just need exposing. Per the current team-boundary rule (Dev 2 does not touch `apps/api`), the backend extension was **not implemented here** — spec'd instead in `docs/handoffs/dev2-to-dev3-teachback-detail-handoff-2026-08-18.md` for Dev 3. Frontend (`types/assessment.ts`'s `TeachbackDetail`, `SessionReport.tsx`'s new `TeachbackDetailSection`) is fully built and tested against that agreed contract — will wire up with zero further frontend changes once Dev 3 ships the backend half. Note: "quiz accuracy by segment" remains explicitly not buildable as scoped (see S2-04 Dev Notes) — separate from this item, still needs its own Dev 3 endpoint if ever prioritized.
 
 ---
 
-### S3-07 — Notifications UI
+### S3-07 — Notifications UI — ✓ DONE 2026-08-06/07
 **Priority:** P2  
-**Status:** 🔲 NOT STARTED  
-**Files:** `src/components/settings/tabs/NotificationsTab.tsx` (extend existing)
+**Status:** ✅ DONE — **correcting a stale entry.** This was genuinely backend-blocked when the note above was written (2026-08-06), but Dev 4 shipped `PATCH /api/auth/notifications` (Story 4-23) the same day, and it was wired up here as Story `2-43-notifications-ui.md`, branch `sprint3/s3-07-notifications-ui`, 4-layer adversarial review passed (9 patches applied), merged into `sprint3-master`. This entry was simply never updated afterward. See `docs/DEFECT-REGISTER.md` D60 for the full four-piece cross-team history (Dev 3/Dev 1/Dev 4/Dev 2).  
+**Files:** `src/hooks/useNotificationPreferences.ts` (new), `src/services/settings.service.ts`, `src/components/settings/tabs/NotificationsTab.tsx` (rewritten, 4 toggles incl. new Session Report), removed obsolete mock plumbing.
 
-Wire notification preferences to `PATCH /api/users/notifications`. Toggle: lesson ready email, session report email.
+Wired to the real `PATCH /api/auth/notifications` (not `/api/users/notifications` as originally scoped — corrected against the real endpoint before implementation). Toggles: session report email, lesson ready email, weekly progress email, streak reminders. **Still email preference storage only** — no email-sending pipeline exists yet; that's separately tracked as Sprint 4's "Email notifications (lesson ready, session report)" item.
 
 ---
 
@@ -1663,6 +1673,15 @@ Wire notification preferences to `PATCH /api/users/notifications`. Toggle: lesso
 **Status:** 🔲 NOT STARTED  
 
 Review all pages at 375px, 768px, 1024px. Player is desktop-first (Chrome target per PRD) — ensure it degrades gracefully on mobile with a "Desktop recommended" banner rather than a broken layout.
+
+---
+
+### S3-09 — Signed-URL auto-refresh + DEFER-012 register entry — ✓ DONE 2026-08-11
+**Priority:** P1 (real user-facing gap, not scheduled Sprint 3 scope — surfaced by `docs/LESSON-DELIVERY-TRACKER.md`'s L3 "Known risk" and this dev's own handoff doc, deviation #2)  
+**Status:** ✅ DONE 2026-08-11 — Story `2-45-signed-url-refresh-and-defer-012.md`, branch `sprint3/s3-09-signed-url-refresh` (cut from `sprint3-master` — `useAttentionMonitor.ts` doesn't exist on `main`, S3-01–S3-04 never merged there). 8-layer adversarial review (Blind Hunter, Edge Case Hunter, Acceptance Auditor, Scale & Load Hunter, plus Story Quality/Test Coverage/AC Completeness/Process Integrity) found 11 patch findings + 1 deferred; **all 11 applied same day**, including rebuilding the branch to fix a story-first-gate violation and renumbering a colliding defect ID (D63→**D66**; `sprint3-master` already had D63–D65 allocated — the re-check had been performed against the wrong branch). Full `apps/web` suite passing, `tsc --noEmit` clean, `eslint` clean.  
+**Files:** `src/lib/media/refreshSignedUrl.ts` (new), `src/components/player/AudioTimeline.tsx`, `src/components/player/SlideRenderer.tsx`, `docs/DEFECT-REGISTER.md` (**D66**, **D67**), `docs/deferred-work.md`.
+
+Closes the "student pauses past the signed-URL expiry window and loses audio/images with only a manual page-level Retry" gap: `AudioTimeline`'s `handleError()` and `SlideRenderer`'s `SlideImage` now each attempt exactly one automatic per-asset re-sign (via the previously-dormant `GET /api/media/signed-url`, parsing `{bucket, path}` back out of the expired Supabase signed URL, with origin validation and an `expires_in` matching the system's 8-hour window — both added in review) before falling through to the existing manual-recovery UI unchanged. Review also caught and fixed two real playback bugs (a stale failed re-sign could flip `audioError` on a segment/lesson already left; a successful re-sign remounted `<audio>` but never resumed playback) and a guard-reset gap on the image side. No `apps/api` changes. Also closed the DEFER-012 binding-rule-5 gap: `useAttentionMonitor.ts`'s floating MediaPipe model tag now has a real register ID (**D66**), owner Dev 2, trigger = the first live browser verification of L6. **D67** (newly-exposed backend rate-limit gap on the signed-url endpoint) is registered and deferred to Dev 1.
 
 ---
 
@@ -1729,6 +1748,121 @@ Fire PostHog events for every significant action:
 - Chart library: dynamic import in reports page only
 - HeyGen video: preload `<link rel="preload">` in lesson page head
 - Lighthouse score target: `/lesson/[id]` > 70 performance
+
+### S4-06 — Fold My Library into My Books
+**Priority:** P2 — ad-hoc, live product decision 2026-08-17 (not originally scheduled Sprint 4 scope)
+**Status:** ✅ DONE (2026-08-17). Combined with S4-07/S4-08/S4-09 into
+`sprint4/s4-06-s4-09-library-and-player-fixes` and PR'd together, per user instruction 2026-08-17.
+**Files:** `apps/api/app/modules/content/router.py`, `schemas.py` (Dev 1's module — explicit user-approved
+exception, same precedent as `docs/handoffs/dev2-backend-changes-handoff-2026-08-14.md`),
+`apps/web/src/components/dashboard/books/ChapterRow.tsx`, `apps/web/src/services/books.service.ts`,
+`docs/contracts/book-api.v1.json` (1.2.0 → 1.3.0, additive), full removal of the standalone `/library`
+route/service/hook/component and every cross-reference.
+
+User noticed `My Books` and `My Library` both surfaced lesson data with no unique capability in
+Library besides reaching a non-latest lesson. Story: `docs/stories/2-47-merge-library-into-books.md`.
+`ChapterResponse` gained `lessons: list[LatestLesson]` (every lesson per chapter, newest-first,
+capped at 20 as a safety ceiling — `lesson_count` still reports the true total past the cap, no
+silent truncation). `ChapterRow.tsx` gained an expandable disclosure for non-latest lessons,
+Watch-gated per-entry. Full BMAD flow: story-first commit, TDD implementation (5 tasks), 6-agent
+adversarial code review (1 decision-needed resolved, 9 patch findings applied — see the story's own
+Review Findings section for the full list, including a mis-cited D59 corrected to a new register
+entry **D115**). Backend: 1186 passed / 0 failed. Frontend: 78 files / 952 tests passing.
+
+### S4-07 — Fix CaptionOverlay's unreachable scroll (live production bug)
+**Priority:** P1 — real, live, student-facing bug found via manual browser verification
+**Status:** ✅ DONE (2026-08-17)
+**Files:** `apps/web/src/components/player/CaptionOverlay.tsx`,
+`apps/web/src/__tests__/components/player/CaptionOverlay.test.tsx`
+
+Found while spot-checking the live lesson player against production (`hieiq.ai`) after an unrelated
+deploy-pipeline fix. The non-synced caption panel (D90, closed 2026-08-13) silently clipped most of
+a segment's narration script with **no way to read the rest** — verified live: a real segment
+clipped 390 of 616px (~63%) of its own text. Two stacked root causes, both now fixed: (1) the panel
+carried `pointer-events-none`, which blocks ALL mouse/wheel interaction including the wheel-driven
+scroll `overflow-y-auto` is supposed to provide; (2) even with that removed, `SmoothScroll.tsx`'s
+global Lenis instance intercepts wheel events app-wide by default — `SlideRenderer.tsx` (the sibling
+component sharing the same slide-area container) already carries `data-lenis-prevent` for this exact
+reason, but `CaptionOverlay.tsx` never got it. Verified the fix live in a real browser (Playwright):
+wheel-scroll moved the panel from 0 to 389.6 of a 390px max scroll once both fixes were applied
+together. Added a regression test asserting `pointer-events-none` never returns (jsdom can't compute
+real overflow/pointer-events cascade, so this directly encodes the fix rather than re-deriving it).
+5/5 `CaptionOverlay.test.tsx` tests pass; full suite 80 files / 966 tests, `tsc --noEmit` and
+targeted `eslint` clean.
+
+### S4-08 — Fix lesson "restarting" after quiz + teach-back on the last segment (live bug)
+**Priority:** P0 — student-facing, breaks lesson completion for any single-segment (or last-segment)
+lesson
+**Status:** ✅ DONE (2026-08-17)
+**Files:** `apps/web/src/components/player/AudioTimeline.tsx`,
+`apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx`
+
+Reported directly by the user testing locally end-to-end: completing a 1/1-segment lesson's quiz +
+teach-back caused the lesson to visibly restart from the beginning instead of ending. Root cause:
+`exitTeachBack()` (`player.machine.ts`) resumes `status: 'PLAYING'` on the last segment, relying on
+its own documented comment ("audio resumes... handleEnded fires endLesson when it finishes") — but
+by teach-back time the segment's real `<audio>` element has already reached its natural end, and
+per the HTML media spec, calling `.play()` on an already-ended element **seeks back to position 0**
+as part of the play steps, replaying the whole segment instead of firing `ended` again. On a
+single-segment lesson this is indistinguishable from the entire lesson looping back to the start.
+The virtual-clock (no-audio) path already had an equivalent fix for its own version of this exact
+problem (`AudioTimeline.tsx`'s S2-33 tick effect explicitly checks `alreadyQuizzed` and calls
+`handleEnded()` manually) — the real-`<audio>` path never got the matching fix. Fixed by checking
+`audio.ended` before calling `.play()`; if already ended, call `handleEnded()` directly instead
+(which correctly resolves to `endLesson()` once the quiz has fired, exactly like the virtual-clock
+path). Added 2 regression tests: one reproducing the exact bug scenario (asserts `handleEnded()`
+fires and `.play()` is never called), one guarding against an over-broad fix that skips `.play()`
+based on quiz-fired state rather than `audio.ended`. Full suite 80 files / 968 tests, `tsc --noEmit`
+and targeted `eslint` clean.
+
+**Not yet investigated in this pass:** the same test session surfaced 6 `connection rejected (400
+Bad Request)` log lines for the tutor WebSocket — confirmed as `MAX_RECONNECT_ATTEMPTS = 5` (+1
+initial attempt) retrying a single underlying handshake failure with exponential backoff, not 6
+separate incidents (`lib/ws/lessonSocket.ts`). Root cause of the initial rejection was never
+reproduced despite multiple full end-to-end attempts (same `--reload` backend, real frontend,
+signed in, same lesson) — the WS connected cleanly every time. Still open, unresolved. A related,
+real bug WAS found and fixed the same session — see PR #142 (`fix/cors-headers-on-unhandled-errors`,
+merged 2026-08-17): unhandled backend exceptions (e.g. a transient httpx.RemoteProtocolError talking
+to Supabase) were reaching the browser as opaque CORS failures instead of clean 500s, because
+Starlette's ServerErrorMiddleware sits outside CORSMiddleware. Not this file's own task (backend/
+shared infra, `apps/api/app/main.py`) — noted here for cross-reference only.
+
+### S4-09 — Redesign CaptionOverlay: YouTube/Netflix-style one-line captions (product request)
+**Priority:** P1 — direct user feedback after S4-07 shipped: "I don't want the entire caption at
+once, I want captions like how YouTube or other platforms provide subtitles, per the line that is
+narrating."
+**Status:** ✅ DONE (2026-08-17)
+**Files:** `apps/web/src/components/player/CaptionOverlay.tsx`,
+`apps/web/src/__tests__/components/player/CaptionOverlay.test.tsx`
+
+Replaced S4-07's "whole segment script, scrollable" caption panel with one-line-at-a-time captions
+that advance as narration plays, matching standard subtitle UX. **Hard constraint, unchanged from
+D90's original note:** there is no word/sentence-level timing anywhere in this pipeline —
+`NarrationTimestamp` (`packages/shared/types/lesson.ts`) is per-SLIDE, not per-word, and Sarvam TTS
+returns no word-level timestamps at all. A frame-perfect, word-highlighted sync (true YouTube
+auto-caption behaviour) is NOT achievable without that backend/TTS work — flagged as a separate,
+larger follow-up, same as before.
+
+What this ships without any new data: `splitScriptIntoCaptionLines()` chunks the script into
+~10-word lines (broadcast-subtitle convention); `activeCaptionLineIndex()` estimates each line's
+time window by allocating the segment's known total duration (`audioDurationMs`) proportionally to
+each line's character count (a closer proxy for spoken duration than a flat per-line split, since
+narration lines vary a lot in length) and picks whichever line's window contains the current
+`audioPositionMs`. This is an approximation, not real sync — pacing/pauses/emphasis all shift true
+timing — but it tracks actual playback position and re-aligns at every segment boundary rather than
+compounding drift. Falls back to line 0 whenever `audioDurationMs` isn't known yet (e.g. before a
+real `<audio>` element's `loadedmetadata` fires) rather than showing nothing.
+
+Verified live in a real browser (Playwright, local dev + local backend, real lesson): caption
+correctly advanced from "Hey there! Today, we're diving into a really interesting topic" at 0:00 to
+"architecture that includes various components such as the agent service," at 0:22 during real
+playback — single short line, no scroll needed. The S4-07 scroll-reachability fix
+(`pointer-events`/`data-lenis-prevent`) is kept as a defensive fallback in case a line ever wraps,
+though it should rarely if ever trigger now that lines are short. 18/18
+`CaptionOverlay.test.tsx` tests pass (both new pure-function unit tests for the line-splitting/
+sync-index logic, and component-level tests asserting only one line renders at a time and it
+advances correctly). Full suite 80 files / 981 tests, `tsc --noEmit` and targeted `eslint` clean.
+>>>>>>> origin/sprint4/s4-07-caption-overlay-scroll-fix
 
 ---
 

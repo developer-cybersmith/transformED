@@ -30,17 +30,28 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # uv sync --locked (not `uv pip install -e ".[dev]" --system`) is load-
+      # bearing: `uv pip install` is uv's pip-COMPATIBLE interface and never
+      # reads uv.lock at all -- it re-resolves from pyproject.toml's bare
+      # constraints on every run, so an unrelated PyPI release (e.g. openai's
+      # 2026-08-14 patch that changed its `timeout=` type stub to reference
+      # its own vendored httpx2) can silently change what CI installs without
+      # any commit to this repo. `uv sync --locked` installs exactly what
+      # uv.lock pins and FAILS LOUDLY if pyproject.toml and uv.lock have
+      # drifted, instead of silently re-resolving. Every subsequent step in
+      # this job runs via `uv run` to use the resulting .venv, not the bare
+      # system Python `uv pip install --system` used to write into.
       - name: Install dependencies
-        run: uv pip install -e ".[dev]" --system
+        run: uv sync --extra dev --locked
 
       - name: Ruff lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Ruff format check
-        run: ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Mypy
-        run: mypy app
+        run: uv run mypy app
 
       # GATING. Was `... -x -q`; `-x` stopped at the first failure, so CI never
       # enumerated its own damage. These two directories are green today and must
@@ -50,7 +61,7 @@ jobs:
       # anonymous Docker Hub pull failure or rate-limit would turn main red for a
       # reason unrelated to the change under test. It runs as its own job below.
       - name: Unit tests (gating)
-        run: pytest tests/unit tests/integration -q -m "not postgres"
+        run: uv run pytest tests/unit tests/integration -q -m "not postgres"
         env:
           SUPABASE_URL: http://localhost:54321
           SUPABASE_ANON_KEY: test
@@ -59,6 +70,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
@@ -107,7 +119,7 @@ jobs:
           psql --version
           docker pull pgvector/pgvector:pg16 || docker pull pgvector/pgvector:pg16
           docker pull postgrest/postgrest:v12.2.3 || docker pull postgrest/postgrest:v12.2.3
-          pytest tests/integration -q -m postgres -rs | tee /tmp/pg-tests.log
+          uv run pytest tests/integration -q -m postgres -rs | tee /tmp/pg-tests.log
           if grep -qE "no tests ran" /tmp/pg-tests.log; then
             echo "::error::no postgres-marked tests ran — the migration guard did not run"
             exit 1
@@ -116,15 +128,30 @@ jobs:
             echo "::error::postgres-marked tests SKIPPED — a skipped guard guards nothing (D51)"
             exit 1
           fi
-          if grep -qE "[0-9]+ (xfailed|xpassed|deselected|error)" /tmp/pg-tests.log; then
-            echo "::error::postgres-marked tests xfailed/deselected/errored — that is not verification (D51)"
+          # NOTE: "deselected" deliberately excluded from this check (unlike an
+          # earlier version of this line) -- `-m postgres` ALWAYS reports a
+          # "N deselected" count for every non-postgres-marked test in the
+          # collected set; that's the marker filter working as designed, not a
+          # verification gap. Including it here meant this guard could never
+          # pass on ANY run, ever, since the pipeline always includes non-
+          # postgres tests in the same `tests/integration` collection. Found
+          # 2026-08-14 the first time this step ever ran a real, fully-green
+          # 79/79 pass and still failed on this line. xfailed/xpassed/error
+          # remain checked -- those ARE genuine non-pass outcomes.
+          if grep -qE "[0-9]+ (xfailed|xpassed|error)" /tmp/pg-tests.log; then
+            echo "::error::postgres-marked tests xfailed/xpassed/errored — that is not verification (D51)"
             exit 1
           fi
           # An EXACT count, not a non-zero one. `[0-9]+ passed` still passes green
           # if a whole test FILE is deleted or loses its marker — which is exactly
           # how the PostgREST half of this suite went un-run in the first place.
           # Removing a postgres test must be a deliberate edit to this number.
-          EXPECTED_PG_TESTS=76
+          # Was 76 -- grown to 79 by migrations/tests landed since (including
+          # the user_notification_preferences RLS policy this exact run
+          # caught test_no_other_table_policy_changed missing). Confirmed
+          # against this run's own real log ("1 failed, 78 passed" = 79
+          # selected), not guessed.
+          EXPECTED_PG_TESTS=79
           if ! grep -qE "\b${EXPECTED_PG_TESTS} passed\b" /tmp/pg-tests.log; then
             echo "::error::expected ${EXPECTED_PG_TESTS} postgres-marked tests to pass; the log disagrees."
             echo "::error::If you added or removed one, update EXPECTED_PG_TESTS in this file deliberately."
@@ -139,13 +166,14 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
 
       - name: Full suite (advisory, not gating)
         continue-on-error: true
-        run: pytest tests -q
+        run: uv run pytest tests -q
         env:
           SUPABASE_URL: http://localhost:54321
           SUPABASE_ANON_KEY: test
@@ -154,6 +182,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
@@ -167,9 +196,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose -- root package.json pins
+      # "packageManager": "pnpm@9.15.9", which corepack already reads. Passing
+      # both an explicit version AND a packageManager-pinned version is a
+      # pnpm/action-setup v4 hard error ("Multiple versions of pnpm
+      # specified"), which is why this job has been failing before a single
+      # real step ran.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -228,9 +261,12 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # See the matching comment on the `api` job's install step -- `uv sync
+      # --locked` reads uv.lock deterministically; `uv pip install --system`
+      # re-resolves from pyproject.toml on every run and can silently drift.
       - name: Install dependencies
         working-directory: apps/api
-        run: uv pip install -e ".[dev]" --system
+        run: uv sync --extra dev --locked
 
       # GATING, and built to the same anti-vacuum shape as `Migration tests`
       # above — read D51 there before touching this. The lesson: a guard that can
@@ -249,7 +285,7 @@ jobs:
         run: |
           set -o pipefail
           cd apps/api
-          uvicorn app.main:app --host 127.0.0.1 --port 8000 --lifespan off &
+          uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --lifespan off &
           UVICORN_PID=$!
           trap 'kill $UVICORN_PID 2>/dev/null || true' EXIT
 
@@ -294,6 +330,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
+          SARVAM_API_KEY: test
           HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test

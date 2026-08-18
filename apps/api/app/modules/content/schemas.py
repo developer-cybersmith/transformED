@@ -10,7 +10,7 @@ The router still declares its older lesson models inline; new models land here.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.lesson import DEFAULT_TIER, VALID_TIERS
 
@@ -154,3 +154,13 @@ class ChapterResponse(BaseModel):
     has_lesson: bool = False
     lesson_count: int = 0
     latest_lesson: LatestLesson | None = None
+    # Story 2-47 (S4-06): every lesson for this chapter (all tiers, all
+    # states), newest-first -- not just latest_lesson. Same embedded `lessons`
+    # rows router._row_to_chapter_response already receives, no second query.
+    # BOUNDED to 20 (router._MAX_LESSONS_EXPOSED) as a safety ceiling above the
+    # realistic range (typical 1-3, one per tier) -- see the story's Scale &
+    # Load section for why no natural bound exists (D59: the underlying embed
+    # itself has no query-level limit). lesson_count above still reports the
+    # TRUE total even past this cap -- never [] truncated silently without that
+    # signal remaining visible.
+    lessons: list[LatestLesson] = Field(default_factory=list)

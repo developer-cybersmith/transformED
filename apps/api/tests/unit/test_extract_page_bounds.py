@@ -72,11 +72,18 @@ API_DIR = pathlib.Path(__file__).resolve().parents[2]
 SAMPLE_PDF = _REPO_ROOT / "demo-assets" / "sample-chapter.pdf"
 EVAL_PDFS = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "eval_pdfs"
 
-SHORT_PDF = EVAL_PDFS / "short.pdf"  # 3 pages
-DENSE_PDF = EVAL_PDFS / "dense_text.pdf"  # 15 pages, "Dense Chapter - Page N"
-LONG_PDF = EVAL_PDFS / "long.pdf"  # 120 pages, "Section C.S"
-IMAGE_PDF = EVAL_PDFS / "image_heavy.pdf"  # 10 pages, images on every page
-TABLE_PDF = EVAL_PDFS / "table_heavy.pdf"  # 8 pages, tables on every page
+# S3-1 renamed the 5 original fixtures into 20 (4 variants/category); these
+# point at the variant that preserves the exact original shape this file's
+# assertions depend on ("_uniform"/"_small"/"_3page" are S2-14's originals,
+# unchanged, just renamed). LONG_PDF has no exact-120-page equivalent among
+# the 4 new long variants (100/150/250/400) — repointed to 150 and LONG_PAGES
+# updated to match; every assertion below already reads LONG_PAGES rather
+# than a hardcoded 120, so this is a rename, not a semantic change.
+SHORT_PDF = EVAL_PDFS / "short_3page.pdf"  # 3 pages
+DENSE_PDF = EVAL_PDFS / "dense_text_uniform.pdf"  # 15 pages, "Dense Chapter - Page N"
+LONG_PDF = EVAL_PDFS / "long_150page.pdf"  # 150 pages, "Section C.S"
+IMAGE_PDF = EVAL_PDFS / "image_heavy_small.pdf"  # 10 pages, images on every page
+TABLE_PDF = EVAL_PDFS / "table_heavy_small.pdf"  # 8 pages, tables on every page
 
 _MODULE = "app.modules.content.pipeline.nodes.extract_subprocess"
 
@@ -84,7 +91,7 @@ _MODULE = "app.modules.content.pipeline.nodes.extract_subprocess"
 # a fixture regenerated at a different length must fail loudly, not silently
 # turn a bounds test into a whole-document test.
 DENSE_PAGES = 15
-LONG_PAGES = 120
+LONG_PAGES = 150
 IMAGE_PAGES = 10
 SHORT_PAGES = 3
 
@@ -93,6 +100,25 @@ def _missing(*paths: pathlib.Path) -> str:
     """Skip reason naming the absent fixture, or '' when all are present."""
     absent = [str(p) for p in paths if not p.exists()]
     return f"fixture(s) absent: {', '.join(absent)}" if absent else ""
+
+
+@pytest.mark.unit
+def test_all_named_eval_fixtures_actually_exist() -> None:
+    """Review finding (Test Coverage, post-S3-1): every bounds test below is
+    `skipif`-gated on one of the 5 named constants above, so a future rename
+    of any of them (the exact defect class S3-1 just hit — 5 constants went
+    stale silently, no failure, only a quieter skip count) makes this whole
+    file's real coverage silently vanish again. This one test is deliberately
+    NOT skipif-gated — it fails loudly, by design, the moment any of the 5
+    named paths goes stale, instead of every other test in this file quietly
+    skipping with no error."""
+    missing = _missing(SHORT_PDF, DENSE_PDF, LONG_PDF, IMAGE_PDF, TABLE_PDF)
+    assert not missing, (
+        f"{missing} — one of this file's 5 named fixture constants is stale. "
+        f"_ensure_eval_pdfs() ran (eval_pdfs/ has SOME files) but not under "
+        f"the name(s) this file expects — update SHORT_PDF/DENSE_PDF/LONG_PDF/"
+        f"IMAGE_PDF/TABLE_PDF to match the current generator output."
+    )
 
 
 def _cli(*args: str) -> subprocess.CompletedProcess[str]:
@@ -170,7 +196,9 @@ def test_extract_pdf_signature_matches_the_contract() -> None:
 @pytest.mark.unit
 def test_extract_text_only_signature_matches_the_contract() -> None:
     """Bounds go AFTER Story 1-10's front_pages/head_chars — those callers pass
-    them positionally."""
+    them positionally. `tail_chars` (D115/D116, 2026-08-15) is trailing and
+    KEYWORD-ONLY specifically so it cannot shift any existing positional call
+    site — asserted here, not just hoped."""
     import inspect
 
     from app.modules.content.pipeline.nodes import extract_subprocess as es
@@ -182,10 +210,13 @@ def test_extract_text_only_signature_matches_the_contract() -> None:
         "head_chars",
         "page_start",
         "page_end",
+        "tail_chars",
     ]
     assert (params[1].default, params[2].default) == (0, 0)
     assert params[3].default is None
     assert params[4].default is None
+    assert params[5].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params[5].default == 0
 
 
 # ── AC3 — backward compatibility (the highest-value test in this file) ────────
@@ -369,7 +400,7 @@ def test_extract_pdf_reports_three_distinct_page_numbers(tmp_path: pathlib.Path)
 @pytest.mark.unit
 @pytest.mark.skipif(bool(_missing(LONG_PDF)), reason=_missing(LONG_PDF) or "present")
 def test_text_only_returns_the_slice_only_with_three_distinct_counts() -> None:
-    """AC6. 120-page document, pages 12..20 → 120 / 9 / 12, all different.
+    """AC6. 150-page document, pages 12..20 → 150 / 9 / 12, all different.
     `page_texts[0]` is the page at `page_offset`, not the document's page 0."""
     out = run_text_only(LONG_PDF, 0, 0, bounds=(12, 20))
 
@@ -512,7 +543,7 @@ def test_an_over_long_range_is_rejected_and_never_clamped(tmp_path: pathlib.Path
 @pytest.mark.unit
 @pytest.mark.skipif(bool(_missing(LONG_PDF)), reason=_missing(LONG_PDF) or "present")
 def test_text_only_over_long_range_is_rejected_and_never_clamped() -> None:
-    """AC4 no-clamp for text-only: a clamped run would return 120 pages of text
+    """AC4 no-clamp for text-only: a clamped run would return 150 pages of text
     to a caller that asked for pages 100..999 and get no signal at all."""
     proc = _cli("--text-only", str(LONG_PDF), "0", "0", "100", "999")
 

@@ -2,9 +2,8 @@ import type { Metadata } from "next";
 import { Sidebar } from "@/components/dashboard/shell/Sidebar";
 import { TopUtilityBar } from "@/components/dashboard/shell/TopUtilityBar";
 
-// There is no shared (dashboard)/layout.tsx -- every child route duplicates the
-// Sidebar + TopUtilityBar shell. Copied from (dashboard)/library/layout.tsx.
-// books/[id] inherits this layout.
+// There is no shared (dashboard)/layout.tsx -- every child route duplicates
+// the Sidebar + TopUtilityBar shell. books/[id] inherits this layout.
 export const metadata: Metadata = {
     title: "Books - HIE",
     description: "Browse your uploaded textbooks and choose a chapter to study.",

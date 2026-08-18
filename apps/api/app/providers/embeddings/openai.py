@@ -161,7 +161,7 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
                 )
 
             # Cost accumulation reads response.usage directly — never depends on tracing.
-            await self._maybe_accumulate_cost(total_tokens)
+            await self._maybe_accumulate_cost(total_tokens, generation=generation)
             return embeddings, total_tokens
 
         except Exception as exc:
@@ -174,11 +174,20 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
             if generation is not None:
                 _safe_trace(generation.end)
 
-    async def _maybe_accumulate_cost(self, total_tokens: int) -> None:
+    async def _maybe_accumulate_cost(
+        self,
+        total_tokens: int,
+        generation: Any | None = None,  # noqa: ANN401
+    ) -> None:
         if self._lesson_id is None:
             return
 
         cost = total_tokens / 1000 * _EMBED_COST_PER_1K_USD
+
+        # S3-5: mirror usage_details onto Langfuse's own cost_details field,
+        # the same field the other 4 priced providers already use.
+        if generation is not None:
+            _safe_trace(lambda: generation.update(cost_details={"input": cost}))
 
         from app.core.cost_tracker import accumulate_cost, check_ceiling
 

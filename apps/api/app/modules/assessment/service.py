@@ -7,8 +7,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import statistics
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException, status
@@ -34,7 +35,7 @@ from app.modules.assessment.schemas import (
 from app.providers.llm.openai import OpenAILLMProvider
 
 if TYPE_CHECKING:
-    from app.modules.assessment.router import SessionReport
+    from app.modules.assessment.router import SessionReport, TeachbackDetail
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,8 @@ async def create_session(
 ) -> dict[str, Any]:
     """Mint a `sessions` row for *user_id* on *lesson_id* (Story 2-35 / D18).
 
-    **This is the only writer of `sessions` in the codebase.** Before this, all 7
+    **This is the only INSERTER of `sessions` in the codebase** (`complete_session`
+    below is the only UPDATER, of `ended_at` alone). Before this, all 7
     `table("sessions")` references were `.select(...)`, `apps/web` never inserted
     one either, and the frontend invented `crypto.randomUUID()`. So the ownership
     check in `grade_quiz` correctly rejected an id that had never existed, and
@@ -200,6 +202,65 @@ async def create_session(
         "lesson_id": str(row.get("lesson_id") or lesson_id),
         "started_at": str(started_at) if started_at is not None else None,
     }
+
+
+async def complete_session(
+    *,
+    session_id: str,
+    user_id: str,
+    supabase: Client,
+) -> dict[str, Any]:
+    """Mark *session_id* as ended, writing `sessions.ended_at`.
+
+    **This is the only writer of `sessions.ended_at` in the codebase.** Before
+    this, nothing ever wrote it -- confirmed by grepping the whole API for
+    `ended_at` -- so `get_session_report`'s `duration_minutes`/`completed_at`
+    fields silently returned 0.0/None for every session ever, including one a
+    student had genuinely finished start to end. The frontend must call this
+    exactly once, when the player reaches its terminal ENDED status.
+
+    Idempotent by construction: the UPDATE's `.is_("ended_at", "null")` filter
+    means only the FIRST call actually writes a row -- a double-fire (retry,
+    a second tab, StrictMode) affects 0 rows on every call after the first,
+    so a later, in-flight duplicate can never clobber the real completion
+    timestamp with a later one (Scale & Load Q6 -- concurrent check-then-act).
+
+    Raises:
+        HTTPException 404: the session does not exist **or** belongs to
+            someone else (SEC-006 — same response for both, matching
+            `create_session` above).
+    """
+    session_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, ended_at")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    session_row = single_row(session_resp)
+    if session_row is None or str(session_row.get("user_id", "")) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    existing_ended_at = session_row.get("ended_at")
+    if existing_ended_at:
+        return {"session_id": session_id, "ended_at": str(existing_ended_at)}
+
+    ended_at = datetime.now(UTC).isoformat()
+    await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .update({"ended_at": ended_at})
+            .eq("session_id", session_id)
+            .is_("ended_at", "null")
+            .execute()
+        )
+    )
+    return {"session_id": session_id, "ended_at": ended_at}
 
 
 async def grade_quiz(
@@ -693,6 +754,7 @@ async def compute_ces_from_session_aggregates(
     # Use _CES_HISTORY_MAX-1 as the stop index so this is self-enforced, not
     # dependent solely on the write-side invariant from tutor/service.py.
     from app.modules.tutor.service import _CES_HISTORY_MAX  # noqa: PLC0415
+
     raw_entries: list[str] = await redis.lrange(history_key, 0, _CES_HISTORY_MAX - 1)
 
     windows: list[float] = []
@@ -782,7 +844,8 @@ async def get_session_report(
         HTTPException 404: Session belongs to a different user (SEC-006 — no 403
             to prevent enumeration).
     """
-    from app.modules.assessment.router import SessionReport  # lazy — avoids circular import
+    # lazy import — avoids circular import between service.py and router.py
+    from app.modules.assessment.router import SessionReport, TeachbackDetail
 
     # Step 1 — Validate session ownership and fetch all needed columns in one query
     session_resp = await asyncio.to_thread(
@@ -823,8 +886,9 @@ async def get_session_report(
                 .execute()
             )
         )
-        if _tier_resp.data and _tier_resp.data.get("tier") in _TIER_LABELS:
-            tier = _tier_resp.data["tier"]
+        _tier_row = single_row(_tier_resp)
+        if _tier_row and _tier_row.get("tier") in _TIER_LABELS:
+            tier = _tier_row["tier"]
     tier_label = _TIER_LABELS[tier]
 
     # Step 2 — Quiz stats from quiz_attempts
@@ -850,11 +914,16 @@ async def get_session_report(
     # Step 3 — Teachback stats from teachback_attempts
     # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
     # .limit(50) is a safety ceiling above the natural bound.
+    # Story 2-48: widened select to include detail columns; .order("created_at") for ordering.
     tb_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
-            .select("score")
+            .select(
+                "segment_id, score, feedback_praise, feedback_correction,"
+                " concepts_hit, concepts_missed, attempt_number"
+            )
             .eq("session_id", session_id)
+            .order("created_at")
             .limit(50)
             .execute()
         )
@@ -865,9 +934,22 @@ async def get_session_report(
         sum_scores = sum(r.get("score", 0) or 0 for r in tb_rows)
         avg_teachback: float = sum_scores / teachback_count
         teachback_score: float | None = round(avg_teachback, 2)
+        teachback_details: list[TeachbackDetail] | None = [
+            TeachbackDetail(
+                segment_id=r.get("segment_id", ""),
+                score=r.get("score"),
+                feedback_praise=r.get("feedback_praise"),
+                feedback_correction=r.get("feedback_correction"),
+                concepts_hit=r.get("concepts_hit") or [],
+                concepts_missed=r.get("concepts_missed") or [],
+                attempt_number=r.get("attempt_number", 1),
+            )
+            for r in tb_rows
+        ]
     else:
         avg_teachback = 0.0
         teachback_score = None
+        teachback_details = None
 
     # D17 (S3-47): formula disclosure — determined by teachback presence
     formula_applied = (
@@ -886,6 +968,34 @@ async def get_session_report(
         )
     )
     interventions_count: int = events_resp.count or 0
+
+    # Step 4b — S3-05 (Story 2-46): raw intervention rows for the attention timeline chart's
+    # vertical markers. BOUNDED: .limit(20) safety ceiling; natural bound is
+    # max_distraction_per_session (default 3) + 1 fatigue + a handful of D64-uncapped confusion
+    # events. `.order("created_at", desc=True)` makes "the 20 most recent" actually true --
+    # without it PostgREST gives no ordering guarantee, so once the natural bound is exceeded
+    # (reachable today via D64's uncapped confusion interventions) `.limit(20)` alone could
+    # silently keep an arbitrary subset instead of the most recent ones (review finding).
+    # Degrades to an empty list (never raises) on a Supabase failure -- this field is optional
+    # display data, not worth failing the whole report over, matching the Redis block below.
+    # minute-offset math happens later, once `started_at` is available (Step 6); the DESC order
+    # is reversed back to chronological (oldest-first) there, matching ces_timeline's convention.
+    try:
+        intervention_rows_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("session_events")
+                .select("created_at, payload")
+                .eq("session_id", session_id)
+                .eq("event_type", "intervention_triggered")
+                .order("created_at", desc=True)
+                .limit(20)
+                .execute()
+            )
+        )
+        intervention_rows: list[dict[str, Any]] = rows(intervention_rows_resp)
+    except Exception:  # noqa: BLE001
+        logger.warning("intervention rows fetch failed for session=%s", session_id, exc_info=True)
+        intervention_rows = []
 
     # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
@@ -959,10 +1069,10 @@ async def get_session_report(
             .execute()
         )
     )
-    if _dna_resp is not None and _dna_resp.data:
+    _dna_row = single_row(_dna_resp)
+    if _dna_row:
         _dim_labels: dict[str, str] = {
-            dim: _score_to_label(float(_dna_resp.data.get(dim) or 0.0))
-            for dim in ALL_NINE_DIMENSIONS
+            dim: _score_to_label(float(_dna_row.get(dim) or 0.0)) for dim in ALL_NINE_DIMENSIONS
         }
 
         # Step 9 — session growth events (dna_update) for delta-based growth labels
@@ -979,7 +1089,7 @@ async def get_session_report(
             )
         )
         _delta_map: dict[str, float | None] = {}
-        for evt in _events_resp.data or []:
+        for evt in rows(_events_resp):
             payload = evt.get("payload")
             if not isinstance(payload, dict):
                 continue
@@ -994,20 +1104,46 @@ async def get_session_report(
 
     # S3-50 (D18): ces_history_summary — compact engagement trend from Redis ces_history.
     # BOUNDED: lrange reads at most 10 entries (ltrim cap at write time).
+    #
+    # S3-05 (Story 2-46) / D109: ces_timeline reuses this SAME read (no second Redis round
+    # trip) to also build a chronological [{"minute","ces"}, ...] series for the attention
+    # timeline chart. `ces_history` is LPUSH'd (newest-first), so raw order is reversed to get
+    # oldest-first. Legacy bare-float entries (no "t") cannot be time-placed and are excluded
+    # from ces_timeline, but still counted in ces_history_summary exactly as before this story
+    # (AC-2 non-regression). D109: this can never exceed _CES_HISTORY_MAX=10 entries — the last
+    # ~50s of the session at default cadence, regardless of session length. The frontend must
+    # present this as a recency window, never as full-session coverage.
+    #
+    # Review finding: a non-finite `v` (a stray "nan"/"inf" string ever written to
+    # session:{id}:ces_history) is accepted by float() without raising, then serialized by
+    # FastAPI's default JSONResponse as a literal NaN/Infinity token -- invalid per the JSON
+    # spec, which breaks the frontend's JSON.parse for the WHOLE report, not just this field.
+    # math.isfinite() rejects it at the same point non-finite floats are already rejected
+    # elsewhere in this codebase (tutor/service.py's attention-signal parser).
     ces_history_summary: dict[str, Any] | None = None
+    ces_timeline: list[dict[str, float]] | None = None
     if redis is not None:
         try:
-            raw_history: list[str] = await redis.lrange(
-                f"session:{session_id}:ces_history", 0, 9
-            )
+            raw_history: list[str] = await redis.lrange(f"session:{session_id}:ces_history", 0, 9)
             ces_vals: list[float] = []
+            timeline_points: list[dict[str, float]] = []
+            started_at_unix = started_at.timestamp() if started_at is not None else None
             for raw in raw_history:
                 try:
                     parsed = json.loads(raw)
-                    ces_vals.append(float(parsed["v"]))
+                    v = float(parsed["v"])
+                    if not math.isfinite(v):
+                        raise ValueError("non-finite ces value")  # noqa: TRY301
+                    ces_vals.append(v)
+                    if started_at_unix is not None and "t" in parsed:
+                        minute = round((float(parsed["t"]) - started_at_unix) / 60.0, 2)
+                        if math.isfinite(minute):
+                            timeline_points.append({"minute": minute, "ces": round(v, 2)})
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                     try:
-                        ces_vals.append(float(raw))
+                        v = float(raw)
+                        if math.isfinite(v):
+                            ces_vals.append(v)
                     except (ValueError, TypeError):
                         pass
             if ces_vals:
@@ -1017,8 +1153,41 @@ async def get_session_report(
                     "max": round(max(ces_vals), 2),
                     "window_count": len(ces_vals),
                 }
+            if timeline_points:
+                ces_timeline = list(reversed(timeline_points))
         except Exception:  # noqa: BLE001
             ces_history_summary = None
+            ces_timeline = None
+
+    # S3-05 (Story 2-46): intervention_events — minute + type only, computed from the
+    # Step 4b raw rows now that `started_at` (Step 6) is available. AC-5: `ces_at_trigger`
+    # (present in the raw payload) is never extracted here — enforced at the contract level,
+    # not by frontend discipline alone. A malformed row (no created_at) is skipped, not fatal.
+    # Step 4b fetches newest-first (`.order("created_at", desc=True)`, so the cap keeps the
+    # true most-recent 20) — reversed back to chronological (oldest-first) here, matching
+    # ces_timeline's convention.
+    intervention_events: list[dict[str, Any]] | None = None
+    if intervention_rows and started_at is not None:
+        _started_at_unix = started_at.timestamp()
+        _computed_events: list[dict[str, Any]] = []
+        for _row in reversed(intervention_rows):
+            _raw_created = _row.get("created_at")
+            if not _raw_created:
+                continue
+            try:
+                _created_dt = (
+                    datetime.fromisoformat(_raw_created.replace("Z", "+00:00"))
+                    if isinstance(_raw_created, str)
+                    else _raw_created
+                )
+                _minute = round((_created_dt.timestamp() - _started_at_unix) / 60.0, 2)
+            except (ValueError, TypeError):
+                continue
+            _payload = _row.get("payload") or {}
+            _itype = _payload.get("intervention_type") if isinstance(_payload, dict) else None
+            _computed_events.append({"minute": _minute, "type": _itype or "unknown"})
+        if _computed_events:
+            intervention_events = _computed_events
 
     logger.info(
         "session_report built: session=%s quiz_score=%s teachback_score=%s interventions=%d",
@@ -1054,6 +1223,11 @@ async def get_session_report(
         ces_history_summary=ces_history_summary,
         # S3-51 intervention messages delivered count
         intervention_messages_used=interventions_count,
+        # S3-05 (Story 2-46) attention timeline chart data
+        ces_timeline=ces_timeline,
+        intervention_events=intervention_events,
+        # Story 2-48 per-attempt teachback detail
+        teachback_details=teachback_details,
     )
 
 
@@ -1073,7 +1247,8 @@ def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, fl
         subdim = QUESTION_SUBDIMENSION_MAP.get(ans.question_id)
         if subdim is None:
             continue
-        normalized = (ans.selected_index / 3) * 100  # BOUNDED: denominator=3 matches OnboardingAnswer.selected_index le=3
+        # BOUNDED: denominator=3 matches OnboardingAnswer.selected_index le=3
+        normalized = (ans.selected_index / 3) * 100
         bucket[subdim].append(normalized)
     return {dim: round(sum(vals) / len(vals), 2) if vals else 0.0 for dim, vals in bucket.items()}
 
@@ -1174,29 +1349,33 @@ async def process_onboarding(
         if _question_ids:  # supabase-py drops IN([]) filter for empty list in some versions
             try:
                 del_resp = await asyncio.to_thread(
-                    lambda: supabase.table("onboarding_responses")
+                    lambda: (
+                        supabase.table("onboarding_responses")
                         .delete()
                         .eq("user_id", user_id)
                         .in_("question_id", _question_ids)
                         .execute()
+                    )
                 )
-                if getattr(del_resp, "error", None):  # supabase signals errors via resp.error, not exceptions
+                # supabase signals errors via resp.error, not exceptions
+                _del_resp_error = getattr(del_resp, "error", None)
+                if _del_resp_error:
                     logger.warning(
                         "onboarding: rollback of onboarding_responses failed user=%s error=%s — "
                         "user may need manual cleanup to retry",
                         user_id,
-                        str(del_resp.error).replace("\n", " "),
+                        str(_del_resp_error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "onboarding: rollback of onboarding_responses failed user=%s (network/client error) — "
-                    "user may need manual cleanup to retry",
+                    "onboarding: rollback of onboarding_responses failed user=%s "
+                    "(network/client error) — user may need manual cleanup to retry",
                     user_id,
                 )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Profile generation temporarily unavailable — please retry.",
-        )
+        ) from None
 
     # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
     dna_row: dict[str, Any] = {
@@ -1222,21 +1401,26 @@ async def process_onboarding(
         if _question_ids:
             try:
                 del_resp5 = await asyncio.to_thread(
-                    lambda: supabase.table("onboarding_responses")
+                    lambda: (
+                        supabase.table("onboarding_responses")
                         .delete()
                         .eq("user_id", user_id)
                         .in_("question_id", _question_ids)
                         .execute()
+                    )
                 )
-                if getattr(del_resp5, "error", None):
+                _del_resp5_error = getattr(del_resp5, "error", None)
+                if _del_resp5_error:
                     logger.warning(
-                        "onboarding: step5 rollback of onboarding_responses failed user=%s error=%s",
+                        "onboarding: step5 rollback of onboarding_responses failed "
+                        "user=%s error=%s",
                         user_id,
-                        str(del_resp5.error).replace("\n", " "),
+                        str(_del_resp5_error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "onboarding: step5 rollback of onboarding_responses failed user=%s (network error)",
+                    "onboarding: step5 rollback of onboarding_responses failed "
+                    "user=%s (network error)",
                     user_id,
                 )
         raise HTTPException(
@@ -1315,13 +1499,15 @@ async def record_consent(
         if "duplicate" in err_str or "unique" in err_str or "23505" in err_str:
             # Idempotent path — row exists; fetch and return it.
             existing_resp = await asyncio.to_thread(
-                lambda: supabase.table("user_consents")
-                .select("id, user_id, consent_type, policy_version, consented_at")
-                .eq("user_id", user_id)
-                .eq("consent_type", consent_type)
-                .eq("policy_version", policy_version)
-                .limit(1)
-                .execute()
+                lambda: (
+                    supabase.table("user_consents")
+                    .select("id, user_id, consent_type, policy_version, consented_at")
+                    .eq("user_id", user_id)
+                    .eq("consent_type", consent_type)
+                    .eq("policy_version", policy_version)
+                    .limit(1)
+                    .execute()
+                )
             )
             existing_rows: list[dict[str, Any]] = getattr(existing_resp, "data", None) or []
             if existing_rows:
@@ -1455,9 +1641,7 @@ async def write_intervention_event(
                 "message_key": message_key,
             },
         }
-        await asyncio.to_thread(
-            lambda: supabase.table("session_events").insert(row).execute()
-        )
+        await asyncio.to_thread(lambda: supabase.table("session_events").insert(row).execute())
     except Exception as exc:  # noqa: BLE001
         _safe_sid = str(session_id).replace("\n", " ").replace("\r", " ")
         logger.error(

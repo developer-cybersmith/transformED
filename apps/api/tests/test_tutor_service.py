@@ -233,6 +233,7 @@ async def test_history_lpush_ltrim_expire_called(mocker) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.unit
 async def test_history_read_via_lrange(mocker) -> None:
     """AC6: history is read via lrange(key, 0, 9)."""
     mock_redis, _ = _setup(mocker, lrange_vals=["0.5"])
@@ -284,9 +285,7 @@ async def test_cooldown_blocks_dispatch(mocker) -> None:
     D6: the guard is now _can_intervene_distraction (Lua) — no separate redis.exists call.
     We simulate the guard returning False (as it would when in cooldown or at the cap).
     """
-    _, mock_dispatch = _setup(
-        mocker, lrange_vals=["0.1", "0.2"], threshold=0.5, can_dispatch=False
-    )
+    _, mock_dispatch = _setup(mocker, lrange_vals=["0.1", "0.2"], threshold=0.5, can_dispatch=False)
 
     from app.modules.tutor.service import process_attention_signal
 
@@ -453,11 +452,16 @@ async def test_intervention_delivers_tutor_intervene_message(mocker) -> None:
     _, kwargs = mock_dispatch.call_args
     assert kwargs["payload"]["intervention_messages"]["distraction"][0] == "focus up"
 
+    # Bug fix: every attention signal now also emits a ces_update, so a fired
+    # intervention means TWO sends this window, not one -- find each by type
+    # rather than assuming call_args is the only/last call.
+    assert mock_manager.send.call_count == 2
+    sent_messages = [call.args[1] for call in mock_manager.send.call_args_list]
+    ces_sent = next(m for m in sent_messages if m["type"] == "ces_update")
+    assert ces_sent["payload"]["session_id"] == "sess-1"
+
     # The client received a ws.ts-shaped tutor_intervene message.
-    mock_manager.send.assert_called_once()
-    sid_arg, sent = mock_manager.send.call_args[0]
-    assert sid_arg == "sess-1"
-    assert sent["type"] == "tutor_intervene"
+    sent = next(m for m in sent_messages if m["type"] == "tutor_intervene")
     assert sent["payload"]["message"] == "focus up"
     assert sent["payload"]["type"] == "distraction"
     assert sent["payload"]["session_id"] == "sess-1"
@@ -487,7 +491,13 @@ async def test_intervention_no_delivery_on_cache_miss(mocker) -> None:
 
     result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
 
-    mock_manager.send.assert_not_called()
+    # Bug fix: ces_update is sent on every signal regardless of intervention
+    # delivery -- tutor_intervene is skipped here (cache miss, no message),
+    # but that must not suppress the (unrelated) ces_update send.
+    mock_manager.send.assert_called_once()
+    sid_arg, sent = mock_manager.send.call_args[0]
+    assert sid_arg == "sess-1"
+    assert sent["type"] == "ces_update"
     assert result.intervention_dispatched is True  # the intervention still fired in the FSM
 
 
@@ -1396,6 +1406,55 @@ def test_parse_signal_nonfinite_behavioral_score_raises() -> None:
 
 
 @pytest.mark.unit
+def test_parse_signal_out_of_range_optional_field_raises() -> None:
+    """SYNC-B range gate: optional float fields outside [0.0, 1.0] → ValueError.
+
+    Story 4-27 froze the wire scale to [0.0, 1.0] for all five signals.
+    _parse_signal must reject values like 1.5 or -0.1 at the entry gate so
+    producer bugs surface immediately rather than being silently clamped by ces.py.
+    """
+    for field in (
+        "quiz_accuracy",
+        "teachback_score",
+        "behavioral_score",
+        "head_pose_score",
+        "blink_rate",
+    ):
+        for bad_value in (1.001, -0.001, 99.0, -1.0):
+            payload = {
+                "session_id": "ses-range",
+                "quiz_accuracy": 0.8,
+                "teachback_score": None,
+                "behavioral_score": 1.0,
+                "head_pose_score": 0.7,
+                "blink_rate": 0.5,
+                field: bad_value,
+            }
+            with pytest.raises(ValueError, match=field):
+                _parse_signal(payload)
+
+
+@pytest.mark.unit
+def test_parse_signal_boundary_values_accepted() -> None:
+    """SYNC-B range gate: exact boundary values 0.0 and 1.0 must not raise.
+
+    The valid range is closed [0.0, 1.0] — both endpoints are legal.
+    """
+    for boundary in (0.0, 1.0):
+        payload = {
+            "session_id": "ses-boundary",
+            "quiz_accuracy": boundary,
+            "teachback_score": boundary,
+            "behavioral_score": boundary,
+            "head_pose_score": boundary,
+            "blink_rate": boundary,
+        }
+        result = _parse_signal(payload)
+        assert result.quiz_accuracy == boundary
+        assert result.behavioral_score == boundary
+
+
+@pytest.mark.unit
 def test_compute_ces_behavioral_none_redistributes_not_zero() -> None:
     """AC7: behavioral_score=None → weight redistributed, not treated as 0.0.
 
@@ -1503,7 +1562,7 @@ def test_compute_ces_partial_mediapipe_via_tutor_wrapper() -> None:
         teachback_score=None,
         behavioral_score=None,  # absent — tab API unavailable
         head_pose_score=0.8,
-        blink_rate=None,        # absent — MediaPipe not yet initialised
+        blink_rate=None,  # absent — MediaPipe not yet initialised
     )
 
     expected = canonical(

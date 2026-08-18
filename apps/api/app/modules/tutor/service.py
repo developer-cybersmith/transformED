@@ -77,6 +77,10 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
         # misleading value (NaN→100 = maximally engaged), silently suppressing interventions.
         if not math.isfinite(f):
             raise ValueError(f"attention_signal field {key!r} must be a finite number")
+        # Reject out-of-range: ws.ts SYNC-B freeze (Story 4-27) locks the scale to [0.0, 1.0].
+        # ces.py clamps downstream, but catching here surfaces producer bugs immediately.
+        if f < 0.0 or f > 1.0:
+            raise ValueError(f"attention_signal field {key!r} must be in [0.0, 1.0], got {f!r}")
         return f
 
     def _optional_float(key: str) -> float | None:
@@ -89,6 +93,12 @@ def _parse_signal(payload: dict[str, Any]) -> NormalizedSignal:
             raise ValueError(f"attention_signal field {key!r} must be numeric or null") from exc
         if not math.isfinite(f):
             raise ValueError(f"attention_signal field {key!r} must be a finite number or null")
+        # Reject out-of-range: ws.ts SYNC-B freeze (Story 4-27) locks the scale to [0.0, 1.0].
+        # ces.py clamps downstream, but catching here surfaces producer bugs immediately.
+        if f < 0.0 or f > 1.0:
+            raise ValueError(
+                f"attention_signal field {key!r} must be in [0.0, 1.0] or null, got {f!r}"
+            )
         return f
 
     return NormalizedSignal(
@@ -245,11 +255,14 @@ async def _delete_intervention_deadline_if_expired(session_id: str, redis: Redis
     import time as _time  # noqa: PLC0415
 
     try:
-        result = await redis.eval(
-            _DELETE_IF_EXPIRED_SCRIPT,
-            1,
-            f"session:{session_id}:intervention_deadline_at",
-            str(int(_time.time())),
+        result = await cast(
+            "Awaitable[str]",
+            redis.eval(
+                _DELETE_IF_EXPIRED_SCRIPT,
+                1,
+                f"session:{session_id}:intervention_deadline_at",
+                str(int(_time.time())),
+            ),
         )
         return bool(result)
     except Exception:  # noqa: BLE001
@@ -277,7 +290,12 @@ async def start_session(session_id: str) -> None:
 # admin-only; session_start has its own handler.
 # D63: intervention_complete added — the client dismissing an intervention overlay must be able to
 # drive INTERVENING → TEACHING. Previously omitted (not deliberately excluded like the events
-# above), which made route_from_intervening's only exit event undispatchable by anything.
+# above), which made route_from_intervening's only exit event undispatchable by anything:
+# TutorInterventionCard.tsx's dismiss (30s auto-dismiss and manual x) only cleared local React
+# state, never told the server, so every session's FIRST intervention permanently stuck the FSM in
+# INTERVENING — useAttentionMonitor.ts's flushWindow gates on `tutorStateRef.current ===
+# 'TEACHING'`, so CES monitoring silently died for the rest of the session.
+# TutorInterventionCard.tsx sends this event on dismiss.
 _CLIENT_DRIVABLE_EVENTS = frozenset(
     {
         "segment_complete",
@@ -442,25 +460,71 @@ async def process_attention_signal(
         # Only written when the signal is not None (MediaPipe may drop frames — S3-38 D13).
         # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
         if normalized.behavioral_score is not None:
-            await redis.lpush(
-                f"session:{session_id}:behavioral_history", normalized.behavioral_score
+            await cast(
+                "Awaitable[int]",
+                redis.lpush(
+                    f"session:{session_id}:behavioral_history", normalized.behavioral_score
+                ),
             )
-            await redis.ltrim(
-                f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1
+            await cast(
+                "Awaitable[str]",
+                redis.ltrim(f"session:{session_id}:behavioral_history", 0, _CES_HISTORY_MAX - 1),
             )
             await redis.expire(f"session:{session_id}:behavioral_history", _CES_WINDOW_TTL)  # D64
         if normalized.head_pose_score is not None:
-            await redis.lpush(
-                f"session:{session_id}:head_pose_history", normalized.head_pose_score
+            await cast(
+                "Awaitable[int]",
+                redis.lpush(f"session:{session_id}:head_pose_history", normalized.head_pose_score),
             )
-            await redis.ltrim(
-                f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1
+            await cast(
+                "Awaitable[str]",
+                redis.ltrim(f"session:{session_id}:head_pose_history", 0, _CES_HISTORY_MAX - 1),
             )
             await redis.expire(f"session:{session_id}:head_pose_history", _CES_WINDOW_TTL)  # D64
         if normalized.blink_rate is not None:
-            await redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate)
-            await redis.ltrim(f"session:{session_id}:blink_history", 0, _CES_HISTORY_MAX - 1)
+            await cast(
+                "Awaitable[int]",
+                redis.lpush(f"session:{session_id}:blink_history", normalized.blink_rate),
+            )
+            await cast(
+                "Awaitable[str]",
+                redis.ltrim(f"session:{session_id}:blink_history", 0, _CES_HISTORY_MAX - 1),
+            )
             await redis.expire(f"session:{session_id}:blink_history", _CES_WINDOW_TTL)  # D64
+
+        # Bug fix: nothing anywhere ever sent the frozen `ces_update` message
+        # (packages/shared/types/ws.ts) -- the frontend's CESIndicator has always
+        # had complete, correct handling for it (useLessonSocket.ts's 'ces_update'
+        # case), but this function only ever emitted `attention_ack` (no score,
+        # deliberately, per PRD §18) and `tutor_intervene` (only when an
+        # intervention actually fires). `compute_ces` returns the 0-100 scale
+        # (PRD §11) but useLessonSocket.ts's ces_update handler validates
+        # `ces in [0,1]` and silently drops anything outside that range -- scaled
+        # by /100 here to match what the frontend expects. window_index must be
+        # monotonically increasing per session (the frontend rejects an
+        # out-of-order frame) -- a dedicated counter, not history length, since
+        # history is capped at _CES_HISTORY_MAX and would not keep increasing
+        # past that. Gated inside `state_raw == "TEACHING"` — CLAUDE.md §10.
+        try:
+            from app.core.websocket import manager  # noqa: PLC0415
+
+            window_index = await cast(
+                "Awaitable[int]", redis.incr(f"session:{session_id}:ces_window_index")
+            )
+            await redis.expire(f"session:{session_id}:ces_window_index", _CES_WINDOW_TTL)
+            await manager.send(
+                session_id,
+                {
+                    "type": "ces_update",
+                    "payload": {
+                        "session_id": session_id,
+                        "ces": ces / 100.0,
+                        "window_index": window_index,
+                    },
+                },
+            )
+        except Exception:
+            logger.exception("ces_update delivery failed for %s", session_id)
 
         # Read history to evaluate the intervention trigger.
         # BOUNDED: ltrim cap of _CES_HISTORY_MAX=10 applied at write time.
@@ -533,9 +597,7 @@ async def process_attention_signal(
                                 },
                             )
                         except Exception:
-                            logger.exception(
-                                "tutor_intervene delivery failed for %s", session_id
-                            )
+                            logger.exception("tutor_intervene delivery failed for %s", session_id)
 
     # ── Fatigue trigger (D7, S3-45) ──────────────────────────────────────────
     # Only evaluate when TEACHING and no intervention already dispatched this signal.
@@ -571,13 +633,9 @@ async def process_attention_signal(
                 )
                 primary_trigger = (
                     len(blink_hist) >= 2
-                    and all(
-                        float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist
-                    )
+                    and all(float(v) < settings.ces_fatigue_blink_threshold for v in blink_hist)
                     and len(hp_hist) >= 2
-                    and all(
-                        float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist
-                    )
+                    and all(float(v) < settings.ces_fatigue_head_pose_threshold for v in hp_hist)
                 )
                 exhaustion_fallback = (
                     normalized.blink_rate is None
@@ -605,9 +663,7 @@ async def process_attention_signal(
                         )
                         intervention_dispatched = True
                         fatigue_msg = fatigue_result.get("intervention_message")
-                        if (
-                            fatigue_result.get("current_state") == "INTERVENING" and fatigue_msg
-                        ):
+                        if fatigue_result.get("current_state") == "INTERVENING" and fatigue_msg:
                             try:
                                 from app.core.websocket import manager  # noqa: PLC0415
 

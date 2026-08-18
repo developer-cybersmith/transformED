@@ -1,31 +1,52 @@
 name: Deploy
 
+# Runs after CI succeeds on main -- a bare `push` trigger (the old Railway
+# version of this file) would deploy code that hasn't passed lint/type-check/
+# tests. workflow_dispatch stays as a manual escape hatch (e.g. re-deploying
+# after a secrets-only change with no new commit).
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   deploy:
-    name: Deploy to Railway
+    name: Deploy hie-api (API + worker) to Fly.io
     runs-on: ubuntu-latest
-    needs: []
+    # workflow_dispatch always runs; a CI-triggered run only proceeds if CI
+    # actually passed -- a failed/cancelled CI run must never reach deploy.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    concurrency:
+      group: deploy-hie-api
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Deploy the exact commit CI just verified, not whatever main points
+          # to when this job happens to start (they can differ if another
+          # push landed in between).
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      # Pinned 2026-08-17: "latest" (0.4.83) fails every deploy from this
+      # runner with "Error: Authenticate: token validation error" against a
+      # deploy-scoped token that works fine locally on 0.4.77 and via a
+      # direct `flyctl deploy` from a dev machine -- confirmed a flyctl
+      # regression, not a bad token (same token, same secret, only the
+      # flyctl version differs between the failing and working case).
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+        with:
+          version: 0.4.77
 
-      - name: Deploy API service
-        run: railway up --service api --detach
+      # fly.toml (repo root) declares app = "hie-api" with both the api and
+      # worker process groups -- one deploy covers both (ADR-001 sec3). Run
+      # from repo root: the Dockerfile's COPY paths assume that as the build
+      # context (2026-08-14 fix, see apps/api/Dockerfile's comment).
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-      - name: Deploy Worker service
-        run: railway up --service worker --detach
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-      - name: Deploy Web service
-        run: railway up --service web --detach
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
