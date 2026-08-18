@@ -50,17 +50,20 @@ def _build_supabase(*, tb_rows: list, quiz_rows: list | None = None) -> MagicMoc
             _ms.return_value.data = tier_row
         elif n == 3:
             # quiz_attempts: .select(...).eq(...).limit(500).execute()
-            m.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = quiz_rows
+            _qlim = m.select.return_value.eq.return_value.limit.return_value
+            _qlim.execute.return_value.data = quiz_rows
         elif n == 4:
-            # teachback_attempts: .select(...).eq(...).order(...).limit(50).execute() — Story 2-48
-            m.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = tb_rows
+            # teachback_attempts: .select(...).eq(...).order(...).limit(50).execute()
+            _tord = m.select.return_value.eq.return_value.order.return_value
+            _tord.limit.return_value.execute.return_value.data = tb_rows
         elif n == 5:
             _s2.return_value.count = 0
         elif n == 6:
             _ms.return_value.data = None
         elif n == 7:
             _s2.return_value.data = []
-            m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+            _dlim = m.select.return_value.eq.return_value.eq.return_value.limit.return_value
+            _dlim.execute.return_value.data = []
         return m
 
     mock.table.side_effect = _table

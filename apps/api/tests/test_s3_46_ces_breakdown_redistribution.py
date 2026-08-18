@@ -522,11 +522,12 @@ def _build_minimal_supabase(*, quiz_rows: list, tb_rows: list) -> MagicMock:
         elif n == 3:
             # quiz_attempts: .select(...).eq(...).limit(500).execute()
             _s.return_value.data = quiz_rows
-            _lim = m.select.return_value.eq.return_value.limit.return_value.execute
-            _lim.return_value.data = quiz_rows
+            _qlim = m.select.return_value.eq.return_value.limit.return_value
+            _qlim.execute.return_value.data = quiz_rows
         elif n == 4:
-            # teachback_attempts: .select(...).eq(...).order(...).limit(50).execute() — Story 2-48
-            m.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = tb_rows
+            # teachback_attempts: .select(...).eq(...).order(...).limit(50).execute()
+            _tord = m.select.return_value.eq.return_value.order.return_value
+            _tord.limit.return_value.execute.return_value.data = tb_rows
         elif n == 5:
             _s2.return_value.count = 0
         elif n == 6:
@@ -534,8 +535,8 @@ def _build_minimal_supabase(*, quiz_rows: list, tb_rows: list) -> MagicMock:
         elif n == 7:
             # session_events/dna_update: .select(...).eq(...).eq(...).limit(20).execute()
             _s2.return_value.data = []
-            _lim2 = m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute
-            _lim2.return_value.data = []
+            _dlim = m.select.return_value.eq.return_value.eq.return_value.limit.return_value
+            _dlim.execute.return_value.data = []
         return m
 
     mock.table.side_effect = _table
