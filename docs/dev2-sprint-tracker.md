@@ -1652,10 +1652,10 @@ Use a lightweight chart library (recharts or a canvas-based solution) — no D3 
 
 ### S3-06 — Reports Page
 **Priority:** P1  
-**Status:** 🔲 NOT STARTED — **unblocked 2026-08-10**, same as S3-05 above.  
+**Status:** 🟡 PARTIAL — 2026-08-18. Attention timeline chart shipped separately as Story 2-46/S3-05 (done). Teach-back summary detail: frontend half done, backend half handed off to Dev 3 (blocked, not started).  
 **Files:** `src/app/reports/[sessionId]/page.tsx`, `src/components/reports/SessionReport.tsx` (route corrected 2026-07-04 during S2-04 — expand v1 from Sprint 2, not `src/app/reports/page.tsx`)
 
-Add: Attention timeline chart (once MediaPipe/attention data exists), teach-back summary detail. Note: "quiz accuracy by segment" is not buildable as scoped — the real backend's `GET /api/assessment/session/{id}/report` only returns one session-level `quiz_score`, no per-segment breakdown (see S2-04 Dev Notes) — would need a new/extended Dev 3 endpoint first.
+Teach-back summary detail: Story `2-48-teachback-summary-detail.md`, branch `sprint3/s3-06-teachback-detail`. The real report endpoint already reads `teachback_attempts` but only selects the aggregate `score` — the richer per-attempt columns (`feedback_praise`, `feedback_correction`, `concepts_hit`, `concepts_missed`) are already persisted and just need exposing. Per the current team-boundary rule (Dev 2 does not touch `apps/api`), the backend extension was **not implemented here** — spec'd instead in `docs/handoffs/dev2-to-dev3-teachback-detail-handoff-2026-08-18.md` for Dev 3. Frontend (`types/assessment.ts`'s `TeachbackDetail`, `SessionReport.tsx`'s new `TeachbackDetailSection`) is fully built and tested against that agreed contract — will wire up with zero further frontend changes once Dev 3 ships the backend half. Note: "quiz accuracy by segment" remains explicitly not buildable as scoped (see S2-04 Dev Notes) — separate from this item, still needs its own Dev 3 endpoint if ever prioritized.
 
 ---
 
