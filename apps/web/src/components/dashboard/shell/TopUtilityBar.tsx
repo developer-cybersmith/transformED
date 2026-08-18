@@ -40,7 +40,8 @@ export function TopUtilityBar() {
 
     // Sidebar (the only place these routes were reachable from) is `hidden
     // lg:flex` with no mobile equivalent -- below lg a logged-in user had no
-    // way to reach Dashboard/Library/Upload/Reports except typing the URL.
+    // way to reach Dashboard/Books/Upload/Reports except typing the URL.
+    // (Story 2-47 (S4-06): the Library nav entry was removed, folded into Books.)
     useEffect(() => {
         if (!isMobileNavOpen) return;
 

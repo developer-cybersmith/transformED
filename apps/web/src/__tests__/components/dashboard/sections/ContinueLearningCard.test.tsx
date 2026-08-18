@@ -30,13 +30,13 @@ describe('ContinueLearningCard', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('"View Path" navigates to /library', async () => {
+  it('"View Path" navigates to /books (Story 2-47: /library removed)', async () => {
     const user = userEvent.setup();
     render(<ContinueLearningCard lesson={LESSON} />);
 
     await user.click(screen.getByText('View Path'));
 
-    expect(pushMock).toHaveBeenCalledWith('/library');
+    expect(pushMock).toHaveBeenCalledWith('/books');
   });
 
   it('shows a "Ready to continue" state instead of a fabricated progress percentage', () => {

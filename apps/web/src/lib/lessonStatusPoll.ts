@@ -1,8 +1,9 @@
 import type { LessonStatusResponse } from '@/services/upload.service';
 
-// S2-27: shared between useLibrary/useDashboard so a lesson that finishes
-// generating while either page is open actually shows up without a manual
-// refresh/navigation (SWR only refetches on remount/tab-refocus by default).
+// S2-27: shared across pages that poll lesson status (useDashboard, useBooks)
+// so a lesson that finishes generating while one is open actually shows up
+// without a manual refresh/navigation (SWR only refetches on remount/tab-
+// refocus by default).
 export const LESSON_STATUS_POLL_INTERVAL_MS = 8000;
 
 // Review fix: without a ceiling, a genuinely-stuck backend job (separately

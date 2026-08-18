@@ -424,6 +424,70 @@ describe('AudioTimeline — segment replay does not freeze playback', () => {
   });
 });
 
+describe('AudioTimeline — review fix: resuming PLAYING on an already-ended last segment must not replay it', () => {
+  it('calls handleEnded() (ending the lesson) instead of audio.play() when exitTeachBack() resumes PLAYING on an already-ended last segment', () => {
+    // Reproduces a real, live-verified bug: exitTeachBack() on the LAST
+    // segment sets status back to PLAYING expecting the real <audio> element's
+    // `ended` event to fire again and drive endLesson() -- but by teach-back
+    // time this segment's audio has already reached its natural end, and
+    // per the HTML media spec, .play() on an already-ended element SEEKS
+    // BACK TO THE START, replaying the whole segment (indistinguishable from
+    // "the lesson restarted" on a single-segment lesson).
+    const sendControl = vi.fn();
+    const lastIndex = mockLessonPackage.segments.length - 1;
+    const lastSegmentId = mockLessonPackage.segments[lastIndex].segment_id;
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: lastIndex,
+      quizFiredForSegment: new Set([lastSegmentId]), // teach-back already completed for this segment
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+    playMock.mockClear(); // drop the initial-mount play() call
+
+    // Simulate the real browser state at the moment exitTeachBack() resumes
+    // PLAYING: this segment's audio already reached its end.
+    Object.defineProperty(audio, 'ended', { configurable: true, value: true });
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED' });
+    });
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+
+    // Must end the lesson via handleEnded(), NOT replay the audio from 0.
+    expect(playMock).not.toHaveBeenCalled();
+    expect(sendControl).toHaveBeenCalledWith({ type: 'lesson_complete' });
+    expect(usePlayerStore.getState().status).toBe('ENDED');
+  });
+
+  it('still calls audio.play() as normal when resuming PLAYING on a segment that has NOT yet ended', () => {
+    // Guards against an over-broad fix that skips play() whenever the quiz
+    // already fired -- the gate must be `audio.ended`, not quiz-fired state.
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PAUSED',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+    Object.defineProperty(audio, 'ended', { configurable: true, value: false });
+    playMock.mockClear();
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+
+    expect(playMock).toHaveBeenCalled();
+    expect(sendControl).not.toHaveBeenCalled();
+  });
+});
+
 describe('AudioTimeline — buffering / error / retry (S2-26)', () => {
   it('sets isBuffering(true) on the "waiting" event', () => {
     usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });

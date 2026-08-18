@@ -19,10 +19,10 @@ beforeEach(() => {
 
 describe('Sidebar — main navigation', () => {
   it('exposes a /books entry (W2 AC9) alongside the existing destinations', () => {
+    // Story 2-47 (S4-06): /library removed, folded into /books.
     expect(mainNavItems.map((item) => item.href)).toEqual([
       '/dashboard',
       '/books',
-      '/library',
       '/upload',
       '/reports',
     ]);
