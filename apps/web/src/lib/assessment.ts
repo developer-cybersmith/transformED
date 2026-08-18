@@ -97,11 +97,56 @@ export async function createSession(payload: CreateSessionPayload): Promise<Sess
   return data;
 }
 
+// Matches apps/api/app/modules/assessment/schemas.py::SessionCompleted exactly.
+export interface SessionCompleted {
+  session_id: string;
+  ended_at: string;
+}
+
+// Call exactly once, when the player reaches its terminal ENDED status.
+// Idempotent server-side (writes sessions.ended_at only if still null) -- see
+// complete_session's docstring in service.py -- so a duplicate call (retry,
+// StrictMode double-invoke) is harmless, but this should still only be fired
+// once per real completion, not on every render.
+export async function completeSession(sessionId: string): Promise<SessionCompleted> {
+  const { data } = await api.post<SessionCompleted>(
+    `/assessment/session/${encodeURIComponent(sessionId)}/complete`
+  );
+  return data;
+}
+
 // ── Session report ──────────────────────────────────────────────────────────
 
 export async function getSessionReport(sessionId: string): Promise<SessionReport> {
   const { data } = await api.get<SessionReport>(
     `/assessment/session/${encodeURIComponent(sessionId)}/report`
   );
+  return data;
+}
+
+// ── DPDP consent (Story 3-32 / D29) ─────────────────────────────────────────
+
+export interface RecordConsentPayload {
+  consent_type: 'attention_tracking' | 'learner_dna';
+  policy_version: string;
+}
+
+// Matches apps/api/app/modules/assessment/schemas.py::ConsentRecord exactly.
+export interface ConsentRecord {
+  id: string;
+  user_id: string;
+  consent_type: string;
+  policy_version: string;
+  consented_at: string | null;
+}
+
+// POST /api/assessment/consent is the ONLY writer to public.user_consents
+// (Story 3-32, docstring of record_consent_endpoint) -- it does INSERT-first
+// idempotency server-side under a unique constraint on (user_id,
+// consent_type, policy_version). Never insert into user_consents directly
+// from the client; a raw client insert has no idempotency handling and will
+// throw a duplicate-key error on a repeat call (double-click, retry).
+export async function recordConsent(payload: RecordConsentPayload): Promise<ConsentRecord> {
+  const { data } = await api.post<ConsentRecord>('/assessment/consent', payload);
   return data;
 }

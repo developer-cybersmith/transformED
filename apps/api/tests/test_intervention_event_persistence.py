@@ -31,12 +31,10 @@ Binding rule (DEFECT-REGISTER.md rule 2): every mock is accompanied by a comment
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -393,12 +391,7 @@ async def test_redis_miss_triggers_db_count_reconstruction():
     count_resp = MagicMock()
     count_resp.count = 2
     (
-        supabase.table.return_value
-        .select.return_value
-        .eq.return_value
-        .eq.return_value
-        .eq.return_value
-        .execute.return_value
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value
     ) = count_resp
 
     with patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()):
@@ -436,7 +429,10 @@ async def test_frustration_tolerance_decrements_when_intervention_count_is_2():
     Formula: 100 - (2/3)*100 = 33.33 -- strictly below the 50.0 neutral baseline.
     Tests the production _compute_signals function -- NOT a mock.
     """
-    from app.modules.assessment.dna_fusion import _INTERVENTION_CAP, _compute_signals  # noqa: PLC0415
+    from app.modules.assessment.dna_fusion import (  # noqa: PLC0415
+        _INTERVENTION_CAP,
+        _compute_signals,
+    )
 
     event_counts = {"intervention_triggered": 2}
     signals = _compute_signals(quiz_rows=[], tb_rows=[], event_counts=event_counts)

@@ -359,8 +359,7 @@ def test_the_read_scanner_tells_the_dead_scalar_from_the_live_embed() -> None:
     # Resolved through a module-level constant, which is how the real code
     # writes it — an inline-literal-only scanner would miss `_CHAPTER_COLUMNS`.
     via_constant = (
-        '_COLS = "chapter_id,lesson_id"\n'
-        'supabase.table("chapters").select(_COLS).execute()\n'
+        '_COLS = "chapter_id,lesson_id"\nsupabase.table("chapters").select(_COLS).execute()\n'
     )
     assert _reads_scalar_chapter_lesson_id(via_constant), (
         "scanner does not follow a module-level select-list constant"

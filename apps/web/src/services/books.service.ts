@@ -72,6 +72,15 @@ export interface ChapterResponse {
     lesson_count: number;
     /** Added in 1.1.0. null exactly when lesson_count is 0. */
     latest_lesson: LatestLesson | null;
+    /**
+     * Added in 1.3.0 (Story 2-47). EVERY lesson for this chapter (all tiers,
+     * all states), newest-first. [] (never absent) when lesson_count is 0.
+     * Capped at 20 entries server-side as a safety ceiling — lesson_count
+     * keeps reporting the true total even past the cap, so `lesson_count >
+     * lessons.length` is possible and means "more exist than shown", not an
+     * inconsistency to paper over.
+     */
+    lessons: LatestLesson[];
 }
 
 /**
@@ -82,9 +91,23 @@ export interface ChapterResponse {
  * non-null `lesson_id`; linking to it produces a button that 404s the player.
  * Returns the lesson id that is safe to open, or null.
  */
+/**
+ * Single source of truth for "is this lesson safe to link to" -- a lesson
+ * that failed or is still generating must never earn a Watch link, whether
+ * it is the chapter's `latest_lesson` or one of the non-latest entries in
+ * `lessons` (Story 2-47 / S4-06). Extracted during that story's
+ * `/bmad-code-review` after `ChapterRow.tsx` shipped a second, independent
+ * copy of this exact rule -- if this gate is ever extended (e.g. an
+ * entitlement check), a duplicate copy would silently keep the old, narrower
+ * rule for every non-latest entry.
+ */
+export function isLessonWatchable(lesson: Pick<LatestLesson, 'status'> | null | undefined): boolean {
+    return lesson != null && lesson.status === 'ready';
+}
+
 export function watchableLessonId(chapter: Pick<ChapterResponse, 'latest_lesson'>): string | null {
     const latest = chapter.latest_lesson;
-    return latest != null && latest.status === 'ready' ? latest.lesson_id : null;
+    return latest != null && isLessonWatchable(latest) ? latest.lesson_id : null;
 }
 
 /**

@@ -10,6 +10,7 @@ Gap B (AC 4): D4 timestamp gap-check non-dispatch path — stale entries with
 Gap C (AC 5-6): Non-TEACHING state guard tests — dispatch_event and lpush
   must never be called when state is QUIZZING or INTERVENING.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -20,8 +21,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ── Shared settings helper (mirrors test_s3_45_fatigue_trigger.py) ─────────────
+
 
 def _mock_settings(**overrides: Any) -> MagicMock:
     s = MagicMock()
@@ -43,7 +44,7 @@ def _mock_settings(**overrides: Any) -> MagicMock:
 
 
 _NORMAL_SIGNAL = {
-    "session_id": "ses-52",       # _parse_signal reads session_id from the dict
+    "session_id": "ses-52",  # _parse_signal reads session_id from the dict
     "quiz_accuracy": 0.5,
     "behavioral_score": 0.7,
     "head_pose_score": 0.8,
@@ -67,7 +68,8 @@ def test_can_intervene_fatigue_source_checks_cooldown_key():
 
     src = inspect.getsource(_can_intervene_fatigue)
     assert "tutor_cooldown" in src, (
-        "_can_intervene_fatigue must check the cooldown key (PRD §10: 2-min gap after any intervention)"
+        "_can_intervene_fatigue must check the cooldown key "
+        "(PRD §10: 2-min gap after any intervention)"
     )
 
 
@@ -107,14 +109,12 @@ async def test_can_intervene_fatigue_blocked_by_active_cooldown():
     from app.modules.tutor.state_machine.graph import _can_intervene_fatigue  # noqa: PLC2701
 
     redis = AsyncMock()
-    redis.exists = AsyncMock(return_value=1)   # cooldown key present
-    redis.set = AsyncMock(return_value="OK")   # should NOT be reached
+    redis.exists = AsyncMock(return_value=1)  # cooldown key present
+    redis.set = AsyncMock(return_value="OK")  # should NOT be reached
 
     result = await _can_intervene_fatigue("ses-52-cooldown", redis=redis)
 
-    assert result is False, (
-        "_can_intervene_fatigue must return False when cooldown key exists"
-    )
+    assert result is False, "_can_intervene_fatigue must return False when cooldown key exists"
     redis.set.assert_not_called()
 
 
@@ -130,8 +130,8 @@ async def test_can_intervene_fatigue_allowed_after_cooldown_expires():
     from app.modules.tutor.state_machine.graph import _can_intervene_fatigue  # noqa: PLC2701
 
     redis = AsyncMock()
-    redis.exists = AsyncMock(return_value=0)    # cooldown clear
-    redis.set = AsyncMock(return_value="OK")    # SET NX succeeds (key was absent)
+    redis.exists = AsyncMock(return_value=0)  # cooldown clear
+    redis.set = AsyncMock(return_value="OK")  # SET NX succeeds (key was absent)
 
     result = await _can_intervene_fatigue("ses-52-ok", redis=redis)
 
@@ -153,13 +153,14 @@ async def test_can_intervene_fatigue_blocked_when_flag_already_set():
     from app.modules.tutor.state_machine.graph import _can_intervene_fatigue  # noqa: PLC2701
 
     redis = AsyncMock()
-    redis.exists = AsyncMock(return_value=0)   # cooldown clear
-    redis.set = AsyncMock(return_value=None)    # SET NX fails — key pre-existed
+    redis.exists = AsyncMock(return_value=0)  # cooldown clear
+    redis.set = AsyncMock(return_value=None)  # SET NX fails — key pre-existed
 
     result = await _can_intervene_fatigue("ses-52-flag-set", redis=redis)
 
     assert result is False, (
-        "_can_intervene_fatigue must return False when SET-NX fails (once-per-session already fired)"
+        "_can_intervene_fatigue must return False when SET-NX fails "
+        "(once-per-session already fired)"
     )
 
 
@@ -189,7 +190,7 @@ async def test_distraction_not_dispatched_when_timestamps_are_stale():
         if "tutor_state" in key:
             return "TEACHING"
         if "session_start_ts" in key:
-            return None   # skip fatigue path for this test
+            return None  # skip fatigue path for this test
         return None
 
     async def fake_lrange(key: str, start: int, end: int):
@@ -211,7 +212,10 @@ async def test_distraction_not_dispatched_when_timestamps_are_stale():
         patch("app.config.get_settings", return_value=_mock_settings()),
         patch("app.core.redis.get_redis", return_value=mock_redis),
         patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch),
-        patch("app.modules.tutor.service._segment_intervention_messages", AsyncMock(return_value={})),
+        patch(
+            "app.modules.tutor.service._segment_intervention_messages",
+            AsyncMock(return_value={}),
+        ),
     ):
         result = await process_attention_signal(
             session_id="ses-52-gap",
@@ -267,7 +271,10 @@ async def test_dispatch_event_not_called_in_quizzing_state_with_low_ces():
         patch("app.config.get_settings", return_value=_mock_settings()),
         patch("app.core.redis.get_redis", return_value=mock_redis),
         patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch),
-        patch("app.modules.tutor.service._segment_intervention_messages", AsyncMock(return_value={})),
+        patch(
+            "app.modules.tutor.service._segment_intervention_messages",
+            AsyncMock(return_value={}),
+        ),
     ):
         result = await process_attention_signal(
             session_id="ses-52-quiz",
@@ -316,7 +323,10 @@ async def test_dispatch_event_not_called_in_intervening_state_with_low_ces():
         patch("app.config.get_settings", return_value=_mock_settings()),
         patch("app.core.redis.get_redis", return_value=mock_redis),
         patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch),
-        patch("app.modules.tutor.service._segment_intervention_messages", AsyncMock(return_value={})),
+        patch(
+            "app.modules.tutor.service._segment_intervention_messages",
+            AsyncMock(return_value={}),
+        ),
     ):
         result = await process_attention_signal(
             session_id="ses-52-intervene",
@@ -359,7 +369,10 @@ async def test_per_signal_lpush_not_called_when_state_is_quizzing():
         patch("app.config.get_settings", return_value=_mock_settings()),
         patch("app.core.redis.get_redis", return_value=mock_redis),
         patch("app.modules.tutor.state_machine.graph.dispatch_event", AsyncMock(return_value={})),
-        patch("app.modules.tutor.service._segment_intervention_messages", AsyncMock(return_value={})),
+        patch(
+            "app.modules.tutor.service._segment_intervention_messages",
+            AsyncMock(return_value={}),
+        ),
     ):
         await process_attention_signal(
             session_id="ses-52-lpush",

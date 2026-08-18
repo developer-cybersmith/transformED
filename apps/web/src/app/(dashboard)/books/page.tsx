@@ -25,8 +25,8 @@ export default function BooksPage() {
 
             {/* A background poll failure must not hide books the student can
                 already see -- SWR keeps the last good `data` alongside a
-                transient `error`. Same banner-plus-stale-data pattern as
-                library/page.tsx. */}
+                transient `error`. Same banner-plus-stale-data pattern used
+                on the dashboard's own poll-failure handling. */}
             {!isLoading && error != null && data && (
                 <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3 text-sm text-red-600 mb-6">
                     We couldn&apos;t refresh your books just now. Showing your last known results.

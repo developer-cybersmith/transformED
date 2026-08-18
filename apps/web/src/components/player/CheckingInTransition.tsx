@@ -41,9 +41,9 @@ export function CheckingInTransition() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none bg-primary-dark/90 backdrop-blur-sm"
+      className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none bg-white/90 backdrop-blur-sm"
     >
-      <p className="font-serif text-white text-lg">Checking in…</p>
+      <p className="font-serif text-neutral-900 text-lg">Checking in…</p>
     </motion.div>
   );
 }

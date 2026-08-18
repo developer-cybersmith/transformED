@@ -53,7 +53,14 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
     collectedAnswers.current = [...collectedAnswers.current, answer];
     setSubmitted(true);
 
-    if (isLast && lesson && segment) {
+    // Bug fix: sessionId can still be '' here -- mintSession (Player.tsx) is
+    // async with retries, and a short first segment's quiz can fire before it
+    // resolves. Submitting '' as session_id isn't just silently ignored --
+    // Postgres rejects it outright (22P02 invalid input syntax for type uuid),
+    // a real 500 on every such attempt. Skip the call entirely rather than
+    // send a request guaranteed to fail; the student experience (no result
+    // shown) is unchanged from the existing catch-and-ignore path below.
+    if (isLast && lesson && segment && sessionId) {
       setIsSubmitting(true);
       try {
         const quizResult = await submitQuiz({
@@ -87,24 +94,24 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
 
     if (!submitted) {
       return base + (selectedIndex === idx
-        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-white'
-        : 'border-white/10 bg-white/5 text-neutral-300 hover:border-white/25 hover:text-white');
+        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/10 text-neutral-900'
+        : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-neutral-300 hover:text-neutral-900');
     }
 
     if (idx === question.correct_index) {
-      return base + 'border-emerald-500 bg-emerald-500/10 text-emerald-300';
+      return base + 'border-emerald-500 bg-emerald-500/10 text-emerald-700';
     }
     if (idx === selectedIndex) {
-      return base + 'border-red-500 bg-red-500/10 text-red-300';
+      return base + 'border-red-500 bg-red-500/10 text-red-700';
     }
-    return base + 'border-white/5 bg-white/[0.02] text-neutral-500';
+    return base + 'border-neutral-100 bg-neutral-50/50 text-neutral-400';
   }
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-white/80 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-white border border-neutral-200 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="px-6 pt-6 pb-4 border-b border-white/5">
+        <div className="px-6 pt-6 pb-4 border-b border-neutral-100">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider">
               Quick Check
@@ -115,7 +122,7 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
               </span>
             )}
           </div>
-          <p className="font-serif text-white text-lg font-medium leading-snug">
+          <p className="font-serif text-neutral-900 text-lg font-medium leading-snug">
             {question.question}
           </p>
         </div>
@@ -142,8 +149,8 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
           <div className={[
             'mx-6 mb-4 px-4 py-3 rounded-xl text-sm',
             isCorrect
-              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
-              : 'bg-red-500/10 text-red-300 border border-red-500/20',
+              ? 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/30'
+              : 'bg-red-500/10 text-red-700 border border-red-500/30',
           ].join(' ')}>
             <span className="font-semibold mr-1">{isCorrect ? 'Correct!' : 'Not quite.'}</span>
             {question.explanation}
@@ -152,15 +159,15 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
 
         {/* Score summary — shown after last question API returns */}
         {result && (
-          <div className="mx-6 mb-4 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm space-y-1">
-            <p className="text-white font-semibold">
+          <div className="mx-6 mb-4 px-4 py-3 rounded-xl bg-neutral-50 border border-neutral-200 text-sm space-y-1">
+            <p className="text-neutral-900 font-semibold">
               {result.correct_count}/{result.total_count} correct
-              <span className="text-neutral-400 font-normal ml-2">
+              <span className="text-neutral-500 font-normal ml-2">
                 ({Math.round(result.score)}%)
               </span>
             </p>
             {result.feedback.map((f) => (
-              <p key={f.question_id} className={f.is_correct ? 'text-emerald-400' : 'text-red-400'}>
+              <p key={f.question_id} className={f.is_correct ? 'text-emerald-700' : 'text-red-700'}>
                 {f.explanation}
               </p>
             ))}

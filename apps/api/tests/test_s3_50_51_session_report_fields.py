@@ -11,6 +11,7 @@ S3-51 AC coverage:
   AC2 — value equals count of intervention_triggered events
   AC3 — 0 when no interventions
 """
+
 from __future__ import annotations
 
 import inspect
@@ -18,7 +19,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -52,9 +52,7 @@ def test_ces_history_summary_field_on_session_report_model():
     # Check via model_fields (Pydantic v2)
     fields = SessionReport.model_fields
     assert "ces_history_summary" in fields, "ces_history_summary missing from SessionReport"
-    assert fields["ces_history_summary"].default is None, (
-        "ces_history_summary must default to None"
-    )
+    assert fields["ces_history_summary"].default is None, "ces_history_summary must default to None"
 
 
 # ── S3-50 AC 2 — populated from Redis ces_history ────────────────────────────
@@ -82,16 +80,21 @@ async def test_ces_history_summary_computed_from_redis():
         patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()),
         patch("app.core.db.single_row", return_value=session_row),
         patch("app.core.db.rows", return_value=[]),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35, ces_weight_teachback=0.25, ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12, ces_weight_blink=0.08,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+            ),
+        ),
     ):
-        from app.modules.assessment.router import SessionReport as _SR  # noqa: N811
-
         # Patch the DB-accessing parts by patching the supabase calls
-        supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
-        supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[], count=0)
+        select_eq = supabase.table.return_value.select.return_value.eq.return_value
+        select_eq.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
+        select_eq.execute.return_value = MagicMock(data=[], count=0)
 
         result = await get_session_report(
             session_id="ses-50",
@@ -118,13 +121,23 @@ def test_ces_history_summary_is_none_when_redis_not_provided():
 
     # Build a minimal SessionReport with redis=None path result
     report = SessionReport(
-        session_id="s", user_id="u", lesson_id="l",
-        ces_score=0.0, ces_breakdown={}, interventions_count=0,
-        quiz_score=None, teachback_score=None,
-        duration_minutes=0.0, completed_at=None,
-        tier="T2", tier_label="Standard",
-        quiz_total_questions=0, quiz_correct_count=0, quiz_accuracy_label=None,
-        formula_applied="full_5_signal", signal_coverage=5,
+        session_id="s",
+        user_id="u",
+        lesson_id="l",
+        ces_score=0.0,
+        ces_breakdown={},
+        interventions_count=0,
+        quiz_score=None,
+        teachback_score=None,
+        duration_minutes=0.0,
+        completed_at=None,
+        tier="T2",
+        tier_label="Standard",
+        quiz_total_questions=0,
+        quiz_correct_count=0,
+        quiz_accuracy_label=None,
+        formula_applied="full_5_signal",
+        signal_coverage=5,
         ces_history_summary=None,  # AC3: None when redis is absent
         intervention_messages_used=0,
     )
@@ -155,13 +168,20 @@ async def test_ces_history_summary_values_rounded_to_2dp():
         patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()),
         patch("app.core.db.single_row", return_value=session_row),
         patch("app.core.db.rows", return_value=[]),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35, ces_weight_teachback=0.25, ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12, ces_weight_blink=0.08,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+            ),
+        ),
     ):
-        supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
-        supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[], count=0)
+        select_eq = supabase.table.return_value.select.return_value.eq.return_value
+        select_eq.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
+        select_eq.execute.return_value = MagicMock(data=[], count=0)
 
         result = await get_session_report(
             session_id="ses-50b",
@@ -207,13 +227,23 @@ def test_intervention_messages_used_equals_interventions_count():
     from app.modules.assessment.router import SessionReport
 
     report = SessionReport(
-        session_id="s", user_id="u", lesson_id="l",
-        ces_score=0.0, ces_breakdown={}, interventions_count=3,
-        quiz_score=None, teachback_score=None,
-        duration_minutes=0.0, completed_at=None,
-        tier="T2", tier_label="Standard",
-        quiz_total_questions=0, quiz_correct_count=0, quiz_accuracy_label=None,
-        formula_applied="full_5_signal", signal_coverage=5,
+        session_id="s",
+        user_id="u",
+        lesson_id="l",
+        ces_score=0.0,
+        ces_breakdown={},
+        interventions_count=3,
+        quiz_score=None,
+        teachback_score=None,
+        duration_minutes=0.0,
+        completed_at=None,
+        tier="T2",
+        tier_label="Standard",
+        quiz_total_questions=0,
+        quiz_correct_count=0,
+        quiz_accuracy_label=None,
+        formula_applied="full_5_signal",
+        signal_coverage=5,
         intervention_messages_used=3,
     )
     assert report.intervention_messages_used == 3
@@ -225,13 +255,23 @@ def test_intervention_messages_used_zero_when_no_interventions():
     from app.modules.assessment.router import SessionReport
 
     report = SessionReport(
-        session_id="s", user_id="u", lesson_id="l",
-        ces_score=0.0, ces_breakdown={}, interventions_count=0,
-        quiz_score=None, teachback_score=None,
-        duration_minutes=0.0, completed_at=None,
-        tier="T2", tier_label="Standard",
-        quiz_total_questions=0, quiz_correct_count=0, quiz_accuracy_label=None,
-        formula_applied="full_5_signal", signal_coverage=5,
+        session_id="s",
+        user_id="u",
+        lesson_id="l",
+        ces_score=0.0,
+        ces_breakdown={},
+        interventions_count=0,
+        quiz_score=None,
+        teachback_score=None,
+        duration_minutes=0.0,
+        completed_at=None,
+        tier="T2",
+        tier_label="Standard",
+        quiz_total_questions=0,
+        quiz_correct_count=0,
+        quiz_accuracy_label=None,
+        formula_applied="full_5_signal",
+        signal_coverage=5,
         intervention_messages_used=0,
     )
     assert report.intervention_messages_used == 0
@@ -260,8 +300,9 @@ async def test_ces_history_summary_none_when_redis_provided_but_history_empty():
         "ended_at": "2026-08-12T10:30:00+00:00",
     }
     supabase = MagicMock()
-    supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
-    supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[], count=0)
+    select_eq = supabase.table.return_value.select.return_value.eq.return_value
+    select_eq.maybe_single.return_value.execute.return_value = MagicMock(data=session_row)
+    select_eq.execute.return_value = MagicMock(data=[], count=0)
 
     # Redis returns empty list for all lrange calls
     redis = AsyncMock()
@@ -271,10 +312,16 @@ async def test_ces_history_summary_none_when_redis_provided_but_history_empty():
         patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()),
         patch("app.core.db.single_row", return_value=session_row),
         patch("app.core.db.rows", return_value=[]),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35, ces_weight_teachback=0.25, ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12, ces_weight_blink=0.08,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+            ),
+        ),
     ):
         result = await get_session_report(
             session_id="ses-50c",
@@ -344,10 +391,16 @@ async def test_intervention_messages_used_from_session_events_count():
         patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()),
         patch("app.core.db.single_row", return_value=session_row),
         patch("app.core.db.rows", return_value=[]),
-        patch("app.config.get_settings", return_value=MagicMock(
-            ces_weight_quiz=0.35, ces_weight_teachback=0.25, ces_weight_behavioral=0.20,
-            ces_weight_head_pose=0.12, ces_weight_blink=0.08,
-        )),
+        patch(
+            "app.config.get_settings",
+            return_value=MagicMock(
+                ces_weight_quiz=0.35,
+                ces_weight_teachback=0.25,
+                ces_weight_behavioral=0.20,
+                ces_weight_head_pose=0.12,
+                ces_weight_blink=0.08,
+            ),
+        ),
     ):
         result = await get_session_report(
             session_id="ses-51",

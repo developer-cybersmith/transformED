@@ -12,16 +12,16 @@ Covers:
   AC 11 — session_start_ts write retries on Redis failure (D61)
   AC 12 — intervention_messages_used has semantic note in model source (D19)
 """
+
 from __future__ import annotations
 
 import inspect
 import json
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -86,8 +86,8 @@ def test_ces_formula_defined_in_one_place():
                     formula_definitions.append(f"{rel}:{node.name}")
 
     assert len(formula_definitions) == 1, (
-        f"Exactly one def compute_ces must contain formula arithmetic, found {len(formula_definitions)}: "
-        f"{formula_definitions}"
+        f"Exactly one def compute_ces must contain formula arithmetic, "
+        f"found {len(formula_definitions)}: {formula_definitions}"
     )
     # Normalize separators for cross-platform comparison
     normalized = formula_definitions[0].replace("\\", "/")
@@ -105,7 +105,8 @@ def test_tutor_service_compute_ces_delegates_not_formula():
 
     src = inspect.getsource(tutor_compute_ces)
     assert "ces_weight_quiz" not in src, (
-        "tutor/service.py:compute_ces must not contain formula weights — delegates to assessment/ces.py"
+        "tutor/service.py:compute_ces must not contain formula weights — "
+        "delegates to assessment/ces.py"
     )
     assert "_canonical" in src or "assessment.ces" in src or "compute_ces" in src, (
         "tutor/service.py:compute_ces must visibly delegate to assessment/ces.py"
@@ -245,7 +246,10 @@ async def test_per_signal_histories_get_expire_call():
         patch("app.config.get_settings", return_value=_mock_settings()),
         patch("app.core.redis.get_redis", return_value=mock_redis),
         patch("app.modules.tutor.state_machine.graph.dispatch_event", AsyncMock(return_value={})),
-        patch("app.modules.tutor.service._segment_intervention_messages", AsyncMock(return_value={})),
+        patch(
+            "app.modules.tutor.service._segment_intervention_messages",
+            AsyncMock(return_value={}),
+        ),
     ):
         await process_attention_signal(session_id="ses-d64", signal=signal)
 
@@ -272,7 +276,7 @@ def test_per_signal_expire_source_present():
     for key_fragment in ("behavioral_history", "head_pose_history", "blink_history"):
         # expire must appear after each lpush for every history key
         idx_lpush = src.find(key_fragment)
-        idx_expire = src.find(f"expire", idx_lpush)
+        idx_expire = src.find("expire", idx_lpush)
         assert idx_expire > idx_lpush, (
             f"redis.expire must appear after lpush for {key_fragment} in process_attention_signal"
         )
@@ -302,13 +306,9 @@ async def test_session_start_ts_write_uses_nx_true():
     ):
         await _init_session_state("ses-nx-test")
 
-    ts_calls = [
-        c for c in mock_redis.set.call_args_list
-        if "session_start_ts" in str(c)
-    ]
+    ts_calls = [c for c in mock_redis.set.call_args_list if "session_start_ts" in str(c)]
     assert ts_calls, "redis.set must be called for session_start_ts"
     last_call = ts_calls[-1]
-    kwargs = last_call.kwargs if last_call.kwargs else {}
     # Also check positional keyword style
     all_args = {**last_call.kwargs}
     assert all_args.get("nx") is True, (
@@ -378,7 +378,10 @@ async def test_positive_distraction_trigger_dispatches_event():
             new_callable=AsyncMock,
             return_value=True,  # guard allows the dispatch
         ),
-        patch("app.modules.tutor.service._segment_intervention_messages", AsyncMock(return_value={})),
+        patch(
+            "app.modules.tutor.service._segment_intervention_messages",
+            AsyncMock(return_value={}),
+        ),
     ):
         result = await process_attention_signal(
             session_id="ses-positive",
@@ -544,7 +547,10 @@ async def test_legacy_bare_float_entries_both_zero_gap_ok():
             new_callable=AsyncMock,
             return_value=True,
         ),
-        patch("app.modules.tutor.service._segment_intervention_messages", AsyncMock(return_value={})),
+        patch(
+            "app.modules.tutor.service._segment_intervention_messages",
+            AsyncMock(return_value={}),
+        ),
     ):
         result = await process_attention_signal(
             session_id="ses-legacy",
@@ -589,7 +595,8 @@ def test_frustration_tolerance_uses_event_counts():
     )
     # 3 interventions at cap=3 → signal = 0.0
     assert signals["frustration_tolerance"] == 0.0, (
-        f"3 interventions at cap=3 must give frustration_tolerance=0.0, got {signals['frustration_tolerance']}"
+        f"3 interventions at cap=3 must give frustration_tolerance=0.0, "
+        f"got {signals['frustration_tolerance']}"
     )
 
     signals_none = _compute_signals(
@@ -636,9 +643,7 @@ async def test_session_start_ts_retries_on_single_failure():
         # Should NOT raise — retry succeeds on second attempt
         await _init_session_state("ses-retry")
 
-    assert attempt_count >= 2, (
-        "session_start_ts SET must be retried at least once on Redis failure"
-    )
+    assert attempt_count >= 2, "session_start_ts SET must be retried at least once on Redis failure"
 
 
 @pytest.mark.unit
@@ -647,7 +652,6 @@ async def test_session_start_ts_logs_warning_after_all_retries_fail():
     """AC 11: After 3 consecutive failures, a WARNING is logged and the
     session continues (degraded — fatigue disabled). Must NOT raise.
     """
-    import logging
 
     from app.core.websocket import _init_session_state  # noqa: PLC2701
 
@@ -669,7 +673,8 @@ async def test_session_start_ts_logs_warning_after_all_retries_fail():
         await _init_session_state("ses-all-fail")
 
     # Session is still initialised (no exception propagated)
-    # The warning log is verified by source inspection in test_session_start_ts_retry_source_has_loop
+    # The warning log is verified by source inspection in
+    # test_session_start_ts_retry_source_has_loop
 
 
 @pytest.mark.unit
@@ -681,9 +686,7 @@ def test_session_start_ts_retry_source_has_loop():
     assert "range(3)" in src or "range(" in src, (
         "_init_session_state must contain a retry loop for session_start_ts"
     )
-    assert "session_start_ts" in src, (
-        "_init_session_state must reference session_start_ts"
-    )
+    assert "session_start_ts" in src, "_init_session_state must reference session_start_ts"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -698,13 +701,7 @@ def test_intervention_messages_used_has_semantic_comment():
     """
     from pathlib import Path
 
-    router_path = (
-        Path(__file__).parent.parent
-        / "app"
-        / "modules"
-        / "assessment"
-        / "router.py"
-    )
+    router_path = Path(__file__).parent.parent / "app" / "modules" / "assessment" / "router.py"
     content = router_path.read_text(encoding="utf-8")
 
     assert "intervention_messages_used" in content

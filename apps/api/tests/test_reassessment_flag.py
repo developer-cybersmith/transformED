@@ -88,12 +88,15 @@ def _build_supabase(
             _mock_exec = tbl.select.return_value.eq.return_value.maybe_single.return_value.execute
             _mock_exec.return_value = _resp(_session_row(user_id=user_id))
         elif name == "quiz_attempts":
-            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp([])
+            chain = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            chain.execute.return_value = _resp([])
         elif name == "teachback_attempts":
-            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp([])
+            chain = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            chain.execute.return_value = _resp([])
         elif name == "session_events":
             # Two chained calls: events for signals + events for dna_update
-            tbl.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = _resp([])
+            chain = tbl.select.return_value.eq.return_value.order.return_value.limit.return_value
+            chain.execute.return_value = _resp([])
             if growth_error:
                 tbl.insert.return_value.execute.side_effect = Exception("insert failed")
             else:

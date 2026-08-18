@@ -26,7 +26,13 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
   const segment = lesson?.segments[currentSegmentIndex];
 
   async function handleSubmit() {
-    if (!text.trim() || !lesson || !segment) {
+    // Bug fix: sessionId can still be '' here -- mintSession (Player.tsx) is
+    // async with retries, and a short first segment's teach-back can arrive
+    // before it resolves. Postgres rejects '' outright for a uuid column
+    // (22P02), a real 500 on every such attempt -- skip the call the same
+    // way a missing lesson/segment already does, rather than send a request
+    // guaranteed to fail.
+    if (!text.trim() || !lesson || !segment || !sessionId) {
       exitTeachBack();
       return;
     }
@@ -53,20 +59,20 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
   // only the encouraging, free-text feedback message.
   if (result) {
     return (
-      <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm">
-        <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-          <div className="px-6 pt-6 pb-4 border-b border-white/5">
+      <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-white/80 backdrop-blur-sm">
+        <div className="w-full max-w-lg bg-white border border-neutral-200 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="px-6 pt-6 pb-4 border-b border-neutral-100">
             <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider block mb-1">
               Teach It Back
             </span>
-            <p className="font-serif text-white text-xl font-semibold">
+            <p className="font-serif text-neutral-900 text-xl font-semibold">
               Nice work!
             </p>
           </div>
 
           {/* Feedback */}
           {result.feedback && (
-            <div className="mx-6 my-4 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm text-neutral-300">
+            <div className="mx-6 my-4 px-4 py-3 rounded-xl bg-neutral-50 border border-neutral-200 text-sm text-neutral-600">
               {result.feedback}
             </div>
           )}
@@ -86,17 +92,17 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
   }
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-primary-dark/90 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-[#07172C] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-white/80 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-white border border-neutral-200 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="px-6 pt-6 pb-4 border-b border-white/5">
+        <div className="px-6 pt-6 pb-4 border-b border-neutral-100">
           <span className="text-[var(--accent-secondary)] text-xs font-semibold uppercase tracking-wider block mb-1">
             Teach It Back
           </span>
-          <p className="text-neutral-400 text-xs mb-3">
+          <p className="text-neutral-500 text-xs mb-3">
             {segmentTitle}
           </p>
-          <p className="font-serif text-white text-lg leading-relaxed">
+          <p className="font-serif text-neutral-900 text-lg leading-relaxed">
             {prompt}
           </p>
         </div>
@@ -109,8 +115,8 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
             placeholder="Type your explanation here…"
             rows={5}
             autoFocus
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3
-                       text-white text-base sm:text-sm placeholder:text-neutral-600
+            className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3
+                       text-neutral-900 text-base sm:text-sm placeholder:text-neutral-400
                        focus:outline-none focus:border-[var(--accent-primary)]/50
                        resize-none transition-colors"
           />
@@ -120,7 +126,7 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
         <div className="px-6 pb-6 flex justify-between items-center">
           <button
             onClick={exitTeachBack}
-            className="text-neutral-500 hover:text-neutral-300 text-sm transition-colors"
+            className="text-neutral-500 hover:text-neutral-900 text-sm transition-colors"
           >
             Skip
           </button>

@@ -130,6 +130,8 @@ describe('assessment types', () => {
       quiz_correct_count: 3,
       quiz_accuracy_label: 'Strong',
       learner_dna_snapshot: null,
+      ces_timeline: null,
+      intervention_events: null,
     };
     expect(report.duration_minutes).toBe(18);
     expect(Object.keys(report)).not.toContain('duration_seconds');
@@ -153,6 +155,8 @@ describe('assessment types', () => {
       quiz_correct_count: 0,
       quiz_accuracy_label: null,
       learner_dna_snapshot: null,
+      ces_timeline: null,
+      intervention_events: null,
     };
     expect(Object.keys(report.ces_breakdown).sort()).toEqual(
       ['behavioral', 'blink', 'head_pose', 'quiz', 'teachback']

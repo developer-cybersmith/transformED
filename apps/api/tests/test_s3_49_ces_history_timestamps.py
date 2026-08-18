@@ -86,9 +86,7 @@ def _setup_trigger(
 
     mocker.patch("app.config.get_settings", return_value=settings)
     mocker.patch("app.core.redis.get_redis", return_value=redis)
-    mocker.patch(
-        "app.modules.tutor.state_machine.graph._trace_dispatch", return_value=None
-    )
+    mocker.patch("app.modules.tutor.state_machine.graph._trace_dispatch", return_value=None)
 
     mock_guard = mocker.patch(
         "app.modules.tutor.state_machine.graph._can_intervene_distraction",
@@ -115,7 +113,7 @@ def test_ces_history_write_is_json_not_bare_float() -> None:
 
     src = inspect.getsource(process_attention_signal)
     assert "json.dumps" in src, "process_attention_signal must use json.dumps for ces_history"
-    assert 'lpush(history_key, ces)' not in src, (
+    assert "lpush(history_key, ces)" not in src, (
         "bare lpush(history_key, ces) must not appear — use json.dumps({'v': ces, 't': ...})"
     )
 

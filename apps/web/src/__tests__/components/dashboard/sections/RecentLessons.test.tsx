@@ -35,13 +35,13 @@ describe('RecentLessons', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('"View All" navigates to /library', async () => {
+  it('"View All" navigates to /books (Story 2-47: /library removed)', async () => {
     const user = userEvent.setup();
     render(<RecentLessons lessons={LESSONS} />);
 
     await user.click(screen.getByText('View All'));
 
-    expect(pushMock).toHaveBeenCalledWith('/library');
+    expect(pushMock).toHaveBeenCalledWith('/books');
   });
 
   it('clicking a lesson card navigates to /lesson/{lesson_id}', async () => {

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@hie/shared": "workspace:*",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@number-flow/react": "^0.6.0",
     "@radix-ui/react-tooltip": "^1.2.10",
     "@supabase/ssr": "^0.12.0",
@@ -28,6 +29,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-use": "^17.6.1",
+    "recharts": "2.15.4",
     "swr": "^2.3.3",
     "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.14"

@@ -3,10 +3,11 @@ import { updateSession } from "@/lib/supabase/middleware";
 
 // Deny-list, not allow-list: everything not explicitly public requires a session.
 // The previous allow-list only matched "/dashboard" and "/settings" — since
-// /library and /upload live under the (dashboard) route group (invisible in the
+// /books and /upload live under the (dashboard) route group (invisible in the
 // URL) and /onboarding, /lesson/[id] are separate top-level routes, all four
 // were silently unauthenticated. A deny-list also fails safe for any future
-// route that forgets to register itself here.
+// route that forgets to register itself here (including /library's removal in
+// Story 2-47 -- deleting the route needed no change here at all).
 //
 // /auth/callback MUST be public: it's the OAuth/email-confirmation code-exchange
 // handler that runs *before* any session cookie exists. Gating it here means the

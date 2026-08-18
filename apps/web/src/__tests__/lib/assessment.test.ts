@@ -9,7 +9,13 @@ vi.mock('@/lib/api', () => ({
   api: { get: apiGetMock, post: apiPostMock },
 }));
 
-import { createSession, getSessionReport, submitQuiz, submitTeachBack } from '@/lib/assessment';
+import {
+  completeSession,
+  createSession,
+  getSessionReport,
+  submitQuiz,
+  submitTeachBack,
+} from '@/lib/assessment';
 
 beforeEach(() => {
   apiGetMock.mockReset();
@@ -30,6 +36,20 @@ describe('getSessionReport', () => {
     await getSessionReport('sess_abc123');
 
     expect(apiGetMock).toHaveBeenCalledWith('/assessment/session/sess_abc123/report');
+  });
+
+  it('passes through ces_timeline and intervention_events unchanged (Story 2-46/S3-05)', async () => {
+    const responseData = {
+      session_id: 'sess_abc123',
+      ces_timeline: [{ minute: 0, ces: 60 }, { minute: 1, ces: 70 }],
+      intervention_events: [{ minute: 3, type: 'distraction' }],
+    };
+    apiGetMock.mockResolvedValue({ data: responseData });
+
+    const result = await getSessionReport('sess_abc123');
+
+    expect(result.ces_timeline).toEqual(responseData.ces_timeline);
+    expect(result.intervention_events).toEqual(responseData.intervention_events);
   });
 });
 
@@ -73,6 +93,26 @@ describe('createSession (D18/Story 2-39)', () => {
     apiPostMock.mockRejectedValue(new Error('network down'));
 
     await expect(createSession({ lesson_id: 'lesson_1' })).rejects.toThrow('network down');
+  });
+});
+
+describe('completeSession', () => {
+  it('URL-encodes the sessionId and posts no body, returning the response data unchanged', async () => {
+    const responseData = { session_id: 'sess/1?evil=true', ended_at: '2026-08-12T12:00:00Z' };
+    apiPostMock.mockResolvedValue({ data: responseData });
+
+    const result = await completeSession('sess/1?evil=true');
+
+    expect(apiPostMock).toHaveBeenCalledWith(
+      `/assessment/session/${encodeURIComponent('sess/1?evil=true')}/complete`
+    );
+    expect(result).toEqual(responseData);
+  });
+
+  it('propagates a rejected request rather than swallowing it -- the caller (Player.tsx) decides how to handle failure', async () => {
+    apiPostMock.mockRejectedValue(new Error('network down'));
+
+    await expect(completeSession('sess_1')).rejects.toThrow('network down');
   });
 });
 

@@ -14,13 +14,13 @@ const Player = dynamic(() => import('./Player'), {
 
 function PlayerSkeleton() {
   return (
-    <div className="flex-1 flex flex-col bg-primary-dark animate-pulse" data-testid="player-skeleton">
-      <div className="h-1.5 bg-neutral-800 w-full" />
+    <div className="flex-1 flex flex-col bg-white animate-pulse" data-testid="player-skeleton">
+      <div className="h-1.5 bg-neutral-200 w-full" />
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
-        <div className="w-48 h-6 rounded bg-neutral-800" />
-        <div className="w-32 h-4 rounded bg-neutral-800" />
+        <div className="w-48 h-6 rounded bg-neutral-200" />
+        <div className="w-32 h-4 rounded bg-neutral-200" />
       </div>
-      <div className="h-20 bg-[#07172C] border-t border-white/5" />
+      <div className="h-20 bg-white border-t border-neutral-200" />
     </div>
   );
 }
@@ -31,7 +31,7 @@ function LessonErrorState({ message }: { message?: string | null }) {
       className="flex-1 flex flex-col items-center justify-center p-6 text-center"
       data-testid="lesson-error"
     >
-      <p className="text-neutral-400 mb-6">
+      <p className="text-neutral-500 mb-6">
         {message || 'This lesson could not be loaded. Please try again.'}
       </p>
       <Link
@@ -51,8 +51,8 @@ function LessonGeneratingState() {
       className="flex-1 flex flex-col items-center justify-center p-6 text-center"
       data-testid="lesson-generating"
     >
-      <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mb-6" />
-      <p className="text-neutral-400">This lesson is still generating. Hang tight...</p>
+      <div className="w-8 h-8 border-2 border-neutral-200 border-t-[var(--accent-secondary)] rounded-full animate-spin mb-6" />
+      <p className="text-neutral-500">This lesson is still generating. Hang tight...</p>
     </div>
   );
 }

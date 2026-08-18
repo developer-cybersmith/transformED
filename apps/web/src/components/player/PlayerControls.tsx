@@ -86,7 +86,7 @@ export function PlayerControls() {
   }
 
   return (
-    <div className="shrink-0 bg-[#07172C] border-t border-white/5">
+    <div className="shrink-0 bg-white border-t border-neutral-200">
       {/* Progress bar */}
       <div
         role="slider"
@@ -101,7 +101,7 @@ export function PlayerControls() {
         ].join(' ')}
       >
         {/* Track */}
-        <div className="absolute inset-0 bg-white/10" />
+        <div className="absolute inset-0 bg-neutral-200" />
         {/* Fill */}
         <div
           className="absolute inset-y-0 left-0 bg-[var(--accent-secondary)] transition-[width] duration-100"
@@ -110,7 +110,7 @@ export function PlayerControls() {
         {/* Thumb — visible on hover */}
         {canSeek && (
           <div
-            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-[var(--accent-secondary)] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
             style={{ left: `${progressPct}%` }}
           />
         )}
@@ -130,7 +130,7 @@ export function PlayerControls() {
             disabled={!canSeek}
             aria-label="Skip back 10 seconds"
             title="−10 s"
-            className="text-neutral-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="text-neutral-500 hover:text-neutral-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <SkipBackIcon />
           </button>
@@ -152,7 +152,7 @@ export function PlayerControls() {
             disabled={!canSeek}
             aria-label="Skip forward 10 seconds"
             title="+10 s"
-            className="text-neutral-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="text-neutral-500 hover:text-neutral-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <SkipForwardIcon />
           </button>
@@ -163,7 +163,7 @@ export function PlayerControls() {
           <button
             onClick={cycleSpeed}
             aria-label={`Playback speed ${playbackRate}×`}
-            className="text-neutral-400 hover:text-white text-xs font-medium tabular-nums w-8 text-center transition-colors"
+            className="text-neutral-500 hover:text-neutral-900 text-xs font-medium tabular-nums w-8 text-center transition-colors"
           >
             {playbackRate === 1.0 ? '1×' : `${playbackRate}×`}
           </button>

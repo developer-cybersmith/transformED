@@ -94,7 +94,10 @@ beforeEach(() => {
   submitQuizMock.mockReset();
   submitQuizMock.mockResolvedValue(RESULT);
   usePlayerStore.getState().loadLesson(mockLessonPackage);
-  usePlayerStore.setState({ status: 'QUIZ', currentSegmentIndex: 0 });
+  // A real sessionId is the realistic default (mintSession has already
+  // resolved by the time a student reaches the quiz in normal use) -- tests
+  // that specifically care about the empty-sessionId guard override this.
+  usePlayerStore.setState({ status: 'QUIZ', currentSegmentIndex: 0, sessionId: 'sess_42' });
 });
 
 describe('QuizOverlay', () => {
@@ -199,6 +202,21 @@ describe('QuizOverlay', () => {
     );
   });
 
+  it('does not call the API when sessionId is still empty (mintSession has not resolved yet)', async () => {
+    // Bug fix: session_id='' reaches Postgres as a real 500 (22P02 invalid
+    // input syntax for type uuid) if this call is ever attempted.
+    usePlayerStore.setState({ sessionId: '' });
+    render(<QuizOverlay questions={QUESTIONS} />);
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next question' }));
+    await userEvent.click(screen.getByText(QUESTIONS[1].options[1]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    expect(submitQuizMock).not.toHaveBeenCalled();
+  });
+
   it('shows the score summary feedback using the real backend field names (is_correct/explanation, not correct/message) (S2-11 review fix)', async () => {
     render(<QuizOverlay questions={[QUESTIONS[0]]} />);
 
@@ -235,8 +253,8 @@ describe('QuizOverlay', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Correct feedback.').className).toMatch(/text-emerald-400/);
-      expect(screen.getByText('Incorrect feedback.').className).toMatch(/text-red-400/);
+      expect(screen.getByText('Correct feedback.').className).toMatch(/text-emerald-700/);
+      expect(screen.getByText('Incorrect feedback.').className).toMatch(/text-red-700/);
     });
   });
 

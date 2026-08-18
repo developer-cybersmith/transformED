@@ -92,7 +92,7 @@ def compute_ces(
 
     # Validate, warn, and clamp each present signal.
     present: list[tuple[float, float]] = []
-    for (v, w), name in zip(raw_pairs, _SIGNAL_NAMES):
+    for (v, w), name in zip(raw_pairs, _SIGNAL_NAMES, strict=True):
         if v is None:
             continue  # absent signals are redistributed; None is valid
         if not math.isfinite(v):

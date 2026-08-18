@@ -1,17 +1,18 @@
 """
-Eval harness runner (Story 2-14/S2-14) — implements the 5-PDF subset of the
-pre-existing `/run-evals` command spec (.claude/commands/run-evals.md).
+Eval harness runner. Story 2-14 (S2-14) built the 5-PDF subset of the
+pre-existing `/run-evals` command spec (.claude/commands/run-evals.md);
+Story 3-57 (S3-1) expands it to the full 20-PDF gate.
 
 `run_eval()` runs ONE PDF through the real content pipeline (`run_pipeline`,
-unmodified) and scores the result. `run_all_evals()` runs all 5 fixture PDFs
-and writes a timestamped results JSON, matching the command spec's
+unmodified) and scores the result. `run_all_evals()` runs all 20 fixture
+PDFs and writes a timestamped results JSON, matching the command spec's
 documented `tests/evals/results/<timestamp>.json` output location.
 
 A single PDF's failure never aborts the others — matches the pipeline's own
 per-node "never hard-fail" philosophy, applied at the harness level (AC-4).
 
 This module is pure library code (`run_eval`/`run_all_evals`) — the actual
-live 5-PDF pytest entry point (gated behind the `live_eval` marker, Story
+live 20-PDF pytest entry point (gated behind the `live_eval` marker, Story
 2-14 AC-8) lives in `tests/evals/test_live_run.py` so it's discoverable by
 pytest's default `test_*.py` collection pattern. Run it explicitly with::
 
@@ -35,7 +36,33 @@ logger = logging.getLogger(__name__)
 _FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "eval_pdfs"
 _RESULTS_DIR = Path(__file__).parent / "results"
 
-_EVAL_PDF_KEYS: tuple[str, ...] = ("short", "long", "dense_text", "table_heavy", "image_heavy")
+_EVAL_PDF_KEYS: tuple[str, ...] = (
+    # short (<=10 pages)
+    "short_1page",
+    "short_3page",
+    "short_10page",
+    "short_sparse",
+    # long (>=100 pages)
+    "long_100page",
+    "long_150page",
+    "long_250page",
+    "long_400page",
+    # dense_text
+    "dense_text_uniform",
+    "dense_text_long_paragraphs",
+    "dense_text_short_paragraphs",
+    "dense_text_with_headers",
+    # table_heavy
+    "table_heavy_small",
+    "table_heavy_wide",
+    "table_heavy_tall",
+    "table_heavy_mixed",
+    # image_heavy
+    "image_heavy_small",
+    "image_heavy_large",
+    "image_heavy_captioned",
+    "image_heavy_grid",
+)
 
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 

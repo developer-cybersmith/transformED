@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-14
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). **2026-07-23 gap-fix (Story 1-6):** `GET /api/content/lessons/{id}` never actually returned `content` despite the frozen contract promising it since Week 1 — discovered while building Story 3-6 (media signed-URL layer); fixed in Story 1-6.
 **Sprint 2 status:** 21/21 COMPLETE ✅ (2026-07-17, still on `sprint2/phase-b-generation-nodes` — not yet merged to `main`). All 15 pipeline nodes real; `package_builder` (S2-11) + `lesson_ready` WebSocket push (S2-12) landed 2026-07-16; cost ceiling enforcement (S2-13) and the 5-PDF eval harness (S2-14, live run not yet triggered) landed 2026-07-17; Learner Mode tier-aware generation (S2-LM1–LM5) landed 2026-07-17 — `POST /lessons` accepts a `tier` param that drives per-segment slide budgets and outline content-depth framing. Frontend/assessment/tutor teams can migrate off `apps/web/src/mocks/data/lessonPackage.ts` once this branch merges. **2026-07-27 gap-fix (Story 2-25):** a full-repo 360° audit (`docs/reports/sprint2-360-audit-2026-07-27.md`) found the admin panel was 100% unimplemented with no admin/role concept anywhere in the codebase (not the "Sprint 3" work it was tracked as — genuinely absent), the media signed-URL allowlist had 3 structurally-broken bucket entries (`source-pdfs`/`avatar-clips`/`lesson-slides` — each unreachable even for the legitimate owner, zero frontend callers), a stale pipeline docstring, and shared-contract drift (`lesson.ts`/`lesson_package.schema.json` nullability + `tier` required/optional mismatch vs. Pydantic). All 4 fixed in Story 2-25, plus a 5-agent code-review round (fixed a real admin-email case-sensitivity lockout bug it surfaced). The other 21 audit findings belong to Dev2/Dev3/Dev4 and are tracked separately for the cross-team wiring handoff. **2026-07-28 gap-fix (Story 2-28):** Dev 2 reported 48 quiz questions for a segment that should have 3, from a live Refresher-tier run. Root cause was NOT ARQ retries — 18 nodes returned `{**state, ...}`, and since six Phase-1 channels are `operator.add` concatenating reducers, the four nodes running after the fan-in each doubled all six: 2⁴ = 16×, in a single clean run. Fixed at all 18 sites and guarded by an AST scan + e2e assertions (the assertion failed `48 <= 3` before the fix, passes after). **Two consequences worth flagging:** (1) real TTS spend was ~4× inflated, so every existing $3.00/lesson calibration and Langfuse baseline must be re-measured; (2) found while fixing it — `_FAN_OUT_STATE_KEYS` omitted `"tier"`, and because a `Send()` payload *replaces* state, all six Phase-1 nodes read the T2 default regardless of the lesson's real tier, silently disabling the S2-LM3/LM4/LM5 bands for every T1 and T3 lesson. Both now covered by tests that fail on the mutation. Same `{**state, ...}` pattern exists in Dev 4's `modules/tutor/state_machine/graph.py` — handed off, not fixed across the ownership boundary. **2026-07-28 gap-fix (Story 2-31):** closes Dev 2's two remaining reported items plus two findings from the Story 2-28 review. `_fallback_narration()` was returning `{"script": ""}`, discarding narration text sitting in `state["narration_scripts"]` — only the *audio* is missing on the TTS degrade path, not the script — so packages built via that path shipped empty narration. `_index_by_segment_id` used `item[value_key]` and `KeyError`-ed the whole node on one malformed entry, contradicting its own docstring. Cached Phase-1 quiz batches are now rejected on read when the count exceeds the lesson tier's band, so a checkpoint written *before* the 2-28 `tier` fix cannot silently replay T2-sized content into a T1 lesson while the logs show the tier fix working (guard is `n_max`-only — a below-band count is ambiguous against 2-28 AC-8's keep-short-batches rule; residual gap documented in the story). `GET /lessons` now lifts `subject` + `estimated_duration_mins` from the `content` JSONB via PostgREST path selectors instead of `select("*")` — Dev 2 needed both for dashboard cards without an N+1 — with regression assertions proving Story 1-6 AC-7 still holds (zero signing calls, no `content` attached). Embedded-lesson signed-URL expiry raised 1h → 8h. **Not fixed here and must not be reported as fixed:** Dev 2's visible 0:00-quiz-fires-instantly symptom is in `AudioTimeline.tsx` and needs a virtual playback clock — see `docs/dev2-narration-playback-handoff.md`. **2026-07-28 review round (6 adversarial layers) on Story 2-31 — worth reading, because it caught a bug that would have taken the product down:** the first `_LIST_COLUMNS` named `completed_at`, which is a column on `lesson_jobs` and *not* on `lessons`. Under `select("*")` that was harmless; naming it explicitly makes PostgREST reject the whole query, so `GET /lessons` would have failed for every user on every request — and no test could catch it, because all four AC-4 tests mock Supabase and assert the select *string*. Now guarded by a test that parses `_LIST_COLUMNS` against the columns the migrations actually define. The review also showed **AC-3's shipped guard could not catch its own stated hazard**: pre-2-28 checkpoints are all T2-sized (2–3 questions) and T1's `n_max` is 5, so every stale T2 cache passed for exactly the T1 lessons the AC was written about; the count heuristic fired only for T3. Redesigned as a `tier` stamp in the checkpoint *value* — exact rather than inferential, keys still `f"{node}:{section_id}"`, same-tier retry still a free cache hit. Also added a salvage path (a rejected cache plus one transient LLM failure previously shipped a segment with **zero** questions and left the stale checkpoint in place, so every ARQ retry re-rejected and re-billed with no `check_ceiling()` call in that node — though the loop was never actually unbounded: Phase 1 is gated on `check_ceiling()` before dispatch and `_maybe_accumulate_cost` raises at the $3.00 ceiling, so it always terminated. That over-claim was corrected on 2026-07-29 after the Story 2-32 review caught it; the salvage fix stands on the zero-questions correctness defect, which was always the stronger argument), hardened `_index_by_segment_id` against non-dict entries/values, and hardened the list response against untrusted LLM-generated JSONB (a dict-valued `subject` or a `NaN` duration would have 500'd or broken `JSON.parse` for the whole page). Three tests were found passing for the wrong reason and fixed. **Standing lesson: mocked tests on both sides validate the mock, not the contract** — the two worst findings here were both invisible to a green suite.
@@ -117,10 +117,10 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 0 | Week 1 (Jun 12–18) | 12 | 12 | 0 | 0 |
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
-| Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 19 | 0 | 4 |
+| Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 22 | 0 | 1 |
 | Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **77** | **62** | **1** | **14** |
+| **Totals** | | **77** | **65** | **1** | **11** |
 
 ---
 
@@ -768,15 +768,47 @@ Every node must:
 
 > **Goal:** Production quality — eval harness at scale, full observability, admin panel live.
 
-- [ ] **S3-1 Eval harness expanded to 20 PDFs**
+- [x] **S3-1 Eval harness expanded to 20 PDFs** — ✓ 2026-08-14
   - `apps/api/tests/evals/`
   - Cover all failure modes: dense text, table-heavy, image-heavy, short (≤10 pages), long (≥100 pages)
   - **AC:** All 20 PDFs produce valid `LessonPackage`; no pipeline crash; scores tracked in Langfuse
+  - **Harness capability delivered; live run + human-review gate NOT run — see below.** 4 real,
+    meaningfully-distinct variants per category (not lazy duplicates): short gets 1/3/10-page +
+    sparse (testing the ≤10p boundary itself), long gets 100/150/250/400-page (testing the ≥100p
+    boundary at real scale, capped at 400 deliberately — this harness is for cheap/frequent
+    regression-catching, not exhaustive scale testing, that's L1's job), dense_text/table_heavy/
+    image_heavy each get 4 variants stressing a different real edge (long vs. short paragraphs,
+    wide vs. tall tables, captioned vs. grid images). Added a guard test keeping `_EVAL_PDF_KEYS`
+    (runner.py) and `_GENERATORS` (generate_eval_pdfs.py) in sync — two independently-edited lists
+    of the same names is exactly the drift pattern CLAUDE.md's binding rule 5 already names.
+  - **Real hidden coupling found and fixed:** `test_extract_page_bounds.py` and
+    `test_extract_text_only_mode.py` referenced the OLD 5 fixture filenames directly and
+    self-skipped (no failure, no error) when the rename removed them — caught only by diffing the
+    skip count against the branch's true baseline (85→110 skipped), not by the test run itself
+    going red. Repointed all 5 constants at the equivalent new-named variant; `LONG_PDF` had no
+    exact-120-page match among the new variants, repointed to `long_150page.pdf` with `LONG_PAGES`
+    updated to match (every assertion already reads the constant, not a hardcoded 120 — a rename,
+    not a semantic change, confirmed by running the affected tests). Branch
+    `sprint3/s3-1-eval-harness-20-pdfs`, Story 3-57.
+  - Tests: new drift-guard + page-count-boundary tests in `test_eval_runner.py`, RED-GREEN
+    verified. Zero new regression failures (76/76, byte-for-byte identical failing set vs. branch
+    base, verified via throwaway worktree).
+  - **Not yet done, stated up front in the story:** the actual live run
+    (`pytest tests/evals/test_live_run.py --run-live-eval`) is blocked on Sarvam credits (same
+    402 as L1, confirmed live). The PRD's "15 of 20 PDFs rated useful to a student" gate
+    (`.claude/commands/run-evals.md`) is a human judgment call, not something this story
+    automates. Both remain the explicit next step once credits return.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
   - Data-driven only: track before/after Langfuse scores; change only prompts that show ≥5% regression or improvement
   - **AC:** At least one node prompt improved; before/after scores committed to Langfuse; no blind prompt edits
+  - **Genuinely blocked, not skippable:** this AC's "data-driven only... no blind prompt edits"
+    requires real before/after Langfuse scores, which requires S3-1's live 20-PDF eval run —
+    blocked on Sarvam credits (still `402 insufficient_quota_error`, confirmed live 2026-08-14),
+    same blocker as L1. Unlike S3-1, there is no infrastructure-only partial delivery possible
+    here — the whole premise is real eval data that doesn't exist yet. Revisit once Sarvam
+    credits return and S3-1's live run produces real scores to act on.
 
 - [x] **S3-3 Circuit breaker implementation** — ✓ 2026-06-12 (built ahead of schedule)
   - `apps/api/app/core/circuit_breaker.py`
@@ -784,14 +816,69 @@ Every node must:
   - **Wire into ALL Sprint 2 provider calls immediately — do not wait until Sprint 3**
   - **AC:** `is_circuit_open()` / `record_failure()` / `record_success()` callable by all providers; state persists across restarts via Redis ✅
 
-- [ ] **S3-4 Admin panel: job status, cost tracking, failed jobs**
-  - `apps/api/app/modules/admin/router.py` *(to create)*
+- [x] **S3-4 Admin panel: job status, cost tracking, failed jobs** — ✓ 2026-08-14
+  - `apps/api/app/modules/admin/router.py` *(the tracker's "(to create)" was stale — this file
+    already existed, 295 lines, built across Story 2-25 + this session's own D59(a) fix)*
   - Endpoints: `GET /api/admin/jobs`, `POST /api/admin/jobs/{job_id}/retry`, `GET /api/admin/costs`
   - **AC:** All jobs listable with status + cost; failed jobs retryable via single API call; cost per lesson and per user visible
+  - **Real gap was 1 of 3 endpoints, not the whole router — verified by reading the current code
+    first.** `GET /jobs` (per-lesson `cost_usd` in every `JobSummary`) and `GET /costs`
+    (`by_user` breakdown) already existed and already satisfied their AC clauses. Only
+    `POST /jobs/{job_id}/retry` was missing.
+  - **Retry design, investigated rather than assumed:** `content_pipeline_job` takes only
+    `lesson_id` (re-fetches everything else from `lessons`), so retry never re-validates
+    ownership/chapter/page-span. `node_outputs`/`last_node` are deliberately left untouched —
+    `run_pipeline` reads them to resume from the last completed node
+    (`graph.py:5602`'s own comment confirms this), clearing them would silently re-run and
+    re-bill already-paid-for nodes. A fresh ARQ `_job_id` is minted per retry
+    (`f"pipeline:{lesson_id}:retry:{token}"`, never the bare original) — `content_pipeline.py`'s
+    own comment already names the trap (`ctx["job_id"]` alone is not a uniquifier); reusing the
+    exact original id on a fresh `enqueue_job()` call risked a stale/duplicate LangGraph
+    `thread_id` depending on ARQ's own `job_try` reset semantics, which this story does not
+    depend on either way. Only `failed` jobs are retryable (409 otherwise, naming the actual
+    status). Branch `sprint3/s3-4-admin-panel-job-cost-tracking`, Story 3-58.
+  - Tests: 8 new tests in `test_admin_router.py` (403/404×2/409×3/202/500), RED-GREEN verified —
+    including a real RED-GREEN proof that reusing the bare `_job_id` fails the fresh-id
+    assertion. Zero new regression failures (76/76, byte-for-byte identical failing set vs.
+    branch base, verified via throwaway worktree).
+  - **CORRECTED 2026-08-14 (retroactive review):** the line above originally called the
+    concurrent-retry gap "a cost nuisance, not double-billing." **That was wrong.** A retroactive
+    8-layer BMAD review's Scale & Load Hunter traced it through: `content_pipeline.py`'s
+    `clear_lesson_cost()` unconditionally deletes the Redis cost counter the moment *either*
+    concurrent run finishes — so the still-running sibling's next `check_ceiling()` reads `$0` and
+    is permitted to spend up to another full $3.00. A real, silent cost-ceiling bypass, not a
+    nuisance. Mitigated same day: `retry_job` now rejects a retry if another job for the lesson is
+    already running/pending, closing the realistic trigger. The narrow residual race (two retry
+    calls racing the mitigation's own check-then-act) is registered as **D109**, deferred, owner
+    Dev 1. See Story 3-58's Review Findings section for the full list (8 patches applied: the
+    scoping fix, the concurrency mitigation, an uncaught-`enqueue_job`-exception fix, the response
+    `arq_job_id` fix, a test mock-chain fix, a missing test assertion, a wording softening, and a
+    `MOCK-CONTRACT` note). Also closed the same day: a real premise-test gap in Story 3-56 (an
+    unverified assumption about Langfuse's `update()` merge semantics — checked directly against
+    the real SDK source, confirmed safe, pinned with a test) and a recurrence guard in Story 3-57
+    (the exact silent-skip-on-stale-fixture-name defect this story already fixed once, now guarded
+    against happening again unnoticed). Branch `sprint3/s3-56-57-58-review-fixes`.
 
-- [ ] **S3-5 Pipeline cost attribution in Langfuse**
+- [x] **S3-5 Pipeline cost attribution in Langfuse** — ✓ 2026-08-14
   - All pipeline nodes — each Langfuse span must include `token_cost_usd` in metadata
   - **AC:** Langfuse dashboard shows cost breakdown per node per lesson; no node missing cost attribution
+  - **Real gap was narrower than this AC's wording:** 4 of 6 priced providers (Sarvam TTS, Azure
+    TTS, Imagen, GPT Image) already called `generation.update(..., cost_details={"input": cost})`
+    from this session's earlier Langfuse self-audit. Only `providers/llm/openai.py` (`complete`,
+    `complete_structured`) and `providers/embeddings/openai.py` were missing it — both computed
+    real cost in `_maybe_accumulate_cost` but never wrote it back to the span. Fixed by passing
+    `generation` into `_maybe_accumulate_cost` and calling `generation.update(cost_details=...)`
+    right where cost is already computed — extends Langfuse's native `cost_details` field (what
+    the dashboard actually reads), not a custom `token_cost_usd` metadata key. LLM cost splits
+    `cost_details={"input": ..., "output": ...}` (mirrors `usage_details`' existing split, unlike
+    TTS/image's single-cost calls). Branch `sprint3/s3-5-langfuse-cost-attribution`, Story 3-56.
+  - Tests: `test_s3_5_langfuse_cost_attribution.py` — 4 new tests, RED-GREEN verified. Extended
+    `test_langfuse_sdk_contract.py`'s premise check to include `cost_details`. Zero new failures
+    in full regression (76/76, byte-for-byte identical failing set vs. branch base, verified via
+    throwaway worktree).
+  - **Not yet done:** cannot verify the AC's literal "Langfuse dashboard shows cost breakdown"
+    visually — no real `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` exist in this environment yet
+    (same limitation as the earlier Langfuse self-audit). Code/mock-level verification only.
 
 - [x] **S3-6 Media signed-URL layer** — ✓ 2026-07-23 — added from 2026-07-22 audit (HIGH #3)
   - `apps/api/app/modules/media/router.py` — finish `GET /api/media/signed-url` (was a 501 stub)

@@ -810,6 +810,7 @@ def test_no_other_table_policy_changed(pg: object) -> None:  # noqa: ARG001
         "sessions",
         "teachback_attempts",
         "user_consents",
+        "user_notification_preferences",
         "users",
     }
     seen = {entry.split(".", 1)[0] for entry in got.split(", ") if entry}
