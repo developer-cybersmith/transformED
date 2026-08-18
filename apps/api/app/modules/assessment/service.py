@@ -35,7 +35,7 @@ from app.modules.assessment.schemas import (
 from app.providers.llm.openai import OpenAILLMProvider
 
 if TYPE_CHECKING:
-    from app.modules.assessment.router import SessionReport
+    from app.modules.assessment.router import SessionReport, TeachbackDetail
 
 logger = logging.getLogger(__name__)
 
@@ -844,7 +844,8 @@ async def get_session_report(
         HTTPException 404: Session belongs to a different user (SEC-006 — no 403
             to prevent enumeration).
     """
-    from app.modules.assessment.router import SessionReport  # lazy — avoids circular import
+    # lazy import — avoids circular import between service.py and router.py
+    from app.modules.assessment.router import SessionReport, TeachbackDetail
 
     # Step 1 — Validate session ownership and fetch all needed columns in one query
     session_resp = await asyncio.to_thread(
@@ -913,11 +914,16 @@ async def get_session_report(
     # Step 3 — Teachback stats from teachback_attempts
     # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
     # .limit(50) is a safety ceiling above the natural bound.
+    # Story 2-48: widened select to include detail columns; .order("created_at") for ordering.
     tb_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
-            .select("score")
+            .select(
+                "segment_id, score, feedback_praise, feedback_correction,"
+                " concepts_hit, concepts_missed, attempt_number"
+            )
             .eq("session_id", session_id)
+            .order("created_at")
             .limit(50)
             .execute()
         )
@@ -928,9 +934,22 @@ async def get_session_report(
         sum_scores = sum(r.get("score", 0) or 0 for r in tb_rows)
         avg_teachback: float = sum_scores / teachback_count
         teachback_score: float | None = round(avg_teachback, 2)
+        teachback_details: list[TeachbackDetail] | None = [
+            TeachbackDetail(
+                segment_id=r.get("segment_id", ""),
+                score=r.get("score"),
+                feedback_praise=r.get("feedback_praise"),
+                feedback_correction=r.get("feedback_correction"),
+                concepts_hit=r.get("concepts_hit") or [],
+                concepts_missed=r.get("concepts_missed") or [],
+                attempt_number=r.get("attempt_number", 1),
+            )
+            for r in tb_rows
+        ]
     else:
         avg_teachback = 0.0
         teachback_score = None
+        teachback_details = None
 
     # D17 (S3-47): formula disclosure — determined by teachback presence
     formula_applied = (
@@ -1207,6 +1226,8 @@ async def get_session_report(
         # S3-05 (Story 2-46) attention timeline chart data
         ces_timeline=ces_timeline,
         intervention_events=intervention_events,
+        # Story 2-48 per-attempt teachback detail
+        teachback_details=teachback_details,
     )
 
 

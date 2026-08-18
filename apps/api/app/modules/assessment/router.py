@@ -38,7 +38,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["assessment"])
 
 # Re-export for backward compatibility — tests and other modules import from here.
-__all__ = ["QuizAnswer", "QuizSubmission", "QuizResult", "TeachbackSubmission", "TeachbackResult"]
+__all__ = [
+    "QuizAnswer",
+    "QuizSubmission",
+    "QuizResult",
+    "TeachbackSubmission",
+    "TeachbackResult",
+    "TeachbackDetail",
+]
+
+
+class TeachbackDetail(BaseModel):
+    """Per-attempt teach-back detail — mirrors teachback_attempts columns verbatim."""
+
+    segment_id: str
+    score: int | None = None
+    feedback_praise: str | None = None
+    feedback_correction: str | None = None
+    concepts_hit: list[str] = []
+    concepts_missed: list[str] = []
+    attempt_number: int = 1
 
 
 class SessionReport(BaseModel):
@@ -79,6 +98,8 @@ class SessionReport(BaseModel):
     # enforced in service.py, not just by convention (AC-5).
     ces_timeline: list[dict[str, float]] | None = None
     intervention_events: list[dict[str, Any]] | None = None
+    # Story 2-48 — per-attempt teach-back detail; None when session had no teach-back
+    teachback_details: list[TeachbackDetail] | None = None
 
 
 class LearnerDNA(BaseModel):
