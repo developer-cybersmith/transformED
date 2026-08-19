@@ -46,11 +46,32 @@ def _patches(
         else AsyncMock(return_value=package)
     )
 
+    # D124: run_eval now calls book_ingest_job (mocked — real detection is
+    # covered by tests/unit/test_book_ingest_job.py) and then queries the
+    # `chapters` it wrote before building the lessons row / calling
+    # run_pipeline. One fake chapter row is enough for these cost-capture
+    # tests, which don't care which chapter was picked.
+    sb = MagicMock()
+    sb.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {
+            "chapter_id": "30303030-3030-3030-3030-303030303030",
+            "book_id": "book-1",
+            "page_start": 1,
+            "page_end": 10,
+            "chapter_index": 0,
+            "boundary_confidence": "fallback",
+        }
+    ]
+
     return [
         patch("app.modules.content.pipeline.graph.run_pipeline", new=run_pipeline),
         patch("app.core.cost_tracker.get_cost", new=get_cost),
         patch("app.core.cost_tracker.clear_lesson_cost", new=AsyncMock(return_value=None)),
-        patch("app.core.db.get_supabase", return_value=MagicMock()),
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch(
+            "app.workers.jobs.book_ingest.book_ingest_job",
+            new=AsyncMock(return_value={"chapters_written": 1}),
+        ),
         patch("app.core.langfuse.get_langfuse", return_value=None),
         # LessonPackage is imported lazily inside run_eval, so it must be
         # patched at its source module, not on the runner.
