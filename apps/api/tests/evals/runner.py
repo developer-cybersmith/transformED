@@ -82,6 +82,12 @@ class EvalResult:
     # `None` means the meter could not be read — deliberately NOT 0.0, which
     # would be indistinguishable from a genuinely free run.
     cost_usd: float | None = None
+    # D124: which real chapter this run actually evaluated, and how it was
+    # detected — makes it visible in the results JSON when a fixture only
+    # ever produced one whole-book "fallback" chapter versus a genuinely
+    # detected sub-chapter, which is otherwise invisible in the summary.
+    chapter_id: str = ""
+    boundary_confidence: str | None = None
 
 
 async def _read_lesson_cost(lesson_id: str) -> float | None:
@@ -155,6 +161,9 @@ def _cleanup_eval_rows(
             )
     if book_id:
         try:
+            # D124: chapters.book_id is ON DELETE CASCADE, so this also
+            # removes every chapter row book_ingest_job wrote for this run —
+            # no separate chapters delete needed.
             supabase.table("books").delete().eq("book_id", book_id).execute()
         except Exception:  # noqa: BLE001
             logger.warning("eval:%s — cleanup: failed to delete books row", pdf_key, exc_info=True)
@@ -176,15 +185,18 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
     Rows/Storage objects created during setup are cleaned up in `finally`
     regardless of outcome (see `_cleanup_eval_rows`).
     """
-    from app.core.db import get_supabase
+    from app.core.db import get_supabase, rows
     from app.core.langfuse import get_langfuse
     from app.modules.content.pipeline.graph import run_pipeline
     from app.schemas.lesson import LessonPackage
+    from app.workers.jobs.book_ingest import book_ingest_job
 
     started = time.monotonic()
     span = None
     book_id: str | None = None
     storage_path: str | None = None
+    chapter_id: str = ""
+    boundary_confidence: str | None = None
     supabase = None
 
     try:
@@ -219,7 +231,7 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
             .insert({"user_id": user_id, "filename": f"{pdf_key}.pdf"})
             .execute()
         )
-        book_id = books_resp.data[0]["book_id"]
+        book_id = str(rows(books_resp)[0]["book_id"])
 
         storage_path = f"{user_id}/{book_id}/{pdf_key}.pdf"
         supabase.storage.from_("source-pdfs").upload(
@@ -228,11 +240,50 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
             file_options={"content-type": "application/pdf"},
         )
 
+        # D124 (docs/DEFECT-REGISTER.md): Story 1-13 made `extract_node`
+        # REQUIRE a real, resolvable `chapter_id` and refuse to run against a
+        # whole document — this harness predates that change and was left
+        # constructing a fake whole-book lesson with no chapter at all, so
+        # every eval run has failed instantly since Story 1-13 landed. Fixed
+        # by running the SAME real production ingestion entry point the ARQ
+        # worker enqueues (`book_ingest_job` — a plain `async def`, not
+        # ARQ-bound, exactly as `tests/unit/test_book_ingest_job.py` already
+        # calls it directly) instead of hand-rolling detection here. Makes
+        # zero LLM/TTS/image calls (pure PDF parsing + the chapter_detection
+        # ladder) — no new real-spend surface.
+        await book_ingest_job({}, book_id, storage_path)
+
+        chapters_resp = (
+            supabase.table("chapters")
+            .select("chapter_id, book_id, page_start, page_end, chapter_index, boundary_confidence")
+            .eq("book_id", book_id)
+            .execute()
+        )
+        chapter_rows = rows(chapters_resp)
+        if not chapter_rows:
+            raise RuntimeError(
+                f"eval:{pdf_key} — book_ingest_job wrote zero chapters for book_id={book_id}"
+            )
+        # Largest page span = most token-cost-representative chapter to
+        # evaluate; tie-break on lowest chapter_index for determinism across
+        # reruns. A no-op whenever detection falls through to its R5
+        # whole-document fallback (one chapter row spanning the whole PDF) —
+        # the likely outcome for these synthetic fixtures, none of which
+        # carry a real TOC/heading hierarchy (`generate_eval_pdfs.py`).
+        chosen_chapter = max(
+            chapter_rows,
+            key=lambda c: (int(c["page_end"]) - int(c["page_start"]) + 1, -int(c["chapter_index"])),
+        )
+        chapter_id = str(chosen_chapter["chapter_id"])
+        boundary_confidence = chosen_chapter.get("boundary_confidence")
+
         supabase.table("lessons").insert(
             {
                 "lesson_id": lesson_id,
                 "user_id": user_id,
                 "book_id": book_id,
+                "chapter_id": chapter_id,
+                "tier": "T2",
                 "status": "generating",
                 "source_file_path": storage_path,
             }
@@ -247,6 +298,8 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
             user_id=user_id,
             source_pdf_path=storage_path,
             book_id=book_id,
+            chapter_id=chapter_id,
+            tier="T2",
         )
 
         LessonPackage.model_validate(lesson_package)
@@ -270,6 +323,8 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
             quiz_relevance_issues=quiz_score.issues,
             elapsed_seconds=time.monotonic() - started,
             cost_usd=await _read_lesson_cost(lesson_id),
+            chapter_id=chapter_id,
+            boundary_confidence=boundary_confidence,
         )
 
     except Exception as exc:  # noqa: BLE001
@@ -280,6 +335,8 @@ async def run_eval(pdf_path: Path, pdf_key: str, lesson_id: str, user_id: str) -
             package_valid=False,
             slide_quality=None,
             quiz_relevance=None,
+            chapter_id=chapter_id,
+            boundary_confidence=boundary_confidence,
             elapsed_seconds=time.monotonic() - started,
             error=str(exc),
             # AC-3: a run that died partway has still spent money, and that is
@@ -301,10 +358,24 @@ def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
+# First real live run (2026-08-18) surfaced a second real gap alongside the
+# Redis one above: the old default, an all-zeros placeholder UUID, has no
+# matching row in the real project's `auth.users`/`public.users` (the latter
+# FK-references the former, see `20260611000000_initial_schema.sql:69`), so
+# every `books` insert failed `books_user_id_fkey` before any provider was
+# ever called. Fixed at the root, not worked around per-call: a dedicated
+# real auth user was created via `sb.auth.admin.create_user(...)`
+# (`on_auth_user_created` trigger auto-populates the matching `public.users`
+# row), specifically so every future live-eval run — not just this one —
+# reuses the same real, valid id without hitting this wall again.
+# eval-harness@internal.transformed.local
+_EVAL_HARNESS_USER_ID = "517b7c57-97d9-4656-b98c-7be3525eb592"
+
+
 async def run_all_evals(
     fixtures_dir: Path = _FIXTURES_DIR,
     results_dir: Path = _RESULTS_DIR,
-    user_id: str = "00000000-0000-0000-0000-000000000000",
+    user_id: str = _EVAL_HARNESS_USER_ID,
 ) -> list[EvalResult]:
     """Run all 5 eval PDFs and write a timestamped results JSON.
 
@@ -320,27 +391,47 @@ async def run_all_evals(
     """
     import uuid
 
-    results: list[EvalResult] = []
-    for pdf_key in _EVAL_PDF_KEYS:
-        pdf_path = fixtures_dir / f"{pdf_key}.pdf"
-        lesson_id = str(uuid.uuid4())
-        try:
-            result = await run_eval(pdf_path, pdf_key, lesson_id, user_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "eval:%s — run_eval raised unexpectedly, isolating as a failure",
-                pdf_key,
-                exc_info=True,
-            )
-            result = EvalResult(
-                pdf_key=pdf_key,
-                lesson_id=lesson_id,
-                package_valid=False,
-                slide_quality=None,
-                quiz_relevance=None,
-                error=str(exc),
-            )
-        results.append(result)
+    # First real live run of this harness (2026-08-18) surfaced a genuine gap:
+    # every pipeline node reaches Redis via `get_redis()`, which requires
+    # `init_redis()` to have run first — normally done once by `main.py`'s
+    # FastAPI lifespan on app startup. This harness invokes `run_pipeline`
+    # directly, outside that lifespan, so nothing ever called it — every one
+    # of the 20 PDFs failed in well under a second with
+    # "Redis pool is not initialised", before any provider was ever called
+    # (confirmed: zero OpenAI/Sarvam calls in that run's logs). Mirrors
+    # `main.py`'s own init/close pattern exactly rather than inventing a new
+    # one. `init_redis`/`close_redis` are both safe to call redundantly
+    # (`init_redis` warns and no-ops if already initialised; `close_redis`
+    # no-ops if never initialised) — safe even if a caller already set this
+    # up around this function for some other reason.
+    from app.config import get_settings as _get_settings
+    from app.core.redis import close_redis, init_redis
+
+    await init_redis(_get_settings().redis_url)
+    try:
+        results: list[EvalResult] = []
+        for pdf_key in _EVAL_PDF_KEYS:
+            pdf_path = fixtures_dir / f"{pdf_key}.pdf"
+            lesson_id = str(uuid.uuid4())
+            try:
+                result = await run_eval(pdf_path, pdf_key, lesson_id, user_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "eval:%s — run_eval raised unexpectedly, isolating as a failure",
+                    pdf_key,
+                    exc_info=True,
+                )
+                result = EvalResult(
+                    pdf_key=pdf_key,
+                    lesson_id=lesson_id,
+                    package_valid=False,
+                    slide_quality=None,
+                    quiz_relevance=None,
+                    error=str(exc),
+                )
+            results.append(result)
+    finally:
+        await close_redis()
 
     valid_count = sum(1 for r in results if r.package_valid)
 
@@ -354,9 +445,7 @@ async def run_all_evals(
     # as 0.0 — averaging in a zero would quietly understate the baseline, which
     # is the exact direction of error a cost ceiling must not have.
     costs = [r.cost_usd for r in results if r.cost_usd is not None]
-    from app.config import get_settings
-
-    ceiling = get_settings().max_lesson_cost_usd
+    ceiling = _get_settings().max_lesson_cost_usd
     breaches = [r.pdf_key for r in results if r.cost_usd is not None and r.cost_usd > ceiling]
 
     summary: dict[str, Any] = {
