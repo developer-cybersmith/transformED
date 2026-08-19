@@ -134,7 +134,7 @@ function LoadingState() {
   return (
     <div
       data-testid="session-report-loading"
-      className="flex flex-col gap-8 w-full max-w-2xl mx-auto pt-8 pb-12 animate-pulse"
+      className="flex flex-col gap-8 w-full max-w-2xl mx-auto pt-8 pb-12 px-4 sm:px-8 lg:px-12 animate-pulse"
     >
       <div className="flex flex-col gap-2">
         <div className="h-7 w-48 rounded bg-neutral-100" />
@@ -153,7 +153,7 @@ function ErrorState() {
   return (
     <div
       data-testid="session-report-error"
-      className="flex flex-col items-center justify-center max-w-2xl mx-auto pt-24 pb-24 text-center gap-6"
+      className="flex flex-col items-center justify-center max-w-2xl mx-auto pt-24 pb-24 px-4 sm:px-8 lg:px-12 text-center gap-6"
     >
       <p className="text-neutral-500">
         This session report isn&apos;t available right now.
@@ -191,7 +191,10 @@ export function SessionReport({ sessionId }: SessionReportProps) {
   if (error || !report) return <ErrorState />;
 
   return (
-    <div className="flex flex-col gap-8 w-full max-w-2xl mx-auto pt-8 pb-12">
+    <div
+      data-testid="session-report-root"
+      className="flex flex-col gap-8 w-full max-w-2xl mx-auto pt-8 pb-12 px-4 sm:px-8 lg:px-12"
+    >
       <div>
         <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight">
           Session Report
