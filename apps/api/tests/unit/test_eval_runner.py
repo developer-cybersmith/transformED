@@ -19,13 +19,38 @@ FAKE_LESSON_ID = "60606060-6060-6060-6060-606060606060"
 FAKE_USER_ID = "10101010-1010-1010-1010-101010101010"
 
 
+FAKE_CHAPTER_ID = "30303030-3030-3030-3030-303030303030"
+
+
 def _mock_supabase() -> MagicMock:
     sb = MagicMock()
     sb.table.return_value.insert.return_value.execute.return_value.data = [
         {"book_id": "20202020-2020-2020-2020-202020202020"}
     ]
     sb.storage.from_.return_value.upload.return_value = MagicMock()
+    # D124: run_eval now queries `chapters` (populated by book_ingest_job,
+    # itself mocked below) after ingest — one fake chapter row is enough for
+    # these tests, which exercise run_eval's own scoring/isolation logic,
+    # not real chapter detection.
+    sb.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {
+            "chapter_id": FAKE_CHAPTER_ID,
+            "book_id": "20202020-2020-2020-2020-202020202020",
+            "page_start": 1,
+            "page_end": 10,
+            "chapter_index": 0,
+            "boundary_confidence": "fallback",
+        }
+    ]
     return sb
+
+
+def _mock_book_ingest_job() -> AsyncMock:
+    """D124: run_eval now calls the real production ingestion entry point
+    before the chapters query above — mocked here so these tests exercise
+    run_eval's own logic, not real PDF parsing/chapter detection (covered
+    separately by `tests/unit/test_book_ingest_job.py`)."""
+    return AsyncMock(return_value={"chapters_written": 1})
 
 
 def _mock_langfuse_span() -> MagicMock:
@@ -51,6 +76,7 @@ async def test_run_eval_valid_package_scores_and_records_langfuse(tmp_path: Path
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.langfuse.get_langfuse", return_value=mock_langfuse),
+        patch("app.workers.jobs.book_ingest.book_ingest_job", new=_mock_book_ingest_job()),
         patch(
             "app.modules.content.pipeline.graph.run_pipeline",
             new=AsyncMock(return_value=REAL_LESSON_PACKAGE),
@@ -92,6 +118,7 @@ async def test_run_eval_pipeline_failure_isolated_not_raised(tmp_path: Path) -> 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.langfuse.get_langfuse", return_value=mock_langfuse),
+        patch("app.workers.jobs.book_ingest.book_ingest_job", new=_mock_book_ingest_job()),
         patch(
             "app.modules.content.pipeline.graph.run_pipeline",
             new=AsyncMock(side_effect=RuntimeError("cost ceiling exceeded")),
@@ -127,6 +154,7 @@ async def test_run_eval_invalid_package_shape_is_isolated_as_failure(tmp_path: P
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.langfuse.get_langfuse", return_value=mock_langfuse),
+        patch("app.workers.jobs.book_ingest.book_ingest_job", new=_mock_book_ingest_job()),
         patch(
             "app.modules.content.pipeline.graph.run_pipeline",
             new=AsyncMock(return_value={"not": "a valid lesson package"}),
@@ -167,6 +195,7 @@ async def test_run_all_evals_isolates_per_pdf_failures_and_writes_results(tmp_pa
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.langfuse.get_langfuse", return_value=mock_langfuse),
+        patch("app.workers.jobs.book_ingest.book_ingest_job", new=_mock_book_ingest_job()),
         patch("app.modules.content.pipeline.graph.run_pipeline", new=_flaky_run_pipeline),
     ):
         results = await run_all_evals(fixtures_dir=fixtures_dir, results_dir=results_dir)
