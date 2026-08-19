@@ -101,6 +101,35 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     };
 }
 
+// ── matchMedia polyfill (jsdom gap) ──────────────────────────────────────────
+// jsdom has no `window.matchMedia`. `useMediaQuery` (apps/web/src/hooks/
+// use-media-query.ts) calls it unconditionally on every render, and Story
+// 2-49/S3-08's `MobileNotice` mounts it inside `Player.tsx` -- so every
+// existing Player test now renders a `useMediaQuery` consumer whether or not
+// it cares about mobile/desktop. Previously only `AttentionChart.tsx` used
+// the hook, and its own test file mocked `matchMedia` locally; that stopped
+// being sufficient the moment a SECOND, unrelated component tree (the whole
+// player) started depending on it too. Defaults to `matches: false` (desktop)
+// so tests that don't care about viewport width are unaffected -- a test that
+// DOES care (AttentionChart.test.tsx, MobileNotice.test.tsx) already
+// overrides `window.matchMedia` locally with its own mock, which simply
+// replaces this default for that file. Feature-detected, same pattern as the
+// other jsdom-gap polyfills in this file.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+    window.matchMedia = function matchMedia(query: string): MediaQueryList {
+        return {
+            matches: false,
+            media: query,
+            onchange: null,
+            addListener: () => {},
+            removeListener: () => {},
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: () => false,
+        } as MediaQueryList;
+    };
+}
+
 // `@/lib/api`'s request interceptor constructs a Supabase browser client on
 // every call; `createBrowserClient` throws on an undefined url. These are the
 // same placeholder values `ci.yml` uses for the web build. Set before any test

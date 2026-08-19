@@ -496,6 +496,19 @@ describe('SessionReport', () => {
     expect(detailIndex).toBeLessThan(dnaIndex);
   });
 
+  // ── Story 2-49 (S3-08) — mobile horizontal padding gap ──────────────────────
+
+  it('has horizontal gutter padding matching the shared dashboard layout convention (px-4 sm:px-8 lg:px-12), so content never sits flush against the screen edge on mobile', () => {
+    useSessionReportMock.mockReturnValue({ report: FULL_REPORT, isLoading: false, error: undefined });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    const root = screen.getByTestId('session-report-root');
+    expect(root.className).toMatch(/px-4/);
+    expect(root.className).toMatch(/sm:px-8/);
+    expect(root.className).toMatch(/lg:px-12/);
+  });
+
   it('does not crash on a null per-attempt score (real, reachable shape — teachback_attempts.score has no NOT NULL constraint) and still renders a descriptive label', () => {
     useSessionReportMock.mockReturnValue({
       report: {
