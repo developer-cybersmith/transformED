@@ -1697,6 +1697,9 @@ _MAX_SLIDES_PER_SEGMENT = 8
 # guidance on bullet length, so a full-paragraph "bullet" was accepted by
 # every guard in this node (only blank titles/bullets were ever rejected)
 # and then scored as a "wall of text" failure by the harness on every run.
+# SYNC: if this value changes, tests/evals/scoring.py's _MAX_BULLET_CHARS
+# must change with it, or the harness scores against a threshold this node
+# no longer enforces.
 _MAX_SLIDE_BULLET_CHARS = 200
 
 
@@ -1938,12 +1941,20 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
             # "degrade don't discard" precedent Story 2-22 established for
             # an over-budget slide COUNT (truncate, don't fail the whole
             # response), applied here to an over-length bullet instead.
+            #
+            # Review finding (Dev 2, PR #151): slicing to _MAX_SLIDE_BULLET_CHARS
+            # and THEN appending a 1-char ellipsis produced a string up to
+            # _MAX_SLIDE_BULLET_CHARS + 1 chars long — still `> _MAX_BULLET_CHARS`
+            # under scoring.py's own check, so the "fix" still failed the exact
+            # "wall of text" test it exists to satisfy. Slice to
+            # _MAX_SLIDE_BULLET_CHARS - 1 so the ellipsis lands the final length
+            # exactly AT the limit, not one past it.
             truncated_any = False
             new_bullets: list[str] = []
             for bullet in slide.bullets:
                 stripped = bullet.strip()
                 if len(stripped) > _MAX_SLIDE_BULLET_CHARS:
-                    new_bullets.append(stripped[:_MAX_SLIDE_BULLET_CHARS].rstrip() + "…")
+                    new_bullets.append(stripped[: _MAX_SLIDE_BULLET_CHARS - 1].rstrip() + "…")
                     truncated_any = True
                 else:
                     new_bullets.append(stripped)

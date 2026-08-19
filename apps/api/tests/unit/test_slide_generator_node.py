@@ -688,11 +688,57 @@ async def test_over_length_bullet_is_truncated_not_rejected() -> None:
 
     sec_0_slide = next(s for s in result["slides"] if s["segment_id"] == "sec_0")
     truncated_bullet = sec_0_slide["data"]["bullets"][0]
-    assert len(truncated_bullet) == _MAX_SLIDE_BULLET_CHARS + 1, (
-        "truncated to the limit plus one ellipsis character"
+    assert len(truncated_bullet) == _MAX_SLIDE_BULLET_CHARS, (
+        "truncated bullet + ellipsis must land AT the limit, not one past it — "
+        "review finding (Dev 2, PR #151): the original slice-then-append order "
+        "produced _MAX_SLIDE_BULLET_CHARS + 1 chars, which still failed "
+        "scoring.py's own `> _MAX_BULLET_CHARS` check"
     )
     assert truncated_bullet.endswith("…")
-    assert truncated_bullet.startswith("X" * _MAX_SLIDE_BULLET_CHARS)
+    assert truncated_bullet.startswith("X" * (_MAX_SLIDE_BULLET_CHARS - 1))
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_bullet_one_char_over_the_limit_is_truncated_to_exactly_the_limit() -> None:
+    """D125 review finding (Dev 2, PR #151): the smallest input that should
+    still trigger truncation — pins the exact edge the off-by-one bug lived
+    at. A bullet of _MAX_SLIDE_BULLET_CHARS + 1 chars must come out at
+    exactly _MAX_SLIDE_BULLET_CHARS chars (with the ellipsis), not
+    _MAX_SLIDE_BULLET_CHARS + 1."""
+    from app.modules.content.pipeline.graph import (
+        _MAX_SLIDE_BULLET_CHARS,
+        slide_generator_node,
+    )
+
+    one_over_bullet = "X" * (_MAX_SLIDE_BULLET_CHARS + 1)
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response(
+        segments=[
+            {"segment_id": "sec_0", "slides": [{"title": "Welcome", "bullets": [one_over_bullet]}]},
+            {"segment_id": "sec_1", "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}]},
+            {"segment_id": "sec_2", "slides": [{"title": "Example", "bullets": ["Case A"]}]},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(_base_state())
+
+    sec_0_slide = next(s for s in result["slides"] if s["segment_id"] == "sec_0")
+    truncated_bullet = sec_0_slide["data"]["bullets"][0]
+    assert len(truncated_bullet) == _MAX_SLIDE_BULLET_CHARS
+
+    # The real check that matters: this must satisfy the eval harness's OWN
+    # independent constant, not just be internally consistent with the
+    # node's own mirror of it — this is exactly the check the off-by-one
+    # bug silently failed despite the node-side assertion passing.
+    from tests.evals.scoring import _MAX_BULLET_CHARS
+
+    assert len(truncated_bullet) <= _MAX_BULLET_CHARS
 
 
 @pytest.mark.unit
