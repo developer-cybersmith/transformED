@@ -1683,6 +1683,16 @@ class _SlideDeckLLM(BaseModel):
 
 _MAX_SLIDES_PER_SEGMENT = 8
 
+# D125: matches tests/evals/scoring.py's own _MAX_BULLET_CHARS "wall of
+# text" check (independently defined, not imported — app/ code must not
+# depend on tests/, same reason _MIN_SLIDES_PER_SEGMENT/_MAX_SLIDES_PER_SEGMENT
+# above are duplicated rather than shared). Found by inspecting what the eval
+# harness actually scores: the prompt below previously gave the LLM zero
+# guidance on bullet length, so a full-paragraph "bullet" was accepted by
+# every guard in this node (only blank titles/bullets were ever rejected)
+# and then scored as a "wall of text" failure by the harness on every run.
+_MAX_SLIDE_BULLET_CHARS = 200
+
 
 async def slide_generator_node(state: PipelineState) -> PipelineState:
     """Node 6 (Story 2-7/S2-8): generate a slide deck from Story 2-6's lesson
@@ -1823,8 +1833,11 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
                 "Produce a slide deck from the lesson plan segments below. "
                 "Each segment specifies its own slide-count range — respect "
                 "it exactly. Each slide has a short title and a list of "
-                "bullet points. Return EXACTLY one slide-set per segment "
-                "provided, echoing back each segment's segment_id "
+                "bullet points. Each bullet must be a single concise point "
+                f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
+                "a full sentence or paragraph; split a longer idea into "
+                "multiple bullets instead. Return EXACTLY one slide-set per "
+                "segment provided, echoing back each segment's segment_id "
                 "UNCHANGED — do not invent, merge, split, omit, or reorder "
                 "segment_ids." + _UNTRUSTED_CONTENT_GUARD
             ),
@@ -1913,6 +1926,30 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
                     f"lesson_id={lesson_id}: slide_generator returned an empty or blank bullet "
                     f"in segment {seg.segment_id!r}"
                 )
+            # D125: prompt guidance alone doesn't guarantee compliance — the
+            # LLM can still return a full-paragraph "bullet". Mirrors the
+            # "degrade don't discard" precedent Story 2-22 established for
+            # an over-budget slide COUNT (truncate, don't fail the whole
+            # response), applied here to an over-length bullet instead.
+            truncated_any = False
+            new_bullets: list[str] = []
+            for bullet in slide.bullets:
+                stripped = bullet.strip()
+                if len(stripped) > _MAX_SLIDE_BULLET_CHARS:
+                    new_bullets.append(stripped[:_MAX_SLIDE_BULLET_CHARS].rstrip() + "…")
+                    truncated_any = True
+                else:
+                    new_bullets.append(stripped)
+            if truncated_any:
+                logger.warning(
+                    "[%s] slide_generator_node: segment %s slide %r — truncated "
+                    "bullet(s) exceeding %d chars",
+                    lesson_id,
+                    seg.segment_id,
+                    slide.title,
+                    _MAX_SLIDE_BULLET_CHARS,
+                )
+            slide.bullets = new_bullets
 
     # ── Assemble output — iterate INPUT order (not LLM response order), same
     # discipline as lesson_planner_node's own review-round patch. ────────────

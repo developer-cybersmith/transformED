@@ -656,6 +656,103 @@ async def test_blank_whitespace_only_bullet_is_rejected() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_over_length_bullet_is_truncated_not_rejected() -> None:
+    """D125: a bullet exceeding _MAX_SLIDE_BULLET_CHARS is TRUNCATED, not
+    rejected wholesale — mirrors Story 2-22's "degrade don't discard"
+    precedent for an over-budget slide COUNT, applied to bullet length.
+    Matches tests/evals/scoring.py's own _MAX_BULLET_CHARS "wall of text"
+    check: without this guard, a paragraph-length bullet passed every
+    existing guard in this node and was scored as a failure by the eval
+    harness on every run."""
+    from app.modules.content.pipeline.graph import (
+        _MAX_SLIDE_BULLET_CHARS,
+        slide_generator_node,
+    )
+
+    long_bullet = "X" * (_MAX_SLIDE_BULLET_CHARS + 50)
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response(
+        segments=[
+            {"segment_id": "sec_0", "slides": [{"title": "Welcome", "bullets": [long_bullet]}]},
+            {"segment_id": "sec_1", "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}]},
+            {"segment_id": "sec_2", "slides": [{"title": "Example", "bullets": ["Case A"]}]},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(_base_state())
+
+    sec_0_slide = next(s for s in result["slides"] if s["segment_id"] == "sec_0")
+    truncated_bullet = sec_0_slide["data"]["bullets"][0]
+    assert len(truncated_bullet) == _MAX_SLIDE_BULLET_CHARS + 1, (
+        "truncated to the limit plus one ellipsis character"
+    )
+    assert truncated_bullet.endswith("…")
+    assert truncated_bullet.startswith("X" * _MAX_SLIDE_BULLET_CHARS)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_bullet_at_exactly_the_limit_is_not_truncated() -> None:
+    """D125: the boundary itself must be a no-op — off-by-one would either
+    truncate a compliant bullet or let a one-over bullet through."""
+    from app.modules.content.pipeline.graph import (
+        _MAX_SLIDE_BULLET_CHARS,
+        slide_generator_node,
+    )
+
+    exact_bullet = "X" * _MAX_SLIDE_BULLET_CHARS
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response(
+        segments=[
+            {"segment_id": "sec_0", "slides": [{"title": "Welcome", "bullets": [exact_bullet]}]},
+            {"segment_id": "sec_1", "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}]},
+            {"segment_id": "sec_2", "slides": [{"title": "Example", "bullets": ["Case A"]}]},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(_base_state())
+
+    sec_0_slide = next(s for s in result["slides"] if s["segment_id"] == "sec_0")
+    assert sec_0_slide["data"]["bullets"][0] == exact_bullet
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_slide_prompt_states_the_bullet_length_limit() -> None:
+    """D125: the eval-scored constraint must actually be told to the LLM,
+    not just enforced silently after the fact — a prompt-blind guard still
+    means most responses need truncating instead of complying up front."""
+    from app.modules.content.pipeline.graph import (
+        _MAX_SLIDE_BULLET_CHARS,
+        slide_generator_node,
+    )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await slide_generator_node(_base_state())
+
+    sent_system_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    assert str(_MAX_SLIDE_BULLET_CHARS) in sent_system_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_malformed_lesson_plan_segment_raises_contextual_error() -> None:
     """Review finding (Blind Hunter + Edge Case Hunter + Acceptance Auditor):
     a lesson_plan segment missing segment_id/title/summary raises a
