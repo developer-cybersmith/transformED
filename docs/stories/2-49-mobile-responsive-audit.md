@@ -196,12 +196,14 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
   `scrollWidth === clientWidth` (zero horizontal overflow) assertion, not just a visual read.
   **`/onboarding` not verified** — gated behind a specific new-user account state not reachable
   with the available test account in this session; recorded as an explicit gap, not silently
-  skipped (AC-8). No genuinely broken layout found on any audited route. One real finding on
-  `/settings`, investigated and correctly left unfixed: the Profile/Learning/Notifications/
-  Privacy/Account tab row visually clips at 375px, but `scrollWidth` (605px) vs `clientWidth`
-  (343px) confirms it is a genuinely working horizontal-scroll tab bar — Privacy/Account are
-  reachable, just not obviously so. Per AC-6's own scope ("fixes breakage... not a visual redesign
-  pass"), left alone.
+  skipped (AC-8). No genuinely broken layout found at 375px on any of these 5 routes at the time
+  of this task (Task 7 later found a real 768px-only defect on `/pending-approval` — see below,
+  not missed here since this task's scope was 375px only). One real finding on `/settings`,
+  investigated and correctly left unfixed: the Profile/Learning/Notifications/Privacy/Account tab
+  row visually clips at 375px, but `scrollWidth` (605px) vs `clientWidth` (343px) confirms it is
+  a genuinely working horizontal-scroll tab bar — Privacy/Account are reachable, just not
+  obviously so. Per AC-6's own scope ("fixes breakage... not a visual redesign pass"), left
+  alone.
 - [x] Task 6 (AC: 9): Full `apps/web` suite green (79 files / 982 tests, +4 new — `MobileNotice`
   suite + the `session-report-root` padding test); `tsc --noEmit` clean; `eslint` clean on every
   touched file. A real regression was found and fixed mid-implementation: mounting `MobileNotice`
@@ -213,6 +215,37 @@ Answering `docs/SCALE-CONTRACT.md`'s six questions.
   (Story 2-46's `ResizeObserver`/`getBoundingClientRect` polyfills) — verified all 46 pass again
   afterward, with `AttentionChart.test.tsx`/`MobileNotice.test.tsx`'s own local mocks unaffected
   (they override the global default per-file, same as before).
+- [x] Task 7 (gap-closing follow-up, user-requested after initial review): the first pass left
+  768px coverage thin (only Dashboard/Settings/landing) and never saw Reports' real success
+  state (only its error state, since no real session existed yet). Closed both gaps live via
+  Playwright, plus checked two real device-specific ratios not in the original 375/768/1024 set:
+  - **768px, remaining pages**: Books (2-column grid, correct), Upload (clean), the player
+    (no banner shown — correctly above the 767px cutoff — controls fine), Signin/Signup (clean,
+    confirmed via `scrollWidth === clientWidth`).
+  - **Reports success state**: completed a real lesson end-to-end (quiz answered 2/4, teach-back
+    skipped) to reach a real `/reports/{sessionId}` with real data — verified the full stat grid,
+    `AttentionChart`, and DNA snapshot all render correctly at 375/768/1024px, and the AC-4
+    padding fix holds on the real success state, not just the error state seen in the first pass.
+  - **Real device ratios**: iPad Air (820×1180) on `/pending-approval` (below) — confirmed the
+    fix holds, not just at the generic 768 value. Phone landscape (812×375) on the player —
+    confirmed no MobileNotice banner (correctly treated as non-mobile by width, since landscape
+    phone width exceeds the 767px cutoff — an accepted trade-off of width-only detection, not a
+    defect) and no layout breakage.
+  - **New real defect found and fixed**: `/pending-approval` was horizontally scrollable at
+    768px — confirmed via `document.body.scrollWidth` (836) vs `clientWidth` (760), and directly
+    via `window.scrollTo` (the page genuinely moved). Root cause: its two decorative
+    absolutely-positioned ambient-glow divs (`top-[-10%] left-[-10%] w-[50%] h-[50%]`, etc.) had
+    no `overflow-hidden` on their parent, unlike the identical pattern on the sibling
+    `signin`/`signup` pages, which already wrap it correctly. Fixed by adding `overflow-hidden`
+    to the page's root container, matching the sibling pages exactly. RED-confirmed via a real
+    `git stash` of the fix (test failed as expected), then GREEN. **Note on methodology**: an
+    initial diagnostic loop using `getBoundingClientRect()` on individual elements produced a
+    false lead (it flagged the glow divs as "overflowing" even after the fix, because
+    `getBoundingClientRect` reports raw layout geometry and ignores ancestor clipping) — the
+    real signal that mattered was `document.body.scrollWidth` (correctly dropped to match
+    `clientWidth` post-fix) and an actual `window.scrollTo` attempt (confirmed non-scrollable),
+    not the element-geometry check alone.
+  - New test: `apps/web/src/__tests__/app/pending-approval/page.test.tsx`.
 
 ## Dev Notes
 
@@ -278,6 +311,7 @@ mock it constructed) — assert the real rendered class/DOM state, not a mocked 
 |------|--------|--------|
 | 2026-08-18 | Story created per S3-08 in `docs/dev2-sprint-tracker.md` — the last remaining Sprint 3 item. Pre-implementation research (a dedicated research pass across every Dev-2-owned route, the player, the dashboard shell, and existing test infra) found the real scope is narrower than "audit everything from scratch": the dashboard shell's mobile nav already exists and is tested, dashboard/books already have substantial responsive classes, but the player has zero deliberate mobile handling (the tracker's own explicit "Desktop recommended" banner ask has no existing implementation), and the Reports page has a confirmed, previously-unknown missing-horizontal-padding bug. Also confirmed no Playwright/E2E infra exists anywhere in the repo — AC-8 defines "audited" via a documented DevTools pass or a `window.matchMedia`-mocked Vitest test (reusing `AttentionChart.tsx`'s existing pattern) rather than silently expanding scope to a new E2E framework. Branch `sprint3/s3-08-mobile-responsive-audit` off `main`. | Dev 2 |
 | 2026-08-19 | All 6 tasks implemented and completed, TDD (RED confirmed before each GREEN). Built `MobileNotice.tsx` (AC-1/AC-2) and fixed `SessionReport.tsx`'s missing horizontal padding (AC-4). Per explicit user instruction, verified every AC live via the Playwright MCP browser tool against a real running dev server (frontend + a real local backend, once the user started it) rather than relying only on mocked tests — confirmed the banner, dismiss behavior, and desktop-absence live against a real generated lesson; confirmed `PlayerControls`/`JargonHover` were never actually broken at 375px (AC-3 — no fix needed, verified not assumed); confirmed the dashboard/books/settings mobile nav and grids all work correctly (AC-5); audited upload/signin/signup/pending-approval/landing with zero defects found, `/onboarding` explicitly recorded as not reachable with the available test account (AC-6). Found and fixed a real regression along the way: mounting `MobileNotice` made every existing `Player.test.tsx` test newly depend on `window.matchMedia`, which jsdom doesn't implement — fixed via a shared polyfill in `test/setup.ts`, matching Story 2-46's established jsdom-gap-polyfill pattern. One investigative false alarm (a `JargonHover` tooltip that appeared not to open on the first two live-verification attempts) was checked further rather than trusted or written off, and confirmed working correctly — no register entry was kept for it, since re-verification showed no real defect. Status → review. | Dev 2 |
+| 2026-08-19 | User asked directly whether all screen ratios (laptop/mobile/tab/iPad) were actually covered — audit of my own coverage found 768px was thin (only 3 of 9 pages) and Reports' real success state (vs. just its error state) had never been seen. Closed both gaps (Task 7) plus checked two real device-specific ratios (iPad Air 820×1180, phone landscape 812×375) not in the original 375/768/1024 set. Found and fixed a second real bug in the process: `/pending-approval` was genuinely horizontally scrollable at 768px (decorative glow divs missing the same `overflow-hidden` its sibling `signin`/`signup` pages already have) — fixed with a RED/GREEN-verified test (confirmed failing via a real `git stash` of the fix, not just reasoned about). Completed a full real lesson end-to-end (quiz + skipped teach-back) to reach and verify the Reports success state with real data at all 3 breakpoints. | Dev 2 |
 
 ## Dev Agent Record
 
@@ -289,14 +323,15 @@ mock it constructed) — assert the real rendered class/DOM state, not a mocked 
 4. For Tasks 2, 4, and 5 (verification-only, no code expected), started a local Next.js dev server and asked the user to log in (no test credentials were available locally) so verification could run against a real authenticated session rather than a logged-out/error-only view. Once backend was also started, re-verified everything against real data (real books, a real generated lesson) rather than settling for the graceful-degradation error states seen before the backend was up.
 5. Used Playwright's `elementFromPoint`/`scrollWidth` APIs to programmatically settle two ambiguous visual findings (a "floating widget" that turned out to be the Next.js dev-tools badge; a "clipped" Settings tab row that turned out to be a genuinely scrollable, reachable tab bar) rather than guessing from a screenshot alone — both turned out not to be defects.
 6. When an initial JargonHover check appeared to show a broken tooltip, drafted and added a `docs/DEFECT-REGISTER.md` entry (D123) for it, per binding rule 5 (a documented limitation needs a register ID) — then, before finishing, retried the exact same check cleanly and found the tooltip working correctly. Retracted the register entry rather than leave a false record, since nothing had been pushed yet.
+7. After reporting completion, the user asked directly whether all screen ratios were covered — rather than assert yes, audited my own actual coverage against what was claimed and found two real gaps (thin 768px coverage, Reports success state never seen). Closed both, plus two real device-ratio checks, which surfaced a second genuine bug (`/pending-approval` horizontal overflow) that the original pass's page list would never have caught since the original 768px check only covered 3 of 9 pages.
 
 ### Completion Notes
 
-- All 9 ACs satisfied, all 6 tasks and their subtasks complete.
-- `apps/web`: 79 files / 982 tests green (4 new: `MobileNotice.test.tsx` ×4 tests, `SessionReport.test.tsx` +1 padding test), `tsc --noEmit` clean, `eslint` clean on every touched file.
-- Live-verified (not just mocked) via Playwright against a real dev server: dashboard, books (real data, 8 books), upload, settings, signin, signup, pending-approval, landing, and the lesson player itself (a real generated lesson, `EvadingEDR.pdf` chapter 9) at 375/768/1024px.
+- All 9 ACs satisfied, all 6 original tasks plus the Task 7 follow-up complete.
+- `apps/web`: 80 files / 984 tests green (5 new: `MobileNotice.test.tsx` ×4, `SessionReport.test.tsx` +1 padding test, `pending-approval/page.test.tsx` +1), `tsc --noEmit` clean, `eslint` clean on every touched file.
+- Live-verified (not just mocked) via Playwright against a real dev server: dashboard, books (real data, 8 books), upload, settings, signin, signup, pending-approval, landing, and the lesson player itself (a real generated lesson, `EvadingEDR.pdf` chapter 9) — now at 375/768/1024px **and** two real device ratios (iPad Air 820×1180, phone landscape 812×375) — plus the real Reports success state (completed a full lesson end-to-end to reach it).
 - Two AC-3 risks flagged by pre-implementation research (`PlayerControls`, `JargonHover`) were both verified NOT broken — no fix applied, consistent with the story's own "verify before fixing" instruction.
-- One genuine bug found and fixed outside the original three headline items: all three of `SessionReport.tsx`'s root containers (not just the one AC-4 named) were missing horizontal padding.
+- Two genuine bugs found and fixed outside the original three headline items: all three of `SessionReport.tsx`'s root containers were missing horizontal padding (found in the first pass), and `/pending-approval` was genuinely horizontally scrollable at 768px due to an unclipped decorative background (found in the Task 7 follow-up, after the user pushed back on claimed coverage).
 - `/onboarding` was not verified — gated behind a new-user account state not reachable with the available test account this session. Recorded as an open gap, not silently skipped.
 - Not fixed, correctly left alone per AC-6's scope: the Settings tab row's low discoverability at 375px (functional horizontal scroll, not breakage).
 
@@ -308,4 +343,6 @@ mock it constructed) — assert the real rendered class/DOM state, not a mocked 
 - `apps/web/src/test/setup.ts` (MODIFIED — global `matchMedia` polyfill, jsdom-gap pattern)
 - `apps/web/src/components/reports/SessionReport.tsx` (MODIFIED — horizontal padding + `session-report-root` testid on all 3 root containers)
 - `apps/web/src/__tests__/components/reports/SessionReport.test.tsx` (MODIFIED — 1 new padding test)
+- `apps/web/src/app/pending-approval/page.tsx` (MODIFIED — Task 7: added `overflow-hidden` to fix real horizontal overflow at 768px)
+- `apps/web/src/__tests__/app/pending-approval/page.test.tsx` (NEW — Task 7: 1 test, RED-confirmed via `git stash`)
 - `docs/dev2-sprint-tracker.md` (MODIFIED — S3-06 marked done, Sprint 3 count corrected, carried on this branch per the earlier note in this file's Change Log)
