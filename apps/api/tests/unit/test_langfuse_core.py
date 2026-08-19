@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import app.core.langfuse as langfuse_module
-from app.core.langfuse import get_langfuse
+from app.core.langfuse import get_langfuse, traced_node
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -206,3 +206,161 @@ def test_deterministic_trace_context_returns_none_when_langfuse_errors() -> None
     result = langfuse_module.deterministic_trace_context(mock_lf, "lesson-1")
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# traced_node() -- per-node span wrapper (D69's node-level half, D123)
+# ---------------------------------------------------------------------------
+
+
+def _fake_langfuse(trace_id: str = "trace-1") -> MagicMock:
+    lf = MagicMock()
+    lf.create_trace_id.side_effect = lambda seed: f"trace-for-{seed}"
+    lf.start_observation.return_value = MagicMock()
+    return lf
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_traced_node_shares_the_pipelines_deterministic_trace_id() -> None:
+    """The entire point of D123: a node's span must land under the SAME
+    trace_id as every provider call for that lesson, not a second,
+    disconnected trace -- so it must be seeded by the same `lesson_id` via
+    the same deterministic_trace_context() every provider already uses."""
+    fake_lf = _fake_langfuse()
+
+    with patch("app.core.langfuse.get_langfuse", return_value=fake_lf):
+
+        @traced_node("structure_node")
+        async def structure_node(state: dict) -> dict:
+            return state
+
+        await structure_node({"lesson_id": "lesson-XYZ"})
+
+    provider_ctx = langfuse_module.deterministic_trace_context(fake_lf, "lesson-XYZ")
+    _, kwargs = fake_lf.start_observation.call_args
+    assert kwargs["trace_context"] == provider_ctx
+    assert kwargs["name"] == "structure_node"
+    assert kwargs["as_type"] == "span"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_traced_node_returns_the_wrapped_nodes_state() -> None:
+    """The decorator must be transparent to the node's own return value --
+    LangGraph reads specific state keys from whatever the node returns."""
+    fake_lf = _fake_langfuse()
+
+    with patch("app.core.langfuse.get_langfuse", return_value=fake_lf):
+
+        @traced_node("chunk_node")
+        async def chunk_node(state: dict) -> dict:
+            return {"chunks": ["a", "b"]}
+
+        result = await chunk_node({"lesson_id": "lesson-1"})
+
+    assert result == {"chunks": ["a", "b"]}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_traced_node_propagates_the_nodes_exception() -> None:
+    """A node failure must still fail the pipeline -- observability is
+    additive, never a mask over a real error (this file's established
+    safe_trace contract, applied here to the node span itself)."""
+    fake_lf = _fake_langfuse()
+    span = fake_lf.start_observation.return_value
+
+    with patch("app.core.langfuse.get_langfuse", return_value=fake_lf):
+
+        @traced_node("embed_node")
+        async def embed_node(state: dict) -> dict:
+            raise ValueError("embedding provider is down")
+
+        with pytest.raises(ValueError, match="embedding provider is down"):
+            await embed_node({"lesson_id": "lesson-1"})
+
+    span.update.assert_called_once_with(level="ERROR", status_message="embedding provider is down")
+    span.end.assert_called_once_with()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_traced_node_ends_the_span_on_success() -> None:
+    """The span must be closed on the success path too, not only on error --
+    otherwise every successful node run leaks an open span."""
+    fake_lf = _fake_langfuse()
+    span = fake_lf.start_observation.return_value
+
+    with patch("app.core.langfuse.get_langfuse", return_value=fake_lf):
+
+        @traced_node("tts_node")
+        async def tts_node(state: dict) -> dict:
+            return state
+
+        await tts_node({"lesson_id": "lesson-1"})
+
+    span.end.assert_called_once_with()
+    span.update.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_traced_node_degrades_gracefully_with_no_seed_in_state() -> None:
+    """A state dict missing lesson_id (or the configured seed_key) must not
+    crash the node -- degrades to a random trace_id, same as every other
+    caller of deterministic_trace_context()."""
+    fake_lf = _fake_langfuse()
+
+    with patch("app.core.langfuse.get_langfuse", return_value=fake_lf):
+
+        @traced_node("slide_generator_node")
+        async def slide_generator_node(state: dict) -> dict:
+            return state
+
+        result = await slide_generator_node({})
+
+    assert result == {}
+    fake_lf.create_trace_id.assert_not_called()
+    _, kwargs = fake_lf.start_observation.call_args
+    assert kwargs["trace_context"] is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_traced_node_never_raises_when_langfuse_itself_is_down() -> None:
+    """safe_trace's own contract, exercised through the decorator: a
+    tracing-layer outage (start_observation raising) must never fail the
+    node it wraps."""
+    fake_lf = MagicMock()
+    fake_lf.create_trace_id.side_effect = lambda seed: f"trace-for-{seed}"
+    fake_lf.start_observation.side_effect = RuntimeError("langfuse is down")
+
+    with patch("app.core.langfuse.get_langfuse", return_value=fake_lf):
+
+        @traced_node("package_builder_node")
+        async def package_builder_node(state: dict) -> dict:
+            return {"package": "built"}
+
+        result = await package_builder_node({"lesson_id": "lesson-1"})
+
+    assert result == {"package": "built"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_traced_node_default_seed_key_is_lesson_id() -> None:
+    """Content-pipeline nodes seed on lesson_id by default -- the tutor FSM
+    deliberately does not use this decorator at all (see the decorator's own
+    docstring), so no other seed_key is exercised by real callers today."""
+    fake_lf = _fake_langfuse()
+
+    with patch("app.core.langfuse.get_langfuse", return_value=fake_lf):
+
+        @traced_node("lesson_planner_node")
+        async def lesson_planner_node(state: dict) -> dict:
+            return state
+
+        await lesson_planner_node({"lesson_id": "lesson-42", "other_id": "ignored"})
+
+    fake_lf.create_trace_id.assert_called_once_with(seed="lesson-42")

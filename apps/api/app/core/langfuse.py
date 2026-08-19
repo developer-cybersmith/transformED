@@ -12,10 +12,11 @@ finally block so all buffered spans are sent before the process exits.
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Coroutine
+from typing import Any, TypeVar
 
 from langfuse import Langfuse
 from langfuse.types import TraceContext
@@ -101,3 +102,79 @@ def deterministic_trace_context(langfuse: Langfuse, seed: str | None) -> TraceCo
     if trace_id is None:
         return None
     return TraceContext(trace_id=trace_id)
+
+
+_NodeFn = TypeVar("_NodeFn", bound=Callable[..., Coroutine[Any, Any, Any]])
+
+
+def traced_node(node_name: str, *, seed_key: str = "lesson_id") -> Callable[[_NodeFn], _NodeFn]:
+    """Wrap a LangGraph node coroutine with a Langfuse span (D69, node-level half).
+
+    D69 (docs/DEFECT-REGISTER.md): every provider call across an N-node
+    pipeline run lands as a flat sibling directly under its trace root, not
+    nested under a per-node span -- because nothing ever created a per-node
+    span to nest under. This closes exactly that half.
+
+    Uses the SAME deterministic trace_id every provider call already uses
+    (`deterministic_trace_context`, seeded by `state[seed_key]`) so each
+    node's span lands under the SAME trace as the LLM/TTS/image calls made
+    while it runs -- not a second, disconnected trace. Content-pipeline
+    nodes seed on `lesson_id` (the default); the tutor FSM deliberately does
+    NOT use this decorator at all -- `_trace_dispatch` already traces each
+    dispatch correctly as its own event, one node ever runs per `ainvoke()`
+    call there, and forcing a shared trace_id across an hour-plus,
+    dozens-of-dispatches session is exactly what `_trace_dispatch`'s own
+    docstring found wrong with an earlier attempt at this. Do not add this
+    to tutor nodes.
+
+    Does NOT nest the provider calls MADE INSIDE each node under that node's
+    own span -- doing so needs `parent_span_id` threaded through pipeline
+    state into every provider constructor, a real architecture change D69
+    itself already scopes as separate and larger. This gives node-level
+    timing/grouping (how long did structure_node take, sibling to the calls
+    it made) without that bigger, riskier change.
+
+    Never raises and never changes the wrapped node's return value or
+    exceptions -- an observability failure must never break the pipeline
+    (this file's own established contract, `safe_trace`).
+
+    Typed via a whole-callable `TypeVar(bound=Callable[..., Coroutine[...]])`
+    (this file's `app.core.retry.with_retry` established the pattern) rather
+    than decomposing the signature into `Callable[[_State], Awaitable[_State]]`
+    and reconstructing it -- LangGraph's `add_node` overloads are generic over
+    a `NodeInputT` bound to `TypedDictLikeV1 | TypedDictLikeV2 | ...`, and a
+    reconstructed `Callable[[X], Awaitable[X]]` type failed every overload at
+    `graph.py`'s `add_node()` call sites even though it was structurally
+    identical to the undecorated node's own type; returning the original
+    function's exact inferred type via the bound TypeVar (not a rebuilt one)
+    resolves it.
+    """
+
+    def decorator(fn: _NodeFn) -> _NodeFn:
+        @functools.wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            state = args[0] if args else kwargs.get("state")
+            seed = state.get(seed_key) if isinstance(state, dict) else None
+            langfuse = get_langfuse()
+            trace_context = deterministic_trace_context(langfuse, seed)
+            span = safe_trace(
+                lambda: langfuse.start_observation(
+                    name=node_name,
+                    as_type="span",
+                    trace_context=trace_context,
+                )
+            )
+            try:
+                return await fn(*args, **kwargs)
+            except Exception as exc:
+                if span is not None:
+                    error_message = str(exc)
+                    safe_trace(lambda: span.update(level="ERROR", status_message=error_message))
+                raise
+            finally:
+                if span is not None:
+                    safe_trace(span.end)
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
