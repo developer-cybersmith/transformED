@@ -20,6 +20,7 @@ import { TutorInterventionCard } from './TutorInterventionCard';
 import { CESIndicator } from './CESIndicator';
 import { AttentionConsentModal } from './AttentionConsentModal';
 import { AttentionMonitor } from './AttentionMonitor';
+import { MobileNotice } from './MobileNotice';
 
 interface PlayerProps {
   lesson: LessonPackage;
@@ -232,6 +233,10 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
           SlideRenderer's own overflow-y-auto never gets a bounded height to
           actually scroll within. */}
       <div className="relative flex-1 min-h-0">
+        {/* Desktop-recommended banner (Story 2-49/S3-08) — informational only,
+            never gates playback or controls underneath (AC-2). */}
+        <MobileNotice />
+
         {/* Tier badge — persistent, visible regardless of playback state (S2-10).
             Not placed in the "before any slide is active" block below since
             currentSlideId is set almost immediately after mount in real use,
