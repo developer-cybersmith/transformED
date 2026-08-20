@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -10,12 +10,15 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { isAuthApiError } from "@supabase/supabase-js";
+import { TurnstileWidget, type TurnstileHandle } from "./Turnstile";
 
 export function SignInForm() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const supabase = createClient();
     const [isLoading, setIsLoading] = useState(false);
+    const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+    const turnstileRef = useRef<TurnstileHandle>(null);
     const [error, setError] = useState(
         searchParams.get("error") === "auth_callback_failed"
             ? "Sign-in failed. Please try again or use email and password."
@@ -31,10 +34,17 @@ export function SignInForm() {
         const email = formData.get("email");
         const password = formData.get("password");
 
+        if (!captchaToken) {
+            setError("Please complete the verification challenge.");
+            setIsLoading(false);
+            return;
+        }
+
         try {
             const { error: signInError } = await supabase.auth.signInWithPassword({
                 email: email as string,
-                password: password as string
+                password: password as string,
+                options: { captchaToken }
             });
 
             if (signInError) throw signInError;
@@ -56,6 +66,10 @@ export function SignInForm() {
                     : "Authentication failed. Please verify your credentials."
             );
         } finally {
+            // Turnstile tokens are single-use -- siteverify consumes it
+            // whether or not the credentials themselves were valid.
+            turnstileRef.current?.reset();
+            setCaptchaToken(null);
             setIsLoading(false);
         }
     };
@@ -135,7 +149,19 @@ export function SignInForm() {
                     </Label>
                 </div>
 
-                <Button type="submit" className="w-full group" isLoading={isLoading} size="lg">
+                <TurnstileWidget
+                    ref={turnstileRef}
+                    onVerify={setCaptchaToken}
+                    onExpire={() => setCaptchaToken(null)}
+                />
+
+                <Button
+                    type="submit"
+                    className="w-full group"
+                    isLoading={isLoading}
+                    disabled={!captchaToken}
+                    size="lg"
+                >
                     Continue Learning
                     <ArrowRight className="w-4 h-4 ml-2 mt-[1px] group-hover:translate-x-1 transition-transform" />
                 </Button>
