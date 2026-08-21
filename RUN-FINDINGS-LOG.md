@@ -22,7 +22,7 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 
 | # | Gap | Found in run | Severity | Status |
 |---|-----|---------------|----------|--------|
-| 1 | Rotated/low-quality real scans OCR into silent, ungated garbage — a real, fully-billed lesson scored a PERFECT 1.0/1.0 quality score while built from unreadable OCR gibberish. No confidence check anywhere in the extraction path. | Real-world PDF investigation (2026-08-20) + confirmed live (2026-08-21) | **High** | Open — `D128` |
+| 1 | ~~Rotated/low-quality real scans OCR into silent, ungated garbage~~ | Real-world PDF investigation (2026-08-20) + confirmed live (2026-08-21) | High | **Fixed 2026-08-21 — `D128` CLOSED.** Unit/mock-level verified (10 tests, 1245/9 skipped full regression, zero regressions). **Not yet re-verified live** — the 2026-08-21 live confirmation was pre-fix; see Closed Gaps below. |
 | 2 | Multiple concurrent real users has never been tested. Three concrete, already-known risks: the circuit breaker trips per-provider globally (one user's failure can lock out others); `D45`'s duplicate-request check has no real DB constraint; `D49`'s rate limiter silently multiplies across server replicas. | Discussion following the real-world live run (2026-08-21) | **High** | Open — `D129`, scoped to Sprint 4 |
 | 3 | The official Sprint 3 eval harness — 20 synthetic PDFs — has **never actually been run live**, despite the tracker previously claiming it was "done, blocked only on Sarvam credits." Two other real blockers were hiding behind that claim (now fixed: `D124`, `D126`), but the run itself still hasn't happened. | Sprint 3 completion audit (2026-08-20) | Med (blocks S3-2 entirely, see #4) | **Open — next scheduled run, not yet executed** |
 | 4 | Prompt tuning (S3-2) cannot be honestly completed — its own rule requires real before/after scores from the 20-PDF harness, which has never produced any (see #3). One prompt change (`D125`) already shipped, but tuned against a static scoring rule, not real data — doesn't satisfy the AC. | Sprint 3 completion audit (2026-08-20) | Med | Open — blocked on #3 |
@@ -33,7 +33,42 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 
 ---
 
+## Closed Gaps
+
+| # | Gap | Fixed in run | Fix summary |
+|---|-----|--------------|-------------|
+| 1 | Rotated/low-quality real scans OCR into silent, ungated garbage | 2026-08-21 — D128 fix build | `_ocr_page_text` now returns real Tesseract confidence alongside the text; below `_OCR_LOW_CONFIDENCE_THRESHOLD=60` the content is still accepted (never silently dropped) but the page is named in a new `low_confidence_ocr_pages` list, persisted on the `lesson_jobs` checkpoint the same way `tables_detected`/`docling_pages` already are. 10 new/updated tests, 1245/9 skipped full regression, zero regressions. **Still owes a live re-verification** — see Run Log entry. |
+
+---
+
 ## Run Log
+
+### 2026-08-21 — D128 fix: OCR confidence check, build + unit-test
+**Commands:** edited `extract_subprocess.py` (`_ocr_page_text`, `extract_pdf`) + `graph.py`
+(`extract_node`'s checkpoint) · `pytest tests/unit/test_extract_subprocess.py
+tests/unit/test_extract_node.py tests/unit/test_real_world_extraction.py -v` · `ruff check` /
+`ruff format --check` / `mypy` on every touched file · full `pytest tests/unit -q`
+
+**Results:**
+- Targeted files: 58 + 16 passed (extraction/node checkpoint tests), 6 of them net-new.
+- Full `tests/unit` regression: **1245 passed, 9 skipped** (1239 prior baseline + these 6),
+  zero regressions.
+- `ruff check`/`ruff format` clean on every touched file. `mypy`: only the same 3 pre-existing,
+  unrelated `openai.py` provider errors — nothing new.
+
+**Findings:**
+- The fix works as designed: the exact fixture that proved D128 (`real_scan_like_rotated`) now
+  flags all 3 of its pages; the companion upright fixture (`real_scan_like`) flags zero — the
+  check discriminates real content from garbage rather than flagging indiscriminately.
+- **This run does NOT re-verify the fix live.** The 2026-08-21 live confirmation logged above
+  (in the real-world eval run entry) was captured BEFORE this fix existed — it proves the bug,
+  not the fix. Whether the flag actually lands correctly in `lesson_jobs.node_outputs` on a real
+  live run remains unit/mock-level verified only, deliberately not re-spent to confirm today
+  (see Gap #1's Open Gaps entry). → **Candidate for the next live run, when one is next run
+  anyway rather than as a dedicated re-spend.**
+- `docs/DEFECT-REGISTER.md`'s D128 entry closed with full fix + test detail.
+
+---
 
 ### 2026-08-21 — Real-world PDF eval tier, LIVE run against real providers
 **Command:** `pytest tests/evals/test_live_run_real_world.py -v --run-live-eval`

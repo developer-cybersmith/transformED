@@ -21,7 +21,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pypdfium2 as pdfium
-import pytesseract
 import pytest
 
 from app.modules.content.pipeline.nodes.extract_subprocess import extract_pdf
@@ -83,9 +82,7 @@ def test_ocr_fallback_recovers_real_text_from_an_upright_scan(tmp_path: Path) ->
     """The real Tesseract call, not a mock — proves the OCR fallback that
     has existed since Story 1-4 actually works against a genuine scanned
     page, which nothing in this repo had ever verified."""
-    result = extract_pdf(
-        str(_fixture_path("real_scan_like")), str(tmp_path), ocr_threshold=50
-    )
+    result = extract_pdf(str(_fixture_path("real_scan_like")), str(tmp_path), ocr_threshold=50)
     assert result["page_count"] == 3
     # The source page's real opening line (page 40 of d2l.pdf) — OCR noise
     # is expected (this is real Tesseract output, not a fixture), but the
@@ -95,44 +92,39 @@ def test_ocr_fallback_recovers_real_text_from_an_upright_scan(tmp_path: Path) ->
     assert len(result["raw_text"]) > 500
 
 
-def test_ocr_on_a_rotated_scan_is_silently_accepted_despite_being_garbage(
+def test_ocr_on_a_rotated_scan_is_accepted_but_flagged_low_confidence(
     tmp_path: Path,
 ) -> None:
-    """D128 (OPEN, docs/DEFECT-REGISTER.md) — documents current behaviour,
-    it does not assert desired behaviour. `extract_pdf` has no OCR
-    confidence gate: it accepts any non-empty `image_to_string` output.
-    Tesseract has no orientation correction here, so a 90-degree-rotated
-    real scan produces non-empty but UNREADABLE text — measured mean
-    per-word confidence 38% vs. 96% for the same page upright — and that
-    garbage sails through with no admin-visible signal. This test pins the
-    ungated, silent-degradation behaviour so a future confidence-gate fix
-    (D128) has something concrete to flip red, then green."""
+    """D128 (docs/DEFECT-REGISTER.md) — real, live-confirmed fix, not just a
+    documented gap. Tesseract has no orientation correction here, so a
+    90-degree-rotated real scan produces non-empty but UNREADABLE text —
+    live-confirmed 2026-08-21: a real, fully-billed lesson built from this
+    exact fixture scored a PERFECT slide_quality=1.0/quiz_relevance=1.0
+    while carrying this garbage content. The content is still ACCEPTED
+    (never silently dropped — a lesser defect than losing real content), but
+    now the real `extract_pdf()` (not a re-derived confidence check) must
+    name the page in `low_confidence_ocr_pages` — the explicit, surfaced
+    degradation flag downstream code and a future admin view can act on."""
     result = extract_pdf(
         str(_fixture_path("real_scan_like_rotated")), str(tmp_path), ocr_threshold=50
     )
-    # "Succeeds" today in the only sense the pipeline currently checks —
-    # non-empty text, no exception, page_count intact.
+    # Still succeeds in the same sense as before the fix — non-empty text,
+    # no exception, page_count intact. The fix adds a flag, not a rejection.
     assert result["page_count"] == 3
     assert len(result["raw_text"]) > 0
-    # But it is not the real content: the correct opening line is absent —
-    # Tesseract, run sideways, does not recover it.
+    # Still not the real content — the correct opening line is absent.
     assert "Introduction" not in result["raw_text"]
+    # The fix itself: every one of the 3 pages (1-based) is named as
+    # low-confidence — this fixture has no readable page to contrast against.
+    assert result["low_confidence_ocr_pages"] == [1, 2, 3]
 
-    # Quantifies "garbage" rather than asserting it impressionistically —
-    # real per-word OCR confidence, not a proxy.
-    doc = pdfium.PdfDocument(str(_fixture_path("real_scan_like_rotated")))
-    try:
-        bitmap = doc[0].render(scale=300 / 72)
-        data = pytesseract.image_to_data(bitmap.to_pil(), output_type=pytesseract.Output.DICT)
-        confidences = [int(c) for c in data["conf"] if int(c) >= 0]
-    finally:
-        doc.close()
-    mean_confidence = sum(confidences) / len(confidences)
-    assert mean_confidence < 60, (
-        f"mean OCR confidence was {mean_confidence:.1f} — if this rises, the "
-        "rotated-scan fixture may no longer reproduce D128 and this test's "
-        "premise should be re-checked, not just its threshold loosened"
-    )
+
+def test_ocr_on_an_upright_scan_is_not_flagged(tmp_path: Path) -> None:
+    """Companion to the rotated case — the real, correctly-read scan must
+    NOT be flagged, proving the confidence check discriminates real content
+    from garbage rather than flagging every OCR'd page indiscriminately."""
+    result = extract_pdf(str(_fixture_path("real_scan_like")), str(tmp_path), ocr_threshold=50)
+    assert result["low_confidence_ocr_pages"] == []
 
 
 def test_corrupted_pdf_fails_loud_not_silent(tmp_path: Path) -> None:
@@ -141,9 +133,10 @@ def test_corrupted_pdf_fails_loud_not_silent(tmp_path: Path) -> None:
     partial result that looks like a valid extraction."""
     with pytest.raises(Exception) as exc_info:  # noqa: PT011 — pdfium's own exception type
         extract_pdf(str(_fixture_path("real_corrupted_truncated")), str(tmp_path), ocr_threshold=50)
-    assert "data format" in str(exc_info.value).lower() or "failed to load" in str(
-        exc_info.value
-    ).lower()
+    assert (
+        "data format" in str(exc_info.value).lower()
+        or "failed to load" in str(exc_info.value).lower()
+    )
 
 
 def test_encrypted_pdf_fails_loud_with_an_identifiable_cause(tmp_path: Path) -> None:

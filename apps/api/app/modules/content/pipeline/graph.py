@@ -515,11 +515,15 @@ async def extract_node(state: PipelineState) -> PipelineState:
     # Story 1-13 adds extracted_page_count/page_offset to the same defensive
     # list: they are how you tell from a checkpoint alone whether a run was
     # chapter-scoped (extracted_page_count << page_count) or whole-document.
+    # D128 adds low_confidence_ocr_pages the same way — real content that OCR
+    # was not confident about, persisted on the record (CLAUDE.md's "silent
+    # truncation is never acceptable" rule) rather than computed and dropped.
     for _extra_key in (
         "tables_detected",
         "docling_pages",
         "extracted_page_count",
         "page_offset",
+        "low_confidence_ocr_pages",
     ):
         if _extra_key in result:
             extract_cache[_extra_key] = result[_extra_key]

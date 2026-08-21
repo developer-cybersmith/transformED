@@ -837,6 +837,15 @@ Every node must:
     not per-user; D45's idempotency check has no real constraint behind it; D49's rate limiter
     silently multiplies across replicas. **Explicitly scoped to Sprint 4** ("Load test +
     calibration") so that sprint starts from a named risk list, not a generic task.
+  - **D128 FIXED 2026-08-21.** `_ocr_page_text` now returns Tesseract's own real confidence
+    alongside the text; below `_OCR_LOW_CONFIDENCE_THRESHOLD=60` the content is still accepted
+    (never silently dropped) but the page is named in a new `low_confidence_ocr_pages` list,
+    persisted on `lesson_jobs.node_outputs` the same additive way `tables_detected`/
+    `docling_pages` already are. 10 new/updated tests; full regression **1245 passed, 9 skipped**
+    (1239 baseline + these 6 net-new), zero regressions. **Not yet re-verified live** — the
+    2026-08-21 live confirmation above was captured PRE-fix; whether the flag lands correctly on
+    a real run is unit/mock-level verified only. See `docs/DEFECT-REGISTER.md` and
+    `RUN-FINDINGS-LOG.md` for full detail.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only

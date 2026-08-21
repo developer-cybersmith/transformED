@@ -57,6 +57,16 @@ logger = logging.getLogger(__name__)
 _MIN_IMAGE_PAGE_AREA_FRACTION = 0.05
 _MIN_IMAGE_RENDER_PX2 = 10_000
 
+# D128 (docs/DEFECT-REGISTER.md): `_ocr_page_text` previously accepted ANY
+# non-empty Tesseract output with no confidence gate. A real page rendered
+# upright OCRs at ~96% mean per-word confidence; the identical page rotated
+# 90 degrees (no orientation correction here) OCRs to unreadable gibberish at
+# ~38% — non-empty, so it passed silently. 60 sits with a clear margin below
+# the one measured "readable" data point (96%) and a clear margin above the
+# one measured "garbage" data point (38%) — a reasoned margin, not a
+# Phase-1-benchmarked constant (same status D115's TITLE_TAIL_WINDOW carries).
+_OCR_LOW_CONFIDENCE_THRESHOLD = 60
+
 # AC-2: one DocumentConverter per subprocess invocation, created lazily on the
 # first table run and reused across runs (model weights load once, ~seconds).
 _docling_converter: Any = None
@@ -408,8 +418,17 @@ def _convert_table_runs(
     return sorted(docling_pages)
 
 
-def _ocr_page_text(pdfium_page: Any, img_dir: str, page_num: int) -> str:  # noqa: ANN401
-    """Render a pypdfium2 page at 300 DPI and run Tesseract OCR on it."""
+def _ocr_page_text(pdfium_page: Any, img_dir: str, page_num: int) -> tuple[str, float | None]:  # noqa: ANN401
+    """Render a pypdfium2 page at 300 DPI and run Tesseract OCR on it.
+
+    D128: also returns the real mean per-word confidence Tesseract itself
+    reports (`image_to_data`), so the caller can tell "OCR ran and the page
+    was probably readable" from "OCR ran and produced non-empty gibberish" —
+    a distinction the return type previously threw away entirely, since a
+    bare `str` cannot carry it. `None` confidence means no words were
+    detected at all (nothing to average) — a real, different case from a low
+    but non-empty confidence, so it is never coerced to 0.0.
+    """
     try:
         import pytesseract
 
@@ -417,10 +436,14 @@ def _ocr_page_text(pdfium_page: Any, img_dir: str, page_num: int) -> str:  # noq
         pil_img = bitmap.to_pil()
         img_path = os.path.join(img_dir, f"ocr_p{page_num}.png")
         pil_img.save(img_path, format="PNG")
-        return pytesseract.image_to_string(pil_img, lang="eng")  # type: ignore[no-any-return]
+        text: str = pytesseract.image_to_string(pil_img, lang="eng")
+        data = pytesseract.image_to_data(pil_img, lang="eng", output_type=pytesseract.Output.DICT)
+        confidences = [int(c) for c in data["conf"] if int(c) >= 0]
+        mean_confidence = sum(confidences) / len(confidences) if confidences else None
+        return text, mean_confidence
     except Exception:  # noqa: BLE001
         logger.warning("OCR failed for page %s", page_num, exc_info=True)
-        return ""
+        return "", None
 
 
 def _extract_page_images(
@@ -614,9 +637,14 @@ def extract_pdf(
     Returns:
         ``{"raw_text": str, "page_count": int, "extracted_page_count": int,
         "page_offset": int, "image_files": list, "font_blocks": list,
-        "tables_detected": int, "docling_pages": list}`` where ``page_count`` is
+        "tables_detected": int, "docling_pages": list,
+        "low_confidence_ocr_pages": list[int]}`` where ``page_count`` is
         the DOCUMENT's total page count (unchanged meaning — callers depend on
-        it) and ``page_offset`` is the ABSOLUTE index of ``page_texts[0]``.
+        it), ``page_offset`` is the ABSOLUTE index of ``page_texts[0]``, and
+        ``low_confidence_ocr_pages`` (D128) names every ABSOLUTE page number
+        where OCR ran and returned non-empty text below
+        ``_OCR_LOW_CONFIDENCE_THRESHOLD`` mean per-word confidence — real
+        content, but flagged as unreliable rather than silently trusted.
     """
     import pdfplumber
     import pypdfium2 as pdfium
@@ -629,6 +657,11 @@ def extract_pdf(
     table_page_idxs: list[int] = []  # ABSOLUTE page indices
     tables_detected = 0
     page_count: int = 0
+    # D128: ABSOLUTE page numbers where OCR ran and produced non-empty text
+    # below _OCR_LOW_CONFIDENCE_THRESHOLD — an explicit, surfaced degradation
+    # flag (CLAUDE.md's "silent truncation is never acceptable" rule) rather
+    # than accepting any non-empty OCR output as if it were reliable text.
+    low_confidence_ocr_pages: list[int] = []
 
     pdf_doc = pdfium.PdfDocument(pdf_path)
     try:
@@ -661,9 +694,18 @@ def extract_pdf(
                     # AC-6: per-page OCR — only pages with low text yield, while
                     # the pdfium page is still alive; replace only on non-empty OCR.
                     if len(text.strip()) < ocr_threshold:
-                        ocr_text = _ocr_page_text(pdfium_page, img_dir, page_num)
+                        ocr_text, ocr_confidence = _ocr_page_text(pdfium_page, img_dir, page_num)
                         if ocr_text.strip():
                             text = ocr_text
+                            # D128: flag, don't reject — a low-confidence page
+                            # still carries real (if uncertain) content, and a
+                            # single bad scan in an otherwise-good chapter
+                            # should degrade visibly, not abort the chapter.
+                            if (
+                                ocr_confidence is not None
+                                and ocr_confidence < _OCR_LOW_CONFIDENCE_THRESHOLD
+                            ):
+                                low_confidence_ocr_pages.append(page_num)
 
                     page_texts.append(text)
                 finally:
@@ -705,6 +747,9 @@ def extract_pdf(
         "font_blocks": font_blocks,
         "tables_detected": tables_detected,
         "docling_pages": docling_pages,
+        # D128: ABSOLUTE page numbers, 1-based — a non-empty list means real
+        # content shipped from pages OCR was not confident about.
+        "low_confidence_ocr_pages": low_confidence_ocr_pages,
     }
 
 
