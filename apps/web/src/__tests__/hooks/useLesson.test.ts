@@ -92,4 +92,18 @@ describe('useLesson', () => {
     expect(options.refreshInterval({ status: 'failed' })).toBe(0);
     expect(options.refreshInterval(undefined)).toBe(0);
   });
+
+  it('stops polling after MAX_POLL_DURATION_MS even if still processing (S4-11 — a genuinely-stuck backend job must not poll forever)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    renderHook(() => useLesson('lsn_1'));
+    const options = useSWRMock.mock.calls[0][2] as { refreshInterval: (data: unknown) => number };
+
+    expect(options.refreshInterval({ status: 'running' })).toBeGreaterThan(0);
+
+    vi.setSystemTime(20 * 60 * 1000 + 1); // just past the 20-minute cap
+    expect(options.refreshInterval({ status: 'running' })).toBe(0);
+
+    vi.useRealTimers();
+  });
 });

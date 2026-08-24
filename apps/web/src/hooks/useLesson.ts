@@ -1,9 +1,11 @@
 'use client';
 
+import { useRef } from 'react';
 import useSWR from 'swr';
 import { lessonService } from '@/services/lesson.service';
 import type { LessonStatus, LessonStatusResponse } from '@/services/upload.service';
 import type { LessonPackage } from '@hie/shared/types/lesson';
+import { isLessonProcessing, nextPollInterval } from '@/lib/lessonStatusPoll';
 
 interface UseLessonResult {
   lesson: LessonPackage | null;
@@ -23,16 +25,14 @@ interface UseLessonResult {
 // !== 'queued' && !== 'running' convention (the DB column value is
 // "generating", but content/router.py's _map_status() translates that to the
 // wire value "running" -- there is no "generating" on the wire).
-// Matches UploadFlow.tsx's existing, already-shipped real polling-interval
-// convention exactly (review fix) -- was 3000ms, an inconsistent one-off.
-const POLL_INTERVAL_MS = 5000;
-
-function refreshIntervalFor(data: LessonStatusResponse | null | undefined): number {
-  if (!data) return 0;
-  return data.status === 'queued' || data.status === 'running' ? POLL_INTERVAL_MS : 0;
-}
 
 export function useLesson(lessonId: string): UseLessonResult {
+  // S4-11: was a standalone interval with no ceiling -- the one outlier among
+  // this app's 5 other polling loops (UploadFlow, useChapters, useBooks x2,
+  // useDashboard), all of which already use this same shared
+  // nextPollInterval/isLessonProcessing pair and its ~20-minute cap. A
+  // genuinely-stuck lesson_jobs row would otherwise poll forever.
+  const pollingStartedAtRef = useRef<number | null>(null);
   const { data, error, isLoading, mutate } = useSWR<LessonStatusResponse | null>(
     lessonId ? `lesson:${lessonId}` : null,
     async () => {
@@ -44,7 +44,7 @@ export function useLesson(lessonId: string): UseLessonResult {
       // any new object reference from this hook as a new lesson and resets its
       // entire state machine (segment index, audio position, quizFiredForSegment).
       revalidateOnFocus: false,
-      refreshInterval: refreshIntervalFor,
+      refreshInterval: (latestData) => nextPollInterval(isLessonProcessing(latestData), pollingStartedAtRef),
     },
   );
 

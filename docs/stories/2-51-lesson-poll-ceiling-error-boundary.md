@@ -43,13 +43,13 @@ Answering the six questions (`docs/SCALE-CONTRACT.md`):
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 2, 3, 5): Replace `useLesson.ts`'s standalone poll-interval logic with the shared `nextPollInterval`/`isLessonProcessing`.
-  - [ ] 1.1 RED: write failing tests for the ceiling behavior (polls while under ceiling, stops past it) and confirm no change to the hook's other return values.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 4, 5): Add `apps/web/src/app/lesson/[id]/error.tsx`.
-  - [ ] 2.1 RED: write failing tests for render/copy, `reset()` wiring, and the dashboard link.
-  - [ ] 2.2 GREEN: implement.
-- [ ] Task 3 (AC: 6): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1, 2, 3, 5): Replace `useLesson.ts`'s standalone poll-interval logic with the shared `nextPollInterval`/`isLessonProcessing`.
+  - [x] 1.1 RED: write failing tests for the ceiling behavior (polls while under ceiling, stops past it) and confirm no change to the hook's other return values.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 4, 5): Add `apps/web/src/app/lesson/[id]/error.tsx`.
+  - [x] 2.1 RED: write failing tests for render/copy, `reset()` wiring, and the dashboard link.
+  - [x] 2.2 GREEN: implement.
+- [x] Task 3 (AC: 6): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -73,15 +73,20 @@ Vitest + Testing Library, matching existing conventions in `apps/web/src/__tests
 
 ### Implementation Plan
 
-_(filled in during implementation)_
+- `useLesson.ts`: dropped the standalone `POLL_INTERVAL_MS`/`refreshIntervalFor` entirely (its 5000ms interval turned out not to match anything else in the codebase — its own comment claiming it matched `UploadFlow.tsx` was stale, since that file actually uses the shared 8000ms `LESSON_STATUS_POLL_INTERVAL_MS`). Now uses `nextPollInterval(isLessonProcessing(latestData), pollingStartedAtRef)` via a `useRef` held in the hook, identical shape to `useDashboard.ts`'s/`useChapters.ts`'s existing wiring — this is now the 6th call site of the same shared utility, not a new one.
+- New `apps/web/src/app/lesson/[id]/error.tsx`: mirrors `(dashboard)/error.tsx`'s pattern (log via `console.error` in a `useEffect`, `reset()`-backed "Try again"), plus a "Return to Dashboard" link matching `PlayerLoader.tsx`'s `LessonErrorState` copy/icon. Given its own explicit white card surface (not just transparent text) since it renders inside the lesson layout's dark `bg-primary-dark` wrapper — matches `PlayerLoader`'s existing light-card convention, which is what a student would otherwise see on this route.
 
 ### Completion Notes
 
-_(filled in during implementation)_
+- Both tasks complete, all ACs (1–6) satisfied.
+- Full `apps/web` suite (this branch, cut from `main` before S4-10 merged): 81 files / 988 tests, all passing. `tsc --noEmit` clean. `eslint` clean on all touched files (no errors, no warnings).
 
 ### File List
 
-_(filled in during implementation)_
+- `apps/web/src/hooks/useLesson.ts` (MODIFIED — removed standalone poll interval/ceiling-less logic, now uses shared `nextPollInterval`/`isLessonProcessing`)
+- `apps/web/src/app/lesson/[id]/error.tsx` (NEW — route-level error boundary)
+- `apps/web/src/__tests__/hooks/useLesson.test.ts` (MODIFIED — added ceiling test)
+- `apps/web/src/__tests__/app/lesson/error.test.tsx` (NEW — 3 tests for the new error boundary)
 
 ## Change Log
 
