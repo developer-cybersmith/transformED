@@ -32,7 +32,7 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 | 8 | ~~Circuit breaker (S3-3) untested against real Redis; Langfuse cost attribution (S3-5) never confirmed against a real dashboard~~ | Sprint 3 completion audit (2026-08-20) | Low | **Langfuse half corrected 2026-08-24 — the "401 Unauthorized, no credentials configured" claim was WRONG.** Connected directly with the real credentials this session: `auth_check()` returned `True`, and real trace data was successfully pulled (see D132, and the traces `traced_node()` has been writing all along). The earlier 401 was almost certainly the D126 credential-shadowing bug, active at the time — not a broken/missing Langfuse account. Circuit-breaker-vs-real-Redis half still genuinely untested. |
 | 9 | ~~The 20 eval-harness fixtures all lack any real chapter structure~~ | Investigation after stopping the 2026-08-21 live run | High | **Fixed 2026-08-21 — `D130` CLOSED.** See Closed Gap #2. |
 | 10 | Same root mechanism as #9, wider blast radius: a real book with no detectable structure has no upper bound on the "chapter" size a real student could select — not just an eval-harness inconvenience. Not an overspend risk (the $3 ceiling still holds via downshift), but a real time/UX/quality-degradation risk, mechanism confirmed, real-world likelihood unmeasured. | Surfaced planning the D130 fix | Med-High | Open — `D131`, deliberately not fixed (product/UX decision). Recommended to decide alongside `D129` at Sprint 4. |
-| 11 | **The real, dominant reason lessons take so long: slide images generate ONE AT A TIME, not concurrently.** Measured via real Langfuse traces across 6 real lessons (both today's post-D130 run and the 2026-08-21 real-world run) — image generation alone is 86-95% of every lesson's total time, 6/6 consistent, every image taking a strikingly uniform ~41-45s. Phase 1's economy nodes already run concurrently per segment; `image_generator_node` has no equivalent for its own per-slide calls. This is a bigger time driver than D130 ever was. | Langfuse trace analysis during the D130 live re-verification (2026-08-24) | **High** | **Fix in progress — see `D132-FIX-TRACKER.md`.** Design finalized (bounded semaphore, concurrency=3, deliberately not a Lua atomic reservation — `accumulate_cost` already uses atomic `INCRBYFLOAT`, no data-corruption risk exists). Build + adversarial review running now. |
+| 11 | ~~The real, dominant reason lessons take so long: slide images generate ONE AT A TIME, not concurrently~~ | Langfuse trace analysis during the D130 live re-verification (2026-08-24) | High | **Fixed 2026-08-24 — `D132` CLOSED.** See Closed Gap #3. **Not yet re-verified live (M6)** — everything verified under mocked providers so far. |
 | 12 | **NEW, likely pre-existing bug, confirmed final: `slide_generator returned unknown segment_id(s)`** — 4 of 20 PDFs failed this way in the completed run (`dense_text_with_headers`, `table_heavy_small`, `image_heavy_small`, `image_heavy_grid`). Pattern worth noting: within `table_heavy_*` only the `_small` variant failed (`_wide`/`_tall`/`_mixed` all passed); within `image_heavy_*`, `_small` and `_grid` failed but `_large`/`_captioned` passed — not a blanket category failure, something specific to those particular fixtures. Lead, not yet fully root-caused: `graph.py:2083` builds `segment_id` as `f"section_{index}_{title}"` — embedding the raw, human-readable section title directly into a machine ID (e.g. `"section_0_1-1-Subsection: Introduction to Cellular Respiration"`, or `"section_0_Document: Introduction to Figure Grids"` for the single-section ones). None of these 4 fixtures were touched by D130 — this is the first time any of them has ever completed a live run, so this looks like a real, previously-invisible defect, not a regression from today's fixes. | Live 20-PDF eval run, 2026-08-24 (final: 16/20 passed, 4/20 this same failure, $10.64 total, 2h40m) | High (4/20 real failures, real cause unconfirmed) | **Open, not yet registered as a D-nn or investigated** — flagged here per this project's own binding rule 5 rather than chased mid-flight while D132 was being built. Next step: proper root-cause investigation. |
 
 ---
@@ -43,10 +43,54 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 |---|-----|--------------|-------------|
 | 1 | Rotated/low-quality real scans OCR into silent, ungated garbage | 2026-08-21 — D128 fix build | `_ocr_page_text` now returns real Tesseract confidence alongside the text; below `_OCR_LOW_CONFIDENCE_THRESHOLD=60` the content is still accepted (never silently dropped) but the page is named in a new `low_confidence_ocr_pages` list, persisted on the `lesson_jobs` checkpoint the same way `tables_detected`/`docling_pages` already are. 10 new/updated tests, 1245/9 skipped full regression, zero regressions. **Still owes a live re-verification** — see Run Log entry. |
 | 2 | The 20 eval-harness fixtures all resolved to 1 whole-document "chapter" (100-400 pages for the "long" ones, 2.5x-10x the normal ~40-page workload) — the real cause of the 6+ hour stalled run | 2026-08-21 — D130 fix build (2 parallel agents) | The 4 "long" fixtures now carry real PDF outline entries (`start_section()`) every 40 pages with distinct chapter titles — re-verified independently against the actual regenerated fixtures: 3/4/7/10 real chapters, every span now 40 pages, none of the old 40-400-page whole-document spans remain. Bonus fix in the same pass: a real non-determinism bug in `creation_date` that silently broke the generator's own "byte-identical two runs" promise. Also fixed the secondary opacity gap: both eval runners now write a real-time, truncated-per-run `progress.jsonl`. 5 new/updated tests, full regression **1250 passed, 9 skipped**, zero regressions. **Live-re-verified 2026-08-24**: all 4 long fixtures succeeded at ~$0.44/~6.5min each — matching normal lesson cost/time, not the multi-hour blowup the pre-fix behavior would have produced. |
+| 3 | Slide images generated ONE AT A TIME — 86-95% of every lesson's total time, 6/6 real lessons measured | 2026-08-24 — D132 fix build (implement + adversarial review workflow) | `image_generator_node` now runs up to 3 slide images concurrently (`asyncio.Semaphore` + `asyncio.gather`), mirroring the proven `_IMAGE_UPLOAD_CONCURRENCY` pattern. Deliberately did NOT add a Redis-Lua atomic cost-reservation system after directly verifying `accumulate_cost()` already uses atomic `INCRBYFLOAT` — no data-corruption risk, only an already-tolerated small bounded overshoot possibility (documented in `D132-FIX-TRACKER.md`, not hidden). **Adversarial review caught a real bug before shipping:** the Storage upload inside the new concurrent code was still a blocking sync call, silently serializing every slide's upload window and undermining the actual speedup despite every correctness invariant (order, isolation, checkpoint timing, cost accounting) holding. Fixed with `asyncio.to_thread`, RED-GREEN verified directly (reverted the fix, confirmed the new test fails at 1.018s vs. required <0.54s; restored it, confirmed green). 4 new tests, 24/24 passing in the node's own file, full regression **1254 passed, 9 skipped**, zero regressions. **Not yet re-verified live (M6)** — real-world speedup only proven under mocked providers so far. |
 
 ---
 
 ## Run Log
+
+### 2026-08-24 — D132 fix: bounded concurrent image generation, build + fix + verify
+**Method:** two-stage workflow (implement, then a fresh adversarial-review agent instructed to
+try to break the diff, not confirm it), followed by my own independent fix of what the review
+found and my own independent full regression run — not trusted from either agent's own report.
+
+**Implementation:** `image_generator_node`'s per-slide loop extracted into
+`_process_one_slide()` (logic byte-for-byte unchanged) run under
+`asyncio.Semaphore(_IMAGE_GENERATION_CONCURRENCY=3)` + `asyncio.gather`. 3 new tests, 23/23
+passing in the node's own file.
+
+**Adversarial review result: NEEDS FIXES — found one real bug, all six "must not change"
+invariants otherwise held.** The Storage upload inside the new concurrent code is `storage3`'s
+SYNC client (confirmed: has a `_sync` module, blocking `httpx` underneath) — called directly on
+the event loop, it would block every OTHER concurrently-scheduled slide for its own duration,
+silently undermining the actual speedup this fix exists to deliver. The new concurrency test
+didn't catch it because it only put latency in the mocked `generate()` call, never `upload()`.
+
+**Fixed directly (not delegated) after independently confirming the review's claim myself:**
+wrapped the upload in `asyncio.to_thread`, mirroring `extract_node`'s own `_bounded_upload`
+pattern. Added the exact test the reviewer recommended — mocked `upload()` with a real blocking
+`time.sleep` inside it. **RED-GREEN verified directly:** temporarily reverted just the
+`to_thread` wrapping, confirmed the new test fails exactly as predicted (elapsed 1.018s vs.
+required <0.54s, real observed numbers not estimated), restored the fix, confirmed green again.
+
+**Final verification (independent):** `ruff check`/`ruff format --check` clean. Node's own test
+file: 24/24 passing. Full `tests/unit` regression: **1254 passed, 9 skipped** (1250 D130
+baseline + 4 net-new), zero regressions.
+
+**Findings:**
+- D132 closed. The mechanism (bounded semaphore fan-out) is validated by real external research
+  as the standard pattern for this exact scenario, not a shortcut — but a heavier Redis-Lua
+  atomic reservation was deliberately NOT built after directly confirming `accumulate_cost()`
+  already uses atomic `INCRBYFLOAT` — no data-corruption risk exists, only a small,
+  already-tolerated bounded overshoot possibility, documented rather than hidden or over-engineered around.
+- Real, concrete proof that a second independent pass (adversarial review) earns its cost: the
+  first implementation was fully correct on every safety invariant and still would have shipped
+  with the actual performance problem barely improved, invisibly, had the review not caught it.
+- **Genuinely still open:** M6 — never run against a real lesson with real AI providers. The
+  next live eval run is the real confirmation of an actual measured speedup, not just
+  correctness under mocked providers.
+
+---
 
 ### 2026-08-24 — 20-PDF S3-1 live eval: COMPLETED — 16/20, first time ever this far
 **Command:** `pytest tests/evals/test_live_run.py -v --run-live-eval` (restarted after the

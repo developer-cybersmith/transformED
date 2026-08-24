@@ -871,6 +871,19 @@ Every node must:
     fixtures have ever run live at all. Not caused by D130 — none of the 4 failing fixtures were
     touched by that fix. See `docs/DEFECT-REGISTER.md` and `RUN-FINDINGS-LOG.md` for full detail
     including the per-PDF cost/time table.
+  - **D132 FIXED 2026-08-24 — the actual dominant cost, found live-verifying D130: slide images
+    generated one at a time, 86-95% of every lesson's total time (6/6 real lessons measured via
+    Langfuse).** `image_generator_node` now runs up to 3 images concurrently
+    (`asyncio.Semaphore` + `asyncio.gather`), mirroring the existing `_IMAGE_UPLOAD_CONCURRENCY`
+    pattern. Built via a two-stage implement-then-adversarial-review workflow — the review caught
+    a real bug the implementation missed (the Storage upload was still a blocking sync call,
+    silently serializing every slide's upload window despite every other correctness invariant
+    holding), fixed with `asyncio.to_thread`, RED-GREEN verified directly. 4 new tests, full
+    regression **1254 passed, 9 skipped** (1250 baseline + these 4), zero regressions.
+    Deliberately did NOT add a Redis-Lua atomic cost-reservation system after directly confirming
+    `accumulate_cost()` already uses atomic `INCRBYFLOAT` — documented in `D132-FIX-TRACKER.md`.
+    **Not yet re-verified live** — everything above verified under mocked providers; the next
+    live eval run is the real confirmation of a measured real-world speedup.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
