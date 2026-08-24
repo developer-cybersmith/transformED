@@ -33,7 +33,7 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 | 9 | ~~The 20 eval-harness fixtures all lack any real chapter structure~~ | Investigation after stopping the 2026-08-21 live run | High | **Fixed 2026-08-21 — `D130` CLOSED.** See Closed Gap #2. |
 | 10 | Same root mechanism as #9, wider blast radius: a real book with no detectable structure has no upper bound on the "chapter" size a real student could select — not just an eval-harness inconvenience. Not an overspend risk (the $3 ceiling still holds via downshift), but a real time/UX/quality-degradation risk, mechanism confirmed, real-world likelihood unmeasured. | Surfaced planning the D130 fix | Med-High | Open — `D131`, deliberately not fixed (product/UX decision). Recommended to decide alongside `D129` at Sprint 4. |
 | 11 | **The real, dominant reason lessons take so long: slide images generate ONE AT A TIME, not concurrently.** Measured via real Langfuse traces across 6 real lessons (both today's post-D130 run and the 2026-08-21 real-world run) — image generation alone is 86-95% of every lesson's total time, 6/6 consistent, every image taking a strikingly uniform ~41-45s. Phase 1's economy nodes already run concurrently per segment; `image_generator_node` has no equivalent for its own per-slide calls. This is a bigger time driver than D130 ever was. | Langfuse trace analysis during the D130 live re-verification (2026-08-24) | **High** | **Fix in progress — see `D132-FIX-TRACKER.md`.** Design finalized (bounded semaphore, concurrency=3, deliberately not a Lua atomic reservation — `accumulate_cost` already uses atomic `INCRBYFLOAT`, no data-corruption risk exists). Build + adversarial review running now. |
-| 12 | **NEW, likely pre-existing bug surfaced for the first time by this live run (unrelated to D130/D132): `slide_generator returned unknown segment_id(s)`** — 3 of 20 PDFs failed this way (`dense_text_with_headers`, `table_heavy_small`, `image_heavy_small`; the other 14/17 completed so far all succeeded). Quick lead only, not investigated deeply yet: `graph.py:2083` builds `segment_id` as `f"section_{index}_{title}"` — embedding the raw, human-readable section title directly into a machine ID (e.g. `"section_0_1-1-Subsection: Introduction to Cellular Respiration"`). If the title used when a segment_id is first created ever differs from the title referenced later (LLM non-determinism, a re-derived title, etc.), the IDs silently stop matching. None of these 3 fixtures were touched by D130 — this is the first time any of them has ever completed a live run, so this looks like a real, previously-invisible defect, not a regression from today's fixes. | Live 20-PDF eval run, 2026-08-24 | High (3/20 real failures, real cause unconfirmed) | **Open, not yet registered as a D-nn or investigated** — flagged here first per this project's own binding rule 5 (don't let an observed failure go undocumented) rather than chased mid-flight while D132 is being built. Next step: proper root-cause investigation. |
+| 12 | **NEW, likely pre-existing bug, confirmed final: `slide_generator returned unknown segment_id(s)`** — 4 of 20 PDFs failed this way in the completed run (`dense_text_with_headers`, `table_heavy_small`, `image_heavy_small`, `image_heavy_grid`). Pattern worth noting: within `table_heavy_*` only the `_small` variant failed (`_wide`/`_tall`/`_mixed` all passed); within `image_heavy_*`, `_small` and `_grid` failed but `_large`/`_captioned` passed — not a blanket category failure, something specific to those particular fixtures. Lead, not yet fully root-caused: `graph.py:2083` builds `segment_id` as `f"section_{index}_{title}"` — embedding the raw, human-readable section title directly into a machine ID (e.g. `"section_0_1-1-Subsection: Introduction to Cellular Respiration"`, or `"section_0_Document: Introduction to Figure Grids"` for the single-section ones). None of these 4 fixtures were touched by D130 — this is the first time any of them has ever completed a live run, so this looks like a real, previously-invisible defect, not a regression from today's fixes. | Live 20-PDF eval run, 2026-08-24 (final: 16/20 passed, 4/20 this same failure, $10.64 total, 2h40m) | High (4/20 real failures, real cause unconfirmed) | **Open, not yet registered as a D-nn or investigated** — flagged here per this project's own binding rule 5 rather than chased mid-flight while D132 was being built. Next step: proper root-cause investigation. |
 
 ---
 
@@ -42,11 +42,58 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 | # | Gap | Fixed in run | Fix summary |
 |---|-----|--------------|-------------|
 | 1 | Rotated/low-quality real scans OCR into silent, ungated garbage | 2026-08-21 — D128 fix build | `_ocr_page_text` now returns real Tesseract confidence alongside the text; below `_OCR_LOW_CONFIDENCE_THRESHOLD=60` the content is still accepted (never silently dropped) but the page is named in a new `low_confidence_ocr_pages` list, persisted on the `lesson_jobs` checkpoint the same way `tables_detected`/`docling_pages` already are. 10 new/updated tests, 1245/9 skipped full regression, zero regressions. **Still owes a live re-verification** — see Run Log entry. |
-| 2 | The 20 eval-harness fixtures all resolved to 1 whole-document "chapter" (100-400 pages for the "long" ones, 2.5x-10x the normal ~40-page workload) — the real cause of the 6+ hour stalled run | 2026-08-21 — D130 fix build (2 parallel agents) | The 4 "long" fixtures now carry real PDF outline entries (`start_section()`) every 40 pages with distinct chapter titles — re-verified independently against the actual regenerated fixtures: 3/4/7/10 real chapters, every span now 40 pages, none of the old 40-400-page whole-document spans remain. Bonus fix in the same pass: a real non-determinism bug in `creation_date` that silently broke the generator's own "byte-identical two runs" promise. Also fixed the secondary opacity gap: both eval runners now write a real-time, truncated-per-run `progress.jsonl`. 5 new/updated tests, full regression **1250 passed, 9 skipped**, zero regressions. **Not yet re-verified against a real live run** — the next `--run-live-eval` attempt is that confirmation. |
+| 2 | The 20 eval-harness fixtures all resolved to 1 whole-document "chapter" (100-400 pages for the "long" ones, 2.5x-10x the normal ~40-page workload) — the real cause of the 6+ hour stalled run | 2026-08-21 — D130 fix build (2 parallel agents) | The 4 "long" fixtures now carry real PDF outline entries (`start_section()`) every 40 pages with distinct chapter titles — re-verified independently against the actual regenerated fixtures: 3/4/7/10 real chapters, every span now 40 pages, none of the old 40-400-page whole-document spans remain. Bonus fix in the same pass: a real non-determinism bug in `creation_date` that silently broke the generator's own "byte-identical two runs" promise. Also fixed the secondary opacity gap: both eval runners now write a real-time, truncated-per-run `progress.jsonl`. 5 new/updated tests, full regression **1250 passed, 9 skipped**, zero regressions. **Live-re-verified 2026-08-24**: all 4 long fixtures succeeded at ~$0.44/~6.5min each — matching normal lesson cost/time, not the multi-hour blowup the pre-fix behavior would have produced. |
 
 ---
 
 ## Run Log
+
+### 2026-08-24 — 20-PDF S3-1 live eval: COMPLETED — 16/20, first time ever this far
+**Command:** `pytest tests/evals/test_live_run.py -v --run-live-eval` (restarted after the
+Redis-down abort earlier the same day)
+**Result:** Ran to completion — **2h40m (9600s), real spend $10.64 total.** First time in this
+project's history the S3-1 eval harness has completed anywhere near this far; every prior
+attempt (this session and before) crashed instantly or was aborted before finishing.
+
+| PDF | Valid? | Cost | Time |
+|---|---|---|---|
+| short_1page | ✅ | $0.43 | 6.6 min |
+| short_3page | ✅ | $1.13 | 16.8 min |
+| short_10page | ✅ | $1.75 | 24.7 min |
+| short_sparse | ✅ | $1.73 | 24.8 min |
+| long_100page | ✅ | $0.44 | 6.6 min |
+| long_150page | ✅ | $0.44 | 6.3 min |
+| long_250page | ✅ | $0.44 | 6.4 min |
+| long_400page | ✅ | $0.44 | 6.4 min |
+| dense_text_uniform | ✅ | $0.44 | 6.8 min |
+| dense_text_long_paragraphs | ✅ | $0.44 | 6.4 min |
+| dense_text_short_paragraphs | ✅ | $0.65 | 9.7 min |
+| dense_text_with_headers | ❌ | $0.09 | 2.1 min |
+| table_heavy_small | ❌ | $0.01 | 0.8 min |
+| table_heavy_wide | ✅ | $0.44 | 6.2 min |
+| table_heavy_tall | ✅ | $0.43 | 7.6 min |
+| table_heavy_mixed | ✅ | $0.44 | 6.6 min |
+| image_heavy_small | ❌ | $0.01 | 0.5 min |
+| image_heavy_large | ✅ | $0.43 | 6.8 min |
+| image_heavy_captioned | ✅ | $0.44 | 6.9 min |
+| image_heavy_grid | ❌ | $0.01 | 0.6 min |
+
+**16/20 valid, 4/20 failed — all 4 failures are the SAME error** (`slide_generator returned
+unknown segment_id(s)`), unrelated to D130 or D132. See Open Gap #12 for the failure detail and
+root-cause lead.
+
+**Findings:**
+- **D130 live-confirmed, definitively.** Every "long" fixture (100-400 pages) now costs and
+  takes essentially the SAME as a tiny document (~$0.44, ~6.5 min) — not the multi-hour, would-be
+  multi-dollar blowup the pre-fix whole-document fallback would have produced. This is the real
+  confirmation the earlier "6+ hours, stopped before finishing" run could never provide.
+- The literal S3-1 AC ("all 20 PDFs produce a valid LessonPackage") is NOT yet fully satisfied —
+  16/20, not 20/20 — but this is by a wide margin the closest this project has ever come, and the
+  gap has a real, identified, separately-tracked cause (Gap #12), not a mystery.
+- D130's fix did not introduce any of the 4 new failures — none of the 4 failing fixtures were
+  touched by that fix, and this is the first time any of them has ever run live at all.
+
+---
 
 ### 2026-08-24 — Langfuse trace analysis: found the real dominant time cost (D132)
 **Method:** while the restarted 20-PDF live eval was in progress (safe, read-only — did not

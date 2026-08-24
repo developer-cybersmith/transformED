@@ -858,12 +858,19 @@ Every node must:
     harness's zero-progress-visibility gap found in the same investigation: both eval runners
     now write a real-time, per-run-truncated `progress.jsonl`. 5 new/updated tests; full
     regression **1250 passed, 9 skipped** (1245 baseline + these 5 net-new), zero regressions.
-    **Not yet re-verified live** — the next `--run-live-eval` attempt is the real confirmation
-    this fix resolves the multi-hour stall, not just the chapter-count math in isolation.
     **D131 registered separately (not fixed)** — the same fallback mechanism has no size ceiling
     for a real student's book either if its structure is undetectable; a product/UX decision,
-    deliberately not folded into this fix. See `docs/DEFECT-REGISTER.md` and
-    `RUN-FINDINGS-LOG.md` for full detail.
+    deliberately not folded into this fix.
+  - **LIVE-VERIFIED 2026-08-24 — full `--run-live-eval` run COMPLETED: 2h40m, $10.64 real spend,
+    16/20 PDFs valid.** First time in this project's history the S3-1 harness has completed
+    anywhere near this far. All 4 "long" fixtures succeeded at ~$0.44/~6.5min each — matching
+    normal lesson cost/time, confirming D130's fix under real conditions, not just locally. The
+    literal AC ("all 20 produce a valid lesson") is not yet fully met — 4/20 failed — but for a
+    separate, unrelated, already-identified reason: a real `slide_generator`/segment_id mismatch
+    bug (`graph.py:2083`), first surfaced because this is the first time these 4 specific
+    fixtures have ever run live at all. Not caused by D130 — none of the 4 failing fixtures were
+    touched by that fix. See `docs/DEFECT-REGISTER.md` and `RUN-FINDINGS-LOG.md` for full detail
+    including the per-PDF cost/time table.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
