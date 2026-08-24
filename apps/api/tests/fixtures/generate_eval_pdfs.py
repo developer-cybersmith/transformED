@@ -18,6 +18,7 @@ Writes into ``tests/fixtures/eval_pdfs/``.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fpdf import FPDF
@@ -33,9 +34,19 @@ _LOREM = (
     "reactions collectively known as the electron transport chain. "
 )
 
+#: fpdf2 defaults `creation_date` to `datetime.now()` and derives the PDF's
+#: `/ID` from a hash that includes it (fpdf/fpdf.py `_default_file_id`) - left
+#: at the default, that makes two runs of the SAME builder differ in bytes
+#: whenever they don't complete inside the same wall-clock second (the long
+#: 100-400 page builders routinely take >1s). Pinning it is what actually
+#: makes the "byte-identical two runs" promise above true, rather than true
+#: only when the process happens to be fast.
+_FIXED_CREATION_DATE = datetime(2026, 1, 1, tzinfo=UTC)
+
 
 def _new_pdf() -> FPDF:
     pdf = FPDF()
+    pdf.set_creation_date(_FIXED_CREATION_DATE)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_font("Helvetica", size=12)
     return pdf
@@ -66,12 +77,55 @@ def _build_short(pages: int, *, sparse: bool = False) -> bytes:
 
 # ── long (>=100 pages) — 4 variants ─────────────────────────────────────────
 
+_CHAPTER_INTERVAL = 40
+"""Pages per chapter. Matches the ~40-page chapter the whole system's
+timing/cost assumptions (CLAUDE.md §9, the $3.00/lesson ceiling) are built
+around — the eval fixtures must exercise that shape, not one page-100/150/
+250/400 "chapter"."""
+
+#: Distinct, deterministic per-chapter topics (no randomness — Story 2-14
+#: AC-2 requires byte-identical output across runs). A rotating list rather
+#: than one repeated string: identical titles across chapter starts get
+#: merged/deduped by the real chapter-detection heading sweep, which keys
+#: candidates by (chapter number, title) and would otherwise collapse
+#: distinct chapters back into one.
+_CHAPTER_TOPICS = (
+    "Cell Structure and Function",
+    "Genetics and Heredity",
+    "Energy and Metabolism",
+    "Human Physiology",
+    "Ecology and Ecosystems",
+    "Evolutionary Biology",
+    "Molecular Biology",
+    "Plant Biology",
+    "Immunology and Disease",
+    "Biotechnology Applications",
+)
+
 
 def _build_long(pages: int) -> bytes:
-    """>=100 pages: a long chapter sequence at the given page count."""
+    """>=100 pages: a long chapter sequence at the given page count.
+
+    Every `_CHAPTER_INTERVAL` pages opens a new chapter: a real PDF outline
+    entry via `pdf.start_section()` (fpdf2's API for writing a genuine
+    bookmark) plus a matching bold on-page heading, each with a distinct
+    title. Previously every page in this fixture carried the identical bold
+    "Section X.Y" style with no outline at all, so real chapter detection
+    (app/modules/content/chapter_detection/) could never find a boundary and
+    fell back to treating the entire 100-400 page document as one chapter.
+    The per-page "Section X.Y" sub-heading is kept below the chapter heading
+    for continuity with the previous shape.
+    """
     pdf = _new_pdf()
     for page in range(pages):
         pdf.add_page()
+        if page % _CHAPTER_INTERVAL == 0:
+            chapter_num = page // _CHAPTER_INTERVAL + 1
+            topic = _CHAPTER_TOPICS[(chapter_num - 1) % len(_CHAPTER_TOPICS)]
+            chapter_title = f"Chapter {chapter_num}: {topic}"
+            pdf.start_section(chapter_title, level=0)
+            pdf.set_font("Helvetica", "B", 18)
+            pdf.cell(0, 12, text=chapter_title, new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "B", 14)
         pdf.cell(
             0, 10, text=f"Section {page // 10 + 1}.{page % 10 + 1}", new_x="LMARGIN", new_y="NEXT"

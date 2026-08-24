@@ -76,10 +76,22 @@ async def run_all_real_world_evals(
     from app.config import get_settings as _get_settings
     from app.core.redis import close_redis, init_redis
 
+    # 2026-08-24: same fix as `run_all_evals` (runner.py) for the same
+    # "6+ hour run, no output until the very end" opacity — pytest captures
+    # stdout/logging by default, so a `logger.info()` alone is invisible to
+    # an external process. Fixed name, TRUNCATED at the start of every call
+    # so a stale progress.jsonl from a previous run is never mistaken for
+    # this run's live data (the same "which run does this belong to" trap
+    # already found once this week with a different Redis key).
+    results_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = results_dir / "progress.jsonl"
+    progress_path.write_text("")
+
     await init_redis(_get_settings().redis_url)
     try:
         results: list[EvalResult] = []
-        for pdf_key in REAL_WORLD_PDF_KEYS:
+        total = len(REAL_WORLD_PDF_KEYS)
+        for index, pdf_key in enumerate(REAL_WORLD_PDF_KEYS):
             pdf_path = fixtures_dir / f"{pdf_key}.pdf"
             lesson_id = str(uuid.uuid4())
             try:
@@ -99,6 +111,35 @@ async def run_all_real_world_evals(
                     error=str(exc),
                 )
             results.append(result)
+
+            # Real-time progress, independent of pytest's stdout/logging
+            # capture — flushed immediately after each PDF, not buffered
+            # across the loop.
+            logger.info(
+                "real-world-eval progress: %d/%d %s — valid=%s cost_usd=%s elapsed=%.1fs",
+                index + 1,
+                total,
+                pdf_key,
+                result.package_valid,
+                result.cost_usd,
+                result.elapsed_seconds,
+            )
+            with progress_path.open("a") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "index": index + 1,
+                            "total": total,
+                            "pdf_key": result.pdf_key,
+                            "package_valid": result.package_valid,
+                            "cost_usd": result.cost_usd,
+                            "elapsed_seconds": result.elapsed_seconds,
+                            "error": result.error,
+                        }
+                    )
+                    + "\n"
+                )
+                f.flush()
     finally:
         await close_redis()
 
