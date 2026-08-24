@@ -24,13 +24,14 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 |---|-----|---------------|----------|--------|
 | 1 | ~~Rotated/low-quality real scans OCR into silent, ungated garbage~~ | Real-world PDF investigation (2026-08-20) + confirmed live (2026-08-21) | High | **Fixed 2026-08-21 — `D128` CLOSED.** Unit/mock-level verified (10 tests, 1245/9 skipped full regression, zero regressions). **Not yet re-verified live** — the 2026-08-21 live confirmation was pre-fix; see Closed Gaps below. |
 | 2 | Multiple concurrent real users has never been tested. Three concrete, already-known risks: the circuit breaker trips per-provider globally (one user's failure can lock out others); `D45`'s duplicate-request check has no real DB constraint; `D49`'s rate limiter silently multiplies across server replicas. | Discussion following the real-world live run (2026-08-21) | **High** | Open — `D129`, scoped to Sprint 4 |
-| 3 | The official Sprint 3 eval harness — 20 synthetic PDFs — has **never actually completed a run**, despite the tracker previously claiming it was "done, blocked only on Sarvam credits." Two silent blockers were fixed (`D124`, `D126`); a THIRD, structural one (see #9) is why a real attempt on 2026-08-21 ran 6+ hours and was stopped before finishing. | Sprint 3 completion audit (2026-08-20) + attempted live (2026-08-21) | Med (blocks S3-2 entirely, see #4) | **Open — root cause now known (#9), needs the harness's own fixtures fixed before the next attempt** |
+| 3 | The official Sprint 3 eval harness — 20 synthetic PDFs — has **never actually completed a run**, despite the tracker previously claiming it was "done, blocked only on Sarvam credits." Three silent blockers found and fixed in sequence (`D124`, `D126`, `D130`) — all now cleared. | Sprint 3 completion audit (2026-08-20) + attempted live (2026-08-21) | Med (blocks S3-2 entirely, see #4) | **All known blockers fixed 2026-08-21 (see Closed Gap #2). Not yet re-attempted live** — next `--run-live-eval` is the real confirmation. |
 | 4 | Prompt tuning (S3-2) cannot be honestly completed — its own rule requires real before/after scores from the 20-PDF harness, which has never produced any (see #3). One prompt change (`D125`) already shipped, but tuned against a static scoring rule, not real data — doesn't satisfy the AC. | Sprint 3 completion audit (2026-08-20) | Med | Open — blocked on #3 |
 | 5 | Encrypted PDFs fail with a raw Python traceback as the error message (`PDFium: Incorrect password error` inside a full stack trace), not a clean, identifiable "this file is password-protected" message. Confirmed: it does NOT crash the worker or silently pass — it fails loud via the subprocess exit-code path — but the message quality is poor. | Real-world PDF investigation (2026-08-20) | Low | Open — not registered as a `D-nn` yet |
 | 6 | Non-English OCR, multi-column layouts, and fillable forms remain completely untested — the 4 real-world fixtures (`D127`) close scan/rotation/corruption/encryption, not these three. | Real-world PDF investigation (2026-08-20) | Low/Med (unknown — never measured) | Open — not registered, no fixtures exist yet |
 | 7 | Admin panel (S3-4) is API-only — zero UI exists anywhere in `apps/web`. Satisfies S3-4's own written AC, but not the Sprint 3 goal line's "admin panel live." | Sprint 3 completion audit (2026-08-20) | Low (scope question, not a bug) | Open — needs a product decision, not a fix |
 | 8 | Circuit breaker (S3-3) and Langfuse cost attribution (S3-5) are both code-complete and unit-tested, but neither has ever been exercised against a real dependency (real/fake Redis for the breaker; a real Langfuse dashboard for cost attribution — confirmed live 401 Unauthorized, no credentials configured for Langfuse specifically, despite other providers' credentials being present). | Sprint 3 completion audit (2026-08-20) | Low | Open |
-| 9 | The 20 eval-harness fixtures all lack any real chapter structure (no TOC, no real headings), so ALL 20 resolve to exactly 1 chapter spanning the whole document — for the 4 "long" fixtures (100/150/250/400 pages), that means a single 400-page "chapter" instead of a realistic ~40-page one, 2.5x-10x the normal workload. Confirmed at zero cost by running the pure chapter-detection function locally against all 20 fixtures. This is the real, now-proven root cause of why a live 20-PDF run took 6+ hours without finishing. | Investigation after stopping the 2026-08-21 live run | **High** | Open — `D130`. Also surfaced a second, smaller gap: the live-run test itself prints zero progress until all 20 finish, so a multi-hour run is completely opaque from the outside. |
+| 9 | ~~The 20 eval-harness fixtures all lack any real chapter structure~~ | Investigation after stopping the 2026-08-21 live run | High | **Fixed 2026-08-21 — `D130` CLOSED.** See Closed Gap #2. |
+| 10 | Same root mechanism as #9, wider blast radius: a real book with no detectable structure has no upper bound on the "chapter" size a real student could select — not just an eval-harness inconvenience. Not an overspend risk (the $3 ceiling still holds via downshift), but a real time/UX/quality-degradation risk, mechanism confirmed, real-world likelihood unmeasured. | Surfaced planning the D130 fix | Med-High | Open — `D131`, deliberately not fixed (product/UX decision). Recommended to decide alongside `D129` at Sprint 4. |
 
 ---
 
@@ -39,10 +40,52 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 | # | Gap | Fixed in run | Fix summary |
 |---|-----|--------------|-------------|
 | 1 | Rotated/low-quality real scans OCR into silent, ungated garbage | 2026-08-21 — D128 fix build | `_ocr_page_text` now returns real Tesseract confidence alongside the text; below `_OCR_LOW_CONFIDENCE_THRESHOLD=60` the content is still accepted (never silently dropped) but the page is named in a new `low_confidence_ocr_pages` list, persisted on the `lesson_jobs` checkpoint the same way `tables_detected`/`docling_pages` already are. 10 new/updated tests, 1245/9 skipped full regression, zero regressions. **Still owes a live re-verification** — see Run Log entry. |
+| 2 | The 20 eval-harness fixtures all resolved to 1 whole-document "chapter" (100-400 pages for the "long" ones, 2.5x-10x the normal ~40-page workload) — the real cause of the 6+ hour stalled run | 2026-08-21 — D130 fix build (2 parallel agents) | The 4 "long" fixtures now carry real PDF outline entries (`start_section()`) every 40 pages with distinct chapter titles — re-verified independently against the actual regenerated fixtures: 3/4/7/10 real chapters, every span now 40 pages, none of the old 40-400-page whole-document spans remain. Bonus fix in the same pass: a real non-determinism bug in `creation_date` that silently broke the generator's own "byte-identical two runs" promise. Also fixed the secondary opacity gap: both eval runners now write a real-time, truncated-per-run `progress.jsonl`. 5 new/updated tests, full regression **1250 passed, 9 skipped**, zero regressions. **Not yet re-verified against a real live run** — the next `--run-live-eval` attempt is that confirmation. |
 
 ---
 
 ## Run Log
+
+### 2026-08-21 — D130 fix: real chapter structure + progress visibility, build + verify
+**Method:** two parallel, independently-scoped agents on disjoint files — Part A (fixture
+chapter structure, `generate_eval_pdfs.py` + new test file) and Part B (progress visibility,
+both eval runners + existing test file) — followed by independent re-verification of both,
+not just trusting their own reports.
+
+**Commands:** `python -m tests.fixtures.generate_eval_pdfs` (regenerate all 20 real fixtures) ·
+manual `detect_chapters()` re-check against the actual regenerated files (not the agent's claim)
+· `pytest tests/unit -q` (full regression) · `ruff check`/`ruff format --check` on every touched
+file.
+
+**Results:**
+- Regenerated all 20 real fixtures cleanly.
+- Independently re-ran chapter detection against the real files: `long_100page` → 3 chapters
+  (heading rung), `long_150/250/400page` → 4/7/10 chapters (toc rung), every chapter now 40
+  pages — exactly matching the implementing agent's own report, confirmed independently rather
+  than trusted.
+- Full `tests/unit` regression: **1250 passed, 9 skipped** (1245 prior baseline + 5 net-new),
+  zero regressions.
+- `ruff check`/`ruff format --check` clean on all 5 touched files.
+
+**Findings:**
+- D130 fixed: the 4 "long" fixtures now carry real PDF outline entries every 40 pages with
+  distinct, deterministic chapter titles (identical repeated titles get merged/deduped by the
+  real detector — confirmed in testing — so a rotating title list was required, not one string).
+- Bonus, found in the same pass: `creation_date` defaulting to `datetime.now()` silently broke
+  the generator's own "byte-identical two runs" promise for every fixture (only visible on the
+  slow "long" builders, which routinely take over a second to build) — now pinned to a fixed
+  constant, verified byte-identical via SHA-256 across two separate process invocations.
+- Second gap fixed: both eval runners (`runner.py`'s `run_all_evals`, `real_world_runner.py`'s
+  `run_all_real_world_evals`) now write a real-time, per-run-truncated `progress.jsonl` — the
+  exact fix for the "6+ hour run, zero visibility" problem experienced firsthand this week.
+- **Not yet done:** the fix has not been re-verified against a real live `--run-live-eval`
+  attempt — that's the next real confirmation this fix actually resolves the multi-hour stall,
+  not just the chapter-count math in isolation.
+- Part C (the same root mechanism as a real-student risk, not just an eval-harness one) was
+  deliberately registered separately (`D131`) rather than folded into this fix — a product/UX
+  decision, not a test-fixture change.
+
+---
 
 ### 2026-08-21 — 20-PDF S3-1 live eval: attempted, stopped after 6+ hours, root cause found
 **Command:** `pytest tests/evals/test_live_run.py -v --run-live-eval`

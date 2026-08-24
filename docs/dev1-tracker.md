@@ -846,6 +846,24 @@ Every node must:
     2026-08-21 live confirmation above was captured PRE-fix; whether the flag lands correctly on
     a real run is unit/mock-level verified only. See `docs/DEFECT-REGISTER.md` and
     `RUN-FINDINGS-LOG.md` for full detail.
+  - **D130 FIXED 2026-08-21 — the real reason the S3-1 live run above took 6+ hours without
+    finishing.** All 20 fixtures fell through chapter detection to the "whole document is one
+    chapter" fallback — for the 4 "long" fixtures (100/150/250/400 pages) that meant one chapter
+    up to 400 pages instead of a realistic ~40-page one. Fixed at the fixture level:
+    `_build_long()` now writes a real PDF outline entry every 40 pages with a distinct,
+    deterministic chapter title (`generate_eval_pdfs.py`) — re-verified independently against
+    the regenerated fixtures, every "long" fixture now splits into 3-10 real chapters of exactly
+    40 pages each. Bonus fix found in the same pass: a real `creation_date` non-determinism bug
+    that silently broke the generator's own "byte-identical two runs" promise. Also fixed the
+    harness's zero-progress-visibility gap found in the same investigation: both eval runners
+    now write a real-time, per-run-truncated `progress.jsonl`. 5 new/updated tests; full
+    regression **1250 passed, 9 skipped** (1245 baseline + these 5 net-new), zero regressions.
+    **Not yet re-verified live** — the next `--run-live-eval` attempt is the real confirmation
+    this fix resolves the multi-hour stall, not just the chapter-count math in isolation.
+    **D131 registered separately (not fixed)** — the same fallback mechanism has no size ceiling
+    for a real student's book either if its structure is undetectable; a product/UX decision,
+    deliberately not folded into this fix. See `docs/DEFECT-REGISTER.md` and
+    `RUN-FINDINGS-LOG.md` for full detail.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
