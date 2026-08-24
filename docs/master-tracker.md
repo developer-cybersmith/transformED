@@ -254,12 +254,12 @@
 
 ---
 
-## Sprint 4 — Weeks 8–9 (Load Test + Calibration + Stripe + Hardening)
+## Sprint 4 — Weeks 8–9 (Load Test + Calibration + Razorpay + Hardening)
 
 ### Dev 1 — Infrastructure + Content Pipeline
 - [ ] Load test: 50 concurrent lesson generations
 - [ ] All pipeline reliability fixes from test sessions
-- [ ] Stripe Checkout integration (hosted page, not custom UI)
+- [ ] Razorpay Checkout integration (Standard Checkout via Orders API, no custom card UI)
 - [ ] Rate limiting (slowapi middleware)
 - [ ] RLS security audit on all Supabase tables
 - [ ] Railway backups confirmed + disaster recovery tested
@@ -271,7 +271,7 @@
 - [ ] Email notifications (lesson ready, session report)
 - [ ] Landing page + marketing copy
 - [ ] Pricing page
-- [ ] Stripe Checkout redirect integrated into onboarding flow
+- [ ] Razorpay Checkout integrated into onboarding flow
 - [ ] Accessibility audit (WCAG AA minimum)
 
 ### Dev 3 — Assessment + Analytics + Learner DNA

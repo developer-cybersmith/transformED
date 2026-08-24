@@ -981,7 +981,7 @@ Every node must:
 
 ## Sprint 4 — Weeks 8–9 (Due: ~2026-08-13)
 
-> **Goal:** Load-tested, rate-limited, RLS-audited, Stripe-ready, runbook written.
+> **Goal:** Load-tested, rate-limited, RLS-audited, Razorpay-ready, runbook written.
 
 - [ ] **S4-1 Load test: 50 concurrent lesson generations**
   - Use `locust` or `k6`
@@ -992,9 +992,10 @@ Every node must:
   - Prioritize: retry exhaustion, cost ceiling mid-flight, Redis connection drops, node timeout under load
   - **AC:** All failure modes from S4-1 resolved; no silent failures in production
 
-- [ ] **S4-3 Stripe Checkout integration**
-  - Hosted Stripe Checkout page only — no custom payment UI in MVP
-  - **AC:** User completes a purchase; Stripe webhook updates user access tier in DB
+- [ ] **S4-3 Razorpay Checkout integration**
+  - Razorpay Orders API (`POST /orders`) + Standard Checkout (`checkout.js`) — no custom card UI in MVP; card/UPI/wallet data never touches our servers
+  - Webhook (`payment.captured`) is the source of truth for fulfillment, verified via raw-body HMAC-SHA256 against `RAZORPAY_WEBHOOK_SECRET` — never trust the client-side `handler` callback alone
+  - **AC:** User completes a purchase; Razorpay webhook updates user access tier in DB; webhook signature validated on every call, unsigned/invalid requests rejected with 400; duplicate `payment.captured` for the same `razorpay_payment_id` does not double-credit
 
 - [ ] **S4-4 Rate limiting — per-route limits** ⚠️ PARTIAL
   - `apps/api/app/main.py` — `slowapi` middleware mounted ✓

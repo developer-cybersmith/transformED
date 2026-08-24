@@ -295,7 +295,7 @@ The Scale & Load agent is the one that would have caught a green-merged Sprint 1
 - **Weeks 2–3 (Sprint 1):** Core pipeline + player skeleton
 - **Weeks 4–5 (Sprint 2):** Full 11-node pipeline + integration → investor demo ready
 - **Weeks 6–7 (Sprint 3):** MediaPipe + CES + full tutor state machine — **prerequisite:** migrate FastAPI/ARQ from Railway to India-region provider before real students join
-- **Weeks 8–9 (Sprint 4):** Load test + calibration + Stripe + hardening
+- **Weeks 8–9 (Sprint 4):** Load test + calibration + Razorpay + hardening
 - **Week 10:** Launch — first paying student
 
 ## Team Ownership (§21)
