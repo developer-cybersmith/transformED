@@ -59,8 +59,7 @@ no data yet to justify a higher number.
 - [x] **M4 — Full regression suite + lint/type check, verified independently**
 - [x] **M5 — Close D132 in `docs/DEFECT-REGISTER.md`, update `RUN-FINDINGS-LOG.md` and
       `docs/dev1-tracker.md`, commit**
-- [ ] **M6 (optional, cost/time permitting)** — live re-verification: does a real lesson's image
-      step actually run ~3-4x faster now? Not yet run.
+- [x] **M6 — live re-verification, DONE.** Real speedup confirmed with real numbers, see below.
 
 **Update this file after each milestone completes — status, real test counts, anything found.**
 
@@ -115,3 +114,33 @@ AI providers. Everything above is verified against real code execution and real 
 under mocked providers, not a measured real-world speedup. The next live eval run (or a small,
 cheap live smoke test) is the real confirmation that a real lesson's image step is actually
 ~3-4x faster now, not just correct in isolation.
+
+### M6 — 2026-08-24
+Ran the exact same fixture (`short_1page`) that already had a precise pre-fix baseline on
+record (395.0s total, 368.5s of that on images, 8 images) — a clean, cheap, apples-to-apples
+comparison rather than a fresh unmeasured lesson.
+
+**Real result: 173.6s total, $0.38 — a 2.3x real speedup**, live, on the exact same input shape.
+
+Pulled the real Langfuse trace for the new lesson and got a precise, quantified confirmation of
+the actual mechanism, not just the headline number:
+
+| | Before (pre-fix) | After (this run) |
+|---|---|---|
+| Total lesson time | 395.0s | 168.7s |
+| `image_generator_node` span | 368.5s | 123.3s |
+| Images generated | 8 | 7 |
+| Sum of individual image calls | ~357.6s | 310.1s |
+| Per-image avg (unchanged, as expected) | 44.7s | 44.3s |
+| Image step as % of total | 93% | 73% |
+
+**The mechanism itself is confirmed, not just the outcome:** before, the node's own span
+duration (368.5s) was essentially equal to the SUM of its images (357.6s) — the serial
+signature. After, the node's span (123.3s) is only ~40% of the sum (310.1s), landing almost
+exactly on the predicted concurrency-of-3 signature: `ceil(7/3) x 44.3s ~= 133s` vs. the
+observed 123.3s. Per-image cost/time is unchanged (as it should be — this fix changes
+scheduling, not the individual provider calls) — the entire improvement comes from real overlap.
+
+D132 is now fully closed: designed, built, adversarially reviewed, one real bug caught and fixed
+pre-ship, and now confirmed under real conditions with a precise, explained mechanism — not just
+a passing test suite.

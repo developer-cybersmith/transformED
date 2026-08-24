@@ -882,8 +882,13 @@ Every node must:
     regression **1254 passed, 9 skipped** (1250 baseline + these 4), zero regressions.
     Deliberately did NOT add a Redis-Lua atomic cost-reservation system after directly confirming
     `accumulate_cost()` already uses atomic `INCRBYFLOAT` — documented in `D132-FIX-TRACKER.md`.
-    **Not yet re-verified live** — everything above verified under mocked providers; the next
-    live eval run is the real confirmation of a measured real-world speedup.
+    **LIVE-VERIFIED 2026-08-24 — real speedup confirmed against real AI providers.** Same
+    `short_1page` fixture with a precise pre-fix baseline on record: **395.0s -> 168.7s total
+    (2.3x), $0.38.** Mechanism confirmed via the real Langfuse trace, not just the headline
+    number — `image_generator_node`'s span went from ~= the sum of its images (serial signature,
+    pre-fix) to ~40% of the sum (post-fix), landing almost exactly on the predicted
+    concurrency-of-3 prediction. Per-image cost/time unchanged, as designed — the entire
+    improvement is real overlap. D132 is now fully closed end to end.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
