@@ -29,9 +29,10 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 | 5 | Encrypted PDFs fail with a raw Python traceback as the error message (`PDFium: Incorrect password error` inside a full stack trace), not a clean, identifiable "this file is password-protected" message. Confirmed: it does NOT crash the worker or silently pass — it fails loud via the subprocess exit-code path — but the message quality is poor. | Real-world PDF investigation (2026-08-20) | Low | Open — not registered as a `D-nn` yet |
 | 6 | Non-English OCR, multi-column layouts, and fillable forms remain completely untested — the 4 real-world fixtures (`D127`) close scan/rotation/corruption/encryption, not these three. | Real-world PDF investigation (2026-08-20) | Low/Med (unknown — never measured) | Open — not registered, no fixtures exist yet |
 | 7 | Admin panel (S3-4) is API-only — zero UI exists anywhere in `apps/web`. Satisfies S3-4's own written AC, but not the Sprint 3 goal line's "admin panel live." | Sprint 3 completion audit (2026-08-20) | Low (scope question, not a bug) | Open — needs a product decision, not a fix |
-| 8 | Circuit breaker (S3-3) and Langfuse cost attribution (S3-5) are both code-complete and unit-tested, but neither has ever been exercised against a real dependency (real/fake Redis for the breaker; a real Langfuse dashboard for cost attribution — confirmed live 401 Unauthorized, no credentials configured for Langfuse specifically, despite other providers' credentials being present). | Sprint 3 completion audit (2026-08-20) | Low | Open |
+| 8 | ~~Circuit breaker (S3-3) untested against real Redis; Langfuse cost attribution (S3-5) never confirmed against a real dashboard~~ | Sprint 3 completion audit (2026-08-20) | Low | **Langfuse half corrected 2026-08-24 — the "401 Unauthorized, no credentials configured" claim was WRONG.** Connected directly with the real credentials this session: `auth_check()` returned `True`, and real trace data was successfully pulled (see D132, and the traces `traced_node()` has been writing all along). The earlier 401 was almost certainly the D126 credential-shadowing bug, active at the time — not a broken/missing Langfuse account. Circuit-breaker-vs-real-Redis half still genuinely untested. |
 | 9 | ~~The 20 eval-harness fixtures all lack any real chapter structure~~ | Investigation after stopping the 2026-08-21 live run | High | **Fixed 2026-08-21 — `D130` CLOSED.** See Closed Gap #2. |
 | 10 | Same root mechanism as #9, wider blast radius: a real book with no detectable structure has no upper bound on the "chapter" size a real student could select — not just an eval-harness inconvenience. Not an overspend risk (the $3 ceiling still holds via downshift), but a real time/UX/quality-degradation risk, mechanism confirmed, real-world likelihood unmeasured. | Surfaced planning the D130 fix | Med-High | Open — `D131`, deliberately not fixed (product/UX decision). Recommended to decide alongside `D129` at Sprint 4. |
+| 11 | **The real, dominant reason lessons take so long: slide images generate ONE AT A TIME, not concurrently.** Measured via real Langfuse traces across 6 real lessons (both today's post-D130 run and the 2026-08-21 real-world run) — image generation alone is 86-95% of every lesson's total time, 6/6 consistent, every image taking a strikingly uniform ~41-45s. Phase 1's economy nodes already run concurrently per segment; `image_generator_node` has no equivalent for its own per-slide calls. This is a bigger time driver than D130 ever was. | Langfuse trace analysis during the D130 live re-verification (2026-08-24) | **High** | Open — `D132`, not fixed. Real fix candidate: bound-concurrency fan-out for `generate-image` calls, same pattern `_IMAGE_UPLOAD_CONCURRENCY` already uses for image *uploads* in the same file. |
 
 ---
 
@@ -45,6 +46,68 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 ---
 
 ## Run Log
+
+### 2026-08-24 — Langfuse trace analysis: found the real dominant time cost (D132)
+**Method:** while the restarted 20-PDF live eval was in progress (safe, read-only — did not
+touch the running process), queried Langfuse's own API directly for the real per-node trace
+data of every completed lesson so far, plus the 2 real-world lessons from the earlier D127 run,
+to answer "where does the time actually go inside one lesson."
+
+**First finding: Langfuse access itself works.** `get_langfuse().auth_check()` returned `True`
+and pulled real trace data successfully — corrects Open Gap #8's earlier "401 Unauthorized, no
+credentials configured" claim, which was almost certainly the now-fixed D126 credential-
+shadowing bug active at the time, not a broken Langfuse account.
+
+**Second finding — corrects a wrong claim made earlier in this same conversation:** an initial
+read of `lf.api.trace.list()`'s top-level trace names misidentified `package_builder_node` as
+the bottleneck (its listed "trace" showed ~1481s latency for `short_10page`). Pulling the FULL
+trace detail (`lf.api.trace.get()`, all observations) showed this was wrong — the trace's
+displayed name is inherited from whichever node last touched it, not what dominates the time.
+`package_builder_node`'s own real span is ~1-2 seconds, exactly as it should be.
+
+**The real finding, quantified across 6 real lessons (4 from today, 2 from 2026-08-21's D127
+run):**
+
+| Lesson | Total | Image gen | % | # images | Avg/image |
+|---|---|---|---|---|---|
+| short_1page | 395s | 368.5s | 93% | 8 | 44.7s |
+| short_3page | 1003s | 955.7s | 95% | 21 | 44.3s |
+| short_10page | 1481s | 1339.6s | 90% | 30 | 43.4s |
+| short_sparse | 1486s | 1412.5s | 95% | 32 | 42.9s |
+| real_scan_like | 415s | 358.1s | 86% | 8 | 43.1s |
+| real_scan_like_rotated | 290s | 255.6s | 88% | 6 | 41.2s |
+
+`image_generator_node`'s own span duration is essentially the SUM of its child `generate-image`
+calls, not the MAX — the signature of serial execution. Phase 1's economy nodes are confirmed
+(same trace data) to genuinely run concurrently per segment; image generation has no equivalent
+fan-out for its own per-slide calls. 6 of 6 measured lessons show the identical pattern
+regardless of content type, size, or day. → **D132 registered (open, not fixed).**
+
+**Answers the standing question directly: no more PDFs are needed to identify this** — the
+signal is already unambiguous across 6 independent, real data points spanning both today's and
+last week's runs.
+
+---
+
+### 2026-08-24 — 20-PDF S3-1 live eval, 1st post-fix attempt: aborted in <2 min, Redis down
+*(Note: logged in-session as "2026-08-21" at the time — corrected here against real Langfuse
+server timestamps, which are authoritative. Any nearby entries still reading 2026-08-21 for
+this same work carry the same correction; not individually re-dated.)*
+**Command:** `pytest tests/evals/test_live_run.py -v --run-live-eval`
+**Result:** Stopped intentionally after 7 of 20 PDFs, all failed with `Connection refused` to
+`localhost:6379` — Redis had stopped running since it was last confirmed up earlier this
+session (unrelated to D130; the machine likely went idle). Confirmed via `redis-cli ping`.
+
+**Finding — the progress-visibility fix (D130 Part B) proved its value on its very first real
+use:** `progress.jsonl` showed 7 failed PDFs within under 2 minutes of run start, live, from
+outside the process. Before this fix, this same failure would only have been discovered after
+the run either finished or was killed blind — as happened with the original 6+ hour D130
+incident. Caught, diagnosed, and Redis restarted in well under 5 minutes.
+
+**Action:** Redis restarted (`redis-server --daemonize yes`, confirmed `PONG`), run restarted
+fresh immediately after — see next entry.
+
+---
 
 ### 2026-08-21 — D130 fix: real chapter structure + progress visibility, build + verify
 **Method:** two parallel, independently-scoped agents on disjoint files — Part A (fixture
