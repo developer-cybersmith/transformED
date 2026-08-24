@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 
 const { useSWRMock } = vi.hoisted(() => ({ useSWRMock: vi.fn() }));
 
@@ -99,10 +99,62 @@ describe('useLesson', () => {
     renderHook(() => useLesson('lsn_1'));
     const options = useSWRMock.mock.calls[0][2] as { refreshInterval: (data: unknown) => number };
 
-    expect(options.refreshInterval({ status: 'running' })).toBeGreaterThan(0);
+    let intervalBeforeCeiling = 0;
+    act(() => {
+      intervalBeforeCeiling = options.refreshInterval({ status: 'running' });
+    });
+    expect(intervalBeforeCeiling).toBeGreaterThan(0);
 
     vi.setSystemTime(20 * 60 * 1000 + 1); // just past the 20-minute cap
-    expect(options.refreshInterval({ status: 'running' })).toBe(0);
+    let intervalPastCeiling = -1;
+    act(() => {
+      intervalPastCeiling = options.refreshInterval({ status: 'running' });
+    });
+    expect(intervalPastCeiling).toBe(0);
+
+    vi.useRealTimers();
+  });
+
+  it('exposes pollTimedOut=false under the ceiling, true once past it, and reset by refetch (S4-11)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const mutateMock = vi.fn().mockResolvedValue(undefined);
+    useSWRMock.mockReturnValue({ data: null, error: undefined, isLoading: true, mutate: mutateMock });
+
+    const { result } = renderHook(() => useLesson('lsn_1'));
+    const options = useSWRMock.mock.calls[0][2] as { refreshInterval: (data: unknown) => number };
+
+    expect(result.current.pollTimedOut).toBe(false);
+
+    act(() => {
+      options.refreshInterval({ status: 'running' });
+    });
+    expect(result.current.pollTimedOut).toBe(false);
+
+    vi.setSystemTime(20 * 60 * 1000 + 1);
+    act(() => {
+      options.refreshInterval({ status: 'running' });
+    });
+    expect(result.current.pollTimedOut).toBe(true);
+
+    act(() => {
+      result.current.refetch();
+    });
+    expect(result.current.pollTimedOut).toBe(false);
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('does not set pollTimedOut for a terminal status, even past the ceiling (S4-11)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    renderHook(() => useLesson('lsn_1'));
+    const options = useSWRMock.mock.calls[0][2] as { refreshInterval: (data: unknown) => number };
+
+    vi.setSystemTime(20 * 60 * 1000 + 1);
+    expect(options.refreshInterval({ status: 'ready' })).toBe(0);
+    expect(options.refreshInterval({ status: 'failed' })).toBe(0);
 
     vi.useRealTimers();
   });

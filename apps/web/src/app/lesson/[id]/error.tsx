@@ -17,7 +17,7 @@ export default function LessonError({
     }, [error]);
 
     return (
-        <div className="flex-1 w-full flex items-center justify-center p-6">
+        <div className="flex-1 w-full flex items-center justify-center p-6 relative z-10">
             <div className="flex flex-col items-center gap-4 max-w-md rounded-3xl bg-white p-8 text-center shadow-xl">
                 <h2 className="font-serif text-xl font-semibold text-neutral-900">Something went wrong</h2>
                 <p className="text-neutral-500">
