@@ -19,16 +19,23 @@ export function PrivacyTab() {
         };
     }, []);
 
-    const fetchPrivacy = useCallback(() => {
+    // isStale is checked in ADDITION to mountedRef, not instead of it: under React
+    // Strict Mode's dev-only double-invoke, a phantom mount's cleanup would have
+    // already flipped mountedRef back to true by the time its OWN fetch resolves
+    // (the real remount re-set it) -- a shared ref alone can't tell "this instance
+    // of the effect is stale" from "the component is still mounted". The mount
+    // effect's own per-invocation `cancelled` flag closes that gap; retry calls
+    // (real user clicks, not Strict Mode phantoms) only need the mountedRef check.
+    const fetchPrivacy = useCallback((isStale: () => boolean) => {
         settingsService.getPrivacy().then(
             (response) => {
-                if (!mountedRef.current) return;
+                if (isStale() || !mountedRef.current) return;
                 setSettings(response.data);
                 setError(false);
                 setIsLoading(false);
             },
             () => {
-                if (!mountedRef.current) return;
+                if (isStale() || !mountedRef.current) return;
                 setError(true);
                 setIsLoading(false);
             }
@@ -36,13 +43,17 @@ export function PrivacyTab() {
     }, []);
 
     useEffect(() => {
-        fetchPrivacy();
+        let cancelled = false;
+        fetchPrivacy(() => cancelled);
+        return () => {
+            cancelled = true;
+        };
     }, [fetchPrivacy]);
 
     const retryLoadPrivacy = useCallback(() => {
         setIsLoading(true);
         setError(false);
-        fetchPrivacy();
+        fetchPrivacy(() => false);
     }, [fetchPrivacy]);
 
     function updateSetting<K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) {

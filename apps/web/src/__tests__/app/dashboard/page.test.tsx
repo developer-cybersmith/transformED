@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-const { useDashboardMock } = vi.hoisted(() => ({ useDashboardMock: vi.fn() }));
+const { useDashboardMock, useAuthMock } = vi.hoisted(() => ({
+  useDashboardMock: vi.fn(),
+  useAuthMock: vi.fn(),
+}));
 
 vi.mock('@/hooks/useDashboard', () => ({
   useDashboard: useDashboardMock,
@@ -12,7 +15,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { full_name: 'Robert', email: 'robert@example.com' } }),
+  useAuth: useAuthMock,
 }));
 
 vi.mock('@/services/onboarding.service', () => ({
@@ -23,6 +26,8 @@ import DashboardPage from '@/app/(dashboard)/dashboard/page';
 
 beforeEach(() => {
   useDashboardMock.mockReset();
+  useAuthMock.mockReset();
+  useAuthMock.mockReturnValue({ user: { full_name: 'Robert', email: 'robert@example.com' } });
 });
 
 describe('DashboardPage', () => {
@@ -94,6 +99,35 @@ describe('DashboardPage', () => {
 
   it('does not show the zero-lessons empty-state when the fetch has failed', () => {
     useDashboardMock.mockReturnValue({ data: null, error: new Error('boom'), isLoading: false });
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByText(/no lessons yet/i)).toBeNull();
+  });
+
+  it('does not show the zero-lessons empty-state when the user has a continueLearning lesson, even with an empty recentLessons list', () => {
+    useDashboardMock.mockReturnValue({
+      data: {
+        continueLearning: { lesson_id: 'l1', status: 'ready', title: 'Intro to Thermodynamics' },
+        recentLessons: [],
+        learningPulse: undefined,
+      },
+      error: undefined,
+      isLoading: false,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByText(/no lessons yet/i)).toBeNull();
+  });
+
+  it('does not show the zero-lessons empty-state before auth has resolved, even though useDashboard reports isLoading: false for its null SWR key (S4-10)', () => {
+    // useDashboard keys its SWR call off `user` -- a null key means SWR is not
+    // fetching at all (isLoading: false), NOT "confirmed no data". Without a
+    // separate `user` check, a returning user with real lessons would see this
+    // flash "No lessons yet" during the brief pre-auth window (review finding).
+    useAuthMock.mockReturnValue({ user: null });
+    useDashboardMock.mockReturnValue({ data: null, error: undefined, isLoading: false });
 
     render(<DashboardPage />);
 

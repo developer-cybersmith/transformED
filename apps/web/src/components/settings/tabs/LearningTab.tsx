@@ -19,16 +19,23 @@ export function LearningTab() {
         };
     }, []);
 
-    const fetchPreferences = useCallback(() => {
+    // isStale is checked in ADDITION to mountedRef, not instead of it: under React
+    // Strict Mode's dev-only double-invoke, a phantom mount's cleanup would have
+    // already flipped mountedRef back to true by the time its OWN fetch resolves
+    // (the real remount re-set it) -- a shared ref alone can't tell "this instance
+    // of the effect is stale" from "the component is still mounted". The mount
+    // effect's own per-invocation `cancelled` flag closes that gap; retry calls
+    // (real user clicks, not Strict Mode phantoms) only need the mountedRef check.
+    const fetchPreferences = useCallback((isStale: () => boolean) => {
         settingsService.getPreferences().then(
             (response) => {
-                if (!mountedRef.current) return;
+                if (isStale() || !mountedRef.current) return;
                 setPreferences(response.data);
                 setError(false);
                 setIsLoading(false);
             },
             () => {
-                if (!mountedRef.current) return;
+                if (isStale() || !mountedRef.current) return;
                 setError(true);
                 setIsLoading(false);
             }
@@ -36,13 +43,17 @@ export function LearningTab() {
     }, []);
 
     useEffect(() => {
-        fetchPreferences();
+        let cancelled = false;
+        fetchPreferences(() => cancelled);
+        return () => {
+            cancelled = true;
+        };
     }, [fetchPreferences]);
 
     const retryLoadPreferences = useCallback(() => {
         setIsLoading(true);
         setError(false);
-        fetchPreferences();
+        fetchPreferences(() => false);
     }, [fetchPreferences]);
 
     function updatePreference<K extends keyof LearningPreferences>(key: K, value: LearningPreferences[K]) {

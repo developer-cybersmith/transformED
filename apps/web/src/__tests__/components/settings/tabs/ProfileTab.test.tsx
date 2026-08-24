@@ -77,6 +77,23 @@ describe('ProfileTab', () => {
     expect(getProfileMock).toHaveBeenCalledTimes(2);
   });
 
+  it('hides the Retry button while a retry is in flight, so it cannot be double-clicked into a second overlapping request (S4-10)', async () => {
+    getProfileMock.mockRejectedValueOnce(new Error('network error'));
+    let resolveRetry!: (value: { data: typeof PROFILE }) => void;
+    getProfileMock.mockReturnValueOnce(new Promise((resolve) => { resolveRetry = resolve; }));
+    const user = userEvent.setup();
+    render(<ProfileTab />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(getProfileMock).toHaveBeenCalledTimes(2);
+
+    resolveRetry({ data: PROFILE });
+    await waitFor(() => expect(screen.getByText(PROFILE.name)).not.toBeNull());
+  });
+
   it('does not warn or throw when a fetch rejects after the component has unmounted (S4-10)', async () => {
     let rejectFetch!: (err: unknown) => void;
     getProfileMock.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectFetch = reject; }));

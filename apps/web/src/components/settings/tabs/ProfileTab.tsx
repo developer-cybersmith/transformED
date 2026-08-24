@@ -20,16 +20,23 @@ export function ProfileTab() {
         };
     }, []);
 
-    const fetchProfile = useCallback(() => {
+    // isStale is checked in ADDITION to mountedRef, not instead of it: under React
+    // Strict Mode's dev-only double-invoke, a phantom mount's cleanup would have
+    // already flipped mountedRef back to true by the time its OWN fetch resolves
+    // (the real remount re-set it) -- a shared ref alone can't tell "this instance
+    // of the effect is stale" from "the component is still mounted". The mount
+    // effect's own per-invocation `cancelled` flag closes that gap; retry calls
+    // (real user clicks, not Strict Mode phantoms) only need the mountedRef check.
+    const fetchProfile = useCallback((isStale: () => boolean) => {
         settingsService.getProfile().then(
             (response) => {
-                if (!mountedRef.current) return;
+                if (isStale() || !mountedRef.current) return;
                 setProfile(response.data);
                 setError(false);
                 setIsFetching(false);
             },
             () => {
-                if (!mountedRef.current) return;
+                if (isStale() || !mountedRef.current) return;
                 setError(true);
                 setIsFetching(false);
             }
@@ -37,13 +44,17 @@ export function ProfileTab() {
     }, []);
 
     useEffect(() => {
-        fetchProfile();
+        let cancelled = false;
+        fetchProfile(() => cancelled);
+        return () => {
+            cancelled = true;
+        };
     }, [fetchProfile]);
 
     const retryLoadProfile = useCallback(() => {
         setIsFetching(true);
         setError(false);
-        fetchProfile();
+        fetchProfile(() => false);
     }, [fetchProfile]);
 
     if (error) {
