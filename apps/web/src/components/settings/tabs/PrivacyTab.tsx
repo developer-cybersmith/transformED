@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Toggle } from "../Toggle";
 import { ShieldAlert } from "lucide-react";
 import { settingsService } from "@/services/settings.service";
@@ -9,18 +9,41 @@ import type { PrivacySettings } from "@/mocks/data/users";
 export function PrivacyTab() {
     const [settings, setSettings] = useState<PrivacySettings | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(false);
+    const mountedRef = useRef(true);
 
     useEffect(() => {
-        let cancelled = false;
-        settingsService.getPrivacy().then((response) => {
-            if (cancelled) return;
-            setSettings(response.data);
-            setIsLoading(false);
-        });
+        mountedRef.current = true;
         return () => {
-            cancelled = true;
+            mountedRef.current = false;
         };
     }, []);
+
+    const fetchPrivacy = useCallback(() => {
+        settingsService.getPrivacy().then(
+            (response) => {
+                if (!mountedRef.current) return;
+                setSettings(response.data);
+                setError(false);
+                setIsLoading(false);
+            },
+            () => {
+                if (!mountedRef.current) return;
+                setError(true);
+                setIsLoading(false);
+            }
+        );
+    }, []);
+
+    useEffect(() => {
+        fetchPrivacy();
+    }, [fetchPrivacy]);
+
+    const retryLoadPrivacy = useCallback(() => {
+        setIsLoading(true);
+        setError(false);
+        fetchPrivacy();
+    }, [fetchPrivacy]);
 
     function updateSetting<K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) {
         const previous = settings;
@@ -28,6 +51,22 @@ export function PrivacyTab() {
         settingsService.updatePrivacy({ [key]: value } as Partial<PrivacySettings>).catch(() => {
             setSettings(previous);
         });
+    }
+
+    if (error) {
+        return (
+            <div className="flex w-full max-w-3xl flex-col items-center justify-center gap-3 pt-24 pb-24 text-sm text-neutral-400">
+                <p>Couldn&apos;t load your privacy settings — check your connection and try again.</p>
+                <button
+                    type="button"
+                    onClick={retryLoadPrivacy}
+                    disabled={isLoading}
+                    className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                >
+                    Retry
+                </button>
+            </div>
+        );
     }
 
     if (isLoading || !settings) {

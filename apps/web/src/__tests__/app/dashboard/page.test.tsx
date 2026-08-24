@@ -55,4 +55,48 @@ describe('DashboardPage', () => {
     expect(screen.getByText(/couldn't load some of your dashboard data/)).not.toBeNull();
     expect(screen.queryByText('Loading your dashboard...')).toBeNull();
   });
+
+  it('shows an empty-state message in place of the collapsed sections when the user has zero lessons (S4-10)', () => {
+    useDashboardMock.mockReturnValue({
+      data: { continueLearning: null, recentLessons: [], learningPulse: undefined },
+      error: undefined,
+      isLoading: false,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText(/no lessons yet/i)).not.toBeNull();
+  });
+
+  it('does not show the zero-lessons empty-state once the user has a lesson', () => {
+    useDashboardMock.mockReturnValue({
+      data: {
+        continueLearning: null,
+        recentLessons: [{ lesson_id: 'l1', status: 'ready', title: 'Intro to Thermodynamics' }],
+        learningPulse: undefined,
+      },
+      error: undefined,
+      isLoading: false,
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByText(/no lessons yet/i)).toBeNull();
+  });
+
+  it('does not show the zero-lessons empty-state while still loading', () => {
+    useDashboardMock.mockReturnValue({ data: null, error: undefined, isLoading: true });
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByText(/no lessons yet/i)).toBeNull();
+  });
+
+  it('does not show the zero-lessons empty-state when the fetch has failed', () => {
+    useDashboardMock.mockReturnValue({ data: null, error: new Error('boom'), isLoading: false });
+
+    render(<DashboardPage />);
+
+    expect(screen.queryByText(/no lessons yet/i)).toBeNull();
+  });
 });

@@ -46,17 +46,17 @@ Answering the six questions (`docs/SCALE-CONTRACT.md`):
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 2, 5): Add error state + Retry to `ProfileTab.tsx`.
-  - [ ] 1.1 RED: write failing tests for rejected-fetch error UI, Retry re-fetch, and post-unmount safety.
-  - [ ] 1.2 GREEN: implement.
-- [ ] Task 2 (AC: 1, 2, 5): Add error state + Retry to `LearningTab.tsx`.
-  - [ ] 2.1 RED / 2.2 GREEN (same shape as Task 1).
-- [ ] Task 3 (AC: 1, 2, 5): Add error state + Retry to `PrivacyTab.tsx`.
-  - [ ] 3.1 RED / 3.2 GREEN (same shape as Task 1).
-- [ ] Task 4 (AC: 4, 5): Add the zero-lessons empty-state message to `dashboard/page.tsx`.
-  - [ ] 4.1 RED: write failing test for the exact AC-4 visibility conditions.
-  - [ ] 4.2 GREEN: implement.
-- [ ] Task 5 (AC: 6): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
+- [x] Task 1 (AC: 1, 2, 5): Add error state + Retry to `ProfileTab.tsx`.
+  - [x] 1.1 RED: write failing tests for rejected-fetch error UI, Retry re-fetch, and post-unmount safety.
+  - [x] 1.2 GREEN: implement.
+- [x] Task 2 (AC: 1, 2, 5): Add error state + Retry to `LearningTab.tsx`.
+  - [x] 2.1 RED / 2.2 GREEN (same shape as Task 1).
+- [x] Task 3 (AC: 1, 2, 5): Add error state + Retry to `PrivacyTab.tsx`.
+  - [x] 3.1 RED / 3.2 GREEN (same shape as Task 1).
+- [x] Task 4 (AC: 4, 5): Add the zero-lessons empty-state message to `dashboard/page.tsx`.
+  - [x] 4.1 RED: write failing test for the exact AC-4 visibility conditions.
+  - [x] 4.2 GREEN: implement.
+- [x] Task 5 (AC: 6): Full `apps/web` suite green; `tsc --noEmit` clean; `eslint` clean on every touched file.
 
 ## Dev Notes
 
@@ -82,15 +82,26 @@ Vitest + Testing Library, matching existing conventions in `apps/web/src/__tests
 
 ### Implementation Plan
 
-_(filled in during implementation)_
+- `ProfileTab.tsx`/`LearningTab.tsx`/`PrivacyTab.tsx` each gained an `error` boolean and a `mountedRef` (replacing the old per-effect `cancelled` local, since Retry needs the same unmount guard outside the mount effect). The mount effect calls a `fetchX()` `useCallback` whose body is only the `settingsService.getX().then(onSuccess, onFailure)` call — no synchronous `setState` before the promise, since that call chain (effect → function → synchronous `setState`) trips this repo's `react-hooks/set-state-in-effect` ESLint rule. The Retry button instead calls a separate `retryLoadX()` callback that synchronously resets `error`/loading state (a real event-handler call, not an effect, so the rule doesn't apply) and then calls the same `fetchX()`.
+- `dashboard/page.tsx` gained a single inline empty-state block, gated on `error == null && !continueLearning && recentLessons.length === 0`, placed above the existing grid — deliberately not touching `ContinueLearningCard`/`RecentLessons` themselves, since their `return null` behavior is correct and shared by other future callers.
+- Scoped via a read-only 8-flow audit (fork agent) before writing ACs — confirmed 6 of 8 flows already correct from prior sprint work, so no changes were made to Books, Upload, Onboarding, the lesson player, Session Report, or auth forms.
 
 ### Completion Notes
 
-_(filled in during implementation)_
+- All 5 tasks complete, all ACs (1–6) satisfied.
+- `NotificationsTab.tsx`/`useNotificationPreferences.ts` and `AccountTab.tsx` confirmed untouched, per Dev Notes — independently re-verified by reading `useNotificationPreferences.ts` directly (its `loadPreferences()` already has a correct `try/catch` + `finally`, contradicting the initial audit's guess that it shared the same bug).
+- Full `apps/web` suite: 80 files / 997 tests, all passing. `tsc --noEmit` clean. `eslint` on all touched files: 0 errors (1 pre-existing, unrelated warning on `ProfileTab.tsx`'s avatar `<img>` tag, not introduced by this story).
 
 ### File List
 
-_(filled in during implementation)_
+- `apps/web/src/components/settings/tabs/ProfileTab.tsx` (MODIFIED — added `error`/`isFetching` state, `mountedRef`, `fetchProfile`/`retryLoadProfile`, error UI with Retry)
+- `apps/web/src/components/settings/tabs/LearningTab.tsx` (MODIFIED — same shape: `error` state, `mountedRef`, `fetchPreferences`/`retryLoadPreferences`, error UI with Retry)
+- `apps/web/src/components/settings/tabs/PrivacyTab.tsx` (MODIFIED — same shape: `error` state, `mountedRef`, `fetchPrivacy`/`retryLoadPrivacy`, error UI with Retry)
+- `apps/web/src/app/(dashboard)/dashboard/page.tsx` (MODIFIED — added zero-lessons empty-state block, gated on no error + no continueLearning + empty recentLessons)
+- `apps/web/src/__tests__/components/settings/tabs/ProfileTab.test.tsx` (MODIFIED — 3 new tests: error+Retry UI, Retry-then-success, post-unmount safety)
+- `apps/web/src/__tests__/components/settings/tabs/LearningTab.test.tsx` (MODIFIED — same 3 new tests)
+- `apps/web/src/__tests__/components/settings/tabs/PrivacyTab.test.tsx` (MODIFIED — same 3 new tests)
+- `apps/web/src/__tests__/app/dashboard/page.test.tsx` (MODIFIED — 4 new tests: empty-state shown/hidden across the 4 AC-4 conditions)
 
 ## Change Log
 

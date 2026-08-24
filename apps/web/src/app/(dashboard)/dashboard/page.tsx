@@ -37,6 +37,17 @@ export default function DashboardPage() {
                 </div>
             ) : (
                 <>
+                    {error == null && !dashboardData?.continueLearning && (dashboardData?.recentLessons?.length ?? 0) === 0 && (
+                        // A brand-new user has no ContinueLearningCard/RecentLessons to show --
+                        // both collapse to null otherwise, leaving two silent blank gaps with no
+                        // indication this is the expected first-run state, not a loading failure
+                        // (S4-10). QuickActions below already has a real "Upload PDF" CTA, so this
+                        // is purely explanatory, not the only path forward.
+                        <div className="rounded-2xl border border-neutral-100 bg-white px-6 py-5 text-sm text-neutral-500">
+                            No lessons yet — upload a PDF to get your first lesson started.
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
 
                         {/* Left Column (Main Focus) */}

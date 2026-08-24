@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Target, Sparkles, BookOpen } from "lucide-react";
 import { settingsService } from "@/services/settings.service";
 import type { UserProfile } from "@/mocks/data/users";
@@ -9,16 +9,58 @@ import { useAuth } from "@/contexts/AuthContext";
 export function ProfileTab() {
     const { user } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [error, setError] = useState(false);
+    const [isFetching, setIsFetching] = useState(false);
+    const mountedRef = useRef(true);
 
     useEffect(() => {
-        let cancelled = false;
-        settingsService.getProfile().then((response) => {
-            if (!cancelled) setProfile(response.data);
-        });
+        mountedRef.current = true;
         return () => {
-            cancelled = true;
+            mountedRef.current = false;
         };
     }, []);
+
+    const fetchProfile = useCallback(() => {
+        settingsService.getProfile().then(
+            (response) => {
+                if (!mountedRef.current) return;
+                setProfile(response.data);
+                setError(false);
+                setIsFetching(false);
+            },
+            () => {
+                if (!mountedRef.current) return;
+                setError(true);
+                setIsFetching(false);
+            }
+        );
+    }, []);
+
+    useEffect(() => {
+        fetchProfile();
+    }, [fetchProfile]);
+
+    const retryLoadProfile = useCallback(() => {
+        setIsFetching(true);
+        setError(false);
+        fetchProfile();
+    }, [fetchProfile]);
+
+    if (error) {
+        return (
+            <div className="flex w-full max-w-3xl flex-col items-center justify-center gap-3 pt-24 pb-24 text-sm text-neutral-400">
+                <p>Couldn&apos;t load your profile — check your connection and try again.</p>
+                <button
+                    type="button"
+                    onClick={retryLoadProfile}
+                    disabled={isFetching}
+                    className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                >
+                    Retry
+                </button>
+            </div>
+        );
+    }
 
     if (!profile) {
         return (
