@@ -201,6 +201,14 @@ _IMAGE_UPLOAD_CONCURRENCY = 4
 _IMAGE_UPLOAD_ATTEMPTS = 5
 _IMAGE_UPLOAD_BACKOFF_BASE_S = 1.0
 
+# D132: max simultaneous slide IMAGE GENERATION calls per lesson (image_generator_node).
+# Deliberately NOT the same value as _IMAGE_UPLOAD_CONCURRENCY above — that 4 was
+# empirically tuned for a different resource (Supabase Storage upload throughput);
+# this provider's real generation-side rate limit isn't documented anywhere in this
+# project. 3 is a conservative starting point (existing per-call retry/circuit-breaker
+# is the safety net if this needs tuning down) — no data yet to justify going higher.
+_IMAGE_GENERATION_CONCURRENCY = 3
+
 
 def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:  # noqa: ANN401
     """AC-5: page-aware timeout for the PDF-extraction subprocess.
@@ -4404,6 +4412,8 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     is a sufficient correlation key here (matches the pre-existing
     PipelineState.slide_images field comment).
     """
+    import asyncio
+
     from app.core.cost_tracker import accumulate_cost, check_ceiling
     from app.core.db import get_supabase
     from app.providers.image.imagen import COST_PER_IMAGE as IMAGEN_COST_PER_IMAGE
@@ -4443,8 +4453,17 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 93.0, "image_generator")
         return {"slide_images": cached, "progress_pct": 93.0}
 
-    slide_images_out: list[dict[str, Any]] = []
-    for index, entry in enumerate(slides):
+    # D132: per-slide generation body extracted into a coroutine so it can be
+    # run under bounded concurrency below (asyncio.Semaphore + asyncio.gather,
+    # mirroring extract_node's `_bounded_upload` pattern a few functions
+    # above). Logic is UNCHANGED from the prior sequential `for` loop body —
+    # only its shape (loop body -> callable) changed. Every exception is
+    # caught INSIDE this coroutine (not left to propagate to gather) so one
+    # slide's failure can never cancel or otherwise affect any other slide's
+    # concurrently-running task — asyncio.gather without return_exceptions
+    # would otherwise surface the first exception and leave sibling tasks in
+    # an undefined state, which AC-11's isolation guarantee cannot tolerate.
+    async def _process_one_slide(index: int, entry: Any) -> dict[str, Any]:  # noqa: ANN401
         # 2026-07-15 review finding (Edge Case Hunter): the original
         # extraction — `(entry.get("data") or {}).get("slide_id", ...)` —
         # raised AttributeError (not a graceful default) if entry["data"]
@@ -4519,7 +4538,16 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                     # provider produced it.
                     image_bytes = _crop_to_16_9(image_bytes)
                     image_path = f"{lesson_id}/{slide_id}.png"
-                    supabase.storage.from_("lesson-images").upload(
+                    # D132 adversarial review finding: supabase.storage is
+                    # storage3's SYNC client (blocking httpx under the hood,
+                    # not async) — called directly on the event loop, it
+                    # would block every OTHER concurrently-scheduled slide's
+                    # await for its own duration, defeating the concurrency
+                    # this function exists to add. asyncio.to_thread is the
+                    # same fix extract_node's _bounded_upload already uses
+                    # for this identical resource (graph.py ~442-489).
+                    await asyncio.to_thread(
+                        supabase.storage.from_("lesson-images").upload,
                         path=image_path,
                         file=image_bytes,
                         file_options={"content-type": "image/png", "upsert": "true"},
@@ -4542,7 +4570,7 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                 else:
                     image_url = None
 
-            slide_images_out.append({"slide_id": slide_id, "image_url": image_url})
+            return {"slide_id": slide_id, "image_url": image_url}
 
         except Exception:  # noqa: BLE001
             logger.warning(
@@ -4552,7 +4580,25 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                 slide_id,
                 exc_info=True,
             )
-            slide_images_out.append({"slide_id": slide_id, "image_url": None})
+            return {"slide_id": slide_id, "image_url": None}
+
+    # D132: bounded concurrent generation, mirroring extract_node's
+    # `_bounded_upload` pattern. asyncio.gather's return list is documented
+    # to match the order of its input awaitables regardless of completion
+    # order, so building `coros` in input (index) order and gathering once
+    # keeps `slide_images_out` index-matched to `slides` even though slides
+    # can now finish generating out of order under concurrency.
+    gen_sem = asyncio.Semaphore(_IMAGE_GENERATION_CONCURRENCY)
+
+    async def _bounded_process(index: int, entry: Any) -> dict[str, Any]:  # noqa: ANN401
+        async with gen_sem:
+            return await _process_one_slide(index, entry)
+
+    slide_images_out: list[dict[str, Any]] = list(
+        await asyncio.gather(
+            *(_bounded_process(index, entry) for index, entry in enumerate(slides))
+        )
+    )
 
     supabase.table("lesson_jobs").update(
         {
