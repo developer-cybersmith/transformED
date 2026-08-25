@@ -126,10 +126,19 @@ GRANT  EXECUTE ON FUNCTION public.decrement_lesson_credit(uuid) TO service_role;
 -- redelivered event id (Stripe's own documented retry behavior on anything
 -- but a 2xx) returns false and the caller grants no credit a second time.
 -- Deliberately a dedicated RPC rather than a PostgREST-level upsert call:
--- the exact "did this specific call insert a new row" signal is what a
--- generic upsert response does not reliably distinguish from "already
--- existed", and this durable Postgres constraint — not an in-process
--- cache or a prior SELECT — is what AC5 requires.
+-- a PostgREST `.upsert()` through the Supabase Python client was judged
+-- (not independently benchmarked/proven in this session) likely to make
+-- "did this specific call insert a new row" harder to distinguish
+-- reliably from "already existed" depending on Prefer-header/resolution
+-- settings; a dedicated RPC with an explicit RETURN FOUND removes that
+-- ambiguity outright regardless of whether the PostgREST behavior itself
+-- would have worked.
+--
+-- Used for every event type EXCEPT a real credit grant on
+-- checkout.session.completed, which instead calls
+-- record_stripe_event_and_grant_credits below — see that function's own
+-- comment for why the two steps must NOT be split into two separate RPC
+-- calls from Python.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION public.record_stripe_event_if_new(
@@ -154,3 +163,67 @@ REVOKE EXECUTE ON FUNCTION public.record_stripe_event_if_new(text, text, text) F
 REVOKE EXECUTE ON FUNCTION public.record_stripe_event_if_new(text, text, text) FROM anon;
 REVOKE EXECUTE ON FUNCTION public.record_stripe_event_if_new(text, text, text) FROM authenticated;
 GRANT  EXECUTE ON FUNCTION public.record_stripe_event_if_new(text, text, text) TO service_role;
+
+
+-- ============================================================
+-- RPC: record_stripe_event_and_grant_credits
+-- Review Finding (Story 5-3, code review 2026-08-26) — the ORIGINAL design
+-- called record_stripe_event_if_new and grant_lesson_credits as two
+-- SEPARATE RPC calls from Python. That is a real defect, not a style
+-- choice: the first call commits durably on its own; if the second call
+-- then fails for ANY reason (a transient DB hiccup, an FK violation
+-- because the user row was deleted between checkout and webhook
+-- delivery), the exception propagates, but the event is now already
+-- marked processed. Stripe's automatic retry of that SAME event_id then
+-- finds record_stripe_event_if_new returning false and acknowledges 200
+-- as an idempotent no-op — the student paid, Stripe considers the
+-- webhook delivered, and the credit is permanently gone with no further
+-- error signal. A `silent-wrong-result` scale finding that can never be
+-- dismissed per docs/SCALE-CONTRACT.md.
+--
+-- Fixed by making both steps ONE plpgsql function body — a single
+-- Postgres function call is one implicit transaction, so a failure
+-- anywhere inside it (including the credit upsert) rolls back the
+-- stripe_events insert too. Either both steps commit, or neither does;
+-- Stripe's retry then sees a genuinely-unprocessed event and can
+-- succeed on a later attempt instead of being told "already handled."
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.record_stripe_event_and_grant_credits(
+  p_event_id text,
+  p_session_id text,
+  p_event_type text,
+  p_user_id uuid,
+  p_credits integer
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+BEGIN
+  INSERT INTO public.stripe_events (stripe_event_id, stripe_session_id, event_type)
+  VALUES (p_event_id, p_session_id, p_event_type)
+  ON CONFLICT (stripe_event_id) DO NOTHING;
+
+  IF NOT FOUND THEN
+    -- Already processed by an earlier delivery of this same event_id —
+    -- no-op, do NOT grant a second time. The stripe_events insert above
+    -- did nothing, so there is nothing to roll back either.
+    RETURN false;
+  END IF;
+
+  INSERT INTO public.lesson_access (user_id, lesson_credits)
+  VALUES (p_user_id, p_credits)
+  ON CONFLICT (user_id) DO UPDATE
+    SET lesson_credits = public.lesson_access.lesson_credits + excluded.lesson_credits,
+        updated_at = now();
+
+  RETURN true;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.record_stripe_event_and_grant_credits(text, text, text, uuid, integer) FROM public;
+REVOKE EXECUTE ON FUNCTION public.record_stripe_event_and_grant_credits(text, text, text, uuid, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.record_stripe_event_and_grant_credits(text, text, text, uuid, integer) FROM authenticated;
+GRANT  EXECUTE ON FUNCTION public.record_stripe_event_and_grant_credits(text, text, text, uuid, integer) TO service_role;

@@ -1007,7 +1007,12 @@ Every node must:
     grants `lesson_credits` via atomic RPC on a verified `checkout.session.completed`; idempotent
     on redelivery; 23 new tests (9 router + 14 migration-schema) + 5 more in
     `test_generate_lesson_endpoint.py`. Full unit suite 1247 passed / 6 skipped / 3 pre-existing
-    unrelated failures (D134), unchanged. See `docs/stories/5-3-stripe-checkout-integration.md`.
+    unrelated failures (`test_extract_page_bounds.py`, pypdfium2 API mismatch — not "D134" as
+    first cited; no such register row exists, corrected during code review), unchanged.
+    **8-layer code review (2026-08-26) found and fixed a real money-losing bug:** webhook
+    idempotency-marking and credit-granting were two non-transactional RPC calls — see D136
+    (closed) and D137 (accepted residual risk, deferred by user decision) in
+    `docs/DEFECT-REGISTER.md`. See `docs/stories/5-3-stripe-checkout-integration.md`.
 
 - [ ] **S4-4 Rate limiting — per-route limits** ⚠️ PARTIAL
   - `apps/api/app/main.py` — `slowapi` middleware mounted ✓

@@ -118,6 +118,12 @@ class _Scenario:
     # True so every pre-existing test in this file, none of which cares about
     # credits, is unaffected by the gate's addition.
     credit_available: bool = True
+    # Review Finding (Story 5-3 code review, Test Coverage): the one
+    # scenario where a student can permanently lose a paid-for credit with
+    # nothing but a log line as evidence had zero test coverage — the
+    # refund RPC itself failing. Defaults to False so every other test is
+    # unaffected.
+    refund_rpc_fails: bool = False
 
 
 def _resp(data: Any, count: int | None = None) -> MagicMock:  # noqa: ANN401
@@ -223,6 +229,18 @@ class _RpcCall:
         return self._response
 
 
+class _RaisingRpcCall:
+    """`.rpc(name, params)` return value whose `.execute()` raises —
+    simulates the RPC call itself failing (network/DB error), as opposed
+    to succeeding and returning a `False`/empty result."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def execute(self) -> MagicMock:
+        raise self._exc
+
+
 class _FakeSupabase:
     """Records every `.table(name)` selection and every executed chain."""
 
@@ -244,6 +262,8 @@ class _FakeSupabase:
         self.rpc_calls.append((name, dict(params)))
         if name == "decrement_lesson_credit":
             return _RpcCall(_resp(self.scenario.credit_available))
+        if name == "grant_lesson_credits" and self.scenario.refund_rpc_fails:
+            return _RaisingRpcCall(RuntimeError("supabase rpc unreachable (simulated)"))
         return _RpcCall(_resp(None))
 
     # -- assertion helpers -----------------------------------------------------
@@ -1749,6 +1769,27 @@ def test_downstream_enqueue_failure_after_decrement_refunds_the_credit() -> None
     assert len(spent) == 1
     assert len(refunded) == 1
     assert refunded[0][1] == {"p_user_id": FAKE_USER["sub"], "p_credits": 1}
+
+
+@pytest.mark.unit
+def test_refund_rpc_itself_failing_still_returns_500_and_attempts_the_refund() -> None:
+    """Review Finding (Story 5-3 code review, Test Coverage): the one
+    scenario where a student can permanently lose a paid-for credit with
+    nothing but a log line as evidence — the refund RPC call itself
+    raising — had zero test coverage. Asserts the request still 500s
+    (rather than masking the original failure) and that a refund attempt
+    was genuinely made, even though it didn't succeed."""
+    pool = _arq_pool()
+    pool.enqueue_job = AsyncMock(side_effect=RuntimeError("redis down"))
+    sc = _ok_scenario(refund_rpc_fails=True)
+    resp, sb, _ = _post(sc, pool=pool)
+
+    assert resp.status_code == 500
+    assert len(sb.rpc_calls_named("decrement_lesson_credit")) == 1
+    # The refund was ATTEMPTED (the call reached the RPC layer) even though
+    # it failed — this proves the code path is exercised, not skipped.
+    attempted = [c for c in sb.rpc_calls if c[0] == "grant_lesson_credits"]
+    assert len(attempted) == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════

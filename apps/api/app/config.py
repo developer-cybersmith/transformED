@@ -29,6 +29,16 @@ class Settings(BaseSettings):
         default=["http://localhost:3000"],
         description="Allowed CORS origins (JSON array string in env)",
     )
+    app_base_url: str = Field(
+        default="http://localhost:3000",
+        validation_alias="NEXT_PUBLIC_APP_URL",
+        description=(
+            "Public base URL of the deployed frontend, reusing the same var Next.js "
+            "already reads (.env.example: NEXT_PUBLIC_APP_URL). Story 5-3 review finding: "
+            "Stripe's real Checkout Session API rejects relative success_url/cancel_url "
+            "values outright -- this is what makes them absolute."
+        ),
+    )
 
     # ── Supabase ──────────────────────────────────────────────────────────────
     supabase_url: str = Field(..., description="Supabase project URL")

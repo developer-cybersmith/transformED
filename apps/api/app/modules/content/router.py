@@ -1446,7 +1446,14 @@ async def generate_chapter_lesson(
         try:
             await grant_lesson_credits(supabase, user_id, 1)
         except Exception:  # noqa: BLE001 — best-effort refund; the 500 below still stands
-            logger.warning(
+            # Review Finding (Story 5-3): was logger.warning -- a permanently
+            # lost paid credit is more serious than the malformed-webhook
+            # path (which correctly logs at ERROR), not less. D-nn (see
+            # docs/DEFECT-REGISTER.md): the residual window between this
+            # RPC's DB commit and its response reaching this process is a
+            # known, registered, deliberately-deferred limitation, not
+            # solved by this log-level fix alone.
+            logger.error(
                 "refund failed to grant back 1 lesson credit for user_id=%s after a "
                 "failed generation attempt — student was charged for nothing",
                 user_id,

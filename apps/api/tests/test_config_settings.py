@@ -27,6 +27,9 @@ _REQUIRED = {
     "HEYGEN_API_KEY": "heygen_test",
     "LANGFUSE_PUBLIC_KEY": "lf_pub",
     "LANGFUSE_SECRET_KEY": "lf_sec",
+    "STRIPE_SECRET_KEY": "sk_test",
+    "STRIPE_WEBHOOK_SECRET": "whsec_test",
+    "STRIPE_PRICE_ID_LESSON_CREDIT": "price_test",
 }
 
 
@@ -172,6 +175,37 @@ def test_intervention_timeout_rejects_out_of_bounds_values(monkeypatch, bad_valu
 
     with pytest.raises(ValidationError):
         _make_settings(monkeypatch, intervention_timeout_seconds=bad_value)
+
+
+# ── Stripe (Story 5-3/S4-3, AC10) ───────────────────────────────────────────────
+# Review Finding (Story 5-3, Test Coverage): AC10 requires
+# stripe_secret_key/stripe_webhook_secret to be "real, required fields" —
+# they were declared with Field(...) but nothing asserted Settings()
+# actually raises without them, unlike every other required field in
+# _REQUIRED above (all of which are exercised implicitly by every test in
+# this file using _make_settings).
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "missing_key", ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_ID_LESSON_CREDIT"]
+)
+def test_stripe_required_fields_raise_when_absent(monkeypatch, missing_key: str) -> None:
+    for key, val in _REQUIRED.items():
+        if key != missing_key:
+            monkeypatch.setenv(key, val)
+    monkeypatch.delenv(missing_key, raising=False)
+    monkeypatch.setenv("ADMIN_EMAILS", "")
+    monkeypatch.setenv("APPROVED_EMAILS", "")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.unit
+def test_stripe_lesson_credits_per_purchase_defaults_to_one(monkeypatch) -> None:
+    s = _make_settings(monkeypatch)
+    assert s.stripe_lesson_credits_per_purchase == 1
 
 
 # ── admin_emails / _parse_admin_emails (Story 2-25) ─────────────────────────────

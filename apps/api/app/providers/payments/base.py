@@ -16,6 +16,31 @@ from dataclasses import dataclass
 from typing import Any
 
 
+class WebhookVerificationError(Exception):
+    """A webhook payload failed signature verification or could not be
+    parsed into the shape this codebase expects, even after a valid
+    signature (e.g. a malformed/unexpected JSON structure).
+
+    Review Finding (Story 5-3): the original design let
+    `stripe.SignatureVerificationError` cross the provider boundary
+    directly, forcing the router to `import stripe` just to catch it —
+    exactly the direct-provider-dependency CLAUDE.md's abstraction rule
+    exists to prevent. Every provider implementation must catch its own
+    SDK-specific exceptions and re-raise this one instead.
+    """
+
+
+class PaymentProviderError(Exception):
+    """A payment provider's API call failed for a reason outside this
+    codebase's control (network error, invalid price, provider outage).
+
+    Review Finding (Story 5-3): `create_checkout_session` had no error
+    handling at all — a bad price, network failure, or provider outage
+    surfaced as an opaque generic 500. Provider implementations must catch
+    their own SDK-specific errors and re-raise this one instead.
+    """
+
+
 @dataclass(frozen=True)
 class CheckoutSession:
     """The two fields a caller needs from a created Checkout Session."""
@@ -67,6 +92,11 @@ class PaymentProvider(ABC):
 
         Returns:
             The created session's redirect URL and provider-side session id.
+
+        Raises:
+            PaymentProviderError: The provider's API call failed (network,
+                invalid price, provider outage). Never the provider SDK's
+                own exception type — that would leak across the boundary.
         """
         ...
 
@@ -84,9 +114,10 @@ class PaymentProvider(ABC):
             The verified, parsed event.
 
         Raises:
-            Exception: A provider-specific signature-verification failure
-                (e.g. Stripe's `SignatureVerificationError`). Callers must
-                catch this and return an explicit error response — never a
-                DB write on an unverified payload.
+            WebhookVerificationError: A missing/invalid signature, or a
+                signature-valid-but-malformed payload. Never the provider
+                SDK's own exception type. Callers must catch this and
+                return an explicit error response — never a DB write on
+                an unverified or unparseable payload.
         """
         ...

@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 MIGRATION_PATH = (
     _REPO_ROOT / "supabase" / "migrations" / "20260825000000_stripe_payments_lesson_access.sql"
 )
@@ -125,6 +125,7 @@ def test_stripe_events_has_rls_enabled_with_zero_policies() -> None:
         ("grant_lesson_credits", "uuid, integer"),
         ("decrement_lesson_credit", "uuid"),
         ("record_stripe_event_if_new", "text, text, text"),
+        ("record_stripe_event_and_grant_credits", "text, text, text, uuid, integer"),
     ],
 )
 @pytest.mark.unit
@@ -165,3 +166,30 @@ def test_record_stripe_event_if_new_is_insert_on_conflict_do_nothing() -> None:
     assert "INSERT INTO public.stripe_events" in body
     assert "ON CONFLICT (stripe_event_id) DO NOTHING" in body
     assert "RETURN FOUND" in body
+
+
+@pytest.mark.unit
+def test_record_stripe_event_and_grant_credits_is_one_atomic_function_body() -> None:
+    """D136 (docs/DEFECT-REGISTER.md) — the whole point of this RPC over
+    two separate calls is that BOTH the idempotency insert and the credit
+    grant live inside ONE plpgsql function body (one implicit transaction),
+    so a failure anywhere inside it rolls back the idempotency insert too.
+    Asserts there is exactly one CREATE FUNCTION statement containing both
+    operations, not two separate function definitions."""
+    block = _extract_block(
+        "CREATE OR REPLACE FUNCTION public.record_stripe_event_and_grant_credits"
+    )
+    body = block.split("AS $$")[1].split("$$;")[0]
+    assert "INSERT INTO public.stripe_events" in body
+    assert "ON CONFLICT (stripe_event_id) DO NOTHING" in body
+    assert "IF NOT FOUND THEN" in body
+    assert "RETURN false" in body
+    assert "INSERT INTO public.lesson_access" in body
+    assert "ON CONFLICT (user_id) DO UPDATE" in body
+    assert "RETURN true" in body
+    # Both INSERTs are inside the SAME "AS $$ ... $$" body (not two separate
+    # CREATE FUNCTION statements) — confirmed by _extract_block finding both
+    # markers within a single block starting at the one CREATE FUNCTION line.
+    assert body.index("INSERT INTO public.stripe_events") < body.index(
+        "INSERT INTO public.lesson_access"
+    ), "expected the idempotency insert to run before the credit grant, in the same function"
