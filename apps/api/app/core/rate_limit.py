@@ -88,3 +88,37 @@ limiter = Limiter(
     headers_enabled=True,
     retry_after="delta-seconds",
 )
+
+
+def assert_rate_limit_storage_configured(
+    *, debug: bool, storage_uri: str | None = None
+) -> None:
+    """D49 — fail fast if the shared rate limiter is running on unshared,
+    per-process storage outside local/dev use.
+
+    `memory://` storage keeps one independent counter per process. fly.toml's
+    `api` process group runs with `auto_start_machines = true` and no fixed
+    replica count (ADR-001 §2 calls the API "bursty and request-scaled") —
+    more than one live machine is the expected case, not an edge case — so an
+    unset `RATE_LIMIT_STORAGE_URL` silently turns the configured "5/minute"
+    (or "3/minute;20/hour") ceiling into N times looser, with no error and no
+    log line above whatever level the process happens to run at. `debug=True`
+    (local, single-process development) is the only exemption — mirrors the
+    existing `assert_required_buckets` startup-assertion pattern
+    (`apps/api/app/core/storage.py`, AC-7/Story 2-0/D1).
+    """
+    if storage_uri is None:
+        storage_uri = os.environ.get("RATE_LIMIT_STORAGE_URL", "memory://")
+    if storage_uri == "memory://" and not debug:
+        raise RuntimeError(
+            "RATE_LIMIT_STORAGE_URL is unset, defaulting to in-process "
+            "'memory://' rate-limit storage outside debug mode -- refusing "
+            "to start. Each API process would enforce its own independent "
+            "counter, silently multiplying every configured rate-limit "
+            "ceiling by however many processes/replicas are running (D49, "
+            "docs/DEFECT-REGISTER.md). Set RATE_LIMIT_STORAGE_URL to a "
+            "shared Redis URL (see "
+            "docs/decisions/ADR-001-india-region-migration-topology.md §4 "
+            "for the current Redis-location decision), or set DEBUG=true "
+            "for local single-process development only."
+        )

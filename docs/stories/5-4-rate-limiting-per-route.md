@@ -1,6 +1,6 @@
 # Story 5-4 — Rate limiting (slowapi middleware) — per-route limits
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -156,65 +156,56 @@ regression here as a P0 defect, not a fresh feature):**
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Confirm and pin down existing behavior (AC: #1, #2)**
-  - [ ] Run `tests/unit/test_content_router.py::test_upload_lesson_429_rate_limit` and
-        `tests/unit/test_rate_limit_key.py` (full file) against current `main`; confirm both are
-        green before touching anything, so this story starts from a known-good baseline.
-  - [ ] Read `apps/api/app/modules/content/router.py:686-706` and
-        `apps/api/app/core/rate_limit.py` end to end; write down in the PR description that AC1/
-        AC2 are pre-existing (cite the exact line numbers) rather than re-implementing the
-        decorator or the key function.
+- [x] **Task 1 — Confirm and pin down existing behavior (AC: #1, #2)**
+  - [x] Ran `tests/unit/test_content_router.py::test_upload_lesson_429_rate_limit` and
+        `tests/unit/test_rate_limit_key.py` (full file) against current `main`; both green (10/10)
+        before touching anything.
+  - [x] Read `apps/api/app/modules/content/router.py:686-706` and
+        `apps/api/app/core/rate_limit.py` end to end; confirmed AC1/AC2 pre-existing (decorator at
+        `router.py:692`, key func fully covered by D52/D64 regression tests) — not re-implemented.
 
-- [ ] **Task 2 — Redis-backed storage for the shared limiter (AC: #3)**
-  - [ ] Confirm (with whoever owns deploy config / ADR-001's open Redis-location decision) which
-        managed Redis instance backs `RATE_LIMIT_STORAGE_URL` in each deployed environment —
-        this may be the same instance as `settings.redis_url` (13 other modules already depend on
-        it, per ADR-001 §4) or a dedicated one; do not assume without checking, since ADR-001
-        itself flags the Redis location as still-open pending an Upstash-vs-Fly-Redis decision.
-  - [ ] Set `RATE_LIMIT_STORAGE_URL` in every deployed environment's secrets/env config to that
-        instance's URL. (Environment/deploy-config change, not an `apps/api` code change — track
-        wherever this repo's env vars are actually managed; `.env.example` is currently stale for
-        at least two other vars per ADR-001, don't let this be a third.)
-  - [ ] Add a unit test constructing two independent `Limiter` instances against the same
-        `storage_uri` (a real or fakeredis-backed Redis, not two `memory://` instances — the
-        point being proven is cross-process sharing) and asserting a burst split across both
-        instances is throttled at the combined limit, not `2×` it.
+- [~] **Task 2 — Redis-backed storage for the shared limiter (AC: #3)**
+  - [ ] Confirm which managed Redis instance backs `RATE_LIMIT_STORAGE_URL` — **not done in this
+        branch, and cannot be from the repo alone.** ADR-001 §4's Redis-location decision
+        (Upstash Mumbai vs. Fly Redis) is still open; ops/deploy-config work, out of scope for a
+        code branch. Task 3's guard makes the absence of this loud instead of silent in the
+        meantime.
+  - [ ] Set `RATE_LIMIT_STORAGE_URL` in every deployed environment — **same reason, not done.**
+        Deploy-config change tracked wherever this repo's env vars are actually managed, not here.
+  - [x] Added a unit test constructing two independent `Limiter` instances against the same
+        fakeredis-backed `storage_uri` and asserting a burst split across both is throttled at the
+        combined `5/minute`, not `10/minute` — `test_rate_limit_redis_storage.py`, plus a
+        `memory://` control case proving the fakeredis test is exercising real cross-instance
+        sharing, not some other effect.
 
-- [ ] **Task 3 — Startup guard closing D49 (AC: #4, #5)**
-  - [ ] In `apps/api/app/core/rate_limit.py` or `apps/api/app/main.py`, add a small assertion
-        function (e.g. `assert_rate_limit_storage_configured(settings)`) mirroring the existing
-        `assert_required_buckets` call pattern in `lifespan()` — raise a clear `RuntimeError` if
-        `os.environ.get("RATE_LIMIT_STORAGE_URL", "memory://") == "memory://"` and
-        `settings.debug` is `False`.
-  - [ ] Call it from `lifespan()` in `main.py`, alongside the existing Redis/ARQ/bucket startup
-        checks, so a misconfigured deploy fails at boot, not silently in production traffic.
-  - [ ] Add the guard test from AC5 (construct the app / call the assertion directly with
-        `debug=False` + no `RATE_LIMIT_STORAGE_URL` → raises; with `debug=True` → does not; with
-        a real `redis://` URL → does not). Mutation-check by temporarily deleting the guard and
-        confirming the test reddens, then restore it.
+- [x] **Task 3 — Startup guard closing D49 (AC: #4, #5)**
+  - [x] Added `assert_rate_limit_storage_configured(*, debug, storage_uri=None)` in
+        `apps/api/app/core/rate_limit.py`, mirroring `assert_required_buckets` — raises
+        `RuntimeError` (citing D49 + ADR-001 §4) when resolved storage is `memory://` and
+        `debug` is `False`.
+  - [x] Called from `lifespan()` in `main.py`, first in the startup sequence (before Redis/ARQ/
+        bucket checks), so a misconfigured deploy fails at boot.
+  - [x] Added the guard test (`test_rate_limit_storage_guard.py`, 6 tests) covering the
+        explicit-arg and real-env-var paths, the `debug=True` exemption, and a real `redis://`
+        URL passing. Mutation-checked: temporarily replaced the guard condition with `if False`,
+        confirmed exactly the 3 tests asserting the raise reddened (the 3 non-raising cases
+        correctly stayed green), then restored.
 
-- [ ] **Task 4 — Close out the register and trackers (AC: #6)**
-  - [ ] Update `docs/DEFECT-REGISTER.md`'s D49 row: strike through the ID, mark
-        `CLOSED <date> (fixed + guarded)`, and cite this story's branch and the AC5 test, matching
-        the format of other closed rows (e.g. D52's).
-  - [ ] Flip `docs/dev1-tracker.md` S4-4's checkbox to `[x]`, append the completion date, and
-        update the Quick Status Dashboard + header date per CLAUDE.md's Dev 1 Sprint Tracker
-        Auto-Update Rule — do this in the same response that lands the code, not later.
-  - [ ] Do **not** silently correct S4-4's "Per-route limits not yet configured on pipeline
-        endpoints ✗" line without comment — see Dev Notes' Process Note below; the tracker entry
-        this story closes out was already stale before this story started.
+- [x] **Task 4 — Close out the register and trackers (AC: #6)**
+  - [x] `docs/DEFECT-REGISTER.md`'s D49 row: struck through, marked `CLOSED 2026-08-25`, cites
+        this branch and both new test files.
+  - [x] `docs/dev1-tracker.md` S4-4 flipped to `[x]`, completion date appended, Quick Status
+        Dashboard updated (Sprint 4: Done 0→1, Partial 1→0), header date updated to 2026-08-25.
+  - [x] Did not silently correct the stale "not yet configured ✗" line — added an explicit note
+        in the tracker entry itself naming the S1-10 discrepancy (see Dev Notes' Process Note).
 
-- [ ] **Task 5 — Explicitly out of scope, flagged not fixed (no AC — documentation only)**
-  - [ ] Note in the PR description (do not silently fold in): **D67** (register) — `GET
-        /api/media/signed-url` has no `@limiter.limit` decorator at all, is owned by Dev 1, and
-        its own trigger note says "before Sprint 3/4 load testing" — a literal reading of this
-        story's title ("per-route limits," plural) could include it, but this story's assigned AC
+- [x] **Task 5 — Explicitly out of scope, flagged not fixed (no AC — documentation only)**
+  - [x] Noted here (commit message + this file, no PR opened in this session): **D67** (register)
+        — `GET /api/media/signed-url` has no `@limiter.limit` decorator at all; this story's AC
         only names `POST /api/content/lessons`. Recommend the team decide whether D67 becomes its
-        own Sprint 4 story or stays deferred; do not fix it inside this branch without that
-        decision, and do not let this task's silence be mistaken for "handled."
-  - [ ] Note Q5's un-re-derived `5/minute` figure (Scale & Load #5 above) as a defect-register
-        candidate for a human product decision — do not unilaterally change the number in this
-        branch.
+        own Sprint 4 story or stays deferred — not fixed in this branch.
+  - [x] Noted: Q5's un-re-derived `5/minute` figure (Scale & Load #5 above) is a defect-register
+        candidate for a human product decision — not unilaterally changed here.
 
 ## Dev Notes
 
@@ -352,8 +343,49 @@ regression here as a P0 defect, not a fresh feature):**
 
 ### Agent Model Used
 
+Claude Sonnet 5 (claude-sonnet-5), 2026-08-25.
+
 ### Debug Log References
+
+- Full unit suite (`apps/api/tests/unit`) before and after: 1241 passed / 6 skipped / 3
+  pre-existing unrelated failures (D134, `test_extract_page_bounds.py`, pypdfium2 API mismatch) —
+  identical failure set both times, zero regressions introduced.
+- Mutation check on `assert_rate_limit_storage_configured`: guard condition replaced with
+  `if False`, 3 of 6 `test_rate_limit_storage_guard.py` tests reddened as expected, restored.
+- `fakeredis[lua]` (adds `lupa`) required for `test_rate_limit_redis_storage.py` — plain
+  `fakeredis` doesn't serve `EVALSHA`/Lua scripts, which `limits`' `RedisStorage` needs for its
+  atomic incr. Added to `pyproject.toml`'s `dev` extra; `uv lock` re-run (`uv sync --extra dev`
+  itself is currently broken in this sandbox on an unrelated `torch` wheel-platform mismatch —
+  pre-existing, not touched by this story; `uv lock` alone resolves and updates the lockfile
+  without needing to install/download `torch`).
 
 ### Completion Notes List
 
+- AC1/AC2 (decorator + per-user keying) were already implemented and tested — verified, not
+  re-built. `docs/dev1-tracker.md`'s S4-4 "not yet configured ✗" line was stale; corrected with an
+  explicit discrepancy note rather than silently.
+- AC3 (Redis-backed shared storage) is proven at the code level (fakeredis-backed test showing
+  two `Limiter` instances share one ceiling). Actually pointing `RATE_LIMIT_STORAGE_URL` at a
+  real shared Redis instance in each deployed environment is a deploy/ops action blocked on
+  ADR-001 §4's still-open Redis-location decision (Upstash Mumbai vs. Fly Redis) — out of a code
+  branch's reach, left explicitly open in Task 2.
+- AC4/AC5 (startup guard) fully implemented, tested, and mutation-checked.
+- AC6 (register + tracker close-out) done: `docs/DEFECT-REGISTER.md` D49 closed, `docs/
+  dev1-tracker.md` S4-4 flipped and dashboard updated.
+- D67 (media signed-url endpoint has no rate limit) and the un-re-derived `5/minute` figure are
+  both explicitly flagged, not fixed, per Task 5 — recommend the team decide on both separately.
+- No PR opened in this session (no `gh` action taken); branch `sprint4/s4-4-rate-limit-per-route`
+  has the story-only commit followed by this implementation. Not yet run through the 6-agent
+  `/bmad-code-review` gate CLAUDE.md requires before merge.
+
 ### File List
+
+- `apps/api/app/core/rate_limit.py` — added `assert_rate_limit_storage_configured()`
+- `apps/api/app/main.py` — imports and calls the guard first in `lifespan()`
+- `apps/api/tests/unit/test_rate_limit_storage_guard.py` — new, 6 tests
+- `apps/api/tests/unit/test_rate_limit_redis_storage.py` — new, 2 tests
+- `apps/api/pyproject.toml` — `fakeredis>=2.23.0` → `fakeredis[lua]>=2.23.0`
+- `apps/api/uv.lock` — regenerated (`uv lock`) for the `lupa` addition
+- `docs/DEFECT-REGISTER.md` — D49 row closed
+- `docs/dev1-tracker.md` — S4-4 flipped, dashboard + header updated
+- `docs/stories/5-4-rate-limiting-per-route.md` — this file (Tasks/Subtasks + Dev Agent Record)
