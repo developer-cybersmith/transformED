@@ -1106,3 +1106,110 @@ async def test_truncation_keeps_the_first_slides_in_order() -> None:
 
     sec0_titles = [s["data"]["title"] for s in result["slides"] if s["segment_id"] == "sec_0"]
     assert sec0_titles == [f"Slide {i}" for i in range(8)], "first 8 slides kept, in order"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_slide_generator_retries_on_echo_mismatch_and_recovers() -> None:
+    """D133: mirrors D77's proven pattern (see
+    test_planner_retries_same_batch_on_echo_mismatch_and_recovers in
+    test_lesson_planner_node.py) applied to slide_generator_node. A real LLM
+    was observed, in a live eval run, appending ": <inferred title>" to an
+    otherwise-correct segment_id -- e.g. "section_0_Document: Introduction to
+    Tabular Data" -- because the prompt's own
+    `segment_id={id}: {title} — {summary}` line format teaches that shape by
+    literal example when the real id/title is generic ("Document", a bare
+    numeric heading). This test proves RECOVERY: the first attempt corrupts
+    one segment_id this exact way, the second attempt echoes cleanly, and the
+    node succeeds using the RECOVERED (not the corrupted) response -- not
+    just that the eventual failure guard still fires (that's
+    test_slide_generator_retry_exhausts_and_still_raises, a permanently-
+    corrupt mock; this one is transient, like the real world)."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    call_count = 0
+
+    def _flaky_then_correct(*args: Any, **kwargs: Any) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _deck_response(
+                segments=[
+                    {
+                        "segment_id": "sec_0",
+                        "slides": [{"title": "Welcome", "bullets": ["Point A"]}],
+                    },
+                    {
+                        "segment_id": "sec_1: How It Actually Works",
+                        "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}],
+                    },
+                    {
+                        "segment_id": "sec_2",
+                        "slides": [{"title": "Example 1", "bullets": ["Case A"]}],
+                    },
+                ]
+            )
+        return _deck_response()  # second attempt: clean echo
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _flaky_then_correct
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(_base_state())
+
+    assert call_count == 2, "must retry exactly once after the first mismatch, then stop"
+    slides = result["slides"]
+    assert {s["segment_id"] for s in slides} == {"sec_0", "sec_1", "sec_2"}, (
+        "the RECOVERED (2nd) response must be used, not the corrupted 1st"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_slide_generator_retry_exhausts_and_still_raises() -> None:
+    """D133: when EVERY retry attempt still mismatches (a permanently-broken
+    completion, not a transient one), the node must still raise via the
+    existing degrade-not-fabricate guard -- retries are a recovery attempt,
+    not a weakening of the failure guarantee. Asserts the exact retry
+    ceiling (_SLIDE_GENERATOR_MAX_ATTEMPTS) is respected, not retried
+    forever, mirroring test_planner_batch_retry_exhausts_and_still_raises_via_existing_guard."""
+    from app.modules.content.pipeline.graph import (
+        _SLIDE_GENERATOR_MAX_ATTEMPTS,
+        slide_generator_node,
+    )
+
+    call_count = 0
+
+    def _always_corrupts_one_id(*args: Any, **kwargs: Any) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        return _deck_response(
+            segments=[
+                {"segment_id": "sec_0", "slides": [{"title": "Welcome", "bullets": ["Point A"]}]},
+                {
+                    "segment_id": "sec_1: How It Actually Works",
+                    "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}],
+                },
+                {"segment_id": "sec_2", "slides": [{"title": "Example 1", "bullets": ["Case A"]}]},
+            ]
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _always_corrupts_one_id
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        pytest.raises(RuntimeError, match="unknown segment_id"),
+    ):
+        await slide_generator_node(_base_state())
+
+    assert call_count == _SLIDE_GENERATOR_MAX_ATTEMPTS, (
+        f"must attempt exactly {_SLIDE_GENERATOR_MAX_ATTEMPTS} times, no more, no fewer"
+    )
+    sb.table.return_value.update.assert_not_called()

@@ -1714,6 +1714,18 @@ _MAX_SLIDES_PER_SEGMENT = 8
 # no longer enforces.
 _MAX_SLIDE_BULLET_CHARS = 200
 
+# D133: the prompt line format `segment_id={id}: {title} — {summary}` teaches
+# the model by literal example that a segment_id value looks like
+# "token: description" — when the real id+title is generic/bare (e.g. a
+# structure-detection fallback title like "Document"), the model sometimes
+# "completes" it with a better title in the same shape, corrupting an
+# otherwise-perfect echo. Confirmed: this is occasional LLM non-determinism
+# (the SAME prompt sometimes echoes cleanly), not a deterministic failure —
+# exactly the class of problem `_PLANNER_BATCH_MAX_ATTEMPTS` (D77) already
+# retries for lesson_planner_node's identical prompt shape. Same value,
+# same reasoning, applied to the sibling node that was missing it.
+_SLIDE_GENERATOR_MAX_ATTEMPTS = 3
+
 
 @traced_node("slide_generator_node")
 async def slide_generator_node(state: PipelineState) -> PipelineState:
@@ -1867,17 +1879,52 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         {"role": "user", "content": segments_text},
     ]
 
-    response = await provider.complete_structured(messages, model, _SlideDeckLLM)
-    if response is None:
-        logger.warning("[%s] slide_generator_node: LLM returned no parsed response", lesson_id)
-        raise RuntimeError(
-            f"lesson_id={lesson_id}: slide_generator received no parsed LLM response"
-        )
-
-    # ── AC-7 degrade-not-fabricate guards — no per-segment redundancy exists
-    # for this premium node, so a wrong response is rejected wholesale. ───────
+    # D133: retry a segment_id echo mismatch before giving up — the SAME
+    # already-proven pattern _run_planner_batch (D77) uses for the identical
+    # prompt shape and failure class in the sibling node. Confirmed via real
+    # failures this recovers from: the model occasionally appends a
+    # self-invented ": <better title>" to an otherwise-perfectly-copied id
+    # when the real title is generic/bare — non-deterministic (the same
+    # prompt sometimes echoes cleanly), so a retry genuinely helps, unlike a
+    # deterministic bug a retry would just repeat.
     input_ids = [s["segment_id"] for s in plan_segments]
     input_id_set = set(input_ids)
+
+    response: _SlideDeckLLM | None = None
+    for attempt in range(1, _SLIDE_GENERATOR_MAX_ATTEMPTS + 1):
+        response = await provider.complete_structured(messages, model, _SlideDeckLLM)
+        if response is None:
+            logger.warning("[%s] slide_generator_node: LLM returned no parsed response", lesson_id)
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: slide_generator received no parsed LLM response"
+            )
+
+        attempt_ids = [seg.segment_id for seg in response.segments]
+        if (
+            len(response.segments) == len(plan_segments)
+            and set(attempt_ids) == input_id_set
+            and len(set(attempt_ids)) == len(attempt_ids)
+        ):
+            break
+
+        logger.warning(
+            "[%s] slide_generator_node: segment_id echo mismatch on attempt %d/%d — "
+            "expected %d ids, got %d ids (missing=%s, unexpected=%s) — retrying",
+            lesson_id,
+            attempt,
+            _SLIDE_GENERATOR_MAX_ATTEMPTS,
+            len(plan_segments),
+            len(response.segments),
+            sorted(input_id_set - set(attempt_ids)),
+            sorted(set(attempt_ids) - input_id_set),
+        )
+    assert response is not None  # loop always assigns before falling through
+
+    # ── AC-7 degrade-not-fabricate guards — no per-segment redundancy exists
+    # for this premium node, so a wrong response is rejected wholesale. Reached
+    # after real retries (above) instead of on the first mismatch — same
+    # relationship _run_planner_batch has to lesson_planner_node's own guard
+    # block, unchanged otherwise. ────────────────────────────────────────────
     response_ids = [seg.segment_id for seg in response.segments]
 
     if len(response.segments) != len(plan_segments):
