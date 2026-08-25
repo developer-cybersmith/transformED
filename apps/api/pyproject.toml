@@ -35,6 +35,7 @@ dependencies = [
     "python-multipart>=0.0.9",     # required by FastAPI File/Form params (content upload router)
     "email-validator>=2.0.0",      # required by pydantic EmailStr (auth router)
     "slowapi>=0.1.9",
+    "stripe>=10.0.0",              # Checkout Sessions + webhook signature verification (Story 5-3)
     "tiktoken>=0.7.0",             # BPE tokenizer for cl100k_base (text-embedding-3-small)
     "tinytag>=2.3.0,<3.0.0",        # MIT — audio-metadata only (no ffmpeg binary); measures REAL MP3 duration in tts_node (Story S3-38), not a video/transcoding dependency. Round 2 review: swapped from mutagen, which was mislabeled MIT here but is actually GPL-2.0-or-later — verified via `pip show`, not asserted.
 ]

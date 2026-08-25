@@ -1,6 +1,6 @@
 # Story 5-3 — Stripe Checkout integration (hosted page, not custom UI)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -57,41 +57,42 @@ so that I can pay for lessons without my card details ever touching TransformED'
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Wire Stripe config + provider abstraction (AC: #10)**
-  - [ ] 1.1 Add `stripe_secret_key: str`, `stripe_webhook_secret: str`, `stripe_price_id_lesson_credit: str`, and `stripe_lesson_credits_per_purchase: int = 1` fields to `Settings` in `apps/api/app/config.py`. `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` are already templated in `.env.example:51-54` but have no matching `Settings` field today — `apps/api/tests/test_env_example_consistency.py` currently skips (not fails) keys with no matching field, so this is a real gap, not a currently-red test.
-  - [ ] 1.2 Create `apps/api/app/providers/payments/base.py` — an abstract `PaymentProvider` (mirrors `apps/api/app/providers/base.py`'s `LLMProvider`/`TTSProvider`/`ImageProvider` shape) with `create_checkout_session(...)` and `verify_and_parse_webhook(payload: bytes, sig_header: str)` methods.
-  - [ ] 1.3 Create `apps/api/app/providers/payments/stripe.py` — the concrete implementation, the only file in the module tree allowed to `import stripe`. No router or service module calls the `stripe` SDK directly (CLAUDE.md: "No direct provider calls in business logic — go through providers/").
-  - [ ] 1.4 Add the `stripe` package to the API's dependency manifest.
+- [x] **Task 1 — Wire Stripe config + provider abstraction (AC: #10)**
+  - [x] 1.1 Added `stripe_secret_key: str`, `stripe_webhook_secret: str`, `stripe_price_id_lesson_credit: str`, and `stripe_lesson_credits_per_purchase: int = 1` fields to `Settings` in `apps/api/app/config.py`. Added stub values to `tests/conftest.py`'s `_STUB_ENV_VARS` (required fields — the whole suite would otherwise fail `Settings()` construction).
+  - [x] 1.2 `apps/api/app/providers/payments/base.py` — abstract `PaymentProvider` with `create_checkout_session(...)` / `verify_and_parse_webhook(...)`, plus `CheckoutSession`/`WebhookEvent` dataclasses so callers never depend on the SDK's own object shape beyond this boundary.
+  - [x] 1.3 `apps/api/app/providers/payments/stripe.py` — the only file allowed to `import stripe`. **Found during implementation:** `StripeObject` is deliberately not `dict()`-convertible/iterable (raises `TypeError`) — `.to_dict()` is the real conversion, confirmed empirically against the installed SDK before writing the code, not assumed.
+  - [x] 1.4 Added `stripe>=10.0.0` (resolved to 15.5.1) to `pyproject.toml`; `uv lock` re-run.
 
-- [ ] **Task 2 — DB migration: `lesson_access`, `stripe_events`, atomic RPCs (AC: #4, #5, #7)**
-  - [ ] 2.1 New migration `supabase/migrations/20260825000000_stripe_payments_lesson_access.sql` (never modify an applied migration — this repo's frozen-contract rule).
-  - [ ] 2.2 `lesson_access` table: `user_id uuid PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE`, `lesson_credits integer NOT NULL DEFAULT 0 CHECK (lesson_credits >= 0)`, `updated_at timestamptz NOT NULL DEFAULT now()`; reuse the existing `public.set_updated_at()` trigger function already defined in `20260611000000_initial_schema.sql` (same pattern as `lessons_set_updated_at`).
-  - [ ] 2.3 `stripe_events` table: `stripe_event_id text PRIMARY KEY`, `stripe_session_id text NOT NULL`, `event_type text NOT NULL`, `processed_at timestamptz NOT NULL DEFAULT now()`. The primary key on `stripe_event_id` **is** the idempotency guarantee (AC 5) — no application-level dedup cache.
-  - [ ] 2.4 RLS on `lesson_access`: `ENABLE ROW LEVEL SECURITY`; one `SELECT` policy `user_id = auth.uid()`; deliberately no `INSERT`/`UPDATE`/`DELETE` policy for `authenticated`/`anon` (matches AC 7 — mirrors the insert-only-no-update style already used in `user_consents`, `supabase/migrations/20260702000000_dpdp_user_consents.sql`, tightened further here to no direct write at all).
-  - [ ] 2.5 RLS on `stripe_events`: `ENABLE ROW LEVEL SECURITY`, zero policies for `authenticated`/`anon` (internal webhook ledger, never read by a user-facing route; service-role bypasses RLS as it does everywhere else in this codebase).
-  - [ ] 2.6 `grant_lesson_credits(p_user_id uuid, p_credits integer) RETURNS void` — `SECURITY INVOKER`, `SET search_path = ''`, atomic `INSERT ... ON CONFLICT (user_id) DO UPDATE SET lesson_credits = lesson_access.lesson_credits + excluded.lesson_credits, updated_at = now()`; `REVOKE EXECUTE` from `public`/`anon`/`authenticated`, `GRANT EXECUTE` to `service_role` only — exact grant/revoke shape as `increment_learner_dna_session_count` in `20260813000001_dna_session_count_atomic_increment.sql`.
-  - [ ] 2.7 `decrement_lesson_credit(p_user_id uuid) RETURNS boolean` — same security/grant shape, atomic `UPDATE lesson_access SET lesson_credits = lesson_credits - 1 WHERE user_id = p_user_id AND lesson_credits > 0`, returns whether a row was affected (`FOUND`).
+- [x] **Task 2 — DB migration: `lesson_access`, `stripe_events`, atomic RPCs (AC: #4, #5, #7)**
+  - [x] 2.1 `supabase/migrations/20260825000000_stripe_payments_lesson_access.sql`.
+  - [x] 2.2 `lesson_access` exactly as specified, reusing `public.set_updated_at()`.
+  - [x] 2.3 `stripe_events` exactly as specified.
+  - [x] 2.4 RLS on `lesson_access`: one `SELECT`-own policy, no write policy.
+  - [x] 2.5 RLS on `stripe_events`: enabled, zero policies.
+  - [x] 2.6 `grant_lesson_credits` — atomic upsert, exact grant/revoke shape as `increment_learner_dna_session_count`.
+  - [x] 2.7 `decrement_lesson_credit` — atomic conditional UPDATE, returns `FOUND`.
+  - [x] **2.8 (added during implementation, not in the original task list):** a THIRD RPC, `record_stripe_event_if_new(p_event_id, p_session_id, p_event_type) RETURNS boolean` — `INSERT ... ON CONFLICT (stripe_event_id) DO NOTHING; RETURN FOUND;`. AC5 requires the idempotency check to be "a durable UNIQUE/primary-key constraint... not an in-process cache **or a SELECT-then-INSERT check**" — a plain PostgREST `.upsert()` call through the Supabase Python client does not reliably expose "did THIS call's insert affect a row" (upsert response shape varies with `Prefer` headers/resolution mode), so a small dedicated RPC mirroring 2.6/2.7's exact pattern was the more correct, less ambiguous implementation of the same principle those two already establish.
 
-- [ ] **Task 3 — `apps/api/app/modules/payments/` module (AC: #1, #2, #3, #6, #10)**
-  - [ ] 3.1 `apps/api/app/modules/payments/schemas.py` — `CreateCheckoutSessionResponse {checkout_url: str, session_id: str}`.
-  - [ ] 3.2 `apps/api/app/modules/payments/router.py` — `router = APIRouter(tags=["payments"])`, matching the shape of `apps/api/app/modules/admin/router.py`.
-  - [ ] 3.3 `POST /create-checkout-session`: `CurrentUser` dependency (401 without a valid JWT), per-user rate limit via `@limiter.limit(...)` + `_get_user_key` (reuse from `apps/api/app/core/rate_limit.py`, do not write a second decoder). Calls the Stripe provider with the configured Price ID and `metadata={"user_id": current_user["sub"]}`; sets `success_url`/`cancel_url` per AC 2.
-  - [ ] 3.4 `POST /webhook`: takes a raw `Request`, calls `await request.body()` **before** any parsing (no Pydantic request-body model on this route — signature verification needs the exact bytes Stripe signed). Calls the provider's `verify_and_parse_webhook`; a `SignatureVerificationError` (or any provider-raised verification failure) returns 400 with no DB write attempted. No `CurrentUser`/JWT dependency on this route.
-  - [ ] 3.5 On a verified event: attempt the `stripe_events` idempotency insert (Task 2.3) first. Only for a request whose insert actually affected a row: branch on `event.type`; for `checkout.session.completed`, read `metadata.user_id` off the session object and call `grant_lesson_credits`; for anything else, acknowledge 200 as a no-op (AC 6). Missing/absent `metadata.user_id` on a `checkout.session.completed` event is logged at ERROR/Sentry severity and acknowledged 200 (Scale & Load Q2) — never a silent drop, never an uncaught 500.
-  - [ ] 3.6 Register the router in `apps/api/app/main.py`: `app.include_router(payments_router, prefix="/api/payments")` — same convention as the other six module routers already mounted there (`admin_router` at `/api/admin`, etc.).
+- [x] **Task 3 — `apps/api/app/modules/payments/` module (AC: #1, #2, #3, #6, #10)**
+  - [x] 3.1 `schemas.py` — `CreateCheckoutSessionResponse`.
+  - [x] 3.2 `router.py` — `router = APIRouter(tags=["payments"])`.
+  - [x] 3.3 `POST /create-checkout-session` — `CurrentUser`, `@limiter.limit("5/minute", key_func=_get_user_key)`. **Found during implementation:** slowapi's `headers_enabled=True` (set on the shared `limiter`) requires the decorated handler to also declare a literally-named `response: Response` parameter (`_inject_headers` raises otherwise) — the same requirement `generate_chapter_lesson` already has; added and documented in the handler's own docstring.
+  - [x] 3.4 `POST /webhook` — raw body read before parsing, no `CurrentUser`, `SignatureVerificationError` → 400 with no DB write.
+  - [x] 3.5 Verified-event handling extracted into `apps/api/app/modules/payments/service.py::process_webhook_event` (module NOT in the original file list — see Dev Notes below for why a service layer was added) — idempotency insert first, branch on event type, missing `metadata.user_id` logged ERROR + 200 no-op.
+  - [x] 3.6 Registered in `apps/api/app/main.py` at `/api/payments`.
 
-- [ ] **Task 4 — Gate lesson generation on `lesson_credits` (AC: #8, #9, #11)**
-  - [ ] 4.1 In `generate_chapter_lesson` (`apps/api/app/modules/content/router.py`, mounted at `GENERATE_LESSON_PATH = "/books/{book_id}/chapters/{chapter_id}/lessons"`), add the credit check **after** the existing ownership/idempotency gates (Gates 1–7, including the existing 200-replay branch) and **before** the `lessons`/`lesson_jobs` insert + ARQ enqueue.
-  - [ ] 4.2 Call `decrement_lesson_credit(user_id)`. If it returns `False`, raise `HTTPException(402, ...)` — nothing has been written yet at this point in the existing handler, so no rollback is needed on this branch.
-  - [ ] 4.3 Confirm (and add a regression test for) the ordering: the existing Gate 5 idempotent-replay branch (an existing `generating`/`ready` lesson for the same `(chapter_id, tier, user_id)`) returns before the new credit check runs at all — re-polling an already-paid-for lesson must never spend a second credit.
-  - [ ] 4.4 On any of the handler's existing downstream failure/rollback branches that fire **after** the credit decrement, add a `grant_lesson_credits(user_id, 1)` refund call alongside the existing `lessons`/`lesson_jobs` cleanup, so a platform-side failure never costs the student a credit for nothing.
+- [x] **Task 4 — Gate lesson generation on `lesson_credits` (AC: #8, #9, #11)**
+  - [x] 4.1 Credit check (Gate 8) added after Gate 7 (concurrency), before the `lessons`/`lesson_jobs` insert + ARQ enqueue.
+  - [x] 4.2 `decrement_lesson_credit` → `False` raises `HTTPException(402, ...)`; nothing written before this point.
+  - [x] 4.3 Regression tests added proving ordering: `test_zero_credits_is_checked_after_the_concurrency_gate_not_before` (429 wins, credit RPC never called) and `test_idempotent_replay_path_does_not_spend_a_second_credit` (Gate 5's 200-replay never reaches the credit gate at all).
+  - [x] 4.4 `grant_lesson_credits(user_id, 1)` refund call added to the existing except-block rollback, same best-effort/logged-not-swallowed pattern as the pre-existing `lessons`/`lesson_jobs` deletes.
 
-- [ ] **Task 5 — Tests (AC: all)**
-  - [ ] 5.1 New `apps/api/tests/unit/test_payments_router.py`: checkout-session happy path; unauthenticated → 401; rate limit keyed by user not IP (assert `_get_user_key` is the `key_func`, not the app-wide IP limiter); webhook valid signature → 200 + credit granted; webhook invalid signature → 400 + zero DB calls (assert on the mock, not merely that the response code is right — binding rule 2); webhook idempotency (same `stripe_event_id` delivered twice → `grant_lesson_credits` called exactly once); unsupported event type → 200 no-op.
-  - [ ] 5.2 Extend `apps/api/tests/unit/test_generate_lesson_endpoint.py`: zero credits → 402, and assert **no** `lessons`/`lesson_jobs` insert and **no** `arq_redis.enqueue_job` call was attempted; sufficient credits → `decrement_lesson_credit` called exactly once per newly-created lesson; the existing idempotent-200-replay path → `decrement_lesson_credit` **not** called; a downstream enqueue failure after the decrement → `grant_lesson_credits` refund call asserted.
-  - [ ] 5.3 A `# MOCK-CONTRACT:` marker (binding rule 2) on any test asserting the RPC call shape only (`decrement_lesson_credit` mocked to return `False`/`True`) — name the real-dependency test that exercises the actual Postgres function (a migration-level or integration test against a real Supabase test project) that this unit test cannot substitute for.
-  - [ ] 5.4 Run `apps/api/tests/unit/test_unbounded_queries.py` against the new `payments/router.py` and the modified `content/router.py` — confirm no new finding, with no `# BOUNDED:` escape hatch needed (every new query is a real `.eq(...).maybe_single()` or RPC call, not a materialized multi-row read).
-  - [ ] 5.5 A migration-level smoke test (naming convention matching `test_migration_analytics_schema.py`/`test_migration_assessment_schema.py`) asserting `lesson_access`/`stripe_events` exist with the expected columns/constraints, RLS is enabled on both, and both RPC functions are revoked from `anon`/`authenticated`.
+- [x] **Task 5 — Tests (AC: all)**
+  - [x] 5.1 `apps/api/tests/unit/test_payments_router.py` — 9 tests: happy path (asserts the real kwargs Stripe was called with, not just the response), 401, rate-limit-keyed-by-user (source-scan assertion), webhook valid signature grants credit, invalid signature 400 + zero RPC calls, a real `stripe.SignatureVerificationError` premise-assertion test (binding rule 3), idempotency (same event id twice → 1 grant), unsupported event type → 200 no-op + still recorded in the ledger, missing `metadata.user_id` → logged ERROR + 200.
+  - [x] 5.2 `test_generate_lesson_endpoint.py` extended: 5 new tests (zero credits → 402 + no state created; gate ordering vs. concurrency; sufficient credits decrements exactly once; idempotent-replay path spends nothing; downstream enqueue failure refunds). Required adding `.rpc()` support to the file's `_FakeSupabase` (it previously had none) and a `credit_available: bool = True` `_Scenario` field, defaulting to True so all 86 pre-existing tests are unaffected. **Found and fixed during implementation:** the first version of the fake's `.rpc()` returned a bare object whose `.execute()` auto-generated a fresh child `MagicMock` instead of the precomputed response — `bool(resp.data)` was therefore always `True` regardless of scenario, silently defeating the 402 test. Fixed with a small `_RpcCall` wrapper whose `.execute()` returns the actual precomputed response; the reused pattern is now also in `test_payments_router.py`.
+  - [x] 5.3 `# MOCK-CONTRACT:` marker added at the top of `test_payments_router.py`, naming `test_migration_payments_schema.py` as the real-dependency-adjacent coverage. **Caveat, stated plainly:** that file parses the migration SQL as text — it is not an execution test against a live Postgres instance (none is available in this sandbox), so it verifies the RPC bodies are SHAPED correctly (single UPDATE, no SELECT-then-write, etc.) but does not execute them. This is a real, named limitation, not silently glossed over.
+  - [x] 5.4 `test_unbounded_queries.py` re-run against the new/modified files: 11/11 passed, no new finding, no `# BOUNDED:` escape hatch needed.
+  - [x] 5.5 `apps/api/tests/test_migration_payments_schema.py` — 14 tests (table existence/columns/constraints for both tables, RLS enabled on both, `lesson_access`'s exactly-one-SELECT-policy/no-write-policy, all three RPCs' grant/revoke shape, and each RPC body's actual SQL shape — e.g. `decrement_lesson_credit` asserted to contain no `SELECT` before its `UPDATE`).
 
 ## Dev Notes
 
@@ -146,8 +147,67 @@ so that I can pay for lessons without my card details ever touching TransformED'
 
 ### Agent Model Used
 
+Claude Sonnet 5 (claude-sonnet-5), 2026-08-25.
+
 ### Debug Log References
+
+- Empirically verified `StripeObject` is not `dict()`-convertible/iterable before writing
+  `stripe.py` — `TypeError: StripeObject is not iterable or a mapping; call .to_dict() for a
+  plain dict` — confirmed against the installed `stripe==15.5.1` SDK directly.
+- Empirically verified `event["data"]["object"]` and `event["id"]`/`event["type"]` subscripting
+  work on a real `StripeObject` (constructed via `StripeObject.construct_from`) before relying on
+  it in `verify_and_parse_webhook`.
+- Full unit suite before and after: 1247 passed / 6 skipped / 3 pre-existing unrelated failures
+  (D134, `test_extract_page_bounds.py`, pypdfium2 API mismatch) — identical failure set, zero
+  regressions.
+- `test_generate_lesson_endpoint.py`'s `_FakeSupabase.rpc()` bug (returning an unconfigured child
+  MagicMock from `.execute()` instead of the precomputed response) was caught by its own new test
+  failing with the WRONG status code (202 instead of 402) rather than an exception — traced with a
+  standalone repro script before fixing, not assumed.
+- Ruff and mypy clean on every touched/new file (mypy's one reported error, `providers/llm/
+  openai.py:69`, is pre-existing and unrelated — confirmed by scope, not touched by this story).
 
 ### Completion Notes List
 
+- AC1-AC11 all implemented and tested. Task 2 added a third RPC beyond the two named in the
+  original task list (`record_stripe_event_if_new`) — a more correct, less ambiguous
+  implementation of AC5's own "durable constraint, not a SELECT-then-INSERT check" requirement
+  than relying on PostgREST upsert-response-shape nuances through the Supabase Python client.
+- A `payments/service.py` module was added, not present in the story's original file list —
+  houses the three RPC wrappers shared between `payments/router.py`'s webhook handler and
+  `content/router.py`'s credit gate, which is the actual mechanism satisfying CLAUDE.md's "modules
+  communicate only through service layer, never via direct DB access into another module's
+  tables" rule (`content/router.py` never touches `lesson_access`/`stripe_events` directly).
+- Not independently verified against a real Supabase/Postgres instance — no live test project
+  available in this sandbox. `test_migration_payments_schema.py` verifies the migration SQL's
+  shape (tables, RLS, RPC grant/revoke, RPC body structure) by parsing the file as text, matching
+  this repo's existing `test_migration_analytics_schema.py`/`test_migration_assessment_schema.py`
+  convention — this is real coverage of the SQL as written, but is not the same as executing it.
+  Named explicitly in the `# MOCK-CONTRACT:` marker rather than implied to be equivalent.
+- Cross-team dependency confirmed still out of scope and untouched: Dev 2's `/payment/success`
+  and `/payment/cancel` pages, the pricing page, and the onboarding-flow Checkout redirect.
+- D45 (the pre-existing `(chapter_id, tier)` idempotency TOCTOU race) is untouched — the new
+  credit gate runs strictly after Gate 5's existing idempotent-replay branch, so it does not
+  interact with that defect's accepted-and-bounded disposition.
+- No PR opened in this session; branch `sprint4/s4-3-stripe-checkout` has the story-only commit
+  followed by this implementation. Not yet run through the 6-agent `/bmad-code-review` gate
+  CLAUDE.md requires before merge, and not yet pushed to remote.
+
 ### File List
+
+- `apps/api/app/config.py` — 4 new Stripe Settings fields
+- `apps/api/app/main.py` — imports + mounts `payments_router` at `/api/payments`
+- `apps/api/app/providers/payments/__init__.py` — new, empty
+- `apps/api/app/providers/payments/base.py` — new, `PaymentProvider` ABC + `CheckoutSession`/`WebhookEvent`
+- `apps/api/app/providers/payments/stripe.py` — new, `StripePaymentProvider` (the only file importing `stripe`)
+- `apps/api/app/modules/payments/__init__.py` — new, empty
+- `apps/api/app/modules/payments/schemas.py` — new, `CreateCheckoutSessionResponse`
+- `apps/api/app/modules/payments/service.py` — new (not in original file list) — RPC wrappers + webhook event processing
+- `apps/api/app/modules/payments/router.py` — new, the two endpoints
+- `apps/api/app/modules/content/router.py` — Gate 8 (credit check) + refund-on-failure added to `generate_chapter_lesson`
+- `supabase/migrations/20260825000000_stripe_payments_lesson_access.sql` — new — `lesson_access`, `stripe_events`, 3 RPC functions
+- `apps/api/tests/unit/test_payments_router.py` — new, 9 tests
+- `apps/api/tests/unit/test_generate_lesson_endpoint.py` — 5 new tests + `_FakeSupabase.rpc()`/`_RpcCall`/`credit_available` support added
+- `apps/api/tests/test_migration_payments_schema.py` — new, 14 tests
+- `apps/api/tests/conftest.py` — 3 new stub env vars (Stripe Settings fields are required)
+- `apps/api/pyproject.toml` / `apps/api/uv.lock` — `stripe>=10.0.0` added

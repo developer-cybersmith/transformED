@@ -302,6 +302,31 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Payments (Stripe, Story 5-3/S4-3) ─────────────────────────────────────
+    # Real, required fields — no bare os.environ.get("STRIPE_...") anywhere in
+    # business logic. STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET/
+    # NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY are already templated in
+    # .env.example:51-54 but had no matching Settings field until this story.
+    stripe_secret_key: str = Field(..., description="Stripe secret API key")
+    stripe_webhook_secret: str = Field(
+        ...,
+        description="Stripe webhook signing secret (whsec_...) for Stripe-Signature verification",
+    )
+    stripe_price_id_lesson_credit: str = Field(
+        ..., description="Stripe Price ID for the single Phase-1 lesson-credit product"
+    )
+    stripe_lesson_credits_per_purchase: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Credits granted per completed Checkout session. A fixed config "
+            "constant, deliberately NOT derived from the Stripe session's "
+            "amount_total — computing credits from a payload-supplied amount "
+            "would let a Stripe-side product/price misconfiguration silently "
+            "grant the wrong number of credits with no error."
+        ),
+    )
+
     # ── LLM model names ────────────────────────────────────────────────────────
     # All model IDs are env-var driven. Never hardcode model strings in business logic.
     # Status: evaluation sprint planned for Sprint 1, Week 1.

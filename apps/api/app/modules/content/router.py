@@ -44,6 +44,7 @@ from app.modules.content.schemas import (
     LatestLesson,
     LessonGenerationResponse,
 )
+from app.modules.payments.service import decrement_lesson_credit, grant_lesson_credits
 
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
 # recorded): single source of truth for the tier default/valid set, shared
@@ -1323,6 +1324,20 @@ async def generate_chapter_lesson(
             headers={"Retry-After": str(_CONCURRENCY_RETRY_AFTER_S)},
         )
 
+    # ── Gate 8: lesson credits (Story 5-3/S4-3, D-payments) ───────────────────
+    # Runs AFTER every existing gate — including Gate 5's idempotent-replay
+    # branch, which returns above and never reaches here — and BEFORE any
+    # lessons/lesson_jobs row or ARQ job is created (AC8), so a 402 leaves
+    # nothing to roll back. `decrement_lesson_credit` is a single atomic
+    # conditional UPDATE ... WHERE lesson_credits > 0 (AC9) — the exact
+    # TOCTOU shape D45 already names as a defect is NOT repeated here: there
+    # is no Python-side "SELECT credits, then IF credits > 0: UPDATE".
+    if not await decrement_lesson_credit(supabase, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="No lesson credits remaining — purchase more to continue",
+        )
+
     # ── Create the work ───────────────────────────────────────────────────────
     lesson_id: str | None = None
     try:
@@ -1423,6 +1438,20 @@ async def generate_chapter_lesson(
                     lesson_id,
                     exc_info=True,
                 )
+        # Story 5-3/S4-3 AC11: the credit was already spent (Gate 8, above)
+        # by the time any of this except block can run — a platform-side
+        # failure must never cost the student a credit they received
+        # nothing for. Best-effort, same pattern as the rollback deletes
+        # above: logged, not swallowed, and does not change the 500 below.
+        try:
+            await grant_lesson_credits(supabase, user_id, 1)
+        except Exception:  # noqa: BLE001 — best-effort refund; the 500 below still stands
+            logger.warning(
+                "refund failed to grant back 1 lesson credit for user_id=%s after a "
+                "failed generation attempt — student was charged for nothing",
+                user_id,
+                exc_info=True,
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to start lesson generation — please retry",

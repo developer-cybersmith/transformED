@@ -113,6 +113,11 @@ class _Scenario:
     existing_lessons: list[dict[str, Any]] = field(default_factory=list)
     # How many lessons this user already has in status='generating'.
     concurrent_generating: int = 0
+    # Story 5-3/S4-3: whether decrement_lesson_credit's RPC succeeds (credits
+    # remain) or returns False (zero credits, gate returns 402). Defaults to
+    # True so every pre-existing test in this file, none of which cares about
+    # credits, is unaffected by the gate's addition.
+    credit_available: bool = True
 
 
 def _resp(data: Any, count: int | None = None) -> MagicMock:  # noqa: ANN401
@@ -205,6 +210,19 @@ class _Builder:
         return _chain
 
 
+class _RpcCall:
+    """`.rpc(name, params)` return value — `.execute()` must return the
+    PRECOMPUTED response, not an auto-generated child MagicMock (which would
+    make `bool(resp.data)` always True regardless of scenario, since an
+    unconfigured MagicMock's `.data` attribute is itself a truthy MagicMock)."""
+
+    def __init__(self, response: MagicMock) -> None:
+        self._response = response
+
+    def execute(self) -> MagicMock:
+        return self._response
+
+
 class _FakeSupabase:
     """Records every `.table(name)` selection and every executed chain."""
 
@@ -213,10 +231,20 @@ class _FakeSupabase:
         self.table_calls: list[str] = []
         self.queries: list[_Query] = []
         self.storage = MagicMock()
+        # Story 5-3/S4-3: recorded RPC calls (decrement_lesson_credit,
+        # grant_lesson_credits) — the credit gate/refund don't go through
+        # .table(), so they need their own recording + response shaping.
+        self.rpc_calls: list[tuple[str, dict[str, Any]]] = []
 
     def table(self, name: str) -> _Builder:
         self.table_calls.append(name)
         return _Builder(_Query(table=name), self.scenario, self.queries)
+
+    def rpc(self, name: str, params: dict[str, Any]) -> _RpcCall:
+        self.rpc_calls.append((name, dict(params)))
+        if name == "decrement_lesson_credit":
+            return _RpcCall(_resp(self.scenario.credit_available))
+        return _RpcCall(_resp(None))
 
     # -- assertion helpers -----------------------------------------------------
     def of(self, table: str, op: str | None = None) -> list[_Query]:
@@ -224,6 +252,9 @@ class _FakeSupabase:
 
     def writes(self) -> list[_Query]:
         return [q for q in self.queries if q.op in {"insert", "update", "upsert", "delete"}]
+
+    def rpc_calls_named(self, name: str) -> list[tuple[str, dict[str, Any]]]:
+        return [c for c in self.rpc_calls if c[0] == name]
 
 
 # ── Fixture data ──────────────────────────────────────────────────────────────
@@ -1641,6 +1672,83 @@ def test_concurrency_count_is_scoped_to_the_caller() -> None:
     assert counting, "no per-user concurrency count was issued"
     assert counting[0].value("user_id") == FAKE_USER["sub"]
     assert counting[0].value("status") == "generating"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Story 5-3/S4-3 — lesson-credit gate (Gate 8: runs after every existing gate,
+# before any lessons/lesson_jobs row or ARQ job is created)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+def test_zero_credits_is_402_with_no_state_created() -> None:
+    """AC8: a caller with no credits left is refused BEFORE any lessons row,
+    lesson_jobs row, or ARQ job is created — no partial state on a 402."""
+    sc = _ok_scenario(credit_available=False)
+    resp, sb, pool = _post(sc)
+
+    assert resp.status_code == 402
+    assert sb.of("lessons", "insert") == []
+    assert sb.of("lesson_jobs", "insert") == []
+    assert pool.enqueue_job.await_count == 0
+
+
+@pytest.mark.unit
+def test_zero_credits_is_checked_after_the_concurrency_gate_not_before() -> None:
+    """Gate ordering matters: a request that would already 429 on concurrency
+    must not spend/attempt-to-spend a credit it never needed to. Both
+    conditions true here — the 429 must win, and decrement_lesson_credit must
+    not have been called at all."""
+    from app.config import get_settings
+
+    cap = get_settings().max_concurrent_generations_per_user
+    sc = _ok_scenario(concurrent_generating=cap, credit_available=False)
+    resp, sb, _ = _post(sc)
+
+    assert resp.status_code == 429
+    assert sb.rpc_calls_named("decrement_lesson_credit") == []
+
+
+@pytest.mark.unit
+def test_sufficient_credits_decrements_exactly_once_for_a_new_lesson() -> None:
+    """AC9: a genuinely new lesson spends exactly one credit via the atomic
+    RPC — never a Python check-then-write."""
+    resp, sb, _ = _post(_ok_scenario())
+
+    assert resp.status_code == 202
+    calls = sb.rpc_calls_named("decrement_lesson_credit")
+    assert len(calls) == 1
+    assert calls[0][1] == {"p_user_id": FAKE_USER["sub"]}
+
+
+@pytest.mark.unit
+def test_idempotent_replay_path_does_not_spend_a_second_credit() -> None:
+    """AC9: Gate 5's existing 200-replay branch (an existing generating/ready
+    lesson for the same chapter+tier+user) returns BEFORE the credit gate
+    even runs — re-polling an already-paid-for lesson must never spend a
+    second credit."""
+    sc = _ok_scenario(existing_lessons=[{"lesson_id": "existing-1", "status": "ready"}])
+    resp, sb, _ = _post(sc)
+
+    assert resp.status_code == 200
+    assert sb.rpc_calls_named("decrement_lesson_credit") == []
+
+
+@pytest.mark.unit
+def test_downstream_enqueue_failure_after_decrement_refunds_the_credit() -> None:
+    """AC11: a platform-side failure AFTER the credit was already spent must
+    never cost the student a credit they received nothing for — the same
+    principle as the existing lessons/lesson_jobs rollback, one row over."""
+    pool = _arq_pool()
+    pool.enqueue_job = AsyncMock(side_effect=RuntimeError("redis down"))
+    resp, sb, _ = _post(_ok_scenario(), pool=pool)
+
+    assert resp.status_code == 500
+    spent = sb.rpc_calls_named("decrement_lesson_credit")
+    refunded = sb.rpc_calls_named("grant_lesson_credits")
+    assert len(spent) == 1
+    assert len(refunded) == 1
+    assert refunded[0][1] == {"p_user_id": FAKE_USER["sub"], "p_credits": 1}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

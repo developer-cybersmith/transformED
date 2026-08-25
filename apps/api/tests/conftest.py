@@ -33,6 +33,9 @@ _STUB_ENV_VARS = {
     "LANGFUSE_PUBLIC_KEY": "test-langfuse-public",
     "LANGFUSE_SECRET_KEY": "test-langfuse-secret",
     "REDIS_URL": "redis://localhost:6379",
+    "STRIPE_SECRET_KEY": "sk_test_stub",
+    "STRIPE_WEBHOOK_SECRET": "whsec_test_stub",
+    "STRIPE_PRICE_ID_LESSON_CREDIT": "price_test_stub",
 }
 for _key, _val in _STUB_ENV_VARS.items():
     os.environ.setdefault(_key, _val)
