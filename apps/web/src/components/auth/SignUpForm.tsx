@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -10,11 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import { isAuthApiError } from "@supabase/supabase-js";
+import { TurnstileWidget, type TurnstileHandle } from "./Turnstile";
 
 export function SignUpForm() {
     const router = useRouter();
     const supabase = createClient();
     const [isLoading, setIsLoading] = useState(false);
+    const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+    const turnstileRef = useRef<TurnstileHandle>(null);
     const [error, setError] = useState("");
     const [isSuccess, setIsSuccess] = useState(false);
     const [submittedEmail, setSubmittedEmail] = useState("");
@@ -43,6 +46,12 @@ export function SignUpForm() {
             return;
         }
 
+        if (!captchaToken) {
+            setError("Please complete the verification challenge.");
+            setIsLoading(false);
+            return;
+        }
+
         try {
             const { data, error: signUpError } = await supabase.auth.signUp({
                 email,
@@ -50,7 +59,8 @@ export function SignUpForm() {
                 options: {
                     data: {
                         full_name: fullName
-                    }
+                    },
+                    captchaToken
                 }
             });
 
@@ -77,6 +87,10 @@ export function SignUpForm() {
                     : "Registration failed. Please try again."
             );
         } finally {
+            // Turnstile tokens are single-use -- siteverify consumes it
+            // regardless of whether signUp itself succeeded.
+            turnstileRef.current?.reset();
+            setCaptchaToken(null);
             setIsLoading(false);
         }
     };
@@ -190,7 +204,19 @@ export function SignUpForm() {
                     </div>
                 </div>
 
-                <Button type="submit" className="w-full group mt-4" isLoading={isLoading} size="lg">
+                <TurnstileWidget
+                    ref={turnstileRef}
+                    onVerify={setCaptchaToken}
+                    onExpire={() => setCaptchaToken(null)}
+                />
+
+                <Button
+                    type="submit"
+                    className="w-full group mt-4"
+                    isLoading={isLoading}
+                    disabled={!captchaToken}
+                    size="lg"
+                >
                     Start Your Transformation
                     <ArrowRight className="w-4 h-4 ml-2 mt-[1px] group-hover:translate-x-1 transition-transform" />
                 </Button>
