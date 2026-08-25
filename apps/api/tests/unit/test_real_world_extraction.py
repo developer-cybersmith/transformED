@@ -73,7 +73,7 @@ def test_scan_like_fixture_has_zero_extractable_text_layer() -> None:
     doc = pdfium.PdfDocument(str(_fixture_path("real_scan_like")))
     try:
         for page in doc:
-            assert page.get_textpage().get_text_range() == ""
+            assert page.get_textpage().get_text_bounded() == ""
     finally:
         doc.close()
 

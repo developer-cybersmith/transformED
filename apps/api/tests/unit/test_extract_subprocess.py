@@ -102,44 +102,30 @@ def _run_extract(
     )
 
 
-# ── extract_text_only: TOC parsing (review fix, D63) ──────────────────────────
+# ── extract_text_only: TOC parsing (review fix, D63; corrected, D133) ─────────
 
 
-class _FakeDest:
-    """Mirrors pypdfium2.PdfDest's REAL API: get_index() only, no attributes."""
-
-    def __init__(self, page_index: int | None) -> None:
-        self._page_index = page_index
-
-    def get_index(self) -> int | None:
-        return self._page_index
-
-
-class _FakeBookmark:
-    """Mirrors pypdfium2.PdfBookmark's REAL API: get_title()/get_dest()/.level.
-
-    Deliberately has NO `.page_index`/`.title` attributes -- a regression back
-    to attribute access must fail this test with the same AttributeError
-    production would raise, not silently pass the way a loose MagicMock would
-    (which is exactly how the original bug shipped untested).
+class _FakeOutlineItem:
+    """Mirrors `pypdfium2.PdfOutlineItem`'s REAL API on the project's PINNED
+    version (uv.lock: pypdfium2==4.30.0), confirmed by directly inspecting the
+    installed package, not assumed: `.page_index` and `.title` are plain
+    attributes -- there is no `get_dest()`/`get_title()` method on this
+    version at all (that shape exists on pypdfium2 5.x's differently-named
+    `PdfBookmark`, which is what an earlier fix (D58/D63) was actually
+    written and tested against, due to an unpinned local pypdfium2 install
+    that had silently drifted off the lockfile -- see D133). `.page_index` is
+    `None` for an unresolvable destination -- a normal bookmark shape, not
+    an error.
     """
 
     def __init__(self, level: int, title: str, page_index: int | None) -> None:
         self.level = level
-        self._title = title
-        self._page_index = page_index
-
-    def get_title(self) -> str:
-        return self._title
-
-    def get_dest(self) -> _FakeDest | None:
-        if self._page_index is None:
-            return None
-        return _FakeDest(self._page_index)
+        self.title = title
+        self.page_index = page_index
 
 
 def _run_extract_text_only(
-    monkeypatch: pytest.MonkeyPatch, *, toc: list[_FakeBookmark]
+    monkeypatch: pytest.MonkeyPatch, *, toc: list[_FakeOutlineItem]
 ) -> dict[str, Any]:
     n = 3
     pdfium_pages = [MagicMock(name=f"pdfium_page_{i}") for i in range(n)]
@@ -157,12 +143,12 @@ def _run_extract_text_only(
 
 
 class TestExtractTextOnlyToc:
-    def test_resolves_page_index_via_get_dest_not_an_attribute(
+    def test_resolves_page_index_via_the_plain_attribute(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         result = _run_extract_text_only(
             monkeypatch,
-            toc=[_FakeBookmark(level=0, title="Chapter 1", page_index=2)],
+            toc=[_FakeOutlineItem(level=0, title="Chapter 1", page_index=2)],
         )
         assert result["toc"] == [{"level": 0, "title": "Chapter 1", "page_index": 2}]
 
@@ -172,8 +158,8 @@ class TestExtractTextOnlyToc:
         result = _run_extract_text_only(
             monkeypatch,
             toc=[
-                _FakeBookmark(level=0, title="Broken", page_index=None),
-                _FakeBookmark(level=0, title="Chapter 2", page_index=1),
+                _FakeOutlineItem(level=0, title="Broken", page_index=None),
+                _FakeOutlineItem(level=0, title="Chapter 2", page_index=1),
             ],
         )
         assert result["toc"] == [{"level": 0, "title": "Chapter 2", "page_index": 1}]

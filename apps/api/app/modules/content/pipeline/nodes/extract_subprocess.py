@@ -842,20 +842,26 @@ def extract_text_only(
 
         toc: list[dict[str, Any]] = []
         for item in pdf_doc.get_toc():
-            # PdfBookmark has no `.page_index`/`.title` attributes -- the page
-            # index lives on the PdfDest returned by get_dest(), and the title
-            # is read via get_title(). Both dest and its index can be None (an
-            # unresolvable destination), which is a normal bookmark shape, not
-            # an error (review fix, D63 -- reached only by a real PDF with an
-            # outline; every local fixture has none, so this path was untested).
-            dest = item.get_dest()
-            page_index = dest.get_index() if dest is not None else None
+            # D133 (docs/DEFECT-REGISTER.md): `PdfOutlineItem` exposes
+            # `.page_index`/`.title` as plain attributes in the project's
+            # PINNED pypdfium2==4.30.0 (uv.lock) -- there is no `get_dest()`/
+            # `get_title()` method at all on that version, confirmed against
+            # the actual installed package, not assumed. The prior code
+            # (D58/D63) called those nonexistent methods and crashed with
+            # `AttributeError` on ANY real PDF with an outline -- invisible
+            # until now because every prior fixture had no TOC, and every
+            # local dev run of this code happened to use an unpinned, newer
+            # pypdfium2 (5.x) where that API shape is real. `.page_index` is
+            # `None` for an unresolvable destination -- a normal bookmark
+            # shape, not an error (D63's original point, still valid) -- so
+            # that entry is skipped, same as before.
+            page_index = item.page_index
             if page_index is None:
                 continue  # bookmark with an unresolvable destination
             toc.append(
                 {
                     "level": int(item.level),
-                    "title": (item.get_title() or "").strip(),
+                    "title": (item.title or "").strip(),
                     "page_index": int(page_index),
                 }
             )
