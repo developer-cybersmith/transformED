@@ -4,7 +4,9 @@
 with `slide_generator returned unknown segment_id(s)`. Real, reproducible root cause found (not
 guessed) — see below.
 
-**Started:** 2026-08-25 · **Status:** Fix built, tested, RED-GREEN verified, full regression clean (Steps 1-3 done). Live re-verification (Step 4) next.
+**Started:** 2026-08-25 · **Closed:** 2026-08-25 · **Status:** CLOSED — fix built, RED-GREEN
+verified, full regression clean, and confirmed against real production data (4/4 previously-
+failing fixtures now pass live, retry mechanism observed firing in a real Langfuse trace).
 
 ---
 
@@ -91,11 +93,48 @@ tests GREEN again.
   `providers/image/openai_image.py`, `providers/embeddings/openai.py` — none touched by this fix).
 - `pytest tests/unit` (full suite) — **1256 passed, 9 skipped, 0 failed** (200.5s).
 
-## Step 4 — Live re-verification (in progress)
-Re-run the 4 previously-failing fixtures for real. 3 of 4 are single-segment (cheap — they
-failed in under a minute each pre-fix, so retries add little cost even if triggered);
-`dense_text_with_headers` has 15 segments (the fixture that actually spent real Phase 1/2 money
-before failing at slide_generator).
+## Step 4 — Live re-verification (DONE, 2026-08-25)
+
+Re-ran all 4 previously-failing fixtures for real, through the unmodified real pipeline
+(`run_pipeline`, real OpenAI/Sarvam calls, real Supabase rows, real cost) — same harness
+(`tests/evals/runner.run_eval`) the original 20-PDF run used, one PDF at a time.
+
+**Result: 4/4 now produce a valid `LessonPackage` — 0/4 failures, matching 0/20 before the fix.**
+
+| Fixture | `package_valid` | slide_quality | quiz_relevance | Time | Cost |
+|---|---|---|---|---|---|
+| `dense_text_with_headers` (15 segments) | ✅ true | 1.0 | 0.9 | 18.6 min | $3.12 |
+| `table_heavy_small` | ✅ true | 1.0 | 1.0 | 3.1 min | $0.39 |
+| `image_heavy_small` | ✅ true | 1.0 | 1.0 | 3.0 min | $0.44 |
+| `image_heavy_grid` | ✅ true | 1.0 | 1.0 | 1.5 min | $0.18 |
+
+`dense_text_with_headers`'s $3.12 is marginally over the $3.00/lesson ceiling — this is the
+documented "downshift, not abort" behavior (`cost_tracker.check_ceiling`), not a new defect; the
+lesson still completed and was still valid.
+
+**The retry mechanism observably fired, live, on real production data** — not just in the unit
+tests. `image_heavy_small`'s run log:
+```
+[519b344a-cec4-4509-b726-58b4dd9866ce] slide_generator_node: segment_id echo mismatch on
+attempt 1/3 — expected 1 ids, got 1 ids (missing=['section_0_Document'],
+unexpected=['section_0_Document: Exploring Illustrations and Captions']) — retrying
+```
+— the exact real corruption pattern predicted in Step 1 (a bare id gaining an inferred-title
+suffix), on the exact fixture class predicted (a "Document"-fallback title).
+
+**Cross-checked against the real Langfuse trace** for that lesson (`create_trace_id(seed=lesson_id)`
+— the deterministic trace_id every node shares), not just the log line: two
+`generate-structured-completion` observations carrying the slide-deck prompt, back-to-back,
+inside `slide_generator_node`'s span —
+`09:06:36.994→09:06:41.607` (attempt 1, the corrupted one) immediately followed by
+`09:06:41.610→09:06:46.485` (attempt 2, the recovered one) — `slide_generator_node`'s own span
+runs `09:06:36.845→09:06:47.167`, containing both. Real production telemetry confirms the retry
+loop executed exactly once and the second attempt's response is what the lesson used, matching
+the unit test's proof of the same mechanism under mocks.
+
+**D133 status: CLOSED.** Guarded by `test_slide_generator_retries_on_echo_mismatch_and_recovers`
+and `test_slide_generator_retry_exhausts_and_still_raises` (binding rule 7 — a fix without a
+CI guard is `FIXED-UNGUARDED`, not fixed).
 
 ---
 
