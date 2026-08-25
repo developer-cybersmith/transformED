@@ -68,7 +68,7 @@ def test_two_limiter_instances_share_one_redis_backed_ceiling(shared_fake_redis:
     )
 
 
-def test_two_memory_backed_limiter_instances_do_NOT_share_a_ceiling() -> None:
+def test_two_memory_backed_limiter_instances_do_not_share_a_ceiling() -> None:
     """Control case, no fakeredis involved: proves the test above is actually
     exercising cross-instance sharing and not some other effect — with the
     CURRENT (D49) default `memory://` storage, two independently constructed

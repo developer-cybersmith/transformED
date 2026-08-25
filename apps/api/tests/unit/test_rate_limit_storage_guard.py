@@ -46,9 +46,7 @@ def test_does_not_raise_in_debug_mode_even_with_memory_storage() -> None:
 @pytest.mark.unit
 def test_does_not_raise_when_storage_url_is_a_real_redis_uri() -> None:
     """A correctly configured deployment must start cleanly."""
-    assert_rate_limit_storage_configured(
-        debug=False, storage_uri="redis://redis.internal:6379/0"
-    )
+    assert_rate_limit_storage_configured(debug=False, storage_uri="redis://redis.internal:6379/0")
 
 
 @pytest.mark.unit

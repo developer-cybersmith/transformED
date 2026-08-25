@@ -90,9 +90,7 @@ limiter = Limiter(
 )
 
 
-def assert_rate_limit_storage_configured(
-    *, debug: bool, storage_uri: str | None = None
-) -> None:
+def assert_rate_limit_storage_configured(*, debug: bool, storage_uri: str | None = None) -> None:
     """D49 — fail fast if the shared rate limiter is running on unshared,
     per-process storage outside local/dev use.
 
