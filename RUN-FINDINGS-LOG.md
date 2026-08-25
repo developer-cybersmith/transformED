@@ -43,11 +43,51 @@ verified vs. assumed, so gaps can be triaged into targeted fixes instead of stay
 |---|-----|--------------|-------------|
 | 1 | Rotated/low-quality real scans OCR into silent, ungated garbage | 2026-08-21 — D128 fix build | `_ocr_page_text` now returns real Tesseract confidence alongside the text; below `_OCR_LOW_CONFIDENCE_THRESHOLD=60` the content is still accepted (never silently dropped) but the page is named in a new `low_confidence_ocr_pages` list, persisted on the `lesson_jobs` checkpoint the same way `tables_detected`/`docling_pages` already are. 10 new/updated tests, 1245/9 skipped full regression, zero regressions. **Still owes a live re-verification** — see Run Log entry. |
 | 2 | The 20 eval-harness fixtures all resolved to 1 whole-document "chapter" (100-400 pages for the "long" ones, 2.5x-10x the normal ~40-page workload) — the real cause of the 6+ hour stalled run | 2026-08-21 — D130 fix build (2 parallel agents) | The 4 "long" fixtures now carry real PDF outline entries (`start_section()`) every 40 pages with distinct chapter titles — re-verified independently against the actual regenerated fixtures: 3/4/7/10 real chapters, every span now 40 pages, none of the old 40-400-page whole-document spans remain. Bonus fix in the same pass: a real non-determinism bug in `creation_date` that silently broke the generator's own "byte-identical two runs" promise. Also fixed the secondary opacity gap: both eval runners now write a real-time, truncated-per-run `progress.jsonl`. 5 new/updated tests, full regression **1250 passed, 9 skipped**, zero regressions. **Live-re-verified 2026-08-24**: all 4 long fixtures succeeded at ~$0.44/~6.5min each — matching normal lesson cost/time, not the multi-hour blowup the pre-fix behavior would have produced. |
-| 3 | Slide images generated ONE AT A TIME — 86-95% of every lesson's total time, 6/6 real lessons measured | 2026-08-24 — D132 fix build (implement + adversarial review workflow) | `image_generator_node` now runs up to 3 slide images concurrently (`asyncio.Semaphore` + `asyncio.gather`), mirroring the proven `_IMAGE_UPLOAD_CONCURRENCY` pattern. Deliberately did NOT add a Redis-Lua atomic cost-reservation system after directly verifying `accumulate_cost()` already uses atomic `INCRBYFLOAT` — no data-corruption risk, only an already-tolerated small bounded overshoot possibility (documented in `D132-FIX-TRACKER.md`, not hidden). **Adversarial review caught a real bug before shipping:** the Storage upload inside the new concurrent code was still a blocking sync call, silently serializing every slide's upload window and undermining the actual speedup despite every correctness invariant (order, isolation, checkpoint timing, cost accounting) holding. Fixed with `asyncio.to_thread`, RED-GREEN verified directly (reverted the fix, confirmed the new test fails at 1.018s vs. required <0.54s; restored it, confirmed green). 4 new tests, 24/24 passing in the node's own file, full regression **1254 passed, 9 skipped**, zero regressions. **Live-re-verified 2026-08-24 (M6)**: identical `short_1page` fixture, 395.0s -> 168.7s total (2.3x real speedup), $0.38. Mechanism confirmed via real Langfuse trace, not just the headline number — `image_generator_node`'s span went from ~= SUM of its images (serial signature) to ~40% of the sum, landing almost exactly on the predicted concurrency-of-3 prediction. |
+| 3 | Slide images generated ONE AT A TIME — 86-95% of every lesson's total time, 6/6 real lessons measured | 2026-08-24 — D132 fix build (implement + adversarial review workflow) | `image_generator_node` now runs up to 3 slide images concurrently (`asyncio.Semaphore` + `asyncio.gather`), mirroring the proven `_IMAGE_UPLOAD_CONCURRENCY` pattern. Deliberately did NOT add a Redis-Lua atomic cost-reservation system after directly verifying `accumulate_cost()` already uses atomic `INCRBYFLOAT` — no data-corruption risk, only an already-tolerated small bounded overshoot possibility (documented in `D132-FIX-TRACKER.md`, not hidden). **Adversarial review caught a real bug before shipping:** the Storage upload inside the new concurrent code was still a blocking sync call, silently serializing every slide's upload window and undermining the actual speedup despite every correctness invariant (order, isolation, checkpoint timing, cost accounting) holding. Fixed with `asyncio.to_thread`, RED-GREEN verified directly (reverted the fix, confirmed the new test fails at 1.018s vs. required <0.54s; restored it, confirmed green). 4 new tests, 24/24 passing in the node's own file, full regression **1254 passed, 9 skipped**, zero regressions. **Live-re-verified 2026-08-24 (M6)**: identical `short_1page` fixture, 395.0s -> 168.7s total (2.3x real speedup), $0.38. Mechanism confirmed via real Langfuse trace, not just the headline number — `image_generator_node`'s span went from ~= SUM of its images (serial signature) to ~40% of the sum, landing almost exactly on the predicted concurrency-of-3 prediction. **Cross-category confirmation 2026-08-25 (M7)**: one real lesson from each of the 4 remaining categories, all against real pre-D132 baselines — `long_400page` 1.83x, `dense_text_uniform` 2.22x, `table_heavy_wide` 2.13x, `image_heavy_large` 2.41x, all 4 succeeded, $1.55 total spend. Every single one's real `image_generator_node` span landed within 1-6% of the predicted `ceil(images/3) x avg` formula — the fix is confirmed across all 5 content categories, not one lucky case. |
 
 ---
 
 ## Run Log
+
+### 2026-08-25 — D132 M7: cross-category live verification (4 lessons, 1 per remaining category)
+**Method:** direct `run_eval()` calls for one real fixture from each of the 4 content categories
+not yet covered by M6 (`long`, `dense_text`, `table_heavy`, `image_heavy` — `short` already
+confirmed) — each one a fixture that already had a precise pre-D132 baseline on record from the
+completed 20-PDF run, giving 4 clean, real before/after comparisons in one pass rather than one.
+
+**Result: all 4 succeeded, real speedups 1.83x-2.41x, $1.55 total real spend.**
+
+| Category | Before | After | Speedup |
+|---|---|---|---|
+| long_400page | 384.7s / $0.440 | 210.2s / $0.436 | 1.83x |
+| dense_text_uniform | 410.3s / $0.437 | 184.6s / $0.339 | 2.22x |
+| table_heavy_wide | 370.0s / $0.442 | 174.0s / $0.392 | 2.13x |
+| image_heavy_large | 409.3s / $0.433 | 170.0s / $0.380 | 2.41x |
+
+**Mechanism re-confirmed per-category, not just the headline numbers:** pulled the real Langfuse
+trace for each of the 4 new lessons and compared `image_generator_node`'s real span duration
+against the predicted `ceil(n_images/3) x avg_image_time` formula:
+
+| Category | Real span | Predicted | Match |
+|---|---|---|---|
+| long_400page | 146.5s | 143.7s | 98% |
+| dense_text_uniform | 134.4s | 133.8s | 99.6% |
+| table_heavy_wide | 120.6s | 122.1s | 99% |
+| image_heavy_large | 123.8s | 131.1s | 94% |
+
+**Findings:**
+- D132's fix is now confirmed across all 5 of the harness's content categories (short, long,
+  dense_text, table_heavy, image_heavy), not a single case — combined with M6's `short_1page`
+  result, every category has real, measured, pre/post evidence.
+- The concurrency mechanism itself (not just an improved stopwatch reading) holds precisely in
+  every category tested — real span durations land within 1-6% of the theoretical
+  `ceil(images/3) x avg` prediction across genuinely different content shapes (long documents,
+  dense text, tables, image-heavy pages).
+- All 4 sequential, matching this project's established (and still-unresolved) posture on
+  cross-lesson concurrency (D129) — this run says nothing new about multiple lessons running at
+  once, only that this one fix behaves consistently lesson to lesson.
+
+---
 
 ### 2026-08-24 — D132 M6: live re-verification against real AI providers
 **Command:** direct `run_eval()` call for a single fixture (`short_1page`), reusing the eval

@@ -4,7 +4,8 @@
 images one at a time; measured across 6 real lessons, this is 86-95% of every lesson's total
 generation time (6/6 consistent, both synthetic and real content).
 
-**Started:** 2026-08-24 · **Status:** CLOSED — fixed, tested, verified. M6 (live re-verification) optional, not yet run.
+**Started:** 2026-08-24 · **Status:** CLOSED — fixed, tested, live-verified across 5 real lessons
+spanning every content category (short, long, dense_text, table_heavy, image_heavy).
 
 ---
 
@@ -144,3 +145,22 @@ scheduling, not the individual provider calls) — the entire improvement comes 
 D132 is now fully closed: designed, built, adversarially reviewed, one real bug caught and fixed
 pre-ship, and now confirmed under real conditions with a precise, explained mechanism — not just
 a passing test suite.
+
+### M7 (additional, requested) — 2026-08-25: cross-category confirmation
+M6 proved the fix on one fixture (`short_1page`). Ran one real lesson from each of the 4
+remaining content categories to confirm the fix holds everywhere, not just the one case already
+tested — each against a real pre-D132 baseline already on record from the 20-PDF run, no
+estimates:
+
+| Category | Before | After | Speedup | `image_generator_node` (after) | Predicted (`ceil(n/3) x avg`) | Match |
+|---|---|---|---|---|---|---|
+| long_400page | 384.7s / $0.440 | 210.2s / $0.436 | **1.83x** | 146.5s | 143.7s | 98% |
+| dense_text_uniform | 410.3s / $0.437 | 184.6s / $0.339 | **2.22x** | 134.4s | 133.8s | 99.6% |
+| table_heavy_wide | 370.0s / $0.442 | 174.0s / $0.392 | **2.13x** | 120.6s | 122.1s | 99% |
+| image_heavy_large | 409.3s / $0.433 | 170.0s / $0.380 | **2.41x** | 123.8s | 131.1s | 94% |
+
+All 4 succeeded. Total real spend this pass: **$1.55**. Combined with M6's `short_1page` result
+(2.3x), the fix now has real, measured confirmation across **all 5 of the harness's content
+categories** — not a single lucky case. In every one, the real `image_generator_node` span
+duration lands within a few percent of the predicted `ceil(images/3) x avg_image_time` formula,
+confirming the concurrency mechanism itself, not just an improved stopwatch reading.
