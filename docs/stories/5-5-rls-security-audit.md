@@ -1,6 +1,6 @@
 # Story 5-5 — RLS security audit on all Supabase tables
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -32,33 +32,33 @@ so that no student can ever read, write, or infer another student's rows, no tab
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Build/extend a real-project, minted-JWT RLS test harness** (AC: 2, 3, 6)
-  - [ ] 1.1 Note explicitly that `apps/api/tests/integration/supabase_shim.sql` (used to close D38) is NOT sufficient alone — its own header states it reproduces the *contract* of `auth.uid()`/`auth.users`, not Supabase's implementation; this audit's verification must run against the real live Supabase project, per D38's original open-item language ("RLS confirmed with real minted JWTs").
-  - [ ] 1.2 Write or extend a JWT-minting helper (HS256, `SUPABASE_JWT_SECRET`, matching `apps/api/app/dependencies.py`'s local-verify contract) producing 3 fixed principals per run: owner, stranger, and a no-JWT/anon-key request.
-  - [ ] 1.3 For each of the 15 live tables, run SELECT/INSERT/UPDATE/DELETE as each of the 3 principals; capture actual row counts/HTTP results as evidence (not "should return 0 rows" — the actual observed result).
-- [ ] **Task 2: `attention_events` consent-gate deep dive** (AC: 4)
-  - [ ] 2.1 Confirm SELECT/INSERT/UPDATE all require `u.attention_consent = true` (`20260611000000_initial_schema.sql:795-832`).
-  - [ ] 2.2 Confirm INSERT's dual-check (`20260702000000_dpdp_user_consents.sql:99-121`) additionally requires a `user_consents` row with `consent_type = 'attention_tracking'`.
-  - [ ] 2.3 Confirm DELETE (`:834-844`) has no consent check at all (ownership only) and UPDATE was never upgraded to the dual-check — decide and record whether this is intentional.
-  - [ ] 2.4 Run the minted-JWT harness against `attention_events` specifically with 4 consent states (no consent + no audit row / no consent + audit row / consent=true + no audit row / consent=true + audit row) to produce real evidence for the audit report.
-- [ ] **Task 3: `user_consents.consent_type` coverage audit** (AC: 5, 10)
-  - [ ] 3.1 Confirm the DB CHECK constraint (`attention_tracking`, `learner_dna`) matches the API's `Literal["attention_tracking", "learner_dna"]` (`apps/api/app/modules/assessment/schemas.py:191`) — they agree with each other.
-  - [ ] 3.2 Diff against Epic-5's DoD (`data_processing` at signup) and epic-5/CLAUDE.md's `'attention_capture'` naming — document the mismatch; recommend whether a new migration is needed before Epic-5's DoD line can ever be true, and confirm (by grep) that no signup-flow code currently writes any `data_processing` consent row today.
-  - [ ] 3.3 Open a `D-nn` DEFECT-REGISTER entry for this gap (owner + trigger), per binding rule 5 — do not leave it as a bare note in the audit doc.
-- [ ] **Task 4: Storage bucket access audit** (AC: 7)
-  - [ ] 4.1 Confirm all 4 buckets are `public = false` (`20260710000000_storage_buckets.sql`).
-  - [ ] 4.2 Confirm (repo-wide search — already zero hits) that no migration defines an explicit `storage.objects` RLS policy.
-  - [ ] 4.3 Verify against the live project that this yields zero anon/authenticated access by default, and confirm the media router's actual access path is exclusively service-role-issued signed URLs — cite the real file/function.
-- [ ] **Task 5: Privileged function grant audit** (AC: 8)
-  - [ ] 5.1 Re-verify `merge_lesson_job_node_output`'s and `increment_learner_dna_session_count`'s live `information_schema.routine_privileges` match their migrations' `REVOKE`/`GRANT` statements (migration intent can drift from a project's live state).
-  - [ ] 5.2 Confirm `handle_new_auth_user` and `sync_attention_consent_on_insert` are `RETURNS TRIGGER` and therefore not callable as direct RPCs — record as a positive finding.
-- [ ] **Task 6: Write and commit the audit report** (AC: 1, 9)
-  - [ ] 6.1 Create `docs/security/` (does not exist yet).
-  - [ ] 6.2 Write `docs/security/rls-audit.md`: per-table matrix (table, RLS on Y/N, policy commands, ownership predicate, verified-with-real-JWT Y/N), the Task 2-5 findings, and the reconciliation from AC1 (dropped `embeddings`, `lesson_packages` is a JSONB column not a table, `lesson_access`/`stripe_events`/`profiles.is_admin` not yet built).
-  - [ ] 6.3 Explicit "Not Yet Applicable" section naming the 3 not-yet-built objects and their trigger (Story 5-3 for `lesson_access`/`stripe_events`; a future admin-panel story for `profiles.is_admin`).
-- [ ] **Task 7: Register findings, don't just describe them** (AC: 10)
-  - [ ] 7.1 File `D-nn` entries in `docs/DEFECT-REGISTER.md` for each confirmed real gap (at minimum: `consent_type` value/name mismatch; `attention_events` DELETE/UPDATE consent-check asymmetry, if judged unintentional after 2.3's decision).
-  - [ ] 7.2 Cross-reference each `D-nn` from the audit report so the two documents don't drift (per binding rule 5's own lesson).
+- [x] **Task 1: Build/extend a real-project, minted-JWT RLS test harness** (AC: 2, 3, 6)
+  - [x] 1.1 Note explicitly that `apps/api/tests/integration/supabase_shim.sql` (used to close D38) is NOT sufficient alone — its own header states it reproduces the *contract* of `auth.uid()`/`auth.users`, not Supabase's implementation; this audit's verification must run against the real live Supabase project, per D38's original open-item language ("RLS confirmed with real minted JWTs").
+  - [x] 1.2 ~~Write or extend a JWT-minting helper (HS256, `SUPABASE_JWT_SECRET`...)~~ **Deviated, disclosed in `docs/security/rls-audit.md` §0:** self-minted HS256 is cryptographically impossible against this project (asymmetric ES256 signing keys, confirmed via its JWKS endpoint). Real sessions minted instead via the service-role Admin API's `generate_link` — same 3-principal outcome, different mechanism.
+  - [x] 1.3 For each of the 15 live tables, run SELECT as each of the 3 principals (done, all 15); full INSERT/UPDATE/DELETE **only on 2 tables + 2 targeted cross-account INSERT spot-checks** — see D128 (residual scope, not literally "each of the 15 tables" for write commands; corrected after adversarial review, was initially over-described as complete for all 15).
+- [x] **Task 2: `attention_events` consent-gate deep dive** (AC: 4)
+  - [x] 2.1 Confirm SELECT/INSERT/UPDATE all require `u.attention_consent = true` (`20260611000000_initial_schema.sql:795-832`).
+  - [x] 2.2 Confirm INSERT's dual-check (`20260702000000_dpdp_user_consents.sql:99-121`) additionally requires a `user_consents` row with `consent_type = 'attention_tracking'`.
+  - [x] 2.3 Confirm DELETE (`:834-844`) has no consent check at all (ownership only) and UPDATE was never upgraded to the dual-check — decide and record whether this is intentional.
+  - [x] 2.4 Run the harness against `attention_events` with the 4 consent states — **2 of 4 live-tested** (no-consent+no-row: reject; consent=true+row: accept); the other 2 (no-consent+row; consent=true+no-row) require mutating a real user's actual consent record or provisioning a new disposable account, deferred and registered as D128 rather than silently skipped.
+- [x] **Task 3: `user_consents.consent_type` coverage audit** (AC: 5, 10)
+  - [x] 3.1 Confirm the DB CHECK constraint (`attention_tracking`, `learner_dna`) matches the API's `Literal["attention_tracking", "learner_dna"]` (`apps/api/app/modules/assessment/schemas.py:191`) — they agree with each other.
+  - [x] 3.2 Diff against Epic-5's DoD (`data_processing` at signup) and epic-5's `'attention_capture'` naming (correction: `CLAUDE.md` does not carry this naming itself — checked directly, it only uses the prose phrase "Attention capture requires explicit consent," not the literal value) — document the mismatch; recommend whether a new migration is needed before Epic-5's DoD line can ever be true, and confirm (by grep) that no signup-flow code currently writes any `data_processing` consent row today.
+  - [x] 3.3 Open a `D-nn` DEFECT-REGISTER entry for this gap (owner + trigger), per binding rule 5 — do not leave it as a bare note in the audit doc.
+- [x] **Task 4: Storage bucket access audit** (AC: 7)
+  - [x] 4.1 Confirm all 4 buckets are `public = false` (`20260710000000_storage_buckets.sql`).
+  - [x] 4.2 Confirm (repo-wide search — already zero hits) that no migration defines an explicit `storage.objects` RLS policy.
+  - [x] 4.3 Verify against the live project that this yields zero anon/authenticated access by default, and confirm the media router's actual access path is exclusively service-role-issued signed URLs — cite the real file/function.
+- [x] **Task 5: Privileged function grant audit** (AC: 8)
+  - [x] 5.1 Re-verify `merge_lesson_job_node_output`'s and `increment_learner_dna_session_count`'s live `information_schema.routine_privileges` match their migrations' `REVOKE`/`GRANT` statements (migration intent can drift from a project's live state).
+  - [x] 5.2 Confirm `handle_new_auth_user` and `sync_attention_consent_on_insert` are `RETURNS TRIGGER` and therefore not callable as direct RPCs — record as a positive finding.
+- [x] **Task 6: Write and commit the audit report** (AC: 1, 9)
+  - [x] 6.1 Create `docs/security/` (does not exist yet).
+  - [x] 6.2 Write `docs/security/rls-audit.md`: per-table matrix (table, RLS on Y/N, policy commands, ownership predicate, verified-with-real-JWT Y/N), the Task 2-5 findings, and the reconciliation from AC1 (dropped `embeddings`, `lesson_packages` is a JSONB column not a table, `lesson_access`/`stripe_events`/`profiles.is_admin` not yet built).
+  - [x] 6.3 Explicit "Not Yet Applicable" section naming the 3 not-yet-built objects and their trigger (Story 5-3 for `lesson_access`/`stripe_events`; a future admin-panel story for `profiles.is_admin`).
+- [x] **Task 7: Register findings, don't just describe them** (AC: 10)
+  - [x] 7.1 File `D-nn` entries in `docs/DEFECT-REGISTER.md` for each confirmed real gap (at minimum: `consent_type` value/name mismatch; `attention_events` DELETE/UPDATE consent-check asymmetry, if judged unintentional after 2.3's decision).
+  - [x] 7.2 Cross-reference each `D-nn` from the audit report so the two documents don't drift (per binding rule 5's own lesson).
 
 ## Dev Notes
 
@@ -101,8 +101,33 @@ so that no student can ever read, write, or infer another student's rows, no tab
 
 ### Agent Model Used
 
+Claude Sonnet 5 (`claude-sonnet-5`).
+
 ### Debug Log References
+
+- Live JWKS check (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`) returning an ES256 key — confirmed the project uses asymmetric JWT Signing Keys, not legacy HS256, before any self-minted-JWT test was attempted against real data.
+- Admin API `generate_link` (magiclink) → direct `GET` of the returned `action_link` with `follow_redirects=False` → real `access_token`/`refresh_token` parsed from the `303` response's `Location` header fragment. Confirmed once against the owner account, then reused as a helper for both owner and stranger principals.
+- Cross-checked every "0 rows" stranger/anon SELECT result against an independent service-role ground-truth query before treating it as RLS-correct, to rule out "0 rows because RLS is silently over-broad and the row doesn't exist anyway" being mistaken for "0 rows because RLS correctly hides it."
+- All mutating tests run against tables with 0 pre-existing rows (`user_notification_preferences`, `attention_events`) using a self-cleaning insert → reject-attempt → owner-cleanup-delete → service-role-confirm-empty lifecycle; no real pre-existing data was touched.
+- **8-layer `/bmad-code-review` (2026-08-26) on this story's diff — 6 of 8 layers independently converged on the same finding: the first draft overstated live-testing scope** ("full CRUD verified for all 15 tables", "4 consent states tested") beyond what was actually run. Corrected in this pass, with additional live evidence gathered rather than just softened wording: a live consent-gate reject test (state A: `attention_consent=false`, no `user_consents` row, real account/session, real `403`), 2 live cross-account INSERT-rejection spot-checks on join-based tables (`quiz_attempts`, `chapters`, both real `403`, zero residue), and a live direct-GET (not just LIST) storage test (anon + real non-owner both `404 NoSuchKey`). Residual scope registered as D128. Also caught and fixed by review: a factual error (`books`' ownership column cited as `uploaded_by`, corrected to the real `user_id`) and an inaccurate citation (`CLAUDE.md` doesn't literally name `'attention_capture'`, only the epic doc does).
 
 ### Completion Notes List
 
+- AC1: 15-table inventory confirmed live (service-role survey) and reconciled against Epic-5's aspirational list — `embeddings` dropped, `lesson_packages` is a JSONB column not a table, `lesson_access`/`stripe_events` exist only on Story 5-3's unmerged branch, `profiles.is_admin` doesn't exist.
+- AC2/AC3: ownership predicate verified for all 15 tables via live **SELECT** across 3 real principals (owner/stranger/anon), every "0 rows" result cross-checked against independent service-role ground truth. Full accept+reject **CRUD** live-tested end-to-end on 2 tables covering the schema's 2 predicate shapes (`user_notification_preferences`, `attention_events`), plus 2 live cross-account INSERT-rejection spot-checks on join-based tables (`quiz_attempts`, `chapters`). The other 11 tables' non-SELECT commands rest on migration-text confirmation only — registered as D128, not silently claimed as fully live-tested. No RLS gap found in any command actually exercised.
+- AC4: `attention_events` consent-gate verified live for 2 of 4 required states — accept when fully satisfied (real INSERT with real consent+audit-row), reject when unconsented with no audit row (real `403` from a different real account) — plus real stranger-rejected SELECT/UPDATE/DELETE and real owner cleanup. The remaining 2 states are registered as part of D128 (would require mutating a real consent record or a new disposable account). DELETE/UPDATE consent-check asymmetry confirmed from migration text and judged intentional (D127) — an erasure right should not itself require active consent.
+- AC5: `consent_type` CHECK constraint diffed against Epic-5's DoD — the `'data_processing'` value is entirely unimplemented (confirmed by repo-wide grep, zero writers), and `'attention_capture'` vs `'attention_tracking'` is pure doc naming drift. Registered as D126.
+- AC6: anon got 0 rows on every one of the 15 tables, live — no table reachable unauthenticated.
+- AC7: storage buckets — live-confirmed anon AND a real authenticated non-privileged user both get `200 []` on bucket listing and object listing, AND `404 NoSuchKey` on a direct GET of a real, known object path (existence itself not disclosed); only service-role can list/fetch. Signed-URL-only access path confirmed.
+- AC8: both privileged RPC functions live-tested directly (not just migration text) — anon and a real authenticated user both get `42501 permission denied` calling either one. Both trigger functions confirmed `RETURNS TRIGGER` (not directly callable).
+- AC9: `docs/security/rls-audit.md` written and committed with all required sections including "Not Yet Applicable."
+- AC10: D126, D127, and D128 filed in `docs/DEFECT-REGISTER.md`, cross-referenced from the audit report.
+- **Deviation from Task 1.2's literal wording:** self-minted HS256 JWTs are cryptographically impossible against this project (it uses asymmetric ES256 signing keys held by Supabase). Real sessions were obtained instead via the service-role Admin API's `generate_link` + redirect-token-exchange for the owner/stranger principals — functionally equivalent (3 fixed real principals, live project, no shim), documented in the audit report §0.
+
 ### File List
+
+- `docs/security/rls-audit.md` (new)
+- `docs/DEFECT-REGISTER.md` (D126, D127, D128 added; header date updated)
+- `docs/stories/5-5-rls-security-audit.md` (this file — status, tasks, Dev Agent Record)
+- `docs/dev1-tracker.md` (S4-5 checkbox/dashboard/header updated per the Sprint Tracker Auto-Update Rule; S4-3/S4-4 rows also corrected to `done`, brought forward from their own branches' tracker state)
+- `docs/sprint4-plan.md` (new on this branch — brought forward from `sprint4/s4-4-rate-limit-per-route`'s copy, updated for 5-5's completion)
