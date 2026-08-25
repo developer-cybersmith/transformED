@@ -2,6 +2,13 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of 5-4-rate-limiting-per-route (2026-08-25)
+
+- **`test_rate_limit_redis_storage.py`'s cross-instance test depends on an internal (undocumented-as-a-contract) call path of the `limits` library** — `RedisStorage.__init__` calling `self.dependency.from_url(uri, **options)`, which the test monkeypatches. A future `limits` version bump changing that internal call shape could silently stop the test from proving what it claims, without ever failing. No cleaner public seam exists in `limits` today to avoid this coupling. [`apps/api/tests/unit/test_rate_limit_redis_storage.py`]
+- **`test_rate_limit_key.py`'s RS256 path is not independently tested** — `_get_user_key`'s `else` branch handles both ES256 and RS256 via the same JWKS code path (`algorithms=["ES256", "RS256"]`), but only an ES256-signed token is used to exercise it. Pre-existing gap, not introduced or claimed as fixed by Story 5-4 (which explicitly locks down AC1/AC2's existing behavior without adding new tests to that file). [`apps/api/app/core/rate_limit.py::_get_user_key`, `apps/api/tests/unit/test_rate_limit_key.py`]
+- **No live-Redis integration test backs the new fakeredis-based cross-instance-sharing test** — the whole AC3 proof rests on `fakeredis[lua]`'s Lua/EVALSHA emulation matching real Redis's atomic-increment semantics exactly; no corresponding `tests/integration/` test against a real/dockerized Redis exists to disconfirm that assumption. A separately-scoped addition (needs a Redis service in CI), not blocking this story. [`apps/api/tests/unit/test_rate_limit_redis_storage.py`]
+- **`docs/DEFECT-REGISTER.md` has two unrelated entries both numbered D67`** — line 286 (CLOSED, Sarvam TTS voice-ID default) and line 333 (the media signed-url rate-limit gap Story 5-4 cites). A real, pre-existing ID collision in the register itself; not created by this story and not its job to renumber — matches the same collision pattern the register already documents for D57/D61/D62/D74-76/D87.
+
 ## Deferred from: code review of story 2-46 (2026-08-13, attention timeline chart)
 
 - **`AttentionChart.tsx` intervention markers have no test asserting exact `minute` position or `<title>` tooltip text content** — only presence-by-`data-testid`-per-type is tested. `x={event.minute}` is a direct, un-transformed pass-through, so risk is low, but the AC's "render at the right position" and "title naming the type" sub-clauses have no dedicated assertion. [`apps/web/src/components/reports/AttentionChart.tsx`]
