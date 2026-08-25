@@ -24,6 +24,8 @@ from limits import parse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from app.core.rate_limit import _get_user_key
+
 pytestmark = pytest.mark.unit
 
 
@@ -65,6 +67,32 @@ def test_two_limiter_instances_share_one_redis_backed_ceiling(shared_fake_redis:
         f"ceiling shared across both simulated processes), got {allowed} — "
         f"10 would mean each 'process' kept its own independent counter, "
         f"which is D49's exact bug reproduced rather than fixed."
+    )
+
+
+def test_two_limiters_using_the_real_production_key_func_share_one_ceiling(
+    shared_fake_redis: None,
+) -> None:
+    """Review Finding (Story 5-4, Test Coverage): the test above proves generic
+    `limits`/`slowapi` storage sharing via `get_remote_address`, not the actual
+    production `app.core.rate_limit.limiter` object (which uses `_get_user_key`).
+    Repeats the same proof using the real key function, so a regression isolated
+    to how the production object is actually built would be caught here too."""
+    limiter_a = Limiter(key_func=_get_user_key, storage_uri="redis://shared-fake-instance:6379/0")
+    limiter_b = Limiter(key_func=_get_user_key, storage_uri="redis://shared-fake-instance:6379/0")
+
+    limit_item = parse("5/minute")
+    key = "user:cross-process-sharing-test-real-keyfunc"
+
+    allowed = sum(
+        1
+        for i in range(10)
+        if (limiter_a if i % 2 == 0 else limiter_b).limiter.hit(limit_item, key)
+    )
+
+    assert allowed == 5, (
+        f"expected exactly 5 hits allowed using the real production key_func "
+        f"(_get_user_key), got {allowed}"
     )
 
 

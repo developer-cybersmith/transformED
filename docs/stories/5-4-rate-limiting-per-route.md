@@ -1,6 +1,6 @@
 # Story 5-4 — Rate limiting (slowapi middleware) — per-route limits
 
-Status: review
+Status: done
 
 ## Story
 
@@ -27,19 +27,22 @@ regression here as a P0 defect, not a fresh feature):**
 2. The limiter key for any request carrying a valid Supabase-issued bearer token (HS256 or
    ES256/RS256) is `f"user:{sub}"` — never the caller's IP — so two different authenticated users
    never share a bucket and one authenticated user's burst never throttles another's. Covered
-   today by `tests/unit/test_rate_limit_key.py` (8 tests, including the D52 and D64 regression
+   today by `tests/unit/test_rate_limit_key.py` (9 tests, including the D52 and D64 regression
    tests). Only a request with **no** usable identity (missing/malformed/forged token) falls back
    to IP-keying, which is the documented, intentional degradation for anonymous traffic — not a
    gap this story closes.
 
 **New work this story actually delivers:**
 
-3. `RATE_LIMIT_STORAGE_URL` is set to a shared Redis-backed store in every environment that runs
-   more than one API process, so the "5/minute" (and the generate endpoint's
-   "3/minute;20/hour") ceilings are enforced **per deployment**, not per process. Verified by:
-   with two `Limiter` instances constructed against the same `storage_uri` (simulating two API
-   processes), a burst split across both instances is throttled at the combined configured limit,
-   not at the limit multiplied by instance count.
+3. **[Review Finding — reworded 2026-08-25, was overclaiming delivered state]** The rate limiter's
+   storage backend correctly enforces one combined ceiling per shared `storage_uri`, not one per
+   `Limiter` instance — verified by constructing two `Limiter` instances against the same
+   Redis-backed `storage_uri` (simulating two API processes) and confirming a burst split across
+   both is throttled at the combined configured limit, not the limit multiplied by instance count.
+   **This proves the mechanism; it does not by itself mean `RATE_LIMIT_STORAGE_URL` is actually
+   pointed at a real shared Redis instance in any deployed environment today** — that rollout is
+   explicitly still open (Task 2, blocked on ADR-001 §4's Redis-location decision) and is not part
+   of what this AC claims.
 4. App startup (`lifespan()` in `apps/api/app/main.py`) raises and refuses to start if
    `RATE_LIMIT_STORAGE_URL` resolves to the `memory://` default while `settings.debug` is
    `False` — converting D49's silent per-process capacity multiplication into a loud, explicit
@@ -64,9 +67,11 @@ regression here as a P0 defect, not a fresh feature):**
    its enforcement scope too, for free. Range for the upload route: 0 requests/minute (idle) up
    to the `5/minute` cap per user, unbounded in *aggregate* across users today (no per-deployment
    or per-instance total-throughput ceiling exists — only a per-user one). No real concurrent
-   multi-user load has ever been measured against this endpoint — **D129** (register) states
-   plainly that every live run to date has been one user at a time, and Sprint 4's S4-1 load test
-   (50 concurrent generations) has not yet run (still `[ ]` in `docs/dev1-tracker.md`). This
+   multi-user load has ever been measured against this endpoint — confirmed by `docs/dev1-tracker.md`'s
+   S4-1 (50 concurrent generations) still being unchecked `[ ]`. **[Review Finding — corrected
+   2026-08-25]** An earlier draft of this section cited a "D129" register entry for this claim;
+   no such row exists in `docs/DEFECT-REGISTER.md` (confirmed by direct search) — removed rather
+   than left as a false citation. The underlying claim above stands on the tracker line alone. This
    story's Scale & Load answers are therefore analytic (read from the code and the `fly.toml`
    deploy config), not drawn from a load test — S4-1, when it runs, is the first real measurement
    and may reveal this story's Redis-storage fix needs its own tuning (e.g. `limits` library
@@ -211,23 +216,24 @@ regression here as a P0 defect, not a fresh feature):**
 
 **6-layer `/bmad-code-review` (+2 extra layers per CLAUDE.md's 6-layer gate), 2026-08-25.** 8 parallel subagents (Blind Hunter, Edge Case Hunter, Acceptance Auditor, Scale & Load Hunter, Story Quality, Test Coverage, AC Completeness, Process Integrity) reviewed branch `sprint4/s4-4-rate-limit-per-route` vs `main`. Findings normalized, deduplicated (several layers independently converged on the same issues — noted per finding), and classified below.
 
-**[Review][Decision] — unresolved, need your call:**
+**[Review][Decision] — resolved 2026-08-25:**
 
-- [ ] [Review][Decision] Hard-fail startup guard has no rollback/warn-only mode, and no deployed environment currently has `RATE_LIMIT_STORAGE_URL` pointed at real Redis — merging as-is means the next non-debug deploy crashes at boot. Should `assert_rate_limit_storage_configured` hard-fail (current behavior, arguably the correct fail-safe posture) or WARN loudly instead until ops sets the env var, to avoid a self-inflicted outage on merge? [`apps/api/app/core/rate_limit.py:93-122`] (source: blind)
-- [ ] [Review][Decision] Scale & Load Q1 and the References section cite a **phantom `docs/DEFECT-REGISTER.md#D129`** — no such row exists (register jumps D125→D134); the cited line 191 is unrelated content. The underlying claim (no concurrent multi-user load has ever run) is true and matches `dev1-tracker.md`'s still-`[ ]` S4-1 — but sibling stories `5-1`/`5-2` and `sprint4-plan.md` repeat the same phantom citation. Fix just this story's wording (remove the false citation), or also create a real D129 register row now (fixes the citation at its root for all 4 files, but is broader than this story's stated scope)? [`docs/stories/5-4-rate-limiting-per-route.md` Scale & Load §1, References] (source: auditor+story-quality+process-integrity, independently confirmed 3×)
+- [x] [Review][Decision] Hard-fail startup guard has no rollback/warn-only mode, and no deployed environment currently has `RATE_LIMIT_STORAGE_URL` pointed at real Redis. **Resolved: keep hard-fail.** A silently-wrong rate limit multiplying by replica count is worse than a loud, obvious boot failure that forces the env var to actually get set before the next real deploy — no code change. [`apps/api/app/core/rate_limit.py:93-122`] (source: blind)
+- [x] [Review][Decision] Scale & Load Q1 and References cite a phantom `docs/DEFECT-REGISTER.md#D129`. **Resolved: fix this story's wording only** — do not create a new register row (that's broader than this story's scope and affects 3 sibling files). See patch item below. (source: auditor+story-quality+process-integrity, independently confirmed 3×)
 
-**[Review][Patch] — unambiguous fixes:**
+**[Review][Patch] — applied 2026-08-25:**
 
-- [ ] [Review][Patch] Guard's `storage_uri == "memory://"` exact-string check misses non-canonical variants that still resolve to real, unshared `MemoryStorage`: empty string `""`, case (`"MEMORY://"`), whitespace (`" memory://"`, `"memory:// "`), and suffix (`"memory://foo"`) — **empirically confirmed** (Scale & Load Hunter constructed real `Limiter` instances with each and verified they all build `MemoryStorage` while the guard doesn't raise for any of them). This is D49's exact failure mode surviving through an untested input class — a **scale finding with `observed_behaviour = silent-wrong-result`, which per the Scale Contract's own rule can never be dismissed.** [`apps/api/app/core/rate_limit.py:110`] (source: edge+blind+scale[empirical]+test-coverage+process-integrity — 5 independent layers)
-- [ ] [Review][Patch] No test guards that `assert_rate_limit_storage_configured` is actually **wired into** `main.py`'s `lifespan()` — deleting the call site entirely reddens zero tests (verified: Test Coverage layer literally deleted it and re-ran the full rate-limit suite green). `assert_required_buckets`, the pattern this claims to mirror, has exactly this guard (`test_bucket_manifest.py::test_startup_paths_call_shared_assertion`, a source-scan) — not copied here. [`apps/api/app/main.py:70`] (source: blind+test-coverage+process-integrity — 3 independent layers)
-- [ ] [Review][Patch] Guard re-reads `RATE_LIMIT_STORAGE_URL` from `os.environ` independently of the real `limiter` object's own construction (`rate_limit.py:87` and `:110` are two separate reads of the same env var) — a future refactor to one without the other silently reopens D49 with no test to catch it. [`apps/api/app/core/rate_limit.py:87,110`] (source: blind+edge+test-coverage)
-- [ ] [Review][Patch] Mutation check only exercised one direction (guard condition → `if False`, confirmed 3/6 tests redden) — the reciprocal (`if True`, proving the 3 "does not raise" tests are actually discriminating rather than vacuously true) was not performed. [`apps/api/tests/unit/test_rate_limit_storage_guard.py`] (source: blind+test-coverage)
-- [ ] [Review][Patch] AC3's wording overclaims delivered state: "`RATE_LIMIT_STORAGE_URL` **is set** to a shared Redis-backed store... in every environment" (present tense, stated as accomplished) — but Task 2/Completion Notes correctly admit the actual env-var rollout is NOT done, only the underlying capability + unit test. Reword AC3 to describe only what was verified. [Story `## Acceptance Criteria` #3]
-- [ ] [Review][Patch] D67 citation's line number is wrong: story cites "line 341", the real entry is at line 333. Also unflagged: the register has an unrelated, already-CLOSED D67 at line 286 (Sarvam TTS voice-ID) — a genuine ID collision this story's citation doesn't surface. [Story Dev Notes/References, `docs/DEFECT-REGISTER.md:333`]
-- [ ] [Review][Patch] AC2's own text says `test_rate_limit_key.py` has "8 tests" — actual count is 9 test instances (6 plain + 1 parametrized ×3 cases). Inherited from the register's D52 row, repeated here without independent verification.
-- [ ] [Review][Patch] AC1's own text requires `Retry-After` to be "present **and parseable as an integer number of seconds**" — `test_upload_lesson_429_rate_limit` (pre-existing, not modified by this story) only asserts header presence, never that its value is `int()`-parseable. Cheap to strengthen given the AC's own literal wording names this.
-- [ ] [Review][Patch] `test_two_limiter_instances_share_one_redis_backed_ceiling` (AC3) constructs a generic `Limiter(key_func=get_remote_address, ...)`, not the actual production `app.core.rate_limit.limiter` singleton (which uses `_get_user_key`) — a regression isolated to how the real object is built wouldn't be caught by this test.
-- [ ] [Review][Patch] `docs/DEFECT-REGISTER.md`'s D49 row says "CLOSED" — accurate for the code-level guard, but the disposition text should be double-checked for clarity once the patches above land, so a reader skimming just the strikethrough+"CLOSED" doesn't conclude the per-replica multiplication bug is fully gone in production (it isn't, until ops sets the env var).
+- [x] [Review][Patch] Guard's `storage_uri == "memory://"` exact-string check misses non-canonical variants that still resolve to real, unshared `MemoryStorage`: empty string `""`, case (`"MEMORY://"`), whitespace (`" memory://"`, `"memory:// "`), and suffix (`"memory://foo"`) — **empirically confirmed** (Scale & Load Hunter constructed real `Limiter` instances with each and verified they all build `MemoryStorage` while the guard doesn't raise for any of them). This is D49's exact failure mode surviving through an untested input class — a **scale finding with `observed_behaviour = silent-wrong-result`, which per the Scale Contract's own rule can never be dismissed.** **Fixed:** guard now resolves via `limits.storage.storage_from_string` (the same factory `Limiter` uses) and checks `isinstance(resolved, MemoryStorage)` — closes every variant at once. 5 new parametrized tests. [`apps/api/app/core/rate_limit.py:126-143`] (source: edge+blind+scale[empirical]+test-coverage+process-integrity — 5 independent layers)
+- [x] [Review][Patch] No test guards that `assert_rate_limit_storage_configured` is actually **wired into** `main.py`'s `lifespan()` — deleting the call site entirely reddens zero tests (verified: Test Coverage layer literally deleted it and re-ran the full rate-limit suite green). `assert_required_buckets`, the pattern this claims to mirror, has exactly this guard (`test_bucket_manifest.py::test_startup_paths_call_shared_assertion`, a source-scan) — not copied here. **Fixed:** added `test_lifespan_actually_calls_the_guard`, mirroring that exact pattern; mutation-verified (removed the call site, confirmed only this new test reddens). [`apps/api/app/main.py:70`] (source: blind+test-coverage+process-integrity — 3 independent layers)
+- [x] [Review][Patch] Guard re-reads `RATE_LIMIT_STORAGE_URL` from `os.environ` independently of the real `limiter` object's own construction (`rate_limit.py:87` and `:110` are two separate reads of the same env var) — a future refactor to one without the other silently reopens D49 with no test to catch it. **Fixed:** both now read one single module-level constant `_RATE_LIMIT_STORAGE_URI`, resolved once at import — true single source of truth. Verified directly by `test_guard_default_is_the_same_value_limiter_was_built_with`. [`apps/api/app/core/rate_limit.py:91,127`] (source: blind+edge+test-coverage)
+- [x] [Review][Patch] Mutation check only exercised one direction (guard condition → `if False`, confirmed 3/6 tests redden) — the reciprocal (`if True`, proving the 3 "does not raise" tests are actually discriminating rather than vacuously true) was not performed. **Done:** reciprocal mutation performed — forcing an unconditional raise reddens `test_does_not_raise_when_storage_url_is_a_real_redis_uri` (the debug-mode case is unaffected by this specific mutation since it returns earlier via the separate `if debug: return` guard clause, which is its own trivially-correct short-circuit). [`apps/api/tests/unit/test_rate_limit_storage_guard.py`] (source: blind+test-coverage)
+- [x] [Review][Patch] AC3's wording overclaims delivered state: "`RATE_LIMIT_STORAGE_URL` **is set** to a shared Redis-backed store... in every environment" (present tense, stated as accomplished) — but Task 2/Completion Notes correctly admit the actual env-var rollout is NOT done, only the underlying capability + unit test. **Reworded** to describe only what was verified, with the still-open rollout stated explicitly in the same AC rather than only in Task 2. [Story `## Acceptance Criteria` #3]
+- [x] [Review][Patch] D67 citation's line number is wrong: story cites "line 341", the real entry is at line 333. Also unflagged: the register has an unrelated, already-CLOSED D67 at line 286 (Sarvam TTS voice-ID) — a genuine ID collision this story's citation doesn't surface. **Fixed** line number; collision noted inline and in `deferred-work.md`. [Story Dev Notes/References, `docs/DEFECT-REGISTER.md:333`]
+- [x] [Review][Patch] AC2's own text says `test_rate_limit_key.py` has "8 tests" — actual count is 9 test instances (6 plain + 1 parametrized ×3 cases). **Fixed** in both places this story repeats the count.
+- [x] [Review][Patch] AC1's own text requires `Retry-After` to be "present **and parseable as an integer number of seconds**" — `test_upload_lesson_429_rate_limit` (pre-existing, not modified by this story) only asserted header presence, never that its value is `int()`-parseable. **Fixed:** strengthened with `int(resp.headers["Retry-After"]) >= 0`.
+- [x] [Review][Patch] `test_two_limiter_instances_share_one_redis_backed_ceiling` (AC3) constructs a generic `Limiter(key_func=get_remote_address, ...)`, not the actual production `app.core.rate_limit.limiter` singleton (which uses `_get_user_key`) — a regression isolated to how the real object is built wouldn't be caught by this test. **Fixed:** added `test_two_limiters_using_the_real_production_key_func_share_one_ceiling`, repeating the same proof with `_get_user_key`.
+- [x] [Review][Patch] `docs/DEFECT-REGISTER.md`'s D49 row said "CLOSED" — accurate for the code-level guard, but the disposition text needed to be unambiguous that the per-replica multiplication is **not yet fixed in any live environment**, only guarded against at boot. **Tightened** the disposition text to state this explicitly, and to record the same-day hardening (non-canonical-variant fix) the review itself found.
+- [ ] [Review][Patch] Remove/soften the phantom `D129` citation in this story's Scale & Load §1 and References — per the resolved decision above, fix wording here only, no new register row.
 
 **[Review][Defer] — pre-existing, real, not this branch's job:**
 
@@ -249,7 +255,7 @@ regression here as a P0 defect, not a fresh feature):**
   named in this task's brief (**D52**) is likewise **already fixed and guarded** — closed
   2026-08-04, with a second independent regression (renumbered **D64**/D75 across several merges,
   same underlying bug class: an ES256-signed token hitting a hardcoded `algorithms=["HS256"]`
-  decode) closed 2026-08-05 — both covered by `tests/unit/test_rate_limit_key.py`'s 8 tests. Do
+  decode) closed 2026-08-05 — both covered by `tests/unit/test_rate_limit_key.py`'s 9 tests. Do
   not re-implement either; this story's real job is Task 2/3 (D49) plus tightening the tracker.
 - **D49 is the one genuinely open, unguarded gap**, and it is not hypothetical: the production
   deploy target is Fly.io (`fly.toml`), whose `api` process group is explicitly documented (ADR-001
@@ -339,10 +345,15 @@ regression here as a P0 defect, not a fresh feature):**
 - [Source: docs/DEFECT-REGISTER.md#D49 (line 218)] — open, the gap this story closes.
 - [Source: docs/DEFECT-REGISTER.md#D45 (line 214)] — the separate, out-of-scope idempotency race
   named in Scale & Load Q6.
-- [Source: docs/DEFECT-REGISTER.md#D67 (line 341)] — the adjacent, unaddressed `media` router
-  rate-limit gap flagged in Task 5.
-- [Source: docs/DEFECT-REGISTER.md#D129 (line 191)] — no real concurrent multi-user load has been
-  run; cited in Scale & Load Q1.
+- [Source: docs/DEFECT-REGISTER.md#D67 (line 333)] — the adjacent, unaddressed `media` router
+  rate-limit gap flagged in Task 5. **[Review Finding — corrected 2026-08-25]** Line number fixed
+  (was miscited as 341). Also note: the register has a second, unrelated, already-CLOSED entry
+  also numbered D67 at line 286 (Sarvam TTS voice-ID default) — a real, pre-existing ID collision,
+  not introduced by this story and not this branch's job to renumber (see
+  `docs/stories/deferred-work.md`).
+- **[Review Finding — removed 2026-08-25]** A prior draft cited a "D129" register entry here; no
+  such row exists in `docs/DEFECT-REGISTER.md`. The underlying Scale & Load Q1 claim is unaffected
+  and now cites only `docs/dev1-tracker.md`'s S4-1 line directly.
 - [Source: docs/SCALE-CONTRACT.md] — the six questions answered above.
 - [Source: fly.toml] — real current deploy topology (Fly, not Railway); `min_machines_running = 1`,
   `auto_start_machines = true`, no stated max.
@@ -405,18 +416,40 @@ Claude Sonnet 5 (claude-sonnet-5), 2026-08-25.
   dev1-tracker.md` S4-4 flipped and dashboard updated.
 - D67 (media signed-url endpoint has no rate limit) and the un-re-derived `5/minute` figure are
   both explicitly flagged, not fixed, per Task 5 — recommend the team decide on both separately.
-- No PR opened in this session (no `gh` action taken); branch `sprint4/s4-4-rate-limit-per-route`
-  has the story-only commit followed by this implementation. Not yet run through the 6-agent
-  `/bmad-code-review` gate CLAUDE.md requires before merge.
+
+**Post-review (2026-08-25):** 8-layer `/bmad-code-review` run (the skill's 4 built-in layers +
+4 additional layers CLAUDE.md's gate requires). 2 decisions resolved (keep hard-fail; fix the
+phantom D129 citation's wording only, no new register row), 10 patches applied, 4 items deferred
+to `docs/stories/deferred-work.md`, 6 dismissed (2 of those were actively refuted by independent
+re-execution — the "full suite passed" and mutation-check claims both checked out exactly as
+stated when the Test Coverage and Acceptance Auditor layers re-ran them themselves). The headline
+patch: the original guard's exact-string `"memory://"` check missed non-canonical variants
+(empty string, case, whitespace, a URI suffix) that all still resolved to real `MemoryStorage` —
+empirically proven by the Scale & Load Hunter constructing real `Limiter` instances with each.
+Replaced string-matching with `limits.storage_from_string` + `isinstance(..., MemoryStorage)`,
+the same factory `Limiter` itself uses. Both mutation-check directions now performed. Full unit
+suite after all patches: 1248 passed (was 1241, +7 new tests) / 6 skipped / same 3 pre-existing
+unrelated failures (D134) — zero regressions. Ruff and mypy clean on every touched file.
+No PR opened in this session (no `gh` action taken); branch `sprint4/s4-4-rate-limit-per-route`
+has 6 commits (story-only → implementation → style fixup → review findings → patch fixes) and is
+not yet pushed to remote.
 
 ### File List
 
-- `apps/api/app/core/rate_limit.py` — added `assert_rate_limit_storage_configured()`
+- `apps/api/app/core/rate_limit.py` — `assert_rate_limit_storage_configured()`; post-review:
+  resolves via `limits.storage_from_string` + `isinstance(..., MemoryStorage)` instead of string
+  match; `_RATE_LIMIT_STORAGE_URI` module-level constant as single source of truth
 - `apps/api/app/main.py` — imports and calls the guard first in `lifespan()`
-- `apps/api/tests/unit/test_rate_limit_storage_guard.py` — new, 6 tests
-- `apps/api/tests/unit/test_rate_limit_redis_storage.py` — new, 2 tests
+- `apps/api/tests/unit/test_rate_limit_storage_guard.py` — 12 tests (6 original + 5 non-canonical
+  variant cases + 1 lifespan-wiring source-scan; 2 of the original 6 rewritten post-review)
+- `apps/api/tests/unit/test_rate_limit_redis_storage.py` — 3 tests (2 original + 1 using the real
+  production `_get_user_key`)
+- `apps/api/tests/unit/test_content_router.py` — strengthened `test_upload_lesson_429_rate_limit`
+  with an `int()`-parseability assertion on `Retry-After` (post-review)
 - `apps/api/pyproject.toml` — `fakeredis>=2.23.0` → `fakeredis[lua]>=2.23.0`
 - `apps/api/uv.lock` — regenerated (`uv lock`) for the `lupa` addition
-- `docs/DEFECT-REGISTER.md` — D49 row closed
+- `docs/DEFECT-REGISTER.md` — D49 row closed, disposition tightened post-review
 - `docs/dev1-tracker.md` — S4-4 flipped, dashboard + header updated
-- `docs/stories/5-4-rate-limiting-per-route.md` — this file (Tasks/Subtasks + Dev Agent Record)
+- `docs/stories/5-4-rate-limiting-per-route.md` — this file (Tasks/Subtasks, Review Findings,
+  Dev Agent Record, AC/Scale-&-Load wording fixes)
+- `docs/stories/deferred-work.md` — 4 items deferred from this story's code review

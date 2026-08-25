@@ -809,6 +809,12 @@ def test_upload_lesson_429_rate_limit() -> None:
 
     assert resp.status_code == 429
     assert "Retry-After" in resp.headers
+    # Review Finding (Story 5-4, AC Completeness): AC1's own text requires the
+    # header to be "present AND parseable as an integer number of seconds" --
+    # presence alone doesn't prove that. A regression that made Retry-After a
+    # non-numeric or malformed string would not have been caught before this.
+    retry_after_seconds = int(resp.headers["Retry-After"])
+    assert retry_after_seconds >= 0
 
 
 # ── Story S2-LM3: tier param ────────────────────────────────────────────────
