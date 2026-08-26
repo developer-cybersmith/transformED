@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-08-14
+**Last updated:** 2026-08-25
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). **2026-07-23 gap-fix (Story 1-6):** `GET /api/content/lessons/{id}` never actually returned `content` despite the frozen contract promising it since Week 1 — discovered while building Story 3-6 (media signed-URL layer); fixed in Story 1-6.
 **Sprint 2 status:** 21/21 COMPLETE ✅ (2026-07-17, still on `sprint2/phase-b-generation-nodes` — not yet merged to `main`). All 15 pipeline nodes real; `package_builder` (S2-11) + `lesson_ready` WebSocket push (S2-12) landed 2026-07-16; cost ceiling enforcement (S2-13) and the 5-PDF eval harness (S2-14, live run not yet triggered) landed 2026-07-17; Learner Mode tier-aware generation (S2-LM1–LM5) landed 2026-07-17 — `POST /lessons` accepts a `tier` param that drives per-segment slide budgets and outline content-depth framing. Frontend/assessment/tutor teams can migrate off `apps/web/src/mocks/data/lessonPackage.ts` once this branch merges. **2026-07-27 gap-fix (Story 2-25):** a full-repo 360° audit (`docs/reports/sprint2-360-audit-2026-07-27.md`) found the admin panel was 100% unimplemented with no admin/role concept anywhere in the codebase (not the "Sprint 3" work it was tracked as — genuinely absent), the media signed-URL allowlist had 3 structurally-broken bucket entries (`source-pdfs`/`avatar-clips`/`lesson-slides` — each unreachable even for the legitimate owner, zero frontend callers), a stale pipeline docstring, and shared-contract drift (`lesson.ts`/`lesson_package.schema.json` nullability + `tier` required/optional mismatch vs. Pydantic). All 4 fixed in Story 2-25, plus a 5-agent code-review round (fixed a real admin-email case-sensitivity lockout bug it surfaced). The other 21 audit findings belong to Dev2/Dev3/Dev4 and are tracked separately for the cross-team wiring handoff. **2026-07-28 gap-fix (Story 2-28):** Dev 2 reported 48 quiz questions for a segment that should have 3, from a live Refresher-tier run. Root cause was NOT ARQ retries — 18 nodes returned `{**state, ...}`, and since six Phase-1 channels are `operator.add` concatenating reducers, the four nodes running after the fan-in each doubled all six: 2⁴ = 16×, in a single clean run. Fixed at all 18 sites and guarded by an AST scan + e2e assertions (the assertion failed `48 <= 3` before the fix, passes after). **Two consequences worth flagging:** (1) real TTS spend was ~4× inflated, so every existing $3.00/lesson calibration and Langfuse baseline must be re-measured; (2) found while fixing it — `_FAN_OUT_STATE_KEYS` omitted `"tier"`, and because a `Send()` payload *replaces* state, all six Phase-1 nodes read the T2 default regardless of the lesson's real tier, silently disabling the S2-LM3/LM4/LM5 bands for every T1 and T3 lesson. Both now covered by tests that fail on the mutation. Same `{**state, ...}` pattern exists in Dev 4's `modules/tutor/state_machine/graph.py` — handed off, not fixed across the ownership boundary. **2026-07-28 gap-fix (Story 2-31):** closes Dev 2's two remaining reported items plus two findings from the Story 2-28 review. `_fallback_narration()` was returning `{"script": ""}`, discarding narration text sitting in `state["narration_scripts"]` — only the *audio* is missing on the TTS degrade path, not the script — so packages built via that path shipped empty narration. `_index_by_segment_id` used `item[value_key]` and `KeyError`-ed the whole node on one malformed entry, contradicting its own docstring. Cached Phase-1 quiz batches are now rejected on read when the count exceeds the lesson tier's band, so a checkpoint written *before* the 2-28 `tier` fix cannot silently replay T2-sized content into a T1 lesson while the logs show the tier fix working (guard is `n_max`-only — a below-band count is ambiguous against 2-28 AC-8's keep-short-batches rule; residual gap documented in the story). `GET /lessons` now lifts `subject` + `estimated_duration_mins` from the `content` JSONB via PostgREST path selectors instead of `select("*")` — Dev 2 needed both for dashboard cards without an N+1 — with regression assertions proving Story 1-6 AC-7 still holds (zero signing calls, no `content` attached). Embedded-lesson signed-URL expiry raised 1h → 8h. **Not fixed here and must not be reported as fixed:** Dev 2's visible 0:00-quiz-fires-instantly symptom is in `AudioTimeline.tsx` and needs a virtual playback clock — see `docs/dev2-narration-playback-handoff.md`. **2026-07-28 review round (6 adversarial layers) on Story 2-31 — worth reading, because it caught a bug that would have taken the product down:** the first `_LIST_COLUMNS` named `completed_at`, which is a column on `lesson_jobs` and *not* on `lessons`. Under `select("*")` that was harmless; naming it explicitly makes PostgREST reject the whole query, so `GET /lessons` would have failed for every user on every request — and no test could catch it, because all four AC-4 tests mock Supabase and assert the select *string*. Now guarded by a test that parses `_LIST_COLUMNS` against the columns the migrations actually define. The review also showed **AC-3's shipped guard could not catch its own stated hazard**: pre-2-28 checkpoints are all T2-sized (2–3 questions) and T1's `n_max` is 5, so every stale T2 cache passed for exactly the T1 lessons the AC was written about; the count heuristic fired only for T3. Redesigned as a `tier` stamp in the checkpoint *value* — exact rather than inferential, keys still `f"{node}:{section_id}"`, same-tier retry still a free cache hit. Also added a salvage path (a rejected cache plus one transient LLM failure previously shipped a segment with **zero** questions and left the stale checkpoint in place, so every ARQ retry re-rejected and re-billed with no `check_ceiling()` call in that node — though the loop was never actually unbounded: Phase 1 is gated on `check_ceiling()` before dispatch and `_maybe_accumulate_cost` raises at the $3.00 ceiling, so it always terminated. That over-claim was corrected on 2026-07-29 after the Story 2-32 review caught it; the salvage fix stands on the zero-questions correctness defect, which was always the stronger argument), hardened `_index_by_segment_id` against non-dict entries/values, and hardened the list response against untrusted LLM-generated JSONB (a dict-valued `subject` or a `NaN` duration would have 500'd or broken `JSON.parse` for the whole page). Three tests were found passing for the wrong reason and fixed. **Standing lesson: mocked tests on both sides validate the mock, not the contract** — the two worst findings here were both invisible to a green suite.
@@ -118,9 +118,9 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 22 | 0 | 1 |
-| Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 0 | 1 | 6 |
+| Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 8 | 0 | 1 | 7 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **77** | **65** | **1** | **11** |
+| **Totals** | | **78** | **65** | **1** | **12** |
 
 ---
 
@@ -798,6 +798,114 @@ Every node must:
     402 as L1, confirmed live). The PRD's "15 of 20 PDFs rated useful to a student" gate
     (`.claude/commands/run-evals.md`) is a human judgment call, not something this story
     automates. Both remain the explicit next step once credits return.
+  - **CORRECTION 2026-08-20 — "blocked only on Sarvam credits" understated the picture.**
+    `docs/DEFECT-REGISTER.md`'s **D124** (closed 2026-08-19, five days after this entry's DONE
+    date) shows the harness as originally shipped crashed on all 20 PDFs for a `chapter_id`
+    reason unrelated to Sarvam, only discovered when someone finally attempted a real run.
+    **D126** (closed 2026-08-20) found a second, independent blocker underneath even the D124
+    fix: `tests/conftest.py`'s stub Supabase credentials were silently shadowing `.env` for
+    every `--run-live-eval` invocation, so the live gate failed instantly with `Connection
+    refused` before reaching any provider — now fixed. **This entry's own text was never
+    updated to disclose either** until now; treat the "next step once credits return" framing
+    above as historical, not current.
+  - **Real-world PDF coverage added 2026-08-20 (D127, `docs/DEFECT-REGISTER.md`), out of this
+    story's original scope but the same gap this AC left open.** All 20 fixtures above are
+    `fpdf`-generated — clean, well-formed, real text layer — and structurally cannot represent
+    what a real messy upload looks like: a scanned page, a rotated scan, a truncated file, a
+    password-locked one. `tests/fixtures/generate_real_world_pdfs.py` derives 4 such fixtures
+    from `d2l.pdf` (CC BY-SA, already tracked) instead — no new copyrighted content, no new
+    dependency. `tests/unit/test_real_world_extraction.py` (free, no credentials, runs by
+    default, 6/6 passing) proves the OCR fallback genuinely recovers real text from a real scan,
+    and that corrupted/encrypted files fail loud with an identifiable cause. An opt-in live tier
+    (`tests/evals/test_live_run_real_world.py`, same `--run-live-eval` gate) reaches the full
+    paid pipeline on the two scan-like fixtures without touching this story's own drift-guarded
+    20-PDF contract. **Found in the process, not fixed: D128 (OPEN)** — a rotated/low-quality
+    real scan OCRs to silent, ungated garbage (measured 96% vs. 38% mean confidence on the same
+    real page, upright vs. rotated) that would currently reach a fully-billed lesson undetected.
+  - **Real-world tier run live 2026-08-21 — PASSED, the first real end-to-end run of this
+    pipeline against real providers, ever.** `test_live_run_real_world.py`, 12m11s, real spend
+    **$0.83** (well under the ~$1-1.30/lesson estimate). Both scan-like fixtures produced a
+    valid `LessonPackage`; both broken fixtures failed for free, with an identifiable real
+    error, before any provider call — exactly as designed. **D128 confirmed live, not just in
+    isolation:** the rotated-scan lesson scored a perfect `slide_quality=1.0`/`quiz_relevance=1.0`
+    despite being built from OCR gibberish, and shipped as `package_valid=true` — severity raised
+    Med -> High in `docs/DEFECT-REGISTER.md`. **This does NOT verify the 20-PDF S3-1 tier
+    itself** — `test_live_run.py` remains unrun; that AC is still open.
+  - **D129 registered 2026-08-21 — multiple-concurrent-real-user load is completely untested,**
+    surfaced discussing this gap directly rather than found by a failing test. Three concrete,
+    already-known risks named in the register: the circuit breaker trips per-provider globally,
+    not per-user; D45's idempotency check has no real constraint behind it; D49's rate limiter
+    silently multiplies across replicas. **Explicitly scoped to Sprint 4** ("Load test +
+    calibration") so that sprint starts from a named risk list, not a generic task.
+  - **D128 FIXED 2026-08-21.** `_ocr_page_text` now returns Tesseract's own real confidence
+    alongside the text; below `_OCR_LOW_CONFIDENCE_THRESHOLD=60` the content is still accepted
+    (never silently dropped) but the page is named in a new `low_confidence_ocr_pages` list,
+    persisted on `lesson_jobs.node_outputs` the same additive way `tables_detected`/
+    `docling_pages` already are. 10 new/updated tests; full regression **1245 passed, 9 skipped**
+    (1239 baseline + these 6 net-new), zero regressions. **Not yet re-verified live** — the
+    2026-08-21 live confirmation above was captured PRE-fix; whether the flag lands correctly on
+    a real run is unit/mock-level verified only. See `docs/DEFECT-REGISTER.md` and
+    `RUN-FINDINGS-LOG.md` for full detail.
+  - **D130 FIXED 2026-08-21 — the real reason the S3-1 live run above took 6+ hours without
+    finishing.** All 20 fixtures fell through chapter detection to the "whole document is one
+    chapter" fallback — for the 4 "long" fixtures (100/150/250/400 pages) that meant one chapter
+    up to 400 pages instead of a realistic ~40-page one. Fixed at the fixture level:
+    `_build_long()` now writes a real PDF outline entry every 40 pages with a distinct,
+    deterministic chapter title (`generate_eval_pdfs.py`) — re-verified independently against
+    the regenerated fixtures, every "long" fixture now splits into 3-10 real chapters of exactly
+    40 pages each. Bonus fix found in the same pass: a real `creation_date` non-determinism bug
+    that silently broke the generator's own "byte-identical two runs" promise. Also fixed the
+    harness's zero-progress-visibility gap found in the same investigation: both eval runners
+    now write a real-time, per-run-truncated `progress.jsonl`. 5 new/updated tests; full
+    regression **1250 passed, 9 skipped** (1245 baseline + these 5 net-new), zero regressions.
+    **D131 registered separately (not fixed)** — the same fallback mechanism has no size ceiling
+    for a real student's book either if its structure is undetectable; a product/UX decision,
+    deliberately not folded into this fix.
+  - **LIVE-VERIFIED 2026-08-24 — full `--run-live-eval` run COMPLETED: 2h40m, $10.64 real spend,
+    16/20 PDFs valid.** First time in this project's history the S3-1 harness has completed
+    anywhere near this far. All 4 "long" fixtures succeeded at ~$0.44/~6.5min each — matching
+    normal lesson cost/time, confirming D130's fix under real conditions, not just locally. The
+    literal AC ("all 20 produce a valid lesson") is not yet fully met — 4/20 failed — but for a
+    separate, unrelated, already-identified reason: a real `slide_generator`/segment_id mismatch
+    bug (`graph.py:2083`), first surfaced because this is the first time these 4 specific
+    fixtures have ever run live at all. Not caused by D130 — none of the 4 failing fixtures were
+    touched by that fix. See `docs/DEFECT-REGISTER.md` and `RUN-FINDINGS-LOG.md` for full detail
+    including the per-PDF cost/time table.
+  - **D132 FIXED 2026-08-24 — the actual dominant cost, found live-verifying D130: slide images
+    generated one at a time, 86-95% of every lesson's total time (6/6 real lessons measured via
+    Langfuse).** `image_generator_node` now runs up to 3 images concurrently
+    (`asyncio.Semaphore` + `asyncio.gather`), mirroring the existing `_IMAGE_UPLOAD_CONCURRENCY`
+    pattern. Built via a two-stage implement-then-adversarial-review workflow — the review caught
+    a real bug the implementation missed (the Storage upload was still a blocking sync call,
+    silently serializing every slide's upload window despite every other correctness invariant
+    holding), fixed with `asyncio.to_thread`, RED-GREEN verified directly. 4 new tests, full
+    regression **1254 passed, 9 skipped** (1250 baseline + these 4), zero regressions.
+    Deliberately did NOT add a Redis-Lua atomic cost-reservation system after directly confirming
+    `accumulate_cost()` already uses atomic `INCRBYFLOAT` — documented in `D132-FIX-TRACKER.md`.
+    **LIVE-VERIFIED 2026-08-24 — real speedup confirmed against real AI providers.** Same
+    `short_1page` fixture with a precise pre-fix baseline on record: **395.0s -> 168.7s total
+    (2.3x), $0.38.** Mechanism confirmed via the real Langfuse trace, not just the headline
+    number — `image_generator_node`'s span went from ~= the sum of its images (serial signature,
+    pre-fix) to ~40% of the sum (post-fix), landing almost exactly on the predicted
+    concurrency-of-3 prediction. Per-image cost/time unchanged, as designed — the entire
+    improvement is real overlap. D132 is now fully closed end to end.
+  - **D133 FIXED 2026-08-25 — the 4/20 `slide_generator` segment_id failures from the D132
+    live-verification run above.** Root cause (zero-cost, reproduced against `structure_node`'s
+    real pure output): the LLM copies the real segment_id perfectly, then appends
+    `": <inferred title>"` because the prompt's own `segment_id={id}: {title} — {summary}` line
+    format teaches it that shape by example — only when the real title is generic/bare
+    (`"Document"`, a bare numeric heading), which is exactly the 4 fixtures that failed.
+    `lesson_planner_node` has the identical prompt shape but is already protected by a D77 retry
+    loop; `slide_generator_node` had none. Fixed by applying that same proven pattern
+    (`_SLIDE_GENERATOR_MAX_ATTEMPTS=3`), downstream guards unchanged. 2 new tests, RED-GREEN
+    verified against the pre-fix code. Full regression **1256 passed, 9 skipped** (1254 D132
+    baseline + these 2), zero regressions. **LIVE-VERIFIED 2026-08-25 — all 4 previously-failing
+    fixtures re-run for real: 4/4 now produce a valid `LessonPackage`, 0/4 failures**
+    (`dense_text_with_headers` 18.6min/$3.12, `table_heavy_small` 3.1min/$0.39, `image_heavy_small`
+    3.0min/$0.44, `image_heavy_grid` 1.5min/$0.18). The retry fired live on real production data,
+    not just mocks — confirmed via a matching real Langfuse trace (two back-to-back slide-deck
+    completion calls inside `slide_generator_node`'s span). D133 is now fully closed end to end;
+    see `D133-FIX-TRACKER.md`.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
@@ -1017,6 +1125,14 @@ Every node must:
   - `docs/` — 5 most likely failure scenarios with step-by-step resolution
   - Scenarios: ARQ job stuck, cost ceiling breach mid-pipeline, Redis unreachable, Supabase down, pipeline node 500-loop
   - **AC:** Runbook committed; each scenario has ≤5 resolution steps; tested by a teammate who didn't write it
+
+- [ ] **S4-8 Resolve dead Imagen 4 Fast image fallback — decide + migrate (D121)** — **Due: end of Week 10 (2026-08-20), the last milestone in the roadmap**
+  - `docs/DEFECT-REGISTER.md` D121 (OPEN, High): `ImagenProvider`'s endpoint (`imagen-4.0-fast-generate-001`) was shut down by Google 2026-08-17. Every slide image that reaches the fallback tier (GPT Image failure, or once `gpt-image-1-mini`/`gpt-image-2`'s primary path fails) now hard-errors, trips the circuit breaker, and silently degrades to text-only — `image_generator_node`'s AC-11 per-slide isolation means nothing surfaces this to a human.
+  - Locked Technology Stack (`CLAUDE.md`) provider decision, requires team sign-off — not a unilateral code change. Three options on the table, per D121's own research notes:
+    1. Migrate to Google's recommended replacement, Gemini 2.5/3.1 Flash Image ("Nano Banana") — **not a model-ID swap**: new `providers/image/nano_banana.py` implementing `ImageProvider`, different request/response shape (Gemini `generateContent`, `response_modalities=["IMAGE"]`, inline base64 — not Imagen's `predict`/`instances`/`predictions` shape), new per-image cost entry (~$0.067/image vs Imagen's $0.02–0.06), reuses existing `settings.google_api_key`.
+    2. Drop the two-tier fallback entirely — `gpt-image-2` as the sole provider, text-only on failure.
+    3. A third vendor.
+  - **AC:** Decision recorded (owner + rationale, not "TBD") in `docs/DEFECT-REGISTER.md` D121 and `CLAUDE.md`'s Locked Technology Stack table (source-of-truth doc, per D36/D122 convention — doc and code must not drift). If option 1: new provider implemented behind the `ImageProvider` interface, wired into `_generate_image_with_fallback()` (`graph.py`), `COST_PER_IMAGE`/cost-ceiling accounting updated, size/aspect-ratio translation added (Nano Banana's output-resolution options ≠ `gpt-image-2`'s arbitrary WxH). Story-first process followed: story file with a `## Scale & Load` section committed alone before any implementation commit, 6-agent review gate before merge.
 
 ---
 

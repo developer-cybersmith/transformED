@@ -201,6 +201,14 @@ _IMAGE_UPLOAD_CONCURRENCY = 4
 _IMAGE_UPLOAD_ATTEMPTS = 5
 _IMAGE_UPLOAD_BACKOFF_BASE_S = 1.0
 
+# D132: max simultaneous slide IMAGE GENERATION calls per lesson (image_generator_node).
+# Deliberately NOT the same value as _IMAGE_UPLOAD_CONCURRENCY above — that 4 was
+# empirically tuned for a different resource (Supabase Storage upload throughput);
+# this provider's real generation-side rate limit isn't documented anywhere in this
+# project. 3 is a conservative starting point (existing per-call retry/circuit-breaker
+# is the safety net if this needs tuning down) — no data yet to justify going higher.
+_IMAGE_GENERATION_CONCURRENCY = 3
+
 
 def _compute_extract_timeout(pdf_size_bytes: int, settings: Any) -> float:  # noqa: ANN401
     """AC-5: page-aware timeout for the PDF-extraction subprocess.
@@ -515,11 +523,15 @@ async def extract_node(state: PipelineState) -> PipelineState:
     # Story 1-13 adds extracted_page_count/page_offset to the same defensive
     # list: they are how you tell from a checkpoint alone whether a run was
     # chapter-scoped (extracted_page_count << page_count) or whole-document.
+    # D128 adds low_confidence_ocr_pages the same way — real content that OCR
+    # was not confident about, persisted on the record (CLAUDE.md's "silent
+    # truncation is never acceptable" rule) rather than computed and dropped.
     for _extra_key in (
         "tables_detected",
         "docling_pages",
         "extracted_page_count",
         "page_offset",
+        "low_confidence_ocr_pages",
     ):
         if _extra_key in result:
             extract_cache[_extra_key] = result[_extra_key]
@@ -1702,6 +1714,18 @@ _MAX_SLIDES_PER_SEGMENT = 8
 # no longer enforces.
 _MAX_SLIDE_BULLET_CHARS = 200
 
+# D133: the prompt line format `segment_id={id}: {title} — {summary}` teaches
+# the model by literal example that a segment_id value looks like
+# "token: description" — when the real id+title is generic/bare (e.g. a
+# structure-detection fallback title like "Document"), the model sometimes
+# "completes" it with a better title in the same shape, corrupting an
+# otherwise-perfect echo. Confirmed: this is occasional LLM non-determinism
+# (the SAME prompt sometimes echoes cleanly), not a deterministic failure —
+# exactly the class of problem `_PLANNER_BATCH_MAX_ATTEMPTS` (D77) already
+# retries for lesson_planner_node's identical prompt shape. Same value,
+# same reasoning, applied to the sibling node that was missing it.
+_SLIDE_GENERATOR_MAX_ATTEMPTS = 3
+
 
 @traced_node("slide_generator_node")
 async def slide_generator_node(state: PipelineState) -> PipelineState:
@@ -1855,17 +1879,52 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         {"role": "user", "content": segments_text},
     ]
 
-    response = await provider.complete_structured(messages, model, _SlideDeckLLM)
-    if response is None:
-        logger.warning("[%s] slide_generator_node: LLM returned no parsed response", lesson_id)
-        raise RuntimeError(
-            f"lesson_id={lesson_id}: slide_generator received no parsed LLM response"
-        )
-
-    # ── AC-7 degrade-not-fabricate guards — no per-segment redundancy exists
-    # for this premium node, so a wrong response is rejected wholesale. ───────
+    # D133: retry a segment_id echo mismatch before giving up — the SAME
+    # already-proven pattern _run_planner_batch (D77) uses for the identical
+    # prompt shape and failure class in the sibling node. Confirmed via real
+    # failures this recovers from: the model occasionally appends a
+    # self-invented ": <better title>" to an otherwise-perfectly-copied id
+    # when the real title is generic/bare — non-deterministic (the same
+    # prompt sometimes echoes cleanly), so a retry genuinely helps, unlike a
+    # deterministic bug a retry would just repeat.
     input_ids = [s["segment_id"] for s in plan_segments]
     input_id_set = set(input_ids)
+
+    response: _SlideDeckLLM | None = None
+    for attempt in range(1, _SLIDE_GENERATOR_MAX_ATTEMPTS + 1):
+        response = await provider.complete_structured(messages, model, _SlideDeckLLM)
+        if response is None:
+            logger.warning("[%s] slide_generator_node: LLM returned no parsed response", lesson_id)
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: slide_generator received no parsed LLM response"
+            )
+
+        attempt_ids = [seg.segment_id for seg in response.segments]
+        if (
+            len(response.segments) == len(plan_segments)
+            and set(attempt_ids) == input_id_set
+            and len(set(attempt_ids)) == len(attempt_ids)
+        ):
+            break
+
+        logger.warning(
+            "[%s] slide_generator_node: segment_id echo mismatch on attempt %d/%d — "
+            "expected %d ids, got %d ids (missing=%s, unexpected=%s) — retrying",
+            lesson_id,
+            attempt,
+            _SLIDE_GENERATOR_MAX_ATTEMPTS,
+            len(plan_segments),
+            len(response.segments),
+            sorted(input_id_set - set(attempt_ids)),
+            sorted(set(attempt_ids) - input_id_set),
+        )
+    assert response is not None  # loop always assigns before falling through
+
+    # ── AC-7 degrade-not-fabricate guards — no per-segment redundancy exists
+    # for this premium node, so a wrong response is rejected wholesale. Reached
+    # after real retries (above) instead of on the first mismatch — same
+    # relationship _run_planner_batch has to lesson_planner_node's own guard
+    # block, unchanged otherwise. ────────────────────────────────────────────
     response_ids = [seg.segment_id for seg in response.segments]
 
     if len(response.segments) != len(plan_segments):
@@ -4400,6 +4459,8 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
     is a sufficient correlation key here (matches the pre-existing
     PipelineState.slide_images field comment).
     """
+    import asyncio
+
     from app.core.cost_tracker import accumulate_cost, check_ceiling
     from app.core.db import get_supabase
     from app.providers.image.imagen import COST_PER_IMAGE as IMAGEN_COST_PER_IMAGE
@@ -4439,8 +4500,17 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 93.0, "image_generator")
         return {"slide_images": cached, "progress_pct": 93.0}
 
-    slide_images_out: list[dict[str, Any]] = []
-    for index, entry in enumerate(slides):
+    # D132: per-slide generation body extracted into a coroutine so it can be
+    # run under bounded concurrency below (asyncio.Semaphore + asyncio.gather,
+    # mirroring extract_node's `_bounded_upload` pattern a few functions
+    # above). Logic is UNCHANGED from the prior sequential `for` loop body —
+    # only its shape (loop body -> callable) changed. Every exception is
+    # caught INSIDE this coroutine (not left to propagate to gather) so one
+    # slide's failure can never cancel or otherwise affect any other slide's
+    # concurrently-running task — asyncio.gather without return_exceptions
+    # would otherwise surface the first exception and leave sibling tasks in
+    # an undefined state, which AC-11's isolation guarantee cannot tolerate.
+    async def _process_one_slide(index: int, entry: Any) -> dict[str, Any]:  # noqa: ANN401
         # 2026-07-15 review finding (Edge Case Hunter): the original
         # extraction — `(entry.get("data") or {}).get("slide_id", ...)` —
         # raised AttributeError (not a graceful default) if entry["data"]
@@ -4515,7 +4585,16 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                     # provider produced it.
                     image_bytes = _crop_to_16_9(image_bytes)
                     image_path = f"{lesson_id}/{slide_id}.png"
-                    supabase.storage.from_("lesson-images").upload(
+                    # D132 adversarial review finding: supabase.storage is
+                    # storage3's SYNC client (blocking httpx under the hood,
+                    # not async) — called directly on the event loop, it
+                    # would block every OTHER concurrently-scheduled slide's
+                    # await for its own duration, defeating the concurrency
+                    # this function exists to add. asyncio.to_thread is the
+                    # same fix extract_node's _bounded_upload already uses
+                    # for this identical resource (graph.py ~442-489).
+                    await asyncio.to_thread(
+                        supabase.storage.from_("lesson-images").upload,
                         path=image_path,
                         file=image_bytes,
                         file_options={"content-type": "image/png", "upsert": "true"},
@@ -4538,7 +4617,7 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                 else:
                     image_url = None
 
-            slide_images_out.append({"slide_id": slide_id, "image_url": image_url})
+            return {"slide_id": slide_id, "image_url": image_url}
 
         except Exception:  # noqa: BLE001
             logger.warning(
@@ -4548,7 +4627,25 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                 slide_id,
                 exc_info=True,
             )
-            slide_images_out.append({"slide_id": slide_id, "image_url": None})
+            return {"slide_id": slide_id, "image_url": None}
+
+    # D132: bounded concurrent generation, mirroring extract_node's
+    # `_bounded_upload` pattern. asyncio.gather's return list is documented
+    # to match the order of its input awaitables regardless of completion
+    # order, so building `coros` in input (index) order and gathering once
+    # keeps `slide_images_out` index-matched to `slides` even though slides
+    # can now finish generating out of order under concurrency.
+    gen_sem = asyncio.Semaphore(_IMAGE_GENERATION_CONCURRENCY)
+
+    async def _bounded_process(index: int, entry: Any) -> dict[str, Any]:  # noqa: ANN401
+        async with gen_sem:
+            return await _process_one_slide(index, entry)
+
+    slide_images_out: list[dict[str, Any]] = list(
+        await asyncio.gather(
+            *(_bounded_process(index, entry) for index, entry in enumerate(slides))
+        )
+    )
 
     supabase.table("lesson_jobs").update(
         {

@@ -611,6 +611,33 @@ async def test_extract_node_checkpoints_new_additive_keys_when_present() -> None
 
 
 @pytest.mark.unit
+async def test_extract_node_checkpoints_low_confidence_ocr_pages_when_present() -> None:
+    """D128: low_confidence_ocr_pages from the subprocess JSON is plumbed
+    into the extract checkpoint the same additive way tables_detected/
+    docling_pages already are — this is what makes the degradation flag
+    actually persisted on the record, not just computed and discarded."""
+    from app.modules.content.pipeline.graph import extract_node
+
+    state = _base_state()
+    sb = _make_supabase_mock(node_outputs={})
+    exec_mock = _make_subprocess_mock(stdout=_stdout_with_images([], low_confidence_ocr_pages=[3]))
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings") as mock_settings,
+        patch("asyncio.create_subprocess_exec", exec_mock),
+        patch("app.modules.content.pipeline.graph._update_job_progress", new_callable=AsyncMock),
+    ):
+        _configure_settings(mock_settings)
+        await extract_node(state)
+
+    jobs_mock = sb.table("lesson_jobs")
+    payload = jobs_mock.update.call_args_list[0].args[0]
+    cache = payload["node_outputs"]["extract"]
+    assert cache["low_confidence_ocr_pages"] == [3]
+
+
+@pytest.mark.unit
 async def test_extract_node_old_subprocess_json_shape_still_checkpoints() -> None:
     """Old-shape subprocess JSON (no tables_detected/docling_pages) must keep
     working — the subprocess change lands in a concurrent lane."""
@@ -634,6 +661,7 @@ async def test_extract_node_old_subprocess_json_shape_still_checkpoints() -> Non
     cache = jobs_mock.update.call_args_list[0].args[0]["node_outputs"]["extract"]
     assert "tables_detected" not in cache
     assert "docling_pages" not in cache
+    assert "low_confidence_ocr_pages" not in cache
 
 
 @pytest.mark.unit
