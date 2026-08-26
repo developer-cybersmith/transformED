@@ -842,7 +842,7 @@ def extract_text_only(
 
         toc: list[dict[str, Any]] = []
         for item in pdf_doc.get_toc():
-            # D133 (docs/DEFECT-REGISTER.md): `PdfOutlineItem` exposes
+            # D134 (docs/DEFECT-REGISTER.md): `PdfOutlineItem` exposes
             # `.page_index`/`.title` as plain attributes in the project's
             # PINNED pypdfium2==4.30.0 (uv.lock) -- there is no `get_dest()`/
             # `get_title()` method at all on that version, confirmed against
