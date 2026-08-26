@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      # D133: real-world OCR coverage (tests/unit/test_real_world_extraction.py,
+      # D135: real-world OCR coverage (tests/unit/test_real_world_extraction.py,
       # D127/D128) calls pytesseract.image_to_string/image_to_data against a
       # REAL scanned-page fixture, not a mock -- CLAUDE.md's OCR stack is
       # "Tesseract (in-container)", but no step anywhere in this workflow ever
