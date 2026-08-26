@@ -4,7 +4,7 @@ baseline_commit: 65459565aac7c660f7bb4dd40e447f6a7ccd2c91
 
 # Story 4.1: Razorpay Payment Backend — Order Creation & Webhook Fulfillment
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 
@@ -85,6 +85,13 @@ defined in AC-1.
 - [ ] 8. Register payments router in `main.py` at `/api/payments`
 - [ ] 9. Run tests — GREEN phase; confirm all 8 AC tests pass
 - [ ] 10. Run ruff + mypy; zero violations
+
+### Review Findings
+
+- [ ] [Review][Patch] Price and lesson ownership not validated server-side — Any authenticated user can pass `amount_paise=1` and any `lesson_id` (including another user's lesson or a premium lesson) to `create-order`. The server trusts the client-supplied values without checking the lesson's canonical price or ownership. After a real payment, the webhook grants lesson access regardless of price mismatch — an authenticated user can pay the minimum and access any lesson. Fix: look up the lesson's actual `price_paise` server-side and use that value for the Razorpay order; validate `lesson_id` belongs to (or is purchasable by) the requesting user. [apps/api/app/modules/payments/router.py:42]
+- [ ] [Review][Patch] Service idempotency catch (23505) is a MOCK-CONTRACT — untested real path — `test_duplicate_webhook_both_return_200` mocks `handle_payment_captured` entirely; the actual exception-catch-and-return logic in `service.py:95–106` has no test. Per DEFECT-REGISTER binding rule 2, a test may not assert only on a mock it constructed. Add a direct unit test for `handle_payment_captured` that supplies a mock Supabase client raising a 23505-matching exception and verifies the function returns cleanly without re-raising. [apps/api/tests/test_razorpay_payments.py:259]
+- [ ] [Review][Patch][Scale] FK violation on invalid lesson_id = silent money loss (SCALE Q2 silent-wrong-result) — If `lesson_id` in webhook notes refers to a deleted or nonexistent lesson, the INSERT hits a PG FK violation (error 23503, NOT caught by the 23505 handler). Service re-raises → webhook 500 → Razorpay retries ~15× → permanently discards → student paid, access never granted, no admin alert. Per SCALE-CONTRACT Q2 and `step-03-triage.md` rules, silent-wrong-result may NEVER be classified defer. Fix: pre-validate `lesson_id` exists in `lessons` table before INSERT; emit `logger.critical` + Sentry alert if the FK violation fires anyway. [apps/api/app/modules/payments/service.py:90]
+- [x] [Review][Defer] Sync supabase call blocks event loop [apps/api/app/modules/payments/service.py:90] — deferred, pre-existing — `supabase.table(...).insert(...).execute()` is synchronous inside `async def handle_payment_captured`. Pre-existing pattern shared by all service modules (`assessment/service.py`, `analytics/service.py`); must be fixed project-wide in a dedicated async-supabase refactor story. Tracked as DEFER-017.
 
 ## Scale & Load
 
