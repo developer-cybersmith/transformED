@@ -782,13 +782,20 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
                 from app.core.arq_pool import get_arq_pool  # noqa: PLC0415
 
                 arq_pool = get_arq_pool()
-                await arq_pool.enqueue_job(
+                notify_job = await arq_pool.enqueue_job(
                     "send_notification_email_job",
                     user_id,
                     "session_report",
                     session_id,
                     _job_id=f"notify:session_report:{session_id}",
                 )
+                if notify_job is None:
+                    # ARQ deduped this _job_id -- not an error, but worth a
+                    # log line since it was previously silently discarded
+                    # (review finding).
+                    logger.info(
+                        "[tutor:%s] session_report notification deduped by ARQ", session_id
+                    )
             else:
                 logger.warning(
                     "[tutor:%s] session_report notification skipped — no user_id in "

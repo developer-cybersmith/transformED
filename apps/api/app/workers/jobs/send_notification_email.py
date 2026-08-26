@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,24 @@ async def send_notification_email_job(
                              (session_report) this notification is about.
 
     Returns:
-        ``{"sent": bool, "reason": str}`` on skip, or
-        ``{"sent": True, "message_id": str}`` on success. Never raises —
-        a failure to send must not block or retry the flow that enqueued
-        this job (AC-4).
+        ``{"sent": bool, "reason": str}`` on a normal skip (opted out, or
+        already sent/claimed), or ``{"sent": True, "message_id": str}`` on
+        success.
+
+    Raises:
+        Exception: if recipient resolution or the provider send fails AFTER
+            the idempotency claim succeeds. This is deliberate (review
+            finding, S4-12): claiming the slot and then swallowing a
+            downstream failure would permanently and silently lose that
+            notification forever, since the UNIQUE constraint would block
+            every future attempt from ever re-claiming it. The claim is
+            rolled back first (so a retry can re-claim), then this re-raises
+            so ARQ's own per-job retry/failure tracking (WorkerSettings.
+            max_tries) takes over — exactly content_pipeline_job's own
+            established pattern for this codebase. This does NOT block or
+            retry the flow (pipeline completion / session end) that enqueued
+            this job — that flow already succeeded independently, and this
+            is a separate ARQ job with its own retry accounting.
     """
     from app.core.db import get_supabase, single_row
 
@@ -99,7 +113,8 @@ async def send_notification_email_job(
             .execute()
         )
     )
-    if not (claim_resp.data or []):
+    claim_rows = claim_resp.data or []
+    if not claim_rows:
         logger.info(
             "send_notification_email_job SKIP (already sent/claimed) user=%s type=%s resource=%s",
             user_id,
@@ -107,34 +122,31 @@ async def send_notification_email_job(
             resource_id,
         )
         return {"sent": False, "reason": "already_sent"}
+    first_claim_row = cast("dict[str, Any]", claim_rows[0])
+    claim_id = first_claim_row.get("id")
 
-    # ── 3. Resolve recipient + render content ─────────────────────────────
-    to_email, subject, html = await _build_email(supabase, notification_type, resource_id, user_id)
-    if to_email is None:
-        logger.warning(
-            "send_notification_email_job ABORT (could not resolve recipient) "
-            "user=%s type=%s resource=%s",
-            user_id,
-            notification_type,
-            resource_id,
-        )
-        return {"sent": False, "reason": "recipient_unresolved"}
-
-    # ── 4. Send ────────────────────────────────────────────────────────────
-    from app.providers.email.resend import ResendEmailProvider
-
-    provider = ResendEmailProvider()
+    # ── 3. Resolve recipient, render content, and send ────────────────────
+    # Everything past this point runs UNDER the claim -- any failure here
+    # must release it (see the docstring's Raises section) rather than
+    # leave a permanently-unfulfillable row behind.
     try:
+        to_email, subject, html = await _build_email(
+            supabase, notification_type, resource_id, user_id
+        )
+        if to_email is None:
+            raise RuntimeError(  # noqa: TRY301
+                f"could not resolve recipient email for user_id={user_id}"
+            )
+
+        from app.providers.email.resend import ResendEmailProvider
+
+        provider = ResendEmailProvider()
         message_id = await provider.send(to=to_email, subject=subject, html=html)
+
     except Exception as exc:
-        # AC-4: never crash the worker or block the flow that enqueued this
-        # job -- that flow (pipeline completion / session end) already
-        # succeeded independently. Logged loudly, never silently swallowed,
-        # and captured to Sentry when available (best-effort — a Sentry
-        # failure here must not mask the original send failure already
-        # logged above).
         logger.error(
-            "send_notification_email_job SEND FAILED user=%s type=%s resource=%s: %s",
+            "send_notification_email_job FAILED (releasing claim) user=%s type=%s "
+            "resource=%s: %s",
             user_id,
             notification_type,
             resource_id,
@@ -146,7 +158,31 @@ async def send_notification_email_job(
             sentry_sdk.capture_exception(exc)
         except Exception:
             logger.debug("sentry_sdk.capture_exception failed", exc_info=True)
-        return {"sent": False, "reason": "send_failed"}
+
+        if claim_id is not None:
+            try:
+                await asyncio.to_thread(
+                    lambda: (
+                        supabase.table("notification_log")
+                        .delete()
+                        .eq("id", claim_id)
+                        .execute()
+                    )
+                )
+            except Exception:
+                # If the rollback itself fails, the claim is now stuck
+                # (a future retry will see "already_sent" and skip forever)
+                # -- this must be loud, it's a second, compounding failure.
+                logger.error(
+                    "send_notification_email_job: FAILED TO RELEASE CLAIM id=%s "
+                    "user=%s type=%s resource=%s -- this notification is now "
+                    "permanently stuck",
+                    claim_id,
+                    user_id,
+                    notification_type,
+                    resource_id,
+                )
+        raise
 
     logger.info(
         "send_notification_email_job SENT user=%s type=%s resource=%s message_id=%s",
