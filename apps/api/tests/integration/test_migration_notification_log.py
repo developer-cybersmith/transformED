@@ -88,8 +88,7 @@ class SqlResult:
 
     def __repr__(self) -> str:
         return (
-            f"SqlResult(rc={self.returncode}, sqlstate={self.sqlstate}, "
-            f"err={self.stderr[:200]!r})"
+            f"SqlResult(rc={self.returncode}, sqlstate={self.sqlstate}, err={self.stderr[:200]!r})"
         )
 
 

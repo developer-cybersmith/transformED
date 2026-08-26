@@ -145,8 +145,7 @@ async def send_notification_email_job(
 
     except Exception as exc:
         logger.error(
-            "send_notification_email_job FAILED (releasing claim) user=%s type=%s "
-            "resource=%s: %s",
+            "send_notification_email_job FAILED (releasing claim) user=%s type=%s resource=%s: %s",
             user_id,
             notification_type,
             resource_id,
@@ -162,12 +161,7 @@ async def send_notification_email_job(
         if claim_id is not None:
             try:
                 await asyncio.to_thread(
-                    lambda: (
-                        supabase.table("notification_log")
-                        .delete()
-                        .eq("id", claim_id)
-                        .execute()
-                    )
+                    lambda: supabase.table("notification_log").delete().eq("id", claim_id).execute()
                 )
             except Exception:
                 # If the rollback itself fails, the claim is now stuck
@@ -215,9 +209,7 @@ async def _build_email(
     settings = get_settings()
 
     user_resp = await asyncio.to_thread(
-        lambda: (
-            supabase.table("users").select("email").eq("id", user_id).maybe_single().execute()
-        )
+        lambda: supabase.table("users").select("email").eq("id", user_id).maybe_single().execute()
     )
     user_row = single_row(user_resp)
     to_email = (user_row or {}).get("email")

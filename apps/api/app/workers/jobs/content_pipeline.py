@@ -215,14 +215,12 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
                 # keep_result_seconds) -- not an error, but worth a log line
                 # since it was previously silently discarded (review finding).
                 logger.info(
-                    "content_pipeline_job: lesson_ready notification deduped by ARQ "
-                    "lesson_id=%s",
+                    "content_pipeline_job: lesson_ready notification deduped by ARQ lesson_id=%s",
                     lesson_id,
                 )
         except Exception:
             logger.exception(
-                "content_pipeline_job: failed to enqueue lesson_ready notification "
-                "lesson_id=%s",
+                "content_pipeline_job: failed to enqueue lesson_ready notification lesson_id=%s",
                 lesson_id,
             )
 

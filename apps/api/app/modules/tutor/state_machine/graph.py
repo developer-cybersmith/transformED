@@ -793,9 +793,7 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
                     # ARQ deduped this _job_id -- not an error, but worth a
                     # log line since it was previously silently discarded
                     # (review finding).
-                    logger.info(
-                        "[tutor:%s] session_report notification deduped by ARQ", session_id
-                    )
+                    logger.info("[tutor:%s] session_report notification deduped by ARQ", session_id)
             else:
                 logger.warning(
                     "[tutor:%s] session_report notification skipped — no user_id in "
@@ -803,9 +801,7 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
                     session_id,
                 )
         except Exception:
-            logger.exception(
-                "[tutor:%s] failed to enqueue session_report notification", session_id
-            )
+            logger.exception("[tutor:%s] failed to enqueue session_report notification", session_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("[tutor:%s] _finalize_session DB write failed: %s", session_id, exc)
         try:
