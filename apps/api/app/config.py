@@ -161,7 +161,8 @@ class Settings(BaseSettings):
         default=None, description="Razorpay secret key — server only, never returned"
     )
     razorpay_webhook_secret: str | None = Field(
-        default=None, description="Razorpay webhook HMAC-SHA256 secret — server only, never returned"
+        default=None,
+        description="Razorpay webhook HMAC-SHA256 secret — server only, never returned",
     )
 
     # ── Sentry ────────────────────────────────────────────────────────────────

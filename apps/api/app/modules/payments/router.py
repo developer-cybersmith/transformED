@@ -6,6 +6,10 @@ POST /api/payments/webhook      — unauthenticated; HMAC-verified; fulfills pay
 
 AC-2 critical: raw_body = await request.body() is called BEFORE any JSON parsing.
 The raw bytes are used for HMAC verification and never re-serialized.
+
+S4-1 patch 1: create_order no longer accepts amount_paise from the client —
+the service looks up lessons.price_paise from the DB. Router maps LessonNotFoundError
+to HTTP 404.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from app.config import Settings, get_settings
 from app.dependencies import ApprovedUser
 from app.modules.payments import schemas, service
+from app.modules.payments.service import LessonNotFoundError
 from app.providers.payments.razorpay import RazorpayProvider
 
 logger = logging.getLogger(__name__)
@@ -34,17 +39,24 @@ async def create_order_endpoint(
     current_user: ApprovedUser,
     settings: SettingsDep,
 ) -> schemas.CreateOrderResponse:
-    """Create a Razorpay order and return order_id + publishable key_id.
+    """Create a Razorpay order using the lesson's canonical server-side price.
 
     The key_secret is never included in the response (AC-1).
+    The client-supplied amount_paise is ignored — server uses lessons.price_paise (S4-1).
+    Returns 404 if lesson_id does not exist in the lessons table.
     """
     user_id: str = current_user["sub"]
-    return await service.create_order(
-        lesson_id=body.lesson_id,
-        user_id=user_id,
-        amount_paise=body.amount_paise,
-        settings=settings,
-    )
+    try:
+        return await service.create_order(
+            lesson_id=body.lesson_id,
+            user_id=user_id,
+            settings=settings,
+        )
+    except LessonNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lesson not found",
+        ) from None
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK)
@@ -79,7 +91,7 @@ async def webhook_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON payload",
-        )
+        ) from None
 
     event: str = payload.get("event", "")
     logger.info("Razorpay webhook received: event=%s", event)
