@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # PostgreSQL constraint error codes
 _PG_UNIQUE_VIOLATION = "23505"  # duplicate key — idempotent duplicate webhook
-_PG_FK_VIOLATION = "23503"       # foreign key violation — lesson deleted after order
+_PG_FK_VIOLATION = "23503"  # foreign key violation — lesson deleted after order
 
 
 class LessonNotFoundError(Exception):
@@ -50,20 +50,21 @@ async def create_order(
     Raises LessonNotFoundError if lesson_id does not exist (router maps to 404).
     """
     # Late import to avoid DB client init at module load time (test isolation)
-    from app.core.db import get_supabase
+    from app.core.db import get_supabase, single_row
 
     supabase = get_supabase()
-    lesson_row = (
+    resp = (
         supabase.table("lessons")
         .select("price_paise")
         .eq("lesson_id", lesson_id)
         .maybe_single()
         .execute()
     )
-    if lesson_row.data is None:
+    lesson_data = single_row(resp)
+    if lesson_data is None:
         raise LessonNotFoundError(lesson_id)
 
-    price_paise: int = lesson_row.data["price_paise"]
+    price_paise: int = lesson_data["price_paise"]
     _settings = settings or get_settings()
     provider = RazorpayProvider(settings=_settings)
     result = await provider.create_order(
@@ -102,8 +103,7 @@ async def handle_payment_captured(
 
     if not user_id or not lesson_id:
         logger.error(
-            "payment.captured missing user_id or lesson_id in notes:"
-            " payment_id=%s order_id=%s",
+            "payment.captured missing user_id or lesson_id in notes: payment_id=%s order_id=%s",
             payment_id,
             order_id,
         )
@@ -114,7 +114,7 @@ async def handle_payment_captured(
 
     supabase = get_supabase()
 
-    row = {
+    row: dict[str, Any] = {
         "user_id": user_id,
         "lesson_id": lesson_id,
         "razorpay_payment_id": payment_id,

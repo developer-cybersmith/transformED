@@ -31,6 +31,7 @@ from app.config import Settings
 
 # ─── Test settings fixture ────────────────────────────────────────────────────
 
+
 def _make_settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = {
         "supabase_url": "https://x.supabase.co",
@@ -52,14 +53,15 @@ def _make_settings(**overrides: Any) -> Settings:
 
 _SETTINGS = _make_settings()
 
-LESSON_ID  = "aaaaaaaa-0000-0000-0000-000000000001"
-USER_ID    = "bbbbbbbb-0000-0000-0000-000000000002"
-ORDER_ID   = "order_TestXYZ"
+LESSON_ID = "aaaaaaaa-0000-0000-0000-000000000001"
+USER_ID = "bbbbbbbb-0000-0000-0000-000000000002"
+ORDER_ID = "order_TestXYZ"
 PAYMENT_ID = "pay_TestABC"
-DB_PRICE   = 99900  # ₹999 in paise — the canonical DB price
+DB_PRICE = 99900  # ₹999 in paise — the canonical DB price
 
 
 # ─── Helper: sign a raw body the same way Razorpay would ─────────────────────
+
 
 def _sign(secret: str, raw_body: bytes) -> str:
     return hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
@@ -67,16 +69,12 @@ def _sign(secret: str, raw_body: bytes) -> str:
 
 # ─── Helper: mock Supabase client returning a lesson row ─────────────────────
 
+
 def _mock_supabase_lesson(price_paise: int = DB_PRICE) -> MagicMock:
     """Return a mock Supabase client whose lessons query returns a lesson row."""
     mock_sb = MagicMock()
     (
-        mock_sb.table.return_value
-        .select.return_value
-        .eq.return_value
-        .maybe_single.return_value
-        .execute.return_value
-        .data
+        mock_sb.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data
     ) = {"price_paise": price_paise}
     return mock_sb
 
@@ -85,17 +83,13 @@ def _mock_supabase_no_lesson() -> MagicMock:
     """Return a mock Supabase client whose lessons query returns no row (lesson gone)."""
     mock_sb = MagicMock()
     (
-        mock_sb.table.return_value
-        .select.return_value
-        .eq.return_value
-        .maybe_single.return_value
-        .execute.return_value
-        .data
+        mock_sb.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data
     ) = None
     return mock_sb
 
 
 # ─── AC-6: Razorpay env vars are present in Settings ─────────────────────────
+
 
 def test_settings_has_razorpay_key_id() -> None:
     assert _SETTINGS.razorpay_key_id == "rzp_test_KEYID"
@@ -111,9 +105,11 @@ def test_settings_has_razorpay_webhook_secret() -> None:
 
 # ─── AC-2 + AC-5: RazorpayProvider.verify_signature ─────────────────────────
 
+
 class TestVerifySignature:
     def setup_method(self) -> None:
         from app.providers.payments.razorpay import RazorpayProvider
+
         self.provider = RazorpayProvider(settings=_SETTINGS)
 
     def test_valid_signature_returns_true(self) -> None:
@@ -148,9 +144,11 @@ class TestVerifySignature:
 
 # ─── AC-1 + AC-5: RazorpayProvider.create_order ──────────────────────────────
 
+
 class TestCreateOrderProvider:
     def setup_method(self) -> None:
         from app.providers.payments.razorpay import RazorpayProvider
+
         self.provider = RazorpayProvider(settings=_SETTINGS)
 
     @pytest.mark.asyncio
@@ -186,6 +184,7 @@ class TestCreateOrderProvider:
 
 # ─── Endpoint test app factory ────────────────────────────────────────────────
 
+
 def _build_test_app() -> FastAPI:
     from app.config import get_settings
     from app.dependencies import require_approved_user
@@ -202,6 +201,7 @@ def _build_test_app() -> FastAPI:
 
 
 # ─── AC-1: POST /api/payments/create-order ────────────────────────────────────
+
 
 class TestCreateOrderEndpoint:
     def setup_method(self) -> None:
@@ -252,6 +252,7 @@ class TestCreateOrderEndpoint:
     def test_lesson_not_found_returns_404(self, mock_svc: Any) -> None:
         """S4-1 patch 1: missing lesson_id should return 404, not 500."""
         from app.modules.payments.service import LessonNotFoundError
+
         mock_svc.side_effect = LessonNotFoundError("nonexistent-uuid")
         resp = self.client.post(
             "/api/payments/create-order",
@@ -261,6 +262,7 @@ class TestCreateOrderEndpoint:
 
 
 # ─── AC-2, AC-3, AC-4: POST /api/payments/webhook ────────────────────────────
+
 
 class TestWebhookEndpoint:
     def setup_method(self) -> None:
@@ -333,6 +335,7 @@ class TestWebhookEndpoint:
 
 # ─── S4-1 patch 1: service.create_order uses DB price, not client amount ──────
 
+
 class TestCreateOrderServicePrice:
     """Direct service-layer tests for price enforcement (S4-1 patch 1)."""
 
@@ -376,6 +379,7 @@ class TestCreateOrderServicePrice:
 
 
 # ─── S4-1 patch 2: handle_payment_captured idempotency — tested directly ──────
+
 
 class TestHandlePaymentCapturedIdempotency:
     """Direct tests for the 23505 catch in handle_payment_captured (patch 2).
@@ -436,6 +440,7 @@ class TestHandlePaymentCapturedIdempotency:
 
 
 # ─── S4-1 patch 3: FK violation (23503) emits critical alert ──────────────────
+
 
 class TestHandlePaymentCapturedFKViolation:
     """Direct tests for the 23503 catch added in S4-1 patch 3."""
