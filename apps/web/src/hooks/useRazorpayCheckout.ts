@@ -110,6 +110,13 @@ export function useRazorpayCheckout(lessonId: string): UseRazorpayCheckoutResult
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const mountedRef = useRef(true);
+    // A ref, not the `status` state, backs the re-entrancy guard: two
+    // synchronous start() calls in the same tick (the actual race -- a fast
+    // double-click, or two tabs) both close over the SAME memoized callback
+    // and the SAME pre-update `status` value, since React batches the first
+    // call's setStatus and doesn't re-render between them. A ref is mutated
+    // immediately, not on next render, so the second call sees it.
+    const inFlightRef = useRef(false);
 
     useEffect(
         () => () => {
@@ -127,8 +134,12 @@ export function useRazorpayCheckout(lessonId: string): UseRazorpayCheckoutResult
                 pollTimeoutRef,
                 mountedRef,
                 (id) => router.push(`/lesson/${id}`),
-                () => setStatus('timeout'),
                 () => {
+                    inFlightRef.current = false;
+                    setStatus('timeout');
+                },
+                () => {
+                    inFlightRef.current = false;
                     setStatus('error');
                     setErrorMessage(
                         'Could not confirm your payment. Please contact support if you were charged.'
@@ -140,6 +151,17 @@ export function useRazorpayCheckout(lessonId: string): UseRazorpayCheckoutResult
     );
 
     const start = useCallback(() => {
+        // Review finding (Scale & Load Hunter, Edge Case Hunter): without this
+        // guard, two rapid clicks (or the same lesson open in two tabs) both
+        // fire create-order before the first response lands and flips
+        // `busy` -- there is no idempotency key in the request body, so a
+        // real duplicate Razorpay order could be created. A ref, not `status`,
+        // backs this: two synchronous calls in the same tick both close over
+        // the same pre-render `status` value (React batches the first call's
+        // setStatus), but a ref is mutated immediately.
+        if (inFlightRef.current) return;
+        inFlightRef.current = true;
+
         setStatus('creating_order');
         setErrorMessage(null);
 
@@ -148,6 +170,7 @@ export function useRazorpayCheckout(lessonId: string): UseRazorpayCheckoutResult
             .then((order) => {
                 if (!mountedRef.current) return;
                 if (typeof window === 'undefined' || !window.Razorpay) {
+                    inFlightRef.current = false;
                     setStatus('error');
                     setErrorMessage('Payment could not start — please refresh and try again.');
                     return;
@@ -168,7 +191,10 @@ export function useRazorpayCheckout(lessonId: string): UseRazorpayCheckoutResult
                             // Student closed the modal without paying (AC-5:
                             // no dedicated cancel page) -- just return to the
                             // pre-click state so they can retry.
-                            if (mountedRef.current) setStatus('idle');
+                            if (mountedRef.current) {
+                                inFlightRef.current = false;
+                                setStatus('idle');
+                            }
                         },
                     },
                 });
@@ -176,6 +202,7 @@ export function useRazorpayCheckout(lessonId: string): UseRazorpayCheckoutResult
             })
             .catch((err: unknown) => {
                 if (!mountedRef.current) return;
+                inFlightRef.current = false;
                 setStatus('error');
                 setErrorMessage(extractErrorMessage(err));
             });

@@ -21,11 +21,18 @@ vi.mock('next/navigation', () => ({
 // AC-2: checkout.js is loaded via next/script — stubbed here to fire
 // onReady on mount (Turnstile.tsx's own precedent: Next.js guarantees this
 // on every mount, cached or not, so no extra "already loaded" branch to
-// test separately).
-function MockScript({ onReady }: { onReady?: () => void }) {
+// test separately). `scriptShouldFail` lets one test simulate a load
+// failure (review finding: onError was previously unhandled entirely).
+let scriptShouldFail = false;
+
+function MockScript({ onReady, onError }: { onReady?: () => void; onError?: () => void }) {
     useEffect(() => {
-        onReady?.();
-    }, [onReady]);
+        if (scriptShouldFail) {
+            onError?.();
+        } else {
+            onReady?.();
+        }
+    }, [onReady, onError]);
     return null;
 }
 
@@ -50,6 +57,7 @@ beforeEach(() => {
     pushMock.mockReset();
     createOrderMock.mockReset();
     checkAccessMock.mockReset();
+    scriptShouldFail = false;
     openMock = vi.fn();
     razorpayConstructorMock = vi.fn().mockImplementation(() => ({ open: openMock }));
     (window as unknown as { Razorpay: unknown }).Razorpay = razorpayConstructorMock;
@@ -166,5 +174,15 @@ describe('RazorpayCheckoutButton', () => {
             expect(button.disabled).toBe(false);
         });
         expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it('AC-2: checkout.js failing to load surfaces a visible error instead of a silently-disabled button forever', async () => {
+        scriptShouldFail = true;
+        render(<RazorpayCheckoutButton lessonId={LESSON_ID} />);
+
+        const alert = await screen.findByRole('alert');
+        expect(alert.textContent).toMatch(/could not load the payment provider/i);
+        const button = screen.getByRole('button', { name: /buy lesson/i }) as HTMLButtonElement;
+        expect(button.disabled).toBe(true);
     });
 });

@@ -28,6 +28,12 @@ const STATUS_LABEL: Record<string, string> = {
  */
 export function RazorpayCheckoutButton({ lessonId }: RazorpayCheckoutButtonProps) {
     const [scriptReady, setScriptReady] = useState(false);
+    // Review finding (Blind Hunter, Edge Case Hunter, Scale & Load Hunter):
+    // `onReady` alone left the button disabled forever with zero feedback if
+    // checkout.js failed to load (ad-blocker, CDN outage) -- `scriptReady`
+    // would just never flip true. This surfaces that failure explicitly
+    // instead of a silent-forever-disabled button.
+    const [scriptError, setScriptError] = useState(false);
     const { status, errorMessage, start } = useRazorpayCheckout(lessonId);
 
     const busy = status === 'creating_order' || status === 'awaiting_payment' || status === 'confirming';
@@ -38,10 +44,17 @@ export function RazorpayCheckoutButton({ lessonId }: RazorpayCheckoutButtonProps
                 src="https://checkout.razorpay.com/v1/checkout.js"
                 strategy="afterInteractive"
                 onReady={() => setScriptReady(true)}
+                onError={() => setScriptError(true)}
             />
-            <Button onClick={start} disabled={busy || !scriptReady} isLoading={busy}>
+            <Button onClick={start} disabled={busy || !scriptReady || scriptError} isLoading={busy}>
                 {STATUS_LABEL[status] ?? 'Buy Lesson'}
             </Button>
+            {scriptError && (
+                <p role="alert" className="mt-2 text-sm text-red-600">
+                    Could not load the payment provider. Please check your connection (or
+                    disable any ad-blocker) and refresh the page.
+                </p>
+            )}
             {status === 'error' && errorMessage && (
                 <p role="alert" className="mt-2 text-sm text-red-600">
                     {errorMessage}

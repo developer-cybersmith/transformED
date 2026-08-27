@@ -14,12 +14,23 @@ import { join, relative } from 'node:path';
  */
 
 const SRC_DIR = join(__dirname, '..', '..');
-const FORBIDDEN = /create-checkout-session|['"]\/payment\/success|['"]\/payment\/cancel|amount_paise:/;
+// Review finding (Acceptance Auditor, Test Coverage): a colon-only match
+// missed `amount_paise=`, bracket/dot access, and shorthand property usage
+// -- widened to a word-boundary match so any reference is caught regardless
+// of syntax shape.
+const DEAD_ROUTES = /create-checkout-session|['"]\/payment\/success|['"]\/payment\/cancel/;
+const AMOUNT_PAISE = /amount_paise\b/;
 const SKIP_DIRS = new Set(['node_modules', '.next']);
 const SELF = relative(SRC_DIR, __filename).split('\\').join('/');
-// The service's own doc comment mentions amount_paise by name to explain
-// why it's never sent — that mention is prose, not a live reference.
-const ALLOWED_COMMENT_FILE = 'services/payment.service.ts';
+// Test names/comments legitimately describe the forbidden term in prose
+// (e.g. "never amount_paise" in a test title) -- that's the guard's own
+// subject matter, not a live reference. Scoped to `__tests__/` broadly
+// rather than one named file, since any test file's description could
+// mention either forbidden pattern going forward, not just this one.
+const IS_TEST_DIR = /(^|\/)__tests__\//;
+// The service's own doc comment additionally mentions amount_paise by name
+// to explain why it's never sent -- also prose, not a live reference.
+const AMOUNT_PAISE_EXEMPT_FILE = 'services/payment.service.ts';
 
 function walk(dir: string, files: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
@@ -36,13 +47,28 @@ function walk(dir: string, files: string[] = []): string[] {
 }
 
 describe('guard — no Stripe-era payment routes, no client-side amount_paise (Story 2-53 AC-1/AC-5)', () => {
-    it('finds zero source files matching create-checkout-session|/payment/success|/payment/cancel|amount_paise:', () => {
+    it('finds zero non-test source files matching create-checkout-session|/payment/success|/payment/cancel', () => {
         const hits: string[] = [];
         for (const file of walk(SRC_DIR)) {
             const relPath = relative(SRC_DIR, file).split('\\').join('/');
-            if (relPath === SELF || relPath.endsWith(ALLOWED_COMMENT_FILE)) continue;
+            if (relPath === SELF || IS_TEST_DIR.test(relPath)) continue;
             const content = readFileSync(file, 'utf-8');
-            if (FORBIDDEN.test(content)) {
+            if (DEAD_ROUTES.test(content)) {
+                hits.push(relPath);
+            }
+        }
+        expect(hits).toEqual([]);
+    });
+
+    it('finds zero non-test source files referencing amount_paise (outside payment.service.ts\'s own doc comment)', () => {
+        const hits: string[] = [];
+        for (const file of walk(SRC_DIR)) {
+            const relPath = relative(SRC_DIR, file).split('\\').join('/');
+            if (relPath === SELF || IS_TEST_DIR.test(relPath) || relPath.endsWith(AMOUNT_PAISE_EXEMPT_FILE)) {
+                continue;
+            }
+            const content = readFileSync(file, 'utf-8');
+            if (AMOUNT_PAISE.test(content)) {
                 hits.push(relPath);
             }
         }
