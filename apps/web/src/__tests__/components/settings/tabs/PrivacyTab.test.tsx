@@ -58,4 +58,61 @@ describe('PrivacyTab', () => {
 
     await waitFor(() => expect(analyticsToggle?.getAttribute('aria-checked')).toBe('true'));
   });
+
+  it('shows an error state with a Retry button when the initial fetch fails, instead of loading forever (S4-10)', async () => {
+    getPrivacyMock.mockReset();
+    getPrivacyMock.mockRejectedValueOnce(new Error('network error'));
+    render(<PrivacyTab />);
+
+    await waitFor(() => expect(screen.getByText(/couldn.t load your privacy settings/i)).not.toBeNull());
+    expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull();
+    expect(screen.queryByText('Loading privacy settings…')).toBeNull();
+  });
+
+  it('shows the real settings after clicking Retry following a failed fetch (S4-10)', async () => {
+    getPrivacyMock.mockReset();
+    getPrivacyMock.mockRejectedValueOnce(new Error('network error'));
+    getPrivacyMock.mockResolvedValueOnce({ data: SETTINGS });
+    const user = userEvent.setup();
+    render(<PrivacyTab />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByText('Learning Analytics')).not.toBeNull());
+    expect(getPrivacyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('hides the Retry button while a retry is in flight, so it cannot be double-clicked into a second overlapping request (S4-10)', async () => {
+    getPrivacyMock.mockReset();
+    getPrivacyMock.mockRejectedValueOnce(new Error('network error'));
+    let resolveRetry!: (value: { data: typeof SETTINGS }) => void;
+    getPrivacyMock.mockReturnValueOnce(new Promise((resolve) => { resolveRetry = resolve; }));
+    const user = userEvent.setup();
+    render(<PrivacyTab />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(getPrivacyMock).toHaveBeenCalledTimes(2);
+
+    resolveRetry({ data: SETTINGS });
+    await waitFor(() => expect(screen.getByText('Learning Analytics')).not.toBeNull());
+  });
+
+  it('does not warn or throw when a fetch rejects after the component has unmounted (S4-10)', async () => {
+    getPrivacyMock.mockReset();
+    let rejectFetch!: (err: unknown) => void;
+    getPrivacyMock.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectFetch = reject; }));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { unmount } = render(<PrivacyTab />);
+    unmount();
+    rejectFetch(new Error('late failure'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
 });

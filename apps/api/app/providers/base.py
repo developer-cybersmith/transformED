@@ -11,6 +11,7 @@ LLMProvider     Text generation (chat completions, structured output)
 TTSProvider     Text-to-speech synthesis
 ImageProvider   Image generation
 AvatarProvider  Pre-cached HeyGen avatar clips (no live per-lesson calls)
+EmailProvider   Transactional email delivery (Story 2-52)
 """
 
 from __future__ import annotations
@@ -159,5 +160,38 @@ class AvatarProvider(ABC):
 
         Returns:
             A time-limited signed URL to the cached MP4 clip in Supabase Storage.
+        """
+        ...
+
+
+class EmailProvider(ABC):
+    """Abstract interface for transactional email delivery (Story 2-52).
+
+    No business logic (ARQ jobs, pipeline/tutor code) may call an email
+    provider SDK/HTTP API directly — always through a concrete implementation
+    of this interface, per CLAUDE.md principle 5.
+    """
+
+    @abstractmethod
+    async def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        html: str,
+    ) -> str:
+        """Send a single transactional email.
+
+        Args:
+            to:      Recipient email address.
+            subject: Email subject line.
+            html:    Fully-rendered HTML body (templating happens before this call).
+
+        Returns:
+            The provider's message/email ID (for logging/troubleshooting).
+
+        Raises:
+            httpx.HTTPStatusError: On a non-2xx response — classified by
+                `app.core.retry.with_retry` at the call site, not here.
         """
         ...
