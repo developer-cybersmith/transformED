@@ -53,11 +53,11 @@ Answering the six questions (`docs/SCALE-CONTRACT.md`):
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1, 6): `payment.service.ts` — `createOrder(lessonId)`, `checkAccess(lessonId)` (mocked per AC-4/D136), service-level tests.
-- [ ] Task 2 (AC: 2, 6): `useRazorpayScript` (or equivalent) script-loader with a load-once guard; test for double-mount/double-click not double-injecting.
-- [ ] Task 3 (AC: 2, 3, 4, 6): `RazorpayCheckoutButton.tsx` — click → create-order → open modal → handler → poll → redirect, plus all terminal/error states; component tests.
-- [ ] Task 4 (AC: 5, 6): guard test confirming no `amount_paise` sent, no dead Stripe-era route references anywhere in the diff.
-- [ ] Task 5: register **D136** in `docs/DEFECT-REGISTER.md` for the mocked `checkAccess`, full `apps/web` suite + lint + typecheck green.
+- [x] Task 1 (AC: 1, 6): `payment.service.ts` — `createOrder(lessonId)`, `checkAccess(lessonId)` (mocked per AC-4/D136), service-level tests.
+- [x] Task 2 (AC: 2, 6): script-loading via `next/script` (`strategy="afterInteractive"`, matching `Turnstile.tsx`'s established convention — no custom script-loader needed since Next.js already dedupes by `src`).
+- [x] Task 3 (AC: 2, 3, 4, 6): `useRazorpayCheckout` (state machine) + `RazorpayCheckoutButton.tsx` (thin UI wrapper) — click → create-order → open modal → handler → poll → redirect, plus all terminal/error states; component tests.
+- [x] Task 4 (AC: 5, 6): guard test (`__tests__/guards/no-stripe-era-payment-routes.test.ts`) confirming no `amount_paise` sent, no dead Stripe-era route references anywhere in `apps/web/src`.
+- [x] Task 5: registered **D136** in `docs/DEFECT-REGISTER.md`. Full `apps/web` suite (85 files, 1020 tests), `ruff`-equivalent (`pnpm lint`, 0 errors), and `pnpm type-check` all green.
 
 ## Dev Notes
 
@@ -85,18 +85,32 @@ Vitest + Testing Library, matching this repo's existing `apps/web/src/__tests__/
 
 ### Implementation Plan
 
-_To be filled in during implementation._
+- **`useRazorpayCheckout` state machine** (`idle → creating_order → awaiting_payment → confirming → error|timeout`, plus `ondismiss` back to `idle`) owns all the logic; `RazorpayCheckoutButton.tsx` is a thin presentational wrapper, mirroring this repo's existing hook+component split (`useAttentionConsent`/`AttentionConsentModal`).
+- **Script loading**: `next/script` with `strategy="afterInteractive"` and an `onReady` callback — the exact pattern already established by `Turnstile.tsx` for a different third-party widget. Next.js dedupes by `src` across mounts, so AC-2's "loaded exactly once" is a platform guarantee, not something this story needed to build.
+- **Poll implementation**: initially wrote the recursive poll as a self-referencing `useCallback` (`pollAccess` scheduling `setTimeout(() => pollAccess(...))` inside its own body) — `eslint-plugin-react-hooks`'s `react-hooks/immutability` rule rejected this as an error (a `useCallback` body cannot reference its own not-yet-fully-declared binding for a recursive reschedule). Refactored to a plain module-level `schedulePoll()` function taking every dependency as a parameter instead of closing over hook state — same behavior, no self-reference, passes lint clean.
+- **D136** (`docs/DEFECT-REGISTER.md`): `checkAccess()` is a hardcoded mock since `GET /api/payments/access` doesn't exist on the backend yet — confirmed directly by reading `origin/razorpay-backend-endpoints-dev3`'s `router.py`, not assumed from the cross-team message.
 
 ### Completion Notes
 
-_To be filled in during implementation._
+- All 5 tasks complete. Full `apps/web` suite: **85 files, 1020 tests passed**, zero failures (includes the 10 new tests this story adds). `pnpm lint`: 0 errors (33 pre-existing warnings, unrelated to this story, plus one new warning on the intentionally-unused `_lessonId` mock parameter — documented inline via the D136 comment, not silent). `pnpm type-check`: clean.
+- Grounded against the REAL backend branch (`origin/razorpay-backend-endpoints-dev3`), not just the cross-team integration message — this caught that the message's flow description was accurate, but let this story independently confirm (rather than assume) three load-bearing facts: the exact response field names, that `create-order` is `ApprovedUser`-gated today, and that no server-side minimum-price guard exists (all three inform the product-owner Q&A this story's kickoff also produced).
+- `docs/dev2-sprint-tracker.md`'s S4-02 section still describes the old Stripe-shaped flow — not updated by this story (out of scope; the story doc itself is the current source of truth per this repo's own stated pattern of story docs sometimes superseding stale tracker prose).
 
 ### File List
 
-_To be filled in during implementation._
+- `apps/web/src/types/payment.ts` (NEW)
+- `apps/web/src/services/payment.service.ts` (NEW)
+- `apps/web/src/services/index.ts` (MODIFIED — export the new service)
+- `apps/web/src/hooks/useRazorpayCheckout.ts` (NEW)
+- `apps/web/src/components/payment/RazorpayCheckoutButton.tsx` (NEW)
+- `apps/web/src/__tests__/services/payment.service.test.ts` (NEW — 3 tests)
+- `apps/web/src/__tests__/components/payment/RazorpayCheckoutButton.test.tsx` (NEW — 6 tests)
+- `apps/web/src/__tests__/guards/no-stripe-era-payment-routes.test.ts` (NEW — 1 test)
+- `docs/DEFECT-REGISTER.md` (MODIFIED — registered D136)
 
 ## Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-08-26 | Story created after reading the real (unmerged) Razorpay backend branch directly (`origin/razorpay-backend-endpoints-dev3`) rather than trusting the cross-team integration message alone — confirmed the exact response shape, confirmed `create-order` is `ApprovedUser`-gated today (informs the product-owner Q1 answer), confirmed `GET /api/payments/access` does not exist yet (D136), and confirmed no server-side minimum-price guard exists (informs the Q2 pricing blocker being real, not hypothetical). Supersedes the stale Stripe-shaped S4-02 write-up in `docs/dev2-sprint-tracker.md`. Branch `sprint4/s4-02-razorpay-checkout` off `sprint4-master`. | Dev 2 |
+| 2026-08-26 | Implemented all 5 tasks: `payment.service.ts`, `useRazorpayCheckout` state machine, `RazorpayCheckoutButton.tsx`, 10 new tests (service + component + guard), D136 registered. One implementation-time lint fix: the poll's recursive `useCallback` self-reference was rejected by `react-hooks/immutability` — refactored to a plain module-level `schedulePoll()` function. Full `apps/web` suite green (85 files, 1020 tests), lint 0 errors, typecheck clean. Not yet merged into `sprint4-master` — held pending the user's call on whether to fold this into the already-open, already-under-review PR #156, or open a separate PR, since 3 reviewers currently have #156 open. | Dev 2 |
