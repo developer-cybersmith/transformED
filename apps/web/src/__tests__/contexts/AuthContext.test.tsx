@@ -3,18 +3,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
-const { mockGetUser, mockSignOut, mockOnAuthStateChange, mockUnsubscribe, mockCreateClient } = vi.hoisted(() => ({
-  mockGetUser: vi.fn(),
-  mockSignOut: vi.fn(),
-  mockOnAuthStateChange: vi.fn(),
-  mockUnsubscribe: vi.fn(),
-  mockCreateClient: vi.fn(),
-}));
+const { mockGetUser, mockSignOut, mockOnAuthStateChange, mockUnsubscribe, mockCreateClient, identifyMock, resetMock } =
+  vi.hoisted(() => ({
+    mockGetUser: vi.fn(),
+    mockSignOut: vi.fn(),
+    mockOnAuthStateChange: vi.fn(),
+    mockUnsubscribe: vi.fn(),
+    mockCreateClient: vi.fn(),
+    identifyMock: vi.fn(),
+    resetMock: vi.fn(),
+  }));
 
 let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
 
 vi.mock('@/lib/supabase/client', () => ({
   createClient: mockCreateClient,
+}));
+
+vi.mock('posthog-js', () => ({
+  default: { identify: identifyMock, reset: resetMock },
 }));
 
 beforeEach(() => {
@@ -69,6 +76,8 @@ beforeEach(() => {
   mockSignOut.mockReset();
   mockOnAuthStateChange.mockReset();
   mockUnsubscribe.mockReset();
+  identifyMock.mockReset();
+  resetMock.mockReset();
   authChangeCallback = undefined;
   Object.defineProperty(window, 'location', {
     configurable: true,
@@ -187,6 +196,71 @@ describe('AuthContext — live auth state subscription', () => {
     );
 
     expect(mockCreateClient).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AuthContext — PostHog identity (Story 2-54 fast-follow)', () => {
+  it('identifies the real account after the initial session resolves, not before', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: SUPABASE_USER }, error: null });
+    renderWithProvider();
+
+    // Not called synchronously on mount, while auth is still resolving.
+    expect(identifyMock).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(identifyMock).toHaveBeenCalledWith('user_1', { email: 'student@example.com' }));
+  });
+
+  it('does not reset() for an anonymous visitor who was never identified (e.g. the public landing page)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    renderWithProvider();
+
+    await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+
+    expect(identifyMock).not.toHaveBeenCalled();
+    expect(resetMock).not.toHaveBeenCalled();
+  });
+
+  it('identifies on a live SIGNED_IN event', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    renderWithProvider();
+    await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+
+    act(() => {
+      authChangeCallback?.('SIGNED_IN', { user: SUPABASE_USER });
+    });
+
+    await waitFor(() => expect(identifyMock).toHaveBeenCalledWith('user_1', { email: 'student@example.com' }));
+  });
+
+  it('resets on a real SIGNED_OUT for a previously-identified user (not two students sharing a device blending under one distinct_id)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: SUPABASE_USER }, error: null });
+    renderWithProvider();
+    await waitFor(() => expect(identifyMock).toHaveBeenCalledWith('user_1', { email: 'student@example.com' }));
+
+    act(() => {
+      authChangeCallback?.('SIGNED_OUT', null);
+    });
+
+    await waitFor(() => expect(resetMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('resets on logout()', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: SUPABASE_USER }, error: null });
+    mockSignOut.mockResolvedValue({ error: null });
+
+    const logoutRef: { current: (() => Promise<void>) | undefined } = { current: undefined };
+    render(
+      <AuthProvider>
+        <LogoutProbe captureRef={logoutRef} />
+      </AuthProvider>
+    );
+    await waitFor(() => expect(identifyMock).toHaveBeenCalledWith('user_1', { email: 'student@example.com' }));
+
+    await act(async () => {
+      await logoutRef.current!();
+    });
+
+    await waitFor(() => expect(resetMock).toHaveBeenCalledTimes(1));
   });
 });
 
