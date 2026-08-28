@@ -6,12 +6,17 @@ import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 import type { QuizQuestion } from '@hie/shared/types/lesson';
 
-const { submitQuizMock } = vi.hoisted(() => ({
+const { submitQuizMock, captureMock } = vi.hoisted(() => ({
   submitQuizMock: vi.fn(),
+  captureMock: vi.fn(),
 }));
 
 vi.mock('@/lib/assessment', () => ({
   submitQuiz: submitQuizMock,
+}));
+
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
 }));
 
 const QUESTIONS: QuizQuestion[] = [
@@ -93,6 +98,7 @@ const RESULT = {
 beforeEach(() => {
   submitQuizMock.mockReset();
   submitQuizMock.mockResolvedValue(RESULT);
+  captureMock.mockReset();
   usePlayerStore.getState().loadLesson(mockLessonPackage);
   // A real sessionId is the realistic default (mintSession has already
   // resolved by the time a student reaches the quiz in normal use) -- tests
@@ -129,6 +135,14 @@ describe('QuizOverlay', () => {
 
     expect(screen.getByText('Correct!')).not.toBeNull();
     expect(screen.getByText(QUESTIONS[0].explanation)).not.toBeNull();
+    // Story 2-54
+    expect(captureMock).toHaveBeenCalledWith('quiz_answered', {
+      lesson_id: mockLessonPackage.lesson_id,
+      segment_id: 'seg_0',
+      question_id: QUESTIONS[0].question_id,
+      is_correct: true,
+      response_time_ms: expect.any(Number),
+    });
   });
 
   it('always shows Continue after the last question, regardless of correctness', async () => {

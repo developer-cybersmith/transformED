@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
+import posthog from 'posthog-js';
 import { usePlayerStore } from '@/stores/player.machine';
 import type { InterventionType } from '@hie/shared/types/ws';
 
@@ -52,6 +53,20 @@ export function TutorInterventionCard() {
   // variant styling left over from the previous card). A pure render-time
   // computation, not a ref/effect-driven counter.
   const renderKey = activeIntervention ? JSON.stringify(activeIntervention) : '';
+
+  // Story 2-54: `visible` toggles false->true again for the SAME payload if
+  // a card is showing when TEACH_BACK starts (activeIntervention isn't
+  // cleared, only hidden) and then ends back to PLAYING -- keyed on
+  // `renderKey` (the payload's own content, same derivation as the remount
+  // key above) so a given intervention only ever fires once, independent of
+  // that visibility round-trip.
+  const firedInterventionKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!visible || !activeIntervention) return;
+    if (firedInterventionKeyRef.current === renderKey) return;
+    firedInterventionKeyRef.current = renderKey;
+    posthog.capture('intervention_received', { intervention_type: activeIntervention.type });
+  }, [visible, activeIntervention, renderKey]);
 
   // Gated on `visible`, not just `activeIntervention` -- AC-6 measures 30s
   // "from when the card became visible". A payload that arrives while hidden

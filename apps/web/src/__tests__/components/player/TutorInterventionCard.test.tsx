@@ -4,8 +4,17 @@ import { act } from 'react';
 import { TutorInterventionCard } from '@/components/player/TutorInterventionCard';
 import { usePlayerStore } from '@/stores/player.machine';
 
+const { captureMock } = vi.hoisted(() => ({
+  captureMock: vi.fn(),
+}));
+
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
+}));
+
 beforeEach(() => {
   usePlayerStore.setState({ activeIntervention: null, status: 'PLAYING', wsSendControl: null });
+  captureMock.mockReset();
 });
 
 afterEach(() => {
@@ -68,6 +77,30 @@ describe('TutorInterventionCard (S3-03 AC-3/AC-4/AC-5)', () => {
       usePlayerStore.setState({ status: 'TEACH_BACK' });
     });
     expect(screen.queryByTestId('tutor-intervention-card')).toBeNull();
+  });
+
+  it('Story 2-54: fires intervention_received once, even after a TEACH_BACK visibility round-trip for the same payload', () => {
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'confusion', message: 'x' },
+        status: 'PLAYING',
+      });
+    });
+    render(<TutorInterventionCard />);
+    expect(captureMock).toHaveBeenCalledWith('intervention_received', { intervention_type: 'confusion' });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+
+    // activeIntervention is NOT cleared by a TEACH_BACK transition (only
+    // hidden) -- ending back to PLAYING re-shows the SAME payload.
+    act(() => {
+      usePlayerStore.setState({ status: 'TEACH_BACK' });
+    });
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+
+    expect(screen.getByTestId('tutor-intervention-card')).not.toBeNull();
+    expect(captureMock).toHaveBeenCalledTimes(1);
   });
 });
 

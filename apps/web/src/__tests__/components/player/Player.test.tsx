@@ -4,9 +4,10 @@ import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { useLessonSocketMock, apiPostMock, useAttentionConsentMock, useAttentionMonitorMock } = vi.hoisted(() => ({
+const { useLessonSocketMock, apiPostMock, useAttentionConsentMock, useAttentionMonitorMock, captureMock } = vi.hoisted(() => ({
   useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
   apiPostMock: vi.fn(),
+  captureMock: vi.fn(),
   // Safe default so every pre-existing test in this file (none of which know
   // about S3-01) never sees the consent modal unless a test opts in.
   useAttentionConsentMock: vi.fn().mockReturnValue({
@@ -46,6 +47,10 @@ vi.mock('@/lib/api', () => ({
   api: { post: apiPostMock },
 }));
 
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
+}));
+
 const TEST_SESSION_ID = 'sess_test_default';
 
 // Opts a single test into a resolving POST /assessment/sessions -- the
@@ -83,6 +88,7 @@ beforeEach(() => {
   });
   mockOnRefetchLesson.mockClear();
   mockOnRefetchLesson.mockResolvedValue(null);
+  captureMock.mockReset();
   apiPostMock.mockReset();
   apiPostMock.mockImplementation((url: string) => {
     if (url === '/assessment/sessions') {
@@ -123,6 +129,37 @@ function renderEnded(sessionId: string) {
   });
   return utils;
 }
+
+describe('Player — Story 2-54 PostHog instrumentation', () => {
+  it('fires lesson_started once the first time PLAYING is observed, not again on resume-from-pause', () => {
+    usePlayerStore.setState({ status: 'IDLE', sessionId: '' });
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    expect(captureMock).toHaveBeenCalledWith('lesson_started', { lesson_id: mockLessonPackage.lesson_id });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED' });
+    });
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    // Resume-from-pause re-enters PLAYING but must not re-fire the event.
+    expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires lesson_completed when status reaches ENDED', () => {
+    renderEnded('sess_lesson_completed');
+
+    expect(captureMock).toHaveBeenCalledWith('lesson_completed', {
+      lesson_id: mockLessonPackage.lesson_id,
+      session_id: 'sess_lesson_completed',
+    });
+  });
+});
 
 describe('Player — lesson complete (ENDED) screen', () => {
   it('links to the session report using the player store sessionId, not a placeholder string', () => {

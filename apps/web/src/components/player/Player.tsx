@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import posthog from 'posthog-js';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
@@ -69,6 +70,14 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   // runs at the end of the (possibly slow) refetch, so the button stays
   // visible/clickable for the whole in-flight window without this.
   const [isRetrying, setIsRetrying] = useState(false);
+  // Story 2-54: PLAYING is re-entered on every resume-from-pause and after
+  // exitTeachBack() (player.machine.ts), not just once per lesson --
+  // `lesson_started` must fire only the first time this mount observes
+  // PLAYING. PlayerLoader is keyed on lesson_id (S4-11), so this component
+  // remounts fresh per lesson visit, making a mount-scoped ref the correct
+  // reset boundary (also holds across React StrictMode's dev-only double
+  // effect invoke, since the ref isn't reset between the two calls).
+  const hasFiredLessonStartedRef = useRef(false);
 
   // Re-fetches fresh signed media URLs before actually retrying (S2-33) --
   // retryAudio() alone just remounts the <audio> element with whatever src
@@ -216,7 +225,20 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
     void completeSession(sessionId).catch(() => {
       // Swallowed on purpose -- see the comment above.
     });
-  }, [status, sessionId]);
+    // Story 2-54: status never leaves ENDED once set (endLesson() is the
+    // only writer), so this effect fires effectively once -- same reasoning
+    // completeSession above already relies on, no extra guard needed.
+    posthog.capture('lesson_completed', { lesson_id: lessonId, session_id: sessionId });
+  }, [status, sessionId, lessonId]);
+
+  // Story 2-54: fires once per mount, the first time PLAYING is observed --
+  // see hasFiredLessonStartedRef's own comment for why a mount-scoped ref
+  // (not a status-transition effect alone) is required here.
+  useEffect(() => {
+    if (status !== 'PLAYING' || hasFiredLessonStartedRef.current) return;
+    hasFiredLessonStartedRef.current = true;
+    posthog.capture('lesson_started', { lesson_id: lessonId });
+  }, [status, lessonId]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;
 

@@ -55,12 +55,12 @@ Answering the six questions (`docs/SCALE-CONTRACT.md`):
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC: 1): `apps/web/src/instrumentation-client.ts` — init with env-sourced key/host, skip-if-unset guard.
-- [ ] Task 2 (AC: 2, 5, 6): `onboarding_completed`, `upload_started`, `upload_completed` — wire + tests.
-- [ ] Task 3 (AC: 2, 3, 5, 6): `lesson_started` (mount-scoped ref guard), `lesson_completed` — wire + tests.
-- [ ] Task 4 (AC: 2, 5, 6): `quiz_answered`, `teachback_submitted` — wire + tests.
-- [ ] Task 5 (AC: 2, 3, 5, 6): `intervention_received` (identity-keyed ref guard) — wire + tests.
-- [ ] Task 6 (AC: 4): guard test — none of the 8 event names appear in `analytics.ts`. Full `apps/web` suite + lint + typecheck green.
+- [x] Task 1 (AC: 1): `apps/web/src/instrumentation-client.ts` — init with env-sourced key/host, skip-if-unset guard.
+- [x] Task 2 (AC: 2, 5, 6): `onboarding_completed`, `upload_started`, `upload_completed` — wired + tested.
+- [x] Task 3 (AC: 2, 3, 5, 6): `lesson_started` (mount-scoped ref guard), `lesson_completed` — wired + tested.
+- [x] Task 4 (AC: 2, 5, 6): `quiz_answered`, `teachback_submitted` — wired + tested.
+- [x] Task 5 (AC: 2, 3, 5, 6): `intervention_received` (identity-keyed ref guard) — wired + tested.
+- [x] Task 6 (AC: 4): guard test (`no-posthog-events-in-analytics-ts.test.ts`) — none of the 8 event names appear in `analytics.ts`. Full `apps/web` suite (87 files, 1038 tests), lint (0 errors), typecheck, and a production build all green.
 
 ## Dev Notes
 
@@ -88,15 +88,37 @@ Vitest + Testing Library, matching this repo's existing `apps/web/src/__tests__/
 
 ### Implementation Plan
 
-_To be filled in during implementation._
+- **Setup**: `apps/web/src/instrumentation-client.ts`, Next.js's officially-recommended App Router integration for client-side instrumentation (stable since 15.3, confirmed against `next@16.2.9` in `package.json`) — no `PostHogProvider` component or `layout.tsx` change needed, simpler than the older provider-wrapping pattern. Skips `posthog.init(...)` entirely if `NEXT_PUBLIC_POSTHOG_KEY` is unset.
+- **Grounding before wiring**: a dedicated research pass read the real trigger-point code for all 8 events rather than trusting the tracker's one-line paraphrases — this caught two real double-fire risks before they shipped (see below) and one stale tracker claim (no WS message named `lesson_ready` exists anywhere).
+- **`lesson_started` guard**: a mount-scoped `useRef` in `Player.tsx`, not a bare status-transition effect — `PLAYING` is re-entered on every resume-from-pause and after `exitTeachBack()`. Since `PlayerLoader` is already keyed on `lesson_id` (S4-11), `Player` remounts fresh per lesson visit, making a mount-scoped ref the correct, already-available reset boundary.
+- **`intervention_received` guard**: a `useRef` keyed on `JSON.stringify(activeIntervention)` (the same derivation `TutorInterventionCard.tsx` already uses for its remount key) — `visible` toggles false→true again for the SAME payload across a TEACH_BACK round-trip (the card hides, but `activeIntervention` itself isn't cleared), so a bare `visible`-watching effect would have double-fired.
+- **`quiz_answered` fires per-question, not per-quiz** — a deliberate, documented choice (see the story's AC-6 clause) since `handleSubmit()` runs once per question in a multi-question quiz; `lesson_completed` already covers the lesson-level terminal signal.
+- **No collision with Dev 3's system**: `apps/web/src/lib/analytics.ts`'s `trackEvent()`/`AnalyticsEventType` is a separate, backend-owned CES contract — confirmed by reading it directly, and guarded going forward by a dedicated test scanning for all 8 event name strings inside that file.
 
 ### Completion Notes
 
-_To be filled in during implementation._
+- All 6 tasks complete. Full `apps/web` suite: **87 files, 1038 tests passed** (1027 + 11 new: 8 from the new AC-4 guard test, 1 new `Player.test.tsx` `lesson_completed` test, 1 new `lesson_started` no-double-fire test, 1 new `TutorInterventionCard` no-double-fire test — the remaining events were tested via new assertions added to existing tests, not new test cases). `pnpm lint`: 0 errors, same 33 pre-existing warnings. `pnpm type-check`: clean. `pnpm build`: succeeds, `instrumentation-client.ts` compiles and is picked up correctly (confirmed via the build's own "Environments: .env.local" line).
+- One transient full-suite failure (15 tests/6 errors, all `Object.onTimeoutError`/`Timeout._onTimeout` traces, 288s duration) on a first `pnpm test` run — re-ran immediately and got a clean 87/87, 1038/1038 pass at 120s duration. Diagnosed as resource-contention flakiness under the full parallel suite's load, not a real regression: every individually-run test file (all 7 touched by this story) passed cleanly on its own before the full-suite run was ever attempted, and the failure signature (bare timeout errors, no assertion failures) doesn't implicate any of this story's code.
+- The user provided a real PostHog project API key and EU-cloud host directly in conversation (not via a formal account-request process — PostHog's free tier is self-serve, no business KYC/approval chain needed, unlike Razorpay). Set in `apps/web/.env.local` as `NEXT_PUBLIC_POSTHOG_KEY`/`NEXT_PUBLIC_POSTHOG_HOST`. **Not yet added to Vercel's production environment variables** — local dev only for now; production wiring is a follow-up when this is ready to ship live (same pattern as the beta-allowlist and Redis work earlier this sprint).
 
 ### File List
 
-_To be filled in during implementation._
+- `apps/web/src/instrumentation-client.ts` (NEW)
+- `apps/web/.env.local` (MODIFIED — `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`; gitignored, not committed)
+- `apps/web/package.json`, `apps/web/pnpm-lock.yaml` (MODIFIED — `posthog-js` dependency)
+- `apps/web/src/components/onboarding/OnboardingFlow.tsx` (MODIFIED — `onboarding_completed`)
+- `apps/web/src/components/dashboard/upload/UploadFlow.tsx` (MODIFIED — `upload_started`, `upload_completed`)
+- `apps/web/src/components/player/Player.tsx` (MODIFIED — `lesson_started`, `lesson_completed`)
+- `apps/web/src/components/player/QuizOverlay.tsx` (MODIFIED — `quiz_answered`)
+- `apps/web/src/components/player/TeachBackModal.tsx` (MODIFIED — `teachback_submitted`)
+- `apps/web/src/components/player/TutorInterventionCard.tsx` (MODIFIED — `intervention_received`)
+- `apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx` (MODIFIED — posthog mock + 2 assertions)
+- `apps/web/src/__tests__/components/dashboard/upload/UploadFlow.test.tsx` (MODIFIED — posthog mock + 3 assertions)
+- `apps/web/src/__tests__/components/player/Player.test.tsx` (MODIFIED — posthog mock + 2 new tests)
+- `apps/web/src/__tests__/components/player/QuizOverlay.test.tsx` (MODIFIED — posthog mock + 1 assertion)
+- `apps/web/src/__tests__/components/player/TeachBackModal.test.tsx` (MODIFIED — posthog mock + 2 assertions)
+- `apps/web/src/__tests__/components/player/TutorInterventionCard.test.tsx` (MODIFIED — posthog mock + 1 new test)
+- `apps/web/src/__tests__/guards/no-posthog-events-in-analytics-ts.test.ts` (NEW — 8 tests)
 
 ## Change Log
 

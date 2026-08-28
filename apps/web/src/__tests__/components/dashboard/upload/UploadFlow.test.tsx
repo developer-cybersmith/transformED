@@ -3,15 +3,20 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { UploadFlow } from '@/components/dashboard/upload/UploadFlow';
 
-const { pushMock, uploadLessonMock, getBookStatusMock, getLessonStatusMock } = vi.hoisted(() => ({
+const { pushMock, uploadLessonMock, getBookStatusMock, getLessonStatusMock, captureMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   uploadLessonMock: vi.fn(),
   getBookStatusMock: vi.fn(),
   getLessonStatusMock: vi.fn(),
+  captureMock: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
+}));
+
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
 }));
 
 // Only `uploadService` is replaced. `extractErrorMessage` and
@@ -49,6 +54,7 @@ beforeEach(() => {
   uploadLessonMock.mockReset();
   getBookStatusMock.mockReset();
   getLessonStatusMock.mockReset();
+  captureMock.mockReset();
 });
 
 // Story W0 AC5. The old fixture here was
@@ -91,6 +97,8 @@ describe('UploadFlow', () => {
 
     await screen.findByText(/exceeds the 50MB limit/i);
     expect(uploadLessonMock).not.toHaveBeenCalled();
+    // Story 2-54
+    expect(captureMock).not.toHaveBeenCalledWith('upload_started', expect.anything());
   });
 
   // ── AC5: INVERTED, not deleted ────────────────────────────────────────────
@@ -121,6 +129,8 @@ describe('UploadFlow', () => {
     expect(screen.queryByText('Deep')).toBeNull();
     expect(screen.queryByText('Balanced')).toBeNull();
     expect(screen.queryByText('Refresher')).toBeNull();
+    // Story 2-54
+    expect(captureMock).toHaveBeenCalledWith('upload_started', { file_size_bytes: expect.any(Number) });
   });
 
   it('polls the BOOK endpoint, not the lesson endpoint (AC5)', async () => {
@@ -146,6 +156,12 @@ describe('UploadFlow', () => {
     await user.click(screen.getByText('Choose a chapter'));
 
     expect(pushMock).toHaveBeenCalledWith(`/books/${BOOK_ID}`);
+    // Story 2-54
+    expect(captureMock).toHaveBeenCalledWith('upload_completed', {
+      book_id: READY_BOOK.book_id,
+      page_count: READY_BOOK.page_count,
+      chapter_count: READY_BOOK.chapter_count,
+    });
   });
 
   it('reports real ingestion progress from chapter_count rather than a fabricated percentage', async () => {

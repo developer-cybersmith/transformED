@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import posthog from 'posthog-js';
 import { usePlayerStore } from '@/stores/player.machine';
 import { submitTeachBack, type TeachBackResult } from '@/lib/assessment';
 
@@ -46,6 +47,12 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
         response_text: text.trim(),
       });
       setResult(teachBackResult);
+      // Story 2-54: success path only -- not the empty-text skip above, and
+      // not the API-unavailable catch below (that's a failed submission).
+      posthog.capture('teachback_submitted', {
+        lesson_id: lesson.lesson_id,
+        segment_id: segment.segment_id,
+      });
     } catch {
       // API unavailable — don't block the student
       exitTeachBack();
