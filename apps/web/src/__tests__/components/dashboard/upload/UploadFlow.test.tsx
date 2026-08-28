@@ -228,6 +228,9 @@ describe('UploadFlow', () => {
     await screen.findByText('Try Again');
     expect(screen.getByText(/couldn't read this PDF/i)).not.toBeNull();
 
+    // Story 2-54: upload_completed must never fire for a failed book.
+    expect(captureMock).not.toHaveBeenCalledWith('upload_completed', expect.anything());
+
     await user.click(screen.getByText('Try Again'));
     expect(screen.getByText('Drop your textbook here')).not.toBeNull();
   });
@@ -271,6 +274,8 @@ describe('UploadFlow', () => {
     await screen.findByText('Finding the chapters...');
     expect(screen.queryByText('Choose a chapter')).toBeNull();
     expect(screen.queryByText('Upload Failed')).toBeNull();
+    // Story 2-54: upload_completed must never fire while still processing.
+    expect(captureMock).not.toHaveBeenCalledWith('upload_completed', expect.anything());
   });
 
   it('fails fast on a 4xx poll error instead of retrying like a transient failure', async () => {

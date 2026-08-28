@@ -13,7 +13,13 @@ vi.mock('posthog-js', () => ({
 }));
 
 beforeEach(() => {
-  usePlayerStore.setState({ activeIntervention: null, status: 'PLAYING', wsSendControl: null });
+  usePlayerStore.setState({
+    activeIntervention: null,
+    status: 'PLAYING',
+    wsSendControl: null,
+    sessionId: '',
+    lesson: null,
+  });
   captureMock.mockReset();
 });
 
@@ -79,19 +85,23 @@ describe('TutorInterventionCard (S3-03 AC-3/AC-4/AC-5)', () => {
     expect(screen.queryByTestId('tutor-intervention-card')).toBeNull();
   });
 
-  it('Story 2-54: fires intervention_received once, even after a TEACH_BACK visibility round-trip for the same payload', () => {
+  it('Story 2-54: fires intervention_received once (with lesson/session context), even after a TEACH_BACK visibility round-trip for the same payload', () => {
+    usePlayerStore.setState({ sessionId: 'sess_1', lesson: { lesson_id: 'lesson_1' } as never });
+    const payload = { session_id: 's1', type: 'confusion' as const, message: 'x' };
     act(() => {
-      usePlayerStore.setState({
-        activeIntervention: { session_id: 's1', type: 'confusion', message: 'x' },
-        status: 'PLAYING',
-      });
+      usePlayerStore.setState({ activeIntervention: payload, status: 'PLAYING' });
     });
     render(<TutorInterventionCard />);
-    expect(captureMock).toHaveBeenCalledWith('intervention_received', { intervention_type: 'confusion' });
+    expect(captureMock).toHaveBeenCalledWith('intervention_received', {
+      intervention_type: 'confusion',
+      lesson_id: 'lesson_1',
+      session_id: 'sess_1',
+    });
     expect(captureMock).toHaveBeenCalledTimes(1);
 
     // activeIntervention is NOT cleared by a TEACH_BACK transition (only
-    // hidden) -- ending back to PLAYING re-shows the SAME payload.
+    // hidden) -- ending back to PLAYING re-shows the SAME payload (same
+    // object reference, unchanged).
     act(() => {
       usePlayerStore.setState({ status: 'TEACH_BACK' });
     });
@@ -101,6 +111,40 @@ describe('TutorInterventionCard (S3-03 AC-3/AC-4/AC-5)', () => {
 
     expect(screen.getByTestId('tutor-intervention-card')).not.toBeNull();
     expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Review fix (Edge Case Hunter): interventions are pre-generated from a
+  // small fixed set of messages per lesson (CLAUDE.md), so two GENUINELY
+  // DIFFERENT dispatches can easily share identical type+message content.
+  // A content-hash guard would wrongly suppress the second, real
+  // intervention_received -- the fix keys on object-reference identity
+  // instead, which correctly distinguishes "same object shown again" from
+  // "a new object with the same content."
+  it('Story 2-54: fires intervention_received again for a genuinely NEW intervention with identical content to a previous one', () => {
+    const first = { session_id: 's1', type: 'distraction' as const, message: 'Stay with me!' };
+    act(() => {
+      usePlayerStore.setState({ activeIntervention: first, status: 'PLAYING' });
+    });
+    render(<TutorInterventionCard />);
+    expect(captureMock).toHaveBeenCalledTimes(1);
+
+    // A fresh dispatch with IDENTICAL content but a NEW object reference --
+    // e.g. the tutor firing the same pre-generated distraction message a
+    // second time later in the session.
+    const second = { session_id: 's1', type: 'distraction' as const, message: 'Stay with me!' };
+    act(() => {
+      usePlayerStore.setState({ activeIntervention: null });
+    });
+    act(() => {
+      usePlayerStore.setState({ activeIntervention: second });
+    });
+
+    expect(captureMock).toHaveBeenCalledTimes(2);
+    expect(captureMock).toHaveBeenNthCalledWith(
+      2,
+      'intervention_received',
+      expect.objectContaining({ intervention_type: 'distraction' })
+    );
   });
 });
 

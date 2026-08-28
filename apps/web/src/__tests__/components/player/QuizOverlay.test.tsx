@@ -153,6 +153,12 @@ describe('QuizOverlay', () => {
 
     expect(screen.getByText('Not quite.')).not.toBeNull();
     await waitFor(() => expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false));
+    // Story 2-54: is_correct must reflect a WRONG answer too, not just the
+    // correct-answer path the other capture assertion exercises.
+    expect(captureMock).toHaveBeenCalledWith(
+      'quiz_answered',
+      expect.objectContaining({ question_id: QUESTIONS[0].question_id, is_correct: false })
+    );
   });
 
   it('advances to the next question and resets selection state', async () => {
@@ -191,6 +197,13 @@ describe('QuizOverlay', () => {
         })
       )
     );
+    // Story 2-54: quiz_answered fires once per QUESTION, including the
+    // middle one -- not just the first/last question a smaller fixture
+    // would happen to exercise.
+    expect(captureMock).toHaveBeenCalledTimes(3);
+    THREE_QUESTIONS.forEach((q) => {
+      expect(captureMock).toHaveBeenCalledWith('quiz_answered', expect.objectContaining({ question_id: q.question_id }));
+    });
   });
 
   it('submits all collected answers with session/lesson/segment ids on the last question', async () => {
