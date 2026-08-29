@@ -186,6 +186,14 @@ async def _run_pubsub_forwarder(
                         )
 
         except asyncio.CancelledError:
+            # Close the dedicated connection here too, not just on the crash
+            # path below — otherwise every clean shutdown (a normal redeploy)
+            # leaks one connection per listener. Found in review (Blind
+            # Hunter): this diff doubles the number of listeners, so it
+            # doubles a pre-existing per-shutdown leak if left unfixed here.
+            if _sub_conn is not None:
+                with contextlib.suppress(Exception):
+                    await _sub_conn.aclose()
             raise  # DECISION 3: shutdown signal — do not restart
         except Exception:
             wait: float = min(2**attempt, 30)

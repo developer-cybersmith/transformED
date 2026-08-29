@@ -233,9 +233,63 @@ already established for `lesson_ready`. Channel: `generation_progress:{lesson_id
 
 - 2026-08-29: Story implemented end-to-end (RED → GREEN → regression-verified → tracker updated).
   Status: in-progress → review.
+- 2026-08-29: 8-layer BMAD review completed. 5 confirmed findings fixed (3 new tests, 2 assertion
+  additions, 1 connection-leak fix); 3 registered as D140-D142 (deferred, out of scope); 1 dismissed
+  (Process Integrity's branch-flow flag — pre-approved by the user, not a violation).
 
 ---
 
 ## Review findings
 
-*(filled in after the 6-layer review, before merge)*
+**8-layer BMAD adversarial review, 2026-08-29, PR #162** (Blind Hunter, Edge Case Hunter, Acceptance
+Auditor, Scale & Load Hunter, plus Story Quality, Test Coverage, AC Completeness, Process Integrity —
+the 4 layers CLAUDE.md's gate requires beyond the skill's own 4 built-ins).
+
+**Fixed in this PR (confirmed by 2+ independent layers, or cheap and directly in scope):**
+
+- **AC5's backoff/reconnect path was entirely untested** (AC Completeness, Story Quality, Edge Case
+  Hunter, Test Coverage — 4 layers). Added `test_subscriber_crash_triggers_backoff_and_reconnects`,
+  asserting the real `wait = min(2**attempt, 30)` math, connection teardown, and reconnect.
+- **`on_message` hook exception path untested** (Edge Case Hunter). Added
+  `test_on_message_hook_exception_does_not_escape_to_reconnect_handler`, proving a raising hook is
+  contained at the hook boundary rather than triggering a full reconnect cycle.
+- **Redis connection leaks on clean `CancelledError` shutdown** (Blind Hunter) — real, pre-existing in
+  `lesson_ready`, doubled by this diff adding a second listener. Fixed in `_run_pubsub_forwarder`:
+  the connection is now closed on the cancellation path too, not just the crash path.
+- **No non-pmessage-filter / multi-message-in-loop test for this channel** (Edge Case Hunter, Test
+  Coverage) — `lesson_ready` has this via its integration suite; `generation_progress` had none. Added
+  `test_subscriber_ignores_non_pmessage_and_delivers_the_next_real_message`.
+- **AC3/AC4's "logged" claims were unasserted** (AC Completeness, Test Coverage). Added `caplog`
+  assertions to both existing tests.
+
+Net: 3 new tests, 2 assertion additions to existing tests (10 tests total, up from 7), 1 production
+code fix (connection-leak-on-cancellation). Full regression re-confirmed after these changes: same 3
+pre-existing D136 failures, zero new regressions, `ruff` clean.
+
+**Registered as defects, not fixed here (out of this story's transport-only scope):**
+
+- **D142** (Scale & Load Hunter) — the "delivered to N session(s)" log line is untrue under the planned
+  multi-replica topology (ADR-001); actual delivery is still correct, this is observability-only.
+- **D141** (Edge Case Hunter) — a `lifespan()` startup failure between the two listeners' `create_task()`
+  calls and `yield` leaks both tasks; pre-existing pattern, doubled by this diff.
+- **D140** (Blind Hunter) — no payload validation, lesson_id cross-check, or rate limiting on
+  `generation_progress`; no publisher exists yet to name a concrete triggering magnitude against, so
+  deferred to Dev 1's future publish-side story.
+
+(Note: these were originally drafted as D137/D138/D139, colliding with an unrelated D137 another
+concurrent session had just added to the register for a Sprint 4 CES defect. Renumbered to
+D140-D142 on discovery; their entry was left untouched.)
+
+**Dismissed (not a real finding):**
+
+- **Process Integrity** flagged the branch being stacked on `dev4/master-bug-resolution` instead of cut
+  fresh from `main`, and its non-standard name, as Sprint-Task-Branch-Rule violations. This is the
+  exact integration-branch flow the user explicitly chose for this Bug Resolution sprint (confirmed via
+  AskUserQuestion before any branch was created) — not a process violation, just context the review
+  agent (correctly, by design) didn't have.
+
+**Confirmed clean by the review, no action needed:** all 8 ACs genuinely satisfied (Acceptance
+Auditor independently re-ran the full regression and reproduced the same numbers); zero LangGraph/
+provider-abstraction/Celery/PostgresSaver/banned-import violations (Process Integrity); no new
+unbounded query (`test_unbounded_queries.py` 11/11 verified directly); story-first commit ordering
+correct; Scale & Load section genuinely answered, not rubber-stamped.
