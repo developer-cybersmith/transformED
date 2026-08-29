@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-29 (dashboard count corrected — Sprint 4 was showing 4/5, actual per-task labels are 3 Completed/6 Partial; Bug Resolution — Feature Sprint 2 added: BR-1..BR-4)
-**Overall status:** 35/47 Completed · 6 Partial · 6 Not Started
+**Last updated:** 2026-08-29 (BR-1 `generation_progress` pub/sub transport shipped and Completed — see Bug Resolution section)
+**Overall status:** 36/47 Completed · 6 Partial · 5 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -23,8 +23,8 @@
 | Sprint 4 | Weeks 8–9 | 9 | 3 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| Bug Resolution | Feature Sprint 2 | 4 | 0 | 0 | 4 |
-| **Total** | | **47** | **35** | **6** | **6** |
+| Bug Resolution | Feature Sprint 2 | 4 | 1 | 0 | 3 |
+| **Total** | | **47** | **36** | **6** | **5** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -752,7 +752,7 @@ MAX_DISTRACTION_PER_SESSION=3
 > `dev4/master-bug-resolution`. The master branch itself PRs into `main` only once all four tasks land.
 
 <!-- CHECK:br1_caption_cue_delivery -->
-- [Not Started] **WebSocket: progressive `generation_progress` delivery (closes the Dev-4 half of W-D13)**
+- [Completed] **WebSocket: progressive `generation_progress` delivery (closes the Dev-4 half of W-D13)** ✅ 2026-08-29
   - **Scope corrected 2026-08-29** (confirmed with the user): the sheet's "progressive caption-cue
     delivery for live narration playback" doesn't match anything in the actual pipeline — captions
     (`CaptionOverlay.tsx`, D90) are 100% client-side, computed from local `audioPositionMs`, zero WS
@@ -765,7 +765,22 @@ MAX_DISTRACTION_PER_SESSION=3
     pipeline node later without touching the WS layer. No `ws.ts` edit, so **no 4-dev PR needed** — the
     type already exists.
   - Story: `docs/stories/br-1-generation-progress-pubsub.md`
-  - **AC:** see story file.
+  - **Implementation:** `core/pubsub.py`'s `_run_lesson_subscriber` loop extracted into a generic
+    `_run_pubsub_forwarder(manager, channel_prefix, on_message=None)`; `_run_lesson_subscriber` is now a
+    thin wrapper (`channel_prefix="lesson_ready"` + the existing package-cache hook), and the new
+    `_run_generation_progress_subscriber` reuses the same forwarder with `channel_prefix="generation_progress"`,
+    no hook. `start_generation_progress_listener` mirrors `start_lesson_ready_listener` exactly; `main.py`
+    lifespan starts/cancels both listeners.
+  - **Tests:** 7 new (`apps/api/tests/test_generation_progress_pubsub.py`) — forwards to one/multiple
+    waiting sessions, malformed JSON skipped, zero-sessions logged not errored, no cache-key write (unlike
+    `lesson_ready`), own dedicated Redis connection, `start_generation_progress_listener` factory contract.
+    Deliberately mocks `app.core.db.get_supabase` directly (not just `get_settings`) so this suite does not
+    inherit **D136**'s import-order fragility (found and registered while prototyping this story).
+  - **Zero-regression proof:** ran the full suite (2,492 tests, `tests/` excl. `tests/evals`) against the
+    pre-BR-1 `pubsub.py` and again against the extracted version — **the only diff across the entire suite
+    is these 7 new tests flipping from failing to passing**; all 223 other pre-existing failures are
+    byte-identical before and after (same tests, same errors).
+  - **AC MET:** AC1–AC8 all satisfied per the story file's ACs.
 
 <!-- CHECK:br2_ces_timing_variable_narration -->
 - [Not Started] **Verify tutor intervention/CES timing still functions correctly with variable-length human-recorded narration**

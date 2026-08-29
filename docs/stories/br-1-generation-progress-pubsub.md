@@ -4,7 +4,7 @@ baseline_commit: "28c73ca073cca72ebe448b49c7520afadaa45270"
 
 # Story BR-1: `generation_progress` Redis Pub/Sub → WebSocket Forwarding
 
-**Status:** in-progress
+**Status:** review
 **Sprint:** Bug Resolution — Feature Sprint 2 (`docs/dev4-tracker.md`)
 **Branch:** `dev4/master-bug-resolution-br-1-caption-cue-delivery` (off `dev4/master-bug-resolution`)
 
@@ -80,28 +80,32 @@ domain — not Dev 1's pipeline-node instrumentation (a separate, future story, 
 
 ## Tasks / Subtasks
 
-- [ ] 1.1 Extract a generic `_run_pubsub_forwarder(manager, channel_prefix, log_label, on_message=None)`
+- [x] 1.1 Extract a generic `_run_pubsub_forwarder(manager, channel_prefix, on_message=None)`
       helper in `core/pubsub.py` from `_run_lesson_subscriber`'s existing loop body — **byte-identical
       behavior for the `lesson_ready` path**, `on_message` is the hook `lesson_ready` uses for its
       package-cache side effect. (Decision: extract rather than duplicate ~80 lines of hardened,
       defect-scarred reconnect/decode logic — see Dev Notes.)
-- [ ] 1.2 `_run_lesson_subscriber` becomes a thin wrapper calling the generic helper with
+- [x] 1.2 `_run_lesson_subscriber` becomes a thin wrapper calling the generic helper with
       `channel_prefix="lesson_ready"` and the existing package-cache `on_message` hook.
-- [ ] 1.3 Add `_run_generation_progress_subscriber(manager)` = the generic helper with
+- [x] 1.3 Add `_run_generation_progress_subscriber(manager)` = the generic helper with
       `channel_prefix="generation_progress"`, no hook.
-- [ ] 1.4 Add `start_generation_progress_listener(manager)`, mirroring
+- [x] 1.4 Add `start_generation_progress_listener(manager)`, mirroring
       `start_lesson_ready_listener` exactly (named task `generation_progress_subscriber`).
-- [ ] 1.5 Wire `main.py` lifespan: start the new listener alongside the existing one, cancel both on
+- [x] 1.5 Wire `main.py` lifespan: start the new listener alongside the existing one, cancel both on
       shutdown.
-- [ ] 1.6 New test file `test_generation_progress_pubsub.py`, mirroring
+- [x] 1.6 New test file `test_generation_progress_pubsub.py`, mirroring
       `test_lesson_ready_pubsub.py`'s subscriber tests (forwards pmessage, malformed JSON, zero-sessions
-      log, own dedicated connection) — **mocks `app.core.db.get_supabase` (or `_sessions_awaiting`)
-      directly**, not just `get_settings`, specifically to not inherit the import-order fragility
-      registered as **D136** in this same pass.
-- [ ] 1.7 Regression run: full existing `test_lesson_ready_pubsub.py` +
-      `test_lesson_ready_integration.py` green, unchanged behavior, after the extraction in 1.1.
-- [ ] 1.8 Update `docs/dev4-tracker.md` BR-1 entry to `[Completed]` and re-run
-      `scripts/check_dev4_progress.py`.
+      log, own dedicated connection) — **mocks `app.core.db.get_supabase` directly**, not just
+      `get_settings`, specifically to not inherit the import-order fragility registered as **D136** in
+      this same pass. 7 tests, RED (ImportError against unmodified `pubsub.py`) confirmed before GREEN.
+- [x] 1.7 Regression run: full existing `test_lesson_ready_pubsub.py` + `tests/integration/test_lesson_ready_integration.py`
+      + `tests/unit/test_lesson_ready_routing_key.py` green/unchanged after the extraction. Went further
+      than the story asked: ran the FULL suite (2,492 tests, `tests/` excl. `tests/evals`) against both the
+      pre-BR-1 and post-BR-1 `pubsub.py` — the only diff in the entire suite is these 7 new tests flipping
+      from failing to passing; all 223 other pre-existing failures are byte-identical before and after.
+- [x] 1.8 Update `docs/dev4-tracker.md` BR-1 entry to `[Completed]` and re-run
+      `scripts/check_dev4_progress.py` — fixed its `br1_caption_cue_delivery` heuristic, which was still
+      checking for a literal `"caption_cue"` string from before scope was corrected.
 
 ---
 
@@ -175,6 +179,60 @@ already established for `lesson_ready`. Channel: `generation_progress:{lesson_id
    Supabase read and the send; `manager.send()`'s own contract already tolerates a missing/dead
    connection without raising. No new concurrency risk introduced by adding a second channel prefix to
    the same forwarding mechanism.
+
+---
+
+## Dev Agent Record
+
+### Implementation Plan
+
+1. Read the existing `_run_lesson_subscriber` in full and confirmed via a real isolated `pytest -k`
+   run that its own subscriber tests are import-order-fragile (D136) — a pre-existing, unrelated
+   defect, registered but deliberately not fixed here.
+2. RED: wrote `test_generation_progress_pubsub.py` (7 tests) against the unmodified `pubsub.py`;
+   confirmed all 7 fail with `ImportError` (the new symbols don't exist yet).
+3. GREEN: extracted `_run_pubsub_forwarder` from `_run_lesson_subscriber`'s loop body, parameterized
+   by `channel_prefix` and an optional `on_message` hook; `_run_lesson_subscriber` became a thin
+   wrapper; added `_run_generation_progress_subscriber` + `start_generation_progress_listener`.
+4. Confirmed the 7 new tests pass.
+5. Regression: ran the pre-existing `lesson_ready`-related test files, then the full suite twice
+   (`git stash` before/after) to get a byte-for-byte diff of the failure set — proved zero regression
+   anywhere in the 2,492-test suite.
+6. Wired `main.py`'s lifespan to start/cancel the new listener alongside the existing one.
+7. `ruff check --fix` + `ruff format` on all three touched/new files — clean. `mypy` was not available
+   in this environment (`No module named mypy`) — not run; flagged rather than silently skipped.
+8. Updated `docs/dev4-tracker.md` (BR-1 → Completed, dashboard counts) and fixed
+   `scripts/check_dev4_progress.py`'s `br1_caption_cue_delivery` heuristic, which still checked for a
+   literal `"caption_cue"` string left over from before this story's scope was corrected.
+
+### Completion Notes
+
+- All 8 ACs met. `GenerationProgressMessage` (frozen in `ws.ts` since Sprint 0) now has a real,
+  tested delivery transport — closing the Dev-4/transport half of **W-D13**. Dev 1's publish-side
+  instrumentation (an actual pipeline node calling `redis.publish("generation_progress:...", ...)`)
+  remains a separate, future story, as scoped.
+- Found and registered **D136** (pre-existing `lesson_ready` subscriber test import-order fragility)
+  while prototyping this story's tests — not fixed here (out of scope), but this story's own new
+  tests were deliberately written not to inherit it.
+- No `ws.ts` change, no 4-dev PR needed — `GenerationProgressMessage` already existed in the frozen
+  union.
+- mypy was not runnable in this environment; this is flagged, not silently treated as clean.
+
+### File List
+
+| File | Change |
+|------|--------|
+| `apps/api/app/core/pubsub.py` | Extracted `_run_pubsub_forwarder`; `_run_lesson_subscriber` now a thin wrapper; added `_run_generation_progress_subscriber`, `_cache_lesson_package` (extracted hook), `start_generation_progress_listener` |
+| `apps/api/app/main.py` | Lifespan starts/cancels the new `generation_progress` listener alongside the existing `lesson_ready` one |
+| `apps/api/tests/test_generation_progress_pubsub.py` | New — 7 tests |
+| `docs/dev4-tracker.md` | BR-1 entry → `[Completed]`; dashboard counts updated |
+| `docs/DEFECT-REGISTER.md` | D136 registered (found while prototyping this story) and updated with the zero-regression cross-check |
+| `scripts/check_dev4_progress.py` | Fixed `br1_caption_cue_delivery` heuristic + label to match the real shipped scope |
+
+### Change Log
+
+- 2026-08-29: Story implemented end-to-end (RED → GREEN → regression-verified → tracker updated).
+  Status: in-progress → review.
 
 ---
 
