@@ -3,9 +3,7 @@
 import { useState } from 'react';
 import { usePlayerStore } from '@/stores/player.machine';
 import { submitTeachBack, type TeachBackResult } from '@/lib/assessment';
-
-const FOCUS_RING =
-  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent-primary)]/20';
+import { FOCUS_RING } from '@/lib/a11y/focusRing';
 
 interface TeachBackModalProps {
   prompt: string;

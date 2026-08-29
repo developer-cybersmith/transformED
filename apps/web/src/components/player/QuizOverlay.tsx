@@ -5,9 +5,7 @@ import type { QuizQuestion } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { submitQuiz, type QuizAnswer, type QuizResult } from '@/lib/assessment';
 import { useRovingRadioGroup } from '@/hooks/useRovingRadioGroup';
-
-const FOCUS_RING =
-  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent-primary)]/20';
+import { FOCUS_RING } from '@/lib/a11y/focusRing';
 
 interface QuizOverlayProps {
   questions: QuizQuestion[];
@@ -165,21 +163,26 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
           ))}
         </div>
 
-        {/* Per-question explanation */}
-        {submitted && (
-          <div
-            role="status"
-            aria-live="polite"
-            className={[
-              'mx-6 mb-4 px-4 py-3 rounded-xl text-sm',
-              isCorrect
-                ? 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/30'
-                : 'bg-red-500/10 text-red-700 border border-red-500/30',
-            ].join(' ')}>
-            <span className="font-semibold mr-1">{isCorrect ? 'Correct!' : 'Not quite.'}</span>
-            {question.explanation}
-          </div>
-        )}
+        {/* Per-question explanation. Always mounted (never conditionally
+            rendered) so this is a genuine ARIA live-region content MUTATION
+            rather than a fresh node insertion -- some screen reader/browser
+            combinations only announce the former (review fix, S4-04). */}
+        <div
+          role="status"
+          aria-live="polite"
+          className={submitted ? [
+            'mx-6 mb-4 px-4 py-3 rounded-xl text-sm',
+            isCorrect
+              ? 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/30'
+              : 'bg-red-500/10 text-red-700 border border-red-500/30',
+          ].join(' ') : 'sr-only'}>
+          {submitted && (
+            <>
+              <span className="font-semibold mr-1">{isCorrect ? 'Correct!' : 'Not quite.'}</span>
+              {question.explanation}
+            </>
+          )}
+        </div>
 
         {/* Score summary — shown after last question API returns */}
         {result && (

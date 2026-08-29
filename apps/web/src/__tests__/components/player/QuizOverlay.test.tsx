@@ -307,6 +307,43 @@ describe('QuizOverlay — Story 2-55 accessibility (WCAG AA)', () => {
     expect(status.textContent).toContain('Correct!');
   });
 
+  it('the status region is always mounted (present, empty) before submit -- a content MUTATION on submit, not a fresh node insertion', async () => {
+    // Some screen reader/browser combinations only announce aria-live
+    // changes on an already-present node, not a newly-inserted one
+    // (review fix, S4-04).
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+
+    const statusBefore = screen.getByRole('status');
+    expect(statusBefore.textContent).toBe('');
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    const statusAfter = screen.getByRole('status');
+    expect(statusAfter).toBe(statusBefore);
+    expect(statusAfter.textContent).toContain('Correct!');
+  });
+
+  it('applies the WCAG AA-compliant text-neutral-600 (not the pre-fix text-neutral-400) to the option-letter prefix and the post-submit dimmed option text', async () => {
+    render(<QuizOverlay questions={QUESTIONS} />);
+
+    for (const option of screen.getAllByRole('radio')) {
+      const letterSpan = option.querySelector('span');
+      expect(letterSpan?.className).toMatch(/text-neutral-600/);
+      expect(letterSpan?.className).not.toMatch(/text-neutral-400/);
+    }
+
+    // QUESTIONS[0].correct_index is 0; select and submit the wrong answer
+    // (index 1) so a non-correct, non-selected option (index 2 or 3) renders
+    // in the post-submit "dimmed" branch of optionStyle().
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[1]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    const dimmedOption = screen.getAllByRole('radio')[3];
+    expect(dimmedOption.className).toMatch(/text-neutral-600/);
+    expect(dimmedOption.className).not.toMatch(/text-neutral-400/);
+  });
+
   it('ArrowDown/ArrowRight move selection and focus to the next option, wrapping at the end', () => {
     render(<QuizOverlay questions={[QUESTIONS[0]]} />);
     const options = screen.getAllByRole('radio');

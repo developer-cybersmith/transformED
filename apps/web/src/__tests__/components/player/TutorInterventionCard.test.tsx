@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { act } from 'react';
 import { TutorInterventionCard } from '@/components/player/TutorInterventionCard';
 import { usePlayerStore } from '@/stores/player.machine';
@@ -25,8 +25,9 @@ describe('TutorInterventionCard (S3-03 AC-3/AC-4/AC-5)', () => {
       });
     });
     render(<TutorInterventionCard />);
-    expect(screen.getByTestId('tutor-intervention-card')).not.toBeNull();
-    expect(screen.getByText('Stay with me!')).not.toBeNull();
+    const card = screen.getByTestId('tutor-intervention-card');
+    expect(card).not.toBeNull();
+    expect(within(card).getByText('Stay with me!')).not.toBeNull();
   });
 
   it.each([
@@ -264,7 +265,7 @@ describe('TutorInterventionCard robustness (review fixes)', () => {
     expect(() => render(<TutorInterventionCard />)).not.toThrow();
     const card = screen.getByTestId('tutor-intervention-card');
     expect(card.getAttribute('data-variant')).toBe('unknown');
-    expect(screen.getByText('x')).not.toBeNull();
+    expect(within(card).getByText('x')).not.toBeNull();
   });
 
   it('remounts (fresh render identity) when a replacement intervention has identical message text but a different type', () => {
@@ -287,17 +288,53 @@ describe('TutorInterventionCard robustness (review fixes)', () => {
 });
 
 describe('TutorInterventionCard — Story 2-55 accessibility (WCAG AA)', () => {
-  it('announces the intervention via role="status" aria-live="polite"', () => {
+  it('renders a permanently-mounted role="status" aria-live="polite" announcer, separate from the visual toast', () => {
+    render(<TutorInterventionCard />);
+
+    // Present (and empty) even with no active intervention -- it must never
+    // unmount/remount, or a screen reader may miss the content mutation that
+    // announces the next intervention (review fix: the visual toast is
+    // deliberately remounted per intervention via `key`; the announcer is not).
+    const announcer = screen.getByTestId('tutor-intervention-announcer');
+    expect(announcer.getAttribute('role')).toBe('status');
+    expect(announcer.getAttribute('aria-live')).toBe('polite');
+    expect(announcer.textContent).toBe('');
+  });
+
+  it('the announcer node identity is stable across two different interventions (no remount)', () => {
     act(() => {
       usePlayerStore.setState({
-        activeIntervention: { session_id: 's1', type: 'distraction', message: 'Stay with me!' },
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'first' },
+      });
+    });
+    render(<TutorInterventionCard />);
+    const announcerBefore = screen.getByTestId('tutor-intervention-announcer');
+    expect(announcerBefore.textContent).toBe('first');
+
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'confusion', message: 'second' },
+      });
+    });
+    const announcerAfter = screen.getByTestId('tutor-intervention-announcer');
+
+    expect(announcerAfter).toBe(announcerBefore);
+    expect(announcerAfter.textContent).toBe('second');
+  });
+
+  it('clears the announcer text when the intervention is dismissed', () => {
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'x' },
       });
     });
     render(<TutorInterventionCard />);
 
-    const card = screen.getByTestId('tutor-intervention-card');
-    expect(card.getAttribute('role')).toBe('status');
-    expect(card.getAttribute('aria-live')).toBe('polite');
+    act(() => {
+      screen.getByRole('button', { name: /dismiss/i }).click();
+    });
+
+    expect(screen.getByTestId('tutor-intervention-announcer').textContent).toBe('');
   });
 
   it('has a visible focus-ring class on the dismiss button', () => {
