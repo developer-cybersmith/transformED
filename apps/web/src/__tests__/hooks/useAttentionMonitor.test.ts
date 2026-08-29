@@ -238,6 +238,29 @@ describe('useAttentionMonitor', () => {
     expect(msg.payload.behavioral_score).toBeCloseTo(computeBehavioralScore(0, 'neutral', 0), 5);
   });
 
+  it('sends head_pose_score/behavioral_score as null (not 0) for a window where every frame failed to process -- distinct from a genuinely-absent face (cross-team review fix)', async () => {
+    detectForVideoMock.mockImplementation(() => {
+      throw new Error('transient GPU/WASM error, every frame this window');
+    });
+    usePlayerStore.setState({ tutorState: 'TEACHING' });
+    renderHook(() => useAttentionMonitor());
+    await flush();
+
+    await flush(5000);
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [msg] = sendMock.mock.calls[0];
+    // Zero samples were ever pushed this window (every detectForVideo call
+    // threw before reaching the push), so these must be null -- a real 0.0
+    // would tell the backend's compute_ces "we measured worst-case
+    // attention", when in fact nothing was measured at all.
+    expect(msg.payload.head_pose_score).toBeNull();
+    expect(msg.payload.behavioral_score).toBeNull();
+    // blink_rate is unconditionally computable from the blink counter and
+    // elapsed time, independent of per-frame samples -- still a real number.
+    expect(msg.payload.blink_rate).toBe(0);
+  });
+
   it('sends no signal while tutorState is not TEACHING (AC-4)', async () => {
     usePlayerStore.setState({ tutorState: 'QUIZZING' });
     renderHook(() => useAttentionMonitor());
