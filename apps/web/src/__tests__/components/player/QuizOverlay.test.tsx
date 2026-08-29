@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QuizOverlay } from '@/components/player/QuizOverlay';
 import { usePlayerStore } from '@/stores/player.machine';
@@ -270,5 +270,95 @@ describe('QuizOverlay', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(exitQuiz).toHaveBeenCalled();
+  });
+});
+
+describe('QuizOverlay — Story 2-55 accessibility (WCAG AA)', () => {
+  it('groups options under a single radiogroup with role="radio"/aria-checked per option', () => {
+    render(<QuizOverlay questions={QUESTIONS} />);
+
+    expect(screen.getByRole('radiogroup')).not.toBeNull();
+    const options = screen.getAllByRole('radio');
+    expect(options).toHaveLength(QUESTIONS[0].options.length);
+    expect(options.every((el) => el.getAttribute('aria-checked') === 'false')).toBe(true);
+  });
+
+  it('has visible focus-ring classes on option, Submit, and Next buttons', async () => {
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+
+    for (const option of screen.getAllByRole('radio')) {
+      expect(option.className).toMatch(/focus-visible:ring-4/);
+    }
+    expect(screen.getByRole('button', { name: 'Submit' }).className).toMatch(/focus-visible:ring-4/);
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    expect(screen.getByRole('button', { name: 'Continue' }).className).toMatch(/focus-visible:ring-4/);
+  });
+
+  it('announces correct/incorrect feedback via role="status" aria-live="polite"', async () => {
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    const status = screen.getByRole('status');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(status.textContent).toContain('Correct!');
+  });
+
+  it('ArrowDown/ArrowRight move selection and focus to the next option, wrapping at the end', () => {
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+    const options = screen.getAllByRole('radio');
+
+    options[0].focus();
+    fireEvent.keyDown(options[0], { key: 'ArrowDown' });
+    expect(options[1].getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(options[1]);
+
+    // Wrap from the last option back to the first.
+    options[3].focus();
+    fireEvent.keyDown(options[3], { key: 'ArrowRight' });
+    expect(options[0].getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(options[0]);
+  });
+
+  it('ArrowUp/ArrowLeft move selection and focus to the previous option, wrapping at the start', () => {
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+    const options = screen.getAllByRole('radio');
+
+    // Wrap from the first option back to the last.
+    options[0].focus();
+    fireEvent.keyDown(options[0], { key: 'ArrowUp' });
+    expect(options[3].getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(options[3]);
+
+    fireEvent.keyDown(options[3], { key: 'ArrowLeft' });
+    expect(options[2].getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(options[2]);
+  });
+
+  it('roving tabindex: only the selected (or first, if none selected) option is a tab stop', () => {
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+    const options = screen.getAllByRole('radio');
+
+    expect(options[0].getAttribute('tabindex')).toBe('0');
+    options.slice(1).forEach((o) => expect(o.getAttribute('tabindex')).toBe('-1'));
+
+    fireEvent.keyDown(options[0], { key: 'ArrowDown' });
+    expect(options[1].getAttribute('tabindex')).toBe('0');
+    expect(options[0].getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('ignores arrow keys once the question is submitted', async () => {
+    render(<QuizOverlay questions={[QUESTIONS[0]]} />);
+
+    await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    const submittedOptions = screen.getAllByRole('radio');
+    fireEvent.keyDown(submittedOptions[0], { key: 'ArrowDown' });
+    expect(submittedOptions[0].getAttribute('aria-checked')).toBe('true');
+    expect(submittedOptions[1].getAttribute('aria-checked')).toBe('false');
   });
 });

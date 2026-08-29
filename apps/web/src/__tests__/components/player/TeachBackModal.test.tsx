@@ -151,3 +151,23 @@ describe('TeachBackModal', () => {
     expect(submitTeachBackMock).not.toHaveBeenCalled();
   });
 });
+
+describe('TeachBackModal — Story 2-55 accessibility (WCAG AA)', () => {
+  it('has visible focus-ring classes on Skip, Submit & Continue, and the textarea', () => {
+    renderModal();
+
+    expect(screen.getByText('Skip').className).toMatch(/focus-visible:ring-4/);
+    expect(screen.getByRole('button', { name: 'Submit & Continue' }).className).toMatch(/focus-visible:ring-4/);
+    expect(screen.getByPlaceholderText('Type your explanation here…').className).toMatch(/focus:ring-4/);
+  });
+
+  it('has a visible focus-ring class on the result view Continue button', async () => {
+    renderModal();
+
+    await userEvent.type(screen.getByPlaceholderText('Type your explanation here…'), 'It terminates the query early.');
+    await userEvent.click(screen.getByRole('button', { name: 'Submit & Continue' }));
+    await waitFor(() => expect(screen.getByText(RESULT.feedback)).not.toBeNull());
+
+    expect(screen.getByRole('button', { name: 'Continue' }).className).toMatch(/focus-visible:ring-4/);
+  });
+});

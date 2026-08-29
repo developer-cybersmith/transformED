@@ -99,18 +99,38 @@ Vitest + Testing Library, matching this repo's existing `apps/web/src/__tests__/
 
 ### Implementation Plan
 
-_To be filled in during implementation._
+1. `useRovingRadioGroup` shared hook (`apps/web/src/hooks/useRovingRadioGroup.ts`) — roving tabindex + arrow-key "selection follows focus" logic, used by both `QuizOverlay.tsx` and `QuestionCard.tsx`.
+2. `apps/web/src/lib/a11y/contrast.ts` — pure WCAG relative-luminance/contrast-ratio functions, used only by the AC-3 guard test (not by the UI at runtime — the actual fix is a static Tailwind class change).
+3. `QuizOverlay.tsx` — `role="radiogroup"`/`role="radio"`/`aria-checked` + roving tabIndex + `onKeyDown` on options; `focus-visible` ring on options, Submit, Next; `role="status" aria-live="polite"` on the correct/incorrect feedback block; `text-neutral-400` → `text-neutral-600` on the option-letter prefix AND on the post-submit dimmed-option state (a second confirmed instance of the same violation, found during implementation — not in the original story audit; same color, same failing ratio, in scope of the same fix).
+4. `TutorInterventionCard.tsx` — `role="status" aria-live="polite"` on the card; `focus-visible` ring on the dismiss button.
+5. `TeachBackModal.tsx` — `focus-visible` ring on Skip, Submit & Continue, and the result-view Continue button; textarea's weak `focus:border-opacity` swapped for a real `focus:ring-4`.
+6. `QuestionCard.tsx` — wired the same roving-tabindex hook onto its already-present `role="radio"` options (completing the pre-existing partial ARIA implementation); `text-neutral-400` → `text-neutral-600`. No focus-ring change needed — inherited from the shared `<Button>` component already.
 
 ### Completion Notes
 
-_To be filled in during implementation._
+- All 6 ACs implemented as scoped. AC-2 required no code change — added a guard test (`__tests__/a11y/altText.test.ts`) enumerating every file with an `<img>`/`<Image>` usage found at audit time and asserting each tag carries `alt=`.
+- Found one additional confirmed `text-neutral-400` contrast violation beyond the two named in the story (`QuizOverlay.tsx`'s post-submit dimmed-option text, same color/background class as the option-letter prefix) — fixed alongside the two originally scoped instances since it's the identical violation, not a new judgment call.
+- `useRovingRadioGroup` implements "selection follows focus": arrow keys move focus and change the selected option together (matches native `<input type="radio">` group behavior per WAI-ARIA APG). Wrapping at both ends. Disabled once `QuizOverlay`'s question is `submitted`.
+- Full `apps/web` suite: 88 test files, 1059 tests passed (was 1048 pre-story; +11 new test files' worth of assertions across new and modified specs). Lint: 0 errors/warnings. Typecheck: clean. Production build (`next build`): succeeds.
 
 ### File List
 
-_To be filled in during implementation._
+- `apps/web/src/hooks/useRovingRadioGroup.ts` (new)
+- `apps/web/src/lib/a11y/contrast.ts` (new)
+- `apps/web/src/components/player/QuizOverlay.tsx` (modified)
+- `apps/web/src/components/player/TutorInterventionCard.tsx` (modified)
+- `apps/web/src/components/player/TeachBackModal.tsx` (modified)
+- `apps/web/src/components/onboarding/QuestionCard.tsx` (modified)
+- `apps/web/src/__tests__/a11y/altText.test.ts` (new)
+- `apps/web/src/__tests__/lib/a11y/contrast.test.ts` (new)
+- `apps/web/src/__tests__/components/player/QuizOverlay.test.tsx` (modified)
+- `apps/web/src/__tests__/components/player/TutorInterventionCard.test.tsx` (modified)
+- `apps/web/src/__tests__/components/player/TeachBackModal.test.tsx` (modified)
+- `apps/web/src/__tests__/components/onboarding/QuestionCard.test.tsx` (modified)
 
 ## Change Log
 
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-08-27 | Story created after a dedicated read-only accessibility audit against all 5 tracker checklist items (not assumption) — confirmed item 2 (alt text) is already compliant, confirmed real focus/contrast/aria-live/keyboard gaps in `QuizOverlay.tsx`/`TutorInterventionCard.tsx`/`TeachBackModal.tsx`, and found a pre-existing bug in already-shipped `QuestionCard.tsx` (ARIA radiogroup roles present with no arrow-key behavior to back them). Branch `sprint4/s4-04-accessibility-audit` off `sprint4-master`. | Dev 2 |
+| 2026-08-29 | Implementation complete: all 6 ACs, shared `useRovingRadioGroup` hook, `lib/a11y/contrast.ts`, full test coverage. Full suite/lint/typecheck/build green. Found and fixed one additional confirmed contrast violation beyond the two named in the original audit. | Dev 2 |

@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useRovingRadioGroup } from "@/hooks/useRovingRadioGroup";
 import type { Question } from "./questions";
 
 export interface QuestionCardProps {
@@ -12,6 +13,12 @@ export interface QuestionCardProps {
 }
 
 export function QuestionCard({ question, selectedIndex, onSelect }: QuestionCardProps) {
+    const { setItemRef, handleKeyDown, getTabIndex } = useRovingRadioGroup({
+        optionCount: question.options.length,
+        selectedIndex: selectedIndex ?? null,
+        onSelect,
+    });
+
     return (
         <motion.div
             initial={{ opacity: 0, x: 16 }}
@@ -28,11 +35,14 @@ export function QuestionCard({ question, selectedIndex, onSelect }: QuestionCard
                     return (
                         <Button
                             key={idx}
+                            ref={setItemRef(idx)}
                             type="button"
                             variant="outline"
                             role="radio"
                             aria-checked={selected}
+                            tabIndex={getTabIndex(idx)}
                             onClick={() => onSelect(idx)}
+                            onKeyDown={(e) => handleKeyDown(e, idx)}
                             className={cn(
                                 "h-auto w-full justify-start rounded-2xl px-4 py-3 text-left text-sm font-normal",
                                 selected
@@ -40,7 +50,7 @@ export function QuestionCard({ question, selectedIndex, onSelect }: QuestionCard
                                     : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50"
                             )}
                         >
-                            <span className="mr-3 font-semibold text-neutral-400">
+                            <span className="mr-3 font-semibold text-neutral-600">
                                 {String.fromCharCode(65 + idx)}.
                             </span>
                             {option}

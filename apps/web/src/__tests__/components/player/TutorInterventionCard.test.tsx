@@ -285,3 +285,29 @@ describe('TutorInterventionCard robustness (review fixes)', () => {
     expect(screen.getByTestId('tutor-intervention-card').getAttribute('data-variant')).toBe('fatigue');
   });
 });
+
+describe('TutorInterventionCard — Story 2-55 accessibility (WCAG AA)', () => {
+  it('announces the intervention via role="status" aria-live="polite"', () => {
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'Stay with me!' },
+      });
+    });
+    render(<TutorInterventionCard />);
+
+    const card = screen.getByTestId('tutor-intervention-card');
+    expect(card.getAttribute('role')).toBe('status');
+    expect(card.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('has a visible focus-ring class on the dismiss button', () => {
+    act(() => {
+      usePlayerStore.setState({
+        activeIntervention: { session_id: 's1', type: 'distraction', message: 'x' },
+      });
+    });
+    render(<TutorInterventionCard />);
+
+    expect(screen.getByRole('button', { name: /dismiss/i }).className).toMatch(/focus-visible:ring-4/);
+  });
+});

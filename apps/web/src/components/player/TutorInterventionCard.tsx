@@ -81,6 +81,8 @@ export function TutorInterventionCard() {
       key={renderKey}
       data-testid="tutor-intervention-card"
       data-variant={activeIntervention.type}
+      role="status"
+      aria-live="polite"
       initial={{ x: 40, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -92,7 +94,8 @@ export function TutorInterventionCard() {
           type="button"
           onClick={dismiss}
           aria-label="Dismiss"
-          className="text-current/60 hover:text-current shrink-0 -mt-0.5 -mr-0.5 text-lg leading-none"
+          className="text-current/60 hover:text-current shrink-0 -mt-0.5 -mr-0.5 text-lg leading-none
+                     focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent-primary)]/20 rounded"
         >
           &times;
         </button>
