@@ -752,14 +752,20 @@ MAX_DISTRACTION_PER_SESSION=3
 > `dev4/master-bug-resolution`. The master branch itself PRs into `main` only once all four tasks land.
 
 <!-- CHECK:br1_caption_cue_delivery -->
-- [Not Started] **WebSocket: progressive caption-cue delivery for live narration playback**
-  - Deliver caption cues incrementally over the WS connection, timed to the actual (variable-length,
-    human-recorded) narration audio position — not derived from a fixed TTS-duration assumption.
-  - **Frozen-contract note:** if this needs a new `ws.ts` message type (vs. reusing an existing one),
-    that requires the 4-dev PR per `packages/shared/types/ws.ts`'s frozen-contract rule — confirm scope
-    against the existing `CaptionOverlay.tsx` / `AudioTimeline.tsx` contract before adding one.
-  - Story: `docs/stories/br-1-caption-cue-delivery.md` (to be created)
-  - **AC:** TBD in story file — captured before implementation per the Story-First Gate.
+- [Not Started] **WebSocket: progressive `generation_progress` delivery (closes the Dev-4 half of W-D13)**
+  - **Scope corrected 2026-08-29** (confirmed with the user): the sheet's "progressive caption-cue
+    delivery for live narration playback" doesn't match anything in the actual pipeline — captions
+    (`CaptionOverlay.tsx`, D90) are 100% client-side, computed from local `audioPositionMs`, zero WS
+    involvement. `GenerationProgressMessage` (`{lesson_id, node, progress, message}`) **already exists**
+    in the frozen `ws.ts` union but has never been emitted by any path (W-D13,
+    `docs/reports/frontend-wiring-audit-2026-07-30.md`; documented Dev-1-owned in
+    `docs/ws-message-contract.md`, `docs/stories/4-10-*`, `docs/stories/1-8-*`). Real scope: **Dev 4
+    builds the Redis pub/sub → WebSocket forwarding transport**, mirroring the already-hardened
+    `lesson_ready:{lesson_id}` pattern in `core/pubsub.py`, so Dev 1 can publish progress from any
+    pipeline node later without touching the WS layer. No `ws.ts` edit, so **no 4-dev PR needed** — the
+    type already exists.
+  - Story: `docs/stories/br-1-generation-progress-pubsub.md`
+  - **AC:** see story file.
 
 <!-- CHECK:br2_ces_timing_variable_narration -->
 - [Not Started] **Verify tutor intervention/CES timing still functions correctly with variable-length human-recorded narration**
