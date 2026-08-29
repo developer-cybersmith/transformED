@@ -6,12 +6,17 @@ import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 import type { QuizQuestion } from '@hie/shared/types/lesson';
 
-const { submitQuizMock } = vi.hoisted(() => ({
+const { submitQuizMock, captureMock } = vi.hoisted(() => ({
   submitQuizMock: vi.fn(),
+  captureMock: vi.fn(),
 }));
 
 vi.mock('@/lib/assessment', () => ({
   submitQuiz: submitQuizMock,
+}));
+
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
 }));
 
 const QUESTIONS: QuizQuestion[] = [
@@ -93,6 +98,7 @@ const RESULT = {
 beforeEach(() => {
   submitQuizMock.mockReset();
   submitQuizMock.mockResolvedValue(RESULT);
+  captureMock.mockReset();
   usePlayerStore.getState().loadLesson(mockLessonPackage);
   // A real sessionId is the realistic default (mintSession has already
   // resolved by the time a student reaches the quiz in normal use) -- tests
@@ -129,6 +135,14 @@ describe('QuizOverlay', () => {
 
     expect(screen.getByText('Correct!')).not.toBeNull();
     expect(screen.getByText(QUESTIONS[0].explanation)).not.toBeNull();
+    // Story 2-54
+    expect(captureMock).toHaveBeenCalledWith('quiz_answered', {
+      lesson_id: mockLessonPackage.lesson_id,
+      segment_id: 'seg_0',
+      question_id: QUESTIONS[0].question_id,
+      is_correct: true,
+      response_time_ms: expect.any(Number),
+    });
   });
 
   it('always shows Continue after the last question, regardless of correctness', async () => {
@@ -139,6 +153,12 @@ describe('QuizOverlay', () => {
 
     expect(screen.getByText('Not quite.')).not.toBeNull();
     await waitFor(() => expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false));
+    // Story 2-54: is_correct must reflect a WRONG answer too, not just the
+    // correct-answer path the other capture assertion exercises.
+    expect(captureMock).toHaveBeenCalledWith(
+      'quiz_answered',
+      expect.objectContaining({ question_id: QUESTIONS[0].question_id, is_correct: false })
+    );
   });
 
   it('advances to the next question and resets selection state', async () => {
@@ -177,6 +197,13 @@ describe('QuizOverlay', () => {
         })
       )
     );
+    // Story 2-54: quiz_answered fires once per QUESTION, including the
+    // middle one -- not just the first/last question a smaller fixture
+    // would happen to exercise.
+    expect(captureMock).toHaveBeenCalledTimes(3);
+    THREE_QUESTIONS.forEach((q) => {
+      expect(captureMock).toHaveBeenCalledWith('quiz_answered', expect.objectContaining({ question_id: q.question_id }));
+    });
   });
 
   it('submits all collected answers with session/lesson/segment ids on the last question', async () => {

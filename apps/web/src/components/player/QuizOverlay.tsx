@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import posthog from 'posthog-js';
 import type { QuizQuestion } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { submitQuiz, type QuizAnswer, type QuizResult } from '@/lib/assessment';
@@ -62,6 +63,15 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
     };
     collectedAnswers.current = [...collectedAnswers.current, answer];
     setSubmitted(true);
+    // Story 2-54: per-question, not per-quiz -- gives within-quiz drop-off
+    // visibility; lesson_completed already covers the lesson-level signal.
+    posthog.capture('quiz_answered', {
+      lesson_id: lesson?.lesson_id ?? null,
+      segment_id: segment?.segment_id ?? null,
+      question_id: question.question_id,
+      is_correct: selectedIndex === question.correct_index,
+      response_time_ms: answer.response_time_ms,
+    });
 
     // Bug fix: sessionId can still be '' here -- mintSession (Player.tsx) is
     // async with retries, and a short first segment's quiz can fire before it

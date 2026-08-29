@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
+import posthog from 'posthog-js';
 import { usePlayerStore } from '@/stores/player.machine';
 import { FOCUS_RING } from '@/lib/a11y/focusRing';
 import type { InterventionType } from '@hie/shared/types/ws';
@@ -30,6 +31,11 @@ export function TutorInterventionCard() {
   const status = usePlayerStore((s) => s.status);
   const setActiveIntervention = usePlayerStore((s) => s.setActiveIntervention);
   const wsSendControl = usePlayerStore((s) => s.wsSendControl);
+  // Story 2-54: same store Player.tsx reads lesson_id/session_id from --
+  // trivially in scope here too, and needed to join intervention_received
+  // back to a specific lesson/session in the funnel.
+  const sessionId = usePlayerStore((s) => s.sessionId);
+  const lesson = usePlayerStore((s) => s.lesson);
 
   const visible = activeIntervention !== null && status !== 'TEACH_BACK';
 
@@ -53,6 +59,35 @@ export function TutorInterventionCard() {
   // variant styling left over from the previous card). A pure render-time
   // computation, not a ref/effect-driven counter.
   const renderKey = activeIntervention ? JSON.stringify(activeIntervention) : '';
+
+  // Story 2-54: `visible` toggles false->true again for the SAME payload if
+  // a card is showing when TEACH_BACK starts (activeIntervention isn't
+  // cleared, only hidden) and then ends back to PLAYING -- guarded so a
+  // given intervention only ever fires once, independent of that
+  // visibility round-trip.
+  //
+  // Review fix (Edge Case Hunter): keyed on OBJECT REFERENCE equality
+  // (`activeIntervention` itself), not `renderKey`'s content hash.
+  // Intervention messages are pre-generated from a small fixed set per
+  // lesson build (CLAUDE.md), so two genuinely DIFFERENT dispatches this
+  // session (e.g. two "distraction" interventions) can easily share
+  // identical type+message text -- a content-hash guard would wrongly
+  // suppress the second, real intervention_received. A fresh dispatch is
+  // always a new object reference even when its content is identical; the
+  // SAME object surviving a TEACH_BACK round-trip is still `===` since it
+  // is never replaced, only hidden -- so reference equality correctly
+  // distinguishes the two cases the content hash could not.
+  const firedInterventionRef = useRef<typeof activeIntervention>(null);
+  useEffect(() => {
+    if (!visible || !activeIntervention) return;
+    if (firedInterventionRef.current === activeIntervention) return;
+    firedInterventionRef.current = activeIntervention;
+    posthog.capture('intervention_received', {
+      intervention_type: activeIntervention.type,
+      lesson_id: lesson?.lesson_id ?? null,
+      session_id: sessionId || null,
+    });
+  }, [visible, activeIntervention, lesson, sessionId]);
 
   // Gated on `visible`, not just `activeIntervention` -- AC-6 measures 30s
   // "from when the card became visible". A payload that arrives while hidden
