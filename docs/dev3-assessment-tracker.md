@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-31 (S4-10 pre-existing test fixes done — 22 stale Dev 3 assertions fixed across 4 files, 66 Dev 1 ERRORs + 12 Dev 4 FAILEDs documented in `docs/sprint4-pre-existing-failures-report.md`; S4-8 D60 notification pref guard done; S4-7 PostHog funnel done; S4-6 D116 ces_final wiring done; S4-5 onboarding audit done; S4-1 calibration partial)
+**Last updated:** 2026-08-31 (S4-11 session dedup guard + CES arch confirmation done; S4-10 test fixes done; S4-8 D60 guard done; S4-7 PostHog funnel done; S4-6 D116 ces_final done; S4-5 onboarding audit done; S4-1 calibration partial — Sprint 4 now 6/11)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,9 +20,9 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 10 | 5 | 1 | 4 |
+| Sprint 4 | Weeks 8–9 | 11 | 6 | 1 | 4 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **66** | **58** | **1** | **7** |
+| **Total** | | **67** | **59** | **1** | **7** |
 
 Update this table each time a task is checked off below.
 
@@ -970,6 +970,21 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Remaining 201 failures (187 Dev 1 FAILED + 66 Dev 1 ERROR + 12 Dev 4 FAILED + 2 integration) documented in `docs/sprint4-pre-existing-failures-report.md`.
   - Branch: `sprint4/s4-dev3-preexisting-test-fixes` → merged to `master-sprint4-dev3`
   - Story: `docs/stories/4-10-dev3-preexisting-test-fixes.md` — status: done
+
+- [x] **Session dedup guard + CES architecture confirmation — ✓ 2026-08-31** (Story S4-11)
+  - Item 3 (CES endpoint): confirmed WS-only architecture is correct — no REST endpoint needed
+    - `attention_signal` WS → `process_attention_signal()` → `compute_ces()` → `Redis LPUSH session:{id}:ces_history`
+    - On SESSION_END, `_finalize_session` reads history, averages, writes `ces_final`
+    - Calibration notes §8 Item 3 updated with architecture explanation
+  - Item 4 (duplicate sessions): fixed with 3-layer defence
+    - Application-level pre-check: `create_session` queries open session before INSERT; returns it on hit
+    - Race-safe fallback: concurrent INSERT loser re-fetches and returns the winner; no 500
+    - DB backstop: partial UNIQUE INDEX `sessions_open_unique ON sessions(user_id, lesson_id) WHERE ended_at IS NULL`
+    - Migration: `supabase/migrations/20260831000000_sessions_open_unique.sql` — apply via Supabase SQL editor before calibration run
+  - Re-take invariant preserved: closed sessions excluded from check and index; mutation guard passes
+  - 3 new tests pass; ruff GREEN; 2 pre-existing cross-team failures unchanged (D4-JWT, D18)
+  - Branch: `sprint4/s4-11-session-dedup-ces-calibration` → merged to `master-sprint4-dev3`
+  - Story: `docs/stories/4-11-session-dedup-ces-calibration.md` — status: done
 
 ---
 
