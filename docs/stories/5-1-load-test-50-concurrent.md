@@ -1,6 +1,6 @@
 # Story 5-1 — Load test: 50 concurrent lesson generations
 
-Status: ready-for-dev
+Status: in-progress (harness built + reviewed; real 50-concurrent execution not yet run — pending explicit go-ahead on real spend)
 
 ## Story
 
@@ -216,48 +216,48 @@ against instead of the zero-concurrency-tested state recorded today in `DEFECT-R
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Choose and scaffold the harness tool** (AC: 1)
-  - [ ] Decide `locust` vs `k6` (neither is in `apps/api/pyproject.toml` or anywhere in the repo —
+- [x] **Task 1 — Choose and scaffold the harness tool** (AC: 1)
+  - [x] Decide `locust` vs `k6` (neither is in `apps/api/pyproject.toml` or anywhere in the repo —
     confirmed via repo-wide search; this is genuinely greenfield tooling, not an extension of
     anything existing). Note `scripts/ws_load_test.py` (Dev 4's WebSocket load-test script) is a
     precedent for a self-contained async-Python harness style in this repo, but it load-tests the
     tutor WebSocket endpoint, not the content-generation HTTP path — not directly reusable, only a
     style reference.
-  - [ ] Explicitly evaluate and reject reusing `apps/api/tests/evals/runner.py` for load
+  - [x] Explicitly evaluate and reject reusing `apps/api/tests/evals/runner.py` for load
     generation: it calls `run_pipeline()` **directly, in-process**, bypassing the HTTP layer, the
     rate limiter, Gate 5/6/7, and the ARQ enqueue path entirely (`runner.py:190-296`), and its own
     Scale & Load section (Story 3-57) states it is a **sequential** `for` loop by design — it
     cannot be safely or meaningfully repurposed for concurrent HTTP load without rewriting it into
     something that no longer resembles the eval harness.
-  - [ ] Scaffold the chosen tool under a new path (e.g. `apps/api/tests/loadtest/` or
+  - [x] Scaffold the chosen tool under a new path (e.g. `apps/api/tests/loadtest/` or
     `scripts/loadtest/`, following the existing `scripts/ws_load_test.py` convention for
     load-test scripts kept outside the pytest tree).
-- [ ] **Task 2 — Seed ≥17 distinct test users + at least one shared uploaded/detected book+chapter
+- [x] **Task 2 — Seed ≥17 distinct test users + at least one shared uploaded/detected book+chapter
   fixture** (AC: 2, 3)
-  - [ ] Reuse or extend the eval-PDF fixture generator (`apps/api/tests/fixtures/generate_eval_pdfs.py`)
+  - [x] Reuse or extend the eval-PDF fixture generator (`apps/api/tests/fixtures/generate_eval_pdfs.py`)
     for a real, chapter-detectable book rather than inventing a new fixture.
-  - [ ] Any new Supabase seed queries this adds must carry `.limit()`/`# BOUNDED:` justification —
+  - [x] Any new Supabase seed queries this adds must carry `.limit()`/`# BOUNDED:` justification —
     re-run `tests/unit/test_unbounded_queries.py` against any new Python seed code.
-- [ ] **Task 3 — Implement the Phase A (upload) load scenario** (AC: 2, 4)
-  - [ ] 50 concurrent `POST /api/content/lessons` requests, distinct users, distinct PDF payloads.
-  - [ ] Capture P95 response time, error count, and Redis connection-error count on the API process
+- [x] **Task 3 — Implement the Phase A (upload) load scenario** (AC: 2, 4)
+  - [x] 50 concurrent `POST /api/content/lessons` requests, distinct users, distinct PDF payloads.
+  - [x] Capture P95 response time, error count, and Redis connection-error count on the API process
     during the run.
-- [ ] **Task 4 — Implement the Phase B (generate) load scenario** (AC: 3, 4, 5, 6)
-  - [ ] 50 concurrent `POST .../lessons` (generate) requests across ≥17 users (respecting
+- [x] **Task 4 — Implement the Phase B (generate) load scenario** (AC: 3, 4, 5, 6)
+  - [x] 50 concurrent `POST .../lessons` (generate) requests across ≥17 users (respecting
     `max_concurrent_generations_per_user = 3` per user by construction of the request plan, not by
     accident).
-  - [ ] Poll each accepted `lesson_id` (via `lesson_jobs`/`lessons.status`, whichever the existing
+  - [x] Poll each accepted `lesson_id` (via `lesson_jobs`/`lessons.status`, whichever the existing
     client-facing status read already uses) to a terminal state; record dequeue time (from
     `lesson_jobs`/ARQ result metadata) separately from HTTP-submission time so queue-wait and
     execution-duration are reported as distinct numbers (Scale & Load Q2).
-  - [ ] Record real Redis error counts, real cost-ceiling breach counts (`cost_tracker`), and
+  - [x] Record real Redis error counts, real cost-ceiling breach counts (`cost_tracker`), and
     real circuit-breaker state transitions (`circuit:{provider}:state` keys) observed during the
     run.
-- [ ] **Task 5 — Implement the two deliberate race-probe scenarios** (AC: 7, 8)
-  - [ ] D45 probe: N truly-simultaneous identical `(chapter_id, tier)` requests from one user.
-  - [ ] Gate 7 probe: several truly-simultaneous generation requests from one user already at or
+- [x] **Task 5 — Implement the two deliberate race-probe scenarios** (AC: 7, 8)
+  - [x] D45 probe: N truly-simultaneous identical `(chapter_id, tier)` requests from one user.
+  - [x] Gate 7 probe: several truly-simultaneous generation requests from one user already at or
     near `max_concurrent_generations_per_user`.
-  - [ ] Report reproduction outcome for each, explicitly (reproduced / not reproduced / blocked by
+  - [x] Report reproduction outcome for each, explicitly (reproduced / not reproduced / blocked by
     existing mitigation, and which one).
 - [ ] **Task 6 — Run, capture topology, and write the results report** (AC: 9)
   - [ ] Record the actual API replica count and worker replica count of the environment the run
@@ -407,8 +407,70 @@ against instead of the zero-concurrency-tested state recorded today in `DEFECT-R
 
 ### Agent Model Used
 
+Claude Sonnet 5 (`claude-sonnet-5`), via a 6-agent workflow (4 parallel builders, 1 integration
+pass, 1 adversarial pre-execution review).
+
 ### Debug Log References
+
+- Confirmed local Redis reachable (`redis-cli ping` → `PONG`) and `arq`/`uvicorn`/`fastapi`
+  importable in `.venv` before starting, to establish the harness is genuinely runnable in this
+  environment (separate question from whether the real 50-concurrent execution is authorized).
+- Confirmed via direct code read that `generate_chapter_lesson` (Phase B) requires only
+  `CurrentUser` (any authenticated user, no allowlist), while `upload_lesson` (Phase A) requires
+  `ApprovedUser` (JWT + `APPROVED_EMAILS`) — this shaped the harness design: Phase B uses 17 fresh
+  disposable users (no allowlist needed), Phase A reuses the 3 existing approved accounts rather
+  than expanding the allowlist.
+- `ruff check`/`mypy`/`pytest tests/unit/test_unbounded_queries.py` all reconfirmed green by hand
+  after the review agent's own fixes, since the review agent itself could only reach
+  `python3 -m py_compile` in its sandbox and explicitly flagged that as a gap.
 
 ### Completion Notes List
 
+- Tasks 1–5 (harness built): pure Python asyncio + httpx (matches `scripts/ws_load_test.py`'s
+  existing style precedent; no new `locust`/`k6` dependency needed), under
+  `apps/api/tests/loadtest/`: `models.py` (shared `TestUser`/`ScenarioResult` contract),
+  `provisioning.py` (disposable-user minting/cleanup via the same Admin-API `generate_link`
+  pattern proven in Story 5-5, since this project's asymmetric JWT signing keys make self-minted
+  JWTs impossible here too), `fixtures.py` (real book/chapter fixture via the existing
+  `eval_pdfs/short_10page.pdf`), `phase_a_upload.py`, `phase_b_generate.py`, `race_probes.py`
+  (D45 + Gate-7), `report.py`, `run.py` (CLI, `--scale smoke|full`).
+- **Adversarial review before any real run found and fixed 2 critical defects that would have
+  caused real, permanent damage on first execution:**
+  1. A partial-provisioning failure (one of 17 disposable-user creations failing after its real
+     `auth.users` row was already written) would have orphaned up to 17 real rows permanently,
+     since `asyncio.gather`'s default fail-fast behavior meant the cleanup `finally` block was
+     never reached. Fixed: gather with `return_exceptions=True`, clean up every user actually
+     created (successful or not) before re-raising.
+  2. Phase A's design (reusing the 3 existing `APPROVED_EMAILS` accounts, since only Phase A needs
+     the allowlist) meant every one of its 50 concurrent uploads would create a REAL, permanent
+     `books`/`chapters`/`chunks` row on real accounts — at least one of which is a real developer
+     account, not a disposable seed user — with **no cleanup path at all** (no `DELETE /books/{id}`
+     endpoint exists in the app). Every full-scale run would have permanently and irreversibly
+     polluted real accounts. Fixed: capture `book_id` from every upload response, added
+     `cleanup_uploaded_books` (storage object + `DELETE .../books` row, cascading to
+     chapters/chunks via the existing migrations' `ON DELETE CASCADE`), wired into `run.py`'s
+     guaranteed cleanup path.
+  3. (Medium) The D45 and Gate-7 race probes originally risked false results by colliding with
+     Phase B's own pre-seeded state (same chapter, same tier) — fixed by using a different tier
+     for the D45 probe and excluding Phase B's chapter from the Gate-7 probe's candidate set.
+  4. (Low, hardening) `TestUser`'s default `repr()` would have printed a real, live access token in
+     full on any incidental log/print/assertion — fixed with a custom `__repr__` that truncates it.
+- Task 6 (the actual run) is **deliberately not done** — this story's own scope includes real
+  financial spend (OpenAI/Sarvam/image-provider costs across up to 100 real generation/upload
+  requests) and requires separate, explicit human go-ahead before executing, per this session's
+  established practice for any real-money action. The harness is built, integrated, lint/type
+  clean, and adversarially reviewed — ready to run at `--scale smoke` (cheap sanity check, ~3 real
+  generations) or `--scale full` (the real AC-2/AC-3 50-concurrent target) once authorized.
+
 ### File List
+
+- `apps/api/tests/loadtest/__init__.py` (new)
+- `apps/api/tests/loadtest/models.py` (new)
+- `apps/api/tests/loadtest/provisioning.py` (new)
+- `apps/api/tests/loadtest/fixtures.py` (new)
+- `apps/api/tests/loadtest/phase_a_upload.py` (new)
+- `apps/api/tests/loadtest/phase_b_generate.py` (new)
+- `apps/api/tests/loadtest/race_probes.py` (new)
+- `apps/api/tests/loadtest/report.py` (new)
+- `apps/api/tests/loadtest/run.py` (new)
+- `docs/stories/5-1-load-test-50-concurrent.md` (this file — status, tasks, Dev Agent Record)
