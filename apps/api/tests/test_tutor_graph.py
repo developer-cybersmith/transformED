@@ -950,11 +950,18 @@ async def test_state_change_broadcast_payload_matches_ws_ts_contract(mocker) -> 
 # ── Story 4-20: QUIZZING deadline enforcement ─────────────────────────────────
 
 
-def _deadline_redis(sid: str, *, state: str = "TEACHING", qa_secs: str | None = "300") -> AsyncMock:
+def _deadline_redis(
+    sid: str,
+    *,
+    state: str = "TEACHING",
+    qa_secs: str | None = "300",
+    segment_index: str | None = None,
+) -> AsyncMock:
     """Key-aware Redis for deadline tests.
 
     GET returns *state* for ``tutor_state:{sid}``, *qa_secs* for
-    ``session:{sid}:qa_phase_seconds``, and None for everything else.
+    ``session:{sid}:qa_phase_seconds``, *segment_index* (BR-2 AC3 — proves quizzing_node
+    never reads it) for ``session:{sid}:segment_index``, and None for everything else.
     SET side-effect updates the tutor_state store so chained dispatches see
     the post-transition value.
     """
@@ -964,6 +971,8 @@ def _deadline_redis(sid: str, *, state: str = "TEACHING", qa_secs: str | None = 
     async def _get(key: str):
         if key == f"session:{sid}:qa_phase_seconds":
             return qa_secs
+        if key == f"session:{sid}:segment_index":
+            return segment_index
         return store.get(key)
 
     async def _set(key: str, value, **kw):
@@ -1015,6 +1024,38 @@ async def test_quizzing_node_uses_t1_qa_seconds(mocker) -> None:
     assert len(deadline_calls) == 1
     written = int(deadline_calls[0].args[1])
     assert before + 600 <= written <= after + 600
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "segment_index",
+    ["2", "40"],
+    ids=["few-long-segments-so-far", "many-short-segments-so-far"],
+)
+async def test_quizzing_node_deadline_unaffected_by_preceding_segment_count(
+    mocker, segment_index
+) -> None:
+    """AC3 (BR-2): quiz_deadline_at = now + qa_secs is identical regardless of how many
+    (long or short) segments preceded QUIZZING entry — quizzing_node reads
+    session:{id}:qa_phase_seconds only; it never reads segment_index or any
+    narration-duration value when computing the deadline."""
+    import time as _time
+
+    sid = f"s-qdl-seglen-{segment_index}"
+    before = int(_time.time())
+    redis = _deadline_redis(sid, qa_secs="300", segment_index=segment_index)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+
+    from app.modules.tutor.state_machine.graph import dispatch_event
+
+    await dispatch_event(sid, "quiz_trigger")
+
+    after = int(_time.time())
+    deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
+    assert len(deadline_calls) == 1
+    written = int(deadline_calls[0].args[1])
+    # Identical +300s offset whether segment_index implies few-long or many-short segments.
+    assert before + 300 <= written <= after + 300
 
 
 @pytest.mark.unit

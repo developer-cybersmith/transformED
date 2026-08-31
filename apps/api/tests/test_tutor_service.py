@@ -377,6 +377,39 @@ async def test_cesresult_fields(mocker) -> None:
     assert result.ces == pytest.approx(75.733, abs=0.01)
 
 
+# ── BR-2: CES/intervention timing vs. variable narration length (regression lock) ────
+#
+# Story BR-2's audit found compute_ces / process_attention_signal / the fatigue floor /
+# quizzing_node / advance_tutor_state are all wall-clock- or event-driven, with no
+# dependency on segment/narration duration. These tests lock that property in so a future
+# change can't silently reintroduce a duration assumption without a test catching it.
+
+
+@pytest.mark.unit
+async def test_ces_computation_identical_regardless_of_segment_length(mocker) -> None:
+    """AC1: compute_ces()/process_attention_signal() take no segment-length input at all —
+    the identical payload produces the identical CES whether the signal is framed as
+    arriving during a short (~800-char, ~45s) or long (~4,069-char, ~3.7min) real-measured
+    segment (Story 3-42/3-45's measured range). Proves the ABSENCE of a duration parameter,
+    rather than adding one that shouldn't exist."""
+    # "Short segment" framing: only the payload/signal content differs test-to-test in
+    # this codebase — there is no segment-length argument to vary, which is the point.
+    _setup(mocker, lrange_vals=["0.5"])
+    from app.modules.tutor.service import process_attention_signal
+
+    short_segment_result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    # "Long segment" framing: re-run with fresh mocks (new call), same payload. If CES
+    # computation ever started reading elapsed-since-segment-start or segment length, this
+    # would need a different setup to produce the same result — it doesn't, because
+    # compute_ces()/_parse_signal() have no such parameter.
+    _setup(mocker, lrange_vals=["0.5"])
+    long_segment_result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    assert short_segment_result.ces == long_segment_result.ces == _EXPECTED_CES
+    assert compute_ces(_parse_signal(_VALID_PAYLOAD)) == _EXPECTED_CES
+
+
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────
 
 
@@ -515,6 +548,37 @@ async def test_segment_complete_increments_segment_index(mocker) -> None:
 
     redis.incr.assert_called_once_with("session:sess-9:segment_index")
     redis.expire.assert_any_call("session:sess-9:segment_index", 86_400)
+    mock_dispatch.assert_called_once_with("sess-9", "segment_complete")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "current_index",
+    [0, 3, 50],
+    ids=["first-segment", "few-long-segments-so-far", "many-short-segments-so-far"],
+)
+async def test_segment_complete_advances_index_regardless_of_elapsed_time(
+    mocker, current_index
+) -> None:
+    """AC4 (BR-2): advance_tutor_state('segment_complete') always increments by exactly 1
+    and dispatches exactly once, regardless of how many segments have already elapsed (a
+    proxy for "how much real time/narration has already played") — the function reads no
+    elapsed-time or segment-count value; `redis.incr` is the only source of truth, and it is
+    called unconditionally on every event, whether reached via few long segments or many
+    short ones."""
+    redis = AsyncMock()
+    redis.incr = AsyncMock(return_value=current_index + 1)
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state("sess-9", "segment_complete")
+
+    # Exactly one increment, one dispatch — regardless of current_index (never read as an
+    # input to gate the transition; it's only used here to vary the *scenario*, not the code).
+    redis.incr.assert_called_once_with("session:sess-9:segment_index")
     mock_dispatch.assert_called_once_with("sess-9", "segment_complete")
 
 

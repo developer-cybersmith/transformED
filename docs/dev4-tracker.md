@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-29 (dashboard count corrected — Sprint 4 was showing 4/5, actual per-task labels are 3 Completed/6 Partial; Bug Resolution — Feature Sprint 2 added: BR-1..BR-4)
-**Overall status:** 35/47 Completed · 6 Partial · 6 Not Started
+**Last updated:** 2026-08-31 (BR-2 CES/intervention-timing verification closed — audit found no bug, added regression-lock tests; BR-1's Completed status lives on its own not-yet-merged branch/PR, not reflected in this branch's dashboard row below)
+**Overall status:** 36/47 Completed · 6 Partial · 5 Not Started (this branch — excludes BR-1, pending PR #162)
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -23,8 +23,8 @@
 | Sprint 4 | Weeks 8–9 | 9 | 3 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| Bug Resolution | Feature Sprint 2 | 4 | 0 | 0 | 4 |
-| **Total** | | **47** | **35** | **6** | **6** |
+| Bug Resolution | Feature Sprint 2 | 4 | 1 | 0 | 3 |
+| **Total** | | **47** | **36** | **6** | **5** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -762,7 +762,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** TBD in story file — captured before implementation per the Story-First Gate.
 
 <!-- CHECK:br2_ces_timing_variable_narration -->
-- [Not Started] **Verify tutor intervention/CES timing still functions correctly with variable-length narration**
+- [Completed] **Verify tutor intervention/CES timing still functions correctly with variable-length narration** ✅ 2026-08-31
   - **Audit performed 2026-08-31** (before writing code): every timing mechanism Dev 4 owns — CES
     window/history, distraction cooldown/cap, fatigue-once floor, intervention timeout, quiz/Q&A
     deadline, `segment_complete`→`segment_index` advance — is wall-clock- or event-driven, never
@@ -775,7 +775,21 @@ MAX_DISTRACTION_PER_SESSION=3
     (`AudioTimeline.tsx`) historically had exactly this class of bug (Dev 1's tracker handoff notes,
     "0:00 — quiz fires instantly" needing a "virtual playback clock") — Dev 2's file, flagged not fixed.
   - Story: `docs/stories/br-2-ces-timing-variable-narration.md`
-  - **AC:** see story file.
+  - **Regression-lock tests added (no production code changed — verification only):**
+    `test_ces_computation_identical_regardless_of_segment_length` (`test_tutor_service.py`),
+    `test_segment_complete_advances_index_regardless_of_elapsed_time` ×3 params (`test_tutor_service.py`),
+    `test_fatigue_floor_depends_on_wallclock_not_segment_count` ×2 params (`test_s3_45_fatigue_trigger.py`),
+    `test_quizzing_node_deadline_unaffected_by_preceding_segment_count` ×2 params (`test_tutor_graph.py`).
+  - **Found while adding these tests, registered not fixed here:** **D143** — 3 pre-existing
+    `test_tutor_graph.py` fatigue tests fail in isolation with the exact D136 symptom
+    (`get_settings`/`get_supabase` import-order binding), reached via a SECOND call site
+    (`graph.py`'s own direct `get_supabase()`, not just `pubsub.py::_sessions_awaiting`) —
+    confirms D136's root cause is repo-wide, not file-specific. Confirmed via `git stash`
+    unrelated to this story's changes.
+  - **AC MET:** AC1–AC5 all satisfied — audit table in the story file + 8 new passing test cases
+    across 3 files; full regression (`test_tutor_service.py` + `test_tutor_graph.py` +
+    `test_s3_45_fatigue_trigger.py` + `test_websocket_session.py`): 212 passed, only the 3
+    pre-existing/unrelated D143 failures (byte-identical before/after via `git stash`); `ruff` clean.
 
 <!-- CHECK:br3_voice_teachback_stt -->
 - [Not Started] **Voice teach-back: real-time mic capture integration in live session flow** — Low priority
