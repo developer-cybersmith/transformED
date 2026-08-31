@@ -150,6 +150,7 @@ async def _poll_one_lesson(
     base_url: str,
     lesson_id: str,
     submitted_at: float,
+    token: str,
 ) -> dict[str, Any]:
     """Poll one `lesson_id` every `_POLL_INTERVAL_S` until a terminal status
     (`ready`/`failed`) or `_POLL_TIMEOUT_S` elapses, whichever comes first.
@@ -182,11 +183,33 @@ async def _poll_one_lesson(
             }
 
         try:
-            resp = await client.get(url, timeout=_POLL_REQUEST_TIMEOUT_S)
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=_POLL_REQUEST_TIMEOUT_S,
+            )
         except httpx.HTTPError as exc:
             last_error = f"poll transport error: {type(exc).__name__}: {exc}"
             await asyncio.sleep(_POLL_INTERVAL_S)
             continue
+
+        if resp.status_code in (401, 403, 404):
+            # Not a transient failure -- auth/ownership is either broken for
+            # this lesson_id/token pair or will never resolve itself by
+            # waiting. Fail fast rather than burning the full
+            # _POLL_TIMEOUT_S (30 min) retrying an error that cannot change
+            # on its own (this bug shape -- silently retrying a
+            # non-transient error for the full deadline -- is exactly what
+            # burned 30 real minutes on this harness's own first live run).
+            return {
+                "lesson_id": lesson_id,
+                "terminal_status": "never_terminal_timeout",
+                "duration_s": None,
+                "error": (
+                    f"poll HTTP {resp.status_code} (non-transient, stopped early): "
+                    f"{resp.text[:200]}"
+                ),
+            }
 
         if resp.status_code != 200:
             last_error = f"poll HTTP {resp.status_code}: {resp.text[:200]}"
@@ -232,8 +255,7 @@ def _record_error(errors: list[str], msg: str) -> None:
 async def run_phase_b(
     base_url: str,
     generate_users: list[TestUser],
-    book_id: str,
-    chapter_id: str,
+    user_fixtures: dict[str, tuple[str, str]],
     total_requests: int,
 ) -> ScenarioResult:
     """Run the Story 5-1 Phase B (generate) load scenario end-to-end:
@@ -247,17 +269,21 @@ async def run_phase_b(
             expected to be freshly created disposable test users, not the
             3 approved accounts Phase A must reuse. Must contain >= 17
             distinct users -- see AC-3's explicit floor below.
-        book_id: a single shared book (already uploaded and `ready`) whose
-            chapters every request targets.
-        chapter_id: a single shared chapter under `book_id` (already
-            detected). Every request in this run targets the SAME
-            `(chapter_id, tier="T2")` pair; because each request comes from
-            a DIFFERENT user (round-robin), this deliberately does NOT
-            engage Gate 5/D45's idempotency check (that requires the SAME
-            user -- see `race_probes.probe_d45_idempotency_race` for that
-            dedicated probe) -- it does legitimately engage Gate 7's
-            per-user concurrency count once a given user's ~3 round-robin
-            requests are in flight together.
+        user_fixtures: maps each generate_users[i].user_id to that SAME
+            user's own real, `ready` (book_id, chapter_id) pair. Ownership of
+            `books`/`chapters` is enforced at the application layer
+            (`generate_chapter_lesson` returns 404 for a book/chapter the
+            caller doesn't own -- confirmed directly against
+            `app/modules/content/router.py`'s own docstring), so a single
+            SHARED book+chapter across many distinct users is not viable --
+            each user must generate from a chapter they themselves uploaded.
+            Because each user submits against their OWN chapter, this
+            deliberately does NOT engage Gate 5/D45's idempotency check
+            across users (that requires the SAME user AND SAME chapter --
+            see `race_probes.probe_d45_idempotency_race` for that dedicated
+            probe) -- it does legitimately engage Gate 7's per-user
+            concurrency count once a given user's ~3 round-robin requests
+            (against their own chapter) are in flight together.
         total_requests: target concurrent request count (Story 5-1 target:
             50). Distributed round-robin across `generate_users`.
 
@@ -292,8 +318,24 @@ async def run_phase_b(
         )
     if total_requests < 1:
         raise ValueError("total_requests must be >= 1")
-
-    url = _generate_lessons_url(base_url, book_id, chapter_id)
+    # Only the users round-robin will ACTUALLY index into
+    # (generate_users[i % len(generate_users)] for i in range(total_requests))
+    # need a fixture -- at total_requests < len(generate_users) (e.g. the
+    # smoke scale's 3-of-17), most of generate_users is never touched, so
+    # requiring a fixture for the whole list would reject a deliberately
+    # cheap smoke run.
+    actually_used_ids = {
+        generate_users[i % len(generate_users)].user_id for i in range(total_requests)
+    }
+    missing = [uid for uid in actually_used_ids if uid not in user_fixtures]
+    if missing:
+        raise ValueError(
+            f"user_fixtures is missing an entry for {len(missing)} of "
+            f"{len(actually_used_ids)} users this run will actually use "
+            f"(e.g. {missing[:3]}) -- every user this round-robin indexes into "
+            f"must have their own (book_id, chapter_id) pair, since ownership is "
+            f"enforced per-user at the application layer, not shared"
+        )
 
     # A generous connection pool so `asyncio.gather` produces true
     # concurrency at the transport level too (mirrors phase_a_upload.py's
@@ -306,9 +348,13 @@ async def run_phase_b(
         max_keepalive_connections=total_requests,
     )
     async with httpx.AsyncClient(timeout=_SUBMIT_TIMEOUT_S, limits=limits) as client:
+        def _url_for(user: TestUser) -> str:
+            book_id, chapter_id = user_fixtures[user.user_id]
+            return _generate_lessons_url(base_url, book_id, chapter_id)
+
+        submitting_users = [generate_users[i % len(generate_users)] for i in range(total_requests)]
         submit_tasks = [
-            _submit_one(client, url, generate_users[i % len(generate_users)])
-            for i in range(total_requests)
+            _submit_one(client, _url_for(user), user) for user in submitting_users
         ]
         # Fire every submission truly concurrently (Story 5-1 AC-1: HTTP
         # load, not a sequential for-loop like the eval harness).
@@ -318,17 +364,22 @@ async def run_phase_b(
         # per-request, not one shared batch-start time) so completion
         # duration reflects that specific request's real submission moment,
         # even though every request was launched in the same event-loop
-        # tick.
+        # tick. GET /lessons/{id} requires CurrentUser (the same auth as the
+        # generate call, not a shared/anonymous read), so each poll must use
+        # the SAME user's token that submitted that specific lesson_id --
+        # zipping by index (submit_results preserves submitting_users' order)
+        # rather than dropping the association, which previously made every
+        # poll 401 regardless of which real user's token was used.
         accepted_now = time.monotonic()
-        poll_targets: list[tuple[str, float]] = [
-            (str(r["lesson_id"]), accepted_now)
-            for r in submit_results
+        poll_targets: list[tuple[str, float, str]] = [
+            (str(r["lesson_id"]), accepted_now, user.access_token)
+            for r, user in zip(submit_results, submitting_users, strict=True)
             if r["lesson_id"] is not None
         ]
 
         poll_tasks = [
-            _poll_one_lesson(client, base_url, lesson_id, submitted_at)
-            for lesson_id, submitted_at in poll_targets
+            _poll_one_lesson(client, base_url, lesson_id, submitted_at, token)
+            for lesson_id, submitted_at, token in poll_targets
         ]
         # Concurrent polling for every in-flight lesson (one coroutine per
         # lesson_id via asyncio.gather), not sequential.
@@ -382,8 +433,7 @@ async def run_phase_b(
                 "this harness; report this as submission latency, not server-side "
                 "enqueue precision."
             ),
-            "book_id": book_id,
-            "chapter_id": chapter_id,
+            "per_user_fixtures": {uid: list(pair) for uid, pair in user_fixtures.items()},
             "tier": _TIER,
             "num_generate_users": len(generate_users),
             "accepted_count": len(poll_targets),

@@ -86,10 +86,27 @@ async def _run_smoke(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any
     logger.info("Smoke run: provisioning %d disposable Phase B users", _GENERATE_USER_COUNT)
     generate_users = await provision_generate_test_users(_GENERATE_USER_COUNT)
     try:
-        approved_users = await get_approved_test_users()
-        uploader = approved_users[0]
-        logger.info("Smoke run: ensuring book+chapter fixture")
-        book_id, chapter_id = await ensure_book_chapter_fixture(base_url, uploader)
+        # Ownership of books/chapters is enforced per-user at the application
+        # layer (generate_chapter_lesson 404s for a book/chapter the caller
+        # doesn't own) -- a single SHARED fixture across many distinct users
+        # is not viable, so every user gets their OWN real, uploaded, ready
+        # book+chapter. This requires each generate_user's email to also be
+        # on APPROVED_EMAILS (upload_lesson's allowlist), not just a valid
+        # JWT -- see apps/api/.env's loadtest-{n}-deleteme@seed.test entries.
+        # Only the users this run's round-robin will ACTUALLY use need a
+        # fixture (min(total_requests, len(generate_users)) distinct users),
+        # keeping the smoke test cheap rather than provisioning all 17.
+        users_needing_fixtures = generate_users[: min(_SMOKE_TOTAL_REQUESTS, len(generate_users))]
+        logger.info(
+            "Smoke run: uploading %d per-user book+chapter fixtures (real ingestion each)",
+            len(users_needing_fixtures),
+        )
+        fixture_pairs = await asyncio.gather(
+            *(ensure_book_chapter_fixture(base_url, u) for u in users_needing_fixtures)
+        )
+        user_fixtures = {
+            u.user_id: pair for u, pair in zip(users_needing_fixtures, fixture_pairs, strict=True)
+        }
 
         logger.info(
             "Smoke run: Phase B, %d concurrent generate requests", _SMOKE_TOTAL_REQUESTS
@@ -97,8 +114,7 @@ async def _run_smoke(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any
         phase_b_result = await run_phase_b(
             base_url=base_url,
             generate_users=generate_users,
-            book_id=book_id,
-            chapter_id=chapter_id,
+            user_fixtures=user_fixtures,
             total_requests=_SMOKE_TOTAL_REQUESTS,
         )
         return [phase_b_result], {}, {}
@@ -123,9 +139,6 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
     created_books: list[dict[str, str]] = []
     try:
         approved_users = await get_approved_test_users()
-        uploader = approved_users[0]
-        logger.info("Full run: ensuring book+chapter fixture")
-        book_id, chapter_id = await ensure_book_chapter_fixture(base_url, uploader)
 
         logger.info(
             "Full run: Phase A, %d concurrent upload requests", _FULL_TOTAL_REQUESTS
@@ -137,6 +150,28 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
         )
         created_books = phase_a_result.extra.get("created_books", [])
 
+        # Ownership of books/chapters is enforced per-user at the application
+        # layer (generate_chapter_lesson 404s for a book/chapter the caller
+        # doesn't own) -- a single SHARED fixture across 17 distinct users is
+        # not viable, so every user gets their OWN real, uploaded, ready
+        # book+chapter (each generate_user's email is also on
+        # APPROVED_EMAILS -- see apps/api/.env's loadtest-{n}-deleteme@seed.test
+        # entries -- so each can use the real upload endpoint themselves).
+        # This is 17 real ingestion runs before Phase B even starts -- slower
+        # and more real-cost than a single shared fixture, a deliberate
+        # tradeoff for a more realistic end-to-end test (chosen explicitly
+        # over directly seeding rows via service-role).
+        logger.info(
+            "Full run: uploading %d per-user book+chapter fixtures (real ingestion each)",
+            len(generate_users),
+        )
+        fixture_pairs = await asyncio.gather(
+            *(ensure_book_chapter_fixture(base_url, u) for u in generate_users)
+        )
+        user_fixtures = {
+            u.user_id: pair for u, pair in zip(generate_users, fixture_pairs, strict=True)
+        }
+
         logger.info(
             "Full run: Phase B, %d concurrent generate requests across %d users",
             _FULL_TOTAL_REQUESTS,
@@ -145,25 +180,28 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
         phase_b_result = await run_phase_b(
             base_url=base_url,
             generate_users=generate_users,
-            book_id=book_id,
-            chapter_id=chapter_id,
+            user_fixtures=user_fixtures,
             total_requests=_FULL_TOTAL_REQUESTS,
         )
 
+        d45_user = generate_users[0]
+        d45_book_id, d45_chapter_id = user_fixtures[d45_user.user_id]
         logger.info("Full run: D45 idempotency race probe")
         race_d45 = await probe_d45_idempotency_race(
             base_url=base_url,
-            user=generate_users[0],
-            book_id=book_id,
-            chapter_id=chapter_id,
+            user=d45_user,
+            book_id=d45_book_id,
+            chapter_id=d45_chapter_id,
         )
 
+        gate7_user = generate_users[1]
+        gate7_book_id, gate7_chapter_id = user_fixtures[gate7_user.user_id]
         logger.info("Full run: listing chapters for the Gate-7 race probe")
-        all_chapter_ids = await _list_all_chapter_ids(base_url, uploader, book_id)
-        # Exclude the ONE chapter Phase B just used (every one of the 17
-        # generate_users, including generate_users[1] below, already
-        # submitted a (chapter_id, tier="T2") generate request against it) --
-        # if that chapter were left in the candidate list, one of the 4
+        all_chapter_ids = await _list_all_chapter_ids(base_url, gate7_user, gate7_book_id)
+        # Exclude the ONE chapter Phase B already used for gate7_user (that
+        # user's own Phase-B request already submitted a
+        # (gate7_chapter_id, tier="T2") generate request against it) -- if
+        # that chapter were left in the candidate list, one of the 4
         # "distinct chapter" probe requests could land on a chapter where
         # this user already has a non-failed lesson from Phase B, so Gate 5's
         # idempotency check would short-circuit it to a 200 idempotent
@@ -175,7 +213,7 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
         # oversubscription of the concurrency cap. Filtering this chapter out
         # keeps every one of the 4 probe requests targeting chapters this
         # user has genuinely never touched before.
-        chapter_ids = [c for c in all_chapter_ids if c != chapter_id]
+        chapter_ids = [c for c in all_chapter_ids if c != gate7_chapter_id]
         race_gate7: dict[str, Any]
         if len(chapter_ids) < _GATE7_MIN_CHAPTERS:
             logger.warning(
@@ -184,7 +222,7 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
                 "distinct, untouched chapters to attempt oversubscription without "
                 "risking an idempotent-replay false positive. Upload a larger "
                 "fixture book to enable this probe.",
-                book_id,
+                gate7_book_id,
                 len(chapter_ids),
                 _GATE7_MIN_CHAPTERS,
             )
@@ -192,8 +230,8 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
         else:
             race_gate7 = await probe_gate7_concurrency_race(
                 base_url=base_url,
-                user=generate_users[1],
-                book_id=book_id,
+                user=gate7_user,
+                book_id=gate7_book_id,
                 chapter_ids=chapter_ids[:_GATE7_MIN_CHAPTERS],
             )
 
