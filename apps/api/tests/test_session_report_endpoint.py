@@ -192,10 +192,8 @@ def _build_report_supabase(
             )
         elif n == 6:
             # session_events intervention rows — .select().eq().eq().order().limit(20).execute()
-            m_exec = (
-                m.select.return_value.eq.return_value.eq.return_value
-                .order.return_value.limit.return_value.execute
-            )
+            _chain = m.select.return_value.eq.return_value.eq.return_value
+            m_exec = _chain.order.return_value.limit.return_value.execute
             m_exec.return_value.data = []
         elif n == 7:
             # learner_dna — maybe_single (Story 3-30)
