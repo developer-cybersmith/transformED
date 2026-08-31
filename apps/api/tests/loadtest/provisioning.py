@@ -70,7 +70,16 @@ _ADMIN_TIMEOUT_S = 30.0
 # this endpoint at the time this was found) -- a conservative starting
 # point, same reasoning as image_generator_node's own
 # _IMAGE_GENERATION_CONCURRENCY=3 for an undocumented provider limit.
-_PROVISION_CONCURRENCY = 5
+_PROVISION_CONCURRENCY = 3
+# Seconds between successive slot starts (see _bounded_create/_bounded_delete)
+# -- confirmed live that concurrency-bounding alone still burst past
+# Supabase's real rate limit; this paces actual request issuance, not just
+# how many are in flight at once. Also not benchmarked against an exact
+# published ceiling -- lowered empirically after a second live attempt at
+# _PROVISION_CONCURRENCY=5 (no stagger) still failed with 5 of 17 users
+# hitting 429, an improvement over the first attempt's earlier failure but
+# still over the real limit.
+_PROVISION_STAGGER_S = 0.5
 
 # Story 5-1 Task 2 email pattern for disposable Phase B users.
 _LOADTEST_EMAIL_PREFIX = "loadtest-"
@@ -324,12 +333,21 @@ Creations run concurrently but bounded by `_PROVISION_CONCURRENCY` (a
 
     async with httpx.AsyncClient(timeout=_ADMIN_TIMEOUT_S, limits=limits) as client:
 
-        async def _bounded_create(index: int) -> TestUser:
+        async def _bounded_create(position: int, index: int) -> TestUser:
+            # Stagger the START of each slot, not just bound how many run at
+            # once -- confirmed live that bounding concurrency ALONE (a
+            # Semaphore with no pacing) still tripped Supabase's Admin API
+            # rate limit, since each user makes 2-3 fast internal calls
+            # (create-user, generate_link, verify) and a free semaphore slot
+            # gets re-admitted the instant one finishes, still producing a
+            # request-rate burst even at low concurrency. `position * delay`
+            # spreads every slot's start across real wall-clock time instead.
+            await asyncio.sleep(position * _PROVISION_STAGGER_S)
             async with sem:
                 return await _create_one_disposable_user(client, index)
 
         results = await asyncio.gather(
-            *(_bounded_create(offset + i) for i in range(n)),
+            *(_bounded_create(i, offset + i) for i in range(n)),
             return_exceptions=True,
         )
 
@@ -402,11 +420,15 @@ async def cleanup_generate_test_users(users: list[TestUser]) -> None:
     sem = asyncio.Semaphore(_PROVISION_CONCURRENCY)
     async with httpx.AsyncClient(timeout=_ADMIN_TIMEOUT_S, limits=limits) as client:
 
-        async def _bounded_delete(user: TestUser) -> str | None:
+        async def _bounded_delete(position: int, user: TestUser) -> str | None:
+            # Same request-rate pacing as _bounded_create -- see its comment.
+            await asyncio.sleep(position * _PROVISION_STAGGER_S)
             async with sem:
                 return await _delete_one_user(client, headers, supabase_url, user)
 
-        results = await asyncio.gather(*(_bounded_delete(user) for user in users))
+        results = await asyncio.gather(
+            *(_bounded_delete(i, user) for i, user in enumerate(users))
+        )
 
     failures = [r for r in results if r is not None]
     if failures:
