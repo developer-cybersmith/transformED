@@ -275,7 +275,7 @@
 - [ ] Landing page + marketing copy
 - [ ] Pricing page
 - [ ] Razorpay Checkout integrated into onboarding flow — 🔵 PARTIAL 2026-08-27 (Story 2-53/S4-02): frontend checkout unit (`RazorpayCheckoutButton`/`useRazorpayCheckout`/`payment.service.ts`) built, tested, 8-agent review passed, merged into `sprint4-master` — but not yet wired into any real page, and blocked partly on the backend's `GET /api/payments/access` (doesn't exist yet; frontend polls a documented mock, D136)
-- [ ] Accessibility audit (WCAG AA minimum)
+- [x] Accessibility audit (WCAG AA minimum) — ✅ 2026-08-29 (Story 2-55/S4-04, 8-agent review passed, merged into `sprint4-master`): focus states, contrast, `aria-live` announcements, and keyboard navigation fixed across the quiz/tutor-intervention/teach-back/onboarding UI; alt text confirmed already compliant
 - [x] PostHog event instrumentation (feeds the Dev 3 funnel-analysis line below) — ✅ 2026-08-27 (Story 2-54/S4-03, 8-agent review passed, merged into `sprint4-master`; same-day fast-follow wired `posthog.identify()`/`reset()` so events tie to real accounts) — **not yet producing real data**: `NEXT_PUBLIC_POSTHOG_KEY`/`HOST` still needs to be added to Vercel's production env (currently local-dev-only)
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
