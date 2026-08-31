@@ -3,7 +3,7 @@
 **Owner:** Dev 1 (developer1-cybersmith) — developer.team2@cybersmithsecure.com
 **Domain:** Infra · Content Pipeline (11 nodes) · Provider Abstraction · Embeddings · Langfuse
 **PRD:** 1.0 Final (10 June 2026) + Decisions Update (25 June 2026) — `CLAUDE.md` is source of truth
-**Last updated:** 2026-08-26
+**Last updated:** 2026-08-31
 **Sprint 0 status:** 12/12 COMPLETE ✅
 **Sprint 1 status:** 10/10 COMPLETE ✅ — merged to `main` 2026-07-13 (PR #72). Includes Tier-1/Tier-2 hardening plus Story 2-0b (page-scoped docling + extraction performance). **2026-07-23 gap-fix (Story 1-6):** `GET /api/content/lessons/{id}` never actually returned `content` despite the frozen contract promising it since Week 1 — discovered while building Story 3-6 (media signed-URL layer); fixed in Story 1-6.
 **Sprint 2 status:** 21/21 COMPLETE ✅ (2026-07-17, still on `sprint2/phase-b-generation-nodes` — not yet merged to `main`). All 15 pipeline nodes real; `package_builder` (S2-11) + `lesson_ready` WebSocket push (S2-12) landed 2026-07-16; cost ceiling enforcement (S2-13) and the 5-PDF eval harness (S2-14, live run not yet triggered) landed 2026-07-17; Learner Mode tier-aware generation (S2-LM1–LM5) landed 2026-07-17 — `POST /lessons` accepts a `tier` param that drives per-segment slide budgets and outline content-depth framing. Frontend/assessment/tutor teams can migrate off `apps/web/src/mocks/data/lessonPackage.ts` once this branch merges. **2026-07-27 gap-fix (Story 2-25):** a full-repo 360° audit (`docs/reports/sprint2-360-audit-2026-07-27.md`) found the admin panel was 100% unimplemented with no admin/role concept anywhere in the codebase (not the "Sprint 3" work it was tracked as — genuinely absent), the media signed-URL allowlist had 3 structurally-broken bucket entries (`source-pdfs`/`avatar-clips`/`lesson-slides` — each unreachable even for the legitimate owner, zero frontend callers), a stale pipeline docstring, and shared-contract drift (`lesson.ts`/`lesson_package.schema.json` nullability + `tier` required/optional mismatch vs. Pydantic). All 4 fixed in Story 2-25, plus a 5-agent code-review round (fixed a real admin-email case-sensitivity lockout bug it surfaced). The other 21 audit findings belong to Dev2/Dev3/Dev4 and are tracked separately for the cross-team wiring handoff. **2026-07-28 gap-fix (Story 2-28):** Dev 2 reported 48 quiz questions for a segment that should have 3, from a live Refresher-tier run. Root cause was NOT ARQ retries — 18 nodes returned `{**state, ...}`, and since six Phase-1 channels are `operator.add` concatenating reducers, the four nodes running after the fan-in each doubled all six: 2⁴ = 16×, in a single clean run. Fixed at all 18 sites and guarded by an AST scan + e2e assertions (the assertion failed `48 <= 3` before the fix, passes after). **Two consequences worth flagging:** (1) real TTS spend was ~4× inflated, so every existing $3.00/lesson calibration and Langfuse baseline must be re-measured; (2) found while fixing it — `_FAN_OUT_STATE_KEYS` omitted `"tier"`, and because a `Send()` payload *replaces* state, all six Phase-1 nodes read the T2 default regardless of the lesson's real tier, silently disabling the S2-LM3/LM4/LM5 bands for every T1 and T3 lesson. Both now covered by tests that fail on the mutation. Same `{**state, ...}` pattern exists in Dev 4's `modules/tutor/state_machine/graph.py` — handed off, not fixed across the ownership boundary. **2026-07-28 gap-fix (Story 2-31):** closes Dev 2's two remaining reported items plus two findings from the Story 2-28 review. `_fallback_narration()` was returning `{"script": ""}`, discarding narration text sitting in `state["narration_scripts"]` — only the *audio* is missing on the TTS degrade path, not the script — so packages built via that path shipped empty narration. `_index_by_segment_id` used `item[value_key]` and `KeyError`-ed the whole node on one malformed entry, contradicting its own docstring. Cached Phase-1 quiz batches are now rejected on read when the count exceeds the lesson tier's band, so a checkpoint written *before* the 2-28 `tier` fix cannot silently replay T2-sized content into a T1 lesson while the logs show the tier fix working (guard is `n_max`-only — a below-band count is ambiguous against 2-28 AC-8's keep-short-batches rule; residual gap documented in the story). `GET /lessons` now lifts `subject` + `estimated_duration_mins` from the `content` JSONB via PostgREST path selectors instead of `select("*")` — Dev 2 needed both for dashboard cards without an N+1 — with regression assertions proving Story 1-6 AC-7 still holds (zero signing calls, no `content` attached). Embedded-lesson signed-URL expiry raised 1h → 8h. **Not fixed here and must not be reported as fixed:** Dev 2's visible 0:00-quiz-fires-instantly symptom is in `AudioTimeline.tsx` and needs a virtual playback clock — see `docs/dev2-narration-playback-handoff.md`. **2026-07-28 review round (6 adversarial layers) on Story 2-31 — worth reading, because it caught a bug that would have taken the product down:** the first `_LIST_COLUMNS` named `completed_at`, which is a column on `lesson_jobs` and *not* on `lessons`. Under `select("*")` that was harmless; naming it explicitly makes PostgREST reject the whole query, so `GET /lessons` would have failed for every user on every request — and no test could catch it, because all four AC-4 tests mock Supabase and assert the select *string*. Now guarded by a test that parses `_LIST_COLUMNS` against the columns the migrations actually define. The review also showed **AC-3's shipped guard could not catch its own stated hazard**: pre-2-28 checkpoints are all T2-sized (2–3 questions) and T1's `n_max` is 5, so every stale T2 cache passed for exactly the T1 lessons the AC was written about; the count heuristic fired only for T3. Redesigned as a `tier` stamp in the checkpoint *value* — exact rather than inferential, keys still `f"{node}:{section_id}"`, same-tier retry still a free cache hit. Also added a salvage path (a rejected cache plus one transient LLM failure previously shipped a segment with **zero** questions and left the stale checkpoint in place, so every ARQ retry re-rejected and re-billed with no `check_ceiling()` call in that node — though the loop was never actually unbounded: Phase 1 is gated on `check_ceiling()` before dispatch and `_maybe_accumulate_cost` raises at the $3.00 ceiling, so it always terminated. That over-claim was corrected on 2026-07-29 after the Story 2-32 review caught it; the salvage fix stands on the zero-questions correctness defect, which was always the stronger argument), hardened `_index_by_segment_id` against non-dict entries/values, and hardened the list response against untrusted LLM-generated JSONB (a dict-valued `subject` or a `NaN` duration would have 500'd or broken `JSON.parse` for the whole page). Three tests were found passing for the wrong reason and fixed. **Standing lesson: mocked tests on both sides validate the mock, not the contract** — the two worst findings here were both invisible to a green suite.
@@ -118,9 +118,9 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 22 | 0 | 1 |
-| Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 3 | 0 | 4 |
+| Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 7 | 2 | 0 | 5 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **77** | **68** | **0** | **9** |
+| **Totals** | | **77** | **67** | **0** | **10** |
 
 ---
 
@@ -992,27 +992,32 @@ Every node must:
   - Prioritize: retry exhaustion, cost ceiling mid-flight, Redis connection drops, node timeout under load
   - **AC:** All failure modes from S4-1 resolved; no silent failures in production
 
-- [x] **S4-3 Stripe Checkout integration** — ✓ 2026-08-25 (Story 5-3, branch `sprint4/s4-3-stripe-checkout`)
-  - Hosted Stripe Checkout page only — no custom payment UI in MVP ✓
-  - Backend complete: `POST /api/payments/create-checkout-session` + `POST /api/payments/webhook`,
-    new `lesson_access`/`stripe_events` tables + 3 atomic RPCs (`grant_lesson_credits`,
-    `decrement_lesson_credit`, `record_stripe_event_if_new`), `PaymentProvider` abstraction
-    (`providers/payments/`), and a credit gate (402 on zero credits, refund on downstream failure)
-    added to `generate_chapter_lesson` — the real spend/generation endpoint, not
-    `POST /api/content/lessons` (see story's Project Structure Notes for why).
-  - **Cross-team, not in scope here:** Dev 2 owns `/payment/success`/`/payment/cancel` pages, the
-    pricing page, and wiring the onboarding-flow redirect into Checkout (per
-    `docs/master-tracker.md` Sprint 4 Dev 2 section).
-  - **AC:** User completes a purchase; Stripe webhook updates user access tier in DB — ✓ webhook
-    grants `lesson_credits` via atomic RPC on a verified `checkout.session.completed`; idempotent
-    on redelivery; 23 new tests (9 router + 14 migration-schema) + 5 more in
-    `test_generate_lesson_endpoint.py`. Full unit suite 1247 passed / 6 skipped / 3 pre-existing
-    unrelated failures (`test_extract_page_bounds.py`, pypdfium2 API mismatch — not "D134" as
-    first cited; no such register row exists, corrected during code review), unchanged.
-    **8-layer code review (2026-08-26) found and fixed a real money-losing bug:** webhook
-    idempotency-marking and credit-granting were two non-transactional RPC calls — see D136
-    (closed) and D137 (accepted residual risk, deferred by user decision) in
-    `docs/DEFECT-REGISTER.md`. See `docs/stories/5-3-stripe-checkout-integration.md`.
+- [ ] **S4-3 Payment integration — REVISED 2026-08-31: provider is Razorpay, not Stripe**
+  - **Correction, not just an update:** the Story 5-3 Stripe implementation described in this
+    line through 2026-08-26 was built without visibility into a parallel, real effort already
+    underway — PR #157 ("Story 4-1 — Razorpay Payment Backend", branch
+    `razorpay-backend-endpoints-dev3`, opened 2026-08-27 by Tanmay Gupta, under a *different*
+    story-numbering track, Epic 4 not Epic 5) — which is the team's actual, live decision.
+    Razorpay fits this product's India-first deployment far better than Stripe (UPI, INR
+    pricing, no US-centric card-only assumption). PR #157's own description confirms the pivot
+    explicitly: "S4-02 in dev2 tracker still describes Stripe Checkout Redirect. Razorpay is
+    fundamentally different (inline modal, no redirect)."
+  - **Story 5-3 (Stripe) is closed, not merged, branch deleted** — PR #158 closed 2026-08-27,
+    `sprint4/s4-3-stripe-checkout` deleted both locally and on origin, confirmed `main` was never
+    touched (PR was never merged; no Stripe payments code exists anywhere in `main`'s history).
+    `docs/stories/5-3-stripe-checkout-integration.md` and its DEFECT-REGISTER entries (D136,
+    D137) describe a dead, unshipped implementation — kept in `docs/stories/` for the historical
+    record (a real 8-layer review did happen and did catch a real money-losing bug class, worth
+    keeping as a reference for whoever reviews the Razorpay webhook's own idempotency logic), but
+    must not be read as "S4-3 done."
+  - **Real S4-3 status: see PR #157 instead** — backend complete per its own description
+    (`create-order` + webhook, HMAC-verified, DB-UNIQUE idempotent, `lesson_access` table,
+    25 tests, 6-layer review done), with 4 explicitly named open gaps pending team answers
+    (no `GET /api/payments/access` endpoint yet; all lessons priced at `price_paise = 0`,
+    which Razorpay will reject on a real charge; access still gated behind the beta
+    `ApprovedUser` allowlist, not real students; no rate limiting on payment endpoints yet).
+    Not marked `[x]` here because it isn't merged and has open gaps — this line should be
+    updated again once PR #157 actually lands.
 
 - [x] **S4-4 Rate limiting — per-route limits** — ✓ 2026-08-25 (Story 5-4, branch `sprint4/s4-4-rate-limit-per-route`)
   - `apps/api/app/main.py` — `slowapi` middleware mounted ✓
