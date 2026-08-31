@@ -90,14 +90,8 @@ def _supabase(
         elif name == "sessions":
             # Idempotency pre-check: SELECT open session via .is_("ended_at","null").maybe_single().
             # Returns open_session (None by default → proceed to INSERT).
-            (
-                t.select.return_value
-                .eq.return_value
-                .eq.return_value
-                .is_.return_value
-                .maybe_single.return_value
-                .execute.return_value.data
-            ) = open_session
+            _rv = t.select.return_value.eq.return_value.eq.return_value
+            _rv.is_.return_value.maybe_single.return_value.execute.return_value.data = open_session
 
             def _insert(payload: dict[str, Any]) -> MagicMock:
                 inserted.append(payload)
@@ -276,9 +270,9 @@ def test_the_same_user_starting_the_same_lesson_again_gets_a_new_session(
                 chain = MagicMock()
                 # Open sessions (ended_at IS NULL) — none in the re-take scenario.
                 open_found = [
-                    r for r in sessions.values()
-                    if value in (r.get("user_id"), r.get("lesson_id"))
-                    and r.get("ended_at") is None
+                    r
+                    for r in sessions.values()
+                    if value in (r.get("user_id"), r.get("lesson_id")) and r.get("ended_at") is None
                 ]
                 chain.is_.return_value.maybe_single.return_value.execute.return_value.data = (
                     open_found[0] if open_found else None
