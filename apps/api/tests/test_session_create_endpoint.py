@@ -393,6 +393,11 @@ def test_a_minted_session_is_accepted_by_grade_quiz_ownership_check() -> None:
             def _eq(_col: str, value: str) -> MagicMock:
                 chain = MagicMock()
                 chain.maybe_single.return_value.execute.return_value.data = store.get(value)
+                # S4-11 idempotency pre-check: .eq(user_id).eq(lesson_id).is_().maybe_single()
+                # chain.eq is the second .eq() — must return None so create_session
+                # proceeds to INSERT rather than returning a spurious "open session".
+                _c2 = chain.eq.return_value
+                _c2.is_.return_value.maybe_single.return_value.execute.return_value.data = None
                 return chain
 
             t.select.return_value.eq.side_effect = _eq
