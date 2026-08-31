@@ -62,6 +62,16 @@ _ENV_PATH = _API_ROOT / ".env"
 # genuinely wedged network call.
 _ADMIN_TIMEOUT_S = 30.0
 
+# Bounds concurrent Auth Admin API calls during provisioning -- confirmed
+# live that firing 30+ users' worth of create-user/generate_link/verify
+# calls fully unbounded trips Supabase's OWN rate limit
+# (429 over_request_rate_limit), independent of anything in this app. Not
+# benchmarked against Supabase's exact published ceiling (undocumented for
+# this endpoint at the time this was found) -- a conservative starting
+# point, same reasoning as image_generator_node's own
+# _IMAGE_GENERATION_CONCURRENCY=3 for an undocumented provider limit.
+_PROVISION_CONCURRENCY = 5
+
 # Story 5-1 Task 2 email pattern for disposable Phase B users.
 _LOADTEST_EMAIL_PREFIX = "loadtest-"
 _LOADTEST_EMAIL_SUFFIX = "-deleteme@seed.test"
@@ -284,12 +294,20 @@ async def provision_generate_test_users(n: int, *, offset: int = 0) -> list[Test
     runs itself, per this task's instructions. Pair every real call with
     `cleanup_generate_test_users` once the load-test run is done.
 
-    All `n` creations run concurrently (`asyncio.gather`, one shared
-    `httpx.AsyncClient` for connection reuse) -- provisioning 17+ users
-    sequentially would itself take long enough to be an annoying setup tax on
-    every harness run.
+Creations run concurrently but bounded by `_PROVISION_CONCURRENCY` (a
+    `Semaphore`, one shared `httpx.AsyncClient` for connection reuse) --
+    provisioning 17+ users sequentially would itself take long enough to be
+    an annoying setup tax on every harness run, but firing ALL of them fully
+    unbounded (as an earlier version of this function did) hits Supabase's
+    OWN Auth Admin API rate limit once a full-scale run provisions 30+ users
+    at once (each needing 2-3 real Admin API calls: create-user,
+    generate_link, verify) -- confirmed live: a 32-user full run hit
+    `429 over_request_rate_limit` from Supabase itself, not from this app.
+    The partial-failure cleanup below already handled that gracefully (zero
+    orphaned rows), but bounding concurrency here avoids provoking Supabase's
+    limit in the first place rather than just recovering from it every time.
 
-    If ANY of the `n` concurrent creations fails, this does NOT return the
+    If ANY of the concurrent creations fails, this does NOT return the
     partial list and leave the successfully-created real rows to leak: it
     collects every user that WAS actually created (both fully-usable
     `TestUser`s and rows whose token mint failed, via
@@ -302,9 +320,16 @@ async def provision_generate_test_users(n: int, *, offset: int = 0) -> list[Test
         raise ValueError(f"n must be >= 1, got {n}")
 
     limits = httpx.Limits(max_connections=n + 5, max_keepalive_connections=n)
+    sem = asyncio.Semaphore(_PROVISION_CONCURRENCY)
+
     async with httpx.AsyncClient(timeout=_ADMIN_TIMEOUT_S, limits=limits) as client:
+
+        async def _bounded_create(index: int) -> TestUser:
+            async with sem:
+                return await _create_one_disposable_user(client, index)
+
         results = await asyncio.gather(
-            *(_create_one_disposable_user(client, offset + i) for i in range(n)),
+            *(_bounded_create(offset + i) for i in range(n)),
             return_exceptions=True,
         )
 
@@ -374,10 +399,14 @@ async def cleanup_generate_test_users(users: list[TestUser]) -> None:
     headers = _admin_headers(service_role_key)
 
     limits = httpx.Limits(max_connections=len(users) + 5, max_keepalive_connections=len(users))
+    sem = asyncio.Semaphore(_PROVISION_CONCURRENCY)
     async with httpx.AsyncClient(timeout=_ADMIN_TIMEOUT_S, limits=limits) as client:
-        results = await asyncio.gather(
-            *(_delete_one_user(client, headers, supabase_url, user) for user in users)
-        )
+
+        async def _bounded_delete(user: TestUser) -> str | None:
+            async with sem:
+                return await _delete_one_user(client, headers, supabase_url, user)
+
+        results = await asyncio.gather(*(_bounded_delete(user) for user in users))
 
     failures = [r for r in results if r is not None]
     if failures:
