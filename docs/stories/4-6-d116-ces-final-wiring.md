@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Story 4-6 — D116: Wire complete_session to dispatch_event so ces_final is written
@@ -43,12 +43,12 @@ Additionally, `lesson_complete` only routes to `session_end` from TEACHING state
 ## Tasks
 
 - [x] T1: Create story file (this file), commit alone, push
-- [ ] T2: Fix `route_entry` in graph.py — add universal `lesson_complete → session_end` guard before state dispatch
-- [ ] T3: Fix `_finalize_session` in graph.py — remove `ended_at` from update payload; `complete_session` owns that write
-- [ ] T4: Fix `complete_session` in assessment/service.py — add `await dispatch_event("lesson_complete")` with try/except after the ended_at write
-- [ ] T5: Write failing tests for AC1–AC6 (`test_d116_ces_final_wiring.py`)
-- [ ] T6: Run full test suite — all pass, no regressions
-- [ ] T7: Run ruff + mypy — lint clean
+- [x] T2: Fix `route_entry` in graph.py — add universal `lesson_complete → session_end` guard before state dispatch
+- [x] T3: Fix `_finalize_session` in graph.py — remove `ended_at` from update payload; `complete_session` owns that write
+- [x] T4: Fix `complete_session` in assessment/service.py — add `await dispatch_event("lesson_complete")` with try/except after the ended_at write
+- [x] T5: Write tests for AC1–AC6 (`test_d116_ces_final_wiring.py`) — 11 tests, all pass
+- [x] T6: Run full test suite — 184 Dev 3 tests pass, 0 regressions
+- [x] T7: Run ruff + mypy — lint clean
 
 ## Dev Notes
 
