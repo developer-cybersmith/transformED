@@ -18,25 +18,26 @@
 
 ---
 
-## 2. Critical Bug: `ces_final` is Always NULL
+## 2. Critical Bug: `ces_final` is Always NULL — Root Cause Confirmed (D116)
 
 **All 4 completed sessions have `ces_final = NULL`.** This blocks any CES calibration.
 
-### Root cause
+### Root cause (confirmed 2026-08-29 by cross-team analysis — see DEFECT-REGISTER.md D116)
 
-There are **two separate code paths** for ending a session:
+Two code paths for session termination were built independently and never connected:
 
-| Path | Writer | What it writes |
-|---|---|---|
-| `POST /api/assessment/sessions/{id}/end` | `assessment/service.py:257` | `ended_at` only |
-| Tutor FSM → SESSION_END state | `tutor/state_machine/graph.py:758` | `ces_final` + `ended_at` |
+| Path | Writer | What it writes | Called by |
+|---|---|---|---|
+| `POST /api/assessment/sessions/{id}/complete` | `assessment/service.py:257` | `ended_at` only | `Player.tsx` on ENDED |
+| Tutor FSM → SESSION_END → `_finalize_session` | `tutor/state_machine/graph.py:758` | `ces_final` + `ended_at` | `dispatch_event("lesson_complete")` via WS — **never sent** |
 
-The assessment endpoint is being called (all 4 sessions have `ended_at`), but the tutor FSM's SESSION_END transition is never completing — either the WebSocket is dropping before SESSION_END fires, or the FSM never reaches that state in these short test sessions.
+`Player.tsx` calls the REST endpoint but never sends `lesson_complete` over the WebSocket. The FSM's SESSION_END path never fires. `ces_final` is never written.
 
-Even when `_finalize_session` does run, it reads Redis `ces_history`. If no CES updates were pushed via WebSocket during the session, `ces_history` is empty → `ces_final = None` → stored as NULL. Same result.
+**Fix (in progress — story to be filed):** `complete_session` in `assessment/service.py` will call `dispatch_event(session_id, "lesson_complete")` after writing `ended_at`, making the REST call the single authoritative trigger. `_finalize_session` will be updated to write `ces_final` only (not `ended_at`, which `complete_session` now owns).
 
-**Owner:** Dev 4 (WebSocket handlers, Redis buffer, SESSION_END trigger).  
-**Action before next session run:** Confirm the SESSION_END WebSocket message is being sent and received. Log `ces_history` length at finalize time.
+**Secondary blocker:** Even when `_finalize_session` runs, it reads Redis `ces_history`. If no `attention_signal` WS frames were sent (e.g. consent not granted → MediaPipe never started), `ces_history` is empty → `ces_final = None` (same NULL outcome). Both the wiring fix and confirmed consent in test sessions are needed.
+
+**Registered as D116 in DEFECT-REGISTER.md. Owner: Dev 3 (story + assessment/service.py change) + Dev 4 (_finalize_session payload change).**
 
 ---
 
@@ -98,17 +99,20 @@ Not enough to calibrate `teachback_score × 0.25`. Both scores were above the im
 - 26 interventions across 14 sessions = ~1.9 interventions per session average. The CLAUDE.md rule is **max 3 per session**. We're near that cap on almost every session.
 - No `quiz_fail`, `segment_complete`, `lesson_end`, or any other event types exist in the DB. This means the session event log is only capturing attention/intervention events — quiz results flow through `quiz_attempts`, not `session_events`.
 
-### CES formula implication
+### CES formula implication — updated 2026-08-29
 
-If behavioral signal is entirely absent (only attention signals arriving sporadically), then:
+Dev 2 confirmed: in `useAttentionMonitor.ts`, `average() ?? 0` sends a literal `0.0` when a 5s window has no samples — a contract violation against `ws.ts` which specifies `null` for uninitialised/dropped frames. This means empty windows drag CES down as a genuine low score rather than triggering weight redistribution. Fix: `?? null` (Dev 2 implementing).
+
+However, the **1:1 tab_switch:intervention ratio across the 14 affected sessions** is the stronger signal. If consent was never granted and zero `attention_signal` frames were sent, every session reaching TEACHING would trigger immediate continuous interventions (CES = 0 from window 1), not just the 14 sessions that match tab switches. The observed pattern — interventions only where tab switches happen — confirms that **tab-visibility-driven behavioral signals ARE being received**. Camera/head_pose/blink are the uncertain signals; those require consent and MediaPipe initialization.
+
+If behavioral arrives (tab-switch driven) but camera signals are absent (no consent):
 ```
-CES ≈ quiz_accuracy×0.35 + 0 + head_pose×0.12 + blink×0.08
+CES ≈ quiz_accuracy×0.35 + behavioral×0.20 + head_pose×0 + blink×0
 ```
-Maximum possible CES = 0.35 + 0.12 + 0.08 = **0.55 × 100 = 55** if all three at perfect score.
+With behavioral = 0 on tab switch, quiz_accuracy = 0.70:
+CES = 0.70×35 + 0 = **24.5 → below 50 → intervention on every tab switch**.
 
-A student with 70% quiz accuracy and perfect attention signals → CES ≈ 0.35×70 + 0.12×100 + 0.08×100 = 24.5 + 12 + 8 = **44.5** → below the 50 threshold → perpetual intervention.
-
-**This explains the high intervention rate.** The behavioral component (weight 0.20) is not being sent from the frontend or is not reaching the CES formula. Without it, almost any student will trigger interventions.
+**Bottom line:** The intervention rate is real but the triggers are disproportionately tab switches. After D116 fix + consent granted in test sessions, the full 5-signal CES will be computable and the threshold can be evaluated against real output values.
 
 ---
 

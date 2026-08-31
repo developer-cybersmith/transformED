@@ -597,6 +597,32 @@ after finalization.
 
 ---
 
+## D116 — `complete_session` and `_finalize_session` were never wired: ces_final always NULL
+
+**Status:** OPEN · **Owner:** Dev 3 (fix in assessment/service.py) + Dev 4 (fix in _finalize_session payload) · **Detected:** 2026-08-29 (Sprint 4 Task 1 — CES calibration analysis, confirmed by Dev 4 message same day)
+
+`sessions.ces_final` is NULL on every session that has ever been run (117 sessions, 2 users, data 2026-08-12 → 2026-08-19). Root cause: two code paths were designed for session termination and were never connected.
+
+**Path A** — `POST /api/assessment/sessions/{id}/complete` → `complete_session` in `assessment/service.py` → writes `ended_at` only. This is the path the frontend (`Player.tsx`) calls when the lesson reaches `ENDED`.
+
+**Path B** — Tutor FSM `SESSION_END` transition → `session_end_node` → `_finalize_session` in `tutor/state_machine/graph.py` → writes both `ces_final` and `ended_at`. This path fires only when `dispatch_event(session_id, "lesson_complete")` is called via WebSocket. No caller ever sends this event when a normal lesson ends.
+
+Neither path calls the other. Path A executes on every lesson completion. Path B never executes. `ces_final` is therefore never written, and all downstream calibration, weight tuning, and DNA fusion based on it are silently skipped.
+
+**Secondary cause:** Even when Path B did run (in theory), if `ces_history` in Redis is empty (no `attention_signal` WS frames received during the session — e.g. because attention consent was not granted), `_finalize_session` writes `ces_final = None` anyway. So Path B running with an empty signal history produces the same NULL outcome.
+
+**Fix (Dev 3 owns, story-first gate applies):** In `complete_session` (`assessment/service.py`), after writing `ended_at`, call `dispatch_event(session_id, "lesson_complete")` from `tutor.state_machine.graph`. This makes the REST completion endpoint the single reliable trigger for both writes, even when the WebSocket has already dropped by the time `ENDED` renders.
+
+**Fix (Dev 4):** Remove `ended_at` from `_finalize_session`'s `.update()` payload — `complete_session` now owns that write and its idempotency guard. `_finalize_session` should only update `ces_final`. This eliminates the double-write and clarifies ownership: assessment module → `ended_at`, tutor module → `ces_final`.
+
+**Open question (Dev 4 must confirm before implementation):** Does `lesson_complete` route to `session_end_node` from non-IDLE states (e.g. TEACHING, CHECKING_IN, QUIZZING, TEACH_BACK)? If the FSM was never initialized via WS (no `session_start` dispatch, Redis state = None), `dispatch_event` defaults to IDLE — confirm that `lesson_complete` from IDLE also routes to SESSION_END, or handle that case explicitly.
+
+**Enforcement:** Integration test — run a session start-to-finish via the REST API surface, call `complete_session`, query `sessions.ces_final` and assert it is NOT NULL. This test must pass before closing.
+
+**Trigger:** This entry. Open until the integration test described above passes in CI.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
