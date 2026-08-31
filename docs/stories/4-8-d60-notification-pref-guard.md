@@ -46,11 +46,11 @@ This closes D60's Dev 3 responsibility. When an email provider is added, the gua
 ## Tasks
 
 - [x] T1: Create story file (this file), commit alone, push
-- [ ] T2: Write `apps/api/app/modules/assessment/email_delivery.py` with guarded stub
-- [ ] T3: Write `apps/api/tests/test_d60_notification_pref_guard.py` with 3+ unit tests
-- [ ] T4: Run full test suite + ruff + mypy — all clean
-- [ ] T5: Update `docs/DEFECT-REGISTER.md` — D60 Dev 3 portion closed
-- [ ] T6: Update `docs/dev3-assessment-tracker.md` — S4-8 done, dashboard
+- [x] T2: Write `apps/api/app/modules/assessment/email_delivery.py` with guarded stub
+- [x] T3: Write `apps/api/tests/test_d60_notification_pref_guard.py` with 3+ unit tests
+- [x] T4: Run full test suite + ruff + mypy — all clean (3/3 D60 tests GREEN; ruff/mypy clean)
+- [x] T5: Update `docs/DEFECT-REGISTER.md` — D60 trigger-fired note added; Dev 3 Story 4-8 recorded
+- [x] T6: Update `docs/dev3-assessment-tracker.md` — S4-8 done, dashboard updated (54/63 done)
 - [ ] T7: Commit implementation, push, open PR into `master-sprint4-dev3`
 
 ## Change Log
