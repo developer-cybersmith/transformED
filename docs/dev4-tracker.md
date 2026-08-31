@@ -762,11 +762,20 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** TBD in story file — captured before implementation per the Story-First Gate.
 
 <!-- CHECK:br2_ces_timing_variable_narration -->
-- [Not Started] **Verify tutor intervention/CES timing still functions correctly with variable-length human-recorded narration**
-  - Confirm the 5s CES window, cooldown timers, and quiz/Q&A deadline math (Learner Mode tier durations)
-    don't assume a fixed segment length now that narration length varies per human recording.
-  - Story: `docs/stories/br-2-ces-timing-variable-narration.md` (to be created)
-  - **AC:** TBD in story file.
+- [Not Started] **Verify tutor intervention/CES timing still functions correctly with variable-length narration**
+  - **Audit performed 2026-08-31** (before writing code): every timing mechanism Dev 4 owns — CES
+    window/history, distraction cooldown/cap, fatigue-once floor, intervention timeout, quiz/Q&A
+    deadline, `segment_complete`→`segment_index` advance — is wall-clock- or event-driven, never
+    derived from segment/narration length. Repo-wide grep for any char-count→duration conversion in
+    `apps/api/app/modules/tutor/` or `core/websocket.py`: zero hits. **No timing bug found** on Dev 4's
+    side; real segment length variance (1,351–4,069 chars, ~1.2–3.7 min/segment per Story 3-42/3-45)
+    was already architecturally safe. Story's contribution: close the *verification* gap — add
+    regression-lock tests proving this, so a future change can't silently reintroduce a duration
+    assumption. **Adjacent, out-of-scope finding:** a sibling frontend component
+    (`AudioTimeline.tsx`) historically had exactly this class of bug (Dev 1's tracker handoff notes,
+    "0:00 — quiz fires instantly" needing a "virtual playback clock") — Dev 2's file, flagged not fixed.
+  - Story: `docs/stories/br-2-ces-timing-variable-narration.md`
+  - **AC:** see story file.
 
 <!-- CHECK:br3_voice_teachback_stt -->
 - [Not Started] **Voice teach-back: real-time mic capture integration in live session flow** — Low priority
