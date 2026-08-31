@@ -752,7 +752,7 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
         ces_final: float | None = round(sum(values) / len(values), 2) if values else None
         ended_at = datetime.now(tz=UTC).isoformat()
 
-        await asyncio.to_thread(
+        update_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("sessions")
                 .update({"ces_final": ces_final, "ended_at": ended_at})
@@ -766,6 +766,42 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
             ces_final,
             ended_at,
         )
+
+        # Story 2-52 (S4-12): enqueue the "session report" notification email.
+        # update() returns the full updated row by default (postgrest
+        # ReturnMethod.representation) — reuse it for user_id rather than a
+        # second SELECT. This is a genuinely separate failure mode from the
+        # DB write above (already succeeded), so it gets its own try/except:
+        # an enqueue failure here must never be misreported as "DB write
+        # failed", and must never stop the already-successful finalize from
+        # having been logged.
+        try:
+            session_row = (update_resp.data or [{}])[0]
+            user_id = session_row.get("user_id")
+            if user_id:
+                from app.core.arq_pool import get_arq_pool  # noqa: PLC0415
+
+                arq_pool = get_arq_pool()
+                notify_job = await arq_pool.enqueue_job(
+                    "send_notification_email_job",
+                    user_id,
+                    "session_report",
+                    session_id,
+                    _job_id=f"notify:session_report:{session_id}",
+                )
+                if notify_job is None:
+                    # ARQ deduped this _job_id -- not an error, but worth a
+                    # log line since it was previously silently discarded
+                    # (review finding).
+                    logger.info("[tutor:%s] session_report notification deduped by ARQ", session_id)
+            else:
+                logger.warning(
+                    "[tutor:%s] session_report notification skipped — no user_id in "
+                    "update response",
+                    session_id,
+                )
+        except Exception:
+            logger.exception("[tutor:%s] failed to enqueue session_report notification", session_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("[tutor:%s] _finalize_session DB write failed: %s", session_id, exc)
         try:

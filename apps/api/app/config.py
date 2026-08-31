@@ -152,6 +152,26 @@ class Settings(BaseSettings):
     # ── Sentry ────────────────────────────────────────────────────────────────
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN — leave empty to disable")
 
+    # ── Email (Resend) — Story 2-52 (S4-12) ───────────────────────────────────
+    # Optional, like sentry_dsn above: the notification job must not crash the
+    # app/worker at import/startup time just because Resend account setup
+    # (an ops task, tracked separately) hasn't landed yet. ResendEmailProvider
+    # raises a clear RuntimeError at call time if this is unset, rather than
+    # Settings() failing to construct for every other unrelated request.
+    resend_api_key: str | None = Field(
+        default=None, description="Resend API key — leave empty to disable email sending"
+    )
+    resend_from_email: str = Field(
+        default="notifications@hieiq.ai",
+        description="Verified sender address for transactional email (Resend requires "
+        "the domain to have SPF/DKIM/DMARC records verified in the Resend dashboard)",
+    )
+    frontend_url: str = Field(
+        default="http://localhost:3000",
+        description="Base URL of the Next.js frontend, used to build links in "
+        "transactional emails (e.g. {frontend_url}/lesson/{lesson_id})",
+    )
+
     # ── Admin access (Story 2-25) ─────────────────────────────────────────────
     # `NoDecode` disables pydantic-settings' default behavior of trying to
     # JSON-decode any list-typed env value before validation runs — without

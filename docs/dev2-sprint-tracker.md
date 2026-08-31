@@ -513,7 +513,7 @@ Public routes (no auth check):
 
 ### `/pricing` — Pricing Page
 **Status:** Sections exist in landing, Sprint 4: standalone page  
-**Responsibility:** Per-lesson credit model explanation, Stripe Checkout CTA, FAQ.
+**Responsibility:** Per-lesson credit model explanation, Razorpay Checkout CTA, FAQ.
 
 ---
 
@@ -1696,24 +1696,29 @@ Closes the "student pauses past the signed-URL expiry window and loses audio/ima
 **Status:** 🔲 NOT STARTED  
 **Files:** All `src/components/sections/*.tsx`, `src/app/pricing/page.tsx`
 
-Standalone `/pricing` page with Stripe Checkout CTA. Landing page animation pass: entrance animations, scroll-triggered reveals, hero interaction.
+Standalone `/pricing` page with Razorpay Checkout CTA. Landing page animation pass: entrance animations, scroll-triggered reveals, hero interaction.
 
-### S4-02 — Stripe Checkout Redirect
+### S4-02 — Razorpay Checkout Integration
 **Priority:** P0 — required for first paying student  
-**Status:** 🔲 NOT STARTED  
-**Files to create:** `src/app/payment/success/page.tsx`, `src/app/payment/cancel/page.tsx`
+**Status:** 🔲 NOT STARTED — **provider changed from Stripe to Razorpay 2026-08-24, see `docs/decisions/ADR-002-payment-gateway-razorpay.md`**  
+**Files to create:** `src/components/payment/RazorpayCheckoutButton.tsx`, `src/app/payment/success/page.tsx`, `src/app/payment/cancel/page.tsx`
 
-Dev 1 creates `POST /api/payments/create-checkout-session`. Dev 2 builds the CTA button (redirects to Stripe-hosted URL) and the return pages.
+Dev 1 creates `POST /api/payments/create-order` (Razorpay Orders API) and `POST /api/payments/webhook`. Dev 2 builds the CTA button that loads Razorpay's `checkout.js` and opens its hosted overlay, plus the return pages.
 
 **Flow:**
 ```
-"Buy Lesson" button → POST /api/payments/create-checkout-session
-                    → redirect to stripe.com hosted checkout
-                    → success: redirect to /payment/success?session_id=...
-                    → cancel:  redirect to /payment/cancel
+"Buy Lesson" button → POST /api/payments/create-order   (backend creates a Razorpay Order)
+                    → frontend loads checkout.js, opens Razorpay's hosted overlay with order_id
+                    → student pays (card/UPI/wallet/netbanking) inside Razorpay's own iframe
+                    → success handler → client-side redirect to /payment/success?order_id=...
+                    → dismissed/failed  → /payment/cancel
+
+Razorpay webhook (payment.captured) → POST /api/payments/webhook   ← source of truth, not the browser handler
+  └─► Verify X-Razorpay-Signature (HMAC-SHA256 over raw body, RAZORPAY_WEBHOOK_SECRET)
+        └─► Write lesson_access record → unlock upload for user (idempotent on razorpay_payment_id)
 ```
 
-No Stripe Elements — hosted checkout only. No card data ever touches HIE's frontend.
+No custom card form — Razorpay's overlay is a JS-embedded widget (not a full-page redirect like Stripe Checkout was), but card/UPI data still never touches our servers or frontend code, satisfying the same hard constraint. `/payment/success` renders optimistically off the client callback but must not be treated as proof of payment by the backend — only the verified webhook unlocks `lesson_access`.
 
 ### S4-03 — PostHog Full Instrumentation
 **Priority:** P1  

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ProfileTab } from '@/components/settings/tabs/ProfileTab';
 
 const { getProfileMock } = vi.hoisted(() => ({ getProfileMock: vi.fn() }));
@@ -53,5 +54,57 @@ describe('ProfileTab', () => {
     expect(avatar.src).toContain(encodeURIComponent(PROFILE.id));
     expect(avatar.src).not.toContain(encodeURIComponent(PROFILE.name));
     expect(avatar.src).not.toContain(encodeURIComponent(PROFILE.email));
+  });
+
+  it('shows an error state with a Retry button when the initial fetch fails, instead of loading forever (S4-10)', async () => {
+    getProfileMock.mockRejectedValueOnce(new Error('network error'));
+    render(<ProfileTab />);
+
+    await waitFor(() => expect(screen.getByText(/couldn.t load your profile/i)).not.toBeNull());
+    expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull();
+    expect(screen.queryByText('Loading profile…')).toBeNull();
+  });
+
+  it('shows the real profile after clicking Retry following a failed fetch (S4-10)', async () => {
+    getProfileMock.mockRejectedValueOnce(new Error('network error'));
+    const user = userEvent.setup();
+    render(<ProfileTab />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByText(PROFILE.name)).not.toBeNull());
+    expect(getProfileMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('hides the Retry button while a retry is in flight, so it cannot be double-clicked into a second overlapping request (S4-10)', async () => {
+    getProfileMock.mockRejectedValueOnce(new Error('network error'));
+    let resolveRetry!: (value: { data: typeof PROFILE }) => void;
+    getProfileMock.mockReturnValueOnce(new Promise((resolve) => { resolveRetry = resolve; }));
+    const user = userEvent.setup();
+    render(<ProfileTab />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(getProfileMock).toHaveBeenCalledTimes(2);
+
+    resolveRetry({ data: PROFILE });
+    await waitFor(() => expect(screen.getByText(PROFILE.name)).not.toBeNull());
+  });
+
+  it('does not warn or throw when a fetch rejects after the component has unmounted (S4-10)', async () => {
+    let rejectFetch!: (err: unknown) => void;
+    getProfileMock.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectFetch = reject; }));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { unmount } = render(<ProfileTab />);
+    unmount();
+    rejectFetch(new Error('late failure'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 });
