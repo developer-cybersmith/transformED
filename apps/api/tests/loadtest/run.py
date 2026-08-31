@@ -64,6 +64,15 @@ _GATE7_MIN_CHAPTERS = 4
 # range (0-16) so the two pools never collide on the same loadtest-N email.
 _PHASE_A_USER_COUNT = 15
 _PHASE_A_USER_OFFSET = _GENERATE_USER_COUNT
+# Bounds how many per-user fixture uploads (real PDF upload + poll + real
+# ingestion job) run concurrently during SETUP -- confirmed live that firing
+# all 17 fully concurrently against a single local uvicorn process + single
+# ARQ worker produced a real httpx.ReadTimeout (the single-process dev
+# environment genuinely couldn't keep up with 17 truly-simultaneous real
+# uploads+ingestions). This throttles fixture SETUP only -- Phase A's and
+# Phase B's own scenario concurrency (the actual thing Story 5-1 measures)
+# is untouched.
+_FIXTURE_SETUP_CONCURRENCY = 5
 
 # apps/api/tests/loadtest/run.py -> parents[2] == apps/api
 _API_ROOT = Path(__file__).resolve().parents[2]
@@ -72,6 +81,24 @@ _REPORT_PATH = _API_ROOT.parent.parent / "docs" / "reports" / "load-test-5-1-res
 
 def _base_url() -> str:
     return os.environ.get("LOADTEST_BASE_URL", _DEFAULT_BASE_URL)
+
+
+async def _setup_fixtures_bounded(
+    base_url: str, users: list[TestUser]
+) -> list[tuple[str, str]]:
+    """Run `ensure_book_chapter_fixture` for every user in `users`, bounded to
+    `_FIXTURE_SETUP_CONCURRENCY` concurrent uploads+ingestions at a time --
+    confirmed live (4th full-run attempt) that firing all 17 fully
+    concurrently produced a real `httpx.ReadTimeout` against a single local
+    uvicorn process + single ARQ worker. Order of the returned list matches
+    `users`, same contract `asyncio.gather` gave callers before this change."""
+    semaphore = asyncio.Semaphore(_FIXTURE_SETUP_CONCURRENCY)
+
+    async def _one(user: TestUser) -> tuple[str, str]:
+        async with semaphore:
+            return await ensure_book_chapter_fixture(base_url, user)
+
+    return await asyncio.gather(*(_one(u) for u in users))
 
 
 def _local_topology(max_jobs: int = 5) -> dict[str, Any]:
@@ -106,9 +133,7 @@ async def _run_smoke(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any
             "Smoke run: uploading %d per-user book+chapter fixtures (real ingestion each)",
             len(users_needing_fixtures),
         )
-        fixture_pairs = await asyncio.gather(
-            *(ensure_book_chapter_fixture(base_url, u) for u in users_needing_fixtures)
-        )
+        fixture_pairs = await _setup_fixtures_bounded(base_url, users_needing_fixtures)
         user_fixtures = {
             u.user_id: pair for u, pair in zip(users_needing_fixtures, fixture_pairs, strict=True)
         }
@@ -176,9 +201,7 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
             "Full run: uploading %d per-user book+chapter fixtures (real ingestion each)",
             len(generate_users),
         )
-        fixture_pairs = await asyncio.gather(
-            *(ensure_book_chapter_fixture(base_url, u) for u in generate_users)
-        )
+        fixture_pairs = await _setup_fixtures_bounded(base_url, generate_users)
         user_fixtures = {
             u.user_id: pair for u, pair in zip(generate_users, fixture_pairs, strict=True)
         }

@@ -45,7 +45,7 @@ _FIXTURE_PDF = (
 )
 
 _UPLOAD_PATH = "/api/content/lessons"
-_REQUEST_TIMEOUT_S = 60.0
+_REQUEST_TIMEOUT_S = 120.0
 
 # Book ingestion (Phase A) is fast by design -- Story 1-10 measured <= 15s for
 # a 1,000-page book, and this fixture PDF is only 10 pages -- so a 2s poll
