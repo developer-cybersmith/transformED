@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Story 4-10 — Dev 3 Pre-existing Test Fix: 22 Stale Assertions After Service Additions
@@ -60,14 +60,14 @@ here; it is documented and flagged to Dev 4.
 ## Tasks
 
 - [x] T1: Create story file, commit alone, push
-- [ ] T2: Fix `_build_report_supabase` mock chains in `test_session_report_endpoint.py` (AC1)
-- [ ] T3: Fix `test_s3_35_session_finalization.py` assertions (AC2)
-- [ ] T4: Fix `test_s3_42_ces_breakdown_accuracy.py` source inspection (AC3)
-- [ ] T5: Fix `test_posthog_events.py` SessionReport constructor (AC4)
-- [ ] T6: Run full Dev 3 test suite — 22+ tests now GREEN
-- [ ] T7: Create `docs/sprint4-pre-existing-failures-report.md` (AC7)
-- [ ] T8: Update `docs/dev3-assessment-tracker.md` (AC8)
-- [ ] T9: Commit, push, merge into master-sprint4-dev3, raise PR
+- [x] T2: Fix `_build_report_supabase` mock chains in `test_session_report_endpoint.py` (AC1)
+- [x] T3: Fix `test_s3_35_session_finalization.py` assertions (AC2)
+- [x] T4: Fix `test_s3_42_ces_breakdown_accuracy.py` source inspection (AC3)
+- [x] T5: Fix `test_posthog_events.py` SessionReport constructor (AC4)
+- [x] T6: Run full Dev 3 test suite — 89 tests now GREEN, 0 regressions
+- [x] T7: Create `docs/sprint4-pre-existing-failures-report.md` (AC7)
+- [x] T8: Update `docs/dev3-assessment-tracker.md` (AC8)
+- [x] T9: Commit, push, merge into master-sprint4-dev3, raise PR
 
 ## Change Log
 
