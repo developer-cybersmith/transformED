@@ -248,6 +248,7 @@ async def complete_session(
 
     existing_ended_at = session_row.get("ended_at")
     if existing_ended_at:
+        # Idempotent: ended_at already written on a prior call — do NOT re-dispatch.
         return {"session_id": session_id, "ended_at": str(existing_ended_at)}
 
     ended_at = datetime.now(UTC).isoformat()
@@ -260,6 +261,22 @@ async def complete_session(
             .execute()
         )
     )
+
+    # D116: trigger ces_final write via the tutor FSM. dispatch_event("lesson_complete")
+    # routes to session_end_node (from any FSM state — see route_entry universal guard)
+    # which fires _finalize_session as an async task. Lazy import avoids module-level
+    # coupling between assessment and tutor packages.
+    try:
+        from app.modules.tutor.state_machine.graph import dispatch_event  # noqa: PLC0415
+
+        await dispatch_event(session_id, "lesson_complete")
+    except Exception:
+        # ended_at is already written above — don't fail the REST response over ces_final.
+        logger.exception(
+            "[session:%s] lesson_complete dispatch failed — ces_final will be NULL",
+            session_id,
+        )
+
     return {"session_id": session_id, "ended_at": ended_at}
 
 
