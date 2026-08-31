@@ -41,8 +41,6 @@ from tests.loadtest.phase_a_upload import run_phase_a
 from tests.loadtest.phase_b_generate import run_phase_b
 from tests.loadtest.provisioning import (
     cleanup_generate_test_users,
-    cleanup_uploaded_books,
-    get_approved_test_users,
     provision_generate_test_users,
 )
 from tests.loadtest.race_probes import (
@@ -59,6 +57,13 @@ _SMOKE_TOTAL_REQUESTS = 3
 _FULL_TOTAL_REQUESTS = 50
 _GENERATE_USER_COUNT = 17
 _GATE7_MIN_CHAPTERS = 4
+# Phase A previously reused the 3 real, non-disposable APPROVED_EMAILS
+# accounts -- the code review flagged this as a real-account-pollution risk
+# even with cleanup added. Phase A now gets its own disposable pool instead,
+# same mechanism as Phase B's generate_users, offset past Phase B's index
+# range (0-16) so the two pools never collide on the same loadtest-N email.
+_PHASE_A_USER_COUNT = 15
+_PHASE_A_USER_OFFSET = _GENERATE_USER_COUNT
 
 # apps/api/tests/loadtest/run.py -> parents[2] == apps/api
 _API_ROOT = Path(__file__).resolve().parents[2]
@@ -129,26 +134,32 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
     fewer than `_GATE7_MIN_CHAPTERS` distinct chapters."""
     logger.info("Full run: provisioning %d disposable Phase B users", _GENERATE_USER_COUNT)
     generate_users = await provision_generate_test_users(_GENERATE_USER_COUNT)
-    # Populated once Phase A actually runs (below); cleaned up in `finally`
-    # alongside `generate_users` regardless of what happens afterward. Phase
-    # A reuses REAL, non-disposable `APPROVED_EMAILS` accounts (see
-    # `phase_a_upload.py`'s docstring) -- unlike `generate_users`, these
-    # accounts themselves must NOT be deleted, only the specific books this
-    # run created on them (`cleanup_uploaded_books`), or every full run
-    # leaves permanent residue on real accounts with no other cleanup path.
-    created_books: list[dict[str, str]] = []
+    # Phase A also gets its own disposable pool now (offset past Phase B's
+    # index range -- see _PHASE_A_USER_OFFSET). Both pools are cleaned up in
+    # `finally` below; since these are disposable auth.users rows, deleting
+    # them cascades away any books/chapters/chunks they created too (see
+    # provisioning.py's cleanup_generate_test_users docstring) -- no separate
+    # book-only cleanup is needed the way it was for the old real-account
+    # design.
+    phase_a_users: list[TestUser] = []
     try:
-        approved_users = await get_approved_test_users()
+        logger.info(
+            "Full run: provisioning %d disposable Phase A users", _PHASE_A_USER_COUNT
+        )
+        phase_a_users = await provision_generate_test_users(
+            _PHASE_A_USER_COUNT, offset=_PHASE_A_USER_OFFSET
+        )
 
         logger.info(
-            "Full run: Phase A, %d concurrent upload requests", _FULL_TOTAL_REQUESTS
+            "Full run: Phase A, %d concurrent upload requests (mixing the small "
+            "synthetic fixture with a real ~19.7MB book)",
+            _FULL_TOTAL_REQUESTS,
         )
         phase_a_result = await run_phase_a(
             base_url=base_url,
-            approved_users=approved_users,
+            approved_users=phase_a_users,
             concurrency=_FULL_TOTAL_REQUESTS,
         )
-        created_books = phase_a_result.extra.get("created_books", [])
 
         # Ownership of books/chapters is enforced per-user at the application
         # layer (generate_chapter_lesson 404s for a book/chapter the caller
@@ -237,15 +248,15 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
 
         return [phase_a_result, phase_b_result], race_d45, race_gate7
     finally:
-        # Both cleanups are attempted even if one fails, and even if the
-        # `try` block above raised partway through -- a book upload leaking
-        # onto a real account, or a disposable user leaking onto the real
-        # project, must not depend on the rest of the run succeeding.
+        # Both pools are cleaned up even if one fails, and even if the `try`
+        # block above raised partway through -- a disposable user (and,
+        # via cascade, everything they created) leaking onto the real
+        # project must not depend on the rest of the run succeeding.
         try:
             await cleanup_generate_test_users(generate_users)
         finally:
-            if created_books:
-                await cleanup_uploaded_books(created_books)
+            if phase_a_users:
+                await cleanup_generate_test_users(phase_a_users)
 
 
 async def _list_all_chapter_ids(base_url: str, uploader: TestUser, book_id: str) -> list[str]:

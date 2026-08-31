@@ -12,15 +12,19 @@ against a running server via `httpx.AsyncClient` and imports nothing from
 HTTP layer, the rate limiter, and the ARQ enqueue entirely, so it cannot
 stand in for this -- see `tests/evals/runner.py` and the story's Dev Notes.
 
-Only 3 real accounts are on `APPROVED_EMAILS` today (`upload_lesson` requires
-`ApprovedUser`, not just any authenticated user). Story 5-1's AC-2 does not
-require distinct users the way AC-3 does, so Phase A deliberately cycles
-through those 3 existing approved accounts rather than expanding the
-allowlist -- at concurrency=50 each fires ~17 concurrent uploads against a
-`5/minute` per-user rate limiter (`router.py:692`), so a large share of 429s
-is the expected, honest result of this design, not a scenario failure. Only
-a transport-level exception (timeout, connection reset) is treated as an
-unexpected error; every HTTP response, 2xx or not, is recorded and returned.
+`upload_lesson` requires `ApprovedUser` (JWT + `APPROVED_EMAILS`), not just
+any authenticated user. `approved_users` is expected to be a disposable pool
+provisioned the same way as Phase B's (`provisioning.provision_generate_test_users`,
+with a non-overlapping `offset` so the two pools' `loadtest-N` emails never
+collide) -- this replaced an earlier design that reused the 3 real,
+non-disposable `APPROVED_EMAILS` accounts directly, which a code review
+flagged as a real-account-pollution risk even with cleanup added. At
+concurrency=50 spread across ~15 users, each fires several concurrent
+uploads against a `5/minute` per-user rate limiter (`router.py:692`), so a
+real share of 429s is the expected, honest result of this design, not a
+scenario failure. Only a transport-level exception (timeout, connection
+reset) is treated as an unexpected error; every HTTP response, 2xx or not,
+is recorded and returned.
 """
 
 from __future__ import annotations
@@ -38,6 +42,16 @@ _UPLOAD_PATH = "/api/content/lessons"
 _FIXTURE_PDF = (
     Path(__file__).resolve().parent.parent / "fixtures" / "eval_pdfs" / "short_10page.pdf"
 )
+# A genuinely large (~19.7MB) real-world book, mixed in alongside the tiny
+# synthetic fixture -- uploading only an 8KB PDF at every concurrency
+# understates real load (ingestion/extraction cost scales with real file
+# size); this fixture is a real book, not a synthetic edge-case one.
+_REAL_WORLD_FIXTURE_PDF = (
+    Path(__file__).resolve().parent.parent
+    / "fixtures"
+    / "real_pdfs"
+    / "real_world_red_team_engineering.pdf"
+)
 # Uploads read+store a real (small) PDF body; generous relative to the 5s scale
 # of the P95<2s target so a slow-but-real response is measured, not timed out
 # and misreported as a transport error.
@@ -49,6 +63,7 @@ async def _one_upload(
     base_url: str,
     user: TestUser,
     pdf_bytes: bytes,
+    filename: str,
 ) -> tuple[float, int, str | None, str | None]:
     """Fire one upload request; never raises on a non-2xx HTTP response.
 
@@ -57,17 +72,13 @@ async def _one_upload(
     was ever received) -- every real response, including 429/413/422/5xx, is
     returned with its real status code and a short error string, not raised.
 
-    `book_id` is populated only on a 202 with a parseable body carrying one.
-    This harness reuses only 3 REAL `APPROVED_EMAILS` accounts for Phase A
-    (see module docstring) -- every successful upload creates a real, live
-    `books` row (+ a real storage object + a real ingestion job) on one of
-    those accounts. Unlike Phase B's disposable users, these accounts are
-    NOT deleted afterward, so `book_id` must be captured here and fed to
-    `provisioning.cleanup_uploaded_books` by the caller -- otherwise every
-    full-scale run permanently accumulates load-test books on real,
-    non-disposable accounts with no cleanup path at all.
+    `book_id` is populated only on a 202 with a parseable body carrying one
+    (kept in the returned tuple for observability/reporting even though, per
+    the module docstring, `approved_users` are now a disposable pool -- the
+    real cleanup path is deleting those users, which cascades away every
+    book/chapter/chunk they created, not a book-by-book delete).
     """
-    files = {"file": ("short_10page.pdf", pdf_bytes, "application/pdf")}
+    files = {"file": (filename, pdf_bytes, "application/pdf")}
     headers = {"Authorization": f"Bearer {user.access_token}"}
     start = time.monotonic()
     try:
@@ -92,8 +103,8 @@ async def _one_upload(
             book_id = None
         return latency_ms, resp.status_code, None, book_id
 
-    # Non-202 (429 from the rate limiter is the expected common case at this
-    # concurrency with only 3 approved users -- see module docstring): record
+    # Non-202 (429 from the rate limiter is an expected outcome at this
+    # concurrency -- see module docstring): record
     # it as an honest, non-raised failure with a short body snippet, never the
     # full response body (could be large or binary).
     snippet = resp.text[:200] if resp.text else ""
@@ -109,20 +120,23 @@ async def run_phase_a(
 
     Fires `concurrency` truly-simultaneous `POST {base_url}/api/content/lessons`
     requests via `asyncio.gather`, cycling round-robin through
-    `approved_users` (real PDF bytes from
-    `tests/fixtures/eval_pdfs/short_10page.pdf`, real `Authorization: Bearer`
-    tokens). 202 counts as `succeeded`; every other outcome (429, 413, 422,
-    5xx, or a transport-level exception) counts as `failed`, with the status
-    code recorded in both `errors` and `extra['status_code_counts']` -- never
-    raised, per the story's AC-2 requirement to measure and report the rate
-    limiter's real behavior under this concurrency, not treat it as a bug in
-    the harness.
+    `approved_users`, alternating real PDF bytes between the small synthetic
+    fixture (`tests/fixtures/eval_pdfs/short_10page.pdf`) and a genuinely
+    large real-world book (`tests/fixtures/real_pdfs/real_world_red_team_engineering.pdf`,
+    ~19.7MB), real `Authorization: Bearer` tokens. 202 counts as `succeeded`;
+    every other outcome (429, 413, 422, 5xx, or a transport-level exception)
+    counts as `failed`, with the status code recorded in both `errors` and
+    `extra['status_code_counts']` -- never raised, per the story's AC-2
+    requirement to measure and report the rate limiter's real behavior under
+    this concurrency, not treat it as a bug in the harness.
 
     Args:
         base_url: e.g. `http://localhost:8000` (`LOADTEST_BASE_URL`).
-        approved_users: real `ApprovedUser`-allowlisted accounts (today: the 3
-            accounts on `APPROVED_EMAILS`). Must be non-empty; cycled
-            round-robin so `concurrency` may exceed `len(approved_users)`.
+        approved_users: real `ApprovedUser`-allowlisted accounts -- a
+            disposable pool provisioned the same way as Phase B's (see
+            module docstring), not the 3 real `APPROVED_EMAILS` accounts.
+            Must be non-empty; cycled round-robin so `concurrency` may
+            exceed `len(approved_users)`.
         concurrency: number of truly-concurrent upload requests to fire.
 
     Returns:
@@ -135,7 +149,8 @@ async def run_phase_a(
     if concurrency < 1:
         raise ValueError("concurrency must be >= 1")
 
-    pdf_bytes = _FIXTURE_PDF.read_bytes()
+    small_pdf_bytes = _FIXTURE_PDF.read_bytes()
+    real_world_pdf_bytes = _REAL_WORLD_FIXTURE_PDF.read_bytes()
 
     # A generous connection pool so `asyncio.gather` produces true concurrency
     # at the transport level too -- httpx's default pool (100 connections) is
@@ -146,10 +161,20 @@ async def run_phase_a(
         max_keepalive_connections=concurrency,
     )
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_S, limits=limits) as client:
-        tasks = [
-            _one_upload(client, base_url, approved_users[i % len(approved_users)], pdf_bytes)
-            for i in range(concurrency)
-        ]
+        tasks = []
+        for i in range(concurrency):
+            user = approved_users[i % len(approved_users)]
+            # Alternate small synthetic / real ~19.7MB book so this scenario
+            # exercises both a trivial upload and a genuinely large real-world
+            # one under the same concurrent load, not only the cheap case.
+            if i % 2 == 0:
+                pdf_bytes, filename = small_pdf_bytes, "short_10page.pdf"
+            else:
+                pdf_bytes, filename = (
+                    real_world_pdf_bytes,
+                    "real_world_red_team_engineering.pdf",
+                )
+            tasks.append(_one_upload(client, base_url, user, pdf_bytes, filename))
         outcomes = await asyncio.gather(*tasks)
 
     latencies_ms: list[float] = []
@@ -157,11 +182,9 @@ async def run_phase_a(
     status_counts: Counter[str] = Counter()
     succeeded = 0
     failed = 0
-    # Every real book created on a REUSED (real, non-disposable) approved
-    # account -- see `_one_upload`'s docstring. The caller MUST pass this to
-    # `provisioning.cleanup_uploaded_books` after the run, or every
-    # successful upload this scenario makes becomes permanent residue on a
-    # real account with no other cleanup path.
+    # Kept for observability/reporting -- real cleanup is deleting the
+    # disposable `approved_users` themselves (cascades away every book these
+    # created), not a book-by-book delete.
     created_books: list[dict[str, str]] = []
     for i, (latency_ms, status_code, error, book_id) in enumerate(outcomes):
         latencies_ms.append(latency_ms)

@@ -268,9 +268,15 @@ async def _create_one_disposable_user(client: httpx.AsyncClient, index: int) -> 
     return TestUser(user_id=str(user_id), email=email, access_token=access_token)
 
 
-async def provision_generate_test_users(n: int) -> list[TestUser]:
+async def provision_generate_test_users(n: int, *, offset: int = 0) -> list[TestUser]:
     """Create `n` REAL, disposable Supabase Auth users for Phase B (AC-3's
     >= 17 distinct users), each with a real minted session.
+
+    `offset` shifts the `loadtest-{i}-deleteme@seed.test` index range so this
+    can be called twice in the same run (e.g. Phase A's own disposable-account
+    pool, separately from Phase B's) without colliding on the same email --
+    every `loadtest-N` up to 49 is pre-approved in `apps/api/.env`'s
+    `APPROVED_EMAILS`, so callers just need non-overlapping index ranges.
 
     WILL create real rows in the live `auth.users` table (and, via the
     project's `handle_new_auth_user` trigger, a matching real `public.users`
@@ -298,7 +304,7 @@ async def provision_generate_test_users(n: int) -> list[TestUser]:
     limits = httpx.Limits(max_connections=n + 5, max_keepalive_connections=n)
     async with httpx.AsyncClient(timeout=_ADMIN_TIMEOUT_S, limits=limits) as client:
         results = await asyncio.gather(
-            *(_create_one_disposable_user(client, i) for i in range(n)),
+            *(_create_one_disposable_user(client, offset + i) for i in range(n)),
             return_exceptions=True,
         )
 

@@ -263,12 +263,12 @@ async def run_phase_b(
 
     Args:
         base_url: e.g. `http://localhost:8000` (`LOADTEST_BASE_URL`).
-        generate_users: real, JWT-authenticated test accounts. Unlike Phase
-            A's upload endpoint, `generate_chapter_lesson` requires only
-            `CurrentUser` (no `APPROVED_EMAILS` allowlist), so these are
-            expected to be freshly created disposable test users, not the
-            3 approved accounts Phase A must reuse. Must contain >= 17
-            distinct users -- see AC-3's explicit floor below.
+        generate_users: real, JWT-authenticated test accounts, freshly
+            created disposable users (`generate_chapter_lesson` requires
+            only `CurrentUser`, no `APPROVED_EMAILS` allowlist, unlike
+            Phase A's upload endpoint -- though Phase A now also uses its
+            own disposable pool at a non-overlapping index offset). Must
+            contain >= 17 distinct users -- see AC-3's explicit floor below.
         user_fixtures: maps each generate_users[i].user_id to that SAME
             user's own real, `ready` (book_id, chapter_id) pair. Ownership of
             `books`/`chapters` is enforced at the application layer
