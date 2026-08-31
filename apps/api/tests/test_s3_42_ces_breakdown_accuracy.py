@@ -575,16 +575,21 @@ def test_get_session_report_reads_all_signal_history_keys():
 
 @pytest.mark.unit
 def test_ces_breakdown_uses_settings_weights_not_hardcoded():
-    """AC5 (source guard): get_session_report must use settings.ces_weight_* not literals."""
+    """AC5 (source guard): CES breakdown computation must use settings.ces_weight_* not literals.
+
+    The weights live in _build_ces_breakdown (the helper get_session_report delegates to),
+    not in get_session_report itself. Checking the helper is correct — AC5's intent is that
+    weights come from settings, which is enforced at the _build_ces_breakdown level.
+    """
     from app.modules.assessment import service as assessment_service
 
-    source = inspect.getsource(assessment_service.get_session_report)
+    source = inspect.getsource(assessment_service._build_ces_breakdown)
     assert "ces_weight_behavioral" in source, (
-        "get_session_report must use settings.ces_weight_behavioral — AC5"
+        "_build_ces_breakdown must use settings.ces_weight_behavioral — AC5"
     )
     assert "ces_weight_head_pose" in source, (
-        "get_session_report must use settings.ces_weight_head_pose — AC5"
+        "_build_ces_breakdown must use settings.ces_weight_head_pose — AC5"
     )
     assert "ces_weight_blink" in source, (
-        "get_session_report must use settings.ces_weight_blink — AC5"
+        "_build_ces_breakdown must use settings.ces_weight_blink — AC5"
     )

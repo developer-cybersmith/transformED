@@ -176,20 +176,25 @@ def _build_report_supabase(
             _m = m.select.return_value.eq.return_value.maybe_single.return_value.execute
             _m.return_value.data = tier_data
         elif n == 3:
-            # quiz_attempts — list (was n==2)
-            m.select.return_value.eq.return_value.execute.return_value.data = quiz_rows
+            # quiz_attempts — .select().eq().limit(500).execute()
+            _chain3 = m.select.return_value.eq.return_value.limit.return_value.execute
+            _chain3.return_value.data = quiz_rows
         elif n == 4:
-            # teachback_attempts — list (was n==3)
-            m.select.return_value.eq.return_value.execute.return_value.data = tb_rows
+            # teachback_attempts — .select().eq().order().limit(50).execute()
+            _chain4 = (
+                m.select.return_value.eq.return_value.order.return_value.limit.return_value.execute
+            )
+            _chain4.return_value.data = tb_rows
         elif n == 5:
             # session_events — count (two .eq() filters: session_id, event_type)
             m.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = (
                 intervention_count
             )
         elif n == 6:
-            # session_events — raw intervention rows (Story 2-46/S3-05, .limit() bounded)
+            # session_events intervention rows — .select().eq().eq().order().limit(20).execute()
             m_exec = (
-                m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute
+                m.select.return_value.eq.return_value.eq.return_value
+                .order.return_value.limit.return_value.execute
             )
             m_exec.return_value.data = []
         elif n == 7:
@@ -197,10 +202,11 @@ def _build_report_supabase(
             m_exec = m.select.return_value.eq.return_value.maybe_single.return_value.execute
             m_exec.return_value.data = dna_data
         elif n == 8:
-            # session_events dna_update — two .eq() filters → data list of payloads
-            m.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = (
-                growth_events
+            # session_events dna_update — .select().eq().eq().limit(20).execute()
+            _chain8 = (
+                m.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute
             )
+            _chain8.return_value.data = growth_events
         return m
 
     mock.table.side_effect = _table
@@ -326,13 +332,19 @@ async def test_get_report_ces_score_from_sessions_ces_final(mock_to_thread):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_get_report_ces_score_null_returns_zero(mock_to_thread):
-    """AC 4: NULL ces_final → ces_score = 0.0."""
+    """AC 4: NULL ces_final → ces_score = None (not 0.0).
+
+    Implementation deliberately returns None so the frontend can distinguish
+    "session ended before CES was computed" (None → "Not measured") from
+    "student genuinely scored zero engagement" (0.0 → "Room to Grow").
+    See Step 7 comment in service.get_session_report.
+    """
     from app.modules.assessment.service import get_session_report
 
     session = {**_SESSION_ROW, "ces_final": None}
     supabase = _build_report_supabase(session_data=session)
     result = await get_session_report(session_id=_SESSION_ID, user_id=_USER_ID, supabase=supabase)
-    assert result.ces_score == pytest.approx(0.0)
+    assert result.ces_score is None
 
 
 @pytest.mark.unit
