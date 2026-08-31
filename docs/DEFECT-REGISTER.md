@@ -597,6 +597,44 @@ after finalization.
 
 ---
 
+## D116 — `complete_session` and `_finalize_session` never connected — `ces_final` NULL on every session ever run
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 3 · **Detected:** 2026-08-29 (Sprint 4 Task 1 calibration analysis) · **Fixed:** 2026-08-31 (Story 4-6)
+
+**Note on ID:** D116 and D117 also appear as inline table entries in Dev 1's content-pipeline tracking section (filter.py, CLOSED). This section entry (Dev 3) was added afterward. The IDs coexist in different contexts (section header vs. inline table row); the `## D116` section is this entry.
+
+`ces_final` was NULL on every one of the 117 sessions ever run. Root cause: two session-termination code paths were built independently and never connected.
+
+- `complete_session` (`assessment/service.py`) — called by `Player.tsx` on lesson end. Wrote only `ended_at`. Never triggered `_finalize_session`.
+- `_finalize_session` (`tutor/state_machine/graph.py`) — writes `ces_final` by averaging Redis `ces_history`. Only reachable via `dispatch_event("lesson_complete")` over WebSocket — an event the frontend never sent.
+- Additionally: `lesson_complete` only routed to `session_end` from TEACHING state. From IDLE, CHECKING_IN, QUIZZING, TEACH_BACK, INTERVENING it routed incorrectly — so even a direct WS dispatch would have failed from non-TEACHING states.
+
+**Fix (Story 4-6, branch `sprint4/s4-6-d116-ces-final-wiring`, merged 2026-08-31):**
+1. `route_entry` universal guard: `lesson_complete` routes to `session_end` from any FSM state before state-specific dispatch.
+2. `_finalize_session`: removed `ended_at` from update payload — `complete_session` is sole writer.
+3. `complete_session`: added `await dispatch_event(session_id, "lesson_complete")` with try/except after writing `ended_at`.
+
+**Enforcement:** `tests/test_d116_ces_final_wiring.py` — 11 unit tests. AC4 parametrized across all 6 FSM states. AC5 AST source scan that fails CI if `ended_at` reappears in `_finalize_session`'s `.update()` payload.
+
+---
+
+## D118 — `POSTHOG_API_KEY` never set in Railway — PostHog received zero events from day one
+
+**Status:** OPEN · **Owner:** Dev 1 (infra) · **Detected:** 2026-08-31 (Story 4-7 funnel analysis)
+
+`posthog_client.capture_event()` has a silent-skip guard: if `posthog.api_key` is falsy, the call returns immediately without error. `POSTHOG_API_KEY` was never set as a Railway env var, so every `posthog.capture(...)` call across all sprints was a no-op. PostHog has received **zero events** — the dashboard is empty. All previous sprint work claiming to send PostHog events has been inert.
+
+This means:
+- PostHog funnel dashboards cannot be built from historical data (no events exist to build from)
+- The funnel analysis in `docs/sprint4-funnel-analysis.md` (Story 4-7) was reconstructed from Supabase relational tables instead
+- Any calibration task that planned to use PostHog as a data source must re-run after this is fixed
+
+**Fix:** Set `POSTHOG_API_KEY` in Railway production environment (and `.env.example` / `.env` for local dev). No code change required — the client is correctly wired; the env var is simply absent.
+
+**Enforcement:** DISCIPLINE — consider adding a startup health check that warns (not fails) if `POSTHOG_API_KEY` is unset, so future env var gaps surface immediately on deploy rather than silently after all analytics data is lost.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
