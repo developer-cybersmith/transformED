@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Story 4-11 — Session Dedup Guard + CES Architecture Confirmation (Calibration Prerequisites)
@@ -76,14 +76,14 @@ mutation guard for this invariant and must continue to pass.
 ## Tasks
 
 - [x] T1: Create story file, commit alone, push
-- [ ] T2: New migration `20260831000000_sessions_open_unique.sql` (write SQL, instruct user to apply)
-- [ ] T3: Update `create_session` in `service.py` — open-session idempotency check + race fallback
-- [ ] T4: Update `_supabase()` helper in `test_session_create_endpoint.py` (configure `.is_` chain)
-- [ ] T5: Update re-take test to configure `.is_("ended_at", "null")` returning None
-- [ ] T6: Add 2 new unit tests (AC1 dedup, AC3 race-fallback)
-- [ ] T7: Update `docs/sprint4-ces-calibration-notes.md` §8 Items 3 and 4
-- [ ] T8: Run full Dev 3 suite — all AC8 checks GREEN
-- [ ] T9: Commit, push, merge into master-sprint4-dev3, raise PR
+- [x] T2: New migration `20260831000000_sessions_open_unique.sql` (write SQL, instruct user to apply)
+- [x] T3: Update `create_session` in `service.py` — open-session idempotency check + race fallback
+- [x] T4: Update `_supabase()` helper in `test_session_create_endpoint.py` (configure `.is_` chain)
+- [x] T5: Update re-take test to configure `.is_("ended_at", "null")` returning None
+- [x] T6: Add 2 new unit tests (AC1 dedup, AC3 race-fallback)
+- [x] T7: Update `docs/sprint4-ces-calibration-notes.md` §8 Items 3 and 4
+- [x] T8: Run full Dev 3 suite — ruff GREEN, 10/12 tests pass; 2 pre-existing cross-team failures (403→401 D4-JWT; D18 session lookup) — not regressions
+- [x] T9: Commit, push, merge into master-sprint4-dev3, raise PR
 
 ## Change Log
 

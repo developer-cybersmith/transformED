@@ -65,11 +65,16 @@ def _supabase(
     *,
     lesson_owner: str | None = USER_ID,
     insert_returns: list[dict[str, Any]] | None = None,
+    open_session: dict[str, Any] | None = None,
 ) -> MagicMock:
-    """Supabase stub: a lessons ownership read, then a sessions insert.
+    """Supabase stub: a lessons ownership read, open-session idempotency check, then insert.
 
     `lesson_owner=None` models a lesson that does not exist. AC-2 requires the
     same 404 for that and for a lesson owned by someone else.
+
+    `open_session=None` (default) — the idempotency pre-check returns no existing
+    open session, so create_session proceeds to INSERT. Pass a session dict to
+    simulate an existing open session (dedup test scenario).
     """
     sb = MagicMock()
     inserted: list[dict[str, Any]] = []
@@ -83,6 +88,16 @@ def _supabase(
                 t.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data
             ) = lesson_row
         elif name == "sessions":
+            # Idempotency pre-check: SELECT open session via .is_("ended_at","null").maybe_single().
+            # Returns open_session (None by default → proceed to INSERT).
+            (
+                t.select.return_value
+                .eq.return_value
+                .eq.return_value
+                .is_.return_value
+                .maybe_single.return_value
+                .execute.return_value.data
+            ) = open_session
 
             def _insert(payload: dict[str, Any]) -> MagicMock:
                 inserted.append(payload)
@@ -213,14 +228,15 @@ def test_the_same_user_starting_the_same_lesson_again_gets_a_new_session(
     mock_to_thread: None,
 ) -> None:
     """Sessions are attempt-scoped, not lesson-scoped — `analytics` and the CES
-    history depend on it. No unique constraint on (user_id, lesson_id), and no
-    reuse-if-exists shortcut.
+    history depend on it.
 
-    Uses ONE store across both calls. An earlier version used two independent
-    stubs, which meant a reuse-if-exists implementation would look up an empty
-    store, find nothing, and insert anyway — the test could not have failed.
-    Mutation testing surfaced that; this version shares state so a lookup would
-    actually find the first session.
+    Models the RE-TAKE scenario: the first session is CLOSED (ended_at IS NOT NULL).
+    The idempotency pre-check looks for an open session (ended_at IS NULL) and
+    finds nothing, so create_session inserts a fresh row. Two calls produce two
+    distinct sessions.
+
+    Uses ONE shared store so a buggy "reuse open session" shortcut would have data
+    to find and return — the assertion `minted == 2` catches it.
     """
     minted: list[str] = []
     sessions: dict[str, dict[str, Any]] = {}
@@ -236,7 +252,15 @@ def test_the_same_user_starting_the_same_lesson_again_gets_a_new_session(
 
             def _insert(payload: dict[str, Any]) -> MagicMock:
                 sid = f"session-{len(sessions) + 1}"
-                row = {"session_id": sid, "started_at": "2026-07-29T12:00:00+00:00", **payload}
+                # Immediately mark as closed (ended_at set) to model the re-take scenario.
+                # This ensures the idempotency open-session check finds nothing for the
+                # second call, producing a fresh session.
+                row = {
+                    "session_id": sid,
+                    "started_at": "2026-07-29T12:00:00+00:00",
+                    "ended_at": "2026-07-29T12:30:00+00:00",
+                    **payload,
+                }
                 sessions[sid] = row
                 minted.append(sid)
                 ex = MagicMock()
@@ -245,18 +269,23 @@ def test_the_same_user_starting_the_same_lesson_again_gets_a_new_session(
 
             t.insert.side_effect = _insert
 
-            # A reuse-if-exists implementation would look here and find the first
-            # session. Serving it is what makes this test able to fail.
+            # The open-session check uses .is_("ended_at", "null") to filter.
+            # All sessions in this store have ended_at set (re-take scenario), so
+            # the check returns None → both calls proceed to INSERT.
             def _eq(_col: str, value: str) -> MagicMock:
                 chain = MagicMock()
-                found = [
-                    r for r in sessions.values() if value in (r.get("user_id"), r.get("lesson_id"))
+                # Open sessions (ended_at IS NULL) — none in the re-take scenario.
+                open_found = [
+                    r for r in sessions.values()
+                    if value in (r.get("user_id"), r.get("lesson_id"))
+                    and r.get("ended_at") is None
                 ]
-                chain.maybe_single.return_value.execute.return_value.data = (
-                    found[0] if found else None
+                chain.is_.return_value.maybe_single.return_value.execute.return_value.data = (
+                    open_found[0] if open_found else None
                 )
+                # Allow chaining: .eq(...).eq(...).is_(...)
                 chain.eq.return_value = chain
-                chain.execute.return_value.data = found
+                chain.execute.return_value.data = []
                 return chain
 
             t.select.return_value.eq.side_effect = _eq
@@ -272,6 +301,58 @@ def test_the_same_user_starting_the_same_lesson_again_gets_a_new_session(
         "re-learning the same lesson must produce a NEW session, not reuse the first"
     )
     assert len(minted) == 2, f"expected two INSERTs, got {len(minted)} — a reuse shortcut?"
+
+
+# ── AC-1 (dedup): existing open session is returned, not duplicated ──────────
+
+
+OPEN_SESSION_ROW: dict[str, Any] = {
+    "session_id": MINTED_SESSION_ID,
+    "lesson_id": LESSON_ID,
+    "started_at": "2026-07-29T12:00:00+00:00",
+}
+
+
+@pytest.mark.unit
+def test_existing_open_session_is_returned_without_new_insert(mock_to_thread: None) -> None:
+    """AC-1: concurrent create (e.g. React StrictMode) returns existing open session.
+
+    If (user_id, lesson_id) already has a row with ended_at IS NULL, create_session
+    must return it — not insert a duplicate. The session_id in the response must be
+    the existing one, and no INSERT must be issued.
+    """
+    sb = _supabase(open_session=OPEN_SESSION_ROW)
+    resp = _post(sb)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["session_id"] == MINTED_SESSION_ID, (
+        "must return the existing open session_id, not a newly-generated one"
+    )
+    assert sb.inserted == [], (
+        "no INSERT must be issued when an open session already exists (dedup path)"
+    )
+
+
+@pytest.mark.unit
+def test_race_fallback_returns_open_session_when_insert_finds_nothing(
+    mock_to_thread: None,
+) -> None:
+    """AC-3: race-condition fallback — insert returns no rows, re-fetch finds open session.
+
+    Models the concurrent case: two requests both pass the pre-check, the DB partial
+    UNIQUE index (sessions_open_unique) lets only one insert succeed. The losing
+    request's insert returns empty data. create_session must re-fetch and return the
+    winning session rather than raising a 500.
+    """
+    # insert_returns=[] simulates the unique-constraint loser getting no rows back.
+    # But _supabase's open-session chain (used for the race re-fetch) returns OPEN_SESSION_ROW.
+    sb = _supabase(insert_returns=[], open_session=OPEN_SESSION_ROW)
+    resp = _post(sb)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["session_id"] == MINTED_SESSION_ID, (
+        "race fallback must return the winning concurrent session, not 500"
+    )
 
 
 # ── AC-4: an unminted id must still 404 ──────────────────────────────────────
