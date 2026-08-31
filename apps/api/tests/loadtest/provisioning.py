@@ -62,24 +62,21 @@ _ENV_PATH = _API_ROOT / ".env"
 # genuinely wedged network call.
 _ADMIN_TIMEOUT_S = 30.0
 
-# Bounds concurrent Auth Admin API calls during provisioning -- confirmed
-# live that firing 30+ users' worth of create-user/generate_link/verify
-# calls fully unbounded trips Supabase's OWN rate limit
-# (429 over_request_rate_limit), independent of anything in this app. Not
-# benchmarked against Supabase's exact published ceiling (undocumented for
-# this endpoint at the time this was found) -- a conservative starting
-# point, same reasoning as image_generator_node's own
-# _IMAGE_GENERATION_CONCURRENCY=3 for an undocumented provider limit.
+# Bounds concurrent Auth Admin API calls during CLEANUP (deletion) --
+# deletion is a single DELETE call per user with no observed rate-limit
+# issue at this concurrency (unlike creation/minting, below), so a plain
+# Semaphore is sufficient here.
 _PROVISION_CONCURRENCY = 3
-# Seconds between successive slot starts (see _bounded_create/_bounded_delete)
-# -- confirmed live that concurrency-bounding alone still burst past
-# Supabase's real rate limit; this paces actual request issuance, not just
-# how many are in flight at once. Also not benchmarked against an exact
-# published ceiling -- lowered empirically after a second live attempt at
-# _PROVISION_CONCURRENCY=5 (no stagger) still failed with 5 of 17 users
-# hitting 429, an improvement over the first attempt's earlier failure but
-# still over the real limit.
-_PROVISION_STAGGER_S = 0.5
+# Seconds between successive user PROVISIONING attempts (creation + token
+# mint runs fully sequential, not just concurrency-bounded -- see
+# provision_generate_test_users' docstring for why). Empirically confirmed
+# live: 3.0s between `generate_link` -> `verify` pairs reliably avoided
+# Supabase's real 429 on `/auth/v1/verify`; two earlier live attempts at
+# bounding CONCURRENCY alone (5 concurrent, then 3 concurrent + a 0.5s
+# stagger) both still tripped it. Not benchmarked against Supabase's exact
+# published ceiling for this endpoint (undocumented at the time this was
+# found) -- 3.5s adds a small margin over the empirically-confirmed-safe 3.0s.
+_PROVISION_STAGGER_S = 3.5
 
 # Story 5-1 Task 2 email pattern for disposable Phase B users.
 _LOADTEST_EMAIL_PREFIX = "loadtest-"
@@ -303,20 +300,20 @@ async def provision_generate_test_users(n: int, *, offset: int = 0) -> list[Test
     runs itself, per this task's instructions. Pair every real call with
     `cleanup_generate_test_users` once the load-test run is done.
 
-Creations run concurrently but bounded by `_PROVISION_CONCURRENCY` (a
-    `Semaphore`, one shared `httpx.AsyncClient` for connection reuse) --
-    provisioning 17+ users sequentially would itself take long enough to be
-    an annoying setup tax on every harness run, but firing ALL of them fully
-    unbounded (as an earlier version of this function did) hits Supabase's
-    OWN Auth Admin API rate limit once a full-scale run provisions 30+ users
-    at once (each needing 2-3 real Admin API calls: create-user,
-    generate_link, verify) -- confirmed live: a 32-user full run hit
-    `429 over_request_rate_limit` from Supabase itself, not from this app.
-    The partial-failure cleanup below already handled that gracefully (zero
-    orphaned rows), but bounding concurrency here avoids provoking Supabase's
-    limit in the first place rather than just recovering from it every time.
+Creations run FULLY SEQUENTIAL (one user at a time, `_PROVISION_STAGGER_S`
+    apart), not just concurrency-bounded -- three live attempts confirmed
+    Supabase's own `/auth/v1/verify` endpoint (the public magic-link
+    verification step inside `mint_real_access_token`, not the admin API
+    generally) carries a strict rate limit that a Semaphore bounding
+    in-flight count alone does not respect: `429 over_request_rate_limit`
+    from Supabase itself recurred at concurrency=5 with no pacing, and again
+    at concurrency=3 with only a 0.5s start-stagger. A direct empirical test
+    (3 sequential `generate_link` -> `verify` pairs, 3.0s apart, 3/3 succeeded)
+    confirmed real serialization with real spacing is what this endpoint
+    actually needs. 32 users at ~3.5s each is a ~2-minute one-time setup tax,
+    small next to the load-test run itself.
 
-    If ANY of the concurrent creations fails, this does NOT return the
+    If ANY creation fails, this does NOT return the
     partial list and leave the successfully-created real rows to leak: it
     collects every user that WAS actually created (both fully-usable
     `TestUser`s and rows whose token mint failed, via
@@ -329,27 +326,26 @@ Creations run concurrently but bounded by `_PROVISION_CONCURRENCY` (a
         raise ValueError(f"n must be >= 1, got {n}")
 
     limits = httpx.Limits(max_connections=n + 5, max_keepalive_connections=n)
-    sem = asyncio.Semaphore(_PROVISION_CONCURRENCY)
 
+    # FULLY sequential, not just bounded-concurrent -- two live attempts at
+    # concurrency-bounding (with and without a start-stagger) both still
+    # tripped a 429 on `GET /auth/v1/verify` specifically (the public
+    # magic-link-verification endpoint, not the admin API generally; it
+    # appears to carry Supabase's own, much stricter, anti-abuse rate limit
+    # on that endpoint). A direct empirical test confirmed 3s between
+    # `generate_link` -> `verify` pairs is reliably safe (3/3 succeeded);
+    # anything more parallel than that reintroduces the 429 regardless of
+    # concurrency bounding. 32 users x ~3.5s is a ~2-minute one-time setup
+    # tax, small next to the run itself.
     async with httpx.AsyncClient(timeout=_ADMIN_TIMEOUT_S, limits=limits) as client:
-
-        async def _bounded_create(position: int, index: int) -> TestUser:
-            # Stagger the START of each slot, not just bound how many run at
-            # once -- confirmed live that bounding concurrency ALONE (a
-            # Semaphore with no pacing) still tripped Supabase's Admin API
-            # rate limit, since each user makes 2-3 fast internal calls
-            # (create-user, generate_link, verify) and a free semaphore slot
-            # gets re-admitted the instant one finishes, still producing a
-            # request-rate burst even at low concurrency. `position * delay`
-            # spreads every slot's start across real wall-clock time instead.
-            await asyncio.sleep(position * _PROVISION_STAGGER_S)
-            async with sem:
-                return await _create_one_disposable_user(client, index)
-
-        results = await asyncio.gather(
-            *(_bounded_create(i, offset + i) for i in range(n)),
-            return_exceptions=True,
-        )
+        results: list[TestUser | BaseException] = []
+        for i in range(n):
+            if i > 0:
+                await asyncio.sleep(_PROVISION_STAGGER_S)
+            try:
+                results.append(await _create_one_disposable_user(client, offset + i))
+            except BaseException as exc:  # noqa: BLE001 -- collected below, not swallowed
+                results.append(exc)
 
     users: list[TestUser] = []
     created_but_unusable: list[TestUser] = []
