@@ -5,14 +5,19 @@ import { OnboardingFlow } from '@/components/onboarding/OnboardingFlow';
 import { QUESTIONS } from '@/components/onboarding/questions';
 import type { OnboardingResult, LearnerDNA } from '@/types/assessment';
 
-const { pushMock, submitOnboardingMock, getLearnerDnaMock } = vi.hoisted(() => ({
+const { pushMock, submitOnboardingMock, getLearnerDnaMock, captureMock } = vi.hoisted(() => ({
   pushMock: vi.fn(),
   submitOnboardingMock: vi.fn(),
   getLearnerDnaMock: vi.fn(),
+  captureMock: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
+}));
+
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
 }));
 
 vi.mock('@/services/onboarding.service', () => ({
@@ -72,6 +77,7 @@ beforeEach(() => {
   pushMock.mockReset();
   submitOnboardingMock.mockReset();
   getLearnerDnaMock.mockReset();
+  captureMock.mockReset();
   window.sessionStorage.clear();
 });
 
@@ -173,6 +179,10 @@ describe('OnboardingFlow', () => {
 
     await waitFor(() => expect(screen.getByText('Pattern Thinker')).not.toBeNull());
     expect(screen.getByText(RESULT.profile_text)).not.toBeNull();
+    // Story 2-54
+    expect(captureMock).toHaveBeenCalledWith('onboarding_completed', {
+      badge_labels: RESULT.badge_labels,
+    });
   }, 15000);
 
   it('on 409 (already submitted), fetches existing DNA and shows the result instead of an error', async () => {
@@ -187,6 +197,9 @@ describe('OnboardingFlow', () => {
 
     await waitFor(() => expect(screen.getByText('Goal-Oriented')).not.toBeNull());
     expect(screen.getByText(EXISTING_DNA.profile_text as string)).not.toBeNull();
+    // Story 2-54: the 409-recovery path re-fetches an already-completed
+    // profile -- it is NOT a new completion and must not fire the event.
+    expect(captureMock).not.toHaveBeenCalledWith('onboarding_completed', expect.anything());
   }, 15000);
 
   it('on 409 where the follow-up DNA fetch also fails, offers "Continue to Dashboard" instead of an infinite Retry loop', async () => {

@@ -773,6 +773,14 @@ register, `dna_fusion.py`, `schemas.py`, `test_unbounded_queries.py`,
 
 ---
 
+### Found by Story 2-53 (S4-02, Razorpay Checkout — Frontend)
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| **D136** | **`GET /api/payments/access` does not exist on the backend yet — confirmed by reading `origin/razorpay-backend-endpoints-dev3`'s `apps/api/app/modules/payments/router.py` directly, which registers only `create-order` and `webhook`.** The frontend checkout flow (button -> Razorpay modal -> poll for access -> redirect to lesson player) needs a way to confirm payment before redirecting, so `payment.service.ts`'s `checkAccess()` is a hardcoded mock (`Promise.resolve({has_access: true})`) rather than a real network call, per the cross-team integration message's own guidance to build against a mock until the endpoint is confirmed in scope. | Low (isolated behind one function; the real risk is this being forgotten, not the mock itself causing a wrong outcome today, since nothing in production calls this code path yet) | **Registered, not fixed — deliberate, scoped placeholder.** Swap `checkAccess`'s body for a real `api.get('payments/access', {params: {lesson_id}})` call once the endpoint lands; the call site (`useRazorpayCheckout`) does not change. **Owner: Dev 2 (frontend) once Dev 1/3 ship the real endpoint. Trigger: `GET /api/payments/access` landing on `main`/`sprint4-master`.** | `apps/web/src/__tests__/services/payment.service.test.ts`'s `checkAccess` test documents the mocked behavior and asserts it never calls the real `api` client — will need to change to assert a real network call once this is fixed, which is itself the signal this entry is still open. |
+
+---
+
 ## Scorecard
 
 | | Count |
