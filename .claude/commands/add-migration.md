@@ -5,7 +5,7 @@ Create a new Supabase database migration.
 ## Usage
 `/add-migration <description>`
 
-Example: `/add-migration add-stripe-customer-id-to-users`
+Example: `/add-migration add-razorpay-customer-id-to-users`
 
 ## What it creates
 

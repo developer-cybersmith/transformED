@@ -7,11 +7,13 @@ import { QuickActions } from "@/components/dashboard/sections/QuickActions";
 import { LearningPulse } from "@/components/dashboard/sections/LearningPulse";
 import { RecentLessons } from "@/components/dashboard/sections/RecentLessons";
 import { useDashboard } from "@/hooks/useDashboard";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function DashboardPage() {
     // Client-side fetch (not a server-side call) -- api.ts's auth interceptor
     // only reads the Supabase session in the browser, so this must run here.
     const { data: dashboardData, error, isLoading } = useDashboard();
+    const { user } = useAuth();
 
     return (
         <div className="w-full max-w-[1400px] mx-auto pt-6 flex flex-col gap-10">
@@ -37,6 +39,22 @@ export default function DashboardPage() {
                 </div>
             ) : (
                 <>
+                    {user != null && error == null && !dashboardData?.continueLearning && (dashboardData?.recentLessons?.length ?? 0) === 0 && (
+                        // A brand-new user has no ContinueLearningCard/RecentLessons to show --
+                        // both collapse to null otherwise, leaving two silent blank gaps with no
+                        // indication this is the expected first-run state, not a loading failure
+                        // (S4-10). QuickActions below already has a real "Upload PDF" CTA, so this
+                        // is purely explanatory, not the only path forward.
+                        // `user != null` guards the pre-auth-resolved window: useDashboard's SWR
+                        // key is null (thus isLoading: false, not "still resolving") until `user`
+                        // exists, so without this check a returning user with real lessons would
+                        // see "No lessons yet" flash before their auth session settles (review
+                        // finding, Edge Case Hunter).
+                        <div className="rounded-2xl border border-neutral-100 bg-white px-6 py-5 text-sm text-neutral-500">
+                            No lessons yet — upload a PDF to get your first lesson started.
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
 
                         {/* Left Column (Main Focus) */}

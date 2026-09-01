@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import posthog from "posthog-js";
 import { UploadCloud, CheckCircle, AlertCircle, Loader2, BookOpen } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { uploadService, extractErrorMessage, MAX_UPLOAD_SIZE_BYTES } from "@/services/upload.service";
@@ -74,6 +75,9 @@ export function UploadFlow() {
         setFile(selectedFile);
         setStatusMessage('Uploading...');
         setUploadState('processing');
+        // Story 2-54: only the accepted-file path -- not the oversized-file
+        // early return above.
+        posthog.capture('upload_started', { file_size_bytes: selectedFile.size });
     };
 
     // Clears the input's FileList so re-selecting the SAME file through the
@@ -130,6 +134,14 @@ export function UploadFlow() {
 
                 if (status.status === 'ready') {
                     setUploadState('completed');
+                    // Story 2-54: no WS "lesson_ready" message actually exists
+                    // (confirmed by reading wireTypes.ts) -- this is the real,
+                    // closest equivalent: the book finished processing.
+                    posthog.capture('upload_completed', {
+                        book_id: status.book_id,
+                        page_count: status.page_count,
+                        chapter_count: status.chapter_count,
+                    });
                     return;
                 }
                 if (status.status === 'failed') {

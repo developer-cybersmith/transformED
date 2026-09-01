@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Target, Sparkles, BookOpen } from "lucide-react";
 import { settingsService } from "@/services/settings.service";
 import type { UserProfile } from "@/mocks/data/users";
@@ -9,16 +9,69 @@ import { useAuth } from "@/contexts/AuthContext";
 export function ProfileTab() {
     const { user } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [error, setError] = useState(false);
+    const [isFetching, setIsFetching] = useState(false);
+    const mountedRef = useRef(true);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
+
+    // isStale is checked in ADDITION to mountedRef, not instead of it: under React
+    // Strict Mode's dev-only double-invoke, a phantom mount's cleanup would have
+    // already flipped mountedRef back to true by the time its OWN fetch resolves
+    // (the real remount re-set it) -- a shared ref alone can't tell "this instance
+    // of the effect is stale" from "the component is still mounted". The mount
+    // effect's own per-invocation `cancelled` flag closes that gap; retry calls
+    // (real user clicks, not Strict Mode phantoms) only need the mountedRef check.
+    const fetchProfile = useCallback((isStale: () => boolean) => {
+        settingsService.getProfile().then(
+            (response) => {
+                if (isStale() || !mountedRef.current) return;
+                setProfile(response.data);
+                setError(false);
+                setIsFetching(false);
+            },
+            () => {
+                if (isStale() || !mountedRef.current) return;
+                setError(true);
+                setIsFetching(false);
+            }
+        );
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
-        settingsService.getProfile().then((response) => {
-            if (!cancelled) setProfile(response.data);
-        });
+        fetchProfile(() => cancelled);
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [fetchProfile]);
+
+    const retryLoadProfile = useCallback(() => {
+        setIsFetching(true);
+        setError(false);
+        fetchProfile(() => false);
+    }, [fetchProfile]);
+
+    if (error) {
+        return (
+            <div className="flex w-full max-w-3xl flex-col items-center justify-center gap-3 pt-24 pb-24 text-sm text-neutral-400">
+                <p>Couldn&apos;t load your profile — check your connection and try again.</p>
+                <button
+                    type="button"
+                    onClick={retryLoadProfile}
+                    disabled={isFetching}
+                    className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                >
+                    Retry
+                </button>
+            </div>
+        );
+    }
 
     if (!profile) {
         return (
