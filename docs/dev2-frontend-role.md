@@ -158,7 +158,7 @@ type WSMessage =
 - Loading + error + empty states for all flows
 - Email notifications (lesson ready, session report)
 - Landing page + pricing page
-- Stripe Checkout redirect integration
+- Razorpay Checkout integration
 - Accessibility audit (WCAG AA minimum)
 
 ---

@@ -5,12 +5,17 @@ import { TeachBackModal } from '@/components/player/TeachBackModal';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { submitTeachBackMock } = vi.hoisted(() => ({
+const { submitTeachBackMock, captureMock } = vi.hoisted(() => ({
   submitTeachBackMock: vi.fn(),
+  captureMock: vi.fn(),
 }));
 
 vi.mock('@/lib/assessment', () => ({
   submitTeachBack: submitTeachBackMock,
+}));
+
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
 }));
 
 const RESULT = {
@@ -24,6 +29,7 @@ const RESULT = {
 beforeEach(() => {
   submitTeachBackMock.mockReset();
   submitTeachBackMock.mockResolvedValue(RESULT);
+  captureMock.mockReset();
   usePlayerStore.getState().loadLesson(mockLessonPackage);
   // A real sessionId is the realistic default (mintSession has already
   // resolved by the time a student reaches teach-back in normal use) --
@@ -75,6 +81,8 @@ describe('TeachBackModal', () => {
 
     expect(exitTeachBack).toHaveBeenCalled();
     expect(submitTeachBackMock).not.toHaveBeenCalled();
+    // Story 2-54: Skip is not a submission.
+    expect(captureMock).not.toHaveBeenCalledWith('teachback_submitted', expect.anything());
   });
 
   it('submits the trimmed response text with session/lesson/segment ids', async () => {
@@ -92,6 +100,11 @@ describe('TeachBackModal', () => {
         response_text: 'It terminates the query early.',
       })
     );
+    // Story 2-54
+    expect(captureMock).toHaveBeenCalledWith('teachback_submitted', {
+      lesson_id: mockLessonPackage.lesson_id,
+      segment_id: mockLessonPackage.segments[0].segment_id,
+    });
   });
 
   it('shows an encouraging message after scoring — never a numeric score or rubric breakdown', async () => {
@@ -134,6 +147,8 @@ describe('TeachBackModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Submit & Continue' }));
 
     await waitFor(() => expect(exitTeachBack).toHaveBeenCalled());
+    // Story 2-54: a failed submission is not a successful one.
+    expect(captureMock).not.toHaveBeenCalledWith('teachback_submitted', expect.anything());
   });
 
   it('does not call the API and exits gracefully when sessionId is still empty (mintSession has not resolved yet)', async () => {
@@ -149,5 +164,25 @@ describe('TeachBackModal', () => {
 
     await waitFor(() => expect(exitTeachBack).toHaveBeenCalled());
     expect(submitTeachBackMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('TeachBackModal — Story 2-55 accessibility (WCAG AA)', () => {
+  it('has visible focus-ring classes on Skip, Submit & Continue, and the textarea', () => {
+    renderModal();
+
+    expect(screen.getByText('Skip').className).toMatch(/focus-visible:ring-4/);
+    expect(screen.getByRole('button', { name: 'Submit & Continue' }).className).toMatch(/focus-visible:ring-4/);
+    expect(screen.getByPlaceholderText('Type your explanation here…').className).toMatch(/focus:ring-4/);
+  });
+
+  it('has a visible focus-ring class on the result view Continue button', async () => {
+    renderModal();
+
+    await userEvent.type(screen.getByPlaceholderText('Type your explanation here…'), 'It terminates the query early.');
+    await userEvent.click(screen.getByRole('button', { name: 'Submit & Continue' }));
+    await waitFor(() => expect(screen.getByText(RESULT.feedback)).not.toBeNull());
+
+    expect(screen.getByRole('button', { name: 'Continue' }).className).toMatch(/focus-visible:ring-4/);
   });
 });

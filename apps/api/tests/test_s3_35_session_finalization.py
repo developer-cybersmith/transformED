@@ -37,7 +37,12 @@ def _make_supabase() -> MagicMock:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_finalize_session_updates_sessions_table():
-    """AC1: _finalize_session calls supabase UPDATE on 'sessions' with ces_final + ended_at."""
+    """AC1: _finalize_session calls supabase UPDATE on 'sessions' with ces_final only.
+
+    D116: ended_at is intentionally NOT written here. complete_session (REST endpoint)
+    owns ended_at and has already written it before dispatching lesson_complete.
+    Writing ended_at again here would clobber the real completion timestamp.
+    """
     from app.modules.tutor.state_machine.graph import _finalize_session  # noqa: PLC0415
 
     redis = _make_redis(history=[{"v": 60.0, "t": 1000}, {"v": 80.0, "t": 1005}])
@@ -50,7 +55,9 @@ async def test_finalize_session_updates_sessions_table():
     update_call = supabase.table.return_value.update.call_args
     payload = update_call[0][0]
     assert "ces_final" in payload, "ces_final must be in UPDATE payload"
-    assert "ended_at" in payload, "ended_at must be in UPDATE payload"
+    assert "ended_at" not in payload, (
+        "ended_at must NOT be in _finalize_session payload (D116: owned by complete_session)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +87,12 @@ async def test_finalize_session_ces_final_is_avg_of_history():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_finalize_session_ces_final_zero_when_no_history():
-    """AC2: ces_final = 0.0 when Redis ces_history is empty."""
+    """AC2: ces_final = None when Redis ces_history is empty.
+
+    Implementation uses None (not 0.0) to distinguish "no data collected" from
+    "student genuinely scored zero". get_session_report maps None→0.0 for display.
+    See _finalize_session docstring in graph.py.
+    """
     from app.modules.tutor.state_machine.graph import _finalize_session  # noqa: PLC0415
 
     redis = _make_redis(history=[])
@@ -91,7 +103,10 @@ async def test_finalize_session_ces_final_zero_when_no_history():
 
     update_call = supabase.table.return_value.update.call_args
     payload = update_call[0][0]
-    assert payload["ces_final"] == pytest.approx(0.0, abs=0.01)
+    assert payload["ces_final"] is None, (
+        "Empty history must produce ces_final=None (not 0.0) so analytics can "
+        "distinguish 'no data' from 'genuine zero engagement'"
+    )
 
 
 # ---------------------------------------------------------------------------

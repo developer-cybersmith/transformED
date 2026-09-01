@@ -49,7 +49,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC
 from enum import StrEnum
 from typing import Any, TypedDict, cast
 
@@ -474,6 +473,14 @@ async def route_entry(state: TutorMachineState) -> str:
     A corrupt or stale persisted state (a value not in ``TutorState``) must never crash a
     dispatch — fall back to IDLE so the session self-heals rather than wedging the tutor.
     """
+    # D116: lesson_complete is a universal terminal event — always route to session_end
+    # regardless of current FSM state. complete_session (REST) dispatches this after writing
+    # ended_at, making it the reliable trigger for ces_final from any state the student is in
+    # when their lesson ends (IDLE if WS never connected, TEACHING normally, or mid-QUIZZING/
+    # TEACH_BACK if they finish while a check-in is in progress).
+    if state.get("event") == "lesson_complete":
+        return "session_end"
+
     raw = state.get("current_state") or TutorState.IDLE
     try:
         current = TutorState(raw)
@@ -722,7 +729,7 @@ async def _read_state(session_id: str) -> str | None:
 
 
 async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> None:  # noqa: ANN401
-    """Write ces_final and ended_at to the sessions table at SESSION_END.
+    """Write ces_final to the sessions table at SESSION_END.
 
     Called via asyncio.create_task from session_end_node — fire-and-forget.
     DB failures are logged at ERROR and captured to Sentry — never re-raised.
@@ -730,9 +737,12 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
     ces_final = average of the Redis ces_history values (rounded to 2 dp).
     If history is empty, ces_final = None (distinguishable from zero engagement).
     BOUNDED: lrange 0..9 reads at most _CES_HISTORY_MAX=10 entries.
+
+    D116: ended_at is intentionally NOT written here. complete_session (REST) owns
+    that field and has already written it before dispatching lesson_complete. Writing
+    it again here would clobber the real completion timestamp with a ~100ms-later value.
     """
     import json  # noqa: PLC0415
-    from datetime import datetime  # noqa: PLC0415
 
     try:
         history_raw: list[str] = await redis.lrange(f"session:{session_id}:ces_history", 0, 9)
@@ -750,22 +760,56 @@ async def _finalize_session(session_id: str, *, redis: Any, supabase: Any) -> No
         # Empty history → None (distinguishable from zero engagement).
         # numeric(5,2) column accepts NULL; 0.0 would incorrectly signal "student scored zero".
         ces_final: float | None = round(sum(values) / len(values), 2) if values else None
-        ended_at = datetime.now(tz=UTC).isoformat()
 
-        await asyncio.to_thread(
+        update_resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("sessions")
-                .update({"ces_final": ces_final, "ended_at": ended_at})
+                .update({"ces_final": ces_final})
                 .eq("session_id", session_id)
                 .execute()
             )
         )
         logger.info(
-            "[tutor:%s] session finalized: ces_final=%s ended_at=%s",
+            "[tutor:%s] session finalized: ces_final=%s",
             session_id,
             ces_final,
-            ended_at,
         )
+
+        # Story 2-52 (S4-12): enqueue the "session report" notification email.
+        # update() returns the full updated row by default (postgrest
+        # ReturnMethod.representation) — reuse it for user_id rather than a
+        # second SELECT. This is a genuinely separate failure mode from the
+        # DB write above (already succeeded), so it gets its own try/except:
+        # an enqueue failure here must never be misreported as "DB write
+        # failed", and must never stop the already-successful finalize from
+        # having been logged.
+        try:
+            session_row = (update_resp.data or [{}])[0]
+            user_id = session_row.get("user_id")
+            if user_id:
+                from app.core.arq_pool import get_arq_pool  # noqa: PLC0415
+
+                arq_pool = get_arq_pool()
+                notify_job = await arq_pool.enqueue_job(
+                    "send_notification_email_job",
+                    user_id,
+                    "session_report",
+                    session_id,
+                    _job_id=f"notify:session_report:{session_id}",
+                )
+                if notify_job is None:
+                    # ARQ deduped this _job_id -- not an error, but worth a
+                    # log line since it was previously silently discarded
+                    # (review finding).
+                    logger.info("[tutor:%s] session_report notification deduped by ARQ", session_id)
+            else:
+                logger.warning(
+                    "[tutor:%s] session_report notification skipped — no user_id in "
+                    "update response",
+                    session_id,
+                )
+        except Exception:
+            logger.exception("[tutor:%s] failed to enqueue session_report notification", session_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("[tutor:%s] _finalize_session DB write failed: %s", session_id, exc)
         try:

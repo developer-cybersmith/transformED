@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
+import posthog from "posthog-js";
 import { AnimatePresence } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -175,6 +176,9 @@ export function OnboardingFlow() {
             clearPersistedProgress();
             setResult(data);
             setPhase("result");
+            // Story 2-54: a NEW completion only -- the 409-recovery path below
+            // re-fetches an already-completed profile and must not fire this.
+            posthog.capture("onboarding_completed", { badge_labels: data.badge_labels });
             return;
         } catch (err) {
             if (getStatus(err) === 401) {
