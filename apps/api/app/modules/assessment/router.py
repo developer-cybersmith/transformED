@@ -135,13 +135,24 @@ async def create_session_endpoint(
 
     `user_id` is taken from the verified JWT and is never read from the body.
     """
+    from app.config import get_settings
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
-    from app.modules.assessment.service import create_session
+    from app.core.redis import get_redis
+    from app.modules.assessment.service import create_session, seed_personalized_ces_threshold
 
+    supabase = get_supabase()
     created = await create_session(
         lesson_id=body.lesson_id,
         user_id=current_user["sub"],
-        supabase=get_supabase(),
+        supabase=supabase,
+    )
+    # Story 4-13 — non-fatal threshold seeding; session creation always succeeds
+    await seed_personalized_ces_threshold(
+        session_id=created["id"],
+        user_id=current_user["sub"],
+        redis=await get_redis(),
+        supabase=supabase,
+        settings=get_settings(),
     )
     return SessionCreated(**created)
 
