@@ -27,7 +27,7 @@ from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["compute_ces"]
+__all__ = ["compute_ces", "compute_personalized_threshold"]
 
 # Signal names in canonical order, parallel to the raw_pairs tuple.
 _SIGNAL_NAMES: tuple[str, ...] = (
@@ -123,3 +123,56 @@ def compute_ces(
     ces: float = sum(v * (w / weight_sum) for v, w in present) * 100.0
     # AC 7: symmetric clamp -- max(0.0, ...) guards against negative-weight configs.
     return max(0.0, min(100.0, round(ces, 4)))
+
+
+def compute_personalized_threshold(
+    *,
+    persistence: float | None,
+    frustration_tolerance: float | None,
+    goal_orientation: float | None,
+    settings: Settings,
+) -> float:
+    """Compute a per-student CES intervention threshold adjusted by Learner DNA.
+
+    Formula (Story 4-13, AC7):
+        threshold = settings.ces_threshold
+            + (frustration_tolerance - 50) × W_frustration  # high frustration → raise
+            + (50 - persistence)           × W_persistence  # low persistence → raise
+            + (50 - goal_orientation)      × W_goal         # low goal-orient → raise
+        clamped to [ces_dna_threshold_min, ces_dna_threshold_max].
+
+    A None dimension contributes 0 (no adjustment).
+    All three None → returns settings.ces_threshold exactly (AC2).
+
+    Returns:
+        float in [settings.ces_dna_threshold_min, settings.ces_dna_threshold_max],
+        rounded to 2 decimal places.
+    """
+    if persistence is None and frustration_tolerance is None and goal_orientation is None:
+        return settings.ces_threshold
+
+    frustration_adj = (
+        (frustration_tolerance - 50.0) * settings.ces_dna_weight_frustration
+        if frustration_tolerance is not None
+        else 0.0
+    )
+    persistence_adj = (
+        (50.0 - persistence) * settings.ces_dna_weight_persistence
+        if persistence is not None
+        else 0.0
+    )
+    goal_adj = (
+        (50.0 - goal_orientation) * settings.ces_dna_weight_goal
+        if goal_orientation is not None
+        else 0.0
+    )
+    raw = settings.ces_threshold + frustration_adj + persistence_adj + goal_adj
+    clamped = max(
+        settings.ces_dna_threshold_min,
+        min(settings.ces_dna_threshold_max, round(raw, 2)),
+    )
+    if clamped != round(raw, 2):
+        logger.debug(
+            "personalized CES threshold clamped: raw=%.2f → %.2f", raw, clamped
+        )
+    return clamped

@@ -380,6 +380,38 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── DNA-personalized CES threshold (Story 4-13) ──────────────────────────
+    ces_dna_weight_frustration: float = Field(
+        default=0.08,
+        ge=0.0,
+        le=1.0,
+        description="Weight of frustration_tolerance DNA dimension on CES threshold adjustment.",
+    )
+    ces_dna_weight_persistence: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="Weight of persistence DNA dimension on CES threshold adjustment.",
+    )
+    ces_dna_weight_goal: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        description="Weight of goal_orientation DNA dimension on CES threshold adjustment.",
+    )
+    ces_dna_threshold_min: float = Field(
+        default=40.0,
+        ge=0.0,
+        le=100.0,
+        description="Minimum personalized CES threshold.",
+    )
+    ces_dna_threshold_max: float = Field(
+        default=65.0,
+        ge=0.0,
+        le=100.0,
+        description="Maximum personalized CES threshold.",
+    )
+
     @model_validator(mode="after")
     def _ces_weights_must_sum_to_one(self) -> Settings:
         total = (

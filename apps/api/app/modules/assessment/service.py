@@ -35,6 +35,8 @@ from app.modules.assessment.schemas import (
 from app.providers.llm.openai import OpenAILLMProvider
 
 if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
     from app.modules.assessment.router import SessionReport, TeachbackDetail
 
 logger = logging.getLogger(__name__)
@@ -1731,3 +1733,84 @@ async def write_intervention_event(
 # D63 (S3-53): _get_distraction_count was removed — it was dead code.
 # frustration_tolerance in dna_fusion.py correctly reads intervention counts
 # from event_counts["intervention_triggered"] (session_events DB) at session end.
+
+
+async def seed_personalized_ces_threshold(
+    *,
+    session_id: str,
+    user_id: str,
+    redis: Redis,
+    supabase: Client,
+    settings: Settings,
+) -> None:
+    """Pre-compute and cache per-session CES threshold personalised by Learner DNA.
+
+    Story 4-13 (AC3, AC4, AC5):
+    - Read DNA from Redis cache first (user:{user_id}:dna, TTL 1h).
+    - Fall back to Supabase learner_dna table on cache miss.
+    - Fall back to all-None (base threshold) if no DNA exists.
+    - Write session:{session_id}:ces_threshold to Redis with 24h TTL.
+    - Failure is non-fatal: logged at WARNING, session creation is not affected.
+
+    BOUNDED: learner_dna has UNIQUE(user_id) — at most 1 row fetched.
+    """
+    from app.modules.assessment.ces import compute_personalized_threshold  # noqa: PLC0415
+
+    _log = logging.getLogger(__name__)
+
+    try:
+        # Step 1 — try Redis DNA cache
+        persistence: float | None = None
+        frustration_tolerance: float | None = None
+        goal_orientation: float | None = None
+
+        cached_raw = await redis.get(f"user:{user_id}:dna")
+        if cached_raw is not None:
+            try:
+                dna_blob: dict[str, Any] = json.loads(cached_raw)
+                persistence = dna_blob.get("persistence")
+                frustration_tolerance = dna_blob.get("frustration_tolerance")
+                goal_orientation = dna_blob.get("goal_orientation")
+            except Exception as _cache_exc:  # noqa: BLE001
+                _log.debug("DNA cache parse failed, falling back to Supabase: %s", _cache_exc)
+
+        # Step 2 — fall back to Supabase
+        if persistence is None and frustration_tolerance is None and goal_orientation is None:
+            resp = (
+                supabase.table("learner_dna")
+                .select("persistence, frustration_tolerance, goal_orientation")
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+            if resp.data:
+                persistence = resp.data.get("persistence")
+                frustration_tolerance = resp.data.get("frustration_tolerance")
+                goal_orientation = resp.data.get("goal_orientation")
+
+        # Step 3 — compute threshold (all-None → base)
+        threshold = compute_personalized_threshold(
+            persistence=persistence,
+            frustration_tolerance=frustration_tolerance,
+            goal_orientation=goal_orientation,
+            settings=settings,
+        )
+
+        # Step 4 — write to Redis with 24h TTL
+        await redis.setex(f"session:{session_id}:ces_threshold", 86400, threshold)
+
+        _log.debug(
+            "personalized CES threshold seeded session=%s user=%s threshold=%.2f",
+            session_id,
+            user_id,
+            threshold,
+        )
+
+    except Exception as exc:
+        _log.warning(
+            "seed_personalized_ces_threshold failed session=%s user=%s: %s — "
+            "falling back to global settings.ces_threshold",
+            session_id,
+            user_id,
+            exc,
+        )
