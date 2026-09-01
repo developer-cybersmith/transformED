@@ -18,6 +18,7 @@ from supabase import Client
 from app.config import Settings, get_settings
 from app.core.db import rows, single_row
 from app.core.posthog_client import capture_event
+from app.modules.assessment.dna_fusion import _apply_ema
 from app.modules.assessment.onboarding_questions import (
     ALL_NINE_DIMENSIONS,
     BADGE_THRESHOLD,
@@ -1338,6 +1339,34 @@ def _compute_badge_labels(scores: dict[str, float]) -> list[str]:
     ]
 
 
+async def _fetch_existing_dna(*, user_id: str, supabase: Client) -> dict[str, Any] | None:
+    """Read the current learner_dna row for *user_id*, or None if absent.
+
+    # BOUNDED: learner_dna has UNIQUE(user_id) — at most 1 row (D137 fix).
+    Returns None on any DB error (fallback to first-time write path, per AC7).
+    """
+    try:
+        resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("learner_dna")
+                .select(", ".join(["user_id", "session_count", *ALL_NINE_DIMENSIONS]))
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+        )
+        row = single_row(resp)
+        return row  # None if no row exists
+    except Exception as exc:
+        logger.warning(
+            "onboarding: could not fetch existing learner_dna for reassessment blend "
+            "(user=%s, error=%s) — falling back to first-time write",
+            user_id,
+            str(exc).replace("\n", " "),
+        )
+        return None
+
+
 async def process_onboarding(
     *,
     responses: list[OnboardingAnswer],
@@ -1366,8 +1395,20 @@ async def process_onboarding(
             (duplicate submission).
         HTTPException 500: Non-duplicate DB insert failure.
     """
+    # D137 fix — detect reassessment path before scoring
+    existing_dna = await _fetch_existing_dna(user_id=user_id, supabase=supabase)
+    existing_session_count = (
+        int(existing_dna.get("session_count") or 0) if existing_dna is not None else 0
+    )
+
     # Step 1 — Compute dimension scores
     scores = _compute_dimension_scores(responses)
+
+    # D137 fix — blend fresh self-report into existing scores on reassessment
+    if existing_dna is not None:
+        retain = get_settings().dna_ema_retain
+        for dim in ALL_NINE_DIMENSIONS:
+            scores[dim] = _apply_ema(existing_dna.get(dim), scores[dim], retain)
 
     # Step 2 — Compute badge labels
     badge_labels = _compute_badge_labels(scores)
@@ -1451,10 +1492,11 @@ async def process_onboarding(
         ) from None
 
     # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
+    # D137: preserve session_count on reassessment; only reset to 0 for first-time onboarding.
     dna_row: dict[str, Any] = {
         "user_id": user_id,
         "badge_labels": badge_labels,
-        "session_count": 0,
+        "session_count": existing_session_count,
         "profile_text": profile_text,
         **scores,
     }
@@ -1514,7 +1556,7 @@ async def process_onboarding(
     return OnboardingResult(
         badge_labels=badge_labels,
         profile_text=profile_text,
-        session_count=0,
+        session_count=existing_session_count,  # D137: reflects actual count on reassessment
     )
 
 
