@@ -15,7 +15,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 from langfuse import Langfuse
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion

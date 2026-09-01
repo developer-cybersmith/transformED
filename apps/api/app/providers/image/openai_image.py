@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 
-import httpx
+import httpx2 as httpx
 from langfuse import Langfuse
 from openai import AsyncOpenAI
 
@@ -208,7 +208,7 @@ class OpenAIImageProvider(ImageProvider):
             )
 
         try:
-            response = await self._client.images.generate(  # type: ignore[call-overload]
+            response = await self._client.images.generate(
                 model=_MODEL,
                 prompt=prompt,
                 size=size,
