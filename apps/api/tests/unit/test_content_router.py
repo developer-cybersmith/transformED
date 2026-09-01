@@ -188,6 +188,79 @@ def test_upload_lesson_202_shape(client: TestClient) -> None:
 
 
 @pytest.mark.unit
+async def test_upload_lesson_concurrent_requests_do_not_serialize_on_blocking_io() -> None:
+    """D138: `upload_lesson` calls the SYNCHRONOUS supabase-py client directly
+    on the event loop (no `asyncio.to_thread`) -- on a single-process uvicorn,
+    one upload's blocking network call stalls every OTHER concurrently
+    in-flight upload for its own duration, not just its own request.
+
+    This test puts a REAL blocking `time.sleep` (not `asyncio.sleep`) inside
+    the mocked storage `upload()` call -- exactly what a real, slow network
+    upload looks like to the event loop if it is never wrapped in
+    `asyncio.to_thread`. Without that wrapping, N concurrent uploads take
+    ~N * delay (fully serialized); with the fix, they overlap and the timing
+    bound holds. Mirrors test_image_generator_node.py's
+    test_concurrency_survives_a_slow_blocking_storage_upload (same defect
+    class, D132), applied here to the upload endpoint (D138).
+    """
+    import asyncio
+    import time
+
+    import httpx
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    limiter.reset()
+
+    n_requests = 4
+    upload_delay_s = 0.15
+
+    sb = _make_supabase_mock()
+    sb.storage.from_.return_value.upload.side_effect = lambda **_kwargs: time.sleep(
+        upload_delay_s
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    app.dependency_overrides[get_settings] = _approved_settings
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                start = time.monotonic()
+                responses = await asyncio.gather(
+                    *(
+                        ac.post(
+                            "/api/content/lessons",
+                            files={
+                                "file": (
+                                    f"c{i}.pdf",
+                                    io.BytesIO(MINIMAL_PDF),
+                                    "application/pdf",
+                                )
+                            },
+                        )
+                        for i in range(n_requests)
+                    )
+                )
+                elapsed = time.monotonic() - start
+    finally:
+        app.dependency_overrides.clear()
+
+    assert all(r.status_code == 202 for r in responses), [r.text for r in responses]
+    serial_time = n_requests * upload_delay_s  # 0.6s if uploads serialize the loop
+    assert elapsed < serial_time * 0.6, (
+        f"elapsed={elapsed:.3f}s is not meaningfully faster than "
+        f"{serial_time:.3f}s (fully-serialized-by-a-blocking-upload time) -- "
+        f"upload_lesson's Supabase calls are blocking the event loop instead "
+        f"of running in a thread"
+    )
+
+
+@pytest.mark.unit
 def test_upload_creates_a_book_and_no_lesson(client: TestClient) -> None:
     """AC20 — upload stops creating `lessons` and `lesson_jobs` rows entirely.
 
