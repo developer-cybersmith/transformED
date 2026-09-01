@@ -172,7 +172,5 @@ def compute_personalized_threshold(
         min(settings.ces_dna_threshold_max, round(raw, 2)),
     )
     if clamped != round(raw, 2):
-        logger.debug(
-            "personalized CES threshold clamped: raw=%.2f → %.2f", raw, clamped
-        )
+        logger.debug("personalized CES threshold clamped: raw=%.2f → %.2f", raw, clamped)
     return clamped

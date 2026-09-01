@@ -23,6 +23,7 @@ import pytest
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _make_settings(
     *,
     ces_threshold: float = 50.0,
@@ -48,6 +49,7 @@ _VALID_USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 # ── AC1 — function exists and returns float in [40, 65] ──────────────────────
 
+
 def test_compute_personalized_threshold_exists_and_returns_float() -> None:
     """AC1: function exists in assessment.ces, returns float."""
     from app.modules.assessment.ces import compute_personalized_threshold
@@ -65,6 +67,7 @@ def test_compute_personalized_threshold_exists_and_returns_float() -> None:
 
 # ── AC2 — all None → returns base exactly ────────────────────────────────────
 
+
 def test_all_none_returns_base_threshold() -> None:
     """AC2: all 3 dims None → returns settings.ces_threshold exactly."""
     from app.modules.assessment.ces import compute_personalized_threshold
@@ -80,6 +83,7 @@ def test_all_none_returns_base_threshold() -> None:
 
 
 # ── AC7 — formula math correct ───────────────────────────────────────────────
+
 
 def test_formula_raises_threshold_for_high_frustration_low_persistence() -> None:
     """AC7/AC10: high frustration + low persistence → threshold > base."""
@@ -138,6 +142,7 @@ def test_formula_exact_math() -> None:
 
 # ── AC6 — clamp applied ───────────────────────────────────────────────────────
 
+
 def test_threshold_clamped_to_max() -> None:
     """AC6: result never exceeds ces_dna_threshold_max."""
     from app.modules.assessment.ces import compute_personalized_threshold
@@ -168,6 +173,7 @@ def test_threshold_clamped_to_min() -> None:
 
 # ── AC8 — Settings fields exist ──────────────────────────────────────────────
 
+
 def test_settings_has_all_five_dna_ces_fields() -> None:
     """AC8: all 5 new env-var-tunable fields exist in Settings with correct defaults."""
     from app.config import Settings
@@ -187,6 +193,7 @@ def test_settings_has_all_five_dna_ces_fields() -> None:
 
 # ── AC4/AC5 — seed_personalized_ces_threshold: Redis cache hit ────────────────
 
+
 @pytest.mark.asyncio
 async def test_seed_uses_redis_cache_when_available() -> None:
     """AC4: DNA read from Redis cache first; AC5: threshold written to Redis."""
@@ -196,14 +203,14 @@ async def test_seed_uses_redis_cache_when_available() -> None:
     supabase = MagicMock()
     settings = _make_settings()
 
-    dna_json = json.dumps({
-        "persistence": 80.0,
-        "frustration_tolerance": 20.0,
-        "goal_orientation": 80.0,
-    })
-    redis.get = AsyncMock(side_effect=lambda key: (
-        dna_json.encode() if "dna" in key else None
-    ))
+    dna_json = json.dumps(
+        {
+            "persistence": 80.0,
+            "frustration_tolerance": 20.0,
+            "goal_orientation": 80.0,
+        }
+    )
+    redis.get = AsyncMock(side_effect=lambda key: dna_json.encode() if "dna" in key else None)
     redis.setex = AsyncMock()
 
     await seed_personalized_ces_threshold(
@@ -244,11 +251,7 @@ async def test_seed_falls_back_to_supabase_on_cache_miss() -> None:
         "goal_orientation": 50.0,
     }
     (
-        supabase.table.return_value
-        .select.return_value
-        .eq.return_value
-        .maybe_single.return_value
-        .execute.return_value
+        supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
     ) = dna_resp
 
     settings = _make_settings()
@@ -278,11 +281,7 @@ async def test_seed_falls_back_to_base_when_no_dna_exists() -> None:
     no_dna_resp = MagicMock()
     no_dna_resp.data = None
     (
-        supabase.table.return_value
-        .select.return_value
-        .eq.return_value
-        .maybe_single.return_value
-        .execute.return_value
+        supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
     ) = no_dna_resp
 
     settings = _make_settings(ces_threshold=50.0)
@@ -297,8 +296,11 @@ async def test_seed_falls_back_to_base_when_no_dna_exists() -> None:
 
     # Threshold written = base (50.0)
     redis.setex.assert_called_once()
-    written_value = float(redis.setex.call_args.args[2] if len(redis.setex.call_args.args) > 2
-                          else redis.setex.call_args.kwargs.get("value", 50.0))
+    written_value = float(
+        redis.setex.call_args.args[2]
+        if len(redis.setex.call_args.args) > 2
+        else redis.setex.call_args.kwargs.get("value", 50.0)
+    )
     assert abs(written_value - 50.0) < 0.01
 
 
@@ -326,6 +328,7 @@ async def test_seed_failure_does_not_raise() -> None:
 
 # ── AC9 — no Supabase query on hot 5s path ───────────────────────────────────
 
+
 def test_no_supabase_query_in_process_attention_signal_source() -> None:
     """AC9: verify by AST scan that process_attention_signal does not call
     supabase.table('learner_dna') — the hot path must only read threshold from Redis.
@@ -333,10 +336,7 @@ def test_no_supabase_query_in_process_attention_signal_source() -> None:
     import ast
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parents[2]
-        / "app" / "modules" / "tutor" / "service.py"
-    )
+    src = Path(__file__).resolve().parents[2] / "app" / "modules" / "tutor" / "service.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
     # Find the process_attention_signal function body
@@ -359,21 +359,17 @@ def test_no_supabase_query_in_process_attention_signal_source() -> None:
 
 # ── AC6 — tutor service reads threshold from Redis with fallback ──────────────
 
+
 def test_process_attention_signal_reads_ces_threshold_from_redis() -> None:
     """AC6: verify by source inspection that process_attention_signal reads
     session:{sid}:ces_threshold from Redis and falls back to settings.ces_threshold.
     """
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parents[2]
-        / "app" / "modules" / "tutor" / "service.py"
-    )
+    src = Path(__file__).resolve().parents[2] / "app" / "modules" / "tutor" / "service.py"
     func_src = src.read_text(encoding="utf-8")
 
-    assert "ces_threshold" in func_src, (
-        "tutor/service.py must reference ces_threshold"
-    )
+    assert "ces_threshold" in func_src, "tutor/service.py must reference ces_threshold"
     # The key pattern for the per-session Redis key
     assert ":ces_threshold" in func_src, (
         "tutor/service.py must read from session:{sid}:ces_threshold Redis key (AC6)"

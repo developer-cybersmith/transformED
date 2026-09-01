@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 
-import httpx2 as httpx
+import httpx
 from langfuse import Langfuse
 from openai import AsyncOpenAI
 
