@@ -1,6 +1,6 @@
 # Story 4-12 — Reassessment Blends Into Existing Learner DNA (D137 Fix)
 
-**Status:** in-progress
+**Status:** done
 **Branch:** `sprint4/s4-12-reassessment-blend`
 **Defect:** D137 — Reassessment fully overwrites learner_dna instead of blending
 **Owner:** Dev 3
@@ -157,3 +157,22 @@ already present and correct (Story 3-31). This story fixes only the service laye
 ## Test File
 
 `apps/api/tests/unit/test_reassessment_blend.py`
+
+---
+
+## Senior Developer Review
+
+**6-agent adversarial code review completed 2026-09-01** on branch `sprint4/s4-12-reassessment-blend`.
+
+### Layers Run
+
+1. **Story Quality** — PASS. Story-first commit confirmed; all 16 ACs testable; Scale & Load section with all 6 questions answered.
+2. **Blind Hunter (Security)** — CLEAN. No IDOR (user_id from JWT only); DB query correctly scoped; log injection prevented; DoS surface gated by Redis SET NX.
+3. **Test Coverage** — PASS. 6 tests covering AC1/2/3/4/7/9/10/13/14/15. AC5 implicitly covered via AC4's blended-score → badge_label proof. AC11 (D71 rollback) pre-existing and unmodified.
+4. **AC Completeness** — PASS. Every AC maps to at least one explicit assertion.
+5. **Process Integrity** — PASS. No LLM calls added; no hardcoded models; no banned imports; asyncio.to_thread used correctly; module discipline intact.
+6. **Scale & Load** — CLEAN. SELECT bounded by UNIQUE(user_id) with `# BOUNDED:` comment; no new fixed caps; `SET NX` gate serializes concurrent submissions; upsert idempotent under concurrency; one-line test: NULL dimension values use _NEUTRAL=50.0 (designed behavior).
+
+### Result
+
+**✅ Clean review — 0 decision-needed, 0 patch, 0 defer, 0 dismissed. Ready to merge.**
