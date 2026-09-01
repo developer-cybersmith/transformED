@@ -819,6 +819,14 @@ register, `dna_fusion.py`, `schemas.py`, `test_unbounded_queries.py`,
 
 ---
 
+### Found by the 2026-09-01 Sprint 4 audit (Story 4-12 — D137 reassessment blend)
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| ~~D137~~ | **CLOSED 2026-09-01 (Story 4-12).** `process_onboarding()` in `assessment/service.py` ran identically for first-time and reassessment paths — Step 5 upserted all 9 dimension scores from raw self-report (full overwrite) and reset `session_count` to `0`, destroying all DNA fusion data accumulated via `fuse_learner_dna()` across real behavioral sessions. When a student re-took the onboarding diagnostic after 10 sessions (`reassessment_due=true`), every EMA-blended score from session history was silently replaced by one snapshot of self-report. **Root cause:** no branch existed in `process_onboarding()` for the reassessment path. **Fix:** added `_fetch_existing_dna()` helper (SELECT with `.maybe_single()`, BOUNDED by `UNIQUE(user_id)`); on reassessment, each of the 9 sub-dimensions is blended via `_apply_ema(old, signal, retain)` (same EMA used by `fuse_learner_dna`, `retain = settings.dna_ema_retain` default 0.7); `session_count` read from existing row and preserved in upsert payload. On DB error fetching the existing row, fallback to first-time write path with explicit `logger.warning` (AC7 graceful degradation — never silent). **No migration required** — all `learner_dna` columns already exist; no schema change. **Owner: Dev 3.** | High (silent data destruction on every reassessment — student's accumulated DNA is reset to a raw self-report snapshot with `session_count=0`, invalidating all behavioural data built across real sessions; no error, no warning, HTTP 200) | **FIXED-GUARDED 2026-09-01 (Story 4-12).** `_fetch_existing_dna()` + blend logic added to `process_onboarding()` in `assessment/service.py`. `session_count` preservation added to upsert payload and return value. | `tests/unit/test_reassessment_blend.py` — 6 tests: first-time raw write + zero session_count; EMA blend for each of the 9 dimensions; session_count preserved (existing=17, result=17); DB error fallback to first-time write + WARNING log; `onboarding_responses` INSERT still runs on reassessment; badge_labels recomputed from blended scores not raw self-report. All 6 GREEN, confirmed in full 1246-test suite pass (zero regressions). |
+
+---
+
 ## Scorecard
 
 | | Count |

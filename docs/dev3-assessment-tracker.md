@@ -991,7 +991,8 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `dna_fusion.py._apply_ema()` now called during reassessment; blend = 0.7×old + 0.3×new
   - `session_count` preserved on reassessment (not incremented — reassessment is not a new session)
   - D137 verified end-to-end against real Supabase: all 9 dims=60→72.0 (0.7×60+0.3×100) ✓
-  - Branch: `sprint4/s4-12-reassessment-blend` — pushed, PR pending
+  - Branch: `sprint4/s4-12-reassessment-blend` | Story: `docs/stories/4-12-reassessment-blend.md`
+  - **AC:** 6 unit tests GREEN; 1246-test full-suite pass, zero regressions; ruff + mypy clean; D137 FIXED-GUARDED in defect register
 
 - [x] **DNA-personalized CES intervention threshold (Story S4-13)** — ✓ 2026-09-01
   - Closes the Learner DNA lifecycle loop: DNA → threshold → interventions → DNA (next session)
@@ -1001,7 +1002,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `create_session_endpoint` wired to call seed after session creation; failure never fails the HTTP response
   - `tutor/service.py:process_attention_signal` reads `session:{sid}:ces_threshold` from Redis (O(1) hot path)
   - 14 unit tests, all GREEN; zero regressions (978 passing vs 965 before)
-  - Branch: `sprint4/s4-13-dna-ces-threshold` — pushed, PR pending
+  - Branch: `sprint4/s4-13-dna-ces-threshold` | Story: `docs/stories/4-13-dna-personalized-ces-threshold.md`
 
 ---
 
