@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-import httpx2 as httpx
+import httpx
 from langfuse import Langfuse
 from openai import AsyncOpenAI
 
