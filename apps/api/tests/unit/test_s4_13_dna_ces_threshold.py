@@ -4,10 +4,13 @@ ACs covered: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC9, AC10.
 
 Formula:
     threshold = base
-        + (frustration_tolerance - 50) × W_frustration   # high frustration → raise
+        + (50 - frustration_tolerance) × W_frustration   # low tolerance → raise
         + (50 - persistence)           × W_persistence   # low persistence → raise
         + (50 - goal_orientation)      × W_goal          # low goal-orient → raise
     clamped to [ces_dna_threshold_min, ces_dna_threshold_max].
+
+frustration_tolerance is scored by dna_fusion.py as: fewer interventions → higher score.
+Low tolerance (easily frustrated) → (50 - low) is positive → raises threshold (intervene sooner).
 
 Default weights: W_frustration=0.08, W_persistence=0.05, W_goal=0.04.
 Default base: ces_threshold=50.0.
@@ -86,13 +89,13 @@ def test_all_none_returns_base_threshold() -> None:
 
 
 def test_formula_raises_threshold_for_high_frustration_low_persistence() -> None:
-    """AC7/AC10: high frustration + low persistence → threshold > base."""
+    """AC7/AC10: easily frustrated (low tolerance) + low persistence → threshold > base."""
     from app.modules.assessment.ces import compute_personalized_threshold
 
     s = _make_settings()
-    # frustration_tolerance=80 → +2.4 adjustment; persistence=20 → +1.5; goal=20 → +1.2
+    # frustration_tolerance=20 → (50-20)*0.08=+2.4; persistence=20 → +1.5; goal=20 → +1.2
     result = compute_personalized_threshold(
-        frustration_tolerance=80.0,
+        frustration_tolerance=20.0,
         persistence=20.0,
         goal_orientation=20.0,
         settings=s,
@@ -101,13 +104,13 @@ def test_formula_raises_threshold_for_high_frustration_low_persistence() -> None
 
 
 def test_formula_lowers_threshold_for_high_persistence_low_frustration() -> None:
-    """AC7/AC10: low frustration + high persistence → threshold < base."""
+    """AC7/AC10: high tolerance (rarely frustrated) + high persistence → threshold < base."""
     from app.modules.assessment.ces import compute_personalized_threshold
 
     s = _make_settings()
-    # frustration_tolerance=20 → -2.4; persistence=80 → -1.5; goal=80 → -1.2
+    # frustration_tolerance=80 → (50-80)*0.08=-2.4; persistence=80 → -1.5; goal=80 → -1.2
     result = compute_personalized_threshold(
-        frustration_tolerance=20.0,
+        frustration_tolerance=80.0,
         persistence=80.0,
         goal_orientation=80.0,
         settings=s,
@@ -127,12 +130,12 @@ def test_formula_exact_math() -> None:
         ces_dna_threshold_min=40.0,
         ces_dna_threshold_max=65.0,
     )
-    # frustration=80: (80-50)*0.08 = +2.4
-    # persistence=20: (50-20)*0.05 = +1.5
-    # goal=20:        (50-20)*0.04 = +1.2
+    # frustration_tolerance=20 (easily frustrated): (50-20)*0.08 = +2.4
+    # persistence=20 (low):                         (50-20)*0.05 = +1.5
+    # goal_orientation=20 (low):                    (50-20)*0.04 = +1.2
     # total = 50 + 2.4 + 1.5 + 1.2 = 55.1
     result = compute_personalized_threshold(
-        frustration_tolerance=80.0,
+        frustration_tolerance=20.0,
         persistence=20.0,
         goal_orientation=20.0,
         settings=s,
@@ -148,8 +151,10 @@ def test_threshold_clamped_to_max() -> None:
     from app.modules.assessment.ces import compute_personalized_threshold
 
     s = _make_settings(ces_dna_threshold_max=52.0)
+    # frustration_tolerance=0 (easily frustrated): (50-0)*0.08=+4.0
+    # persistence=0, goal=0: each (50-0)*w → push threshold up → forces clamp
     result = compute_personalized_threshold(
-        frustration_tolerance=100.0,
+        frustration_tolerance=0.0,
         persistence=0.0,
         goal_orientation=0.0,
         settings=s,
@@ -162,8 +167,10 @@ def test_threshold_clamped_to_min() -> None:
     from app.modules.assessment.ces import compute_personalized_threshold
 
     s = _make_settings(ces_dna_threshold_min=48.0)
+    # frustration_tolerance=100 (rarely frustrated): (50-100)*0.08=-4.0
+    # persistence=100, goal=100: each (50-100)*w → push threshold down → forces clamp
     result = compute_personalized_threshold(
-        frustration_tolerance=0.0,
+        frustration_tolerance=100.0,
         persistence=100.0,
         goal_orientation=100.0,
         settings=s,

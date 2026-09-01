@@ -136,10 +136,15 @@ def compute_personalized_threshold(
 
     Formula (Story 4-13, AC7):
         threshold = settings.ces_threshold
-            + (frustration_tolerance - 50) × W_frustration  # high frustration → raise
+            + (50 - frustration_tolerance) × W_frustration  # low tolerance → raise
             + (50 - persistence)           × W_persistence  # low persistence → raise
             + (50 - goal_orientation)      × W_goal         # low goal-orient → raise
         clamped to [ces_dna_threshold_min, ces_dna_threshold_max].
+
+    ``frustration_tolerance`` is scored by dna_fusion.py as:
+        fewer interventions triggered → higher score (100 = never frustrated; 0 = hit cap)
+    So a LOW score means the student gets frustrated easily → we want to intervene sooner
+    → (50 - frustration_tolerance) gives a POSITIVE adjustment when tolerance is below 50.
 
     A None dimension contributes 0 (no adjustment).
     All three None → returns settings.ces_threshold exactly (AC2).
@@ -152,7 +157,7 @@ def compute_personalized_threshold(
         return settings.ces_threshold
 
     frustration_adj = (
-        (frustration_tolerance - 50.0) * settings.ces_dna_weight_frustration
+        (50.0 - frustration_tolerance) * settings.ces_dna_weight_frustration
         if frustration_tolerance is not None
         else 0.0
     )
