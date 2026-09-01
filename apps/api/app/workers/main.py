@@ -26,6 +26,7 @@ from app.core.queues import PIPELINE_QUEUE
 from app.workers.jobs.book_ingest import book_ingest_job
 from app.workers.jobs.content_pipeline import content_pipeline_job
 from app.workers.jobs.reap_stale_lessons import reap_stale_generating_lessons
+from app.workers.jobs.send_notification_email import send_notification_email_job
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ class WorkerSettings:
     functions = [
         content_pipeline_job,
         book_ingest_job,
+        send_notification_email_job,
         # Add future jobs here:
         # quiz_generation_job,
         # teachback_evaluation_job,

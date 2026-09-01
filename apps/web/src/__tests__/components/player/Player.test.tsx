@@ -4,9 +4,10 @@ import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { useLessonSocketMock, apiPostMock, useAttentionConsentMock, useAttentionMonitorMock } = vi.hoisted(() => ({
+const { useLessonSocketMock, apiPostMock, useAttentionConsentMock, useAttentionMonitorMock, captureMock } = vi.hoisted(() => ({
   useLessonSocketMock: vi.fn().mockReturnValue({ status: 'closed', sendAttentionSignal: vi.fn() }),
   apiPostMock: vi.fn(),
+  captureMock: vi.fn(),
   // Safe default so every pre-existing test in this file (none of which know
   // about S3-01) never sees the consent modal unless a test opts in.
   useAttentionConsentMock: vi.fn().mockReturnValue({
@@ -46,6 +47,10 @@ vi.mock('@/lib/api', () => ({
   api: { post: apiPostMock },
 }));
 
+vi.mock('posthog-js', () => ({
+  default: { capture: captureMock },
+}));
+
 const TEST_SESSION_ID = 'sess_test_default';
 
 // Opts a single test into a resolving POST /assessment/sessions -- the
@@ -83,6 +88,7 @@ beforeEach(() => {
   });
   mockOnRefetchLesson.mockClear();
   mockOnRefetchLesson.mockResolvedValue(null);
+  captureMock.mockReset();
   apiPostMock.mockReset();
   apiPostMock.mockImplementation((url: string) => {
     if (url === '/assessment/sessions') {
@@ -123,6 +129,90 @@ function renderEnded(sessionId: string) {
   });
   return utils;
 }
+
+describe('Player — Story 2-54 PostHog instrumentation', () => {
+  it('fires lesson_started once the first time PLAYING is observed, not again on resume-from-pause', () => {
+    usePlayerStore.setState({ status: 'IDLE', sessionId: '' });
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    expect(captureMock).toHaveBeenCalledWith('lesson_started', { lesson_id: mockLessonPackage.lesson_id });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED' });
+    });
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    // Resume-from-pause re-enters PLAYING but must not re-fire the event.
+    expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires lesson_completed when status reaches ENDED', () => {
+    renderEnded('sess_lesson_completed');
+
+    expect(captureMock).toHaveBeenCalledWith('lesson_completed', {
+      lesson_id: mockLessonPackage.lesson_id,
+      session_id: 'sess_lesson_completed',
+    });
+  });
+
+  // Review fix (Edge Case Hunter): usePlayerStore is a module-level
+  // singleton PlayerLoader's per-lesson remount does NOT reset -- a fresh
+  // Player mount for a NEW lesson could otherwise see the PREVIOUS lesson's
+  // leftover ENDED status/sessionId and misattribute a completion.
+  it('does not attribute a new lesson mount to the previous lesson leftover ENDED status/sessionId', () => {
+    const lessonB = { ...mockLessonPackage, lesson_id: 'lesson_mock_2' };
+
+    const { unmount } = renderEnded('sess_lesson_A');
+    expect(captureMock).toHaveBeenCalledWith('lesson_completed', {
+      lesson_id: mockLessonPackage.lesson_id,
+      session_id: 'sess_lesson_A',
+    });
+    captureMock.mockClear();
+    unmount();
+
+    // Deliberately NOT resetting the store here -- this is the real-world
+    // race: usePlayerStore still holds lesson A's leftover
+    // { status: 'ENDED', sessionId: 'sess_lesson_A' } when lesson B mounts.
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={lessonB} />);
+
+    expect(captureMock).not.toHaveBeenCalledWith(
+      'lesson_completed',
+      expect.objectContaining({ lesson_id: lessonB.lesson_id })
+    );
+  });
+
+  // Review fix (Edge Case Hunter): the mirror case for lesson_started --
+  // a new lesson mount must not immediately fire using the PREVIOUS
+  // lesson's leftover PLAYING status; it must wait for its OWN real
+  // transition.
+  it('does not immediately fire lesson_started for a new lesson mount inheriting the previous lesson leftover PLAYING status', () => {
+    const lessonB = { ...mockLessonPackage, lesson_id: 'lesson_mock_2' };
+
+    usePlayerStore.setState({ status: 'IDLE', sessionId: '' });
+    const { unmount } = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    expect(captureMock).toHaveBeenCalledWith('lesson_started', { lesson_id: mockLessonPackage.lesson_id });
+    captureMock.mockClear();
+    unmount();
+
+    // Store still holds lesson A's leftover PLAYING when lesson B mounts.
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={lessonB} />);
+    expect(captureMock).not.toHaveBeenCalledWith('lesson_started', { lesson_id: lessonB.lesson_id });
+
+    // Once lesson B genuinely reaches PLAYING, it must still fire for real.
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING' });
+    });
+    expect(captureMock).toHaveBeenCalledWith('lesson_started', { lesson_id: lessonB.lesson_id });
+  });
+});
 
 describe('Player — lesson complete (ENDED) screen', () => {
   it('links to the session report using the player store sessionId, not a placeholder string', () => {

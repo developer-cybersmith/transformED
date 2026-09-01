@@ -40,7 +40,7 @@
 | Sprint 1 | 2–3 | Core pipeline + player skeleton |
 | Sprint 2 | 4–5 | Full pipeline + integration → investor demo |
 | Sprint 3 | 6–7 | MediaPipe + CES + full tutor machine — **prerequisite:** migrate FastAPI/ARQ from Railway to India-region provider before real students join |
-| Sprint 4 | 8–9 | Load test + Stripe + hardening |
+| Sprint 4 | 8–9 | Load test + Razorpay + hardening |
 | Launch | 10 | First paying student |
 
 ---

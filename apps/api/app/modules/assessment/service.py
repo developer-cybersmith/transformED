@@ -147,17 +147,26 @@ async def create_session(
     reintroduce D18; a client-chosen `started_at` would make session duration and
     Dev 3's CES-final logic meaningless.
 
-    Called once per lesson attempt. Re-learning the same lesson creates a NEW
-    session on purpose — sessions are attempt-scoped, and `analytics` and the CES
-    history depend on that. Do not add a unique constraint on
-    `(user_id, lesson_id)` or a reuse-if-exists shortcut.
+    Called once per lesson attempt. Re-learning the same lesson (after completing
+    the previous one) creates a NEW session on purpose — sessions are
+    attempt-scoped, and `analytics` and the CES history depend on that. Do NOT
+    add an all-time UNIQUE constraint on `(user_id, lesson_id)` — that would
+    prevent re-taking lessons.
+
+    Idempotency for concurrent creates: a partial UNIQUE index
+    `sessions_open_unique` on `(user_id, lesson_id) WHERE ended_at IS NULL`
+    (migration 20260831000000_sessions_open_unique.sql) ensures two simultaneous
+    requests (e.g. React StrictMode double-render) return the same open session
+    rather than creating duplicate rows. The pre-check below handles the common
+    case; the DB constraint is the concurrent-safe backstop.
 
     Raises:
         HTTPException 404: the lesson does not exist **or** belongs to someone
             else. Deliberately the SAME response for both — a distinct 403 would
             turn this endpoint into an existence oracle for lesson ids. Matches
             `content/router.py:get_lesson` and `media/router.py:get_signed_url`.
-        HTTPException 500: the insert returned no row.
+        HTTPException 500: the insert returned no row and no open session could
+            be found (genuine DB failure).
     """
     lesson_resp = await asyncio.to_thread(
         lambda: (
@@ -177,6 +186,30 @@ async def create_session(
             detail="Lesson not found",
         )
 
+    # Idempotency pre-check: return an existing open session rather than inserting
+    # a duplicate. Handles the React StrictMode double-render case (two requests
+    # arrive at the same millisecond). This is NOT a "reuse forever" shortcut —
+    # it only matches rows WHERE ended_at IS NULL. Completed sessions are excluded.
+    open_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, lesson_id, started_at")
+            .eq("user_id", str(user_id))
+            .eq("lesson_id", str(lesson_id))
+            .is_("ended_at", "null")
+            .maybe_single()
+            .execute()
+        )
+    )
+    open_row = single_row(open_resp)
+    if open_row is not None:
+        started_at = open_row.get("started_at")
+        return {
+            "session_id": str(open_row["session_id"]),
+            "lesson_id": str(open_row.get("lesson_id") or lesson_id),
+            "started_at": str(started_at) if started_at is not None else None,
+        }
+
     insert_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("sessions")
@@ -186,6 +219,29 @@ async def create_session(
     )
     created = rows(insert_resp)
     if not created:
+        # The insert returned no row. This may be a race-condition unique
+        # violation on sessions_open_unique (two concurrent requests both passed
+        # the pre-check, one won the race). Re-fetch the open session before
+        # giving up — if the winner is there, return it.
+        race_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("sessions")
+                .select("session_id, lesson_id, started_at")
+                .eq("user_id", str(user_id))
+                .eq("lesson_id", str(lesson_id))
+                .is_("ended_at", "null")
+                .maybe_single()
+                .execute()
+            )
+        )
+        race_row = single_row(race_resp)
+        if race_row is not None:
+            started_at = race_row.get("started_at")
+            return {
+                "session_id": str(race_row["session_id"]),
+                "lesson_id": str(race_row.get("lesson_id") or lesson_id),
+                "started_at": str(started_at) if started_at is not None else None,
+            }
         logger.error(
             "create_session: sessions insert returned no row for lesson=%s",
             lesson_id,

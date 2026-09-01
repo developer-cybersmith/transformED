@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-14 (S3-55 fallout fix merged to main — 32 Story 3-55 regressions resolved: 29 mock-chain fixes across 5 files, 3 UUID fixture fixes, 2 missing import inspect additions, D105 closed as stale duplicate of D93; Sprint 3 now 17/17)
+**Last updated:** 2026-08-31 (S4-11 session dedup guard + CES architecture confirmation done and merged to master-sprint4-dev3; S4-10 pre-existing test fixes and S4-5 onboarding audit also complete — Sprint 4 now 3/9)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,9 +20,9 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 7 | 0 | 0 | 7 |
+| Sprint 4 | Weeks 8–9 | 9 | 3 | 0 | 6 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **63** | **53** | **0** | **10** |
+| **Total** | | **65** | **56** | **0** | **9** |
 
 Update this table each time a task is checked off below.
 
@@ -931,11 +931,12 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Document any failing profiles and the prompt fix applied
   - **AC:** All 10 profiles pass review checklist; failing cases have documented prompt fixes
 
-- [ ] **Onboarding question quality audit**
+- [x] **Onboarding question quality audit — ✓ 2026-08-31** (Story S4-5)
   - Review all 20 questions for: ambiguity, clinical language, cultural bias, response distribution (are students using the full scale?)
   - Flag questions where >80% of responses are the same value (low discrimination)
   - Propose replacements for flagged questions
   - **AC:** Audit complete; max 3 questions flagged; replacements proposed
+  - **Done:** 7 questions replaced/reworded, mappings corrected, merged to master-sprint4-dev3
 
 - [ ] **PostHog funnel analysis: where do students drop off?**
   - In PostHog, build funnel: session_start → quiz_submitted → teachback_submitted → session_end
@@ -951,6 +952,18 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `get_notification_preference()` lives in `apps/api/app/modules/assessment/notification_prefs.py` (Story 3-33, merged 2026-08-06)
   - **Prerequisite:** Dev 1 must have applied the `user_notification_preferences` migration (D60) before this task is testable end-to-end
   - **AC:** Session report emails respect `session_report_email = false`; no email sent to opted-out user; D60 closed when table exists and this is wired
+
+- [x] **Pre-existing Dev 3 test failure audit & fixes — ✓ 2026-08-31** (Story S4-10)
+  - Audited all 89 Dev 3 tests; fixed 22 pre-existing failures across 5 test files
+  - Root causes: Supabase mock-chain misconfiguration (MagicMock auto-resolution), missing `asyncio.to_thread` mock, UUID normalisation gaps, schema field renames
+  - Created cross-team failure report at `docs/sprint4-pre-existing-failures-report.md`
+  - **AC:** 89/89 Dev 3 tests GREEN; 0 new regressions; report classifies Dev 1 (187F+66E) and Dev 4 (12F) failures by owner
+
+- [x] **Session dedup guard + CES architecture confirmation — ✓ 2026-08-31** (Story S4-11)
+  - Confirmed CES uses WS-only flow (no REST endpoint needed); §8 Item 3 documented
+  - Fixed duplicate session creation: application-level idempotency pre-check + race-fallback + DB partial UNIQUE index
+  - Migration: `supabase/migrations/20260831000000_sessions_open_unique.sql` (apply via Supabase SQL editor before calibration run)
+  - **AC:** 3 new tests pass (dedup return, race-fallback, re-take still creates new session); ruff GREEN; calibration notes §8 updated
 
 ---
 

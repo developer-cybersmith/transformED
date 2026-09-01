@@ -328,18 +328,39 @@ export function useAttentionMonitor(): void {
           }
           lastDropLogged = false;
 
+          // Cross-team review fix (2026-08-29): a window with zero processed
+          // frames (e.g. TEACHING resumed only right before this flush, or
+          // every detectForVideo call in the window threw) previously sent
+          // 0.0 here via `?? 0` -- a real (worst-case) score indistinguishable
+          // from "we measured attention and it was zero". The frozen wire
+          // contract (packages/shared/types/ws.ts) is explicit that these
+          // fields are `null` when no data was collected, so the backend's
+          // compute_ces can redistribute CES weight across the signals that
+          // ARE present instead of averaging in a false zero. `average()`
+          // already returns null for an empty array -- this is NOT the same
+          // as a full window where a face was genuinely never detected
+          // (headPoseSamples/gazeSamples still get real per-frame 0 entries
+          // in that case, so `average()` correctly returns a real 0, not
+          // null; see "scores a completely absent face as worst-case
+          // attention" below).
+          const headPoseScore = average(headPoseSamples);
+          const gazeAverage = average(gazeSamples);
+
           const msg: AttentionSignalMessage = {
             type: 'attention_signal',
             payload: {
               session_id: sessionId,
               quiz_accuracy: null,
               teachback_score: null,
-              behavioral_score: computeBehavioralScore(
-                average(gazeSamples) ?? 0,
-                pickDominantExpression(expressionCounts),
-                interactionEventCount,
-              ),
-              head_pose_score: average(headPoseSamples) ?? 0,
+              behavioral_score:
+                gazeAverage === null
+                  ? null
+                  : computeBehavioralScore(
+                      gazeAverage,
+                      pickDominantExpression(expressionCounts),
+                      interactionEventCount,
+                    ),
+              head_pose_score: headPoseScore,
               // Wall-clock corrected rather than assuming exactly
               // AGGREGATION_WINDOW_MS between flushes -- a backgrounded/
               // throttled tab can push real elapsed time well past 5s, and
