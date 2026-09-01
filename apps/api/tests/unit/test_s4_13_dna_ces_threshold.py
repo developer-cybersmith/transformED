@@ -35,6 +35,7 @@ def _make_settings(
     ces_dna_weight_goal: float = 0.04,
     ces_dna_threshold_min: float = 40.0,
     ces_dna_threshold_max: float = 65.0,
+    ces_dna_dim_midpoint: float = 50.0,
 ) -> MagicMock:
     s = MagicMock()
     s.ces_threshold = ces_threshold
@@ -43,6 +44,7 @@ def _make_settings(
     s.ces_dna_weight_goal = ces_dna_weight_goal
     s.ces_dna_threshold_min = ces_dna_threshold_min
     s.ces_dna_threshold_max = ces_dna_threshold_max
+    s.ces_dna_dim_midpoint = ces_dna_dim_midpoint
     return s
 
 
@@ -181,8 +183,13 @@ def test_threshold_clamped_to_min() -> None:
 # ── AC8 — Settings fields exist ──────────────────────────────────────────────
 
 
-def test_settings_has_all_five_dna_ces_fields() -> None:
-    """AC8: all 5 new env-var-tunable fields exist in Settings with correct defaults."""
+def test_settings_has_all_dna_ces_fields() -> None:
+    """AC8: all env-var-tunable DNA CES fields exist in Settings with correct defaults.
+
+    ces_dna_dim_midpoint (50.0) is the neutral midpoint of the 0-100 DNA dimension
+    scale. Stored in Settings so the no-hardcoded-literals guard stays clean and
+    the value is tunable if the DNA fusion scale ever changes.
+    """
     from app.config import Settings
 
     s = Settings()
@@ -191,11 +198,13 @@ def test_settings_has_all_five_dna_ces_fields() -> None:
     assert hasattr(s, "ces_dna_weight_goal")
     assert hasattr(s, "ces_dna_threshold_min")
     assert hasattr(s, "ces_dna_threshold_max")
+    assert hasattr(s, "ces_dna_dim_midpoint")
     assert abs(s.ces_dna_weight_frustration - 0.08) < 1e-9
     assert abs(s.ces_dna_weight_persistence - 0.05) < 1e-9
     assert abs(s.ces_dna_weight_goal - 0.04) < 1e-9
     assert abs(s.ces_dna_threshold_min - 40.0) < 1e-9
     assert abs(s.ces_dna_threshold_max - 65.0) < 1e-9
+    assert abs(s.ces_dna_dim_midpoint - 50.0) < 1e-9
 
 
 # ── AC4/AC5 — seed_personalized_ces_threshold: Redis cache hit ────────────────

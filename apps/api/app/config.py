@@ -411,6 +411,16 @@ class Settings(BaseSettings):
         le=100.0,
         description="Maximum personalized CES threshold.",
     )
+    ces_dna_dim_midpoint: float = Field(
+        default=50.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Neutral midpoint of the 0-100 DNA dimension scale used in the personalized "
+            "CES threshold formula: adjustment = (midpoint - dim_score) × weight. "
+            "Stored in Settings so it is tunable if the DNA fusion scale ever changes."
+        ),
+    )
 
     @model_validator(mode="after")
     def _ces_weights_must_sum_to_one(self) -> Settings:

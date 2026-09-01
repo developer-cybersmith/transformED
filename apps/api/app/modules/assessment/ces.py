@@ -27,6 +27,10 @@ from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
+# Deliberately includes compute_personalized_threshold (Story 4-13): the
+# personalized threshold formula is CES arithmetic and belongs in this
+# canonical module. guard test test_dunder_all_contains_only_compute_ces
+# was updated in the same commit to reflect this intentional extension.
 __all__ = ["compute_ces", "compute_personalized_threshold"]
 
 # Signal names in canonical order, parallel to the raw_pairs tuple.
@@ -135,10 +139,11 @@ def compute_personalized_threshold(
     """Compute a per-student CES intervention threshold adjusted by Learner DNA.
 
     Formula (Story 4-13, AC7):
+        mid = settings.ces_dna_dim_midpoint  # default 50 — neutral point of 0-100 DNA scale
         threshold = settings.ces_threshold
-            + (50 - frustration_tolerance) × W_frustration  # low tolerance → raise
-            + (50 - persistence)           × W_persistence  # low persistence → raise
-            + (50 - goal_orientation)      × W_goal         # low goal-orient → raise
+            + (mid - frustration_tolerance) × W_frustration  # low tolerance → raise
+            + (mid - persistence)           × W_persistence  # low persistence → raise
+            + (mid - goal_orientation)      × W_goal         # low goal-orient → raise
         clamped to [ces_dna_threshold_min, ces_dna_threshold_max].
 
     ``frustration_tolerance`` is scored by dna_fusion.py as:
@@ -156,18 +161,19 @@ def compute_personalized_threshold(
     if persistence is None and frustration_tolerance is None and goal_orientation is None:
         return settings.ces_threshold
 
+    mid = settings.ces_dna_dim_midpoint
     frustration_adj = (
-        (50.0 - frustration_tolerance) * settings.ces_dna_weight_frustration
+        (mid - frustration_tolerance) * settings.ces_dna_weight_frustration
         if frustration_tolerance is not None
         else 0.0
     )
     persistence_adj = (
-        (50.0 - persistence) * settings.ces_dna_weight_persistence
+        (mid - persistence) * settings.ces_dna_weight_persistence
         if persistence is not None
         else 0.0
     )
     goal_adj = (
-        (50.0 - goal_orientation) * settings.ces_dna_weight_goal
+        (mid - goal_orientation) * settings.ces_dna_weight_goal
         if goal_orientation is not None
         else 0.0
     )
