@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Toggle } from "../Toggle";
 import { ShieldAlert } from "lucide-react";
 import { settingsService } from "@/services/settings.service";
@@ -9,18 +9,52 @@ import type { PrivacySettings } from "@/mocks/data/users";
 export function PrivacyTab() {
     const [settings, setSettings] = useState<PrivacySettings | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(false);
+    const mountedRef = useRef(true);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
+
+    // isStale is checked in ADDITION to mountedRef, not instead of it: under React
+    // Strict Mode's dev-only double-invoke, a phantom mount's cleanup would have
+    // already flipped mountedRef back to true by the time its OWN fetch resolves
+    // (the real remount re-set it) -- a shared ref alone can't tell "this instance
+    // of the effect is stale" from "the component is still mounted". The mount
+    // effect's own per-invocation `cancelled` flag closes that gap; retry calls
+    // (real user clicks, not Strict Mode phantoms) only need the mountedRef check.
+    const fetchPrivacy = useCallback((isStale: () => boolean) => {
+        settingsService.getPrivacy().then(
+            (response) => {
+                if (isStale() || !mountedRef.current) return;
+                setSettings(response.data);
+                setError(false);
+                setIsLoading(false);
+            },
+            () => {
+                if (isStale() || !mountedRef.current) return;
+                setError(true);
+                setIsLoading(false);
+            }
+        );
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
-        settingsService.getPrivacy().then((response) => {
-            if (cancelled) return;
-            setSettings(response.data);
-            setIsLoading(false);
-        });
+        fetchPrivacy(() => cancelled);
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [fetchPrivacy]);
+
+    const retryLoadPrivacy = useCallback(() => {
+        setIsLoading(true);
+        setError(false);
+        fetchPrivacy(() => false);
+    }, [fetchPrivacy]);
 
     function updateSetting<K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) {
         const previous = settings;
@@ -28,6 +62,22 @@ export function PrivacyTab() {
         settingsService.updatePrivacy({ [key]: value } as Partial<PrivacySettings>).catch(() => {
             setSettings(previous);
         });
+    }
+
+    if (error) {
+        return (
+            <div className="flex w-full max-w-3xl flex-col items-center justify-center gap-3 pt-24 pb-24 text-sm text-neutral-400">
+                <p>Couldn&apos;t load your privacy settings — check your connection and try again.</p>
+                <button
+                    type="button"
+                    onClick={retryLoadPrivacy}
+                    disabled={isLoading}
+                    className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                >
+                    Retry
+                </button>
+            </div>
+        );
     }
 
     if (isLoading || !settings) {

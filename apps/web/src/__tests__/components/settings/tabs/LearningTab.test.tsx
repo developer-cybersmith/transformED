@@ -71,4 +71,61 @@ describe('LearningTab', () => {
     await waitFor(() => expect(screen.getByText('Accelerated').className).toContain('text-neutral-900'));
     expect(screen.getByText('Moderate').className).toContain('text-neutral-500');
   });
+
+  it('shows an error state with a Retry button when the initial fetch fails, instead of loading forever (S4-10)', async () => {
+    getPreferencesMock.mockReset();
+    getPreferencesMock.mockRejectedValueOnce(new Error('network error'));
+    render(<LearningTab />);
+
+    await waitFor(() => expect(screen.getByText(/couldn.t load your preferences/i)).not.toBeNull());
+    expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull();
+    expect(screen.queryByText('Loading preferences…')).toBeNull();
+  });
+
+  it('shows the real preferences after clicking Retry following a failed fetch (S4-10)', async () => {
+    getPreferencesMock.mockReset();
+    getPreferencesMock.mockRejectedValueOnce(new Error('network error'));
+    getPreferencesMock.mockResolvedValueOnce({ data: PREFERENCES });
+    const user = userEvent.setup();
+    render(<LearningTab />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByText('Accelerated')).not.toBeNull());
+    expect(getPreferencesMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('hides the Retry button while a retry is in flight, so it cannot be double-clicked into a second overlapping request (S4-10)', async () => {
+    getPreferencesMock.mockReset();
+    getPreferencesMock.mockRejectedValueOnce(new Error('network error'));
+    let resolveRetry!: (value: { data: typeof PREFERENCES }) => void;
+    getPreferencesMock.mockReturnValueOnce(new Promise((resolve) => { resolveRetry = resolve; }));
+    const user = userEvent.setup();
+    render(<LearningTab />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(getPreferencesMock).toHaveBeenCalledTimes(2);
+
+    resolveRetry({ data: PREFERENCES });
+    await waitFor(() => expect(screen.getByText('Accelerated')).not.toBeNull());
+  });
+
+  it('does not warn or throw when a fetch rejects after the component has unmounted (S4-10)', async () => {
+    getPreferencesMock.mockReset();
+    let rejectFetch!: (err: unknown) => void;
+    getPreferencesMock.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectFetch = reject; }));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { unmount } = render(<LearningTab />);
+    unmount();
+    rejectFetch(new Error('late failure'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
 });

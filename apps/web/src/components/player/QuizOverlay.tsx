@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import posthog from 'posthog-js';
 import type { QuizQuestion } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { submitQuiz, type QuizAnswer, type QuizResult } from '@/lib/assessment';
+import { useRovingRadioGroup } from '@/hooks/useRovingRadioGroup';
+import { FOCUS_RING } from '@/lib/a11y/focusRing';
 
 interface QuizOverlayProps {
   questions: QuizQuestion[];
@@ -32,6 +35,14 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
   }, [questionIndex]);
 
   const question = questions[questionIndex];
+
+  const { setItemRef, handleKeyDown, getTabIndex } = useRovingRadioGroup({
+    optionCount: question?.options.length ?? 0,
+    selectedIndex,
+    onSelect: handleSelect,
+    disabled: submitted,
+  });
+
   if (!question) return null;
 
   const isCorrect = submitted && selectedIndex === question.correct_index;
@@ -52,6 +63,15 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
     };
     collectedAnswers.current = [...collectedAnswers.current, answer];
     setSubmitted(true);
+    // Story 2-54: per-question, not per-quiz -- gives within-quiz drop-off
+    // visibility; lesson_completed already covers the lesson-level signal.
+    posthog.capture('quiz_answered', {
+      lesson_id: lesson?.lesson_id ?? null,
+      segment_id: segment?.segment_id ?? null,
+      question_id: question.question_id,
+      is_correct: selectedIndex === question.correct_index,
+      response_time_ms: answer.response_time_ms,
+    });
 
     // Bug fix: sessionId can still be '' here -- mintSession (Player.tsx) is
     // async with retries, and a short first segment's quiz can fire before it
@@ -90,7 +110,7 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
 
   function optionStyle(idx: number): string {
     const base =
-      'w-full text-left px-4 py-3 rounded-xl border text-sm transition-colors duration-150 ';
+      `w-full text-left px-4 py-3 rounded-xl border text-sm transition-colors duration-150 ${FOCUS_RING} `;
 
     if (!submitted) {
       return base + (selectedIndex === idx
@@ -104,7 +124,7 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
     if (idx === selectedIndex) {
       return base + 'border-red-500 bg-red-500/10 text-red-700';
     }
-    return base + 'border-neutral-100 bg-neutral-50/50 text-neutral-400';
+    return base + 'border-neutral-100 bg-neutral-50/50 text-neutral-600';
   }
 
   return (
@@ -128,15 +148,24 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
         </div>
 
         {/* Options */}
-        <div className="px-6 py-4 space-y-2">
+        <div
+          role="radiogroup"
+          aria-label={question.question}
+          className="px-6 py-4 space-y-2"
+        >
           {question.options.map((opt, idx) => (
             <button
               key={idx}
+              ref={setItemRef(idx)}
+              role="radio"
+              aria-checked={selectedIndex === idx}
+              tabIndex={getTabIndex(idx)}
               onClick={() => handleSelect(idx)}
+              onKeyDown={(e) => handleKeyDown(e, idx)}
               disabled={submitted}
               className={optionStyle(idx)}
             >
-              <span className="text-neutral-400 mr-2">
+              <span className="text-neutral-600 mr-2">
                 {String.fromCharCode(65 + idx)}.
               </span>
               {opt}
@@ -144,18 +173,26 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
           ))}
         </div>
 
-        {/* Per-question explanation */}
-        {submitted && (
-          <div className={[
+        {/* Per-question explanation. Always mounted (never conditionally
+            rendered) so this is a genuine ARIA live-region content MUTATION
+            rather than a fresh node insertion -- some screen reader/browser
+            combinations only announce the former (review fix, S4-04). */}
+        <div
+          role="status"
+          aria-live="polite"
+          className={submitted ? [
             'mx-6 mb-4 px-4 py-3 rounded-xl text-sm',
             isCorrect
               ? 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/30'
               : 'bg-red-500/10 text-red-700 border border-red-500/30',
-          ].join(' ')}>
-            <span className="font-semibold mr-1">{isCorrect ? 'Correct!' : 'Not quite.'}</span>
-            {question.explanation}
-          </div>
-        )}
+          ].join(' ') : 'sr-only'}>
+          {submitted && (
+            <>
+              <span className="font-semibold mr-1">{isCorrect ? 'Correct!' : 'Not quite.'}</span>
+              {question.explanation}
+            </>
+          )}
+        </div>
 
         {/* Score summary — shown after last question API returns */}
         {result && (
@@ -180,9 +217,9 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
             <button
               onClick={handleSubmit}
               disabled={selectedIndex === null}
-              className="px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
+              className={`px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
                          text-primary text-sm font-semibold transition-all
-                         disabled:opacity-40 disabled:cursor-not-allowed"
+                         disabled:opacity-40 disabled:cursor-not-allowed ${FOCUS_RING}`}
             >
               Submit
             </button>
@@ -190,9 +227,9 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
             <button
               onClick={handleNext}
               disabled={isSubmitting}
-              className="px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
+              className={`px-5 py-2 rounded-full bg-[var(--accent-secondary)] hover:brightness-105
                          text-primary text-sm font-semibold transition-all
-                         disabled:opacity-40 disabled:cursor-not-allowed"
+                         disabled:opacity-40 disabled:cursor-not-allowed ${FOCUS_RING}`}
             >
               {isSubmitting ? 'Scoring…' : isLast ? 'Continue' : 'Next question'}
             </button>

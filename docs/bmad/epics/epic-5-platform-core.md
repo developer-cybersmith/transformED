@@ -26,7 +26,7 @@ Without auth, payments, and a hardened production environment, TransformED is a 
 
 - As a **prospective student**, I can land on the homepage, understand the product value, and sign up in under 2 minutes.
 - As a **student**, I must complete the Learner DNA onboarding before I can upload my first lesson (platform gate).
-- As a **student**, I can pay for a lesson using a hosted Stripe checkout page — my card details never touch TransformED's servers.
+- As a **student**, I can pay for a lesson using Razorpay's hosted checkout overlay — my card/UPI/wallet details never touch TransformED's servers.
 - As a **student**, I receive an email when my lesson is ready and another email with my session report link.
 - As an **admin**, I can view all running and failed pipeline jobs, their costs, and retry a failed job.
 - As an **admin**, I can see all users, their lesson counts, and payment status.
@@ -63,23 +63,27 @@ Middleware (`middleware.ts`) checks `learner_dna.completed_at`; any route under 
 ## Payments
 
 ### Provider
-Stripe Checkout (hosted) — no card data on TransformED servers under any circumstances.
+**Razorpay** (Standard Checkout, Orders API) — chosen over Stripe 2026-08-24 for native UPI/wallet/netbanking support and India-first pricing. See `docs/decisions/ADR-002-payment-gateway-razorpay.md`. No card/UPI data on TransformED servers under any circumstances.
 
 ### Flow
 
 ```
 Student clicks "Buy Lesson"
-  └─► POST /api/payments/create-checkout-session
-        └─► Stripe creates hosted checkout session
-              └─► Student enters card on stripe.com
-                    ├─► Success → stripe.com redirects to /payment/success?session_id=...
-                    └─► Cancel  → stripe.com redirects to /payment/cancel
-  
-Stripe webhook → POST /api/payments/webhook
-  └─► Verify Stripe-Signature header (STRIPE_WEBHOOK_SECRET)
-        └─► On checkout.session.completed:
+  └─► POST /api/payments/create-order
+        └─► Backend creates a Razorpay Order (Orders API)
+              └─► Frontend loads checkout.js, opens Razorpay's hosted overlay with order_id
+                    ├─► Success (client handler) → optimistic redirect to /payment/success?order_id=...
+                    └─► Dismissed/failed         → /payment/cancel
+
+Razorpay webhook (payment.captured) → POST /api/payments/webhook   ← source of truth for fulfillment
+  └─► Verify X-Razorpay-Signature header (HMAC-SHA256 over raw body, RAZORPAY_WEBHOOK_SECRET)
+        └─► On payment.captured:
               └─► Write lesson_access record → unlock upload for user
 ```
+
+The client-side success callback is UX-only (lets the student see a success page immediately) —
+the backend must never grant `lesson_access` from it. Only the signature-verified webhook is
+trusted, since the browser callback can be spoofed or the tab can close before it fires.
 
 ### Lesson Access Gating
 - `lesson_access` table: `{ user_id, lesson_credits, updated_at }`
@@ -88,9 +92,9 @@ Stripe webhook → POST /api/payments/webhook
 - RLS: users can only read their own `lesson_access` row
 
 ### Key Constraints
-- Stripe Checkout (hosted) only — no Stripe Elements, no card data on our servers
-- `STRIPE_WEBHOOK_SECRET` validated on every webhook call — unsigned webhooks rejected with 400
-- Idempotency: webhook handler checks if `stripe_session_id` already processed to prevent double-credit
+- Razorpay Standard Checkout (`checkout.js` hosted overlay) only — no custom card form, no card/UPI data on our servers
+- `RAZORPAY_WEBHOOK_SECRET` validated on every webhook call (raw-body HMAC-SHA256) — unsigned/invalid webhooks rejected with 400
+- Idempotency: webhook handler checks if `razorpay_payment_id` already processed to prevent double-credit
 
 ---
 
@@ -142,7 +146,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 
 ### On-Call Runbook
 - Location: `docs/ops/runbook.md`
-- Covers: pipeline job stuck, Redis memory full, Stripe webhook failing, Supabase connection pool exhausted
+- Covers: pipeline job stuck, Redis memory full, Razorpay webhook failing, Supabase connection pool exhausted
 
 ### DPDP Act Compliance (India)
 - Privacy policy published at `/privacy`
@@ -178,7 +182,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 | Email templates | `backend/notifications/templates/*.html` |
 | Admin panel | `app/(admin)/admin/` (route group with layout auth check) |
 | Landing pages | `app/page.tsx`, `app/pricing/page.tsx`, `app/privacy/page.tsx` |
-| DB migrations | `supabase/migrations/` — `lesson_access`, `profiles` (is_admin), `stripe_events`, `user_consents` (DPDP consent audit — Sprint 2) |
+| DB migrations | `supabase/migrations/` — `lesson_access`, `profiles` (is_admin), `razorpay_events`, `user_consents` (DPDP consent audit — Sprint 2) |
 | Runbook | `docs/ops/runbook.md` |
 | RLS audit | `docs/security/rls-audit.md` |
 
@@ -201,7 +205,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 |---|---|
 | Sprint 0 infra + Supabase project | Done |
 | Epics 1–4 functionally complete (pipeline, player, assessment, tutor) | Must be done before E2E test |
-| Stripe account + API keys provisioned | Must be done before Sprint 2 |
+| Razorpay account + API keys provisioned | Must be done before Sprint 2 |
 | Resend account + domain verified | Must be done before Sprint 3 |
 | Legal review of DPDP disclaimer + privacy policy | Must be done before Sprint 4 |
 | Supabase Pro plan (for backups) | Must be upgraded before Sprint 4 |
@@ -213,10 +217,10 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 - [ ] New user can sign up with email, verify, complete onboarding, and land on dashboard
 - [ ] Google OAuth sign-in works end-to-end
 - [ ] Onboarding gate blocks `/upload` and `/lesson` routes until DNA completed
-- [ ] Stripe Checkout session created and student redirected to Stripe-hosted page
-- [ ] Successful payment → `lesson_credits` incremented → upload unlocked
-- [ ] Stripe webhook signature validation tested with valid and invalid signatures
-- [ ] Webhook idempotency tested: duplicate `checkout.session.completed` does not double-credit
+- [ ] Razorpay Order created and student sees the Razorpay Standard Checkout overlay
+- [ ] Successful payment → `lesson_credits` incremented → upload unlocked (via verified webhook, not the client callback)
+- [ ] Razorpay webhook signature validation tested with valid and invalid `X-Razorpay-Signature` values
+- [ ] Webhook idempotency tested: duplicate `payment.captured` for the same `razorpay_payment_id` does not double-credit
 - [ ] "Lesson ready" email delivered within 2 minutes of `package_builder` completion
 - [ ] Admin panel shows all job statuses, costs, and users (real data, not mocked)
 - [ ] Failed job visible in admin panel with error message; retry queues new ARQ job
@@ -234,7 +238,7 @@ Admin panel is a Next.js route group `(admin)` with a layout that checks `is_adm
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Stripe webhook delivery failure (network, Railway cold start) | Medium | High | Webhook retry in Stripe dashboard; idempotency key prevents double-process |
+| Razorpay webhook delivery failure (network, Railway cold start) | Medium | High | Razorpay auto-retries failed webhooks (dashboard-configurable schedule); idempotency key prevents double-process |
 | RLS misconfiguration exposes user data | Low | Critical | RLS audit checklist before every migration merge; automated test in CI |
 | Supabase connection pool exhaustion under 50 concurrent users | Medium | High | Use `pgBouncer` mode on Supabase; pool size tuned in Sprint 4 load test |
 | DPDP compliance gap discovered post-launch | Low | High | Legal review in Sprint 3; data deletion flow tested before launch |

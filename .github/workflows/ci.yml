@@ -161,7 +161,13 @@ jobs:
           # caught test_no_other_table_policy_changed missing). Confirmed
           # against this run's own real log ("1 failed, 78 passed" = 79
           # selected), not guessed.
-          EXPECTED_PG_TESTS=79
+          # Grown to 86 by Story 2-52 / S4-12's tests/integration/
+          # test_migration_notification_log.py (7 new postgres-marked tests
+          # verifying the notification_log migration's UNIQUE constraint,
+          # RLS-zero-policies posture, and the job's exact atomic claim SQL
+          # against a real Postgres instance). Confirmed against this PR's
+          # own CI run ("86 passed, 20 deselected"), not guessed.
+          EXPECTED_PG_TESTS=86
           if ! grep -qE "\b${EXPECTED_PG_TESTS} passed\b" /tmp/pg-tests.log; then
             echo "::error::expected ${EXPECTED_PG_TESTS} postgres-marked tests to pass; the log disagrees."
             echo "::error::If you added or removed one, update EXPECTED_PG_TESTS in this file deliberately."

@@ -45,7 +45,30 @@ function LessonErrorState({ message }: { message?: string | null }) {
   );
 }
 
-function LessonGeneratingState() {
+function LessonGeneratingState({ timedOut, onCheckAgain }: { timedOut: boolean; onCheckAgain: () => void }) {
+  // S4-11 review finding: closing the poll's infinite-loop gap (SWR stops
+  // calling refreshInterval once it returns 0) means this hook can no longer
+  // learn on its own whether a still-generating lesson has finished --
+  // without this branch, the plain spinner below would silently freeze
+  // forever with no way to tell "still working" apart from "gave up
+  // 3 hours ago". Mirrors UploadFlow.tsx's giveUpSlow() degradation.
+  if (timedOut) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center" data-testid="lesson-generating-timeout">
+        <p className="text-neutral-500 mb-6">
+          This is taking longer than expected. Your lesson may still be generating — check again in a moment.
+        </p>
+        <button
+          type="button"
+          onClick={onCheckAgain}
+          className="flex items-center gap-2 px-5 py-2.5 bg-[var(--accent-primary)] rounded-full text-white text-sm font-medium hover:scale-105 transition-transform"
+        >
+          Check again
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex-1 flex flex-col items-center justify-center p-6 text-center"
@@ -62,7 +85,7 @@ interface PlayerLoaderProps {
 }
 
 export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
-  const { lesson, isLoading, error, status, serverError, refetch } = useLesson(lessonId);
+  const { lesson, isLoading, error, status, serverError, pollTimedOut, refetch } = useLesson(lessonId);
 
   // Status-derived states take priority over the generic SWR `error` (review
   // fix): SWR retains the last good data/status across a failed background
@@ -70,7 +93,9 @@ export function PlayerLoader({ lessonId }: PlayerLoaderProps) {
   // that's still genuinely running/queued to the permanent error page.
   // "running"/"queued" (still generating) is a normal state a direct-navigated
   // (bookmark/refresh/back-button) request can land on -- not an error.
-  if (status === 'running' || status === 'queued') return <LessonGeneratingState />;
+  if (status === 'running' || status === 'queued') {
+    return <LessonGeneratingState timedOut={pollTimedOut} onCheckAgain={refetch} />;
+  }
   if (status === 'failed') return <LessonErrorState message={serverError} />;
   // Gated on status === 'ready' (not just lesson truthiness, review fix) --
   // content is only ever populated atomically with status 'ready' by the
