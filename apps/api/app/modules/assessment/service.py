@@ -1776,17 +1776,18 @@ async def seed_personalized_ces_threshold(
 
         # Step 2 — fall back to Supabase
         if persistence is None and frustration_tolerance is None and goal_orientation is None:
-            resp = (
+            _db_resp = (
                 supabase.table("learner_dna")
                 .select("persistence, frustration_tolerance, goal_orientation")
                 .eq("user_id", user_id)
                 .maybe_single()
                 .execute()
             )
-            if resp.data:
-                persistence = resp.data.get("persistence")
-                frustration_tolerance = resp.data.get("frustration_tolerance")
-                goal_orientation = resp.data.get("goal_orientation")
+            _db_row = single_row(_db_resp)
+            if _db_row is not None:
+                persistence = _db_row.get("persistence")
+                frustration_tolerance = _db_row.get("frustration_tolerance")
+                goal_orientation = _db_row.get("goal_orientation")
 
         # Step 3 — compute threshold (all-None → base)
         threshold = compute_personalized_threshold(
