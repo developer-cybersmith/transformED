@@ -208,7 +208,7 @@ class OpenAIImageProvider(ImageProvider):
             )
 
         try:
-            response = await self._client.images.generate(
+            response = await self._client.images.generate(  # type: ignore[call-overload]
                 model=_MODEL,
                 prompt=prompt,
                 size=size,

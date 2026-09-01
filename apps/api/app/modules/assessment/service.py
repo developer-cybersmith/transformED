@@ -1397,14 +1397,13 @@ async def process_onboarding(
     """
     # D137 fix — detect reassessment path before scoring
     existing_dna = await _fetch_existing_dna(user_id=user_id, supabase=supabase)
-    is_reassessment = existing_dna is not None
-    existing_session_count = int(existing_dna.get("session_count") or 0) if is_reassessment else 0
+    existing_session_count = int(existing_dna.get("session_count") or 0) if existing_dna is not None else 0
 
     # Step 1 — Compute dimension scores
     scores = _compute_dimension_scores(responses)
 
     # D137 fix — blend fresh self-report into existing scores on reassessment
-    if is_reassessment:
+    if existing_dna is not None:
         retain = get_settings().dna_ema_retain
         for dim in ALL_NINE_DIMENSIONS:
             scores[dim] = _apply_ema(existing_dna.get(dim), scores[dim], retain)
