@@ -784,14 +784,16 @@ async def upload_lesson(
         # single-process uvicorn for its own duration. asyncio.to_thread runs
         # it on a worker thread instead (same pattern as auth/router.py).
         books_resp = await asyncio.to_thread(
-            lambda: supabase.table("books")
-            .insert(
-                {
-                    "user_id": user_id,
-                    "filename": safe_filename,
-                }
+            lambda: (
+                supabase.table("books")
+                .insert(
+                    {
+                        "user_id": user_id,
+                        "filename": safe_filename,
+                    }
+                )
+                .execute()
             )
-            .execute()
         )
         books_rows = rows(books_resp)
         if not books_rows:

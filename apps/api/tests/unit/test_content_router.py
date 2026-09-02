@@ -230,9 +230,7 @@ async def test_upload_lesson_concurrent_requests_do_not_serialize_on_blocking_io
     upload_delay_s = 0.15
 
     sb = _make_supabase_mock()
-    sb.storage.from_.return_value.upload.side_effect = lambda **_kwargs: time.sleep(
-        upload_delay_s
-    )
+    sb.storage.from_.return_value.upload.side_effect = lambda **_kwargs: time.sleep(upload_delay_s)
 
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
     app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
@@ -370,8 +368,8 @@ async def test_upload_lesson_dedup_cleanup_does_not_serialize_on_blocking_io() -
     sb.storage.from_.return_value.remove.side_effect = lambda *_a, **_kw: time.sleep(
         cleanup_delay_s
     )
-    sb.table("books").delete.return_value.eq.return_value.execute.side_effect = (
-        lambda: time.sleep(cleanup_delay_s)
+    sb.table("books").delete.return_value.eq.return_value.execute.side_effect = lambda: time.sleep(
+        cleanup_delay_s
     )
 
     arq_mock = AsyncMock()
@@ -443,8 +441,8 @@ async def test_upload_lesson_exception_cleanup_does_not_serialize_on_blocking_io
     sb.storage.from_.return_value.remove.side_effect = lambda *_a, **_kw: time.sleep(
         cleanup_delay_s
     )
-    sb.table("books").delete.return_value.eq.return_value.execute.side_effect = (
-        lambda: time.sleep(cleanup_delay_s)
+    sb.table("books").delete.return_value.eq.return_value.execute.side_effect = lambda: time.sleep(
+        cleanup_delay_s
     )
 
     arq_mock = AsyncMock()
