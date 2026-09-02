@@ -10,8 +10,10 @@ Provider types
 LLMProvider     Text generation (chat completions, structured output)
 TTSProvider     Text-to-speech synthesis
 ImageProvider   Image generation
-AvatarProvider  Pre-cached HeyGen avatar clips (no live per-lesson calls)
 EmailProvider   Transactional email delivery (Story 2-52)
+
+(AvatarProvider — HeyGen cached avatar clips — removed 2026-09-02, D144:
+dead/unwired code, no pipeline node ever called it.)
 """
 
 from __future__ import annotations
@@ -138,28 +140,6 @@ class EmbeddingsProvider(ABC):
             A 2-tuple of:
             - ``list[list[float]]``: One embedding vector per input text.
             - ``int``: Total tokens consumed (for cost tracking).
-        """
-        ...
-
-
-class AvatarProvider(ABC):
-    """Abstract interface for avatar intro/outro video clips.
-
-    Per PRD §8 (Option 6 cached approach): HeyGen clips are pre-generated
-    and stored in Supabase Storage.  There are NO live HeyGen API calls per
-    lesson.  This provider simply returns signed URLs to the cached clips.
-    """
-
-    @abstractmethod
-    async def get_cached_clip(self, clip_type: str) -> str:
-        """Return a signed Supabase Storage URL for a cached avatar clip.
-
-        Args:
-            clip_type: One of ``"intro"`` or ``"outro"`` (may be extended to
-                       include specific module variants in future sprints).
-
-        Returns:
-            A time-limited signed URL to the cached MP4 clip in Supabase Storage.
         """
         ...
 
