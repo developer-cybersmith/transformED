@@ -215,12 +215,15 @@ class LessonPackage(BaseModel):
     metadata: LessonMetadata
     segments: Annotated[list[Segment], Field(min_length=1)]
     glossary: list[GlossaryEntry]
-    # Story 1-5 — HeyGen cached-clip URLs (signed Supabase Storage URLs, or None
+    # Story 1-5 — avatar cached-clip URLs (signed Supabase Storage URLs, or None
     # when unavailable/not yet populated). Defaults to None, matching `tier`'s
     # retroactive-field pattern above — package_builder_node does not populate
     # these yet (Dev 1 follow-up, tracked in
     # docs/proposals/avatar-fields-schema-change.md); every lesson validated
-    # today will have all 3 fields default to None.
+    # today will have all 3 fields default to None. Vendor-agnostic: the
+    # HeyGen provider that would have populated these was removed as
+    # dead/unwired code (D141) — these fields are unaffected and remain for
+    # a future implementation.
     avatar_intro_url: str | None = None
     avatar_static_url: str | None = None
     avatar_outro_url: str | None = None

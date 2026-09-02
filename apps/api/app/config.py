@@ -101,9 +101,6 @@ class Settings(BaseSettings):
         default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam"
     )
 
-    # ── HeyGen ────────────────────────────────────────────────────────────────
-    heygen_api_key: str = Field(..., description="HeyGen API key for avatar clips")
-
     # ── Langfuse ──────────────────────────────────────────────────────────────
     langfuse_public_key: str = Field(..., description="Langfuse public key")
     langfuse_secret_key: str = Field(..., description="Langfuse secret key")

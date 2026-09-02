@@ -111,9 +111,12 @@ def test_every_referenced_bucket_is_provisioned() -> None:
 
 
 def test_constant_based_bucket_access_is_resolved() -> None:
-    """Guard the scanner itself: heygen.py's _AVATAR_BUCKET-style access must
-    be visible to the manifest — a literal-only regex missed it once already."""
-    assert "avatar-clips" in _referenced_buckets()
+    """Guard the scanner itself: a module-constant-based `.storage.from_(...)`
+    access must be visible to the manifest — a literal-only regex missed one
+    once already. (D141: was heygen.py's `_AVATAR_BUCKET`, before HeyGen was
+    removed as dead/unwired code; repointed to book_ingest.py's
+    `_SOURCE_BUCKET`, the same module-constant pattern, still real.)"""
+    assert "source-pdfs" in _referenced_buckets()
 
 
 def test_no_unresolvable_bucket_identifiers() -> None:
@@ -140,10 +143,25 @@ def test_migration_provisions_every_bucket() -> None:
 
 
 def test_migration_provisions_all_buckets_private() -> None:
-    """D1: lesson content is paid — every bucket row must be public=false."""
+    """D1: lesson content is paid — every bucket row must be public=false.
+
+    D141: was an exact set-equality between the migration's rows and
+    `_PROVISIONED` — relaxed to a subset check. The frozen migration
+    (`supabase/migrations/` is never modified, CLAUDE.md) still provisions
+    `avatar-clips` from before HeyGen was removed; `REQUIRED_BUCKETS` no
+    longer requires it, since nothing references it anymore. A bucket the
+    app no longer requires is allowed to keep existing in Supabase, orphaned
+    but harmless — the invariant this test actually protects (D1: every
+    PROVISIONED bucket is private) still runs over every row the migration
+    defines, `avatar-clips` included, not just the currently-required ones.
+    """
     migration_text = _MIGRATION.read_text(encoding="utf-8").lower()
     rows = re.findall(r"\(\s*'([^']+)'\s*,\s*'[^']+'\s*,\s*(\w+)\s*\)", migration_text)
-    assert {name for name, _ in rows} == _PROVISIONED
+    migration_buckets = {name for name, _ in rows}
+    assert _PROVISIONED <= migration_buckets, (
+        f"every currently-required bucket must still be provisioned in the migration: "
+        f"missing {_PROVISIONED - migration_buckets}"
+    )
     public_rows = [name for name, flag in rows if flag != "false"]
     assert not public_rows, (
         f"buckets provisioned public in {_MIGRATION.name}: {public_rows} — "
