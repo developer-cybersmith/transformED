@@ -554,7 +554,12 @@ async def process_attention_signal(
 
             # D6: _can_intervene_distraction uses a Lua script to atomically check cooldown +
             # distraction cap and increment the count — no separate EXISTS+GET two-step.
-            if gap_ok and v0 < settings.ces_threshold and v1 < settings.ces_threshold:
+            # Story 4-13: read personalized threshold seeded at session creation (AC6).
+            _threshold_raw = await redis.get(f"session:{session_id}:ces_threshold")
+            _threshold: float = (
+                float(_threshold_raw) if _threshold_raw is not None else settings.ces_threshold
+            )
+            if gap_ok and v0 < _threshold and v1 < _threshold:
                 from app.modules.tutor.state_machine.graph import (  # noqa: PLC0415
                     _can_intervene_distraction,
                 )
