@@ -327,16 +327,20 @@ async def test_retry_module_imports_and_still_classifies_httpx_without_openai() 
 
     Run in a SUBPROCESS, deliberately. The obvious version — monkeypatch
     `builtins.__import__` and `importlib.reload(app.core.retry)` — mutates the
-    live module, which rebinds `SanitizedHTTPError` to a NEW class object.
-    `app.providers.image.imagen` imported the OLD one at import time, so the
-    reloaded `with_retry`'s `except SanitizedHTTPError` stops matching what
-    imagen raises, and AC-5's retry silently dies for the rest of the session.
-    Verified repro before this was changed:
+    live module, which rebinds `SanitizedHTTPError` to a NEW class object. Any
+    provider module that imported the OLD one at import time would have its
+    `with_retry`'s `except SanitizedHTTPError` stop matching what it raises,
+    silently killing that provider's retry for the rest of the session.
+    Verified repro before this was changed (against the now-deleted
+    `ImagenProvider`, `SanitizedHTTPError`'s original consumer — see D121 —
+    reproduced identically for any provider importing the class at module
+    load time, which is why the guard remains general rather than tied to
+    one provider):
 
         pytest tests/unit/test_image_providers.py
                tests/unit/test_retry.py::test_retry_module_imports..._without_openai
                tests/unit/test_breaker_accounting.py
-        -> FAILED test_imagen_retryable_error_is_retried_and_never_leaks_the_key
+        -> FAILED (Imagen's retryable-error test, since removed with the provider)
 
     `monkeypatch.undo()` restores `sys.modules` and `__import__` but cannot
     restore class identity already captured by other modules. A subprocess has no
