@@ -680,6 +680,13 @@ class Settings(BaseSettings):
         "float to the SDK sets connect to that value too, destroying the 5s connect "
         "guard and making hangs WORSE than the default.",
     )
+    google_image_request_timeout_s: float = Field(
+        default=180.0,
+        description="Read/write/pool timeout for Gemini 'Nano Banana' image generation "
+        "(seconds, Story 5-8b) — same rationale as openai_image_request_timeout_s. "
+        "Same NOTE applies: always build httpx.Timeout(..., connect=5.0) explicitly, "
+        "never pass a bare float.",
+    )
 
     # ── ARQ / pipeline timeouts (Story 2-0 AC-5) ──────────────────────────────
     # Invariant (contract-tested): arq_job_timeout_s >= extract_timeout_cap_s + 300

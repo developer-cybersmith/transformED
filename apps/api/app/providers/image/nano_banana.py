@@ -108,6 +108,14 @@ class NanoBananaProvider(ImageProvider):
 
         settings = get_settings()
         self._api_key = settings.google_api_key
+        # Explicit httpx.Timeout, NEVER a bare float — a bare float sets
+        # connect= to the same value, destroying the 5s connect guard and
+        # making a connect hang strictly worse (same rationale as
+        # openai_image.py's identical comment; review finding, Story 5-8b:
+        # this file originally copied imagen.py's bare `timeout=30.0`
+        # verbatim, which was fine for an occasional fallback call but not
+        # for this file's new PRIMARY role, hit on every slide).
+        self._timeout = httpx.Timeout(settings.google_image_request_timeout_s, connect=5.0)
         self._lesson_id = lesson_id
         self._langfuse: Langfuse | None
         try:
@@ -174,7 +182,7 @@ class NanoBananaProvider(ImageProvider):
 
         try:
             aspect_ratio = _closest_aspect_ratio(size)
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
                     _NANO_BANANA_URL,
                     headers={"x-goog-api-key": self._api_key or ""},

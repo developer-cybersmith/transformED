@@ -258,11 +258,56 @@ async def test_nano_banana_success_returns_data_uri() -> None:
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = NanoBananaProvider(lesson_id="lesson-1")
         result = await provider.generate("A friendly robot teaching a class", size="1280x720")
 
     assert result == "data:image/png;base64,ZmFrZWltYWdlbg=="
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_nano_banana_uses_an_explicit_timeout_never_a_bare_float() -> None:
+    """Review finding (correctness): this file originally copied the deleted
+    imagen.py's `httpx.AsyncClient(timeout=30.0)` verbatim — a bare float,
+    which httpx applies to ALL categories including connect=, destroying the
+    5s connect guard `openai_image.py`'s own comment explicitly warns against
+    (a bare float here would make a connect hang WORSE, not just slower).
+    This matters more for this file than it did for imagen.py: Nano Banana is
+    now the PRIMARY tier, hit on every slide, not an occasional fallback."""
+    from app.providers.image.nano_banana import NanoBananaProvider
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "candidates": [
+            {"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "ZmFrZQ=="}}]}}
+        ]
+    }
+    mock_response.raise_for_status.return_value = None
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = NanoBananaProvider(lesson_id="lesson-1")
+        await provider.generate("A friendly robot", size="1024x1024")
+
+    timeout = mock_client_cls.call_args.kwargs.get("timeout")
+    assert isinstance(timeout, httpx.Timeout), (
+        "timeout must be an explicit httpx.Timeout, never a bare float — a bare float "
+        "also overwrites connect=, destroying the 5s connect guard"
+    )
+    assert timeout.connect == 5.0, "connect guard must stay at 5s regardless of the read timeout"
+    assert timeout.read == 180.0
 
 
 @pytest.mark.unit
@@ -278,6 +323,7 @@ async def test_nano_banana_circuit_open_raises_before_any_http_call() -> None:
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = NanoBananaProvider(lesson_id="lesson-1")
         with pytest.raises(RuntimeError, match="Circuit breaker OPEN"):
@@ -312,6 +358,7 @@ async def test_nano_banana_authenticates_via_header_not_url_query_param() -> Non
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "SUPER-SECRET-KEY-VALUE"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = NanoBananaProvider(lesson_id="lesson-1")
         await provider.generate("A friendly robot", size="1024x1024")
@@ -350,6 +397,7 @@ async def test_nano_banana_translates_landscape_size_to_the_matching_aspect_rati
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = NanoBananaProvider(lesson_id="lesson-1")
         # "1280x720" is the real current production value (graph.py's
@@ -383,6 +431,7 @@ async def test_nano_banana_unparseable_size_degrades_to_square_rather_than_raisi
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = NanoBananaProvider(lesson_id="lesson-1")
         result = await provider.generate("A friendly robot", size="not-a-size")
@@ -414,6 +463,7 @@ async def test_nano_banana_empty_response_raises_value_error() -> None:
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = NanoBananaProvider(lesson_id="lesson-1")
         with pytest.raises(ValueError, match="empty response"):
@@ -447,6 +497,7 @@ async def test_nano_banana_retryable_error_retries_exactly_twice_then_raises() -
         patch("app.core.retry.asyncio.sleep", new=AsyncMock()),
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = NanoBananaProvider(lesson_id="lesson-1")
         with pytest.raises(httpx.HTTPStatusError):

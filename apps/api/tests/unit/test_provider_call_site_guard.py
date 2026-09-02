@@ -10,14 +10,25 @@ second call site bypasses the circuit breaker/cost-ceiling/fallback
 semantics the chain exists to enforce — silently, since nothing else in this
 suite checks WHERE a provider is constructed, only what happens once it is.
 
-Detection is pure AST: walk `graph.py` for every `ast.Call` whose `func` is a
-bare `Name` matching one of the two provider class names, then climb the
-tree (via a parent-lookup map, same technique as
-`test_unbounded_queries.py`'s `_parents`/`_outermost_chain`) to the nearest
-enclosing function and assert its name is `_generate_image_with_fallback`.
-No docstring/comment stripping is needed here (unlike the query-boundedness
-guard) — a plain string literal never parses as an `ast.Call`, so prose can
-never produce a false positive the way it can for substring-based scanners.
+Detection is pure AST: walk `graph.py` for every `ast.Call` whose `func` is
+either a bare `Name` or a module-qualified `Attribute` matching one of the
+two provider class names, then climb the tree (via a parent-lookup map, same
+technique as `test_unbounded_queries.py`'s `_parents`/`_outermost_chain`) to
+the nearest enclosing function and assert its name is
+`_generate_image_with_fallback`. No docstring/comment stripping is needed
+here (unlike the query-boundedness guard) — a plain string literal never
+parses as an `ast.Call`, so prose can never produce a false positive the way
+it can for substring-based scanners.
+
+Known, accepted scope limit (review finding, matching this repo's own
+convention of stating a guard's boundary rather than pretending it is
+complete): arbitrary indirection — aliasing the class to a variable, then
+calling the variable, or calling via `getattr` — evades this scanner. Only a
+full data-flow analysis catches those, which is out of proportion to the
+realistic risk here: a copy-pasted or newly-added call site looks like
+`ClassName(...)` or `module.ClassName(...)`, not a deliberately obfuscated
+indirection. If that changes, widen the scanner; do not weaken this test to
+make a red run green.
 """
 
 from __future__ import annotations
@@ -53,8 +64,21 @@ def _enclosing_function_name(node: ast.AST, parents: dict[int, ast.AST]) -> str 
 
 def _provider_instantiation_sites(source: str) -> list[tuple[str, str | None]]:
     """`(provider_class_name, enclosing_function_name_or_None)` for every
-    direct instantiation call (`NanoBananaProvider(...)`,
-    `OpenAIImageProvider(...)`) found anywhere in *source*."""
+    direct instantiation call found anywhere in *source* — both the bare-name
+    form (`NanoBananaProvider(...)`, matching this repo's actual `from ...
+    import NanoBananaProvider` style) and the module-qualified form
+    (`some_module.NanoBananaProvider(...)`, review finding: the original
+    version only matched `ast.Name`, missing this shape entirely).
+
+    Known, accepted limitation (same honesty this repo's other AST guards —
+    e.g. test_unbounded_queries.py — document about their own scope): this
+    cannot catch arbitrary indirection such as aliasing the class to a
+    variable (`cls = NanoBananaProvider; cls(...)`) or calling it via
+    `getattr`. Those require full data-flow analysis, not a syntax-level
+    scan, and are a materially less likely accidental-reintroduction shape
+    than a straightforward second `ClassName(...)` or `module.ClassName(...)`
+    call — which is exactly what a copy-pasted call site looks like.
+    """
     tree = ast.parse(source)
     parents = _parents(tree)
     sites: list[tuple[str, str | None]] = []
@@ -64,6 +88,8 @@ def _provider_instantiation_sites(source: str) -> list[tuple[str, str | None]]:
         func = node.func
         if isinstance(func, ast.Name) and func.id in _PROVIDER_CLASS_NAMES:
             sites.append((func.id, _enclosing_function_name(node, parents)))
+        elif isinstance(func, ast.Attribute) and func.attr in _PROVIDER_CLASS_NAMES:
+            sites.append((func.attr, _enclosing_function_name(node, parents)))
     return sites
 
 
@@ -89,6 +115,24 @@ def test_scanner_detects_a_planted_second_call_site() -> None:
     planted = (
         "async def some_other_node(state):\n"
         "    provider = NanoBananaProvider(lesson_id='x')\n"
+        "    return {'x': provider}\n"
+    )
+    sites = _provider_instantiation_sites(planted)
+    assert sites == [("NanoBananaProvider", "some_other_node")]
+
+
+@pytest.mark.unit
+def test_scanner_detects_a_module_qualified_second_call_site() -> None:
+    """Review finding (test-coverage): the first version of this scanner only
+    matched the bare-name call shape (`NanoBananaProvider(...)`), missing the
+    module-qualified shape (`some_module.NanoBananaProvider(...)`) entirely —
+    a real, plausible way a second call site could be introduced (a `import
+    app.providers.image.nano_banana as nb` style import, unlike this repo's
+    actual `from ... import NanoBananaProvider` convention)."""
+    planted = (
+        "import app.providers.image.nano_banana as nb\n\n"
+        "async def some_other_node(state):\n"
+        "    provider = nb.NanoBananaProvider(lesson_id='x')\n"
         "    return {'x': provider}\n"
     )
     sites = _provider_instantiation_sites(planted)
