@@ -12,7 +12,7 @@ TTSProvider     Text-to-speech synthesis
 ImageProvider   Image generation
 EmailProvider   Transactional email delivery (Story 2-52)
 
-(AvatarProvider — HeyGen cached avatar clips — removed 2026-09-02, D141:
+(AvatarProvider — HeyGen cached avatar clips — removed 2026-09-02, D144:
 dead/unwired code, no pipeline node ever called it.)
 """
 

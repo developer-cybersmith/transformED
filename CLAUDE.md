@@ -21,7 +21,7 @@
 | Primary LLM | **OpenAI GPT-4o + GPT-4o-mini** (defaults — see model table) | Per-task allocation below |
 | Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A, evaluation candidate) | |
 | TTS | **Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. |
-| Avatar | **No active vendor (D141, 2026-09-02)** | HeyGen was never wired into the pipeline (no node ever called it) — removed as dead code, not replaced. `LessonPackage.avatar_intro_url/avatar_static_url/avatar_outro_url` remain (nullable, vendor-agnostic) for a future implementation. |
+| Avatar | **No active vendor (D144, 2026-09-02)** | HeyGen was never wired into the pipeline (no node ever called it) — removed as dead code, not replaced. `LessonPackage.avatar_intro_url/avatar_static_url/avatar_outro_url` remain (nullable, vendor-agnostic) for a future implementation. |
 | Image | **GPT Image 2 → Imagen 4 Fast → text-only** | DALL-E 3 DEAD (shut down May 2026). GPT Image 1 Mini migrated to GPT Image 2 2026-08-18 (D122) — 1 Mini itself retires 2026-12-01. **Imagen 4 Fast is DEAD as of 2026-08-17 (D121, OPEN)** — its endpoint returns hard errors; the fallback tier is presently non-functional pending a migration decision (Gemini Flash Image, dropping the fallback tier, or a different vendor). |
 | Embeddings | **text-embedding-3-small** | Chunk content: embed at ingestion only, never regenerate. Phase 2 RAG tutor embeds student questions at query time — this is permitted. |
 | OCR | **Tesseract** (in-container) | Azure Doc Intelligence removed |

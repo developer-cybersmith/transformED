@@ -113,7 +113,7 @@ def test_every_referenced_bucket_is_provisioned() -> None:
 def test_constant_based_bucket_access_is_resolved() -> None:
     """Guard the scanner itself: a module-constant-based `.storage.from_(...)`
     access must be visible to the manifest — a literal-only regex missed one
-    once already. (D141: was heygen.py's `_AVATAR_BUCKET`, before HeyGen was
+    once already. (D144: was heygen.py's `_AVATAR_BUCKET`, before HeyGen was
     removed as dead/unwired code; repointed to book_ingest.py's
     `_SOURCE_BUCKET`, the same module-constant pattern, still real.)"""
     assert "source-pdfs" in _referenced_buckets()
@@ -145,7 +145,7 @@ def test_migration_provisions_every_bucket() -> None:
 def test_migration_provisions_all_buckets_private() -> None:
     """D1: lesson content is paid — every bucket row must be public=false.
 
-    D141: was an exact set-equality between the migration's rows and
+    D144: was an exact set-equality between the migration's rows and
     `_PROVISIONED` — relaxed to a subset check. The frozen migration
     (`supabase/migrations/` is never modified, CLAUDE.md) still provisions
     `avatar-clips` from before HeyGen was removed; `REQUIRED_BUCKETS` no

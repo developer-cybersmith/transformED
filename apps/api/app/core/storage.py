@@ -22,7 +22,7 @@ REQUIRED_BUCKETS: frozenset[str] = frozenset({"source-pdfs", "lesson-images", "l
 with the 20260710000000_storage_buckets.sql migration (enforced by
 tests/unit/test_bucket_manifest.py).
 
-D141 (2026-09-02): 'avatar-clips' removed from this set — HeyGen (its only
+D144 (2026-09-02): 'avatar-clips' removed from this set — HeyGen (its only
 referencer) was deleted as dead/unwired code. The migration itself is
 frozen and still provisions that bucket; it is simply no longer required
 or checked at startup. See test_bucket_manifest.py's

@@ -222,7 +222,7 @@ class LessonPackage(BaseModel):
     # docs/proposals/avatar-fields-schema-change.md); every lesson validated
     # today will have all 3 fields default to None. Vendor-agnostic: the
     # HeyGen provider that would have populated these was removed as
-    # dead/unwired code (D141) — these fields are unaffected and remain for
+    # dead/unwired code (D144) — these fields are unaffected and remain for
     # a future implementation.
     avatar_intro_url: str | None = None
     avatar_static_url: str | None = None
