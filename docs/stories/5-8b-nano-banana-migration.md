@@ -129,6 +129,17 @@ semaphore). A typical lesson has 6–12 slides; largest observed is bounded by
 - Cost per image increases (Gemini ~$0.067 vs GPT Image 2's ~$0.05) — this
   raises the effective ceiling-breach point for a lesson with many slides;
   explicitly named in the D121 update, not silently absorbed.
+- `nano_banana.py`'s HTTP timeout (review finding, fixed in this story, not
+  deferred): the first draft copied the deleted `imagen.py`'s bare
+  `httpx.AsyncClient(timeout=30.0)` verbatim. A bare float applies to ALL
+  httpx timeout categories including `connect=`, replacing the codebase's
+  established 5s connect guard with 30s — tolerable for Imagen's occasional
+  fallback role, not for this file's new PRIMARY role (hit on every slide).
+  Fixed: a new `settings.google_image_request_timeout_s` field (mirroring
+  `openai_image_request_timeout_s`, default 180.0) plus an explicit
+  `httpx.Timeout(..., connect=5.0)`, matching `openai_image.py`'s existing
+  convention exactly. Guarded by
+  `test_nano_banana_uses_an_explicit_timeout_never_a_bare_float`.
 
 **Q3 — Scope of limits:**
 `_IMAGE_GENERATION_CONCURRENCY` is per-lesson (module constant, unchanged).

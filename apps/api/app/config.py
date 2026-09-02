@@ -56,8 +56,10 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Google AI / Vertex AI key — used for Gemini model evaluation AND "
-            "(as of Story 2-9) as the production auth key for ImagenProvider "
-            "(Imagen 4 Fast, image_generator_node's fallback tier)."
+            "(as of Story 5-8b) as the production auth key for NanoBananaProvider "
+            "(Gemini 'Nano Banana', image_generator_node's PRIMARY tier — "
+            "previously backed ImagenProvider/Imagen 4 Fast, Story 2-9, until "
+            "that endpoint died and was replaced per D121)."
         ),
     )
 
@@ -674,6 +676,13 @@ class Settings(BaseSettings):
         "NOTE: always build httpx.Timeout(..., connect=5.0) explicitly; passing a bare "
         "float to the SDK sets connect to that value too, destroying the 5s connect "
         "guard and making hangs WORSE than the default.",
+    )
+    google_image_request_timeout_s: float = Field(
+        default=180.0,
+        description="Read/write/pool timeout for Gemini 'Nano Banana' image generation "
+        "(seconds, Story 5-8b) — same rationale as openai_image_request_timeout_s. "
+        "Same NOTE applies: always build httpx.Timeout(..., connect=5.0) explicitly, "
+        "never pass a bare float.",
     )
 
     # ── ARQ / pipeline timeouts (Story 2-0 AC-5) ──────────────────────────────
