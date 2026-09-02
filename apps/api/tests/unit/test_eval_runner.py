@@ -213,6 +213,74 @@ async def test_run_all_evals_isolates_per_pdf_failures_and_writes_results(tmp_pa
     assert payload["summary"]["pdfs_valid"] == 19
     assert payload["summary"]["pdfs_crashed"] == 1
 
+    # 2026-08-24: real-time progress file — a 6+ hour live run this week was
+    # completely opaque from the outside because the results JSON above is
+    # only written once, at the very end. `progress.jsonl` must exist with
+    # exactly one line per PDF, each a parseable JSON object with the
+    # expected keys, so an external process can `tail`/`cat` it mid-run.
+    progress_path = results_dir / "progress.jsonl"
+    assert progress_path.exists()
+    lines = progress_path.read_text().splitlines()
+    assert len(lines) == 20
+    for i, line in enumerate(lines):
+        entry = json.loads(line)
+        assert entry.keys() == {
+            "index",
+            "total",
+            "pdf_key",
+            "package_valid",
+            "cost_usd",
+            "elapsed_seconds",
+            "error",
+        }
+        assert entry["index"] == i + 1
+        assert entry["total"] == 20
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_all_evals_truncates_stale_progress_file(tmp_path: Path) -> None:
+    """2026-08-24: progress.jsonl must be TRUNCATED at the start of each
+    `run_all_evals()` call — a fixed (not timestamped) filename means a
+    stale file from a previous run must never be misread as the current
+    run's live progress (the same "which run does this stale data belong
+    to" trap already found once this week with a different Redis key)."""
+    from tests.evals.runner import run_all_evals
+    from tests.fixtures.generate_eval_pdfs import generate_all
+
+    fixtures_dir = tmp_path / "fixtures"
+    results_dir = tmp_path / "results"
+    generate_all(fixtures_dir)
+
+    results_dir.mkdir(parents=True, exist_ok=True)
+    stale_progress = results_dir / "progress.jsonl"
+    stale_progress.write_text('{"index": 1, "total": 999, "pdf_key": "stale_leftover"}\n' * 5)
+
+    sb = _mock_supabase()
+    span = _mock_langfuse_span()
+    mock_langfuse = MagicMock()
+    mock_langfuse.start_observation.return_value = span
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.core.langfuse.get_langfuse", return_value=mock_langfuse),
+        patch("app.workers.jobs.book_ingest.book_ingest_job", new=_mock_book_ingest_job()),
+        patch(
+            "app.modules.content.pipeline.graph.run_pipeline",
+            new=AsyncMock(return_value=REAL_LESSON_PACKAGE),
+        ),
+    ):
+        results = await run_all_evals(fixtures_dir=fixtures_dir, results_dir=results_dir)
+
+    assert len(results) == 20
+    lines = stale_progress.read_text().splitlines()
+    assert len(lines) == 20
+    import json
+
+    for line in lines:
+        entry = json.loads(line)
+        assert entry["pdf_key"] != "stale_leftover"
+
 
 # ── S3-1: 20-PDF expansion guards ────────────────────────────────────────────
 

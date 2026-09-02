@@ -18,6 +18,7 @@ from supabase import Client
 from app.config import Settings, get_settings
 from app.core.db import rows, single_row
 from app.core.posthog_client import capture_event
+from app.modules.assessment.dna_fusion import _apply_ema
 from app.modules.assessment.onboarding_questions import (
     ALL_NINE_DIMENSIONS,
     BADGE_THRESHOLD,
@@ -35,6 +36,8 @@ from app.modules.assessment.schemas import (
 from app.providers.llm.openai import OpenAILLMProvider
 
 if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
     from app.modules.assessment.router import SessionReport, TeachbackDetail
 
 logger = logging.getLogger(__name__)
@@ -147,17 +150,26 @@ async def create_session(
     reintroduce D18; a client-chosen `started_at` would make session duration and
     Dev 3's CES-final logic meaningless.
 
-    Called once per lesson attempt. Re-learning the same lesson creates a NEW
-    session on purpose — sessions are attempt-scoped, and `analytics` and the CES
-    history depend on that. Do not add a unique constraint on
-    `(user_id, lesson_id)` or a reuse-if-exists shortcut.
+    Called once per lesson attempt. Re-learning the same lesson (after completing
+    the previous one) creates a NEW session on purpose — sessions are
+    attempt-scoped, and `analytics` and the CES history depend on that. Do NOT
+    add an all-time UNIQUE constraint on `(user_id, lesson_id)` — that would
+    prevent re-taking lessons.
+
+    Idempotency for concurrent creates: a partial UNIQUE index
+    `sessions_open_unique` on `(user_id, lesson_id) WHERE ended_at IS NULL`
+    (migration 20260831000000_sessions_open_unique.sql) ensures two simultaneous
+    requests (e.g. React StrictMode double-render) return the same open session
+    rather than creating duplicate rows. The pre-check below handles the common
+    case; the DB constraint is the concurrent-safe backstop.
 
     Raises:
         HTTPException 404: the lesson does not exist **or** belongs to someone
             else. Deliberately the SAME response for both — a distinct 403 would
             turn this endpoint into an existence oracle for lesson ids. Matches
             `content/router.py:get_lesson` and `media/router.py:get_signed_url`.
-        HTTPException 500: the insert returned no row.
+        HTTPException 500: the insert returned no row and no open session could
+            be found (genuine DB failure).
     """
     lesson_resp = await asyncio.to_thread(
         lambda: (
@@ -177,6 +189,30 @@ async def create_session(
             detail="Lesson not found",
         )
 
+    # Idempotency pre-check: return an existing open session rather than inserting
+    # a duplicate. Handles the React StrictMode double-render case (two requests
+    # arrive at the same millisecond). This is NOT a "reuse forever" shortcut —
+    # it only matches rows WHERE ended_at IS NULL. Completed sessions are excluded.
+    open_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, lesson_id, started_at")
+            .eq("user_id", str(user_id))
+            .eq("lesson_id", str(lesson_id))
+            .is_("ended_at", "null")
+            .maybe_single()
+            .execute()
+        )
+    )
+    open_row = single_row(open_resp)
+    if open_row is not None:
+        started_at = open_row.get("started_at")
+        return {
+            "session_id": str(open_row["session_id"]),
+            "lesson_id": str(open_row.get("lesson_id") or lesson_id),
+            "started_at": str(started_at) if started_at is not None else None,
+        }
+
     insert_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("sessions")
@@ -186,6 +222,29 @@ async def create_session(
     )
     created = rows(insert_resp)
     if not created:
+        # The insert returned no row. This may be a race-condition unique
+        # violation on sessions_open_unique (two concurrent requests both passed
+        # the pre-check, one won the race). Re-fetch the open session before
+        # giving up — if the winner is there, return it.
+        race_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("sessions")
+                .select("session_id, lesson_id, started_at")
+                .eq("user_id", str(user_id))
+                .eq("lesson_id", str(lesson_id))
+                .is_("ended_at", "null")
+                .maybe_single()
+                .execute()
+            )
+        )
+        race_row = single_row(race_resp)
+        if race_row is not None:
+            started_at = race_row.get("started_at")
+            return {
+                "session_id": str(race_row["session_id"]),
+                "lesson_id": str(race_row.get("lesson_id") or lesson_id),
+                "started_at": str(started_at) if started_at is not None else None,
+            }
         logger.error(
             "create_session: sessions insert returned no row for lesson=%s",
             lesson_id,
@@ -248,6 +307,7 @@ async def complete_session(
 
     existing_ended_at = session_row.get("ended_at")
     if existing_ended_at:
+        # Idempotent: ended_at already written on a prior call — do NOT re-dispatch.
         return {"session_id": session_id, "ended_at": str(existing_ended_at)}
 
     ended_at = datetime.now(UTC).isoformat()
@@ -260,6 +320,22 @@ async def complete_session(
             .execute()
         )
     )
+
+    # D116: trigger ces_final write via the tutor FSM. dispatch_event("lesson_complete")
+    # routes to session_end_node (from any FSM state — see route_entry universal guard)
+    # which fires _finalize_session as an async task. Lazy import avoids module-level
+    # coupling between assessment and tutor packages.
+    try:
+        from app.modules.tutor.state_machine.graph import dispatch_event  # noqa: PLC0415
+
+        await dispatch_event(session_id, "lesson_complete")
+    except Exception:
+        # ended_at is already written above — don't fail the REST response over ces_final.
+        logger.exception(
+            "[session:%s] lesson_complete dispatch failed — ces_final will be NULL",
+            session_id,
+        )
+
     return {"session_id": session_id, "ended_at": ended_at}
 
 
@@ -1265,6 +1341,34 @@ def _compute_badge_labels(scores: dict[str, float]) -> list[str]:
     ]
 
 
+async def _fetch_existing_dna(*, user_id: str, supabase: Client) -> dict[str, Any] | None:
+    """Read the current learner_dna row for *user_id*, or None if absent.
+
+    # BOUNDED: learner_dna has UNIQUE(user_id) — at most 1 row (D137 fix).
+    Returns None on any DB error (fallback to first-time write path, per AC7).
+    """
+    try:
+        resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("learner_dna")
+                .select(", ".join(["user_id", "session_count", *ALL_NINE_DIMENSIONS]))
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+        )
+        row = single_row(resp)
+        return row  # None if no row exists
+    except Exception as exc:
+        logger.warning(
+            "onboarding: could not fetch existing learner_dna for reassessment blend "
+            "(user=%s, error=%s) — falling back to first-time write",
+            user_id,
+            str(exc).replace("\n", " "),
+        )
+        return None
+
+
 async def process_onboarding(
     *,
     responses: list[OnboardingAnswer],
@@ -1293,8 +1397,20 @@ async def process_onboarding(
             (duplicate submission).
         HTTPException 500: Non-duplicate DB insert failure.
     """
+    # D137 fix — detect reassessment path before scoring
+    existing_dna = await _fetch_existing_dna(user_id=user_id, supabase=supabase)
+    existing_session_count = (
+        int(existing_dna.get("session_count") or 0) if existing_dna is not None else 0
+    )
+
     # Step 1 — Compute dimension scores
     scores = _compute_dimension_scores(responses)
+
+    # D137 fix — blend fresh self-report into existing scores on reassessment
+    if existing_dna is not None:
+        retain = get_settings().dna_ema_retain
+        for dim in ALL_NINE_DIMENSIONS:
+            scores[dim] = _apply_ema(existing_dna.get(dim), scores[dim], retain)
 
     # Step 2 — Compute badge labels
     badge_labels = _compute_badge_labels(scores)
@@ -1378,10 +1494,11 @@ async def process_onboarding(
         ) from None
 
     # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
+    # D137: preserve session_count on reassessment; only reset to 0 for first-time onboarding.
     dna_row: dict[str, Any] = {
         "user_id": user_id,
         "badge_labels": badge_labels,
-        "session_count": 0,
+        "session_count": existing_session_count,
         "profile_text": profile_text,
         **scores,
     }
@@ -1441,7 +1558,7 @@ async def process_onboarding(
     return OnboardingResult(
         badge_labels=badge_labels,
         profile_text=profile_text,
-        session_count=0,
+        session_count=existing_session_count,  # D137: reflects actual count on reassessment
     )
 
 
@@ -1658,3 +1775,85 @@ async def write_intervention_event(
 # D63 (S3-53): _get_distraction_count was removed — it was dead code.
 # frustration_tolerance in dna_fusion.py correctly reads intervention counts
 # from event_counts["intervention_triggered"] (session_events DB) at session end.
+
+
+async def seed_personalized_ces_threshold(
+    *,
+    session_id: str,
+    user_id: str,
+    redis: Redis,
+    supabase: Client,
+    settings: Settings,
+) -> None:
+    """Pre-compute and cache per-session CES threshold personalised by Learner DNA.
+
+    Story 4-13 (AC3, AC4, AC5):
+    - Read DNA from Redis cache first (user:{user_id}:dna, TTL 1h).
+    - Fall back to Supabase learner_dna table on cache miss.
+    - Fall back to all-None (base threshold) if no DNA exists.
+    - Write session:{session_id}:ces_threshold to Redis with 24h TTL.
+    - Failure is non-fatal: logged at WARNING, session creation is not affected.
+
+    BOUNDED: learner_dna has UNIQUE(user_id) — at most 1 row fetched.
+    """
+    from app.modules.assessment.ces import compute_personalized_threshold  # noqa: PLC0415
+
+    _log = logging.getLogger(__name__)
+
+    try:
+        # Step 1 — try Redis DNA cache
+        persistence: float | None = None
+        frustration_tolerance: float | None = None
+        goal_orientation: float | None = None
+
+        cached_raw = await redis.get(f"user:{user_id}:dna")
+        if cached_raw is not None:
+            try:
+                dna_blob: dict[str, Any] = json.loads(cached_raw)
+                persistence = dna_blob.get("persistence")
+                frustration_tolerance = dna_blob.get("frustration_tolerance")
+                goal_orientation = dna_blob.get("goal_orientation")
+            except Exception as _cache_exc:  # noqa: BLE001
+                _log.debug("DNA cache parse failed, falling back to Supabase: %s", _cache_exc)
+
+        # Step 2 — fall back to Supabase
+        if persistence is None and frustration_tolerance is None and goal_orientation is None:
+            _db_resp = (
+                supabase.table("learner_dna")
+                .select("persistence, frustration_tolerance, goal_orientation")
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+            _db_row = single_row(_db_resp)
+            if _db_row is not None:
+                persistence = _db_row.get("persistence")
+                frustration_tolerance = _db_row.get("frustration_tolerance")
+                goal_orientation = _db_row.get("goal_orientation")
+
+        # Step 3 — compute threshold (all-None → base)
+        threshold = compute_personalized_threshold(
+            persistence=persistence,
+            frustration_tolerance=frustration_tolerance,
+            goal_orientation=goal_orientation,
+            settings=settings,
+        )
+
+        # Step 4 — write to Redis with 24h TTL
+        await redis.setex(f"session:{session_id}:ces_threshold", 86400, threshold)
+
+        _log.debug(
+            "personalized CES threshold seeded session=%s user=%s threshold=%.2f",
+            session_id,
+            user_id,
+            threshold,
+        )
+
+    except Exception as exc:
+        _log.warning(
+            "seed_personalized_ces_threshold failed session=%s user=%s: %s — "
+            "falling back to global settings.ces_threshold",
+            session_id,
+            user_id,
+            exc,
+        )

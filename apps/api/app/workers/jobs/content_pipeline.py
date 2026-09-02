@@ -196,6 +196,34 @@ async def content_pipeline_job(ctx: dict[str, Any], lesson_id: str) -> dict[str,
         await redis.publish(channel, json.dumps(message))
         logger.info("content_pipeline_job PUBLISHED lesson_ready channel=%s", channel)
 
+        # ── 4b-2. Enqueue the "lesson ready" notification email (Story 2-52) ──
+        # ctx["redis"] is the ArqRedis job-enqueue pool (same process, no
+        # cross-process hop needed here — contrast session_end_node's
+        # _finalize_session, which DOES need one via app.core.arq_pool).
+        # A failure to enqueue must not fail the pipeline job itself, which
+        # has already fully succeeded at this point.
+        try:
+            notify_job = await ctx["redis"].enqueue_job(
+                "send_notification_email_job",
+                user_id,
+                "lesson_ready",
+                lesson_id,
+                _job_id=f"notify:lesson_ready:{lesson_id}",
+            )
+            if notify_job is None:
+                # ARQ deduped this _job_id (already enqueued/still cached in
+                # keep_result_seconds) -- not an error, but worth a log line
+                # since it was previously silently discarded (review finding).
+                logger.info(
+                    "content_pipeline_job: lesson_ready notification deduped by ARQ lesson_id=%s",
+                    lesson_id,
+                )
+        except Exception:
+            logger.exception(
+                "content_pipeline_job: failed to enqueue lesson_ready notification lesson_id=%s",
+                lesson_id,
+            )
+
         # ── 4c. Clear cost tracker ────────────────────────────────────────────
         await clear_lesson_cost(lesson_id)
 

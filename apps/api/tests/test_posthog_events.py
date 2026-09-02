@@ -371,14 +371,18 @@ def test_posthog_session_report_event_fired():
         quiz_correct_count=4,
         quiz_accuracy_label="Strong",
         learner_dna_snapshot=None,  # Story 3-30 added
+        # Story 3-47 required formula disclosure fields (D17)
+        formula_applied="full_5_signal",
+        signal_coverage=5,
     )
 
     with patch(
         "app.modules.assessment.service.get_session_report", new=AsyncMock(return_value=mock_report)
     ):
         with patch("app.core.db.get_supabase", return_value=MagicMock()):
-            with patch("app.core.posthog_client.posthog.capture") as mock_capture:
-                response = _client.get(f"/api/assessment/session/{SESSION_ID}/report")
+            with patch("app.core.redis.get_redis", return_value=MagicMock()):
+                with patch("app.core.posthog_client.posthog.capture") as mock_capture:
+                    response = _client.get(f"/api/assessment/session/{SESSION_ID}/report")
 
     assert response.status_code == 200
     mock_capture.assert_called_once()

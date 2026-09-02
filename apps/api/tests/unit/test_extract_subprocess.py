@@ -31,7 +31,7 @@ def _run_extract(
     texts: list[str],
     table_counts: list[int] | None = None,
     ocr_threshold: int = 50,
-    ocr_return: str = "OCR TEXT",
+    ocr_return: tuple[str, float | None] = ("OCR TEXT", 95.0),
 ) -> tuple[dict[str, Any], SimpleNamespace]:
     """Run extract_pdf with fake pdfium/pdfplumber modules and stubbed helpers."""
     n = len(texts)
@@ -102,44 +102,30 @@ def _run_extract(
     )
 
 
-# ── extract_text_only: TOC parsing (review fix, D63) ──────────────────────────
+# ── extract_text_only: TOC parsing (review fix, D63; corrected, D133) ─────────
 
 
-class _FakeDest:
-    """Mirrors pypdfium2.PdfDest's REAL API: get_index() only, no attributes."""
-
-    def __init__(self, page_index: int | None) -> None:
-        self._page_index = page_index
-
-    def get_index(self) -> int | None:
-        return self._page_index
-
-
-class _FakeBookmark:
-    """Mirrors pypdfium2.PdfBookmark's REAL API: get_title()/get_dest()/.level.
-
-    Deliberately has NO `.page_index`/`.title` attributes -- a regression back
-    to attribute access must fail this test with the same AttributeError
-    production would raise, not silently pass the way a loose MagicMock would
-    (which is exactly how the original bug shipped untested).
+class _FakeOutlineItem:
+    """Mirrors `pypdfium2.PdfOutlineItem`'s REAL API on the project's PINNED
+    version (uv.lock: pypdfium2==4.30.0), confirmed by directly inspecting the
+    installed package, not assumed: `.page_index` and `.title` are plain
+    attributes -- there is no `get_dest()`/`get_title()` method on this
+    version at all (that shape exists on pypdfium2 5.x's differently-named
+    `PdfBookmark`, which is what an earlier fix (D58/D63) was actually
+    written and tested against, due to an unpinned local pypdfium2 install
+    that had silently drifted off the lockfile -- see D133). `.page_index` is
+    `None` for an unresolvable destination -- a normal bookmark shape, not
+    an error.
     """
 
     def __init__(self, level: int, title: str, page_index: int | None) -> None:
         self.level = level
-        self._title = title
-        self._page_index = page_index
-
-    def get_title(self) -> str:
-        return self._title
-
-    def get_dest(self) -> _FakeDest | None:
-        if self._page_index is None:
-            return None
-        return _FakeDest(self._page_index)
+        self.title = title
+        self.page_index = page_index
 
 
 def _run_extract_text_only(
-    monkeypatch: pytest.MonkeyPatch, *, toc: list[_FakeBookmark]
+    monkeypatch: pytest.MonkeyPatch, *, toc: list[_FakeOutlineItem]
 ) -> dict[str, Any]:
     n = 3
     pdfium_pages = [MagicMock(name=f"pdfium_page_{i}") for i in range(n)]
@@ -157,12 +143,12 @@ def _run_extract_text_only(
 
 
 class TestExtractTextOnlyToc:
-    def test_resolves_page_index_via_get_dest_not_an_attribute(
+    def test_resolves_page_index_via_the_plain_attribute(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         result = _run_extract_text_only(
             monkeypatch,
-            toc=[_FakeBookmark(level=0, title="Chapter 1", page_index=2)],
+            toc=[_FakeOutlineItem(level=0, title="Chapter 1", page_index=2)],
         )
         assert result["toc"] == [{"level": 0, "title": "Chapter 1", "page_index": 2}]
 
@@ -172,8 +158,8 @@ class TestExtractTextOnlyToc:
         result = _run_extract_text_only(
             monkeypatch,
             toc=[
-                _FakeBookmark(level=0, title="Broken", page_index=None),
-                _FakeBookmark(level=0, title="Chapter 2", page_index=1),
+                _FakeOutlineItem(level=0, title="Broken", page_index=None),
+                _FakeOutlineItem(level=0, title="Chapter 2", page_index=1),
             ],
         )
         assert result["toc"] == [{"level": 0, "title": "Chapter 2", "page_index": 1}]
@@ -652,12 +638,77 @@ class TestPerPageOcr:
             tmp_path,
             texts=["A" * 100, "short", "B" * 100],
             ocr_threshold=50,
-            ocr_return="   ",
+            ocr_return=("   ", None),
         )
 
         ctx.ocr_mock.assert_called_once()
         assert result["raw_text"] == "\n\n".join(["A" * 100, "short", "B" * 100])
         assert ctx.pdfium_ctor.call_count == 1
+
+    def test_high_confidence_ocr_is_not_flagged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """D128 baseline: default ocr_return carries confidence=95.0 — above
+        _OCR_LOW_CONFIDENCE_THRESHOLD (60) — so the accepted text carries no
+        degradation flag."""
+        result, _ctx = _run_extract(
+            monkeypatch, tmp_path, texts=["A" * 100, "", "B" * 100], ocr_threshold=50
+        )
+        assert result["low_confidence_ocr_pages"] == []
+
+    def test_low_confidence_ocr_is_accepted_but_flagged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """D128: real, previously silent gap. A rotated/low-quality scan OCRs
+        to non-empty but unreliable text (measured live: 38% mean confidence
+        on a genuinely garbled real page) — accepted into raw_text exactly as
+        before (never silently dropped, a lesser defect than losing real
+        content), but the ABSOLUTE page number is now named in
+        low_confidence_ocr_pages, an explicit, surfaced degradation record
+        rather than nothing at all."""
+        result, ctx = _run_extract(
+            monkeypatch,
+            tmp_path,
+            texts=["A" * 100, "", "B" * 100],
+            ocr_threshold=50,
+            ocr_return=("garbled text", 38.0),
+        )
+        ctx.ocr_mock.assert_called_once()
+        assert result["raw_text"] == f"{'A' * 100}\n\ngarbled text\n\n{'B' * 100}"
+        assert result["low_confidence_ocr_pages"] == [2]  # 1-based page_num of the OCR'd page
+
+    def test_confidence_exactly_at_the_threshold_is_not_flagged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """Boundary case: the check is `< threshold`, so a page AT exactly
+        _OCR_LOW_CONFIDENCE_THRESHOLD is accepted as confident, not flagged —
+        pins the boundary so an off-by-one can't silently flip which side of
+        60 it lands on."""
+        result, _ctx = _run_extract(
+            monkeypatch,
+            tmp_path,
+            texts=["A" * 100, "", "B" * 100],
+            ocr_threshold=50,
+            ocr_return=("borderline text", float(es._OCR_LOW_CONFIDENCE_THRESHOLD)),
+        )
+        assert result["low_confidence_ocr_pages"] == []
+
+    def test_no_words_detected_is_not_flagged_as_low_confidence(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """confidence=None (no words detected at all — a different case from
+        a low but real confidence) must not be coerced into a flag; the
+        empty-OCR-output path above already covers this text being discarded
+        entirely when it's blank, this test covers non-blank text with no
+        scorable words."""
+        result, _ctx = _run_extract(
+            monkeypatch,
+            tmp_path,
+            texts=["A" * 100, "", "B" * 100],
+            ocr_threshold=50,
+            ocr_return=("unscored text", None),
+        )
+        assert result["low_confidence_ocr_pages"] == []
 
 
 # ── AC-3: per-page release ────────────────────────────────────────────────────
