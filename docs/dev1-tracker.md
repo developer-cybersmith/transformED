@@ -1156,19 +1156,19 @@ Every node must:
     accept+reject **CRUD** live-tested end-to-end on 2 tables covering the schema's 2 ownership-
     predicate shapes, plus 2 live cross-account INSERT-rejection spot-checks on join-based tables —
     the other 11 tables' write commands rest on migration-text confirmation only, registered as
-    **D140** rather than overclaimed. No RLS gap found in anything actually exercised.
+    **D143** rather than overclaimed. No RLS gap found in anything actually exercised.
   - `attention_events` consent gate confirmed live for 2 of the 4 required states: real INSERT with
     real consent + `user_consents` audit row succeeded (201); a real account with
     `attention_consent=false` and no audit row was rejected (403) on the identical INSERT against
-    their own session. The remaining 2 states are part of D140 (would need mutating a real user's
+    their own session. The remaining 2 states are part of D143 (would need mutating a real user's
     actual consent record or a new disposable account). A stranger's session got 0 rows on
     SELECT/UPDATE/DELETE of the owner's row; owner's own cleanup DELETE succeeded. DELETE/UPDATE
     never gate on `attention_consent` — judged **intentional** (an erasure right shouldn't depend
-    on active consent), registered as D139 so a future "symmetry fix" doesn't make it worse, not
+    on active consent), registered as D142 so a future "symmetry fix" doesn't make it worse, not
     left as a silent gap.
   - `user_consents.consent_type` only allows 2 values (`attention_tracking`, `learner_dna`);
     Epic-5's DoD wants a 3rd (`data_processing`, at signup) that is entirely unimplemented
-    (confirmed by repo-wide grep — zero writers) — registered as D138, open, owner TBD.
+    (confirmed by repo-wide grep — zero writers) — registered as D141, open, owner TBD.
   - Storage buckets (4, all private, zero `storage.objects` policies) live-confirmed: anon AND a
     real authenticated user both get zero direct bucket/object access; only signed URLs work.
   - Both privileged RPC functions (`merge_lesson_job_node_output`, `increment_learner_dna_session_count`)
@@ -1176,7 +1176,8 @@ Every node must:
     calling either one; live grants match migration text, no dashboard-side drift.
   - **AC:** Audit report committed to `docs/`; no table accessible without RLS; `attention_consent`
     gate verified — ✓ `docs/security/rls-audit.md`; see `docs/stories/5-5-rls-security-audit.md`
-    for full detail and `docs/DEFECT-REGISTER.md` D138/D139/D140.
+    for full detail and `docs/DEFECT-REGISTER.md` D141/D142/D143 (renumbered 2026-09-02 from
+    D138/D139/D140 to resolve a collision with main's own D138/D139, landed via PRs #170/#171).
 
 - [ ] **S4-6 Railway backups + disaster recovery tested**
   - Test restore from latest backup; validate data integrity post-restore
