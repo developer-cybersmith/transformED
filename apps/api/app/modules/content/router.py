@@ -6,6 +6,7 @@ Handles PDF upload → lesson pipeline dispatch and lesson status/retrieval.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import copy
 import logging
@@ -777,15 +778,22 @@ async def upload_lesson(
 
     try:
         # ── 1. books row ──────────────────────────────────────────────────────
-        books_resp = (
-            supabase.table("books")
-            .insert(
-                {
-                    "user_id": user_id,
-                    "filename": safe_filename,
-                }
+        # D138: `supabase` is the SYNCHRONOUS supabase-py client -- called
+        # directly on the event loop, one upload's network round-trip would
+        # stall every OTHER concurrently in-flight request on this
+        # single-process uvicorn for its own duration. asyncio.to_thread runs
+        # it on a worker thread instead (same pattern as auth/router.py).
+        books_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("books")
+                .insert(
+                    {
+                        "user_id": user_id,
+                        "filename": safe_filename,
+                    }
+                )
+                .execute()
             )
-            .execute()
         )
         books_rows = rows(books_resp)
         if not books_rows:
@@ -797,10 +805,12 @@ async def upload_lesson(
         # must reconstruct this exact string from the books row long after the
         # upload, and `books` has no column to store it in.
         storage_path = _source_pdf_path(user_id, str(book_id), safe_filename)
-        supabase.storage.from_("source-pdfs").upload(
-            path=storage_path,
-            file=pdf_bytes,
-            file_options={"content-type": "application/pdf"},
+        await asyncio.to_thread(
+            lambda: supabase.storage.from_("source-pdfs").upload(
+                path=storage_path,
+                file=pdf_bytes,
+                file_options={"content-type": "application/pdf"},
+            )
         )
 
         # ── 3. Enqueue chapter detection ──────────────────────────────────────
@@ -822,9 +832,13 @@ async def upload_lesson(
             logger.warning("ARQ deduped book_ingest job for book_id=%s", book_id)
             if storage_path:
                 with contextlib.suppress(Exception):
-                    supabase.storage.from_("source-pdfs").remove([storage_path])
+                    await asyncio.to_thread(
+                        lambda: supabase.storage.from_("source-pdfs").remove([storage_path])
+                    )
             with contextlib.suppress(Exception):
-                supabase.table("books").delete().eq("book_id", book_id).execute()
+                await asyncio.to_thread(
+                    lambda: supabase.table("books").delete().eq("book_id", book_id).execute()
+                )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This book is already being ingested",
@@ -839,10 +853,14 @@ async def upload_lesson(
         # (marking as "failed" leaves orphaned books rows on subsequent retry attempts)
         if storage_path:
             with contextlib.suppress(Exception):
-                supabase.storage.from_("source-pdfs").remove([storage_path])
+                await asyncio.to_thread(
+                    lambda: supabase.storage.from_("source-pdfs").remove([storage_path])
+                )
         if book_id:
             with contextlib.suppress(Exception):
-                supabase.table("books").delete().eq("book_id", book_id).execute()
+                await asyncio.to_thread(
+                    lambda: supabase.table("books").delete().eq("book_id", book_id).execute()
+                )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to ingest book — please retry",
