@@ -38,6 +38,10 @@ junit*.xml
 # ---- Eval artifacts (results are gitignored — only golden examples are committed) ----
 tests/evals/results/
 tests/fixtures/eval_pdfs/*.pdf
+# D127: derived from d2l.pdf (already tracked) — regenerate via
+# `python -m tests.fixtures.generate_real_world_pdfs`, never commit the output
+# (one variant is a multi-MB partial copy of the source book).
+tests/fixtures/real_pdfs/*.pdf
 
 # ---- Local env ----
 .env

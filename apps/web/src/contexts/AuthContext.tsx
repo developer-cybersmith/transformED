@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import posthog from "posthog-js";
 import { createClient } from "@/lib/supabase/client";
 
 type User = {
@@ -139,6 +140,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Story 2-54 fast-follow: without this, every PostHog event was tied to
+    // an anonymous per-browser distinct_id, not the real account -- the same
+    // student on two devices (or after clearing cookies) would silently
+    // undercount as two different funnel entries. Centralized on `user`
+    // changing (rather than a call at each of the three setUser() call
+    // sites above) so it fires exactly once per real transition regardless
+    // of which path produced it.
+    //
+    // Waits for `isLoading` to resolve before acting at all: `user` starts
+    // `null` on every page load (including anonymous, not-yet-signed-up
+    // landing-page visits) before auth has even been checked -- calling
+    // posthog.reset() on that initial null would generate a fresh anonymous
+    // ID and break pre-signup funnel continuity for visitors who were never
+    // identified to begin with. `hasIdentifiedRef` then makes reset() fire
+    // only on a REAL logout/session-expiry (a previously-identified user
+    // going to null), not on every anonymous page load once loading settles.
+    const hasIdentifiedRef = useRef(false);
+    useEffect(() => {
+        if (isLoading) return;
+        if (user) {
+            posthog.identify(user.id, { email: user.email });
+            hasIdentifiedRef.current = true;
+        } else if (hasIdentifiedRef.current) {
+            // Also prevents two students sharing a device from having their
+            // events blended under the first student's distinct_id.
+            posthog.reset();
+            hasIdentifiedRef.current = false;
+        }
+    }, [user, isLoading]);
 
     return (
         <AuthContext.Provider value={{ user, isLoading, error, refreshSession: fetchSession, logout }}>

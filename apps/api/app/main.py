@@ -86,6 +86,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("ARQ Redis pool initialised (queue=%s)", PIPELINE_QUEUE)
 
+    # Story 2-52: also register the pool with the module-level singleton so
+    # code with no `Request` to inject from (session_end_node's
+    # _finalize_session) can enqueue a job too — see app.core.arq_pool.
+    from app.core.arq_pool import init_arq_pool
+
+    init_arq_pool(app.state.arq_redis)
+
     # Supabase client + storage-bucket assertion (AC-7, Story 2-0 + D1).
     # Buckets are provisioned by migration 20260710000000_storage_buckets.sql;
     # a missing or public bucket must fail the deploy here, not the first upload.
