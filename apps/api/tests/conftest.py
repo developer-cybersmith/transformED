@@ -29,7 +29,6 @@ _STUB_ENV_VARS = {
     "SUPABASE_JWT_SECRET": "test-jwt-secret-that-is-long-enough-32-bytes",
     "OPENAI_API_KEY": "sk-test-openai-key",
     "SARVAM_API_KEY": "test-sarvam-key",
-    "HEYGEN_API_KEY": "test-heygen-key",
     "LANGFUSE_PUBLIC_KEY": "test-langfuse-public",
     "LANGFUSE_SECRET_KEY": "test-langfuse-secret",
     "REDIS_URL": "redis://localhost:6379",

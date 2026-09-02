@@ -21,7 +21,7 @@
 | Primary LLM | **OpenAI GPT-4o + GPT-4o-mini** (defaults — see model table) | Per-task allocation below |
 | Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A, evaluation candidate) | |
 | TTS | **Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. |
-| Avatar | **HeyGen cached intro/outro (~$0/lesson)** | No live HeyGen per lesson |
+| Avatar | **No active vendor (D144, 2026-09-02)** | HeyGen was never wired into the pipeline (no node ever called it) — removed as dead code, not replaced. `LessonPackage.avatar_intro_url/avatar_static_url/avatar_outro_url` remain (nullable, vendor-agnostic) for a future implementation. |
 | Image | **Gemini "Nano Banana" → GPT Image 2 → text-only** | DALL-E 3 DEAD (shut down May 2026). GPT Image 1 Mini migrated to GPT Image 2 2026-08-18 (D122) — 1 Mini itself retires 2026-12-01. **Imagen 4 Fast was DEAD as of 2026-08-17 (D121, FIXED-GUARDED) — replaced, not patched: Gemini 2.5/3.1 Flash Image ("Nano Banana") is now PRIMARY (Story 5-8b), GPT Image 2 is FALLBACK, `ImagenProvider` deleted.** Nano Banana costs more per image (~$0.067 vs GPT Image 2's ~$0.05) — a deliberate quality-over-cost choice, not an oversight. |
 | Embeddings | **text-embedding-3-small** | Chunk content: embed at ingestion only, never regenerate. Phase 2 RAG tutor embeds student questions at query time — this is permitted. |
 | OCR | **Tesseract** (in-container) | Azure Doc Intelligence removed |
