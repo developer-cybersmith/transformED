@@ -4294,9 +4294,31 @@ _SLIDE_IMAGE_SIZE = "1280x720"
 async def _generate_image_with_fallback(
     lesson_id: str, slide_id: str, prompt: str, *, size: str = _SLIDE_IMAGE_SIZE
 ) -> tuple[str | None, str]:
-    """Try GPT Image 1 Mini, then Imagen 4 Fast, then text-only — never raises
-    (Story 2-9 AC-2). Returns (data_uri_or_None, provider_used_for_logging).
+    """Try Gemini "Nano Banana", then GPT Image 2, then text-only — never
+    raises (Story 2-9 AC-2; order reversed by Story 5-8b — Gemini is now
+    primary, GPT Image 2 fallback, Imagen 4 Fast deleted per D121).
+    Returns (data_uri_or_None, provider_used_for_logging).
     """
+    from app.providers.image.nano_banana import NanoBananaProvider
+
+    try:
+        data_uri = await NanoBananaProvider(lesson_id).generate(prompt, size=size)
+        if data_uri:
+            return data_uri, "nano_banana"
+        logger.warning(
+            "[%s] image_generator_node: Gemini returned empty result for slide %s, "
+            "falling back to GPT Image",
+            lesson_id,
+            slide_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] image_generator_node: Gemini failed for slide %s, falling back to GPT Image",
+            lesson_id,
+            slide_id,
+            exc_info=True,
+        )
+
     from app.providers.image.openai_image import OpenAIImageProvider
 
     try:
@@ -4305,33 +4327,13 @@ async def _generate_image_with_fallback(
             return data_uri, "gpt_image"
         logger.warning(
             "[%s] image_generator_node: GPT Image returned empty result for slide %s, "
-            "falling back to Imagen",
-            lesson_id,
-            slide_id,
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "[%s] image_generator_node: GPT Image failed for slide %s, falling back to Imagen",
-            lesson_id,
-            slide_id,
-            exc_info=True,
-        )
-
-    from app.providers.image.imagen import ImagenProvider
-
-    try:
-        data_uri = await ImagenProvider(lesson_id).generate(prompt, size=size)
-        if data_uri:
-            return data_uri, "imagen"
-        logger.warning(
-            "[%s] image_generator_node: Imagen returned empty result for slide %s, "
             "falling back to text-only",
             lesson_id,
             slide_id,
         )
     except Exception:  # noqa: BLE001
         logger.warning(
-            "[%s] image_generator_node: Imagen failed for slide %s, falling back to text-only",
+            "[%s] image_generator_node: GPT Image failed for slide %s, falling back to text-only",
             lesson_id,
             slide_id,
             exc_info=True,
@@ -4463,7 +4465,10 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
 
     from app.core.cost_tracker import accumulate_cost, check_ceiling
     from app.core.db import get_supabase
-    from app.providers.image.imagen import COST_PER_IMAGE as IMAGEN_COST_PER_IMAGE
+    from app.providers.image.nano_banana import (
+        _DEFAULT_COST_PER_IMAGE as _NANO_BANANA_DEFAULT_COST_PER_IMAGE,
+    )
+    from app.providers.image.nano_banana import COST_PER_IMAGE as NANO_BANANA_COST_PER_IMAGE
     from app.providers.image.openai_image import _DEFAULT_COST_PER_IMAGE
     from app.providers.image.openai_image import COST_PER_IMAGE as GPT_IMAGE_COST_PER_IMAGE
 
@@ -4611,7 +4616,9 @@ async def image_generator_node(state: PipelineState) -> PipelineState:
                     cost = (
                         GPT_IMAGE_COST_PER_IMAGE.get(_SLIDE_IMAGE_SIZE, _DEFAULT_COST_PER_IMAGE)
                         if provider_used == "gpt_image"
-                        else IMAGEN_COST_PER_IMAGE
+                        else NANO_BANANA_COST_PER_IMAGE.get(
+                            _SLIDE_IMAGE_SIZE, _NANO_BANANA_DEFAULT_COST_PER_IMAGE
+                        )
                     )
                     await accumulate_cost(lesson_id, cost)
                 else:

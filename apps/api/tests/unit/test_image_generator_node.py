@@ -3,7 +3,9 @@ Unit tests for Story 2-9 (S2-10): image_generator_node real body.
 
 Covers docs/stories/2-9-image-generator-node.md's ACs:
 - AC-1: input is state["slides"] only.
-- AC-2: GPT Image 1 Mini -> Imagen 4 Fast -> text-only fallback, never fails.
+- AC-2: Gemini "Nano Banana" -> GPT Image 2 -> text-only fallback, never fails
+  (order per Story 5-8b — reversed from the original GPT-Image-primary chain
+  once Imagen 4 Fast died, D121).
 - AC-3: proactive cost-ceiling pre-check.
 - AC-7: successful images uploaded to lesson-images bucket, upsert=true.
 - AC-8: flat {slide_id, image_url} output shape.
@@ -83,21 +85,21 @@ def _mock_supabase(node_outputs: dict[str, Any] | None = None) -> MagicMock:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_happy_path_openai_success_produces_flat_slide_images() -> None:
-    """AC-2/AC-7/AC-8: GPT Image succeeds -> storage upload with upsert=true,
-    flat {slide_id, image_url} entries."""
+async def test_happy_path_gemini_success_produces_flat_slide_images() -> None:
+    """AC-2/AC-7/AC-8: Gemini "Nano Banana" (primary, Story 5-8b) succeeds ->
+    storage upload with upsert=true, flat {slide_id, image_url} entries."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -116,6 +118,45 @@ async def test_happy_path_openai_success_produces_flat_slide_images() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_gemini_is_tried_before_gpt_image() -> None:
+    """Story 5-8b AC5: pins the fallback ORDER explicitly. Both providers are
+    mocked to succeed with DIFFERENT payloads — if Gemini is genuinely tried
+    first (as required), its payload is the one that reaches the slide; if a
+    future change silently reverted the order (or tried both/either), GPT
+    Image's payload would win instead and this test would catch it. Closes a
+    real, confirmed gap: no earlier test in this suite asserted WHICH
+    provider is queried first, only which one wins when the other fails."""
+    from app.modules.content.pipeline.graph import image_generator_node
+
+    gemini_data_uri = f"data:image/png;base64,{base64.b64encode(b'GEMINIIMG').decode()}"
+    gpt_data_uri = f"data:image/png;base64,{base64.b64encode(b'GPTIMAGEIMG').decode()}"
+
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = gemini_data_uri
+    mock_gpt_fallback = AsyncMock()
+    mock_gpt_fallback.generate.return_value = gpt_data_uri
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+        patch(
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
+        ),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_gpt_fallback
+        ),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        await image_generator_node(_base_state(slides=[SLIDES[0]]))
+
+    mock_gemini_provider.generate.assert_awaited_once()
+    mock_gpt_fallback.generate.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_d118_requests_a_widescreen_size_not_the_old_default_square() -> None:
     """D118: the player renders slide images with object-contain in a wide
     panel, sized from the image's own intrinsic ratio — a 1024x1024 square
@@ -126,50 +167,53 @@ async def test_d118_requests_a_widescreen_size_not_the_old_default_square() -> N
 
     assert _SLIDE_IMAGE_SIZE != "1024x1024", "must not silently regress to the old square default"
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         await image_generator_node(_base_state(slides=[SLIDES[0]]))
 
-    assert mock_openai_provider.generate.call_args.kwargs.get("size") == _SLIDE_IMAGE_SIZE
+    assert mock_gemini_provider.generate.call_args.kwargs.get("size") == _SLIDE_IMAGE_SIZE
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_d118_imagen_fallback_also_requests_the_widescreen_size() -> None:
+async def test_d118_gpt_image_fallback_also_requests_the_widescreen_size() -> None:
     """The fallback provider must receive the SAME size the primary was asked
-    for, not silently revert to square when GPT Image fails."""
+    for, not silently revert to square when Gemini fails. (Story 5-8b:
+    Gemini "Nano Banana" is now primary, GPT Image 2 is now fallback.)"""
     from app.modules.content.pipeline.graph import _SLIDE_IMAGE_SIZE, image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.side_effect = RuntimeError("GPT Image down")
-    mock_imagen_provider = AsyncMock()
-    mock_imagen_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_primary = AsyncMock()
+    mock_gemini_primary.generate.side_effect = RuntimeError("Gemini down")
+    mock_gpt_fallback = AsyncMock()
+    mock_gpt_fallback.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_primary,
         ),
-        patch("app.providers.image.imagen.ImagenProvider", return_value=mock_imagen_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_gpt_fallback
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         await image_generator_node(_base_state(slides=[SLIDES[0]]))
 
-    assert mock_imagen_provider.generate.call_args.kwargs.get("size") == _SLIDE_IMAGE_SIZE
+    assert mock_gpt_fallback.generate.call_args.kwargs.get("size") == _SLIDE_IMAGE_SIZE
 
 
 @pytest.mark.unit
@@ -183,10 +227,10 @@ async def test_d118_cost_accumulated_matches_the_size_actually_requested() -> No
     dollar figure, so this test can't silently drift from reality the way
     D120 found the constant itself had (see graph.py's own D120 comment)."""
     from app.modules.content.pipeline.graph import _SLIDE_IMAGE_SIZE, image_generator_node
-    from app.providers.image.openai_image import COST_PER_IMAGE
+    from app.providers.image.nano_banana import COST_PER_IMAGE
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
     mock_accumulate = AsyncMock()
 
@@ -194,8 +238,8 @@ async def test_d118_cost_accumulated_matches_the_size_actually_requested() -> No
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
@@ -222,16 +266,16 @@ async def test_d118_uploaded_bytes_are_actually_cropped_to_exact_16_9() -> None:
     Image.new("RGB", (1024, 1024), color=(10, 20, 30)).save(square, format="PNG")
     real_square_data_uri = f"data:image/png;base64,{b64.b64encode(square.getvalue()).decode()}"
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = real_square_data_uri
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = real_square_data_uri
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -246,24 +290,27 @@ async def test_d118_uploaded_bytes_are_actually_cropped_to_exact_16_9() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_openai_failure_falls_back_to_imagen() -> None:
-    """AC-2: GPT Image raises -> Imagen is tried and succeeds."""
+async def test_gemini_failure_falls_back_to_gpt_image() -> None:
+    """AC3 (Story 5-8b): Gemini "Nano Banana" (now primary) raises -> GPT
+    Image 2 (now fallback) is tried and succeeds."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.side_effect = RuntimeError("GPT Image down")
-    mock_imagen_provider = AsyncMock()
-    mock_imagen_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_primary = AsyncMock()
+    mock_gemini_primary.generate.side_effect = RuntimeError("Gemini down")
+    mock_gpt_fallback = AsyncMock()
+    mock_gpt_fallback.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_primary,
         ),
-        patch("app.providers.image.imagen.ImagenProvider", return_value=mock_imagen_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_gpt_fallback
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         result = await image_generator_node(_base_state(slides=[SLIDES[0]]))
@@ -278,10 +325,10 @@ async def test_both_providers_fail_falls_back_to_text_only_never_raises() -> Non
     upload, no cost accumulated."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.side_effect = RuntimeError("GPT Image down")
-    mock_imagen_provider = AsyncMock()
-    mock_imagen_provider.generate.side_effect = RuntimeError("Imagen down")
+    mock_gemini_primary = AsyncMock()
+    mock_gemini_primary.generate.side_effect = RuntimeError("Gemini down")
+    mock_gpt_fallback = AsyncMock()
+    mock_gpt_fallback.generate.side_effect = RuntimeError("GPT Image down")
     sb = _mock_supabase()
     mock_accumulate = AsyncMock()
 
@@ -289,10 +336,12 @@ async def test_both_providers_fail_falls_back_to_text_only_never_raises() -> Non
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_primary,
         ),
-        patch("app.providers.image.imagen.ImagenProvider", return_value=mock_imagen_provider),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_gpt_fallback
+        ),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
         result = await image_generator_node(_base_state(slides=[SLIDES[0]]))
@@ -305,24 +354,32 @@ async def test_both_providers_fail_falls_back_to_text_only_never_raises() -> Non
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_cost_ceiling_over_skips_providers_entirely() -> None:
-    """AC-3: cost ceiling already over -> image_url=None, zero provider calls."""
+    """AC-3: cost ceiling already over -> image_url=None, zero calls to EITHER
+    provider (not just the primary — a regression that skipped only the
+    primary but still fell through to the fallback would pass a
+    single-provider assertion here)."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
+    mock_gemini_primary = AsyncMock()
+    mock_gpt_fallback = AsyncMock()
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_primary,
+        ),
+        patch(
+            "app.providers.image.openai_image.OpenAIImageProvider", return_value=mock_gpt_fallback
         ),
     ):
         result = await image_generator_node(_base_state(slides=[SLIDES[0]]))
 
     assert result["slide_images"][0]["image_url"] is None
-    mock_openai_provider.generate.assert_not_called()
+    mock_gemini_primary.generate.assert_not_called()
+    mock_gpt_fallback.generate.assert_not_called()
 
 
 @pytest.mark.unit
@@ -332,8 +389,8 @@ async def test_malformed_slide_entry_degrades_that_slide_only() -> None:
     degrades JUST that slide, other slides still process normally."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     malformed = {
@@ -346,8 +403,8 @@ async def test_malformed_slide_entry_degrades_that_slide_only() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -366,8 +423,8 @@ async def test_unsafe_slide_id_degrades_to_text_only() -> None:
     before being used in a storage path."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     unsafe_slide = {
@@ -385,8 +442,8 @@ async def test_unsafe_slide_id_degrades_to_text_only() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -426,20 +483,20 @@ async def test_idempotency_cache_hit_skips_all_generation() -> None:
     from app.modules.content.pipeline.graph import image_generator_node
 
     cached_images = [{"slide_id": "slide_sec_0_0", "image_url": "x/slide_sec_0_0.png"}]
-    mock_openai_provider = AsyncMock()
+    mock_gemini_provider = AsyncMock()
     sb = _mock_supabase(node_outputs={"image_generator": cached_images})
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
     ):
         result = await image_generator_node(_base_state())
 
     assert result["slide_images"] == cached_images
-    mock_openai_provider.generate.assert_not_called()
+    mock_gemini_provider.generate.assert_not_called()
 
 
 @pytest.mark.unit
@@ -448,16 +505,16 @@ async def test_successful_run_writes_checkpoint() -> None:
     """AC-13: a successful run writes last_node + node_outputs."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -480,8 +537,8 @@ async def test_prompt_never_includes_raw_lesson_plan_or_narration() -> None:
     present in state alongside slides, image prompts never reference them."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     state = _base_state(
@@ -495,14 +552,14 @@ async def test_prompt_never_includes_raw_lesson_plan_or_narration() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
         await image_generator_node(state)
 
-    sent_prompt = mock_openai_provider.generate.call_args.args[0]
+    sent_prompt = mock_gemini_provider.generate.call_args.args[0]
     assert "RAW LESSON PLAN" not in sent_prompt
     assert "RAW SUMMARY" not in sent_prompt
     assert "RAW NARRATION" not in sent_prompt
@@ -523,8 +580,8 @@ async def test_cost_is_accumulated_only_after_successful_upload_not_by_provider(
     is never called when the upload itself fails."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
     sb.storage.from_.return_value.upload.side_effect = RuntimeError("Storage down")
     mock_accumulate = AsyncMock()
@@ -533,8 +590,8 @@ async def test_cost_is_accumulated_only_after_successful_upload_not_by_provider(
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
@@ -554,16 +611,16 @@ async def test_malformed_data_uri_from_provider_degrades_slide_not_uploaded_as_s
     degrade that slide, not silently upload a 0-byte 'success'."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = "not-a-real-data-uri"
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = "not-a-real-data-uri"
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -581,8 +638,8 @@ async def test_non_dict_data_field_degrades_that_slide_only() -> None:
     per-slide try/except — it must degrade just that slide."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
 
     bad_entry = {"segment_id": "sec_bad", "data": "oops-not-a-dict"}
@@ -592,8 +649,8 @@ async def test_non_dict_data_field_degrades_that_slide_only() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -645,7 +702,7 @@ async def test_empty_bullets_list_degrades_slide_without_calling_provider() -> N
     must be rejected like a malformed entry, not paid for."""
     from app.modules.content.pipeline.graph import image_generator_node
 
-    mock_openai_provider = AsyncMock()
+    mock_gemini_provider = AsyncMock()
     sb = _mock_supabase()
 
     empty_bullets_slide = {
@@ -663,14 +720,14 @@ async def test_empty_bullets_list_degrades_slide_without_calling_provider() -> N
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
     ):
         result = await image_generator_node(_base_state(slides=[empty_bullets_slide]))
 
     assert result["slide_images"][0]["image_url"] is None
-    mock_openai_provider.generate.assert_not_called()
+    mock_gemini_provider.generate.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -719,8 +776,8 @@ async def test_slides_generate_concurrently_not_serially() -> None:
         await asyncio.sleep(delay_s)
         return _FAKE_DATA_URI
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.side_effect = _slow_generate
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.side_effect = _slow_generate
     sb = _mock_supabase()
 
     with (
@@ -739,8 +796,8 @@ async def test_slides_generate_concurrently_not_serially() -> None:
         patch("app.core.langfuse.get_langfuse", return_value=MagicMock()),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -787,8 +844,8 @@ async def test_concurrency_survives_a_slow_blocking_storage_upload() -> None:
     upload_delay_s = 0.15
     slides_in = [_slide(i) for i in range(n_slides)]
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.return_value = _FAKE_DATA_URI
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.return_value = _FAKE_DATA_URI
     sb = _mock_supabase()
     # Blocking sleep — this callable runs inside asyncio.to_thread's worker
     # thread if (and only if) the fix wraps the upload call correctly; if
@@ -802,8 +859,8 @@ async def test_concurrency_survives_a_slow_blocking_storage_upload() -> None:
         patch("app.core.langfuse.get_langfuse", return_value=MagicMock()),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -841,16 +898,16 @@ async def test_output_order_preserved_when_later_slide_finishes_first() -> None:
             await asyncio.sleep(0.01)
         return _FAKE_DATA_URI
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.side_effect = _generate
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.side_effect = _generate
     sb = _mock_supabase()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
@@ -888,8 +945,8 @@ async def test_one_slide_failure_does_not_cancel_concurrent_siblings() -> None:
         await asyncio.sleep(0.05 if "WillFail" in prompt else 0.15)
         return _FAKE_DATA_URI
 
-    mock_openai_provider = AsyncMock()
-    mock_openai_provider.generate.side_effect = _generate
+    mock_gemini_provider = AsyncMock()
+    mock_gemini_provider.generate.side_effect = _generate
     sb = _mock_supabase()
 
     def _upload_side_effect(*, path: str, file: bytes, file_options: dict[str, Any]) -> MagicMock:
@@ -903,8 +960,8 @@ async def test_one_slide_failure_does_not_cancel_concurrent_siblings() -> None:
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
         patch(
-            "app.providers.image.openai_image.OpenAIImageProvider",
-            return_value=mock_openai_provider,
+            "app.providers.image.nano_banana.NanoBananaProvider",
+            return_value=mock_gemini_provider,
         ),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):

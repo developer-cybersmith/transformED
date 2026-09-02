@@ -270,7 +270,7 @@ _TRACED_PROVIDER_MODULES = [
     "app.providers.tts.sarvam",
     "app.providers.tts.azure",
     "app.providers.image.openai_image",
-    "app.providers.image.imagen",
+    "app.providers.image.nano_banana",
 ]
 
 

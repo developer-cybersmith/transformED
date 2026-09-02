@@ -56,8 +56,10 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Google AI / Vertex AI key — used for Gemini model evaluation AND "
-            "(as of Story 2-9) as the production auth key for ImagenProvider "
-            "(Imagen 4 Fast, image_generator_node's fallback tier)."
+            "(as of Story 5-8b) as the production auth key for NanoBananaProvider "
+            "(Gemini 'Nano Banana', image_generator_node's PRIMARY tier — "
+            "previously backed ImagenProvider/Imagen 4 Fast, Story 2-9, until "
+            "that endpoint died and was replaced per D121)."
         ),
     )
 
