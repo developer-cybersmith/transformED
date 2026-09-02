@@ -6,6 +6,7 @@ Handles PDF upload → lesson pipeline dispatch and lesson status/retrieval.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import copy
 import logging
@@ -1156,18 +1157,26 @@ async def generate_chapter_lesson(
     # `user_id` and `filename` are selected because `_source_pdf_path` must
     # reconstruct the storage key from the row that was actually written, not
     # from the JWT. `books` has no path column to read it back from.
-    book = _fetch_owned_book(
-        supabase, validated_book_id, user_id, "book_id,user_id,filename,status"
+    #
+    # D139: `_fetch_owned_book` is a synchronous helper (its own `.execute()`
+    # call is unwrapped) with two OTHER call sites elsewhere in this module —
+    # wrapping the CALL here in asyncio.to_thread (rather than making the
+    # helper itself async) keeps this fix scoped to generate_chapter_lesson
+    # only, matching D138's own scoping discipline.
+    book = await asyncio.to_thread(
+        _fetch_owned_book, supabase, validated_book_id, user_id, "book_id,user_id,filename,status"
     )
 
     # ── Gate 3b: the chapter, scoped to that book, then re-checked ────────────
-    chapter_resp = (
-        supabase.table("chapters")
-        .select(_GENERATE_CHAPTER_COLUMNS)
-        .eq("chapter_id", validated_chapter_id)
-        .eq("book_id", validated_book_id)
-        .maybe_single()
-        .execute()
+    chapter_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("chapters")
+            .select(_GENERATE_CHAPTER_COLUMNS)
+            .eq("chapter_id", validated_chapter_id)
+            .eq("book_id", validated_book_id)
+            .maybe_single()
+            .execute()
+        )
     )
     chapter: dict[str, Any] | None = single_row(chapter_resp)
     if not chapter or str(chapter.get("book_id")) != validated_book_id:
@@ -1219,13 +1228,15 @@ async def generate_chapter_lesson(
     # already exists and bill the user a second time for it. Only the
     # `generating` branch gets a clock.
     stale_before = _generating_cutoff_iso()
-    existing_resp = (
-        supabase.table("lessons")
-        .select("lesson_id,status,tier,created_at")
-        .eq("chapter_id", validated_chapter_id)
-        .eq("tier", tier)
-        .eq("user_id", user_id)
-        .execute()
+    existing_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("lessons")
+            .select("lesson_id,status,tier,created_at")
+            .eq("chapter_id", validated_chapter_id)
+            .eq("tier", tier)
+            .eq("user_id", user_id)
+            .execute()
+        )
     )
     # D54: `body.force` bypasses ONLY the early-return below — the branch that
     # hands an existing `generating`/`ready` lesson back as-is instead of a new
@@ -1306,12 +1317,16 @@ async def generate_chapter_lesson(
     # killed workers consume every slot permanently and 429 the user out of all
     # generation forever, behind a `Retry-After` that can never come true.
     running = rows(
-        supabase.table("lessons")
-        .select("lesson_id")
-        .eq("user_id", user_id)
-        .eq("status", "generating")
-        .gte("created_at", stale_before)
-        .execute()
+        await asyncio.to_thread(
+            lambda: (
+                supabase.table("lessons")
+                .select("lesson_id")
+                .eq("user_id", user_id)
+                .eq("status", "generating")
+                .gte("created_at", stale_before)
+                .execute()
+            )
+        )
     )
     if len(running) >= settings.max_concurrent_generations_per_user:
         raise HTTPException(
@@ -1335,20 +1350,22 @@ async def generate_chapter_lesson(
         source_file_path = _source_pdf_path(
             str(book["user_id"]), validated_book_id, str(book.get("filename") or "")
         )
-        lessons_resp = (
-            supabase.table("lessons")
-            .insert(
-                {
-                    "user_id": user_id,
-                    "book_id": validated_book_id,
-                    "chapter_id": validated_chapter_id,
-                    "tier": tier,
-                    "status": "generating",
-                    "title": str(chapter.get("title") or f"Chapter {chapter['chapter_index']}"),
-                    "source_file_path": source_file_path,
-                }
+        lessons_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("lessons")
+                .insert(
+                    {
+                        "user_id": user_id,
+                        "book_id": validated_book_id,
+                        "chapter_id": validated_chapter_id,
+                        "tier": tier,
+                        "status": "generating",
+                        "title": str(chapter.get("title") or f"Chapter {chapter['chapter_index']}"),
+                        "source_file_path": source_file_path,
+                    }
+                )
+                .execute()
             )
-            .execute()
         )
         lessons_rows = rows(lessons_resp)
         if not lessons_rows:
@@ -1363,9 +1380,13 @@ async def generate_chapter_lesson(
         # is also scalar and cannot express one chapter with lessons at three
         # tiers. It is dead; the reads source the link from `lessons` instead.
 
-        supabase.table("lesson_jobs").insert(
-            {"lesson_id": lesson_id, "status": "pending"}
-        ).execute()
+        await asyncio.to_thread(
+            lambda: (
+                supabase.table("lesson_jobs")
+                .insert({"lesson_id": lesson_id, "status": "pending"})
+                .execute()
+            )
+        )
 
         # `pipeline:{lesson_id}` is kept verbatim: it is the retry-safety key the
         # worker and CLAUDE.md's thread_id rule already reference. A
@@ -1407,7 +1428,11 @@ async def generate_chapter_lesson(
         # the sole record that the cleanup did not happen.
         if lesson_id:
             try:
-                supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
+                await asyncio.to_thread(
+                    lambda: (
+                        supabase.table("lesson_jobs").delete().eq("lesson_id", lesson_id).execute()
+                    )
+                )
             except Exception:  # noqa: BLE001 — best-effort rollback; the 500 below still stands
                 logger.warning(
                     "rollback failed to delete lesson_jobs for lesson_id=%s (D53)",
@@ -1415,7 +1440,9 @@ async def generate_chapter_lesson(
                     exc_info=True,
                 )
             try:
-                supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+                await asyncio.to_thread(
+                    lambda: supabase.table("lessons").delete().eq("lesson_id", lesson_id).execute()
+                )
             except Exception:  # noqa: BLE001 — best-effort rollback; the 500 below still stands
                 logger.warning(
                     "rollback failed to delete lesson for lesson_id=%s — it will sit in "
