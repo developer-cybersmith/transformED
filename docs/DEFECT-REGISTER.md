@@ -827,6 +827,14 @@ register, `dna_fusion.py`, `schemas.py`, `test_unbounded_queries.py`,
 
 ---
 
+### Found running Story 5-1's real 50-concurrent load test against the D138-fixed API (2026-09-02)
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| **D139** | **`generate_chapter_lesson` (`content/router.py:1073`, the real chapter-generation endpoint Phase B measures) makes at least EIGHT sequential synchronous `supabase-py` calls directly on the event loop, inside an `async def` handler, with no `asyncio.to_thread` wrapping — the exact same defect class as D138, on a more important endpoint.** Call sites: `_fetch_owned_book()` (a plain `def` helper, itself unwrapped, called directly at line 1175), the chapter fetch (Gate 3b), the Gate 5 idempotency-check read, the Gate 7 per-user-concurrency-check read, the `lessons` insert, the `lesson_jobs` insert, and both rollback deletes (`lesson_jobs`, `lessons`) in the exception handler. Found for real: after D138 landed, Story 5-1's full 50-concurrent run got past Phase A and into Phase B (`generate_chapter_lesson`) for the first time — and Phase B was a complete failure, 0/50 succeeded, every single request hit a client-side `ReadTimeout` at exactly the 30s client timeout (P99 30100.1ms) with NO response at all, not just slow ones. Confirmed by reading the endpoint start to finish and counting every blocking call: ~6-8 sequential round-trips per request, all queued on one shared event-loop thread across 50 concurrent requests, comfortably exceeds any reasonable client timeout — matching the observed "every request times out identically" symptom exactly. | **High** (the real, paid lesson-generation endpoint is completely non-functional under even modest concurrency — 0% success at 50 concurrent requests — worse in practice than D138, since this is the endpoint Story 5-1 exists to validate) | **Fix in progress 2026-09-02** — wrap all eight blocking call sites in `asyncio.to_thread`, mirroring D138's own fix exactly. `_fetch_owned_book` itself is NOT made async (it has two other call sites elsewhere in this file, lines 1001 and 1029, both out of scope for D139) — instead its call at line 1175 is wrapped with `asyncio.to_thread(_fetch_owned_book, ...)` at the call site only, leaving the helper and its other two callers untouched. Scoped ONLY to `generate_chapter_lesson`. **Owner: Dev 1 (content pipeline).** | `tests/unit/test_generate_lesson_endpoint.py` — new regression tests mirroring D138's approach (thread-identity checks and/or timing checks per call site), proving each of the eight call sites runs off the event loop thread. |
+
+---
+
 ## Scorecard
 
 | | Count |
