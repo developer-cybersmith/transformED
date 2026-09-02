@@ -188,6 +188,305 @@ def test_upload_lesson_202_shape(client: TestClient) -> None:
 
 
 @pytest.mark.unit
+async def test_upload_lesson_concurrent_requests_do_not_serialize_on_blocking_io() -> None:
+    """D138: `upload_lesson` calls the SYNCHRONOUS supabase-py client directly
+    on the event loop (no `asyncio.to_thread`) -- on a single-process uvicorn,
+    one upload's blocking network call stalls every OTHER concurrently
+    in-flight upload for its own duration, not just its own request.
+
+    This test puts a REAL blocking `time.sleep` (not `asyncio.sleep`) inside
+    the mocked storage `upload()` call -- exactly what a real, slow network
+    upload looks like to the event loop if it is never wrapped in
+    `asyncio.to_thread`. Without that wrapping, N concurrent uploads take
+    ~N * delay (fully serialized); with the fix, they overlap and the timing
+    bound holds. Mirrors test_image_generator_node.py's
+    test_concurrency_survives_a_slow_blocking_storage_upload (same defect
+    class, D132), applied here to the upload endpoint (D138).
+
+    Review finding (test-coverage): this test alone only exercises the
+    storage-upload call site's concurrency, not the books-insert call site
+    or either cleanup branch. The dedicated
+    test_upload_lesson_books_insert_and_storage_upload_run_off_the_event_loop
+    below covers the books-insert site (a direct, non-timing thread-identity
+    check -- empirically, this ASGI test harness's own request-handling
+    exhibits unrelated first-blocking-call serialization behavior that made a
+    timing assertion on the insert call site unreliable even against
+    correctly-fixed code, so a deterministic thread-identity check is used
+    there instead); the two cleanup-branch call sites (ARQ-dedup 409, generic
+    exception) are covered by their own dedicated tests below.
+    """
+    import asyncio
+    import time
+
+    import httpx
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    limiter.reset()
+
+    n_requests = 4
+    upload_delay_s = 0.15
+
+    sb = _make_supabase_mock()
+    sb.storage.from_.return_value.upload.side_effect = lambda **_kwargs: time.sleep(upload_delay_s)
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    app.dependency_overrides[get_settings] = _approved_settings
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                start = time.monotonic()
+                responses = await asyncio.gather(
+                    *(
+                        ac.post(
+                            "/api/content/lessons",
+                            files={
+                                "file": (
+                                    f"c{i}.pdf",
+                                    io.BytesIO(MINIMAL_PDF),
+                                    "application/pdf",
+                                )
+                            },
+                        )
+                        for i in range(n_requests)
+                    )
+                )
+                elapsed = time.monotonic() - start
+    finally:
+        app.dependency_overrides.clear()
+
+    assert all(r.status_code == 202 for r in responses), [r.text for r in responses]
+    serial_time = n_requests * upload_delay_s  # 0.6s if uploads serialize the loop
+    assert elapsed < serial_time * 0.6, (
+        f"elapsed={elapsed:.3f}s is not meaningfully faster than "
+        f"{serial_time:.3f}s (fully-serialized-by-a-blocking-upload time) -- "
+        f"upload_lesson's Supabase calls are blocking the event loop instead "
+        f"of running in a thread"
+    )
+
+
+@pytest.mark.unit
+async def test_upload_lesson_books_insert_and_storage_upload_run_off_the_event_loop() -> None:
+    """D138: direct, deterministic proof (no concurrency/timing involved, so
+    it cannot be flaky) that BOTH main-path blocking calls -- the books
+    insert and the storage upload -- actually run via `asyncio.to_thread`,
+    i.e. on a worker thread, never on the event loop's own thread.
+
+    Review finding (test-coverage): the concurrency-timing test above only
+    delays the storage upload; it cannot, on its own, prove the books-insert
+    call site is wrapped too (and a timing assertion on that specific call
+    site turned out to be unreliable in this ASGI test harness for reasons
+    unrelated to the fix). Recording which OS thread actually executes each
+    mocked call and asserting it differs from the event loop's own thread is
+    a direct enough check that no timing threshold is needed at all.
+    """
+    import threading
+
+    import httpx
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    limiter.reset()
+    event_loop_thread_id = threading.get_ident()
+    seen_thread_ids: dict[str, int] = {}
+
+    sb = _make_supabase_mock()
+    real_insert_execute = sb.table("books").insert.return_value.execute
+
+    def _record_insert() -> Any:
+        seen_thread_ids["insert"] = threading.get_ident()
+        return real_insert_execute.return_value
+
+    sb.table("books").insert.return_value.execute.side_effect = _record_insert
+
+    def _record_upload(**_kwargs: Any) -> None:
+        seen_thread_ids["upload"] = threading.get_ident()
+
+    sb.storage.from_.return_value.upload.side_effect = _record_upload
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: _make_arq_mock()
+    app.dependency_overrides[get_settings] = _approved_settings
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/content/lessons",
+                    files={"file": ("c.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 202, resp.text
+    assert seen_thread_ids.get("insert") is not None, "books insert mock was never called"
+    assert seen_thread_ids.get("upload") is not None, "storage upload mock was never called"
+    assert seen_thread_ids["insert"] != event_loop_thread_id, (
+        "books insert ran ON the event-loop thread -- asyncio.to_thread wrapping is missing"
+    )
+    assert seen_thread_ids["upload"] != event_loop_thread_id, (
+        "storage upload ran ON the event-loop thread -- asyncio.to_thread wrapping is missing"
+    )
+
+
+@pytest.mark.unit
+async def test_upload_lesson_dedup_cleanup_does_not_serialize_on_blocking_io() -> None:
+    """D138: the ARQ-dedup (409) cleanup branch has its OWN two blocking
+    calls -- `storage.remove()` and `books.delete().execute()` -- distinct
+    from the main path's insert/upload call sites and NOT exercised by
+    `test_upload_lesson_concurrent_requests_do_not_serialize_on_blocking_io`
+    (that test's happy-path mock never returns `job=None`, so it never
+    enters this branch at all). Review finding (test-coverage): without a
+    dedicated test, reverting `asyncio.to_thread` on just these two lines
+    would ship silently. Forces `enqueue_job` to return `None` (ARQ's real
+    dedup signal) so every request takes this branch, then puts real
+    blocking sleeps in the mocked `remove()`/`delete()` calls.
+    """
+    import asyncio
+    import time
+
+    import httpx
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    limiter.reset()
+
+    n_requests = 4
+    cleanup_delay_s = 0.1
+
+    sb = _make_supabase_mock()
+    sb.storage.from_.return_value.remove.side_effect = lambda *_a, **_kw: time.sleep(
+        cleanup_delay_s
+    )
+    sb.table("books").delete.return_value.eq.return_value.execute.side_effect = lambda: time.sleep(
+        cleanup_delay_s
+    )
+
+    arq_mock = AsyncMock()
+    arq_mock.enqueue_job = AsyncMock(return_value=None)  # ARQ dedup -- triggers the 409 branch
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+    app.dependency_overrides[get_settings] = _approved_settings
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                start = time.monotonic()
+                responses = await asyncio.gather(
+                    *(
+                        ac.post(
+                            "/api/content/lessons",
+                            files={
+                                "file": (
+                                    f"c{i}.pdf",
+                                    io.BytesIO(MINIMAL_PDF),
+                                    "application/pdf",
+                                )
+                            },
+                        )
+                        for i in range(n_requests)
+                    )
+                )
+                elapsed = time.monotonic() - start
+    finally:
+        app.dependency_overrides.clear()
+
+    assert all(r.status_code == 409 for r in responses), [r.text for r in responses]
+    serial_time = n_requests * (2 * cleanup_delay_s)  # remove() + delete() per request
+    assert elapsed < serial_time * 0.6, (
+        f"elapsed={elapsed:.3f}s is not meaningfully faster than "
+        f"{serial_time:.3f}s -- the ARQ-dedup cleanup branch's remove()/delete() "
+        f"calls are blocking the event loop instead of running in a thread"
+    )
+
+
+@pytest.mark.unit
+async def test_upload_lesson_exception_cleanup_does_not_serialize_on_blocking_io() -> None:
+    """D138: the generic-exception cleanup branch has its OWN two blocking
+    calls -- `storage.remove()` and `books.delete().execute()` -- distinct
+    from both the main path and the ARQ-dedup branch, and not exercised by
+    either of the other two tests. Review finding (test-coverage): without a
+    dedicated test, reverting `asyncio.to_thread` on just these two lines
+    would ship silently. Forces `enqueue_job` to raise (any post-insert
+    failure lands here) so every request takes this branch, then puts real
+    blocking sleeps in the mocked `remove()`/`delete()` calls.
+    """
+    import asyncio
+    import time
+
+    import httpx
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    limiter.reset()
+
+    n_requests = 4
+    cleanup_delay_s = 0.1
+
+    sb = _make_supabase_mock()
+    sb.storage.from_.return_value.remove.side_effect = lambda *_a, **_kw: time.sleep(
+        cleanup_delay_s
+    )
+    sb.table("books").delete.return_value.eq.return_value.execute.side_effect = lambda: time.sleep(
+        cleanup_delay_s
+    )
+
+    arq_mock = AsyncMock()
+    arq_mock.enqueue_job = AsyncMock(side_effect=RuntimeError("simulated ARQ/Redis failure"))
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+    app.dependency_overrides[get_settings] = _approved_settings
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                start = time.monotonic()
+                responses = await asyncio.gather(
+                    *(
+                        ac.post(
+                            "/api/content/lessons",
+                            files={
+                                "file": (
+                                    f"c{i}.pdf",
+                                    io.BytesIO(MINIMAL_PDF),
+                                    "application/pdf",
+                                )
+                            },
+                        )
+                        for i in range(n_requests)
+                    )
+                )
+                elapsed = time.monotonic() - start
+    finally:
+        app.dependency_overrides.clear()
+
+    assert all(r.status_code == 500 for r in responses), [r.text for r in responses]
+    serial_time = n_requests * (2 * cleanup_delay_s)  # remove() + delete() per request
+    assert elapsed < serial_time * 0.6, (
+        f"elapsed={elapsed:.3f}s is not meaningfully faster than "
+        f"{serial_time:.3f}s -- the generic-exception cleanup branch's "
+        f"remove()/delete() calls are blocking the event loop instead of "
+        f"running in a thread"
+    )
+
+
+@pytest.mark.unit
 def test_upload_creates_a_book_and_no_lesson(client: TestClient) -> None:
     """AC20 — upload stops creating `lessons` and `lesson_jobs` rows entirely.
 
@@ -809,6 +1108,12 @@ def test_upload_lesson_429_rate_limit() -> None:
 
     assert resp.status_code == 429
     assert "Retry-After" in resp.headers
+    # Review Finding (Story 5-4, AC Completeness): AC1's own text requires the
+    # header to be "present AND parseable as an integer number of seconds" --
+    # presence alone doesn't prove that. A regression that made Retry-After a
+    # non-numeric or malformed string would not have been caught before this.
+    retry_after_seconds = int(resp.headers["Retry-After"])
+    assert retry_after_seconds >= 0
 
 
 # ── Story S2-LM3: tier param ────────────────────────────────────────────────
