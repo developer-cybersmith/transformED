@@ -45,7 +45,6 @@ def _settings(retain: float = 0.7) -> Settings:
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
         dna_ema_retain=retain,
