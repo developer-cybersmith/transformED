@@ -118,9 +118,9 @@ aggregate. 3 more tests added, RED-confirmed by reverting `graph.py` alone. Full
 | Sprint 1 | Weeks 2–3 (Jun 19 – Jul 2) | 10 | 10 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 (Jul 3–16) | 21 | 21 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 (Jul 17–30) | 23 | 22 | 0 | 1 |
-| Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 8 | 0 | 1 | 7 |
+| Sprint 4 | Weeks 8–9 (Jul 31 – Aug 13) | 8 | 1 | 0 | 7 |
 | Week 10 | Aug 14–20 | 4 | 0 | 0 | 4 |
-| **Totals** | | **78** | **65** | **1** | **12** |
+| **Totals** | | **78** | **66** | **0** | **12** |
 
 ---
 
@@ -1105,11 +1105,24 @@ Every node must:
   - Webhook (`payment.captured`) is the source of truth for fulfillment, verified via raw-body HMAC-SHA256 against `RAZORPAY_WEBHOOK_SECRET` — never trust the client-side `handler` callback alone
   - **AC:** User completes a purchase; Razorpay webhook updates user access tier in DB; webhook signature validated on every call, unsigned/invalid requests rejected with 400; duplicate `payment.captured` for the same `razorpay_payment_id` does not double-credit
 
-- [ ] **S4-4 Rate limiting — per-route limits** ⚠️ PARTIAL
+- [x] **S4-4 Rate limiting — per-route limits** — ✓ 2026-08-25 (Story 5-4, branch `sprint4/s4-4-rate-limit-per-route`)
   - `apps/api/app/main.py` — `slowapi` middleware mounted ✓
-  - Per-route limits not yet configured on pipeline endpoints ✗
-  - Apply `"5/minute"` per-user limit on `POST /api/content/lessons`
-  - **AC:** Exceeding 5 uploads/minute returns `429` with `Retry-After` header; limit is per-user (JWT sub), not global IP
+  - **This line's "not yet configured ✗" was already stale before this story started** — direct
+    read of `content/router.py:692` found `@limiter.limit("5/minute", key_func=_get_user_key)`
+    already present and already covered by `test_content_router.py::test_upload_lesson_429_rate_limit`.
+    Flagged, not silently corrected: S1-10 below explicitly said "do not defer to Sprint 4," and
+    the decorator's presence suggests it landed around that time anyway — yet this line persisted
+    as PARTIAL. Two tracker entries disagreed about the same fact; neither had been reconciled
+    against the code until this story.
+  - **Real gap closed (D49):** `RATE_LIMIT_STORAGE_URL` defaulted to `memory://` with no startup
+    guard — a multi-replica deploy silently multiplies every ceiling by replica count. Fixed via
+    `assert_rate_limit_storage_configured()` (`core/rate_limit.py`), called first thing in
+    `main.py`'s `lifespan()`; raises `RuntimeError` outside debug mode. Actually pointing
+    `RATE_LIMIT_STORAGE_URL` at a real shared Redis instance in each deployed environment still
+    needs ADR-001 §4's open Redis-location decision (Upstash Mumbai vs. Fly Redis) — the guard
+    will correctly refuse to start any non-debug deploy until that lands, which is intended.
+  - **AC:** Exceeding 5 uploads/minute returns `429` with `Retry-After` header; limit is per-user (JWT sub), not global IP — ✓ pre-existing, re-confirmed green (`test_rate_limit_key.py` 8 tests + `test_content_router.py`)
+  - 8 new tests added (`test_rate_limit_storage_guard.py` ×6, `test_rate_limit_redis_storage.py` ×2, the latter fakeredis-backed proving real cross-instance sharing). Full unit suite: 1241 passed / 6 skipped / 3 pre-existing unrelated failures (D134), unchanged before/after. See `docs/DEFECT-REGISTER.md` D49 (closed) and `docs/stories/5-4-rate-limiting-per-route.md` for full detail.
 
 - [ ] **S4-5 RLS security audit on all Supabase tables**
   - All tables have RLS enabled (verified in migrations)
