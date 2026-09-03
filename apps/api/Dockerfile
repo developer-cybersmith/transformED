@@ -25,14 +25,31 @@ WORKDIR /build
 # it deploys as the context. Do not shorten these back to bare paths; that
 # silently assumed a context of apps/api/ and broke every real deploy attempt
 # (2026-08-14) with "COPY app/ ./app/: not found".
-COPY apps/api/pyproject.toml ./
+COPY apps/api/pyproject.toml apps/api/uv.lock ./
 
 # Create a virtual environment and install deps into it
 RUN uv venv /opt/venv
 ENV VIRTUAL_ENV="/opt/venv"
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN uv pip install --no-cache ".[dev]" 2>/dev/null || uv pip install --no-cache .
+# `uv export` + `uv pip install -r` (NOT `uv pip install .`) is load-bearing:
+# `uv pip install .` re-resolves every dependency's version RANGE fresh at
+# build time against pyproject.toml, ignoring uv.lock entirely -- it silently
+# let pypdfium2 (pinned 4.30.0 in uv.lock, pulled in transitively by pdftext)
+# float to whatever 5.x release was newest at build time. That drift
+# reintroduced D134's exact AttributeError in production ("PdfBookmark
+# object has no attribute page_index" -- the 5.x API renamed the class),
+# even though D134 was fixed and closed against the correctly-pinned 4.30.0.
+# CI never caught this: CI uses `uv sync --extra dev --locked`, which reads
+# uv.lock deterministically (see the matching comment in
+# .github/workflows/ci.yml) -- only this Dockerfile's install step diverged
+# from that. Exporting the lock file to a pinned requirements list and
+# installing from THAT keeps the build deterministic without pulling in
+# `uv sync`'s full project-install machinery (which wants the local
+# package's source present, which would break the COPY-order caching below).
+RUN uv export --locked --extra dev --no-hashes -o /tmp/requirements.txt 2>/dev/null \
+      || uv export --locked --no-hashes -o /tmp/requirements.txt
+RUN uv pip install --no-cache -r /tmp/requirements.txt
 
 # Copy application source
 COPY apps/api/app/ ./app/
