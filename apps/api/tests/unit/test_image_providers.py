@@ -1,11 +1,16 @@
 """
-Unit tests for Story 2-9 (S2-10): OpenAIImageProvider and ImagenProvider.
+Unit tests for Story 2-9 (S2-10): OpenAIImageProvider, and Story 5-8b:
+NanoBananaProvider.
 
 Covers docs/stories/2-9-image-generator-node.md's ACs:
-- AC-4: OpenAIImageProvider (GPT Image 1 Mini) — circuit breaker, retry,
-  base64 response decoded into a data: URI.
-- AC-5: ImagenProvider (Imagen 4 Fast) — circuit breaker, retry, real HTTP
-  call, base64 response decoded into a data: URI.
+- AC-4: OpenAIImageProvider (GPT Image 2, now the FALLBACK tier per Story
+  5-8b) — circuit breaker, retry, base64 response decoded into a data: URI.
+
+Covers docs/stories/5-8b-nano-banana-migration.md's ACs:
+- AC2: NanoBananaProvider (Gemini "Nano Banana", now the PRIMARY tier) —
+  circuit breaker, retry, real HTTP call, base64 response decoded into a
+  data: URI. Replaces ImagenProvider (Imagen 4 Fast), deleted per D121 —
+  its endpoint was shut down by Google 2026-08-17.
 
 Both providers import is_circuit_open/record_success/record_failure at
 module top level (same convention as app.providers.llm.openai and Story
@@ -104,8 +109,9 @@ async def test_openai_image_retryable_error_retries_exactly_twice_then_raises() 
     only ever exercised with NON-retryable errors (instant abort), so the
     @with_retry(max_attempts=2) 'optional node' contract was unverified. A
     retryable 503 must cause exactly TWO attempts (one retry) before exhausting
-    — proving the optional-node retry budget, and the caller (node) then
-    cascades to Imagen."""
+    — proving the optional-node retry budget. (GPT Image 2 is now the FALLBACK
+    tier per Story 5-8b; the caller degrades to text-only from here, since
+    nothing is tried after it.)"""
     from app.providers.image.openai_image import OpenAIImageProvider
 
     request = httpx.Request("POST", "https://api.openai.com/v1/images/generations")
@@ -213,215 +219,288 @@ async def test_generate_raises_before_any_network_call_on_an_invalid_size() -> N
 
 
 # ---------------------------------------------------------------------------
-# ImagenProvider
+# NanoBananaProvider (Story 5-8b — Gemini "Nano Banana", PRIMARY as of D121's
+# migration; replaces the dead ImagenProvider fallback tier, and becomes
+# primary rather than fallback per team preference for Gemini's image
+# quality). Raw httpx against Google's generateContent endpoint, same as
+# ImagenProvider was — mirrors its mocking pattern, not OpenAIImageProvider's
+# SDK pattern. Authenticates via the `x-goog-api-key` HEADER (Gemini's
+# documented convention), NOT a URL query parameter like Imagen did — so the
+# URL-embeds-the-key leak class of bug ImagenProvider guards against does
+# not apply here the same way; still tested defensively below.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_imagen_success_returns_data_uri() -> None:
-    from app.providers.image.imagen import ImagenProvider
+async def test_nano_banana_success_returns_data_uri() -> None:
+    from app.providers.image.nano_banana import NanoBananaProvider
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"predictions": [{"bytesBase64Encoded": "ZmFrZWltYWdlbg=="}]}
+    mock_response.json.return_value = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [{"inlineData": {"mimeType": "image/png", "data": "ZmFrZWltYWdlbg=="}}]
+                }
+            }
+        ]
+    }
     mock_response.raise_for_status.return_value = None
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
         patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
-        provider = ImagenProvider(lesson_id="lesson-1")
-        result = await provider.generate("A friendly robot teaching a class", size="1024x1024")
+        provider = NanoBananaProvider(lesson_id="lesson-1")
+        result = await provider.generate("A friendly robot teaching a class", size="1280x720")
 
     assert result == "data:image/png;base64,ZmFrZWltYWdlbg=="
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_imagen_circuit_open_raises_before_any_http_call() -> None:
-    from app.providers.image.imagen import ImagenProvider
+async def test_nano_banana_uses_an_explicit_timeout_never_a_bare_float() -> None:
+    """Review finding (correctness): this file originally copied the deleted
+    imagen.py's `httpx.AsyncClient(timeout=30.0)` verbatim — a bare float,
+    which httpx applies to ALL categories including connect=, destroying the
+    5s connect guard `openai_image.py`'s own comment explicitly warns against
+    (a bare float here would make a connect hang WORSE, not just slower).
+    This matters more for this file than it did for imagen.py: Nano Banana is
+    now the PRIMARY tier, hit on every slide, not an occasional fallback."""
+    from app.providers.image.nano_banana import NanoBananaProvider
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "candidates": [
+            {"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "ZmFrZQ=="}}]}}
+        ]
+    }
+    mock_response.raise_for_status.return_value = None
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = NanoBananaProvider(lesson_id="lesson-1")
+        await provider.generate("A friendly robot", size="1024x1024")
+
+    timeout = mock_client_cls.call_args.kwargs.get("timeout")
+    assert isinstance(timeout, httpx.Timeout), (
+        "timeout must be an explicit httpx.Timeout, never a bare float — a bare float "
+        "also overwrites connect=, destroying the 5s connect guard"
+    )
+    assert timeout.connect == 5.0, "connect guard must stay at 5s regardless of the read timeout"
+    assert timeout.read == 180.0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_nano_banana_circuit_open_raises_before_any_http_call() -> None:
+    from app.providers.image.nano_banana import NanoBananaProvider
 
     mock_client = AsyncMock()
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=True)),
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=True)),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
-        provider = ImagenProvider(lesson_id="lesson-1")
+        provider = NanoBananaProvider(lesson_id="lesson-1")
         with pytest.raises(RuntimeError, match="Circuit breaker OPEN"):
             await provider.generate("A friendly robot", size="1024x1024")
 
     mock_client.post.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# D118 (2026-08-17): `size` was accepted for interface compatibility only and
-# silently discarded — Imagen always returned a square 1:1 image regardless
-# of what the caller asked for, the one place a landscape request could not
-# actually reach a landscape image even after image_generator_node started
-# asking for one.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_imagen_translates_landscape_size_to_the_matching_aspect_ratio() -> None:
-    from app.providers.image.imagen import ImagenProvider
+async def test_nano_banana_authenticates_via_header_not_url_query_param() -> None:
+    """Gemini's documented auth convention is the `x-goog-api-key` header —
+    unlike Imagen's `?key=...` query param, the key must never appear in the
+    request URL at all (not just "never leak via an exception")."""
+    from app.providers.image.nano_banana import NanoBananaProvider
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"predictions": [{"bytesBase64Encoded": "ZmFrZQ=="}]}
+    mock_response.json.return_value = {
+        "candidates": [
+            {"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "ZmFrZQ=="}}]}}
+        ]
+    }
     mock_response.raise_for_status.return_value = None
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.return_value.google_api_key = "SUPER-SECRET-KEY-VALUE"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = NanoBananaProvider(lesson_id="lesson-1")
+        await provider.generate("A friendly robot", size="1024x1024")
+
+    call = mock_client.post.call_args
+    assert "SUPER-SECRET-KEY-VALUE" not in call.args[0], (
+        "API key must not appear in the request URL"
+    )
+    sent_headers = call.kwargs.get("headers") or {}
+    assert sent_headers.get("x-goog-api-key") == "SUPER-SECRET-KEY-VALUE"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_nano_banana_translates_landscape_size_to_the_matching_aspect_ratio() -> None:
+    """Mirrors D118's Imagen fix — Gemini's image config also takes an
+    aspect-ratio enum, not raw pixel dimensions, so the same "WxH" ->
+    nearest-enum translation is needed here too."""
+    from app.providers.image.nano_banana import NanoBananaProvider
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "candidates": [
+            {"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "ZmFrZQ=="}}]}}
+        ]
+    }
+    mock_response.raise_for_status.return_value = None
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
         patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
-        provider = ImagenProvider(lesson_id="lesson-1")
-        # D122: "1280x720" is the REAL current production value
-        # (graph.py's `_SLIDE_IMAGE_SIZE`, gpt-image-2's landscape preset)
-        # and is itself already EXACT 16:9 (1280*9 == 720*16), so this also
-        # proves `_closest_aspect_ratio` picks an exact match at distance 0,
-        # not just "closest of a bad lot".
+        provider = NanoBananaProvider(lesson_id="lesson-1")
+        # "1280x720" is the real current production value (graph.py's
+        # _SLIDE_IMAGE_SIZE) and is itself exact 16:9.
         await provider.generate("A friendly robot teaching a class", size="1280x720")
 
     sent_body = mock_client.post.call_args.kwargs["json"]
-    assert sent_body["parameters"]["aspectRatio"] == "16:9"
+    assert sent_body["generationConfig"]["imageConfig"]["aspectRatio"] == "16:9"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_imagen_computes_the_nearest_ratio_for_a_size_never_seen_before() -> None:
-    """D122: `_closest_aspect_ratio` is computed, not a lookup table -- it
-    must handle a size string NO ONE has ever hardcoded a mapping for
-    (unlike the old `_SIZE_TO_ASPECT_RATIO` dict, which silently fell back
-    to "1:1" square for anything not listed, and had already gone stale
-    twice by the time it was replaced). 3000x2000 = 1.5:1, numerically
-    closer to "4:3" (1.333, distance 0.167) than "16:9" (1.778, distance
-    0.278) or "1:1" (0.5) -- proving real nearest-match arithmetic, not a
-    hardcoded default."""
-    from app.providers.image.imagen import ImagenProvider
+async def test_nano_banana_unparseable_size_degrades_to_square_rather_than_raising() -> None:
+    from app.providers.image.nano_banana import NanoBananaProvider
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"predictions": [{"bytesBase64Encoded": "ZmFrZQ=="}]}
+    mock_response.json.return_value = {
+        "candidates": [
+            {"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "ZmFrZQ=="}}]}}
+        ]
+    }
     mock_response.raise_for_status.return_value = None
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
         patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
-        provider = ImagenProvider(lesson_id="lesson-1")
-        result = await provider.generate("A friendly robot", size="3000x2000")
-
-    assert result == "data:image/png;base64,ZmFrZQ=="
-    sent_body = mock_client.post.call_args.kwargs["json"]
-    assert sent_body["parameters"]["aspectRatio"] == "4:3"
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_imagen_unparseable_size_degrades_to_square_rather_than_raising() -> None:
-    """This is the FALLBACK provider — a genuinely malformed size string
-    (can't even be split into WxH) must still produce an image (wrong
-    shape, right content) rather than fail the whole slide."""
-    from app.providers.image.imagen import ImagenProvider
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"predictions": [{"bytesBase64Encoded": "ZmFrZQ=="}]}
-    mock_response.raise_for_status.return_value = None
-    mock_client = AsyncMock()
-    mock_client.post.return_value = mock_response
-
-    with (
-        patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
-        patch("httpx.AsyncClient") as mock_client_cls,
-    ):
-        mock_settings.return_value.google_api_key = "test-key"
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-        provider = ImagenProvider(lesson_id="lesson-1")
+        provider = NanoBananaProvider(lesson_id="lesson-1")
         result = await provider.generate("A friendly robot", size="not-a-size")
 
     assert result == "data:image/png;base64,ZmFrZQ=="
     sent_body = mock_client.post.call_args.kwargs["json"]
-    assert sent_body["parameters"]["aspectRatio"] == "1:1"
-
-
-# ---------------------------------------------------------------------------
-# 2026-07-15 code review patches
-# ---------------------------------------------------------------------------
+    assert sent_body["generationConfig"]["imageConfig"]["aspectRatio"] == "1:1"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_imagen_http_error_does_not_leak_api_key_in_exception() -> None:
-    """CRITICAL review finding (Blind Hunter): an HTTP error must never
-    surface the raw httpx exception (whose message embeds the full request
-    URL, including the ?key=... query param) — only a redacted RuntimeError
-    with no key in it."""
-    from app.providers.image.imagen import ImagenProvider
+async def test_nano_banana_empty_response_raises_value_error() -> None:
+    """No candidates / no inlineData part must raise, not silently return a
+    None-shaped success — the caller (_generate_image_with_fallback) treats
+    any exception here as "try the next tier", never a false success."""
+    from app.providers.image.nano_banana import NanoBananaProvider
 
     mock_response = MagicMock()
-    mock_response.status_code = 429
-    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "429 rate limited for url 'https://generativelanguage.googleapis.com/v1beta/models/"
-        "imagen-4.0-fast-generate-001:predict?key=SUPER-SECRET-KEY-VALUE'",
-        request=MagicMock(),
-        response=mock_response,
-    )
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"candidates": []}
+    mock_response.raise_for_status.return_value = None
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.image.imagen.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
         patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
-        mock_settings.return_value.google_api_key = "SUPER-SECRET-KEY-VALUE"
+        mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
         mock_client_cls.return_value.__aenter__.return_value = mock_client
-        provider = ImagenProvider(lesson_id="lesson-1")
-        with pytest.raises(RuntimeError) as exc_info:
+        provider = NanoBananaProvider(lesson_id="lesson-1")
+        with pytest.raises(ValueError, match="empty response"):
             await provider.generate("A friendly robot", size="1024x1024")
 
-    assert "SUPER-SECRET-KEY-VALUE" not in str(exc_info.value)
-    assert "SUPER-SECRET-KEY-VALUE" not in repr(exc_info.value)
-    # Neither chaining slot may hold the raw httpx exception, whose str()/repr()
-    # embed the key-bearing request URL.
-    assert exc_info.value.__cause__ is None
-    # 2026-07-29 review: this previously asserted `__suppress_context__ is True`,
-    # which pinned the MECHANISM (`raise ... from None`) rather than the
-    # property. That mechanism was never sufficient — `from None` leaves
-    # `__context__` populated, so anything walking the chain directly (structlog,
-    # custom formatters, ad-hoc repr debugging) still saw the key. The provider
-    # now raises outside the `except` block so `__context__` is genuinely None,
-    # which is strictly stronger and makes the suppress flag irrelevant.
-    assert exc_info.value.__context__ is None, (
-        "the original httpx exception must not be reachable via __context__ — "
-        "its str()/repr() embed the API key"
-    )
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_nano_banana_retryable_error_retries_exactly_twice_then_raises() -> None:
+    """Mirrors test_openai_image_retryable_error_retries_exactly_twice_then_raises
+    (openai_image.py's pattern): a retryable error propagates as its OWN
+    exception type (httpx.HTTPStatusError), not wrapped — unlike
+    ImagenProvider's SanitizedHTTPError, which exists ONLY because Imagen's
+    key lived in the URL. Nano Banana authenticates via a header, so there
+    is nothing to redact and no wrapping is needed."""
+    from app.providers.image.nano_banana import NanoBananaProvider
+
+    request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1/models/x")
+    err_response = httpx.Response(503, request=request)
+    err = httpx.HTTPStatusError("503", request=request, response=err_response)
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = err
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.image.nano_banana.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+        patch("app.core.retry.asyncio.sleep", new=AsyncMock()),
+    ):
+        mock_settings.return_value.google_api_key = "test-key"
+        mock_settings.return_value.google_image_request_timeout_s = 180.0
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = NanoBananaProvider(lesson_id="lesson-1")
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.generate("A friendly robot", size="1024x1024")
+
+    assert mock_client.post.call_count == 2, "with_retry(max_attempts=2) must retry exactly once"

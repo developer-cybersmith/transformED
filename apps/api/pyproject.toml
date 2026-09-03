@@ -47,7 +47,10 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-mock>=3.14.0",
     "jsonschema>=4.22.0",
-    "fakeredis>=2.23.0",           # AC-1 queue round-trip test (test_queue_symmetry)
+    "fakeredis[lua]>=2.23.0",       # AC-1 queue round-trip test; [lua] (lupa) needed by
+                                    # test_rate_limit_redis_storage.py (Story 5-4/D49) --
+                                    # limits' RedisStorage uses EVALSHA/Lua scripts for
+                                    # atomic incr, which fakeredis only serves via lupa.
     "fpdf2>=2.7.0",                 # MIT — synthetic PDF generation for the S2-14 eval harness fixtures only
 ]
 

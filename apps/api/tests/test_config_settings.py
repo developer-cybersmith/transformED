@@ -24,7 +24,6 @@ _REQUIRED = {
     "SUPABASE_JWT_SECRET": "jwt_secret",
     "OPENAI_API_KEY": "sk-test",
     "SARVAM_API_KEY": "sarvam_test",
-    "HEYGEN_API_KEY": "heygen_test",
     "LANGFUSE_PUBLIC_KEY": "lf_pub",
     "LANGFUSE_SECRET_KEY": "lf_sec",
 }

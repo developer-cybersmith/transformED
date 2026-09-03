@@ -48,10 +48,19 @@ _NON_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({400, 401, 403, 404, 422
 class SanitizedHTTPError(RuntimeError):
     """An HTTP failure whose original exception could not be allowed to escape.
 
-    Some providers must redact before re-raising: Imagen puts the API key in the
-    request URL, and httpx embeds the full URL in its exception message and
-    repr, so any `exc_info=True` upstream would log the credential. Those
-    providers therefore catch `httpx.HTTPError` and re-raise `... from None`.
+    Some providers must redact before re-raising: a provider whose API key
+    travels in the request URL (rather than a header) would have httpx embed
+    the full URL — key included — in its exception message and repr, so any
+    `exc_info=True` upstream would log the credential. Such a provider must
+    catch `httpx.HTTPError` and re-raise `... from None`.
+
+    (Historical note: `ImagenProvider`, Story 5-8b's predecessor to the
+    current `NanoBananaProvider`, was this class's original reference
+    implementation and consumer — it authenticated via a URL query parameter
+    and needed exactly this redaction. It was deleted along with Imagen 4
+    Fast's endpoint (D121); `NanoBananaProvider` authenticates via a header
+    instead and does not need this class. Kept here as general infrastructure
+    for the next provider that DOES put a credential in its request URL.)
 
     Before Story 2-32 they re-raised a bare `RuntimeError`, which `with_retry`
     could not classify — so a retryable 429/503 became permanently fatal and
@@ -69,9 +78,9 @@ class SanitizedHTTPError(RuntimeError):
     embed the full request URL, key included. Assigning `__context__ = None`
     before the raise does not help either; the raise re-binds it. The only
     reliable pattern is to BUILD the sanitized error inside the `except` block
-    and RAISE IT AFTER the block has exited, when no exception is active. See
-    `providers/image/imagen.py` for the reference implementation, and
-    `test_sanitized_error_does_not_retain_the_original_via_context`.
+    and RAISE IT AFTER the block has exited, when no exception is active. The
+    now-deleted `ImagenProvider` was the reference implementation of this
+    pattern (see git history / D121) — no current provider needs it.
 
     `network_error=True` marks a transport-level failure (timeout, connection
     reset) that carries no status code but is still retryable — without it, the

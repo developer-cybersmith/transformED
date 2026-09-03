@@ -354,111 +354,6 @@ async def test_image_provider_records_one_failure_per_logical_call() -> None:
     assert record_failure.await_count == 1
 
 
-# ── AC-5: Imagen retries again WITHOUT leaking the API key ───────────────────
-
-_FAKE_IMAGEN_KEY = "AIzaSy-SUPER-SECRET-KEY-do-not-log"
-
-
-async def test_imagen_retryable_error_is_retried_and_never_leaks_the_key(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """AC-5. imagen.py catches httpx.HTTPError and re-raises a SANITIZED
-    RuntimeError because the API key travels in the request URL and httpx
-    embeds the full URL in its exception repr. The redaction is correct and must
-    stay — but it converted retryable 429/503 into a class `with_retry` would
-    never retry, making `@with_retry(max_attempts=2)` decorative.
-
-    Both properties are asserted together on purpose: a fix that restores retry
-    by dropping the sanitization would pass a retry-only test.
-    """
-    import logging
-
-    request = httpx.Request("POST", f"https://imagen.example/v1:predict?key={_FAKE_IMAGEN_KEY}")
-    response = httpx.Response(503, request=request)
-    # 2026-07-29 review: this used to be HTTPStatusError("503", ...), whose str()
-    # is literally "503" — the key lived only in request.url. That made all three
-    # no-leak assertions VACUOUS: deleting the sanitization entirely left them
-    # green. Real `response.raise_for_status()` embeds the full URL in the
-    # message, so the fixture must too or the test cannot fail for the right reason.
-    http_error = httpx.HTTPStatusError(
-        f"Server error '503 Service Unavailable' for url '{request.url}'",
-        request=request,
-        response=response,
-    )
-    assert _FAKE_IMAGEN_KEY in str(http_error), "fixture must be able to leak, or it proves nothing"
-
-    client = MagicMock()
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-    client.post = AsyncMock(side_effect=http_error)
-
-    mod = "app.providers.image.imagen"
-    with (
-        caplog.at_level(logging.DEBUG),
-        patch(f"{mod}.httpx.AsyncClient", return_value=client),
-        patch(f"{mod}.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
-        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()) as record_failure,
-        patch("asyncio.sleep", new=AsyncMock()),
-    ):
-        from app.providers.image.imagen import ImagenProvider
-
-        provider = ImagenProvider()
-        provider._api_key = _FAKE_IMAGEN_KEY  # noqa: SLF001
-        with pytest.raises(Exception) as excinfo:  # noqa: PT011
-            await provider.generate("a cat")
-
-    exc = excinfo.value
-    assert client.post.await_count == 2, (
-        "a retryable 503 must be retried — max_attempts=2 for this provider"
-    )
-    assert record_failure.await_count == 1, "AC-3 still holds on the retried path"
-
-    # AC-5: the key must appear nowhere a human or Sentry could read it.
-    assert _FAKE_IMAGEN_KEY not in str(exc)
-    assert _FAKE_IMAGEN_KEY not in repr(exc)
-    assert _FAKE_IMAGEN_KEY not in caplog.text
-    assert exc.__cause__ is None, "the redaction must be preserved (AC-6)"
-    assert exc.__context__ is None, (
-        "__context__ must be cleared too — `from None` alone leaves the httpx "
-        "exception reachable, and its str()/repr() embed the key-bearing URL"
-    )
-
-
-async def test_imagen_non_retryable_error_still_sanitized_and_not_retried() -> None:
-    """A 401 is non-retryable per PRD §14 and must still be redacted."""
-    request = httpx.Request("POST", f"https://imagen.example/v1:predict?key={_FAKE_IMAGEN_KEY}")
-    response = httpx.Response(401, request=request)
-    http_error = httpx.HTTPStatusError(
-        f"Client error '401 Unauthorized' for url '{request.url}'",
-        request=request,
-        response=response,
-    )
-
-    client = MagicMock()
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-    client.post = AsyncMock(side_effect=http_error)
-
-    mod = "app.providers.image.imagen"
-    with (
-        patch(f"{mod}.httpx.AsyncClient", return_value=client),
-        patch(f"{mod}.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
-        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
-        patch("asyncio.sleep", new=AsyncMock()),
-    ):
-        from app.providers.image.imagen import ImagenProvider
-
-        provider = ImagenProvider()
-        provider._api_key = _FAKE_IMAGEN_KEY  # noqa: SLF001
-        with pytest.raises(Exception) as excinfo:  # noqa: PT011
-            await provider.generate("a cat")
-
-    assert client.post.await_count == 1, "401 must NOT be retried"
-    assert _FAKE_IMAGEN_KEY not in str(excinfo.value)
-
-
 # ── AC-3 on the TTS providers — a PRE-EXISTING defect, not one this story caused ─
 #
 # Sarvam and Azure use raw httpx, so `with_retry` always classified their errors
@@ -551,13 +446,13 @@ async def test_tts_providers_no_longer_record_breaker_outcomes_themselves() -> N
     import inspect
 
     import app.providers.embeddings.openai as emb
-    import app.providers.image.imagen as imagen
+    import app.providers.image.nano_banana as nano_banana
     import app.providers.image.openai_image as oai_img
     import app.providers.llm.openai as llm
     import app.providers.tts.azure as azure
     import app.providers.tts.sarvam as sarvam
 
-    for mod in (llm, emb, oai_img, imagen, sarvam, azure):
+    for mod in (llm, emb, oai_img, nano_banana, sarvam, azure):
         for name in ("record_failure", "record_success"):
             assert not hasattr(mod, name), (
                 f"{mod.__name__} imports {name} directly — breaker accounting must "
@@ -618,60 +513,19 @@ async def test_azure_retries_but_records_one_failure() -> None:
     assert record_failure.await_count == 1, "AC-3: 3 attempts is ONE logical failure"
 
 
-async def test_sanitized_error_does_not_retain_the_original_via_context() -> None:
-    """The `__context__` leak.
-
-    `raise ... from None` sets `__cause__ = None` and `__suppress_context__ =
-    True`, but the raise statement STILL binds `__context__` to the httpx
-    exception — whose str()/repr() embed the key-bearing URL. Default traceback
-    formatting honours the suppress flag, but anything walking the chain
-    directly (structlog, custom formatters, ad-hoc repr debugging) reproduces
-    the exact leak the redaction exists to prevent.
-    """
-    request = httpx.Request("POST", f"https://imagen.example/v1:predict?key={_FAKE_IMAGEN_KEY}")
-    response = httpx.Response(503, request=request)
-    http_error = httpx.HTTPStatusError(
-        f"Server error 503 for url {request.url}", request=request, response=response
-    )
-    assert _FAKE_IMAGEN_KEY in str(http_error), "premise: the real error DOES carry the key"
-
-    client = _httpx_client(MagicMock())
-    client.post = AsyncMock(side_effect=http_error)
-    mod = "app.providers.image.imagen"
-
-    with (
-        patch(f"{mod}.httpx.AsyncClient", return_value=client),
-        patch(f"{mod}.is_circuit_open", new=AsyncMock(return_value=False)),
-        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
-        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
-        patch("asyncio.sleep", new=AsyncMock()),
-    ):
-        from app.providers.image.imagen import ImagenProvider
-
-        provider = ImagenProvider()
-        provider._api_key = _FAKE_IMAGEN_KEY  # noqa: SLF001
-        with pytest.raises(Exception) as excinfo:  # noqa: PT011
-            await provider.generate("a cat")
-
-    exc = excinfo.value
-    assert exc.__cause__ is None
-    assert exc.__context__ is None, (
-        "__context__ must be cleared — build the sanitized error inside the "
-        "except block and raise it AFTER the block exits"
-    )
-    assert _FAKE_IMAGEN_KEY not in str(exc)
-    assert _FAKE_IMAGEN_KEY not in repr(exc)
-
-
-async def test_imagen_network_error_is_retried() -> None:
-    """AC-5 was only half-met: a transport failure (timeout / connection reset)
-    carries no status code, so it fell into the "cannot classify, do not retry"
-    branch — leaving the MOST common transient failure of an outbound call
-    permanently fatal, which is exactly what `@with_retry` exists to handle."""
-    request = httpx.Request("POST", f"https://imagen.example/v1:predict?key={_FAKE_IMAGEN_KEY}")
+async def test_nano_banana_network_error_is_retried() -> None:
+    """A transport failure (timeout / connection reset) carries no status
+    code, so it could fall into an unclassifiable "cannot retry" branch if
+    with_retry's classification ever regressed — leaving the MOST common
+    transient failure of an outbound call permanently fatal on Gemini's
+    primary tier. (Was test_imagen_network_error_is_retried, which also
+    checked the URL-embedded-key redaction — Nano Banana authenticates via a
+    header, not a URL query param, so that redaction concern does not apply
+    here; see nano_banana.py's module docstring.)"""
+    request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1/models/x")
     client = _httpx_client(MagicMock())
     client.post = AsyncMock(side_effect=httpx.ConnectTimeout("timed out", request=request))
-    mod = "app.providers.image.imagen"
+    mod = "app.providers.image.nano_banana"
 
     with (
         patch(f"{mod}.httpx.AsyncClient", return_value=client),
@@ -680,16 +534,14 @@ async def test_imagen_network_error_is_retried() -> None:
         patch("app.core.circuit_breaker.record_failure", new=AsyncMock()) as record_failure,
         patch("asyncio.sleep", new=AsyncMock()),
     ):
-        from app.providers.image.imagen import ImagenProvider
+        from app.providers.image.nano_banana import NanoBananaProvider
 
-        provider = ImagenProvider()
-        provider._api_key = _FAKE_IMAGEN_KEY  # noqa: SLF001
-        with pytest.raises(Exception) as excinfo:  # noqa: PT011
+        provider = NanoBananaProvider()
+        with pytest.raises(httpx.ConnectTimeout):
             await provider.generate("a cat")
 
     assert client.post.await_count == 2, "a transport failure must be retried (max_attempts=2)"
     assert record_failure.await_count == 1
-    assert _FAKE_IMAGEN_KEY not in str(excinfo.value)
 
 
 async def test_cost_ceiling_abort_does_not_count_against_the_provider() -> None:
@@ -862,7 +714,7 @@ async def test_openai_clients_disable_sdk_retries_and_set_explicit_timeouts() ->
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # `is_circuit_open()` is the FIRST statement of every retried provider call
-# (providers/llm/openai.py:111 and the same line in embeddings/, image/imagen,
+# (providers/llm/openai.py:111 and the same line in embeddings/, image/nano_banana,
 # image/openai_image). It talks to Redis. So the first thing every provider
 # call does is a Redis round-trip — and if that round-trip fails, the node
 # fails before the provider is ever contacted.

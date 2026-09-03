@@ -1,5 +1,5 @@
 # HIE — Master Project Tracker
-**Last updated:** 2026-08-24 (Cross-team reconciliation against each dev's own online tracker. Dev 1 Sprint 3: all 5 lines flipped to done, unverified by Dev 2 — see note below that section (also flags stale ElevenLabs/DALL-E provider labels on the Sprint 2 tts_node/image_generator lines in Dev 1's online tracker itself, contradicting CLAUDE.md's locked stack and this doc's own already-verified entries). Dev 3 Sprint 3: Growth tracking and Session report Learner DNA section flipped to done — corroborated via Dev 2 tracker §11 S2-10's consumption of Dev 3's Story 3-30; Re-assessment prompt logic still IN PROGRESS. Payment gateway switched Stripe → Razorpay across all trackers/specs (see `docs/decisions/ADR-002-payment-gateway-razorpay.md`); Dev 2's own S4-10 (loading/error/empty states) shipped, 8-agent review passed.) — previously 2026-08-10 (Cross-team reconciliation against each dev's own online tracker. Dev 2: S3-02 AttentionMonitor shipped + S3-07 Notifications UI found already done but never checked off — Sprint 3 now 5/8 for Dev 2. Dev 1/3/4 Sprint 0-2 sections updated from their online tracker (several items marked "per their own tracker, unverified by Dev 2" where this doc previously had stronger caveats, e.g. Dev 4's Sprint 2 "pending integration test" notes and Dev 3's Sprint 2 7-item jump from all-not-started to all-done). Dev 3 and Dev 4's Sprint 3 backend claims (CES formula, DNA fusion, attention ingestion, intervention triggers, cooldowns, caps) were independently verified against real code on `origin/main` with file:line citations — all 10 + 2 confirmed, and 2 of Dev 4's own "Not Started" lines turned out to already be done in the actual repo.) — previously 2026-08-06 (Dev 2's Sprint 3 checklist below brought current — Consent flow UI, Tutor intervention card, and CES indicator all shipped (S3-01/S3-03/S3-04). D18, D29, D30 all closed. See Dev 2 tracker §12 for full detail.) — previously 2026-07-29 (Both systemic Dev 1 pipeline bugs reported 2026-07-27 are now fixed and verified end-to-end — backend fixes PR #100/#101, frontend fix (Story 2-33) closing the visible TTS-fallback symptom. Dev 2's Sprint 2 checklist below also brought current — S2-11 through S2-15, S2-26, S2-33 all shipped. See status notes below.)
+**Last updated:** 2026-09-01 (Sprint 4 close-out sync + **Bug Resolution Sprint (Feature Sprint 2) added**. Sprint 4: S4-02/03/04 all merged to `main` (not just `sprint4-master`); a cross-team `attention_signal` null-vs-0.0 fix merged; Dev 3's onboarding audit (S4-5), session dedup (S4-11), D116 `ces_final` wiring, D137 reassessment-overwrite fix, and the new Learner DNA → CES threshold personalization (S4-13) all merged — the last two found and fixed via cross-team review this session (D137: reassessment was discarding real behavioral fusion data on every retake; S4-13: a dimension-name sign inversion that would have raised intervention frequency for students actually doing well, plus two CI guard-test regressions hidden in an "advisory, not gating" bucket that doesn't fail the build — both independently re-verified against real CI logs, not the green checkmark). Dev 1's Razorpay backend (PR #157), rate limiting (PR #159), and RLS audit (PR #160) remain open/unmerged — #157 has a failing CI check despite an existing approval, #159/#160 have real merge conflicts. **New: Bug Resolution Sprint** — a second feature sprint started immediately after Sprint 4 on per-dev integration branches; full task list added below per-dev, Dev 4 already has 2 items done (caption-cue WS delivery, CES-timing-vs-human-narration verification) and 1 in progress (backend CAPTCHA verification).) — previously 2026-08-27 (Dev 2 Sprint 4 sync: S4-10 loading/error/empty-states and S4-12 email notifications checked off DONE (both merged into `sprint4-master`, 8-agent reviews passed); S4-02 Razorpay marked PARTIAL, not DONE — the frontend checkout unit is built/reviewed/merged but not yet wired into a page, and partly blocked on the backend's `GET /api/payments/access` not existing yet; added a new PostHog event-instrumentation line (S4-03, DONE) feeding into the existing Dev 3 "PostHog funnel analysis" line below — instrumentation is wired but not yet producing real data since the production PostHog key hasn't been added to Vercel yet.) — previously 2026-08-24 (Cross-team reconciliation against each dev's own online tracker. Dev 1 Sprint 3: all 5 lines flipped to done, unverified by Dev 2 — see note below that section (also flags stale ElevenLabs/DALL-E provider labels on the Sprint 2 tts_node/image_generator lines in Dev 1's online tracker itself, contradicting CLAUDE.md's locked stack and this doc's own already-verified entries). Dev 3 Sprint 3: Growth tracking and Session report Learner DNA section flipped to done — corroborated via Dev 2 tracker §11 S2-10's consumption of Dev 3's Story 3-30; Re-assessment prompt logic still IN PROGRESS. Payment gateway switched Stripe → Razorpay across all trackers/specs (see `docs/decisions/ADR-002-payment-gateway-razorpay.md`); Dev 2's own S4-10 (loading/error/empty states) shipped, 8-agent review passed.) — previously 2026-08-10 (Cross-team reconciliation against each dev's own online tracker. Dev 2: S3-02 AttentionMonitor shipped + S3-07 Notifications UI found already done but never checked off — Sprint 3 now 5/8 for Dev 2. Dev 1/3/4 Sprint 0-2 sections updated from their online tracker (several items marked "per their own tracker, unverified by Dev 2" where this doc previously had stronger caveats, e.g. Dev 4's Sprint 2 "pending integration test" notes and Dev 3's Sprint 2 7-item jump from all-not-started to all-done). Dev 3 and Dev 4's Sprint 3 backend claims (CES formula, DNA fusion, attention ingestion, intervention triggers, cooldowns, caps) were independently verified against real code on `origin/main` with file:line citations — all 10 + 2 confirmed, and 2 of Dev 4's own "Not Started" lines turned out to already be done in the actual repo.) — previously 2026-08-06 (Dev 2's Sprint 3 checklist below brought current — Consent flow UI, Tutor intervention card, and CES indicator all shipped (S3-01/S3-03/S3-04). D18, D29, D30 all closed. See Dev 2 tracker §12 for full detail.) — previously 2026-07-29 (Both systemic Dev 1 pipeline bugs reported 2026-07-27 are now fixed and verified end-to-end — backend fixes PR #100/#101, frontend fix (Story 2-33) closing the visible TTS-fallback symptom. Dev 2's Sprint 2 checklist below also brought current — S2-11 through S2-15, S2-26, S2-33 all shipped. See status notes below.)
 
 > Source of truth for cross-team task ownership. Use this to know who to escalate to when blocked.
 
@@ -262,28 +262,34 @@
 ### Dev 1 — Infrastructure + Content Pipeline
 - [ ] Load test: 50 concurrent lesson generations
 - [ ] All pipeline reliability fixes from test sessions
-- [ ] Razorpay Checkout integration (Standard Checkout via Orders API, no custom card UI)
-- [ ] Rate limiting (slowapi middleware)
-- [ ] RLS security audit on all Supabase tables
+- [ ] Razorpay Checkout integration (Standard Checkout via Orders API, no custom card UI) — 🔵 PARTIAL: backend built on PR #157 (`create-order`/webhook/`lesson_access`, 6-layer review done, 25 tests green per PR description) but **not merged** — its own CI `API — lint, type-check, test` check is currently FAILING despite an existing approval; do not treat as done until that's green and re-verified. PR itself also names 4 open gaps: no `GET /api/payments/access` endpoint (blocks Dev 2), all lessons still `price_paise = 0` (Razorpay would reject a real charge), beta-allowlist-only access, no rate limiting on payment routes.
+- [ ] Rate limiting (slowapi middleware) — PR #159 open, real merge conflict against `main`, not yet resolved by owner
+- [ ] RLS security audit on all Supabase tables — PR #160 open, real merge conflict against `main`, not yet resolved by owner
 - [ ] Railway backups confirmed + disaster recovery tested
 - [ ] On-call runbook written (5 most likely failure scenarios)
 
 ### Dev 2 — Lesson Player + Frontend
 - [ ] All UI bugs from real student test sessions fixed
-- [ ] Loading + error + empty states for all flows
-- [ ] Email notifications (lesson ready, session report)
+- [x] Loading + error + empty states for all flows — ✅ 2026-08-26 (Story 2-50/S4-10, 8-agent review passed, merged into `sprint4-master`)
+- [x] Email notifications (lesson ready, session report) — ✅ 2026-08-26 (Story 2-52/S4-12, 8-agent review passed, merged into `sprint4-master`; crosses into `apps/api` under an explicit user-approved exception)
 - [ ] Landing page + marketing copy
 - [ ] Pricing page
-- [ ] Razorpay Checkout integrated into onboarding flow
-- [ ] Accessibility audit (WCAG AA minimum)
+- [ ] Razorpay Checkout integrated into onboarding flow — 🔵 PARTIAL 2026-08-27 (Story 2-53/S4-02): frontend checkout unit (`RazorpayCheckoutButton`/`useRazorpayCheckout`/`payment.service.ts`) built, tested, 8-agent review passed, merged into `main`. Still blocked on backend: PR #157 (`GET /api/payments/access` + real `price_paise` values) is open but not merged (failing CI, see Dev 1's row above) — `checkAccess()` remains a hardcoded mock (D136).
+- [x] Accessibility audit (WCAG AA minimum) — ✅ 2026-08-29 (Story 2-55/S4-04, 8-agent review passed, merged into `main`): focus states, contrast, `aria-live` announcements, and keyboard navigation fixed across the quiz/tutor-intervention/teach-back/onboarding UI; alt text confirmed already compliant
+- [x] PostHog event instrumentation (feeds the Dev 3 funnel-analysis line below) — ✅ 2026-08-27 (Story 2-54/S4-03, 8-agent review passed, merged into `main`; same-day fast-follow wired `posthog.identify()`/`reset()` so events tie to real accounts) — **still not producing real data**: `NEXT_PUBLIC_POSTHOG_KEY`/`HOST` still not in Vercel's production env (D118, Dev 1 owns, per Dev 3's calibration doc — `POSTHOG_API_KEY` was also never set in Railway, so historical backend events are zero too); Dev 3's funnel analysis (Story 4-7) had to be reconstructed from Supabase tables instead
+- [x] Cross-team fix: `attention_signal` sent `0.0` instead of `null` for a genuinely empty MediaPipe measurement window — ✅ 2026-08-29 (merged into `main`), found via Dev 3's CES calibration thread; a real (worst-case) score was being sent instead of the "no data, redistribute weight" signal the backend's `compute_ces` needs
 
 ### Dev 3 — Assessment + Analytics + Learner DNA
-- [ ] Analyse 20+ real student test session data
-- [ ] CES weight tuning against post-session ground truth quiz scores
+- [ ] Analyse 20+ real student test session data — still blocked pending a fresh run with all prerequisites now closed (see below); no run has happened yet as of this update
+- [ ] CES weight tuning against post-session ground truth quiz scores — blocked on the above
 - [ ] Update tuned weights in Railway env vars
 - [ ] Learner DNA profile quality review (human review 10 profiles)
-- [ ] Onboarding question quality audit
-- [ ] PostHog funnel analysis: where do students drop off?
+- [x] Onboarding question quality audit — ✅ 2026-08-31/09-01 (Story 4-5, merged via PR #166): 7 questions reworded. **Found and fixed mid-review:** the reword silently corrupted Learner DNA scoring on 7 of those questions, because `_compute_dimension_scores` scores by raw array *index* (`selected_index/3*100`), not option content — a reorder-for-clarity pass had scrambled the intended low→high gradient. Fixed with option order restored/corrected + a new CI guard test (`test_onboarding_question_ordering.py`) that fails on any future silent reorder.
+- [x] PostHog funnel analysis: where do students drop off? — ✅ (Story 4-7, `docs/sprint4-funnel-analysis.md`) — reconstructed from Supabase tables since PostHog itself never received real events (D118)
+- [x] Session dedup guard + CES architecture confirmation — ✅ 2026-08-31 (Story 4-11 / PR #164, ad-hoc, not originally on this checklist): fixed React-StrictMode duplicate session creation (app-level pre-check + DB partial UNIQUE index `sessions_open_unique`); confirmed CES is correctly WS-only with no missing REST endpoint
+- [x] D116 — `ces_final` always NULL fix — ✅ 2026-08-31 (Story 4-6, ad-hoc): `complete_session` REST endpoint now dispatches `lesson_complete` over the tutor FSM so `_finalize_session` actually fires from any state, not just after a WS event that was never being sent
+- [x] D137 — reassessment was overwriting (not blending) Learner DNA — ✅ 2026-09-01 (Story 4-12 / PR #167, ad-hoc): found in a cross-team review discussion (reassessment fully discarded 10 sessions of real behavioral EMA fusion data on every retake); fixed to blend the fresh self-report into the existing profile via the same `_apply_ema()` session-fusion already uses, and stopped resetting `session_count`
+- [x] Learner DNA → CES threshold personalization — ✅ 2026-09-01 (Story 4-13 / PR #168, ad-hoc): closes the "Learner DNA is purely decorative" gap — `compute_personalized_threshold()` now adjusts each student's CES intervention threshold using `frustration_tolerance`/`persistence`/`goal_orientation`, seeded into Redis at session creation, read by `process_attention_signal` in the hot path (O(1), no extra DB query). **Found and fixed mid-review:** the `frustration_tolerance` term's sign was inverted relative to how that field is actually computed in `dna_fusion.py` (would have raised the intervention threshold — more interventions — for students who were behaviorally handling frustration *well*); also found and fixed two masked CI regressions (this PR's own changes broke `ces.py`'s pre-existing `__all__`-shape and no-hardcoded-literal guard tests, hidden inside CI's "advisory, not gating" bucket that doesn't fail the build). Both rounds fixed and independently re-verified against the real CI logs, not just the green checkmark.
 
 ### Dev 4 — Tutor Agent + Attention + Realtime
 - [ ] Intervention threshold tuning — 🔵 PARTIAL: methodology written, pending ≥20 real sessions of data
@@ -292,6 +298,39 @@
 - [ ] WebSocket stability testing under 50 concurrent users — 🔵 PARTIAL: harness built + locally validated, production run pending staging
 - [ ] Session reconnect testing under poor network conditions — 🔵 PARTIAL: all-7-states Redis restore proven, live network-fault sim pending
 - [ ] Intervention message copy review (tone + warmth) — 🔵 PARTIAL: checklist ready, pending 5 real lesson packages
+
+---
+
+## Bug Resolution Sprint (Feature Sprint 2)
+
+Started immediately after Sprint 4, on its own integration branches (e.g. Dev 4's `dev4/master-bug-resolution`) rather than waiting for a full Sprint 4 close-out. Task list as reported by each dev; statuses below are each dev's own self-report, not independently re-verified except where noted.
+
+### Dev 1 — Infrastructure + Content Pipeline
+- [ ] Line-level caption timestamps: extend `narration_generator` + `tts_node` to emit start/end time per caption line — High
+- [ ] Evaluate + integrate Nano Banana (Gemini 2.5 Flash Image) in `image_generator` fallback chain for slides/diagrams — Medium
+- [ ] Inject Learner DNA + behavior signals into `lesson_planner` / `slide_generator` / `narration_generator` system prompts — Medium
+- [ ] Human narration pipeline: new node to accept human-recorded audio per segment, store in Supabase, sync duration to slide timing — High
+- [ ] Redesign `lesson_planner`/`slide_generator` prompts: plain-language explanations + easy-to-understand diagram prompts — Medium
+
+### Dev 2 — Lesson Player + Frontend
+- [ ] CAPTCHA widget on login + signup screens (reCAPTCHA v3 invisible badge) — High
+- [ ] Update mode-selection cards to show explicit "15 min / 30 min / 45 min" labels — Low
+- [ ] Caption/subtitle display — one dialogue line at a time, synced to narration timestamps — High
+- [ ] Highlight/underline the active narration text on slide (karaoke-style sync) using caption timestamps — High — **depends on Dev 1's caption timestamp output**
+- [ ] Slide transition: add configurable pause (default 2s) between slides + manual "Next" button for navigation — Medium
+- [ ] Voice teach-back: mic capture UI, recording + upload, toggle between typed/voice input — Medium — **depends on an STT node** (as reported to Dev 2; note this reads "Dev 1's STT node" in the source list while Dev 3's own list below describes building the STT node itself and Dev 4's list says "depends on Dev 3's STT node" — flagging this inconsistency rather than silently resolving it; confirm the real owner before starting this task)
+
+### Dev 3 — Assessment + Analytics + Learner DNA
+- [ ] Expose Learner DNA + behavior-signal summary via internal API for prompt injection — Medium
+- [ ] Teach-back scorer: accept source flag (typed vs voice-transcribed) — no rubric change, just input path — Low
+- [ ] Verify Learner Mode tiers already map to 15/30/45 min (T3=15, T2=30, T1=45); relabel internally if needed — Low
+- [ ] Voice teach-back: Whisper/OpenAI STT node to transcribe audio submissions, feed transcript into existing scorer — Medium
+
+### Dev 4 — Tutor Agent + Attention + Realtime
+- [x] WebSocket: support progressive caption-cue delivery for live narration playback — Medium — **Done** (Story BR-1, PR #162)
+- [x] Verify tutor intervention/CES timing still functions correctly with variable-length human-recorded narration — Medium — **Done** (Story BR-2, PR #163)
+- [ ] Voice teach-back: real-time mic capture integration in live session flow — Low — depends on Dev 3's STT node
+- [ ] Backend CAPTCHA verification (reCAPTCHA v3) on login + signup — reject low trust score before issuing session — High — **In Progress**
 
 ---
 
