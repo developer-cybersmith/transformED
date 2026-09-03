@@ -1,6 +1,6 @@
 ---
 title: "Story 2-56 — Performance: Code Splitting + Lazy Loading (S4-05)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: 4
 ---
@@ -92,6 +92,54 @@ reason per `docs/SCALE-CONTRACT.md`'s own rule that a bare "N/A" is a missing an
   `apps/web/src/app/reports/[sessionId]/page.tsx` (the only real route reaching either file).
 - `PlayerLoader.tsx`'s existing `dynamic(() => import('./Player'), { ssr: false, loading: ... })`
   is the pattern this story's AC1 mirrors.
+
+## Dev Agent Record
+
+### Completion Notes
+
+- **AC1 — DONE.** `SessionReport.tsx` now loads `AttentionChart` via `next/dynamic` (`ssr: false`),
+  mirroring `PlayerLoader.tsx`'s existing convention exactly. Loading skeleton matches the real
+  card's chrome (`p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm`, 220px chart height)
+  to avoid a visible layout jump.
+- **AC2 — DONE (verification only).** Confirmed MediaPipe is already lazy-loaded and
+  consent-gated — no code change made. See Dev Notes above for the exact evidence.
+- **AC3 — DONE.** HeyGen-preload bullet recorded as dropped/moot, cross-referenced to D144.
+- **AC4 — DONE, with real measured evidence, not assumed:**
+  - **Before:** a clean `next build` showed recharts compiled into a single chunk
+    (`static/chunks/0vqibwmj_nme5.js`, **390.8 KB**), and the reports route's
+    `page_client-reference-manifest.js` listed that exact chunk in both
+    `clientModules["...SessionReport.tsx"].chunks` and the route's own `entryJSFiles` — i.e.
+    recharts was eagerly loaded on every `/reports/[sessionId]` visit, unconditionally, regardless
+    of whether `ces_timeline` was ever non-null.
+  - **After AC1's fix**, a second clean `next build` (`.next` fully removed and rebuilt from
+    scratch) shows recharts now compiles into a different chunk (`static/chunks/3qqwd17x4r3l2.js`,
+    **383.2 KB** — the small size delta is normal chunk-boundary reshuffling, not a real content
+    change). Verified this chunk is **absent** from the reports route's `entryJSFiles` and
+    `clientModules` chunk lists entirely (checked directly against the manifest text, not
+    inferred), and instead appears in `.next/server/app/reports/[sessionId]/page/react-loadable-manifest.json`
+    — the manifest specifically for `next/dynamic()`-loaded modules. This is the exact before/after
+    signature of a successful eager→lazy conversion: gone from the eager list, present in the
+    loadable list.
+- **AC5 — DONE, honestly scoped.** Started the real production server (`next start`) and confirmed
+  `GET /lesson/test-id` returns **307 → /signin** unauthenticated (no test credentials exist for
+  this session, per the standing limitation already recorded in `docs/DEPLOYMENT-OPS-NOTES.md`) —
+  a Lighthouse run against that redirect would measure the sign-in bounce, not the real lesson
+  player, so it was not attempted as a stand-in for the real target. To confirm the tooling itself
+  works and produces real numbers (not to substitute for the actual target route), ran a real
+  Lighthouse audit against the one publicly reachable route, `/` (landing page, no auth):
+  **Performance score 73/100** (FCP 1.2s, LCP 8.1s, TBT 10ms — real measured values, `npx lighthouse`
+  against a local Chrome, JSON output). **`/lesson/[id]`'s own score remains genuinely unverified** —
+  flagged here as a residual gap requiring either a disposable test account with a real completed
+  lesson, or the team's own manual Lighthouse run against a real authenticated session, not
+  something this story can close without new credentials.
+- **AC6 — DONE.** No test changes needed — `SessionReport.test.tsx` (26 tests) and
+  `AttentionChart.test.tsx` (10 tests) both pass unchanged; full suite 90 files / 1088 tests green.
+- **AC7 — DONE.** `tsc --noEmit` clean, targeted `eslint` clean on `SessionReport.tsx`.
+
+### File List
+
+- `apps/web/src/components/reports/SessionReport.tsx` — static `AttentionChart` import replaced
+  with `next/dynamic(..., { ssr: false, loading: ... })`
 
 ## References
 
