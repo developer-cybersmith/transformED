@@ -1857,3 +1857,280 @@ async def seed_personalized_ces_threshold(
             user_id,
             exc,
         )
+
+
+# ── F2-1 — DNA prompt-context helper ─────────────────────────────────────────
+
+# Canonical 9 DNA dimension column names (matches learner_dna table schema).
+_DNA_DIMS: tuple[str, ...] = (
+    "pattern_recognition",
+    "logical_deduction",
+    "processing_speed",
+    "frustration_tolerance",
+    "persistence",
+    "help_seeking",
+    "goal_orientation",
+    "curiosity_index",
+    "study_independence",
+)
+
+_DNA_SELECT = ", ".join(_DNA_DIMS) + ", badge_labels, profile_text, session_count"
+
+_PROFILE_SNIPPET_MAX = 200
+
+
+async def get_dna_prompt_context(
+    *,
+    user_id: str,
+    session_id: str | None,
+    supabase: Client,
+    redis: Any,  # noqa: ANN401
+    settings: Settings,
+) -> dict[str, Any]:
+    """Return Learner DNA labels + session behaviour signals for LLM prompt injection.
+
+    Story F2-1 (AC1–AC10): a non-fatal, read-only helper for service / pipeline
+    nodes that build personalised LLM system prompts.  Never raises — on any
+    error the affected section returns an empty / partial result and logs WARNING.
+
+    DNA source priority:
+        1. Redis key ``user:{user_id}:dna`` (JSON blob, TTL 1h — written by dna_fusion).
+        2. Supabase ``learner_dna`` table (all 9 dimensions).
+        3. Empty dict (user not yet onboarded, or read failure).
+
+    Args:
+        user_id:    JWT-verified user UUID.
+        session_id: Session UUID for behavioural signals, or ``None`` for DNA only.
+        supabase:   Synchronous Supabase client (I/O run via asyncio.to_thread).
+        redis:      Async Redis client.
+        settings:   App settings (unused currently; reserved for future thresholds).
+
+    Returns:
+        dict with keys: dna_labels, badge_labels, profile_snippet, session_count,
+        reassessment_due, session_signals.
+
+    BOUNDED: learner_dna has UNIQUE(user_id) — at most 1 row.  Session signal
+    queries carry .limit() caps (quiz:500, teachback:100, events:1000).
+    """
+    _safe_uid = str(user_id).replace("\n", " ").replace("\r", " ")
+    _log = logger
+
+    # ── Step 1: read DNA from Redis cache or Supabase ─────────────────────────
+    dna_labels: dict[str, str] = {}
+    badge_labels: list[str] = []
+    profile_snippet: str | None = None
+    session_count: int = 0
+
+    try:
+        dim_values: dict[str, float | None] = {}
+        _profile_text: str | None = None
+
+        # Try Redis cache first (written by dna_fusion.py after every session)
+        cached_raw = await redis.get(f"user:{user_id}:dna")
+        if cached_raw is not None:
+            try:
+                blob: dict[str, Any] = json.loads(cached_raw)
+                for dim in _DNA_DIMS:
+                    v = blob.get(dim)
+                    if isinstance(v, (int, float)):
+                        dim_values[dim] = float(v)
+            except Exception as _parse_exc:  # noqa: BLE001
+                _log.debug(
+                    "get_dna_prompt_context: DNA cache parse failed user=%s: %s",
+                    _safe_uid,
+                    _parse_exc,
+                )
+                dim_values = {}
+
+        # Fall back to Supabase when cache empty / unparseable
+        if not dim_values:
+            db_resp = await asyncio.to_thread(
+                lambda: (
+                    supabase.table("learner_dna")
+                    .select(_DNA_SELECT)
+                    .eq("user_id", user_id)
+                    .maybe_single()
+                    .execute()
+                )
+            )
+            db_row = single_row(db_resp)
+            if db_row is not None:
+                for dim in _DNA_DIMS:
+                    v = db_row.get(dim)
+                    if isinstance(v, (int, float)):
+                        dim_values[dim] = float(v)
+                badge_labels = db_row.get("badge_labels") or []
+                _profile_text = db_row.get("profile_text")
+                session_count = int(db_row.get("session_count") or 0)
+        else:
+            # Cache hit: badge_labels / profile_text / session_count not in cache blob;
+            # we skip a second Supabase call to keep the hot path fast.
+            # Callers that need the full row should use get_learner_dna_data instead.
+            pass
+
+        # Convert numeric dimensions to descriptive labels (AC9: no raw floats)
+        dna_labels = {dim: _score_to_label(v) for dim, v in dim_values.items()}
+
+        # Build profile snippet
+        if _profile_text:
+            if len(_profile_text) > _PROFILE_SNIPPET_MAX:
+                profile_snippet = _profile_text[:_PROFILE_SNIPPET_MAX] + "…"
+            else:
+                profile_snippet = _profile_text
+
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "get_dna_prompt_context: DNA read failed user=%s: %s",
+            _safe_uid,
+            exc,
+        )
+        dna_labels = {}
+        badge_labels = []
+        profile_snippet = None
+        session_count = 0
+
+    # ── Step 2: reassessment_due Redis check (mirrors get_learner_dna_data) ───
+    reassessment_due: bool = False
+    try:
+        val = await redis.get(f"user:{user_id}:reassessment_due")
+        reassessment_due = val == "1" or val == b"1"
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "get_dna_prompt_context: reassessment_due check failed user=%s: %s",
+            _safe_uid,
+            exc,
+        )
+
+    # ── Step 3: session behavioural signals (skipped when session_id is None) ─
+    session_signals: dict[str, Any] | None = None
+
+    if session_id is not None:
+        try:
+            # BOUNDED: quiz_attempts.limit(500) — typical session ≤250 rows
+            quiz_resp = await asyncio.to_thread(
+                lambda: (
+                    supabase.table("quiz_attempts")
+                    .select("is_correct")
+                    .eq("session_id", session_id)
+                    .limit(500)
+                    .execute()
+                )
+            )
+            quiz_rows: list[dict[str, Any]] = quiz_resp.data or []
+            quiz_accuracy: float | None = None
+            if quiz_rows:
+                correct = sum(1 for r in quiz_rows if r.get("is_correct"))
+                quiz_accuracy = correct / len(quiz_rows) * 100.0
+
+            # BOUNDED: teachback_attempts.limit(100) — typical session ≤50 rows
+            tb_resp = await asyncio.to_thread(
+                lambda: (
+                    supabase.table("teachback_attempts")
+                    .select("score")
+                    .eq("session_id", session_id)
+                    .limit(100)
+                    .execute()
+                )
+            )
+            tb_rows: list[dict[str, Any]] = tb_resp.data or []
+            teachback_avg: float | None = None
+            if tb_rows:
+                scores = [r["score"] for r in tb_rows if r.get("score") is not None]
+                if scores:
+                    teachback_avg = sum(scores) / len(scores)
+
+            # BOUNDED: session_events.limit(1000) — counting intervention acks (typically <10)
+            ev_resp = await asyncio.to_thread(
+                lambda: (
+                    supabase.table("session_events")
+                    .select("event_type")
+                    .eq("session_id", session_id)
+                    .eq("event_type", "intervention_acknowledged")
+                    .limit(1000)
+                    .execute()
+                )
+            )
+            ev_rows: list[dict[str, Any]] = ev_resp.data or []
+            intervention_count = len(ev_rows)
+
+            session_signals = {
+                "quiz_accuracy": quiz_accuracy,
+                "teachback_avg": teachback_avg,
+                "intervention_count": intervention_count,
+            }
+
+        except Exception as exc:  # noqa: BLE001
+            _safe_sid = str(session_id).replace("\n", " ").replace("\r", " ")
+            _log.warning(
+                "get_dna_prompt_context: session signal read failed session=%s: %s",
+                _safe_sid,
+                exc,
+            )
+            session_signals = {
+                "quiz_accuracy": None,
+                "teachback_avg": None,
+                "intervention_count": 0,
+            }
+
+    return {
+        "dna_labels": dna_labels,
+        "badge_labels": badge_labels,
+        "profile_snippet": profile_snippet,
+        "session_count": session_count,
+        "reassessment_due": reassessment_due,
+        "session_signals": session_signals,
+    }
+
+
+def format_dna_for_prompt(context: dict[str, Any]) -> str:
+    """Render a get_dna_prompt_context dict as a compact LLM system-prompt string.
+
+    Story F2-1 (AC10): synchronous, no I/O.  All DNA dimension values are
+    descriptive labels — no raw floats.  Session signal percentages rendered
+    as integer strings (:.0f) to keep prompts concise.
+    """
+    dna_labels: dict[str, str] = context.get("dna_labels") or {}
+    badge_labels: list[str] = context.get("badge_labels") or []
+    profile_snippet: str | None = context.get("profile_snippet")
+    session_count: int = context.get("session_count") or 0
+    session_signals: dict[str, Any] | None = context.get("session_signals")
+
+    if not dna_labels:
+        base = "No Learner DNA available yet."
+        if session_signals:
+            qa = session_signals.get("quiz_accuracy")
+            ta = session_signals.get("teachback_avg")
+            ic = session_signals.get("intervention_count", 0)
+            parts = []
+            if qa is not None:
+                parts.append(f"quiz {qa:.0f}%")
+            if ta is not None:
+                parts.append(f"teachback {ta:.0f}%")
+            parts.append(f"interventions {ic}")
+            base += f" This session: {', '.join(parts)}."
+        return base
+
+    badges_str = ", ".join(badge_labels) if badge_labels else "none"
+    profile_str = profile_snippet if profile_snippet else "not set"
+    dims_str = ", ".join(f"{dim.replace('_', ' ')}: {label}" for dim, label in dna_labels.items())
+
+    parts = [
+        f"[Student context] Badges: {badges_str}.",
+        f"Profile: {profile_str}.",
+        f"DNA ({len(dna_labels)} dimensions): {dims_str}.",
+        f"Sessions completed: {session_count}.",
+    ]
+
+    if session_signals:
+        qa = session_signals.get("quiz_accuracy")
+        ta = session_signals.get("teachback_avg")
+        ic = session_signals.get("intervention_count", 0)
+        sig_parts = []
+        if qa is not None:
+            sig_parts.append(f"quiz {qa:.0f}%")
+        if ta is not None:
+            sig_parts.append(f"teachback {ta:.0f}%")
+        sig_parts.append(f"interventions {ic}")
+        parts.append(f"This session: {', '.join(sig_parts)}.")
+
+    return " ".join(parts)
