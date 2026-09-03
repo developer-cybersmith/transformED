@@ -58,6 +58,8 @@ class TeachbackDetail(BaseModel):
     concepts_hit: list[str] = []
     concepts_missed: list[str] = []
     attempt_number: int = 1
+    # F2-2: default "llm" so pre-migration rows (no column → DB DEFAULT) deserialise correctly
+    score_source: Literal["llm", "fallback", "skipped"] = "llm"
 
 
 class SessionReport(BaseModel):
@@ -226,6 +228,7 @@ async def submit_teachback(
         response_text=body.response_text,
         user_id=current_user["sub"],
         supabase=get_supabase(),
+        is_skip=body.is_skip,
     )
 
 

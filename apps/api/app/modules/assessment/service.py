@@ -607,6 +607,7 @@ async def grade_teachback(
     response_text: str,
     user_id: str,
     supabase: Client,
+    is_skip: bool = False,
 ) -> TeachbackResult:
     """Score a student's typed teach-back response and persist to teachback_attempts.
 
@@ -696,6 +697,8 @@ async def grade_teachback(
     key_concepts: list[str] = [j["term"] for j in target_segment.get("jargon", [])]
 
     # Step 5 — Query existing attempt count to compute attempt_number
+    # Runs for ALL three paths (llm, fallback, skipped) so attempt_number is
+    # always correct even when a student submits, gets a fallback, then submits again.
     count_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
@@ -707,8 +710,37 @@ async def grade_teachback(
     )
     attempt_number: int = (count_resp.count or 0) + 1
 
+    # ── F2-2: Skipped path ────────────────────────────────────────────────────
+    # AC6: is_skip=True → record the skip, skip the LLM call, return immediately.
+    if is_skip:
+        skip_row: dict[str, Any] = {
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "response_text": "",
+            "score": None,
+            "feedback_praise": None,
+            "feedback_correction": None,
+            "concepts_hit": [],
+            "concepts_missed": [],
+            "attempt_number": attempt_number,
+            "score_source": "skipped",
+        }
+        await asyncio.to_thread(
+            lambda: supabase.table("teachback_attempts").insert(skip_row).execute()
+        )
+        return TeachbackResult(
+            session_id=session_id,
+            rubric_scores={},
+            overall_score=0.0,
+            ces_contribution=0.0,
+            feedback="",
+            score_source="skipped",
+        )
+
     # Step 6 — Score via GPT-4o-mini through OpenAILLMProvider (cost tracked by provider)
     provider = OpenAILLMProvider(lesson_id=lesson_id)
+    _llm_failed = False
+    result = None
     try:
         result = await score_teachback(
             topic=topic,
@@ -716,18 +748,44 @@ async def grade_teachback(
             response_text=response_text,
             provider=provider,
         )
+        if result is None:
+            _llm_failed = True
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("score_teachback failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Scoring service unavailable.",
-        ) from exc
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Scoring service unavailable.",
+        # F2-2 AC5: graceful degradation instead of 502; log at WARNING (not ERROR).
+        safe_msg = str(exc).replace("\n", " ").replace("\r", " ")
+        logger.warning(
+            "score_teachback failed (fallback): session=%s exc=%s",
+            session_id,
+            safe_msg,
+        )
+        _llm_failed = True
+
+    # ── F2-2: Fallback path ───────────────────────────────────────────────────
+    if _llm_failed:
+        fallback_row: dict[str, Any] = {
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "response_text": response_text,
+            "score": None,
+            "feedback_praise": None,
+            "feedback_correction": None,
+            "concepts_hit": [],
+            "concepts_missed": [],
+            "attempt_number": attempt_number,
+            "score_source": "fallback",
+        }
+        await asyncio.to_thread(
+            lambda: supabase.table("teachback_attempts").insert(fallback_row).execute()
+        )
+        return TeachbackResult(
+            session_id=session_id,
+            rubric_scores={},
+            overall_score=0.0,
+            ces_contribution=0.0,
+            feedback="Scoring temporarily unavailable — your response has been saved.",
+            score_source="fallback",
         )
 
     # Step 7 — Compute CES contribution
@@ -744,7 +802,7 @@ async def grade_teachback(
         result.praise if not result.correction else f"{result.praise}\n\n{result.correction}"
     )
 
-    # Step 9 — Persist to teachback_attempts
+    # Step 9 — Persist to teachback_attempts (llm path)
     row: dict[str, Any] = {
         "session_id": session_id,
         "segment_id": segment_id,
@@ -755,6 +813,7 @@ async def grade_teachback(
         "concepts_hit": result.concepts_hit,
         "concepts_missed": result.concepts_missed,
         "attempt_number": attempt_number,
+        "score_source": "llm",
     }
     insert_resp = await asyncio.to_thread(
         lambda: supabase.table("teachback_attempts").insert(row).execute()
@@ -808,6 +867,7 @@ async def grade_teachback(
         overall_score=float(result.score),
         ces_contribution=ces_contribution,
         feedback=feedback,
+        score_source="llm",
     )
 
 
@@ -996,7 +1056,7 @@ async def get_session_report(
             supabase.table("teachback_attempts")
             .select(
                 "segment_id, score, feedback_praise, feedback_correction,"
-                " concepts_hit, concepts_missed, attempt_number"
+                " concepts_hit, concepts_missed, attempt_number, score_source"
             )
             .eq("session_id", session_id)
             .order("created_at")
@@ -1007,9 +1067,15 @@ async def get_session_report(
     tb_rows: list[dict[str, Any]] = rows(tb_resp)
     teachback_count = len(tb_rows)
     if teachback_count > 0:
-        sum_scores = sum(r.get("score", 0) or 0 for r in tb_rows)
-        avg_teachback: float = sum_scores / teachback_count
-        teachback_score: float | None = round(avg_teachback, 2)
+        # F2-2: exclude fallback/skipped rows (score is None) from the average.
+        # Including them would silently dilute real scores — a skip treated as 0
+        # would drag a genuine 80 down to 40 in a 2-row session.
+        scored_rows = [r for r in tb_rows if r.get("score") is not None]
+        if scored_rows:
+            avg_teachback: float = sum(r["score"] for r in scored_rows) / len(scored_rows)
+            teachback_score: float | None = round(avg_teachback, 2)
+        else:
+            teachback_score = None
         teachback_details: list[TeachbackDetail] | None = [
             TeachbackDetail(
                 segment_id=r.get("segment_id", ""),
@@ -1019,11 +1085,11 @@ async def get_session_report(
                 concepts_hit=r.get("concepts_hit") or [],
                 concepts_missed=r.get("concepts_missed") or [],
                 attempt_number=r.get("attempt_number", 1),
+                score_source=r.get("score_source", "llm"),
             )
             for r in tb_rows
         ]
     else:
-        avg_teachback = 0.0
         teachback_score = None
         teachback_details = None
 
