@@ -76,11 +76,17 @@ The returned dict contains exactly these top-level keys:
 - `session_signals`: `dict | None` — see AC6/AC7; `None` when `session_id`
   is `None`.
 
-**AC3 — Redis cache hit skips Supabase for DNA**
+**AC3 — Redis cache hit: dimension values from Redis, metadata always from Supabase**
 When `user:{user_id}:dna` exists in Redis (JSON blob with all 9 numeric
-dimension values), the function reads DNA from cache and does NOT call
-`supabase.table("learner_dna")`. The cache blob shape is the same as
-written by `dna_fusion.py`.
+dimension values), the function reads the 9 numeric dimension values from
+the cache blob. However, a Supabase query is STILL made on the cache-hit
+path, selecting only `_METADATA_SELECT = "badge_labels, profile_text,
+session_count"` (not the 9 dimension columns). This ensures `badge_labels`,
+`profile_text`, and `session_count` always reflect the current database row,
+even on a cache hit. On a Redis cache miss, a single Supabase query fetches
+all 9 dimension columns AND the metadata columns (`_DNA_SELECT`). The cache
+blob shape is the same as written by `dna_fusion.py` (9 numeric keys only —
+metadata fields are never in the Redis blob).
 
 **AC4 — Redis miss falls back to Supabase**
 When the Redis DNA cache is absent or unparseable, the function queries
@@ -125,8 +131,14 @@ Result dict shape:
     "quiz_accuracy": float | None,   # 0-100
     "teachback_avg": float | None,   # 0-100
     "intervention_count": int,       # always an int, minimum 0
+    "signals_capped": bool,          # True if any query hit its .limit() boundary
 }
 ```
+When `signals_capped` is `True`, quiz_accuracy and/or teachback_avg are
+computed from a capped row set and may be approximate. Callers building LLM
+prompts should check this flag and add a caveat when True. The exception
+fallback path always returns `signals_capped: False` (per SCALE-CONTRACT §2:
+"explicitly surfaced degradation, visible to caller").
 
 **AC8 — Non-fatal: all exceptions are swallowed**
 Any exception during Redis read, Supabase DNA query, or Supabase session
@@ -307,15 +319,15 @@ Range: 1 to ~20 calls per session; each call is independent (no shared state).
 - Redis DNA read: O(1), always exactly one key regardless of dimension count.
 - Supabase DNA fallback: `.maybe_single()` — PostgREST returns ≤1 row.
 - `quiz_attempts`: `.limit(500)`. A typical session has ≤250 quiz rows
-  (5 MCQs × 50 segments). At limit: rows beyond 500 are silently excluded
-  from the accuracy computation. This is acceptable for a prompt-context
-  summary (not a billing-accuracy path). If needed, the caller is informed
-  by a `# BOUNDED:` comment explaining the cap.
+  (5 MCQs × 50 segments). At limit: rows beyond 500 are excluded from
+  the accuracy computation, and `signals_capped=True` is set in the return
+  dict so callers know the value is approximate (SCALE-CONTRACT §2:
+  explicit surfaced degradation, not silent truncation).
 - `teachback_attempts`: `.limit(100)`. Typical: ≤100 rows. At limit:
-  silently excluded — same rationale.
+  `signals_capped=True` set — same explicit-surfacing pattern.
 - `session_events`: `.limit(1000)`. Only `intervention_acknowledged` events
-  are counted. Typical per session: <10. At limit: silently excludes extra
-  events — count may be slightly under-reported, acceptable for context.
+  are counted. Typical per session: <10. At limit: count may be slightly
+  under-reported; `signals_capped=True` set.
 
 **Q3 — Scope of limits**
 All per session_id (bounded by session lifecycle) and per user_id (bounded

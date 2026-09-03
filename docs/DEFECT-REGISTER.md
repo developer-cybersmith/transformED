@@ -878,6 +878,14 @@ register, `dna_fusion.py`, `schemas.py`, `test_unbounded_queries.py`,
 
 ---
 
+### Found by the 2026-09-03 BMAD 6-agent code review of Story F2-1 (Learner DNA prompt context helper)
+
+| ID | Defect | Sev | Decision | Enforcement |
+|----|--------|-----|----------|-------------|
+| **D149** | **`get_dna_prompt_context`'s session signal queries filter by `session_id` only — no redundant `user_id` clause.** `quiz_attempts`, `teachback_attempts`, and `session_events` are each queried with `.eq("session_id", session_id)` alone; the caller can pass any session_id string, including one belonging to a different user. In practice this is not a true IDOR: all three tables hold a `session_id` FK to `sessions`, and `sessions` has `user_id` with RLS enabled — a cross-user session_id passes through `.eq("session_id", ...)` but returns zero rows because RLS blocks the join. The function therefore silently returns `quiz_accuracy=None, teachback_avg=None, intervention_count=0` (the same graceful-empty path as "no data yet") for a cross-user session, rather than an error. **This matches the existing `get_session_report` pattern exactly** (same three tables, same session_id-only filter, same RLS reliance), which was itself reviewed without objection and deliberately left without a user_id clause. Blind Hunter flagged it as a potential IDOR; reviewed against the schema (migrations/20260611000000_initial_schema.sql), confirmed RLS is the control plane, deferred as intended-by-design not a silent-wrong-result. | Low (not a data-exposure risk given RLS; a misconfigured-RLS risk if the policy is ever changed or if RLS is disabled in a future migration without updating this function — the risk is the assumption, not the current code) | **Registered, not fixed — intentional pattern per story IDOR scope note (`docs/stories/f2-1-dna-api-prompt-injection.md`), matches `get_session_report` pattern. Owner: Dev 3. Trigger: any real-user IDOR report, any RLS policy change on `sessions`/`quiz_attempts`/`teachback_attempts`/`session_events`, or a security audit finding that contradicts this assumption.** | DISCIPLINE — an integration test asserting RLS rejects a cross-user session_id query (analogous to the pattern recommended in `docs/DEFECT-REGISTER.md`'s own binding rule 4, "any code naming a DB table/column must be validated against supabase/migrations/") would both document this ownership assumption and catch a policy regression; no such test exists yet for these three tables. |
+
+---
+
 ## Scorecard
 
 | | Count |

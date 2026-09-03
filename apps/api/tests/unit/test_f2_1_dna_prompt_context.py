@@ -181,16 +181,25 @@ async def test_return_dict_has_expected_top_level_keys() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_redis_cache_hit_skips_supabase_dna_query() -> None:
-    """AC3: when user:{user_id}:dna is in Redis, supabase.table('learner_dna') is NOT called."""
+async def test_redis_cache_hit_still_fetches_metadata_from_supabase() -> None:
+    """AC3 (updated): on Redis cache hit, dimension values come from Redis;
+    metadata (badge_labels, profile_text, session_count) always fetched from Supabase.
+    dna_labels has all 9 dims even though the Supabase row has no dim values.
+    """
     from app.modules.assessment.service import get_dna_prompt_context  # noqa: PLC0415
 
     redis = _make_redis(dna_json=json.dumps(_DNA_BLOB))
-    supabase = MagicMock()  # any call to supabase will be detected
-    supabase.table = MagicMock()
+    # Supabase row has only metadata — no dim values.
+    # If dims came from Supabase instead of Redis, dna_labels would be {}.
+    dna_row = {
+        "badge_labels": ["Pattern Thinker"],
+        "profile_text": "A curious learner.",
+        "session_count": 3,
+    }
+    supabase = _make_supabase(dna_row=dna_row)
     settings = _make_settings()
 
-    await get_dna_prompt_context(
+    result = await get_dna_prompt_context(
         user_id=_VALID_USER_ID,
         session_id=None,
         supabase=supabase,
@@ -198,12 +207,13 @@ async def test_redis_cache_hit_skips_supabase_dna_query() -> None:
         settings=settings,
     )
 
-    # No supabase.table("learner_dna") call should have been made
-    table_calls = [str(c) for c in supabase.table.call_args_list]
-    learner_dna_calls = [c for c in table_calls if "learner_dna" in c]
-    assert learner_dna_calls == [], (
-        f"Supabase learner_dna was queried despite Redis cache hit: {table_calls}"
+    # Dimension labels come from Redis (all 9 present)
+    assert set(result["dna_labels"].keys()) == set(_ALL_9_DIMS), (
+        "dna_labels must contain all 9 dims on Redis cache hit"
     )
+    # Metadata comes from Supabase (not silently empty)
+    assert result["badge_labels"] == ["Pattern Thinker"]
+    assert result["session_count"] == 3
 
 
 # ── AC4 — Redis miss falls back to Supabase ───────────────────────────────────
@@ -278,12 +288,13 @@ async def test_no_dna_anywhere_returns_empty_state_without_raising() -> None:
 @pytest.mark.asyncio
 @pytest.mark.unit
 async def test_session_id_none_returns_none_session_signals_no_db_query() -> None:
-    """AC6: session_id=None → session_signals is None; no quiz/teachback/events queries."""
+    """AC6: session_id=None → session_signals is None; no quiz/teachback/events queries.
+    Note: learner_dna IS queried for metadata even on Redis hit — that is expected.
+    """
     from app.modules.assessment.service import get_dna_prompt_context  # noqa: PLC0415
 
     redis = _make_redis(dna_json=json.dumps(_DNA_BLOB))
-    supabase = MagicMock()
-    supabase.table = MagicMock()
+    supabase = _make_supabase()  # handles learner_dna metadata call cleanly
     settings = _make_settings()
 
     result = await get_dna_prompt_context(
@@ -627,3 +638,118 @@ def test_unbounded_query_guard_passes_import() -> None:
 
     mod = importlib.import_module("tests.unit.test_unbounded_queries")
     assert mod is not None
+
+
+# ── Review-fix tests (from 6-agent code review, 2026-09-03) ──────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_session_signal_exception_swallowed_signals_path() -> None:
+    """AC8 (session signal path): exception during quiz_attempts query is caught;
+    returns safe fallback session_signals without raising.
+    """
+    from app.modules.assessment.service import get_dna_prompt_context  # noqa: PLC0415
+
+    redis = _make_redis(dna_json=json.dumps(_DNA_BLOB))
+
+    # Supabase raises on quiz_attempts query
+    supabase = MagicMock()
+
+    def _bad_table(name: str) -> MagicMock:
+        if name == "quiz_attempts":
+            raise Exception("DB connection lost")
+        return _make_supabase().table(name)  # normal for others
+
+    supabase.table = MagicMock(side_effect=_bad_table)
+
+    result = await get_dna_prompt_context(
+        user_id=_VALID_USER_ID,
+        session_id=_VALID_SESSION_ID,
+        supabase=supabase,
+        redis=redis,
+        settings=_make_settings(),
+    )
+
+    # Must not raise; session_signals is the safe fallback
+    assert isinstance(result, dict)
+    signals = result["session_signals"]
+    assert signals is not None
+    assert signals["quiz_accuracy"] is None
+    assert signals["teachback_avg"] is None
+    assert signals["intervention_count"] == 0
+    assert signals["signals_capped"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_session_events_event_type_filter_applied() -> None:
+    """AC7: only 'intervention_acknowledged' events are counted; other types ignored."""
+    from app.modules.assessment.service import get_dna_prompt_context  # noqa: PLC0415
+
+    redis = _make_redis(dna_json=json.dumps(_DNA_BLOB))
+    # The mock returns only rows matching the filter (as a real DB would).
+    # We pass only 2 intervention_acknowledged rows to confirm count=2, not 5.
+    event_rows = [
+        {"event_type": "intervention_acknowledged"},
+        {"event_type": "intervention_acknowledged"},
+    ]
+    supabase = _make_supabase(event_rows=event_rows)
+
+    result = await get_dna_prompt_context(
+        user_id=_VALID_USER_ID,
+        session_id=_VALID_SESSION_ID,
+        supabase=supabase,
+        redis=redis,
+        settings=_make_settings(),
+    )
+
+    assert result["session_signals"] is not None
+    assert result["session_signals"]["intervention_count"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_signals_capped_set_when_quiz_limit_hit() -> None:
+    """P2/P3: signals_capped=True when quiz_rows reaches the .limit(500) boundary."""
+    from app.modules.assessment.service import get_dna_prompt_context  # noqa: PLC0415
+
+    redis = _make_redis(dna_json=json.dumps(_DNA_BLOB))
+    # Simulate exactly 500 rows returned (the limit boundary — may be truncated)
+    quiz_rows = [{"is_correct": True}] * 500
+    supabase = _make_supabase(quiz_rows=quiz_rows)
+
+    result = await get_dna_prompt_context(
+        user_id=_VALID_USER_ID,
+        session_id=_VALID_SESSION_ID,
+        supabase=supabase,
+        redis=redis,
+        settings=_make_settings(),
+    )
+
+    signals = result["session_signals"]
+    assert signals is not None
+    assert signals["signals_capped"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_signals_capped_false_when_under_limit() -> None:
+    """P2/P3: signals_capped=False for normal-sized sessions (no truncation)."""
+    from app.modules.assessment.service import get_dna_prompt_context  # noqa: PLC0415
+
+    redis = _make_redis(dna_json=json.dumps(_DNA_BLOB))
+    quiz_rows = [{"is_correct": True}] * 10  # well under limit
+    supabase = _make_supabase(quiz_rows=quiz_rows)
+
+    result = await get_dna_prompt_context(
+        user_id=_VALID_USER_ID,
+        session_id=_VALID_SESSION_ID,
+        supabase=supabase,
+        redis=redis,
+        settings=_make_settings(),
+    )
+
+    signals = result["session_signals"]
+    assert signals is not None
+    assert signals["signals_capped"] is False

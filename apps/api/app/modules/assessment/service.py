@@ -1875,6 +1875,7 @@ _DNA_DIMS: tuple[str, ...] = (
 )
 
 _DNA_SELECT = ", ".join(_DNA_DIMS) + ", badge_labels, profile_text, session_count"
+_METADATA_SELECT = "badge_labels, profile_text, session_count"
 
 _PROFILE_SNIPPET_MAX = 200
 
@@ -1907,7 +1908,9 @@ async def get_dna_prompt_context(
 
     Returns:
         dict with keys: dna_labels, badge_labels, profile_snippet, session_count,
-        reassessment_due, session_signals.
+        reassessment_due, session_signals.  session_signals includes signals_capped
+        (True if any session query hit its row limit — caller should treat signal
+        values as approximate).
 
     BOUNDED: learner_dna has UNIQUE(user_id) — at most 1 row.  Session signal
     queries carry .limit() caps (quiz:500, teachback:100, events:1000).
@@ -1942,31 +1945,31 @@ async def get_dna_prompt_context(
                 )
                 dim_values = {}
 
-        # Fall back to Supabase when cache empty / unparseable
-        if not dim_values:
-            db_resp = await asyncio.to_thread(
-                lambda: (
-                    supabase.table("learner_dna")
-                    .select(_DNA_SELECT)
-                    .eq("user_id", user_id)
-                    .maybe_single()
-                    .execute()
-                )
+        # ALWAYS query Supabase for metadata (badge_labels, profile_text, session_count).
+        # The Redis blob contains only the 9 numeric dimension values — metadata fields
+        # are never in the blob.  On a Redis cache hit we SELECT only metadata columns
+        # (skipping the expensive dim re-fetch); on a cache miss we SELECT everything.
+        # This prevents silently returning empty badges/profile for returning students.
+        _select = _METADATA_SELECT if dim_values else _DNA_SELECT
+        db_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("learner_dna")
+                .select(_select)
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
             )
-            db_row = single_row(db_resp)
-            if db_row is not None:
+        )
+        db_row = single_row(db_resp)
+        if db_row is not None:
+            if not dim_values:  # Redis miss — also pick up dimension values
                 for dim in _DNA_DIMS:
                     v = db_row.get(dim)
                     if isinstance(v, (int, float)):
                         dim_values[dim] = float(v)
-                badge_labels = db_row.get("badge_labels") or []
-                _profile_text = db_row.get("profile_text")
-                session_count = int(db_row.get("session_count") or 0)
-        else:
-            # Cache hit: badge_labels / profile_text / session_count not in cache blob;
-            # we skip a second Supabase call to keep the hot path fast.
-            # Callers that need the full row should use get_learner_dna_data instead.
-            pass
+            badge_labels = db_row.get("badge_labels") or []
+            _profile_text = db_row.get("profile_text")
+            session_count = int(db_row.get("session_count") or 0)
 
         # Convert numeric dimensions to descriptive labels (AC9: no raw floats)
         dna_labels = {dim: _score_to_label(v) for dim, v in dim_values.items()}
@@ -2005,7 +2008,10 @@ async def get_dna_prompt_context(
     session_signals: dict[str, Any] | None = None
 
     if session_id is not None:
+        _safe_sid = str(session_id).replace("\n", " ").replace("\r", " ")
         try:
+            signals_capped = False
+
             # BOUNDED: quiz_attempts.limit(500) — typical session ≤250 rows
             quiz_resp = await asyncio.to_thread(
                 lambda: (
@@ -2019,10 +2025,17 @@ async def get_dna_prompt_context(
             quiz_rows: list[dict[str, Any]] = quiz_resp.data or []
             quiz_accuracy: float | None = None
             if quiz_rows:
+                if len(quiz_rows) >= 500:
+                    signals_capped = True
+                    _log.warning(
+                        "get_dna_prompt_context: quiz_attempts hit limit(500) "
+                        "session=%s — quiz_accuracy is approximate",
+                        _safe_sid,
+                    )
                 correct = sum(1 for r in quiz_rows if r.get("is_correct"))
                 quiz_accuracy = correct / len(quiz_rows) * 100.0
 
-            # BOUNDED: teachback_attempts.limit(100) — typical session ≤50 rows
+            # BOUNDED: teachback_attempts.limit(100) — cap equals typical max; any retry hits it
             tb_resp = await asyncio.to_thread(
                 lambda: (
                     supabase.table("teachback_attempts")
@@ -2035,6 +2048,13 @@ async def get_dna_prompt_context(
             tb_rows: list[dict[str, Any]] = tb_resp.data or []
             teachback_avg: float | None = None
             if tb_rows:
+                if len(tb_rows) >= 100:
+                    signals_capped = True
+                    _log.warning(
+                        "get_dna_prompt_context: teachback_attempts hit limit(100) "
+                        "session=%s — teachback_avg is approximate",
+                        _safe_sid,
+                    )
                 scores = [r["score"] for r in tb_rows if r.get("score") is not None]
                 if scores:
                     teachback_avg = sum(scores) / len(scores)
@@ -2057,10 +2077,10 @@ async def get_dna_prompt_context(
                 "quiz_accuracy": quiz_accuracy,
                 "teachback_avg": teachback_avg,
                 "intervention_count": intervention_count,
+                "signals_capped": signals_capped,
             }
 
         except Exception as exc:  # noqa: BLE001
-            _safe_sid = str(session_id).replace("\n", " ").replace("\r", " ")
             _log.warning(
                 "get_dna_prompt_context: session signal read failed session=%s: %s",
                 _safe_sid,
@@ -2070,6 +2090,7 @@ async def get_dna_prompt_context(
                 "quiz_accuracy": None,
                 "teachback_avg": None,
                 "intervention_count": 0,
+                "signals_capped": False,
             }
 
     return {
