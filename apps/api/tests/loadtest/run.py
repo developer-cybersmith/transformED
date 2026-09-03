@@ -83,9 +83,7 @@ def _base_url() -> str:
     return os.environ.get("LOADTEST_BASE_URL", _DEFAULT_BASE_URL)
 
 
-async def _setup_fixtures_bounded(
-    base_url: str, users: list[TestUser]
-) -> list[tuple[str, str]]:
+async def _setup_fixtures_bounded(base_url: str, users: list[TestUser]) -> list[tuple[str, str]]:
     """Run `ensure_book_chapter_fixture` for every user in `users`, bounded to
     `_FIXTURE_SETUP_CONCURRENCY` concurrent uploads+ingestions at a time --
     confirmed live (4th full-run attempt) that firing all 17 fully
@@ -138,9 +136,7 @@ async def _run_smoke(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any
             u.user_id: pair for u, pair in zip(users_needing_fixtures, fixture_pairs, strict=True)
         }
 
-        logger.info(
-            "Smoke run: Phase B, %d concurrent generate requests", _SMOKE_TOTAL_REQUESTS
-        )
+        logger.info("Smoke run: Phase B, %d concurrent generate requests", _SMOKE_TOTAL_REQUESTS)
         phase_b_result = await run_phase_b(
             base_url=base_url,
             generate_users=generate_users,
@@ -168,9 +164,7 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
     # design.
     phase_a_users: list[TestUser] = []
     try:
-        logger.info(
-            "Full run: provisioning %d disposable Phase A users", _PHASE_A_USER_COUNT
-        )
+        logger.info("Full run: provisioning %d disposable Phase A users", _PHASE_A_USER_COUNT)
         phase_a_users = await provision_generate_test_users(
             _PHASE_A_USER_COUNT, offset=_PHASE_A_USER_OFFSET
         )

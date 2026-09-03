@@ -179,14 +179,12 @@ async def mint_real_access_token(email: str) -> str:
         )
         if link_resp.status_code >= 400:
             raise RuntimeError(
-                f"generate_link failed for {email}: {link_resp.status_code} "
-                f"{link_resp.text[:300]}"
+                f"generate_link failed for {email}: {link_resp.status_code} {link_resp.text[:300]}"
             )
         action_link = link_resp.json().get("action_link")
         if not action_link:
             raise RuntimeError(
-                f"generate_link response for {email} carried no action_link: "
-                f"{link_resp.text[:300]}"
+                f"generate_link response for {email} carried no action_link: {link_resp.text[:300]}"
             )
 
         redirect_resp = await client.get(action_link, follow_redirects=False)
@@ -207,9 +205,7 @@ async def mint_real_access_token(email: str) -> str:
     params = parse_qs(fragment)
     access_tokens = params.get("access_token")
     if not access_tokens:
-        raise RuntimeError(
-            f"Location fragment for {email} had no access_token: {location[:300]}"
-        )
+        raise RuntimeError(f"Location fragment for {email} had no access_token: {location[:300]}")
     return access_tokens[0]
 
 
@@ -270,8 +266,7 @@ async def _create_one_disposable_user(client: httpx.AsyncClient, index: int) -> 
     user_id = body.get("id") or (body.get("user") or {}).get("id")
     if not user_id:
         raise RuntimeError(
-            f"admin create user response for {email} carried no id: "
-            f"{create_resp.text[:300]}"
+            f"admin create user response for {email} carried no id: {create_resp.text[:300]}"
         )
 
     try:
@@ -286,41 +281,41 @@ async def _create_one_disposable_user(client: httpx.AsyncClient, index: int) -> 
 
 async def provision_generate_test_users(n: int, *, offset: int = 0) -> list[TestUser]:
     """Create `n` REAL, disposable Supabase Auth users for Phase B (AC-3's
-    >= 17 distinct users), each with a real minted session.
+        >= 17 distinct users), each with a real minted session.
 
-    `offset` shifts the `loadtest-{i}-deleteme@seed.test` index range so this
-    can be called twice in the same run (e.g. Phase A's own disposable-account
-    pool, separately from Phase B's) without colliding on the same email --
-    every `loadtest-N` up to 49 is pre-approved in `apps/api/.env`'s
-    `APPROVED_EMAILS`, so callers just need non-overlapping index ranges.
+        `offset` shifts the `loadtest-{i}-deleteme@seed.test` index range so this
+        can be called twice in the same run (e.g. Phase A's own disposable-account
+        pool, separately from Phase B's) without colliding on the same email --
+        every `loadtest-N` up to 49 is pre-approved in `apps/api/.env`'s
+        `APPROVED_EMAILS`, so callers just need non-overlapping index ranges.
 
-    WILL create real rows in the live `auth.users` table (and, via the
-    project's `handle_new_auth_user` trigger, a matching real `public.users`
-    row) the moment this is actually invoked -- not something this build step
-    runs itself, per this task's instructions. Pair every real call with
-    `cleanup_generate_test_users` once the load-test run is done.
+        WILL create real rows in the live `auth.users` table (and, via the
+        project's `handle_new_auth_user` trigger, a matching real `public.users`
+        row) the moment this is actually invoked -- not something this build step
+        runs itself, per this task's instructions. Pair every real call with
+        `cleanup_generate_test_users` once the load-test run is done.
 
-Creations run FULLY SEQUENTIAL (one user at a time, `_PROVISION_STAGGER_S`
-    apart), not just concurrency-bounded -- three live attempts confirmed
-    Supabase's own `/auth/v1/verify` endpoint (the public magic-link
-    verification step inside `mint_real_access_token`, not the admin API
-    generally) carries a strict rate limit that a Semaphore bounding
-    in-flight count alone does not respect: `429 over_request_rate_limit`
-    from Supabase itself recurred at concurrency=5 with no pacing, and again
-    at concurrency=3 with only a 0.5s start-stagger. A direct empirical test
-    (3 sequential `generate_link` -> `verify` pairs, 3.0s apart, 3/3 succeeded)
-    confirmed real serialization with real spacing is what this endpoint
-    actually needs. 32 users at ~3.5s each is a ~2-minute one-time setup tax,
-    small next to the load-test run itself.
+    Creations run FULLY SEQUENTIAL (one user at a time, `_PROVISION_STAGGER_S`
+        apart), not just concurrency-bounded -- three live attempts confirmed
+        Supabase's own `/auth/v1/verify` endpoint (the public magic-link
+        verification step inside `mint_real_access_token`, not the admin API
+        generally) carries a strict rate limit that a Semaphore bounding
+        in-flight count alone does not respect: `429 over_request_rate_limit`
+        from Supabase itself recurred at concurrency=5 with no pacing, and again
+        at concurrency=3 with only a 0.5s start-stagger. A direct empirical test
+        (3 sequential `generate_link` -> `verify` pairs, 3.0s apart, 3/3 succeeded)
+        confirmed real serialization with real spacing is what this endpoint
+        actually needs. 32 users at ~3.5s each is a ~2-minute one-time setup tax,
+        small next to the load-test run itself.
 
-    If ANY creation fails, this does NOT return the
-    partial list and leave the successfully-created real rows to leak: it
-    collects every user that WAS actually created (both fully-usable
-    `TestUser`s and rows whose token mint failed, via
-    `_PartialUserCreationError`), best-effort deletes all of them via
-    `cleanup_generate_test_users`, and only then raises -- so a partial
-    provisioning failure never leaves permanent, untracked residue on the
-    real Supabase project.
+        If ANY creation fails, this does NOT return the
+        partial list and leave the successfully-created real rows to leak: it
+        collects every user that WAS actually created (both fully-usable
+        `TestUser`s and rows whose token mint failed, via
+        `_PartialUserCreationError`), best-effort deletes all of them via
+        `cleanup_generate_test_users`, and only then raises -- so a partial
+        provisioning failure never leaves permanent, untracked residue on the
+        real Supabase project.
     """
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
@@ -422,9 +417,7 @@ async def cleanup_generate_test_users(users: list[TestUser]) -> None:
             async with sem:
                 return await _delete_one_user(client, headers, supabase_url, user)
 
-        results = await asyncio.gather(
-            *(_bounded_delete(i, user) for i, user in enumerate(users))
-        )
+        results = await asyncio.gather(*(_bounded_delete(i, user) for i, user in enumerate(users)))
 
     failures = [r for r in results if r is not None]
     if failures:
@@ -512,8 +505,7 @@ async def cleanup_uploaded_books(books: list[dict[str, str]]) -> None:
         for failure in failures:
             logger.warning("cleanup_uploaded_books: failed to delete %s", failure)
         raise RuntimeError(
-            f"cleanup_uploaded_books: {len(failures)} of {len(books)} deletions "
-            f"failed: {failures}"
+            f"cleanup_uploaded_books: {len(failures)} of {len(books)} deletions failed: {failures}"
         )
 
 

@@ -285,15 +285,9 @@ def build_report(
 
     lines.append("## Summary for DEFECT-REGISTER.md D129")
     lines.append("")
-    total_crashes = sum(
-        _count_matching(r.errors, _CRASH_MARKERS) for r in results
-    )
-    total_redis_errors = sum(
-        _count_matching(r.errors, _REDIS_ERROR_MARKERS) for r in results
-    )
-    lines.append(
-        f"- Total crash-like (5xx) errors across all scenarios this run: {total_crashes}"
-    )
+    total_crashes = sum(_count_matching(r.errors, _CRASH_MARKERS) for r in results)
+    total_redis_errors = sum(_count_matching(r.errors, _REDIS_ERROR_MARKERS) for r in results)
+    lines.append(f"- Total crash-like (5xx) errors across all scenarios this run: {total_crashes}")
     lines.append(f"- Total Redis-connection-error occurrences this run: {total_redis_errors}")
     lines.append(
         f"- D45 race: {'REPRODUCED' if race_d45.get('reproduced') else 'not reproduced / skipped'}"

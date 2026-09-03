@@ -77,8 +77,7 @@ async def _find_existing_ready_book(uploader: TestUser) -> str | None:
         )
     if resp.status_code >= 400:
         raise RuntimeError(
-            f"live book lookup failed for {uploader.email}: {resp.status_code} "
-            f"{resp.text[:300]}"
+            f"live book lookup failed for {uploader.email}: {resp.status_code} {resp.text[:300]}"
         )
     rows: list[dict[str, str]] = resp.json()
     if not rows:
@@ -110,8 +109,7 @@ async def _find_first_chapter_id(book_id: str) -> str | None:
         )
     if resp.status_code >= 400:
         raise RuntimeError(
-            f"live chapter lookup failed for book {book_id}: {resp.status_code} "
-            f"{resp.text[:300]}"
+            f"live chapter lookup failed for book {book_id}: {resp.status_code} {resp.text[:300]}"
         )
     rows: list[dict[str, str]] = resp.json()
     if not rows:
@@ -136,8 +134,7 @@ async def _upload_fixture_book(base_url: str, uploader: TestUser) -> str:
         )
     if resp.status_code != 202:
         raise RuntimeError(
-            f"fixture upload failed for {uploader.email}: {resp.status_code} "
-            f"{resp.text[:300]}"
+            f"fixture upload failed for {uploader.email}: {resp.status_code} {resp.text[:300]}"
         )
     body = resp.json()
     book_id = body.get("book_id")

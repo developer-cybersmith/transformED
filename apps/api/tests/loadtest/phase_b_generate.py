@@ -348,14 +348,13 @@ async def run_phase_b(
         max_keepalive_connections=total_requests,
     )
     async with httpx.AsyncClient(timeout=_SUBMIT_TIMEOUT_S, limits=limits) as client:
+
         def _url_for(user: TestUser) -> str:
             book_id, chapter_id = user_fixtures[user.user_id]
             return _generate_lessons_url(base_url, book_id, chapter_id)
 
         submitting_users = [generate_users[i % len(generate_users)] for i in range(total_requests)]
-        submit_tasks = [
-            _submit_one(client, _url_for(user), user) for user in submitting_users
-        ]
+        submit_tasks = [_submit_one(client, _url_for(user), user) for user in submitting_users]
         # Fire every submission truly concurrently (Story 5-1 AC-1: HTTP
         # load, not a sequential for-loop like the eval harness).
         submit_results = await asyncio.gather(*submit_tasks)
