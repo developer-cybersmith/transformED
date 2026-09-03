@@ -1,10 +1,36 @@
 'use client';
 
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useSessionReport } from '@/hooks/useSessionReport';
 import { cesScoreColor, formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
-import { AttentionChart } from '@/components/reports/AttentionChart';
 import type { DnaDimension, LearnerDnaSnapshot, TeachbackDetail } from '@/types/assessment';
+
+// Story 2-56 (S4-05): recharts ships as its own ~390KB chunk (confirmed via
+// a real `next build` — apps/web/.next's client-reference-manifest listed it
+// in this route's entryJSFiles unconditionally). Static import meant every
+// /reports/[sessionId] visit paid that cost even when `ces_timeline` is null
+// and the chart never renders below. next/dynamic defers the import to the
+// point AttentionChart actually mounts -- mirrors PlayerLoader.tsx's own
+// `dynamic(() => import('./Player'), { ssr: false, ... })`, the one other
+// place this repo already does this. ssr: false because ResponsiveContainer
+// (recharts) measures a real DOM node -- nothing useful to render server-side
+// anyway, same reasoning PlayerLoader's comment gives for Player.
+const AttentionChart = dynamic(
+  () => import('@/components/reports/AttentionChart').then((mod) => mod.AttentionChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        data-testid="attention-chart-skeleton"
+        className="flex flex-col gap-1.5 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm"
+      >
+        <div className="h-3 w-32 rounded bg-neutral-100 animate-pulse" />
+        <div className="h-[220px] rounded-xl bg-neutral-100 animate-pulse mt-1.5" />
+      </div>
+    ),
+  }
+);
 
 interface SessionReportProps {
   sessionId: string;
