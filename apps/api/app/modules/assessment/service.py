@@ -662,7 +662,63 @@ async def grade_teachback(
             detail="Session does not belong to this lesson.",
         )
 
-    # Step 2 — Load lesson JSONB
+    # Step 2 (R2 fix) — Count existing attempts BEFORE any path branches.
+    # Runs for ALL three paths (llm, fallback, skipped) so attempt_number is
+    # always correct even when a student submits, gets a fallback, then submits again.
+    count_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("teachback_attempts")
+            .select("id", count=cast("Any", "exact"))
+            .eq("session_id", session_id)
+            .eq("segment_id", segment_id)
+            .execute()
+        )
+    )
+    attempt_number: int = (count_resp.count or 0) + 1
+
+    # ── F2-2: Skipped path ────────────────────────────────────────────────────
+    # AC6: is_skip=True → record the skip immediately after session check and
+    # count query; skip Steps 3–7 (no lesson load, no LLM call). Moving this
+    # branch before the lesson load ensures a skip always succeeds even when
+    # lesson content is missing or a segment was renamed post-generation.
+    if is_skip:
+        skip_row: dict[str, Any] = {
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "response_text": "",
+            "score": None,
+            "feedback_praise": None,
+            "feedback_correction": None,
+            "concepts_hit": [],
+            "concepts_missed": [],
+            "attempt_number": attempt_number,
+            "score_source": "skipped",
+        }
+        skip_insert_resp = await asyncio.to_thread(
+            lambda: supabase.table("teachback_attempts").insert(skip_row).execute()
+        )
+        skip_insert_error = getattr(skip_insert_resp, "error", None)
+        if skip_insert_error:
+            safe_err = str(skip_insert_error).replace("\n", " ").replace("\r", " ")
+            logger.error(
+                "teachback_attempts skip insert failed: session=%s error=%s",
+                session_id,
+                safe_err,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to record teachback skip.",
+            )
+        return TeachbackResult(
+            session_id=session_id,
+            rubric_scores={},
+            overall_score=0.0,
+            ces_contribution=0.0,
+            feedback="",
+            score_source="skipped",
+        )
+
+    # Step 3 — Load lesson JSONB (only needed for llm and fallback paths)
     lesson_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("lessons")
@@ -682,7 +738,7 @@ async def grade_teachback(
     content: dict[str, Any] = lesson_row["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
-    # Step 3 — Find the segment
+    # Step 4 — Find the segment
     target_segment: dict[str, Any] | None = next(
         (s for s in segments if s["segment_id"] == segment_id), None
     )
@@ -692,50 +748,9 @@ async def grade_teachback(
             detail=f"Segment {segment_id!r} not found in lesson {lesson_id!r}.",
         )
 
-    # Step 4 — Extract topic and key concepts from segment
+    # Step 5 — Extract topic and key concepts from segment
     topic: str = target_segment.get("title", "")
     key_concepts: list[str] = [j["term"] for j in target_segment.get("jargon", [])]
-
-    # Step 5 — Query existing attempt count to compute attempt_number
-    # Runs for ALL three paths (llm, fallback, skipped) so attempt_number is
-    # always correct even when a student submits, gets a fallback, then submits again.
-    count_resp = await asyncio.to_thread(
-        lambda: (
-            supabase.table("teachback_attempts")
-            .select("id", count=cast("Any", "exact"))
-            .eq("session_id", session_id)
-            .eq("segment_id", segment_id)
-            .execute()
-        )
-    )
-    attempt_number: int = (count_resp.count or 0) + 1
-
-    # ── F2-2: Skipped path ────────────────────────────────────────────────────
-    # AC6: is_skip=True → record the skip, skip the LLM call, return immediately.
-    if is_skip:
-        skip_row: dict[str, Any] = {
-            "session_id": session_id,
-            "segment_id": segment_id,
-            "response_text": "",
-            "score": None,
-            "feedback_praise": None,
-            "feedback_correction": None,
-            "concepts_hit": [],
-            "concepts_missed": [],
-            "attempt_number": attempt_number,
-            "score_source": "skipped",
-        }
-        await asyncio.to_thread(
-            lambda: supabase.table("teachback_attempts").insert(skip_row).execute()
-        )
-        return TeachbackResult(
-            session_id=session_id,
-            rubric_scores={},
-            overall_score=0.0,
-            ces_contribution=0.0,
-            feedback="",
-            score_source="skipped",
-        )
 
     # Step 6 — Score via GPT-4o-mini through OpenAILLMProvider (cost tracked by provider)
     provider = OpenAILLMProvider(lesson_id=lesson_id)
@@ -749,6 +764,10 @@ async def grade_teachback(
             provider=provider,
         )
         if result is None:
+            logger.warning(
+                "score_teachback returned None (fallback): session=%s",
+                session_id,
+            )
             _llm_failed = True
     except HTTPException:
         raise
@@ -776,9 +795,21 @@ async def grade_teachback(
             "attempt_number": attempt_number,
             "score_source": "fallback",
         }
-        await asyncio.to_thread(
+        fallback_insert_resp = await asyncio.to_thread(
             lambda: supabase.table("teachback_attempts").insert(fallback_row).execute()
         )
+        fallback_insert_error = getattr(fallback_insert_resp, "error", None)
+        if fallback_insert_error:
+            safe_err = str(fallback_insert_error).replace("\n", " ").replace("\r", " ")
+            logger.error(
+                "teachback_attempts fallback insert failed: session=%s error=%s",
+                session_id,
+                safe_err,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to record teachback attempt.",
+            )
         return TeachbackResult(
             session_id=session_id,
             rubric_scores={},
@@ -1048,8 +1079,10 @@ async def get_session_report(
     quiz_accuracy: float = (correct_count / total_quiz) if total_quiz > 0 else 0.0
 
     # Step 3 — Teachback stats from teachback_attempts
-    # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
-    # .limit(50) is a safety ceiling above the natural bound.
+    # BOUNDED: F2-2 adds skip and fallback rows per segment alongside llm rows,
+    # so the previous "one row per segment → max ~15 rows" assumption no longer holds.
+    # Worst case: 15 segments × (llm + fallback + skip) = up to ~45 rows per session;
+    # .limit(200) provides a safety ceiling well above the realistic maximum.
     # Story 2-48: widened select to include detail columns; .order("created_at") for ordering.
     tb_resp = await asyncio.to_thread(
         lambda: (
@@ -1060,7 +1093,7 @@ async def get_session_report(
             )
             .eq("session_id", session_id)
             .order("created_at")
-            .limit(50)
+            .limit(200)
             .execute()
         )
     )
@@ -1141,7 +1174,7 @@ async def get_session_report(
 
     # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
-    teachback_normalised = (avg_teachback / 100.0) if teachback_count > 0 else None
+    teachback_normalised = (teachback_score / 100.0) if teachback_score is not None else None
 
     # S3-42 (D9): read per-signal histories from Redis to populate real averages.
     # Graceful fallback to 0.0 when redis is None, key missing, or history empty.

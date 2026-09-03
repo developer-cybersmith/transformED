@@ -384,6 +384,101 @@ async def test_fallback_path_inserts_score_none() -> None:
     assert inserted_row["score"] is None, "fallback must store score=None, never an integer"
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fallback_path_logs_at_warning_not_error() -> None:
+    """AC5 (R5): LLM exception must be logged at WARNING level, never ERROR."""
+    from app.modules.assessment.service import grade_teachback
+
+    supabase = _make_supabase()
+    settings = _make_settings()
+    warning_calls: list = []
+    error_calls: list = []
+
+    with (
+        patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
+        patch("app.modules.assessment.service.get_settings", return_value=settings),
+        patch("app.modules.assessment.service.capture_event"),
+        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch("app.modules.assessment.service.logger") as mock_logger,
+    ):
+        mock_st.side_effect = Exception("timeout")
+        mock_logger.warning.side_effect = lambda *a, **kw: warning_calls.append(a)
+        mock_logger.error.side_effect = lambda *a, **kw: error_calls.append(a)
+        await grade_teachback(
+            session_id=_SESSION_ID,
+            lesson_id=_LESSON_ID,
+            segment_id=_SEGMENT_ID,
+            response_text="Some response.",
+            user_id=_USER_ID,
+            supabase=supabase,
+            is_skip=False,
+        )
+
+    assert any("fallback" in str(a) for a in warning_calls), "fallback LLM error must log at WARNING"
+    assert not any("fallback" in str(a) for a in error_calls), "fallback LLM error must NOT log at ERROR"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_fallback_exact_feedback_string() -> None:
+    """AC5 (R6): fallback path must return exact prescribed feedback string."""
+    from app.modules.assessment.service import grade_teachback
+
+    supabase = _make_supabase()
+    settings = _make_settings()
+
+    with (
+        patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
+        patch("app.modules.assessment.service.get_settings", return_value=settings),
+        patch("app.modules.assessment.service.capture_event"),
+        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+    ):
+        mock_st.side_effect = Exception("LLM service down")
+        result = await grade_teachback(
+            session_id=_SESSION_ID,
+            lesson_id=_LESSON_ID,
+            segment_id=_SEGMENT_ID,
+            response_text="Some response.",
+            user_id=_USER_ID,
+            supabase=supabase,
+            is_skip=False,
+        )
+
+    assert result.feedback == "Scoring temporarily unavailable — your response has been saved.", (
+        f"Expected exact fallback message, got: {result.feedback!r}"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_skip_exact_feedback_string() -> None:
+    """AC6 (R6): skip path must return empty string feedback."""
+    from app.modules.assessment.service import grade_teachback
+
+    supabase = _make_supabase()
+    settings = _make_settings()
+
+    with (
+        patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
+        patch("app.modules.assessment.service.get_settings", return_value=settings),
+        patch("app.modules.assessment.service.capture_event"),
+        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+    ):
+        result = await grade_teachback(
+            session_id=_SESSION_ID,
+            lesson_id=_LESSON_ID,
+            segment_id=_SEGMENT_ID,
+            response_text="",
+            user_id=_USER_ID,
+            supabase=supabase,
+            is_skip=True,
+        )
+        mock_st.assert_not_called()
+
+    assert result.feedback == "", f"Expected empty string for skip feedback, got: {result.feedback!r}"
+
+
 # ── AC6 — Skip path ───────────────────────────────────────────────────────────
 
 

@@ -347,6 +347,42 @@ introduced.
 
 ---
 
+## Review Findings (BMAD 6-Layer Code Review — 2026-09-03)
+
+All 7 review layers ran. 8 patch items applied in-branch before merge; 4 items deferred with D-nn IDs; 3 dismissed.
+
+### Patches applied (must be green before merge)
+
+| ID | Severity | Description | Fix |
+|----|----------|-------------|-----|
+| R1 | Critical | `avg_teachback` UnboundLocalError in `get_session_report` when all teach-backs are skip/fallback | Changed `service.py:1175` to use `teachback_score` instead of unbound `avg_teachback` |
+| R2 | High | AC6 violated: `if is_skip:` branch ran AFTER Steps 2–4 (lesson load, segment find, concept extract) | Moved count query to Step 2, moved `if is_skip:` before lesson load; skip now exits without touching lesson JSONB |
+| R3 | High | Skip and fallback insert errors silently discarded — HTTP 200 returned on DB failure | Added `.error` check on both insert responses; raises HTTP 500 on failure, matching LLM-path pattern |
+| R4 | Medium | `result is None` branch had no WARNING log — silent fallback trigger | Added `logger.warning(...)` in the `if result is None:` branch |
+| R5 | Medium | Missing test: AC5 specifies WARNING not ERROR; log level not asserted | Added `test_fallback_path_logs_at_warning_not_error` using patched logger |
+| R6 | Medium | Missing tests: exact feedback strings for fallback and skip not asserted | Added `test_fallback_exact_feedback_string` and `test_skip_exact_feedback_string` |
+| R7 | Medium | `.limit(50)` invalidated by F2-2 (skip+fallback = multiple rows per segment) | Raised to `.limit(200)`; updated comment explaining new worst-case calculation |
+| D-regs | — | D150 and D151 registered in `docs/DEFECT-REGISTER.md` per binding rule 5 | — |
+
+### Deferred items
+
+| ID | Description | Register |
+|----|-------------|---------|
+| D150 | `ces_contribution=0.0` on skip vs real-time CES redistribution — cross-team Dev 3/Dev 4 interface concern | Registered as D150 |
+| D151 | `HTTPException` from `score_teachback` bypasses fallback path — low risk, OpenAI SDK doesn't raise HTTPException | Registered as D151 |
+| R10 | Unbounded skip inserts (no max skip attempts per session) — pre-existing D107 | Deferred to D107 resolution |
+| R11 | Exception string logged in `safe_msg` could leak internal info — pre-existing pattern across codebase | Deferred; scope too large for this story |
+
+### Dismissed
+
+| ID | Reason |
+|----|--------|
+| R13 | Scale Q2 no D-nn — moot once R3 applied (insert errors now surfaced, not silently discarded) |
+| R14 | Whitespace response_text false positive — `@model_validator` uses `.strip()`, so `"   "` correctly raises 422 |
+| R15 | `TeachbackResult.score_source` default `"llm"` masks future bugs — all 3 call sites set explicit value; no risk |
+
+---
+
 ## Dev Agent Record
 
 ### Implementation Plan
