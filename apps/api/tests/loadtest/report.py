@@ -143,9 +143,23 @@ def _render_scenario_summary(result: ScenarioResult) -> str:
     return "\n".join(lines)
 
 
+def _race_summary_label(probe: dict[str, Any]) -> str:
+    if probe.get("error"):
+        return "FAILED (probe raised — see AC-7/AC-8 section above, not a mitigation result)"
+    if not probe:
+        return "not reproduced / skipped"
+    return "REPRODUCED" if probe.get("reproduced") else "not reproduced / skipped"
+
+
 def _render_race(name: str, probe: dict[str, Any]) -> str:
     if not probe:
         return f"### {name}\n\n- **SKIPPED** — no probe result available for this run.\n"
+    if probe.get("error"):
+        return (
+            f"### {name}\n\n"
+            f"- Outcome: **FAILED** — the probe raised an unexpected error and did "
+            f"not complete: `{probe['error']}`\n"
+        )
     reproduced = probe.get("reproduced")
     verdict = "REPRODUCED" if reproduced else "NOT reproduced (existing mitigation held)"
     lines = [f"### {name}", "", f"- Outcome: **{verdict}**"]
@@ -289,13 +303,8 @@ def build_report(
     total_redis_errors = sum(_count_matching(r.errors, _REDIS_ERROR_MARKERS) for r in results)
     lines.append(f"- Total crash-like (5xx) errors across all scenarios this run: {total_crashes}")
     lines.append(f"- Total Redis-connection-error occurrences this run: {total_redis_errors}")
-    lines.append(
-        f"- D45 race: {'REPRODUCED' if race_d45.get('reproduced') else 'not reproduced / skipped'}"
-    )
-    lines.append(
-        f"- Gate 7 race: "
-        f"{'REPRODUCED' if race_gate7.get('reproduced') else 'not reproduced / skipped'}"
-    )
+    lines.append(f"- D45 race: {_race_summary_label(race_d45)}")
+    lines.append(f"- Gate 7 race: {_race_summary_label(race_gate7)}")
     lines.append(
         "- D129 status: this run supersedes the prior 'OPEN, NOT TESTED' status with "
         "the real measurements above — update `docs/DEFECT-REGISTER.md` D129 by hand "

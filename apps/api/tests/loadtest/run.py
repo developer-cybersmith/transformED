@@ -212,56 +212,80 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
             total_requests=_FULL_TOTAL_REQUESTS,
         )
 
-        d45_user = generate_users[0]
-        d45_book_id, d45_chapter_id = user_fixtures[d45_user.user_id]
-        logger.info("Full run: D45 idempotency race probe")
-        race_d45 = await probe_d45_idempotency_race(
-            base_url=base_url,
-            user=d45_user,
-            book_id=d45_book_id,
-            chapter_id=d45_chapter_id,
-        )
-
-        gate7_user = generate_users[1]
-        gate7_book_id, gate7_chapter_id = user_fixtures[gate7_user.user_id]
-        logger.info("Full run: listing chapters for the Gate-7 race probe")
-        all_chapter_ids = await _list_all_chapter_ids(base_url, gate7_user, gate7_book_id)
-        # Exclude the ONE chapter Phase B already used for gate7_user (that
-        # user's own Phase-B request already submitted a
-        # (gate7_chapter_id, tier="T2") generate request against it) -- if
-        # that chapter were left in the candidate list, one of the 4
-        # "distinct chapter" probe requests could land on a chapter where
-        # this user already has a non-failed lesson from Phase B, so Gate 5's
-        # idempotency check would short-circuit it to a 200 idempotent
-        # replay. `probe_gate7_concurrency_race` counts any 200 OR 202 as
-        # "accepted" (matching the real client-visible outcome), so that
-        # replay would be miscounted as a fresh Gate-7 admission -- inflating
-        # `accepted_count` and risking a FALSE "Gate 7 REPRODUCED" verdict
-        # that is actually just an unrelated idempotent replay, not a real
-        # oversubscription of the concurrency cap. Filtering this chapter out
-        # keeps every one of the 4 probe requests targeting chapters this
-        # user has genuinely never touched before.
-        chapter_ids = [c for c in all_chapter_ids if c != gate7_chapter_id]
-        race_gate7: dict[str, Any]
-        if len(chapter_ids) < _GATE7_MIN_CHAPTERS:
-            logger.warning(
-                "Gate-7 race probe SKIPPED: fixture book %s has only %d detected "
-                "chapter(s) other than the one Phase B already used, need >= %d "
-                "distinct, untouched chapters to attempt oversubscription without "
-                "risking an idempotent-replay false positive. Upload a larger "
-                "fixture book to enable this probe.",
-                gate7_book_id,
-                len(chapter_ids),
-                _GATE7_MIN_CHAPTERS,
-            )
-            race_gate7 = {}
-        else:
-            race_gate7 = await probe_gate7_concurrency_race(
+        # Both race probes run AFTER Phase A/B's real load has already
+        # completed and produced valid, reportable data -- each is wrapped in
+        # its own try/except so a probe-side failure (e.g. a disposable
+        # user's token expiring, a transient network error) can never
+        # propagate out of `_run_full` and discard that already-collected
+        # Phase A/B data. Found the hard way on run #8 (2026-09-03): a bare
+        # `RuntimeError` from `_list_all_chapter_ids` on a 401 propagated
+        # uncaught all the way out of `_main_async`, so the script exited 1
+        # BEFORE `build_report`/`_write_report` ever ran -- a fully successful
+        # 50-concurrent Phase A/B run was silently lost with no report at
+        # all. Each except below turns that failure into an "error"-shaped
+        # probe dict instead (see `report._render_race` / `_race_summary_label`),
+        # so the report always gets written and states plainly that the
+        # probe itself failed -- never confused with "ran and did not
+        # reproduce the race".
+        race_d45: dict[str, Any]
+        try:
+            d45_user = generate_users[0]
+            d45_book_id, d45_chapter_id = user_fixtures[d45_user.user_id]
+            logger.info("Full run: D45 idempotency race probe")
+            race_d45 = await probe_d45_idempotency_race(
                 base_url=base_url,
-                user=gate7_user,
-                book_id=gate7_book_id,
-                chapter_ids=chapter_ids[:_GATE7_MIN_CHAPTERS],
+                user=d45_user,
+                book_id=d45_book_id,
+                chapter_id=d45_chapter_id,
             )
+        except Exception as exc:  # noqa: BLE001 -- deliberately broad, see comment above
+            logger.warning("D45 race probe failed with an unexpected error: %s", exc)
+            race_d45 = {"reproduced": False, "error": str(exc)}
+
+        race_gate7: dict[str, Any]
+        try:
+            gate7_user = generate_users[1]
+            gate7_book_id, gate7_chapter_id = user_fixtures[gate7_user.user_id]
+            logger.info("Full run: listing chapters for the Gate-7 race probe")
+            all_chapter_ids = await _list_all_chapter_ids(base_url, gate7_user, gate7_book_id)
+            # Exclude the ONE chapter Phase B already used for gate7_user (that
+            # user's own Phase-B request already submitted a
+            # (gate7_chapter_id, tier="T2") generate request against it) -- if
+            # that chapter were left in the candidate list, one of the 4
+            # "distinct chapter" probe requests could land on a chapter where
+            # this user already has a non-failed lesson from Phase B, so Gate 5's
+            # idempotency check would short-circuit it to a 200 idempotent
+            # replay. `probe_gate7_concurrency_race` counts any 200 OR 202 as
+            # "accepted" (matching the real client-visible outcome), so that
+            # replay would be miscounted as a fresh Gate-7 admission -- inflating
+            # `accepted_count` and risking a FALSE "Gate 7 REPRODUCED" verdict
+            # that is actually just an unrelated idempotent replay, not a real
+            # oversubscription of the concurrency cap. Filtering this chapter out
+            # keeps every one of the 4 probe requests targeting chapters this
+            # user has genuinely never touched before.
+            chapter_ids = [c for c in all_chapter_ids if c != gate7_chapter_id]
+            if len(chapter_ids) < _GATE7_MIN_CHAPTERS:
+                logger.warning(
+                    "Gate-7 race probe SKIPPED: fixture book %s has only %d detected "
+                    "chapter(s) other than the one Phase B already used, need >= %d "
+                    "distinct, untouched chapters to attempt oversubscription without "
+                    "risking an idempotent-replay false positive. Upload a larger "
+                    "fixture book to enable this probe.",
+                    gate7_book_id,
+                    len(chapter_ids),
+                    _GATE7_MIN_CHAPTERS,
+                )
+                race_gate7 = {}
+            else:
+                race_gate7 = await probe_gate7_concurrency_race(
+                    base_url=base_url,
+                    user=gate7_user,
+                    book_id=gate7_book_id,
+                    chapter_ids=chapter_ids[:_GATE7_MIN_CHAPTERS],
+                )
+        except Exception as exc:  # noqa: BLE001 -- deliberately broad, see comment above
+            logger.warning("Gate-7 race probe failed with an unexpected error: %s", exc)
+            race_gate7 = {"reproduced": False, "error": str(exc)}
 
         return [phase_a_result, phase_b_result], race_d45, race_gate7
     finally:
