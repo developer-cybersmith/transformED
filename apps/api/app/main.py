@@ -26,7 +26,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.config import get_settings
 from app.core.langfuse import get_langfuse
-from app.core.rate_limit import limiter
+from app.core.rate_limit import assert_rate_limit_storage_configured, limiter
 from app.core.redis import close_redis, init_redis
 from app.core.websocket import ws_router
 from app.modules.admin.router import router as admin_router
@@ -62,6 +62,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("Starting HIE API...")
+
+    # Rate-limit storage assertion (D49, Story 5-4/S4-4). Fails fast and loud
+    # if the shared limiter would silently run on per-process memory:// storage
+    # outside debug — must run before anything else so a misconfigured deploy
+    # never serves a single request under the wrong ceiling.
+    assert_rate_limit_storage_configured(debug=settings.debug)
 
     # Redis (app-level redis-py pool)
     await init_redis(settings.redis_url)

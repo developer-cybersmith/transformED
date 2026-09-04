@@ -81,7 +81,6 @@ jobs:
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
           SARVAM_API_KEY: test
-          HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
 
@@ -183,7 +182,6 @@ jobs:
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
           SARVAM_API_KEY: test
-          HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
 
@@ -199,7 +197,6 @@ jobs:
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
           SARVAM_API_KEY: test
-          HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test
 
@@ -347,6 +344,5 @@ jobs:
           OPENAI_API_KEY: test
           ELEVENLABS_API_KEY: test
           SARVAM_API_KEY: test
-          HEYGEN_API_KEY: test
           LANGFUSE_PUBLIC_KEY: test
           LANGFUSE_SECRET_KEY: test

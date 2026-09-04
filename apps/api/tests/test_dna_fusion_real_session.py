@@ -272,7 +272,6 @@ async def test_fuse_learner_dna_upsert_payload_contains_exact_ema_values(
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
         dna_ema_retain=0.7,
@@ -396,7 +395,6 @@ async def test_fuse_learner_dna_ended_at_none_no_upsert(
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
     )
@@ -521,7 +519,6 @@ async def test_fuse_learner_dna_idor_raises_404(
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
     )
@@ -583,7 +580,6 @@ async def test_fuse_learner_dna_redis_reassessment_flag_at_session_10(
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
     )
@@ -671,7 +667,6 @@ async def test_fuse_learner_dna_redis_failure_is_non_fatal(
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
     )

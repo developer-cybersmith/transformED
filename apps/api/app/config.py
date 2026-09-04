@@ -56,8 +56,10 @@ class Settings(BaseSettings):
         default=None,
         description=(
             "Google AI / Vertex AI key — used for Gemini model evaluation AND "
-            "(as of Story 2-9) as the production auth key for ImagenProvider "
-            "(Imagen 4 Fast, image_generator_node's fallback tier)."
+            "(as of Story 5-8b) as the production auth key for NanoBananaProvider "
+            "(Gemini 'Nano Banana', image_generator_node's PRIMARY tier — "
+            "previously backed ImagenProvider/Imagen 4 Fast, Story 2-9, until "
+            "that endpoint died and was replaced per D121)."
         ),
     )
 
@@ -100,9 +102,6 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = Field(
         default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam"
     )
-
-    # ── HeyGen ────────────────────────────────────────────────────────────────
-    heygen_api_key: str = Field(..., description="HeyGen API key for avatar clips")
 
     # ── Langfuse ──────────────────────────────────────────────────────────────
     langfuse_public_key: str = Field(..., description="Langfuse public key")
@@ -380,6 +379,48 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── DNA-personalized CES threshold (Story 4-13) ──────────────────────────
+    ces_dna_weight_frustration: float = Field(
+        default=0.08,
+        ge=0.0,
+        le=1.0,
+        description="Weight of frustration_tolerance DNA dimension on CES threshold adjustment.",
+    )
+    ces_dna_weight_persistence: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="Weight of persistence DNA dimension on CES threshold adjustment.",
+    )
+    ces_dna_weight_goal: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        description="Weight of goal_orientation DNA dimension on CES threshold adjustment.",
+    )
+    ces_dna_threshold_min: float = Field(
+        default=40.0,
+        ge=0.0,
+        le=100.0,
+        description="Minimum personalized CES threshold.",
+    )
+    ces_dna_threshold_max: float = Field(
+        default=65.0,
+        ge=0.0,
+        le=100.0,
+        description="Maximum personalized CES threshold.",
+    )
+    ces_dna_dim_midpoint: float = Field(
+        default=50.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Neutral midpoint of the 0-100 DNA dimension scale used in the personalized "
+            "CES threshold formula: adjustment = (midpoint - dim_score) × weight. "
+            "Stored in Settings so it is tunable if the DNA fusion scale ever changes."
+        ),
+    )
+
     @model_validator(mode="after")
     def _ces_weights_must_sum_to_one(self) -> Settings:
         total = (
@@ -635,6 +676,13 @@ class Settings(BaseSettings):
         "NOTE: always build httpx.Timeout(..., connect=5.0) explicitly; passing a bare "
         "float to the SDK sets connect to that value too, destroying the 5s connect "
         "guard and making hangs WORSE than the default.",
+    )
+    google_image_request_timeout_s: float = Field(
+        default=180.0,
+        description="Read/write/pool timeout for Gemini 'Nano Banana' image generation "
+        "(seconds, Story 5-8b) — same rationale as openai_image_request_timeout_s. "
+        "Same NOTE applies: always build httpx.Timeout(..., connect=5.0) explicitly, "
+        "never pass a bare float.",
     )
 
     # ── ARQ / pipeline timeouts (Story 2-0 AC-5) ──────────────────────────────

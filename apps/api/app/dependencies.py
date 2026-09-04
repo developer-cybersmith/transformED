@@ -33,7 +33,7 @@ __all__ = [
     "get_settings",
 ]
 
-_bearer_scheme = HTTPBearer(auto_error=True)
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 # Cached across requests — PyJWKClient fetches + caches Supabase's public signing
 # keys itself (keyed by `kid`), so this is still zero remote calls per request in
@@ -50,7 +50,7 @@ def _get_jwks_client(settings: Settings) -> jwt.PyJWKClient:
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer_scheme)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any]:
     """Verify a Supabase JWT locally — never makes a remote auth call per request.
@@ -65,9 +65,15 @@ async def get_current_user(
     Branches on the token's own (unverified) `alg` header so both key types work
     without needing to know in advance which one a given project uses.
 
-    Raises HTTP 401 on any validation failure.
+    Raises HTTP 401 on any validation failure (including missing Authorization header).
     Returns the decoded JWT payload (includes sub, email, role, app_metadata, etc.).
     """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     token = credentials.credentials
 
     credentials_exception = HTTPException(

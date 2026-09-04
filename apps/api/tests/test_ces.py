@@ -50,7 +50,6 @@ def _settings(
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
         ces_weight_quiz=quiz,
@@ -73,12 +72,18 @@ def _import_compute_ces():
 
 @pytest.mark.unit
 def test_dunder_all_contains_only_compute_ces():
-    """AC 2: ces.py defines __all__ = ['compute_ces'] and nothing else."""
+    """AC 2 (updated Story 4-13): ces.py __all__ contains exactly the two canonical
+    CES formula functions. compute_personalized_threshold was added deliberately in
+    Story 4-13 — it is CES arithmetic (computes the threshold that drives CES
+    interventions) and belongs in this canonical module. Any further addition to __all__
+    must update this list explicitly, not silently.
+    """
     import app.modules.assessment.ces as ces_module
 
     assert hasattr(ces_module, "__all__"), "__all__ must be defined in ces.py"
-    assert list(ces_module.__all__) == ["compute_ces"], (
-        f"__all__ must contain only 'compute_ces', got {ces_module.__all__!r}"
+    assert list(ces_module.__all__) == ["compute_ces", "compute_personalized_threshold"], (
+        f"__all__ must contain exactly the two canonical CES formula functions, "
+        f"got {ces_module.__all__!r}. Adding to ces.py __all__ requires updating this guard."
     )
 
 

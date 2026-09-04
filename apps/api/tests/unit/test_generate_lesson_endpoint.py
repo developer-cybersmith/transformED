@@ -35,6 +35,7 @@ import ast
 import inspect
 import io
 import re
+import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -92,6 +93,10 @@ class _Query:
     payload: Any = None
     filters: list[tuple[str, Any]] = field(default_factory=list)
     single: bool = False
+    # D139: which OS thread actually called `.execute()` — recorded so tests
+    # can prove a call ran off the event loop (asyncio.to_thread), not just
+    # that it happened at all.
+    thread_id: int | None = None
 
     def has(self, key: str) -> bool:
         return any(k == key for k, _ in self.filters)
@@ -194,6 +199,7 @@ class _Builder:
         return self
 
     def execute(self) -> MagicMock:
+        self._q.thread_id = threading.get_ident()
         self._sink.append(self._q)
         return _resolve(self._q, self._sc)
 
@@ -1857,3 +1863,116 @@ def test_a_stale_ready_lesson_is_still_returned_never_regenerated() -> None:
     assert resp.status_code == 200
     assert resp.json()["lesson_id"] == EXISTING_LESSON_ID
     assert pool.enqueue_job.await_count == 0, "a 90-day-old ready lesson must not be regenerated"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# D139 — every blocking Supabase call runs off the event loop
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+async def test_generate_chapter_lesson_all_supabase_calls_run_off_the_event_loop() -> None:
+    """D139: `generate_chapter_lesson` made eight sequential synchronous
+    supabase-py calls directly on the event loop -- confirmed live when
+    Story 5-1's 50-concurrent load test got 0/50 successes on this endpoint,
+    every request timing out identically at the client's 30s deadline.
+
+    This is a direct, deterministic proof (no concurrency/timing involved,
+    so it cannot be flaky): `_FakeSupabase`'s `_Builder.execute()` records
+    which OS thread actually ran each call (`_Query.thread_id`), and this
+    test asserts every recorded call on the happy path ran on a DIFFERENT
+    thread than the event loop serving the request -- i.e. every one of
+    them is actually wrapped in `asyncio.to_thread`, not just some.
+
+    The happy path (`_ok_scenario()`: no existing lessons, book ready, valid
+    span, no concurrency cap hit) reaches exactly six of the eight call
+    sites: `_fetch_owned_book` (books), the chapter fetch, Gate 5's
+    idempotency read, Gate 7's concurrency read, the `lessons` insert, and
+    the `lesson_jobs` insert. The remaining two (the rollback deletes) only
+    run on the failure path -- covered by the test below.
+    """
+    import httpx
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sc = _ok_scenario()
+    sb = _FakeSupabase(sc)
+    pool = _arq_pool()
+
+    limiter.reset()
+    event_loop_thread_id = threading.get_ident()
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: pool
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(_url(), json={})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 202, resp.text
+    assert len(sb.queries) == 6, (
+        f"expected exactly 6 recorded Supabase calls on this happy path, got "
+        f"{len(sb.queries)}: {[(q.table, q.op) for q in sb.queries]} -- the mock "
+        "wiring may be broken, not just the thread check"
+    )
+    on_event_loop = [q for q in sb.queries if q.thread_id == event_loop_thread_id]
+    assert not on_event_loop, (
+        f"{len(on_event_loop)} of {len(sb.queries)} Supabase call(s) ran ON the "
+        f"event-loop thread instead of a worker thread: "
+        f"{[(q.table, q.op) for q in on_event_loop]} -- asyncio.to_thread wrapping "
+        "is missing for at least one call site"
+    )
+
+
+@pytest.mark.unit
+async def test_generate_chapter_lesson_rollback_deletes_run_off_the_event_loop() -> None:
+    """D139: the two rollback deletes (`lesson_jobs`, `lessons`) in the
+    generic-exception handler are a SEPARATE code path from the happy path
+    above -- nothing exercises them there, since nothing fails. Forces the
+    ARQ enqueue to raise (any post-insert failure lands in this branch) so
+    every request takes the rollback path, then applies the same
+    thread-identity proof to its two `delete()` calls specifically.
+    """
+    import httpx
+
+    from app.core.rate_limit import limiter
+    from app.dependencies import get_arq_redis, get_current_user
+    from app.main import app
+
+    sc = _ok_scenario()
+    sb = _FakeSupabase(sc)
+    pool = AsyncMock()
+    pool.enqueue_job = AsyncMock(side_effect=RuntimeError("simulated ARQ/Redis failure"))
+
+    limiter.reset()
+    event_loop_thread_id = threading.get_ident()
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: pool
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.post(_url(), json={})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 500, resp.text
+    rollback_deletes = [q for q in sb.queries if q.op == "delete"]
+    assert len(rollback_deletes) == 2, (
+        f"expected exactly 2 rollback delete() calls (lesson_jobs, lessons), got "
+        f"{len(rollback_deletes)}: {[(q.table, q.op) for q in rollback_deletes]} -- "
+        "the failure path may not have been reached as expected"
+    )
+    on_event_loop = [q for q in rollback_deletes if q.thread_id == event_loop_thread_id]
+    assert not on_event_loop, (
+        f"{len(on_event_loop)} of 2 rollback delete() call(s) ran ON the event-loop "
+        "thread instead of a worker thread -- asyncio.to_thread wrapping is missing"
+    )

@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import posthog from 'posthog-js';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
 import { useLessonSocket } from '@/hooks/useLessonSocket';
@@ -69,6 +70,14 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   // runs at the end of the (possibly slow) refetch, so the button stays
   // visible/clickable for the whole in-flight window without this.
   const [isRetrying, setIsRetrying] = useState(false);
+  // Story 2-54: PLAYING is re-entered on every resume-from-pause and after
+  // exitTeachBack() (player.machine.ts), not just once per lesson --
+  // `lesson_started` must fire only the first time this mount observes
+  // PLAYING. PlayerLoader is keyed on lesson_id (S4-11), so this component
+  // remounts fresh per lesson visit, making a mount-scoped ref the correct
+  // reset boundary (also holds across React StrictMode's dev-only double
+  // effect invoke, since the ref isn't reset between the two calls).
+  const hasFiredLessonStartedRef = useRef(false);
 
   // Re-fetches fresh signed media URLs before actually retrying (S2-33) --
   // retryAudio() alone just remounts the <audio> element with whatever src
@@ -211,12 +220,48 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   // call here is harmless -- no ref guard needed. Non-fatal on failure: a
   // report field being wrong must never block the "Lesson complete" screen,
   // which is already rendered by the time this fires.
+  // Review fix (Edge Case Hunter, Story 2-54): `status`/`sessionId` above are
+  // the values captured at the render that scheduled this effect. On a
+  // FRESH MOUNT for a new lesson, that render's very first pass still sees
+  // the PREVIOUS lesson's leftover status/sessionId, because `usePlayerStore`
+  // is a module-level singleton loadLesson's own mount effect resets --
+  // that reset effect is declared earlier in this component and runs first
+  // in the same commit, but it does not retroactively change what THIS
+  // effect's closure already captured. Concretely: navigating from lesson
+  // A's ENDED screen straight to lesson B (PlayerLoader remounts a fresh
+  // Player keyed on lesson_id) could otherwise fire lesson_completed/
+  // completeSession for lesson B's lessonId tagged with lesson A's stale
+  // sessionId -- a real pre-existing bug in completeSession(sessionId) that
+  // this story's own capture call would have inherited and compounded.
+  // Reading fresh via getState() (not the destructured hook values) sees
+  // loadLesson's correction, matching the pattern TutorInterventionCard's
+  // auto-dismiss timer already uses for the identical class of problem.
   useEffect(() => {
-    if (status !== 'ENDED' || !sessionId) return;
-    void completeSession(sessionId).catch(() => {
+    const fresh = usePlayerStore.getState();
+    if (fresh.status !== 'ENDED' || !fresh.sessionId) return;
+    void completeSession(fresh.sessionId).catch(() => {
       // Swallowed on purpose -- see the comment above.
     });
-  }, [status, sessionId]);
+    // Story 2-54: status never leaves ENDED once set (endLesson() is the
+    // only writer) for a GIVEN lesson mount, so this fires effectively once
+    // per real lesson completion -- the fresh-read above is what makes that
+    // true across a lesson change too, not just within one lesson's session.
+    posthog.capture('lesson_completed', { lesson_id: lessonId, session_id: fresh.sessionId });
+  }, [status, sessionId, lessonId]);
+
+  // Story 2-54: fires once per mount, the first time PLAYING is observed --
+  // see hasFiredLessonStartedRef's own comment for why a mount-scoped ref
+  // (not a status-transition effect alone) is required here. Also reads
+  // fresh (see the ENDED effect above for the full reasoning): without it,
+  // mounting a new lesson while the store still shows the PREVIOUS lesson's
+  // PLAYING status would fire lesson_started immediately, before this
+  // lesson's audio has actually started.
+  useEffect(() => {
+    const freshStatus = usePlayerStore.getState().status;
+    if (freshStatus !== 'PLAYING' || hasFiredLessonStartedRef.current) return;
+    hasFiredLessonStartedRef.current = true;
+    posthog.capture('lesson_started', { lesson_id: lessonId });
+  }, [status, lessonId]);
 
   const segment = lesson.segments[currentSegmentIndex] ?? null;
 

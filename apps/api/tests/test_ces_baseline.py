@@ -49,7 +49,6 @@ def _settings(window: int = 5, ttl: int = 86400) -> Settings:
         supabase_jwt_secret="x",
         openai_api_key="x",
         sarvam_api_key="x",
-        heygen_api_key="x",
         langfuse_public_key="x",
         langfuse_secret_key="x",
         ces_baseline_window=window,
