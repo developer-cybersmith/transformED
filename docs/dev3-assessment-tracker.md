@@ -1042,9 +1042,17 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - All 5 typed-submit STT guard tests still pass (assertions unchanged)
   - `test_no_unbounded_select_on_a_request_path` passes — session query is `.maybe_single()` bounded
   - 9 unit tests in `apps/api/tests/unit/test_f2_4_voice_teachback_stt.py` — all GREEN
-  - 6-layer BMAD review run 2026-09-04 — see Review Findings below
+  - 6-layer adversarial BMAD review passed 2026-09-04; 6 patches applied (R1–R6)
+    - R1: `is_circuit_open` import + `await` (was NameError at runtime)
+    - R2: `guard_breaker` wired around `with_retry` (circuit state now tracked for STT)
+    - R3: `accumulate_cost(lesson_id, ...)` not `session_id` ($3.00/lesson ceiling fixed)
+    - R4: unified 404 messages (session-existence enumeration closed)
+    - R5: WARNING log when `duration_seconds==0` (silent cost skip now observable)
+    - R6: filename sanitized with `Path(...).name` before passing to Whisper
+  - Deferred defects: D154 (read-before-check DoS), D155 (duration=0 cost gap doc), D156 (audio inherits D45 race)
+  - 10/10 unit tests GREEN after patches
   - Branch: `feature2/f2-4-voice-teachback-stt`
-  - Story: `docs/stories/f2-4-voice-teachback-stt.md` — status: in-progress (review pending)
+  - Story: `docs/stories/f2-4-voice-teachback-stt.md` — status: done
 
 ---
 
