@@ -30,6 +30,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,8 @@ from tests.loadtest.models import ScenarioResult, TestUser
 from tests.loadtest.phase_a_upload import run_phase_a
 from tests.loadtest.phase_b_generate import run_phase_b
 from tests.loadtest.provisioning import (
+    _admin_headers,
+    _require_env,
     cleanup_generate_test_users,
     provision_generate_test_users,
 )
@@ -81,6 +84,83 @@ _REPORT_PATH = _API_ROOT.parent.parent / "docs" / "reports" / "load-test-5-1-res
 
 def _base_url() -> str:
     return os.environ.get("LOADTEST_BASE_URL", _DEFAULT_BASE_URL)
+
+
+_LESSON_TERMINAL_WAIT_POLL_S = 20.0
+_LESSON_TERMINAL_WAIT_MAX_S = 60 * 60.0  # 1 hour hard backstop
+
+
+async def _wait_for_lessons_terminal(
+    lesson_ids: list[str],
+    *,
+    poll_interval_s: float = _LESSON_TERMINAL_WAIT_POLL_S,
+    max_wait_s: float = _LESSON_TERMINAL_WAIT_MAX_S,
+) -> dict[str, str]:
+    """Block until every id in *lesson_ids* has a real terminal `status`
+    ('ready'/'failed') in the `lessons` table, or *max_wait_s* elapses.
+
+    D152 (found live, run #10, 2026-09-04): `_run_full`'s cleanup used to
+    fire as soon as `run_phase_b`'s OWN polling gave up on a lesson --
+    which can happen EARLY if the disposable user's own bearer token
+    expires mid-poll (`phase_b_generate._poll_one_lesson`'s 401/403/404
+    fail-fast branch), even though the real ARQ pipeline job for that
+    lesson may still be genuinely running. Cleanup then deleted the owning
+    disposable user while its job was still in flight, and the job crashed
+    on its now-cascade-deleted `lesson_jobs` row partway through real,
+    paid generation work -- confirmed live: one job failed at 794s with
+    `APIError: ... The result contains 0 rows`, well after real LLM/image
+    spend had already happened.
+
+    Uses the SERVICE-ROLE REST API directly (never a disposable user's own
+    token, which is exactly what can expire) -- immune to the same failure
+    this function exists to guard against. Any id still not terminal once
+    *max_wait_s* elapses is reported as `'timed_out'`, NOT silently treated
+    as done -- callers must decide what "still running after an hour" means
+    (this harness's own choice: skip cleanup for that run entirely rather
+    than risk destroying genuinely in-flight work, per binding rule 5 --
+    fail loud, don't silently corrupt).
+    """
+    supabase_url = _require_env("SUPABASE_URL").rstrip("/")
+    headers = _admin_headers(_require_env("SUPABASE_SERVICE_ROLE_KEY"))
+
+    remaining = set(lesson_ids)
+    final_status: dict[str, str] = {}
+    deadline = time.monotonic() + max_wait_s
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        while remaining and time.monotonic() < deadline:
+            ids_csv = ",".join(remaining)
+            try:
+                resp = await client.get(
+                    f"{supabase_url}/rest/v1/lessons",
+                    headers=headers,
+                    params={"lesson_id": f"in.({ids_csv})", "select": "lesson_id,status"},
+                )
+                if resp.status_code == 200:
+                    for row in resp.json():
+                        if row["status"] in ("ready", "failed"):
+                            final_status[row["lesson_id"]] = row["status"]
+                            remaining.discard(row["lesson_id"])
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "Transient error checking real terminal status for %d lesson(s), retrying: %s",
+                    len(remaining),
+                    exc,
+                )
+
+            if remaining:
+                logger.info(
+                    "Waiting for %d lesson(s) to reach a REAL terminal status "
+                    "(service-role check, immune to test-user token expiry) "
+                    "before cleanup -- D152: %s",
+                    len(remaining),
+                    sorted(remaining)[:5],
+                )
+                await asyncio.sleep(poll_interval_s)
+
+    for lesson_id in remaining:
+        final_status[lesson_id] = "timed_out"
+    return final_status
 
 
 async def _setup_fixtures_bounded(base_url: str, users: list[TestUser]) -> list[tuple[str, str]]:
@@ -163,6 +243,13 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
     # book-only cleanup is needed the way it was for the old real-account
     # design.
     phase_a_users: list[TestUser] = []
+    # D152: set to a reason string if any Phase B lesson never reaches a
+    # real terminal status even after the extended wait below -- the
+    # `finally` block checks this and skips cleanup entirely rather than
+    # risk deleting a disposable user whose lesson may still be genuinely
+    # running (see _wait_for_lessons_terminal's docstring for the full
+    # incident this guards against).
+    skip_cleanup_reason: str | None = None
     try:
         logger.info("Full run: provisioning %d disposable Phase A users", _PHASE_A_USER_COUNT)
         phase_a_users = await provision_generate_test_users(
@@ -211,6 +298,33 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
             user_fixtures=user_fixtures,
             total_requests=_FULL_TOTAL_REQUESTS,
         )
+
+        # D152: wait for every ACCEPTED Phase B lesson to reach a REAL
+        # terminal status (checked via the service-role API, immune to a
+        # disposable user's own token expiring) before doing anything else
+        # that leads to cleanup. `run_phase_b`'s own polling may have given
+        # up on some of these early (see `_wait_for_lessons_terminal`'s
+        # docstring) -- that is a client-observation limit, not proof the
+        # real pipeline job actually finished.
+        accepted_lesson_ids = phase_b_result.extra.get("accepted_lesson_ids", [])
+        if accepted_lesson_ids:
+            logger.info(
+                "Full run: confirming all %d accepted Phase B lesson(s) reached a "
+                "REAL terminal status before cleanup (D152)",
+                len(accepted_lesson_ids),
+            )
+            final_statuses = await _wait_for_lessons_terminal(accepted_lesson_ids)
+            stuck = sorted(lid for lid, st in final_statuses.items() if st == "timed_out")
+            if stuck:
+                skip_cleanup_reason = (
+                    f"D152: {len(stuck)} lesson(s) never reached a real terminal status "
+                    f"even after the extended wait -- {stuck[:10]}"
+                )
+                logger.error(
+                    "%s. SKIPPING cleanup for this run's disposable users to avoid "
+                    "destroying still-in-flight work -- manual cleanup required.",
+                    skip_cleanup_reason,
+                )
 
         # Both race probes run AFTER Phase A/B's real load has already
         # completed and produced valid, reportable data -- each is wrapped in
@@ -293,11 +407,26 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
         # block above raised partway through -- a disposable user (and,
         # via cascade, everything they created) leaking onto the real
         # project must not depend on the rest of the run succeeding.
-        try:
-            await cleanup_generate_test_users(generate_users)
-        finally:
-            if phase_a_users:
-                await cleanup_generate_test_users(phase_a_users)
+        #
+        # D152 exception: if a Phase B lesson never confirmed a real
+        # terminal status (see above), skip cleanup entirely rather than
+        # delete a disposable user whose lesson may still be genuinely
+        # running -- a leaked disposable test account is cheap and visible
+        # (an operator can delete it by hand); destroying real, paid,
+        # in-flight generation work by racing ahead of it is not.
+        if skip_cleanup_reason:
+            logger.error(
+                "Cleanup SKIPPED (%s). Disposable users from this run were left in "
+                "place -- delete them manually once you've confirmed their lessons "
+                "are no longer running.",
+                skip_cleanup_reason,
+            )
+        else:
+            try:
+                await cleanup_generate_test_users(generate_users)
+            finally:
+                if phase_a_users:
+                    await cleanup_generate_test_users(phase_a_users)
 
 
 async def _list_all_chapter_ids(base_url: str, uploader: TestUser, book_id: str) -> list[str]:
