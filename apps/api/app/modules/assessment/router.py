@@ -10,11 +10,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 
+from fastapi import Depends
+
+from app.config import Settings
 from app.core.posthog_client import capture_event
-from app.dependencies import ApprovedUser, CurrentUser
+from app.dependencies import ApprovedUser, CurrentUser, get_settings
 
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
@@ -224,6 +227,50 @@ async def submit_teachback(
         lesson_id=body.lesson_id,
         segment_id=body.segment_id,
         response_text=body.response_text,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
+
+
+@router.post(
+    "/teachback/{session_id}/{segment_id}/audio",
+    response_model=TeachbackResult,
+    summary="Submit a voice teach-back recording for Whisper STT + LLM evaluation (F2-4)",
+)
+async def submit_audio_teachback(
+    session_id: str,
+    segment_id: str,
+    audio: UploadFile = File(..., description="Audio file (WAV, MP3, MP4, WEBM)"),
+    current_user: ApprovedUser = ...,
+    settings: Settings = Depends(get_settings),
+) -> TeachbackResult:
+    """Transcribe a voice teach-back recording via Whisper and score it with GPT-4o-mini.
+
+    On transcription failure the endpoint returns HTTP 200 with score_source='fallback'
+    so the student is never hard-blocked by a Whisper outage.
+    Raw audio is never stored — only the transcript reaches the database.
+    """
+    from app.core.db import get_supabase  # noqa: PLC0415
+    from app.modules.assessment.service import transcribe_and_score_audio  # noqa: PLC0415
+
+    max_bytes = settings.stt_max_file_mb * 1024 * 1024
+    audio_bytes = await audio.read()
+    if len(audio_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Audio file exceeds the {settings.stt_max_file_mb} MB limit "
+                f"({len(audio_bytes) / (1024*1024):.1f} MB uploaded). "
+                "Please trim the recording and try again."
+            ),
+        )
+
+    filename = audio.filename or "audio.webm"
+    return await transcribe_and_score_audio(
+        session_id=session_id,
+        segment_id=segment_id,
+        audio_bytes=audio_bytes,
+        filename=filename,
         user_id=current_user["sub"],
         supabase=get_supabase(),
     )

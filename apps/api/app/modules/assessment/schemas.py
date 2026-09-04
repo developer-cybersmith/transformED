@@ -119,7 +119,8 @@ class QuizResult(BaseModel):
 
 # ── Teachback schemas ──────────────────────────────────────────────────────────
 # Frozen contract (Sprint 1) — shape changes require 4-dev PR review.
-# NO transcript field (STT banned). NO duration_seconds field (implies timer).
+# NO transcript field on typed-submit schema (voice uses audio endpoint, F2-4).
+# NO duration_seconds field (implies a timer, banned — creates test anxiety).
 
 
 class TeachbackSubmission(BaseModel):
@@ -150,6 +151,9 @@ class TeachbackResult(BaseModel):
     overall_score: float
     ces_contribution: float
     feedback: str  # praise only (score >= 90) or praise + "\n\n" + correction (score < 90)
+    # F2-2 / F2-4: how the score was produced. "llm" = GPT-4o-mini rubric; "fallback" = pre-computed
+    # default (LLM or STT unavailable); "skipped" = student chose to skip.
+    score_source: Literal["llm", "fallback", "skipped"] = "llm"
 
 
 # ── Onboarding schemas ─────────────────────────────────────────────────────────
