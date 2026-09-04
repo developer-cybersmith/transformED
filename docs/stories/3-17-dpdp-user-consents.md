@@ -223,6 +223,9 @@ Schema-only migration — no application unit tests required or applicable. Veri
 - [ ] [Review][Defer] `ON DELETE CASCADE` wipes consent records when user is deleted — DPDP may require 3-year retention for audit purposes. Low priority for MVP; revisit before real-student launch.
 - [ ] [Review][Defer] `attention_events` SELECT/UPDATE/DELETE RLS policies still use only `users.attention_consent` (not the dual check). This is intentional — users should be able to read historical attention data. Documented here for future auditor review.
 
+### Agent 6 — Scale & Load Hunter (added 2026-09-05)
+PASS — Schema-only migration. `user_consents` has a UNIQUE constraint on `(user_id, consent_type, policy_version)` — caps rows per user to a small finite set (bounded by consent types × policy versions). Trigger `user_consents_sync_attention` is O(1) per INSERT. No runtime code introduced. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section.
+
 ---
 
 ## Dev Agent Record

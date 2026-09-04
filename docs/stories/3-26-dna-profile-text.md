@@ -618,3 +618,4 @@ Two concurrent session-end events for the same user_id (unlikely but possible if
 | `inspect.iscoroutinefunction(refresh_dna_profile)` | `True` |
 | All 19 ACs verified against code | **19/19 SATISFIED** |
 | Production logic changed | **None** |
+| Scale & Load Hunter (added 2026-09-05) | **PASS** — One GPT-4o-mini call per invocation (bounded by `@with_retry(max_attempts=3)`). DNA dimension inputs bounded by `maybe_single()` read in parent `refresh_dna_profile`. No Supabase fan-out, no Redis. Profile text length capped by model `max_tokens`. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section. |

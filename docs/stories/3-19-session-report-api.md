@@ -637,3 +637,6 @@ No test for `started_at = None` path (code: `if ended_at is not None and started
 - 30 tests in `test_session_report_endpoint.py` (28 original + 2 added during BLOCKER resolution)
 - 111 assessment module tests total — all passing (quiz=42, teachback=28, session_report=30, contracts=11)
 - All 17 ACs covered by ≥ 1 named test with an explicit, non-trivial assertion
+
+### Agent 6 — Scale & Load Hunter (added 2026-09-05)
+PASS — All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section. Session read uses `.maybe_single()` (0–1 row). Quiz/teachback attempt reads each carry `.limit(500)` and `.limit(100)` respectively (documented caps with degradation path — a `signals_capped` note). CES/DNA reads bounded by `maybe_single()`. No fan-out, no LLM calls, no Redis writes in this endpoint. Read-only endpoint — no TOCTOU risk.

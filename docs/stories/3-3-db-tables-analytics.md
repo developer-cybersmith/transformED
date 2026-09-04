@@ -176,3 +176,4 @@ Review notes:
 - Indexes on all FK columns and on event_type are appropriate for anticipated query patterns.
 - Code review finding acknowledged: missing UNIQUE(user_id, question_id) on onboarding_responses is a medium-severity gap. Must be addressed in a new migration (not this one — this migration is frozen).
 - Schema verification tests provide a regression safety net against future accidental migration edits.
+- **Scale & Load Hunter (added 2026-09-05):** PASS — Migration-only story. JSONB payload is fixed overhead; indexes on FK + event_type are appropriate. UNIQUE gap on `onboarding_responses` acknowledged (new migration needed). No runtime code. All 6 SCALE-CONTRACT.md questions N/A (DDL only).

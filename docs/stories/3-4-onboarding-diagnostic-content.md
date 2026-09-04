@@ -195,3 +195,5 @@ claude-sonnet-4-6 (retroactive BMAD documentation created 2026-06-26)
 
 1. The `(app)` route group is missing from the current working tree — Dev 2 needs to restore this route when implementing the auth → onboarding flow in Sprint 2.
 2. The ID format mismatch (frontend: `c1` vs DB example: `cog_01`) is a Sprint 2 implementation detail for the service layer — not a content defect.
+
+**Scale & Load Hunter (added 2026-09-05):** PASS — Static content file (20 questions, 80 options). No DB reads/writes, no LLM calls, no Redis, no network I/O. All 6 SCALE-CONTRACT.md questions N/A (static data).

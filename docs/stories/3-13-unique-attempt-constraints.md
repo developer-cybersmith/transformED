@@ -190,6 +190,9 @@ None.
 - [ ] [Review][Defer] I1 — TDD: RED commit not separate from GREEN commit. Documented process limitation.
 - [ ] [Review][Defer] I2 — After migration is applied to production, verify UNIQUE constraints work end-to-end with a manual integration test.
 
+### Agent 6 — Scale & Load Hunter (added 2026-09-05)
+PASS — Migration-only story. UNIQUE constraints are the structural guard against unbounded duplicate row accumulation on concurrent inserts. No runtime code introduced. Service-layer 409 handler is O(1). All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section.
+
 ## Dev Agent Record
 
 ### Completion Notes

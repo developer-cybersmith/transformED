@@ -224,3 +224,4 @@ claude-sonnet-4-6 (retroactive documentation 2026-06-26; original implementation
 | PASS | Assessment router registered in `main.py` under correct prefix | No action required |
 | PASS | All 5 CES weights present in `config.py` at correct PRD values | No action required |
 | PASS | All 5 endpoints return 501 (confirmed by 10 unit tests, all green) | No action required |
+| PASS (Scale & Load Hunter) | Module stub only — Pydantic schemas and 501 stubs, no DB reads/writes, no LLM calls, no Redis. No scale concerns apply. All 6 SCALE-CONTRACT.md questions answered N/A (no runtime I/O). | N/A |

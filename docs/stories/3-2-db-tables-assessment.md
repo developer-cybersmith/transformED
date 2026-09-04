@@ -201,3 +201,5 @@ Schema is clean. All PRD rules enforced at the column level (no transcript, no d
 
 Review date: 2026-06-26
 Reviewer: Senior Developer (automated code review pass — see code_review_outcome in StructuredOutput)
+
+**Scale & Load Hunter (added 2026-09-05):** PASS — Migration-only story. All tables have FK indexes; NUMERIC(5,2) is fixed-size. UNIQUE `user_id` on `learner_dna` caps rows to 1 per user. No runtime code. All 6 SCALE-CONTRACT.md questions N/A (DDL only).

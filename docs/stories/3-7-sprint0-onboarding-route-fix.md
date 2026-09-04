@@ -152,3 +152,5 @@ All 10 ACs verified in filesystem and git log. Route move confirmed — `apps/we
 **Critical catch:** Story draft Dev Notes incorrectly said "default export" — implementation correctly used named export. This correction is documented above and must not be reverted. The `dev2-assessment-api-handoff.md` doc also shows the wrong default import syntax in one code example; flag for Sprint 2 cleanup.
 
 **No action items.** Story 3.7 is complete.
+
+**Scale & Load Hunter (added 2026-09-05):** PASS — Frontend route fix (file move + import update). No backend changes, no DB reads/writes, no LLM calls, no Redis. All 6 SCALE-CONTRACT.md questions N/A (frontend-only routing change).

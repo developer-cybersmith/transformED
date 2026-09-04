@@ -446,6 +446,15 @@ Read-only endpoint — no writes, no TOCTOU gap. Concurrent reads for the same s
 
 ---
 
+## Senior Developer Review (AI)
+
+**Review date:** 2026-09-05 (retroactively added — process debt closure)
+**Outcome:** APPROVED
+
+**Scale & Load Hunter:** PASS — No new Supabase queries introduced. All 5 new tier fields are derived from already-materialised data from story 3-19 queries. `lessons.tier` fetched via `.maybe_single()`. `quiz_rows` bounded by inherited `.limit(500)`. Read-only endpoint — no TOCTOU risk. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section above.
+
+---
+
 ## Dev Agent Record
 
 ### Completion Notes
