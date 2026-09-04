@@ -371,7 +371,18 @@ async def test_fatigue_floor_depends_on_wallclock_not_segment_count(segment_inde
     segments (segment_index='2') or many short ones (segment_index='40') — the guard reads
     session_start_ts vs. real time only, and per _make_fatigue_redis's fake_get, the fatigue
     branch in service.py never queries session:{id}:segment_index at all, so this value has
-    no path to influence the outcome either way."""
+    no path to influence the outcome either way.
+
+    Scope note (review finding, Edge Case Hunter): this proves the TRIGGER-DECISION code
+    path (primary_trigger/exhaustion_fallback -> dispatch) is segment_index-blind. It does
+    NOT exercise `_segment_intervention_messages` (the message-selection step that runs
+    after the decision) -- that call is mocked to return {} in `_fatigue_patches`, by
+    design, since selection is a distinct concern already covered by its own dedicated
+    tests (test_segment_messages_* in test_tutor_service.py). Unlike the original,
+    tautological version of AC1's test, this one IS falsifiable: `_make_fatigue_redis`
+    genuinely returns a different segment_index per parametrized case, so a future change
+    that made the reachable trigger-decision code read that key would make one of the two
+    cases diverge and fail."""
     mock_redis = _make_fatigue_redis(
         state="TEACHING", start_ts_offset=1000, segment_index=segment_index
     )

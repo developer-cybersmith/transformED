@@ -343,6 +343,8 @@ def _build_checks() -> dict[str, object]:
             any_file_contains(
                 "apps/api/tests/test_tutor_service.py",
                 "test_ces_computation_identical_regardless_of_segment_length",
+                "test_gap_check_depends_on_real_timestamps_not_segment_framing",
+                "test_segment_complete_advances_index_regardless_of_elapsed_time",
             )
             and any_file_contains(
                 "apps/api/tests/test_s3_45_fatigue_trigger.py",

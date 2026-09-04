@@ -49,11 +49,26 @@ safe against variable narration length. Repo-wide grep for any char-count→dura
 in the content-generation pipeline (`content/pipeline/graph.py`, Dev 1's lesson-planning/slide-budget
 code), never read by the tutor FSM or the WS layer at runtime.
 
-**Worth naming, not fixing here:** a sibling *frontend* component historically had exactly this class
-of bug — `docs/dev1-tracker.md`'s handoff notes reference `AudioTimeline.tsx`'s "0:00 — quiz fires
-instantly" symptom needing "a virtual playback clock," i.e., the frontend narration-playback timeline
-assumed a duration that didn't match reality. That is Dev 2's file, out of this story's scope, but it
-confirms the concern behind this task was real somewhere in the system — just not on Dev 4's side.
+**Test coverage scope note (review finding, Edge Case Hunter):** regression-lock tests were added for
+CES computation + the D4 gap-check, the fatigue floor, and the quiz/Q&A deadline (Tasks 2.1-2.4) — the
+mechanisms with actual computation (a timestamp comparison, a duration floor, a tier-based offset)
+where a future change could plausibly introduce a segment-length dependency. Intervention timeout
+(D63) and the distraction cooldown/cap were included in the audit table above but deliberately did NOT
+get an equivalent dedicated test: both are pure `time.time() + constant` / Redis-TTL mechanisms whose
+real functions (`_intervention_deadline_expired`, `_can_intervene_distraction`) take no
+session-narration-length-shaped argument at all — by function signature, not just by current
+behavior — so an "inject a value, prove no effect" test here would repeat AC1's original mistake
+(a test that can't fail because there's nothing for it to vary). Confirmed by direct source read of
+both functions' signatures before deciding not to add tests, not assumed.
+
+**Correction (review finding, Story Quality):** this story originally cited `AudioTimeline.tsx`'s
+"0:00 — quiz fires instantly" symptom as a live, unaddressed adjacent risk. Verified directly against
+`docs/dev2-sprint-tracker.md` before this correction: it was already fixed over a month earlier —
+**Story 2-33** (`docs/stories/2-33-virtual-playback-clock.md`, merged to `main` via PR #106,
+2026-07-29) shipped a `setInterval`-driven virtual playback clock in `AudioTimeline.tsx` that closes
+this exact symptom for real. It's worth naming as historical confirmation that the general concern
+behind this task (a component silently assuming a fixed/known duration) was real somewhere in the
+system at one point — just not on Dev 4's side, and not still open on Dev 2's side either.
 
 **Given the audit found the architecture already correct, this story's value is closing the
 verification gap, not a code fix:** none of the mechanisms above has a test that explicitly varies
@@ -160,9 +175,8 @@ index always advances by exactly 1 on the event, never gated by elapsed time.
 
 ### Out of scope (flagged, not built here)
 
-- **Frontend `AudioTimeline.tsx` playback-clock issue** — Dev 2's file, referenced in Dev 1's tracker
-  handoff notes as a historical symptom of exactly this class of bug on the frontend side. Not touched
-  by this story; flagged for Dev 2 awareness only if not already resolved.
+- **Frontend `AudioTimeline.tsx` playback-clock issue** — Dev 2's file. Already resolved (Story 2-33,
+  PR #106, 2026-07-29) — see the Context section's correction above. No action needed.
 
 ---
 
@@ -238,4 +252,66 @@ index always advances by exactly 1 on the event, never gated by elapsed time.
 
 ## Review findings
 
-*(filled in after the 6-layer review, before merge)*
+**8-layer BMAD adversarial review, 2026-08-31, PR #163** (Blind Hunter, Edge Case Hunter, Acceptance
+Auditor, Scale & Load Hunter, plus Story Quality, Test Coverage, AC Completeness, Process Integrity).
+
+**Fixed in this PR (confirmed by 5-6 independent layers each, including empirical mutation-testing
+proof from Test Coverage):**
+
+- **AC1's test was tautological and structurally never reached the code it claimed to test**
+  (6 layers: AC Completeness, Story Quality, Edge Case Hunter, Blind Hunter, Acceptance Auditor, Test
+  Coverage). The original called `process_attention_signal` twice with byte-identical setup — Test
+  Coverage proved by direct mutation (injecting a fake segment-index dependency into the real trigger
+  branch) that the test still passed unchanged. It also supplied only 1 history entry, so the
+  trigger-decision branch (`if len(history_raw) >= 2`) was never even reached. **Rewritten**: now
+  injects a `segment_index` value via `_setup()`'s extended mock (matching the already-proven-sound
+  AC2/AC3 pattern) and reaches the real trigger branch with 2 history entries. Re-verified by the same
+  mutation technique: the rewritten test now correctly FAILS when the same regression is injected, then
+  passes again once reverted.
+- **The CES history gap-check (`gap_ok = abs(t0-t1) <= 2*cadence`) had zero test coverage** (Edge Case
+  Hunter) — the one CES mechanism that genuinely computes against real timestamps, and every existing
+  test used the legacy bare-float format that trivially sets `t=0` for both entries, never exercising
+  this branch. Added `test_gap_check_depends_on_real_timestamps_not_segment_framing` using the real
+  JSON `{"v","t"}` format with a short vs. long real gap, proving the mechanism reacts to actual
+  elapsed time (fires within cadence tolerance, correctly suppresses when stale).
+- **AC4's test didn't test elapsed time at all** (6 layers, same set as AC1). It parametrized a mocked
+  `redis.incr` return value the code never reads, never mocking or varying `time.time()` as the story's
+  own Dev Notes prescribed. **Rewritten**: two sequential real calls to `advance_tutor_state` with a
+  mocked (non-blocking) `asyncio.sleep` gap between them — 0.05s vs. 900s — proving both produce exactly
+  one increment + one dispatch regardless of the gap.
+- **`check_dev4_progress.py`'s heuristic only checked 3 of 4 new test names** (Acceptance Auditor) —
+  the AC4 test wasn't in the guard, so deleting it would still report BR-2 `[Completed]`. Fixed to
+  check all new test names (now 3 in `test_tutor_service.py` alone, after the gap-check test was added).
+- **Dashboard/script count mismatch** (Acceptance Auditor) — investigated, not blindly "fixed": the
+  script's own 32/43 undercounts because its `CHECKS` dict has no entries for 4 already-`[Completed]`
+  tasks tracked only in prose. Ran the script for real (not dry-run) and confirmed it made zero changes
+  — every task it CAN check was already correct. Documented the gap in the tracker header rather than
+  mechanically matching the narrower, wrong number.
+- **Stale `AudioTimeline.tsx` citation** (Story Quality) — the story cited a frontend symptom as live,
+  unaddressed risk; it was actually fixed over a month earlier (Story 2-33, PR #106, 2026-07-29),
+  verified directly against `docs/dev2-sprint-tracker.md`. Corrected in both the story and the tracker.
+
+**Registered as defects, not fixed here (out of this story's verification-only scope):**
+
+- **D144** (Scale & Load Hunter) — the tutor FSM's `MemorySaver` checkpointer is never evicted per
+  session, unlike the content pipeline's own established eviction pattern for the identical,
+  CLAUDE.md-documented risk. Unbounded per-process growth; a resource-lifecycle defect, unrelated to
+  narration duration.
+- **D143** (found by me while adding tests, not by the review layers) — already registered before this
+  review round; independently re-confirmed by 3 of the 8 layers (Process Integrity, Acceptance Auditor,
+  Story Quality) via direct reproduction.
+
+**Deliberately not added (explained, not a gap):**
+
+- Intervention timeout (D63) and distraction-cooldown duration-independence tests (Edge Case Hunter
+  flagged these as "audited but untested"). Both mechanisms' real functions take no
+  session/narration-length-shaped parameter at all by signature (`_intervention_deadline_expired(session_id,
+  redis)`, `_can_intervene_distraction(session_id, redis, settings)`, confirmed by direct source read) —
+  adding an "inject a value, prove no effect" test here would repeat AC1's exact original mistake.
+  Documented in the story's Context section instead of padding the test count.
+
+**Confirmed clean by the review, no action needed:** AC2 and AC3's original tests were independently
+mutation-tested by Test Coverage and shown to genuinely fail when the corresponding code is regressed
+— no changes needed there beyond a scope-clarifying docstring addition to AC2. Process Integrity found
+zero rule violations (LangGraph/provider/banned-import/Celery/PostgresSaver/unbounded-query checks all
+clean; branch-stacking correctly not flagged as a violation, per the pre-approved sprint deviation).
