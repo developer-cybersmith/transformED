@@ -54,7 +54,11 @@ class TestConfigDescriptions:
         from app.config import Settings
 
         s = Settings()
-        assert s.learner_tier_t1_qa_seconds > s.learner_tier_t2_qa_seconds > s.learner_tier_t3_qa_seconds
+        assert (
+            s.learner_tier_t1_qa_seconds
+            > s.learner_tier_t2_qa_seconds
+            > s.learner_tier_t3_qa_seconds
+        )
 
 
 class TestSessionReportContract:
