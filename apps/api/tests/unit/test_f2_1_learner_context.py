@@ -137,6 +137,7 @@ def _mock_supabase(
         def _chain_quiz():
             chain = MagicMock()
             chain.eq.return_value = chain
+            chain.limit.return_value = chain  # R2: service now calls .limit(500)
             execute_resp = MagicMock()
             execute_resp.data = quiz_rows or []
             chain.execute.return_value = execute_resp
@@ -145,6 +146,7 @@ def _mock_supabase(
         def _chain_teachback():
             chain = MagicMock()
             chain.eq.return_value = chain
+            chain.limit.return_value = chain  # R2: service now calls .limit(50)
             execute_resp = MagicMock()
             execute_resp.data = teachback_rows or []
             chain.execute.return_value = execute_resp
@@ -268,7 +270,7 @@ def test_dna_block_populated_when_row_exists(mock_single_row, mock_to_thread):
 
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         get_learner_context(
             session_id=_SESSION_ID,
             user_id=_USER_ID,
@@ -279,7 +281,10 @@ def test_dna_block_populated_when_row_exists(mock_single_row, mock_to_thread):
     assert result.dna is not None
     assert set(result.dna.badge_labels) == {"Pattern Thinker", "Curious Explorer"}
     assert result.dna.profile_text is not None
-    assert "DPDP Act 2023" in result.dna.profile_text
+    # MOCK-CONTRACT: disclaimer enforcement is at write-time in prompts.generate_dna_profile_text().
+    # This test verifies the service returns DB content as-is; the write-path test lives in
+    # tests/unit/test_onboarding.py::test_profile_text_ends_with_dpdp_disclaimer.
+    assert result.dna.profile_text.endswith("DPDP Act 2023.")
     assert result.dna.session_count == 4
     # dimension_labels uses descriptive bands, not raw floats
     labels = result.dna.dimension_labels
@@ -337,7 +342,7 @@ def test_current_session_block_computed_correctly(mock_single_row, mock_to_threa
     from app.modules.assessment.service import get_learner_context
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         get_learner_context(
             session_id=_SESSION_ID,
             user_id=_USER_ID,
@@ -365,7 +370,7 @@ def test_current_session_none_when_no_attempts(mock_single_row, mock_to_thread):
     from app.modules.assessment.service import get_learner_context
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         get_learner_context(
             session_id=_SESSION_ID,
             user_id=_USER_ID,
@@ -400,7 +405,7 @@ def test_prompt_text_contains_no_raw_floats(mock_single_row, mock_to_thread):
     from app.modules.assessment.service import get_learner_context
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         get_learner_context(
             session_id=_SESSION_ID,
             user_id=_USER_ID,
@@ -429,7 +434,7 @@ def test_prompt_text_is_non_empty_when_context_exists(mock_single_row, mock_to_t
     from app.modules.assessment.service import get_learner_context
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         get_learner_context(
             session_id=_SESSION_ID,
             user_id=_USER_ID,
@@ -458,7 +463,7 @@ def test_prompt_text_empty_string_when_no_context(mock_single_row, mock_to_threa
     from app.modules.assessment.service import get_learner_context
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         get_learner_context(
             session_id=_SESSION_ID,
             user_id=_USER_ID,

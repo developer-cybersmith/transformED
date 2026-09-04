@@ -46,6 +46,7 @@ __all__ = [
     "TeachbackSubmission",
     "TeachbackResult",
     "TeachbackDetail",
+    "LearnerContext",  # R3: added so tests/other modules can import from here
 ]
 
 

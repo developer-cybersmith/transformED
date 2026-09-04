@@ -25,7 +25,12 @@ from app.modules.assessment.onboarding_questions import (
     BADGE_THRESHOLDS,
     QUESTION_SUBDIMENSION_MAP,
 )
-from app.modules.assessment.prompts import generate_onboarding_profile, score_teachback
+from app.modules.assessment.prompts import (
+    _DIM_LABELS,
+    _dim_descriptor,
+    generate_onboarding_profile,
+    score_teachback,
+)
 from app.modules.assessment.schemas import (
     OnboardingAnswer,
     OnboardingResult,
@@ -1860,43 +1865,18 @@ async def seed_personalized_ces_threshold(
 
 
 # ── Story F2-1 — Learner Context API for Tutor Prompt Injection ───────────────
+# R1: Removed _ALL_NINE_DIMS duplicate → use ALL_NINE_DIMENSIONS (already imported).
+# R1: Removed _DIM_HUMAN_LABELS duplicate → use _DIM_LABELS (imported from prompts.py).
+# R1: _dim_band is now a thin None-guard wrapper over prompts._dim_descriptor.
 
-_ALL_NINE_DIMS: tuple[str, ...] = (
-    "pattern_recognition",
-    "logical_deduction",
-    "processing_speed",
-    "frustration_tolerance",
-    "persistence",
-    "help_seeking",
-    "goal_orientation",
-    "curiosity_index",
-    "study_independence",
-)
-
-_DIM_HUMAN_LABELS: dict[str, str] = {
-    "pattern_recognition": "pattern recognition",
-    "logical_deduction": "logical reasoning",
-    "processing_speed": "processing speed",
-    "frustration_tolerance": "resilience under pressure",
-    "persistence": "persistence",
-    "help_seeking": "collaborative learning",
-    "goal_orientation": "goal orientation",
-    "curiosity_index": "curiosity",
-    "study_independence": "study independence",
-}
+# Valid badge label set for allowlist filtering in _build_learner_prompt_text.
+# BADGE_THRESHOLDS maps dim → badge_label; its values are the only valid labels.
+_VALID_BADGE_LABELS: frozenset[str] = frozenset(BADGE_THRESHOLDS.values())
 
 
 def _dim_band(value: float | None) -> str:
-    """Map a numeric dimension value to a descriptive band (no raw floats passed to LLM)."""
-    if value is None:
-        return "emerging"
-    if value >= 75.0:
-        return "strong"
-    if value >= 55.0:
-        return "developing"
-    if value >= 35.0:
-        return "building"
-    return "emerging"
+    """Thin wrapper over prompts._dim_descriptor that handles None → 'emerging'."""
+    return _dim_descriptor(value if value is not None else 0.0)
 
 
 def _build_learner_prompt_text(
@@ -1905,15 +1885,17 @@ def _build_learner_prompt_text(
 ) -> str:
     """Build a pre-formatted string ready to inject into an LLM system prompt.
 
-    Descriptive language only — no raw numeric dimension values. Uses the
-    same band thresholds as _dim_band (≥75 strong, ≥55 developing, ≥35 building, else emerging).
+    Descriptive language only — no raw numeric dimension values or floats.
+    badge_labels are allowlist-filtered before interpolation (prompt injection defence).
     """
     parts: list[str] = []
 
     if dna is not None:
-        badge_str = ", ".join(dna.badge_labels) if dna.badge_labels else "none yet"
+        # Allowlist filter — only hardcoded badge strings from BADGE_THRESHOLDS reach the prompt
+        safe_badges = [b for b in dna.badge_labels if b in _VALID_BADGE_LABELS]
+        badge_str = ", ".join(safe_badges) if safe_badges else "none yet"
         dim_lines = [
-            f"  - {_DIM_HUMAN_LABELS.get(k, k)}: {v}"
+            f"  - {_DIM_LABELS.get(k, k)}: {v}"
             for k, v in dna.dimension_labels.items()
         ]
         dims_str = "\n".join(dim_lines)
@@ -1954,7 +1936,7 @@ async def get_learner_context(
     """Return historical Learner DNA + current session signals for tutor prompt injection.
 
     Story F2-1. Called by Dev 4's tutor state machine with the student's own JWT.
-    No LLM calls — pure data aggregation. All DB reads are bounded by equality filters.
+    No LLM calls — pure data aggregation.
 
     Raises:
         HTTPException 404: session_id not found OR belongs to a different user.
@@ -2005,7 +1987,7 @@ async def get_learner_context(
     if dna_row is not None:
         dim_labels = {
             dim: _dim_band(dna_row.get(dim))
-            for dim in _ALL_NINE_DIMS
+            for dim in ALL_NINE_DIMENSIONS
         }
         learner_dna = LearnerContextDNA(
             badge_labels=dna_row.get("badge_labels") or [],
@@ -2014,12 +1996,15 @@ async def get_learner_context(
             dimension_labels=dim_labels,
         )
 
-    # Step 3 — quiz attempts this session (bounded: eq(session_id))
+    # Step 3 — quiz attempts this session.
+    # BOUNDED: eq(session_id) + .limit(500). Upper bound derivation: 15 segments × 10
+    # questions × 3 retries = 450 rows per session (matches get_session_report cap).
     quiz_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("quiz_attempts")
             .select("is_correct")
             .eq("session_id", session_id)
+            .limit(500)
             .execute()
         )
     )
@@ -2030,12 +2015,15 @@ async def get_learner_context(
         correct = sum(1 for r in quiz_rows if r.get("is_correct"))
         quiz_accuracy = correct / quiz_total
 
-    # Step 4 — teachback attempts this session (bounded: eq(session_id))
+    # Step 4 — teachback attempts this session.
+    # BOUNDED: eq(session_id) + .limit(50). Upper bound: 1 attempt per segment, ~15 max
+    # (matches get_session_report cap).
     tb_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
             .select("score")
             .eq("session_id", session_id)
+            .limit(50)
             .execute()
         )
     )
