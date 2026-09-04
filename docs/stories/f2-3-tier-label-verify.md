@@ -134,4 +134,20 @@ New test file: `apps/api/tests/unit/test_f2_3_tier_label_verify.py`
 | 7 | `test_qa_seconds_ordering` | `t1_qa > t2_qa > t3_qa` on default `Settings()` |
 | 8 | `test_session_report_no_tier_minutes_field` | `"tier_minutes" not in SessionReport.model_fields` |
 
-All 8 tests must be RED before implementation and GREEN after.
+Tests grew from 8 → 9 during the review (F2 patch added `test_tier_minutes_values_are_int_not_float`).
+All 9 tests are RED before implementation and GREEN after.
+
+---
+
+## Review Findings
+
+6-layer adversarial review run 2026-09-04 on branch `feature2/f2-3-tier-label-verify`. 2 patches applied; 0 deferred; 0 dismissed.
+
+| ID | Sev | Layer | Finding | Action |
+|----|-----|-------|---------|--------|
+| F1 | Low | Edge Case Hunter | Unused `import pytest` in test file — ruff F401, blocks CI lint | Removed unused import |
+| F2 | Low | AC Completeness | AC8 (`_TIER_MINUTES` values must be `int`) had no test assertion | Added `test_tier_minutes_values_are_int_not_float` |
+
+**Scale & Load Hunter:** `[]` — no findings. Constant dict with 3 fixed keys, no variable input, no caps, no queries, no concurrency surface.
+
+**Senior Developer Review:** All 6 layers ran and passed. Patches F1 and F2 applied and verified (9/9 tests GREEN). PR-ready.

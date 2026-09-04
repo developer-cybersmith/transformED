@@ -3,7 +3,6 @@
 All 8 tests must be RED before implementation and GREEN after.
 """
 
-import pytest
 from app.modules.assessment.service import _TIER_LABELS, _TIER_MINUTES
 
 
@@ -16,6 +15,11 @@ class TestTierMinutesConstant:
 
     def test_tier_ordering_t1_longest(self):
         assert _TIER_MINUTES["T1"] > _TIER_MINUTES["T2"] > _TIER_MINUTES["T3"]
+
+    def test_tier_minutes_values_are_int_not_float(self):
+        # AC8 — _TIER_MINUTES must use int, not float (guard test would catch floats repo-wide,
+        # but this explicitly pins the type for this constant per the story's own AC)
+        assert all(isinstance(v, int) for v in _TIER_MINUTES.values())
 
 
 class TestConfigDescriptions:
