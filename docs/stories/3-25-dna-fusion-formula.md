@@ -449,7 +449,7 @@ All limits are per-session (queries filtered by `session_id`). `learner_dna` ups
 
 ## Senior Developer Review (AI)
 
-5-agent adversarial review ran 2026-07-03 against commits `c01584f`+`db3c593` (pre-fix).
+6-agent adversarial review ran 2026-07-03 against commits `c01584f`+`db3c593` (pre-fix). Scale & Load Hunter added 2026-09-05 (process debt closure).
 
 | # | Agent | Finding | Severity | Status |
 |---|-------|---------|----------|--------|
@@ -463,6 +463,7 @@ All limits are per-session (queries filtered by `session_id`). `learner_dna` ups
 | 8 | Blind Hunter | IDOR check uses 404 not 403 — correct per PRD §18 security rules. | NITPICK | Pass |
 | 9 | Blind Hunter | upsert_payload `**new_dims` correctly excludes badge_labels/profile_text. | NITPICK | Pass |
 | 10 | Process Integrity | No LLM calls, no hardcoded model strings, no forbidden imports. All EMA weight from `settings.dna_ema_retain`. | PASS | — |
+| 11 | Scale & Load Hunter | IMPROVEMENT | (a) `signals_capped` not surfaced when `quiz_attempts.limit(500)` or `teachback_attempts.limit(100)` is hit — function returns silently degraded values with no caller-visible flag. (b) `session_count` TOCTOU: concurrent session-end calls both read old value and overwrite with same base — count under-increments by 1. Both documented in `## Scale & Load` Q2/Q6. Fix in Sprint 4: (a) add `signals_capped` bool to return; (b) use `session_count = session_count + 1` SQL expression. | Deferred — documented in `## Scale & Load` section; Sprint 4 backlog. |
 
 **Verdict:** APPROVED after BLOCKER fixes. Story 3-25 done.
 

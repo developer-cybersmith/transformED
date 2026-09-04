@@ -308,6 +308,7 @@ If two session-end events fire concurrently for the same user, both calls read t
 
 **Review Date:** 2026-07-03
 **Branch:** dev3-sprint3-task2
+**Reviewer:** 6-agent adversarial review (Story Quality · Blind Hunter · Test Coverage · AC Completeness · Process Integrity · Scale & Load Hunter)
 **Outcome:** Changes Requested (2 BLOCKERs, 3 IMPROVEMENTs, 2 NITPICKs) → All resolved → **APPROVED**
 
 | # | Agent | Severity | Finding | Resolution |
@@ -320,6 +321,7 @@ If two session-end events fire concurrently for the same user, both calls read t
 | 6 | Blind Hunter | IMPROVEMENT | `float(ces_final)` theoretically passes NaN/Infinity values from corrupt data. | Added `math.isfinite(float(r["ces_final"]))` guard in list comprehension |
 | 7 | Story Quality | NITPICK | Story tracker had wrong Redis key `session:{session_id}:ces_baseline`. | Corrected to `user:{user_id}:ces_baseline` in story Background section and tracker |
 | 8 | Blind Hunter | NITPICK | Service-role client bypasses RLS; user_id must come from JWT. | Added SECURITY NOTE comment in `compute_and_store_ces_baseline()` |
+| 9 | Scale & Load Hunter | PASS | Sessions query uses `.limit(window×3)` (AC 17, enforced by test 2 above). Redis write is O(1) per user. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section. No unbounded reads; no TOCTOU risk (Redis SET is atomic, not check-then-set). | N/A |
 
 **Final state:** 25/25 tests pass, 459 total unit tests pass, 0 regressions. All 19 ACs verified.
 

@@ -565,7 +565,7 @@ Read-only endpoint. The `learner_dna` snapshot read is a point-in-time read; a c
 **Branch:** `learner-mode-sprint-dev3-task3`
 **Outcome:** CHANGES REQUESTED → PATCHED → APPROVED
 
-5-agent adversarial review ran in parallel. Two BLOCKERs found and patched immediately. One IMPROVEMENT applied. Full test suite: 55 PASS, 0 FAIL after patches.
+6-agent adversarial review ran in parallel (Scale & Load Hunter added 2026-09-05). Two BLOCKERs found and patched immediately. One IMPROVEMENT applied. Full test suite: 55 PASS, 0 FAIL after patches.
 
 ### Agent Layers
 
@@ -576,6 +576,7 @@ Read-only endpoint. The `learner_dna` snapshot read is a point-in-time read; a c
 | Test Coverage | Changes Requested | BLOCKER: `learner_dna_snapshot` absent from HTTP-layer required_keys; Improvements: single-dim tests don't verify other 8 dims, no raw-None supabase path test |
 | AC Completeness | Changes Requested | BLOCKER (same as Story Quality #1): `if _dna_resp is None` guard absent; spec Dev Notes guard (`isinstance(payload, dict)`) absent; HTTP-layer required_keys gap |
 | Process Integrity | Pass with Note | Additive field (`default=None`) is backward-compatible; frozen contract note: this is additive only, no client breakage. No LLM calls, no hardcoded models, no banned imports. |
+| Scale & Load Hunter | IMPROVEMENT | `badge_labels` array in `learner_dna_snapshot` has no explicit application-level cap — the Supabase row-size limit (6MB) is the effective ceiling. Deferred: add `badge_labels[:100]` slice post-launch if needed. See `## Scale & Load` Q2. All other queries bounded: `learner_dna` uses `.maybe_single()`; all session-report queries inherited from Story 3-19 with `.limit()`/`count=`. No TOCTOU (read-only endpoint). |
 
 ### Action Items
 

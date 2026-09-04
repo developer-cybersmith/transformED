@@ -608,7 +608,7 @@ Duplicate growth events for the same `session_id` are possible if `record_dna_gr
 
 **Review date:** 2026-07-06
 **Review outcome:** Changes Requested
-**Agents:** Story Quality, Blind Hunter (Security), Test Coverage, AC Completeness, Process Integrity
+**Agents:** Story Quality, Blind Hunter (Security), Test Coverage, AC Completeness, Process Integrity, Scale & Load Hunter
 
 ### Action Items
 
@@ -630,6 +630,8 @@ Duplicate growth events for the same `session_id` are possible if `record_dna_gr
 - [x] [Review][Defer] R8 — ACs 6/7/8: log level/message not captured in tests. [tests/test_dna_growth.py] — deferred, return value verification sufficient
 
 **Dismissed (noise/non-vulnerabilities):** 3 (JSONB injection, dim key injection, lambda closure race — all confirmed non-issues by Blind Hunter)
+
+**Scale & Load Hunter:** PASS — single batched INSERT of exactly ≤9 rows (bounded by DNA dimension count, a compile-time constant). No Supabase reads. No LLM calls. Duplicate event rows on ARQ retry are non-fatal observability data (AC 6), not data corruption. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section.
 
 ---
 

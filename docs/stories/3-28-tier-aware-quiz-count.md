@@ -269,7 +269,7 @@ N/A. `quiz_generator_node` runs inside an ARQ worker (single-process per job). M
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-20
-**Layers run:** Story Quality · Blind Hunter · Edge Case Hunter · Acceptance Auditor · Process Integrity
+**Layers run:** Story Quality · Blind Hunter · Edge Case Hunter · Acceptance Auditor · Process Integrity · Scale & Load Hunter
 **Outcome:** Changes Requested — 5 patch findings
 
 ### Review Findings
@@ -286,3 +286,4 @@ N/A. `quiz_generator_node` runs inside an ARQ worker (single-process per job). M
 - [x] [Review][Defer] D5 — AC-9 old-shape cache-miss integration path not end-to-end tested — deferred, story explicitly documents unit-test approach; sufficient coverage
 - [x] [Review][Defer] D6 — AC-11 _group_by_segment_id multi-accumulation waived — deferred, explicit story waiver; implementation trivially correct
 - [x] [Review][Defer] D7 — _TIER_QUIZ_COUNT_BAND not typed Final — deferred, matches _TIER_TOTAL_SLIDE_BAND pattern; coordinated fix needed for both constants
+- [x] [Scale & Load Hunter] PASS — No Supabase reads in this node; all inputs come from LangGraph state. Question count is tier-deterministic (T1: 3–5, T2: 2–3, T3: 1–2). LLM call bounded by `with_retry(max_attempts=3)` and `$3.00/lesson` ceiling. Bounded checkpoint write per segment. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section.
