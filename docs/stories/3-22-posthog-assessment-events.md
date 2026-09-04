@@ -307,3 +307,11 @@ N/A — `posthog>=3.0.0` dependency and `posthog_client.py` are new in this stor
 - [Re-Review][Defer] TOCTOU race: consent checked after business logic in router handlers — theoretical, narrow window, MVP risk negligible; addressable in DPDP compliance story
 - [Re-Review][Defer] AC 12 import-time init test — requires module reload; complexity outweighs value at MVP stage
 - [Re-Review][Defer] AC 1/19 CI gate items — inherently process gates, not unit-testable
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 6 | Scale & Load Hunter | **PASS** | PostHog `capture_event()` is fire-and-forget (non-blocking). Event payload is a fixed-schema dict (assessment data only — bounded by what endpoints produce). PostHog client batches internally with its own retry. No DB reads in this story's scope. No check-then-act. Q4–Q6 all N/A. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

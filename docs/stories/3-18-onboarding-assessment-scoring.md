@@ -597,3 +597,11 @@ All 7 BLOCKERs were fixed before merge. 2 IMPROVEMENTs and 2 NITPICKs deferred w
 - New migration is a new file — no applied migration was modified
 - `lesson_id="onboarding"` for cost tracking: accepted as semantic sentinel (onboarding has no lesson context; the rule requires cost context, not UUID format)
 - New `/onboarding/submit` endpoint is an addition, not a shape change to the 5 frozen endpoint signatures — Dev 2 sync required before merge (noted in story Dev Notes OpenAPI section)
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 4 | Scale & Load Hunter | **PASS** | Fixed 20-question input (bounded by schema `max_length=20`). Redis `SET nx=True` is atomic — concurrent duplicate submissions: only one wins, second returns cached result. Cost ceiling applies to LLM profiling call. `learner_dna` lookup uses `.maybe_single()` (naturally bounded). | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

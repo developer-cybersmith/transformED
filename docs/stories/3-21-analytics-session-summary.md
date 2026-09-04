@@ -462,3 +462,11 @@ Read-only endpoint. No check-then-act sequences. No shared mutable state. Multip
 - [x] [Review][Defer] [tests/test_analytics_summary_endpoint.py] `distraction_events` / `events_count` / `page_views` int types not asserted (only `total_blinks` has isinstance check) — deferred: FastAPI/Pydantic `response_model` coerces correctly; asymmetry is cosmetic
 - [x] [Review][Defer] [docs/stories/3-21-analytics-session-summary.md] Task list has duplicate entry for `test_supabase_called_in_correct_table_order` — deferred: documentation drift only; no code impact
 - [x] [Review][Defer] [docs/stories/3-21-analytics-session-summary.md] AC 9 text does not specify `started_at = NULL → 0.0` (only `ended_at = NULL` documented) — deferred: test 21 covers the behavior; AC text should be updated in a housekeeping pass
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 4 | Scale & Load Hunter | **IMPROVEMENT** | Both aggregation queries carry `.limit(10_000)` (`session_events` line 188, `attention_events` line 203 in analytics/service.py). These limits are inherited (not derived for this summary path). At 1 Hz MediaPipe for 45-min session: ~2,700 attention rows (within limit). For a pathological long session, rows beyond 10k are silently excluded — `events_count` becomes approximate and the discrepancy is not surfaced to the caller. | Add `# BOUNDED: 10_000 — at 1 Hz for 45-min = ~2700; pathological sessions may under-count` comment to service.py lines 188 and 203. Future story: expose `events_capped: bool` in `SessionSummary` when `len(rows) == limit`. |
+
+**Scale & Load Hunter verdict:** IMPROVEMENT — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

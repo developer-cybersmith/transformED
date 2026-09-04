@@ -394,3 +394,11 @@ No dedicated REFACTOR phase commit exists for Story 3-9. Code quality improvemen
 - No test changes, no behavior changes — purely structural improvements
 
 This REFACTOR commit is a required BMAD phase and must be auditable separately from bug fixes.
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | LLM retry bounded at `max_attempts=3` (with_retry decorator). `lessons.package` read bounded by UNIQUE `lesson_id`. `teachback_attempts` insert guarded by UNIQUE `(session_id, segment_id)`. No unbounded SELECT. Cost ceiling (`$3.00/lesson`) applies to LLM scoring call. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

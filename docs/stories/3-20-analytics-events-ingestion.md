@@ -445,3 +445,11 @@ One unit = one `POST /api/analytics/events` request containing a batch of 1–10
 | D1 | DEFERRED | [x] | Module boundary — sessions table query direct |
 | D2 | DEFERRED | [x] | Payload size unbounded |
 | D3 | DEFERRED | [x] | _captured_mocks indexing fragility |
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 19 | Scale & Load Hunter | **IMPROVEMENT** | (1) Individual `payload` JSONB field has no byte cap — a single event's payload dict can be arbitrarily large (already noted in this story's `## Scale & Load` section). (2) Sessions ownership `SELECT` in `service.py:53–60` has no `.limit()` — bounded by the batch's unique session_ids (≤100 from Pydantic cap) but missing `# BOUNDED:` comment required by `test_unbounded_queries.py`. | (1) Open a `D-nn` register entry for payload JSONB byte cap. (2) Add `# BOUNDED: ≤100 unique session_ids, capped by BatchEventsRequest.max_length=100` comment to service.py line 53. |
+
+**Scale & Load Hunter verdict:** IMPROVEMENT — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

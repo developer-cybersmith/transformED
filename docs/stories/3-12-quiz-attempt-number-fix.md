@@ -212,3 +212,11 @@ None.
 ### Change Log
 - 2026-06-30: Story created (story-first gate commit)
 - 2026-07-01: All 7 ACs implemented and merged to main at commit `ef72e11`; story marked done
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | Attempt-count query uses `count='exact'` with Supabase (no rows materialised). Bounded by `(session_id, segment_id)` filter — naturally ≤ max quiz attempts per segment (typically 1–3). No check-then-act: attempt number computed and immediately used in the same atomic insert path. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

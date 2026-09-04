@@ -309,3 +309,11 @@ None.
 ### Change Log
 - 2026-06-29: Story 3-11 created — BMAD Phase 1 story-first commit
 - 2026-07-01: All ACs implemented via PR #46; story marked done on dev3-sprint1-blocker-fixes
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | `max_length=4000` on `response_text` is an explicit per-request cap (HTTP 422 past limit — not silent truncation). UNIQUE constraint on `teachback_attempts (session_id, segment_id)` is the concurrent-insert guard. Scope: per-submission, per-deployment enforcement via Pydantic. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

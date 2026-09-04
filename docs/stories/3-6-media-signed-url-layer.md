@@ -128,3 +128,11 @@ Claude Opus 4.8 (Sonnet 5 session default)
 **Action items:** none outstanding — all findings from layers 2–4 were fixed in commit `8cc5c6f` and this follow-up test-rigor pass; layer 1 and 5 raised no findings.
 - `docs/stories/3-6-media-signed-url-layer.md` (this file).
 - `docs/dev1-tracker.md` (UPDATE, story-first commit) — added S3-6 entry + dashboard totals.
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 4 | Scale & Load Hunter | **PASS** | Signed-URL generation uses a Storage path key (not a table SELECT) — no unbounded read. Signed URL TTL (`settings.media_signed_url_ttl_seconds`) is per-deployment; scope is documented in config.py. Storage `create_signed_url` is idempotent — no check-then-act. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.
