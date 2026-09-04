@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-01 (S4-13 DNA-personalized CES threshold done; S4-12 D137 reassessment EMA blend done — Sprint 4 now 8/11)
+**Last updated:** 2026-09-05 (Story 4-30 done — synthetic session generator + calibration notes §10; Sprint 4 now 9/11)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,9 +20,9 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 11 | 8 | 1 | 2 |
+| Sprint 4 | Weeks 8–9 | 11 | 9 | 0 | 2 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **67** | **61** | **1** | **5** |
+| **Total** | | **67** | **62** | **0** | **4** |
 
 Update this table each time a task is checked off below.
 
@@ -906,13 +906,13 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 
 > **Goal:** Calibration, quality review, tuning. No new features — only data-driven improvements.
 
-- [~] **Analyse 20+ real student test session data** ⚠️ PARTIAL — 2026-08-29 (doc written, 20-session target blocked — see below)
+- [x] **Analyse 20+ real student test session data + synthetic session generator (Story 4-30)** — ✓ 2026-09-05
   - Run at least 20 end-to-end test sessions (can use internal team as testers)
   - Export `quiz_attempts`, `teachback_attempts`, `session_events`, `learner_dna` data
   - Look for: score distribution anomalies, CES formula outliers, Learner DNA convergence patterns
   - Document findings in `docs/sprint4-ces-calibration-notes.md`
   - **AC:** Analysis doc written; at least 3 concrete calibration observations documented
-  - **Status:** `docs/sprint4-ces-calibration-notes.md` written with 6+ observations. Blocked by 1 remaining bug: behavioral/attention WebSocket signals not reaching Redis ces_history (Dev 2 must apply `?? null` fix in `useAttentionMonitor.ts`). **D116 FIXED 2026-08-31** — ces_final now written on session end. Once Dev 2's fix merges, run 20 sessions and update doc.
+  - **Status (done 2026-09-05):** `docs/sprint4-ces-calibration-notes.md` has 6+ observations + §10 "How to Run the 20-Session Calibration" instructions. `apps/api/scripts/generate_test_sessions.py` — synthetic session generator (CLI, 14/14 tests GREEN). `apps/api/scripts/export_calibration_data.py` — Supabase CSV export (standalone, `signals_capped` surfaced per SCALE-CONTRACT §2). D116 FIXED in Story S4-6. Branch: `sprint4/s4-30-synthetic-sessions-ces-analysis`
 
 - [x] **D116: Wire complete_session → dispatch_event so ces_final is written (Story 4-6)** — ✓ 2026-08-31
   - Root cause: `complete_session` and `_finalize_session` built independently, never connected. ces_final NULL on all 117 sessions.

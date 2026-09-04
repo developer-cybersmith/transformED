@@ -189,3 +189,67 @@ These numbers are from 2 users running internal tests. Treat as directional only
 | ces_final | NULL on all sessions — formula output unobservable (D116 FIXED, run again) |
 
 **Recommended CES threshold for initial real-student calibration:** Keep at 50 but do not trigger interventions if `behavioral` score has not been received (is NULL/unknown). A "partial signal" mode prevents intervention spam when 2 of 5 signals are absent.
+
+---
+
+## 10. How to Run the 20-Session Calibration (Story S4-30)
+
+### Prerequisites checklist
+
+Before running, confirm ALL of the following:
+
+- [ ] **D116 fix is deployed** — `complete_session` REST endpoint dispatches `lesson_complete` WS event. Confirmed Story S4-6 (2026-08-31). Verify by completing one test session and checking `sessions.ces_final IS NOT NULL` in Supabase.
+- [ ] **Dev 2's `?? null` fix (PR #161) is merged** — `useAttentionMonitor.ts` sends `null` not `0.0` for empty 5s windows. Without this, empty windows drag CES below 50 artificially.
+- [ ] **Attention consent granted in test sessions** — testers must click "Allow" on the attention consent modal so MediaPipe initialises and sends `attention_signal` WS frames.
+- [ ] **Session dedup migration applied** — `supabase/migrations/20260831000000_sessions_open_unique.sql` must be applied via the Supabase SQL editor (Story S4-11).
+- [ ] **You have a valid JWT token** — obtain via `supabase.auth.sign_in_with_password` or the dev login form.
+
+### Step 1 — Generate synthetic sessions (optional, for baseline)
+
+```bash
+# From repo root
+python apps/api/scripts/generate_test_sessions.py \
+    --api-url http://localhost:8000 \
+    --auth-token <your-jwt-token> \
+    --n-sessions 20 \
+    --segments-per-session 3 \
+    --quiz-accuracy 0.7 \
+    --seed 42 \
+    --output ces_synthetic_sessions.csv
+```
+
+This creates 20 sessions with known quiz accuracy (0.7) so the grid search (Story 4-31) has a controlled baseline. Synthetic sessions do NOT produce CES data from WebSocket signals — ces_final will be NULL unless you also run the WS path manually.
+
+### Step 2 — Run 20 real test sessions (target for calibration)
+
+Have 1–3 internal testers run the full lesson experience end-to-end (with attention consent). 20 sessions is the target; 10 is the minimum for a meaningful distribution.
+
+### Step 3 — Export calibration data
+
+```bash
+export SUPABASE_URL=https://xjypglfmjunmlccbhjgn.supabase.co
+export SUPABASE_SERVICE_ROLE_KEY=<service-role-key>  # never commit this
+
+python apps/api/scripts/export_calibration_data.py \
+    --output ces_calibration_export.csv
+```
+
+Output: `ces_calibration_export.csv` with one row per completed session. Feed this file to the weight grid search script (Story 4-31).
+
+### Step 4 — Run weight grid search
+
+```bash
+python apps/api/scripts/ces_weight_grid_search.py \
+    --input ces_calibration_export.csv \
+    --output ces_weight_results.csv
+```
+
+The grid search script (Story 4-31) tries 5 weight combinations and reports Pearson r between CES and final quiz accuracy. Pick the combination with the highest r.
+
+### Step 5 — Update calibration notes
+
+After the run, add a new §11 to this file with:
+- Number of sessions run
+- ces_final distribution (min, median, max)
+- Chosen weight combination (from grid search)
+- Observed improvement in Pearson r vs baseline weights
