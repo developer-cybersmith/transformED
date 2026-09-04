@@ -127,7 +127,7 @@ N/A — tests are stateless and idempotent.
 
 **Date:** 2026-07-23
 **Outcome:** Approve — no code patches required.
-**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs) — per CLAUDE.md's BMAD Code Review Gate.
+**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs), Scale & Load Hunter (retrospectively added 2026-09-05) — per CLAUDE.md's BMAD Code Review Gate.
 
 ### Findings
 
@@ -139,6 +139,7 @@ N/A — tests are stateless and idempotent.
 | 4 | Low (accepted) | Blind Hunter | No runtime schema validation on the real API response shape | Accepted, out of scope — consistent with this file's own existing convention (`getSessionReport` has no runtime validation either); would require a schema-validation library across the whole module, well beyond this story. |
 | 5 | Low (accepted) | Edge Case Hunter | New `submitQuiz` test's mocked `feedback: []` doesn't exercise a populated feedback array | Accepted — the test's `toEqual(responseData)` still catches endpoint/payload/passthrough drift regardless; feedback-array shape is already covered by `QuizOverlay.test.tsx` and the `QuizResult` type test. |
 | 6 | Low (fixed) | Acceptance Auditor | Dev Notes miscounted `types/assessment.test.ts`'s pre-existing test count as "9 others" when the file has 11 total (10 others) | Fixed — corrected the count in Dev Notes. |
+| 7 | Scale & Load Hunter | PASS | **Q1–Q6** Test-only story — no production code paths added or modified. No Supabase queries, no LLM calls, no check-then-act sequences. Mocks target `api.post` (not the whole module), which means real endpoint strings are exercised — this is the correct pattern and would catch an unbounded URL change. | N/A — test-only; all 6 questions trivially N/A |
 
 ### Non-issues independently re-verified
 

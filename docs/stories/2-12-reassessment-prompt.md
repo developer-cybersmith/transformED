@@ -156,7 +156,7 @@ N/A — read-only check on mount plus a write (retake) that is idempotent (409 h
 
 **Date:** 2026-07-23
 **Outcome:** Changes Requested → all actionable findings resolved this session (see Review Follow-ups above)
-**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs) — per CLAUDE.md's BMAD Code Review Gate.
+**Reviewers:** Blind Hunter (diff-only), Edge Case Hunter (diff + repo access), Acceptance Auditor (diff + spec + context docs), Scale & Load Hunter (retrospectively added 2026-09-05) — per CLAUDE.md's BMAD Code Review Gate.
 
 ### Findings
 
@@ -168,6 +168,7 @@ N/A — read-only check on mount plus a write (retake) that is idempotent (409 h
 | 4 | Low | Edge Case Hunter | No `aria-live`/`role="status"` on the async-appearing banner | Fixed |
 | 5 | Low/informational | Edge Case Hunter | Duplicate `getLearnerDna()` calls (dashboard + onboarding), no shared cache | Deferred — explicitly accepted trade-off per AC-6 |
 | 6 | **High** | Edge Case Hunter + Acceptance Auditor (corroborated 2/3), independently verified by dev agent via `git merge-base --is-ancestor` | `sprint2-master` (this story's actual merge target) has fully diverged from `main` and lacks Story 3-31's backend entirely — `reassessment_due` can never be `true` on this branch until Dev 3's backend commits sync over. The story's "verified... not assumed" framing was accurate against `main` but overclaimed relative to the branch it targets. | Documented — see the post-review correction note in Story/Context and Review Follow-ups; no frontend code change applies; flagged for cross-team coordination before functional demo |
+| 7 | Scale & Load Hunter | PASS | **Q1–Q6** Frontend-only story. No Supabase queries in scope. Dismiss key scoped to `user_id + session_count` (finding #1 above, fixed). `getLearnerDna()` is a single GET call bounded by the backend (maybeSingle on learner_dna). No check-then-act sequences on the frontend. | N/A — all 6 questions pass |
 
 ### Non-issues checked and dismissed
 

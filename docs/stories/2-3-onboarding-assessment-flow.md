@@ -240,3 +240,21 @@ None — no blocking failures. One test-authoring correction: initial `QuestionC
 
 - 2026-07-03: All 7 tasks completed. 22 new tests, 157/157 suite passing, tsc clean, lint clean (1 pre-existing unrelated warning).
 - 2026-07-04: 5-agent adversarial code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor) run against the uncommitted diff. 3 decision-needed items resolved with the user (2 → patch, 1 → defer), 14 patches applied, 3 items deferred to `deferred-work.md`, 3 dismissed as spec-compliant/non-issues. Key fixes: middleware now fails open (not closed) on Supabase errors and uses an exact path-segment gate check instead of a naive `startsWith`; added 401 handling (redirect to `/signin`) at both mount and submit; added a terminal "Continue to Dashboard" escape hatch for the 409-then-DNA-fetch-also-fails case instead of an infinite Retry loop; switched to `axios.isAxiosError` instead of duck-typing; fixed the progress-bar off-by-one; `QuestionCard` now uses `role="radiogroup"`/`role="radio"` and the shared `Button` component for all 4 options; `OnboardingFlow`'s Back button now uses the shared `Button` too; added `sessionStorage` persistence for in-progress answers so a refresh no longer loses them. 13 new tests added for the fixes (170/170 suite passing), tsc clean, lint clean (same 1 pre-existing unrelated warning). Status → `done`.
+- 2026-09-05: Scale & Load Hunter (6th agent) retrospectively added per process-debt remediation.
+
+## Senior Developer Review (AI) — Supplemental: Scale & Load Hunter
+
+**Date:** 2026-09-05
+**Reviewer:** Scale & Load Hunter (6th agent — retrospectively added; 5-agent review ran 2026-07-04 on branch sprint2/s2-3-onboarding-flow)
+**Outcome:** PASS — no Scale & Load blockers
+
+### Findings
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | PASS | **Q1** One unit = one onboarding submission (20 answers). Fixed set; never variable. | N/A |
+| 2 | Scale & Load Hunter | PASS | **Q2** No fixed budgets in frontend scope. Backend enforces Redis NX idempotency lock (409 on duplicate). Explicit 409 handler in OnboardingFlow prevents silent double-billing. | N/A |
+| 3 | Scale & Load Hunter | PASS | **Q3** Dismiss-state storage is client-only (sessionStorage) — per-browser, per-user scope by definition. No server-side limit scoping needed. | N/A |
+| 4 | Scale & Load Hunter | PASS | **Q4** No Supabase queries in frontend story scope. Middleware gate (AC 6.2) uses `.maybeSingle()` on `learner_dna` — bounded by UNIQUE `user_id` constraint. | N/A |
+| 5 | Scale & Load Hunter | PASS | **Q5** No inherited caps. Frontend story inherits no sizing from an earlier design unit. | N/A |
+| 6 | Scale & Load Hunter | PASS | **Q6** Submit is idempotent via backend NX lock (explicit 409 → DNA re-fetch path, not a retry). No frontend TOCTOU: the form submits once after all 20 answers collected. | N/A |

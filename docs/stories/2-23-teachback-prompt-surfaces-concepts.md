@@ -63,3 +63,18 @@ N/A — pure function. No shared mutable state.
 ## Senior Developer Review (AI) — 5-agent, 2026-07-22
 5-agent review (CONFIRMED Med): AC-1's case-insensitive dedup clause was unimplemented — added dedup in `_build_teachback_prompt` (key=term.lower(), matching the glossary dedup) + a dedup test. Layer 5 PASS.
 Post-fix: 543 passed / 1 skipped; mypy 0; ruff clean.
+
+## Senior Developer Review (AI) — Supplemental: Scale & Load Hunter (retrospectively added 2026-09-05)
+
+**Scope:** `_build_teachback_prompt(title, jargon_entries)` in `graph.py` — pure synchronous function, no DB/LLM/I/O.
+
+| Q# | Question | Answer | Status |
+|----|----------|--------|--------|
+| Q1 | Unit of work & range | One call per segment. Number of jargon terms per segment: min 0, typical 3–8, max bounded by `JARGON_MAX_TERMS` (env-var-capped in jargon_extractor node). | PASS |
+| Q2 | Fixed budgets vs variable input | Prompt string grows linearly with jargon count. `JARGON_MAX_TERMS` cap upstream bounds the output length. No silent truncation. | PASS |
+| Q3 | Scope of limits | Per-segment; no shared state. | PASS |
+| Q4 | Unbounded reads/writes | None — pure in-memory string build from the already-materialised `jargon_entries` list. | PASS |
+| Q5 | Inherited caps re-derived | `JARGON_MAX_TERMS` cap originates in the jargon_extractor node (Phase 1). This function inherits the already-capped list — no re-derivation needed; inheriting a bounded input is safe here. | PASS |
+| Q6 | Concurrent TOCTOU safety | Stateless pure function — safe under any concurrency. | PASS |
+
+**Verdict:** PASS — all 6 questions clear. No changes required.
