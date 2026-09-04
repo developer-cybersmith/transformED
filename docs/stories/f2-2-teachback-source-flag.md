@@ -362,14 +362,14 @@ All 7 review layers ran. 8 patch items applied in-branch before merge; 4 items d
 | R5 | Medium | Missing test: AC5 specifies WARNING not ERROR; log level not asserted | Added `test_fallback_path_logs_at_warning_not_error` using patched logger |
 | R6 | Medium | Missing tests: exact feedback strings for fallback and skip not asserted | Added `test_fallback_exact_feedback_string` and `test_skip_exact_feedback_string` |
 | R7 | Medium | `.limit(50)` invalidated by F2-2 (skip+fallback = multiple rows per segment) | Raised to `.limit(200)`; updated comment explaining new worst-case calculation |
-| D-regs | — | D150 and D151 registered in `docs/DEFECT-REGISTER.md` per binding rule 5 | — |
+| D-regs | — | D152 and D153 registered in `docs/DEFECT-REGISTER.md` per binding rule 5 (renumbered from D150/D151 — Dev 4's BR-5 merged and claimed those IDs first) | — |
 
 ### Deferred items
 
 | ID | Description | Register |
 |----|-------------|---------|
-| D150 | `ces_contribution=0.0` on skip vs real-time CES redistribution — cross-team Dev 3/Dev 4 interface concern | Registered as D150 |
-| D151 | `HTTPException` from `score_teachback` bypasses fallback path — low risk, OpenAI SDK doesn't raise HTTPException | Registered as D151 |
+| D152 | `ces_contribution=0.0` on skip vs real-time CES redistribution — cross-team Dev 3/Dev 4 interface concern | Registered as D152 |
+| D153 | `HTTPException` from `score_teachback` bypasses fallback path — low risk, OpenAI SDK doesn't raise HTTPException | Registered as D153 |
 | R10 | Unbounded skip inserts (no max skip attempts per session) — pre-existing D107 | Deferred to D107 resolution |
 | R11 | Exception string logged in `safe_msg` could leak internal info — pre-existing pattern across codebase | Deferred; scope too large for this story |
 
