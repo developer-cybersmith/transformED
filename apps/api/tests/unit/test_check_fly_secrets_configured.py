@@ -24,10 +24,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# __file__ = <root>/apps/api/tests/test_check_fly_secrets_configured.py
-# → parents[3] is the repo root (same layout as test_ws_load_test.py).
+from app.config import Settings
+
+# __file__ = <root>/apps/api/tests/unit/test_check_fly_secrets_configured.py
+# → parents[4] is the repo root.
+#
+# [Review][Patch] moved here from apps/api/tests/ (2026-09-04): the root-level
+# location was never actually gating CI -- ci.yml's only gating step is
+# `pytest tests/unit tests/integration`, and root-level tests only run in the
+# `continue-on-error: true` advisory step (the same gap ci.yml's own comments
+# already document, D24, for a different file). Confirmed directly, not
+# assumed. test_rate_limit_storage_guard.py in this same directory is the
+# correct precedent this file should have followed originally.
 _SCRIPT = (
-    pathlib.Path(__file__).resolve().parents[3] / "scripts" / "check_fly_secrets_configured.py"
+    pathlib.Path(__file__).resolve().parents[4] / "scripts" / "check_fly_secrets_configured.py"
 )
 _spec = importlib.util.spec_from_file_location("check_fly_secrets_configured", _SCRIPT)
 assert _spec and _spec.loader
@@ -79,17 +89,20 @@ def test_list_missing_secrets_partial_overlap_sorted() -> None:
 def test_required_settings_fields_is_derived_live_not_a_fixed_list() -> None:
     """Proves this reads app.config.Settings for real, rather than a hand-typed
     list that could silently drift the way the underlying app config already
-    has once (that's the exact class of bug D146 surfaced one layer up)."""
-    fields = required_settings_fields()
-    # Spot-check real, currently-required Settings fields (app/config.py) —
-    # if config.py ever drops these to optional, this test must be updated
-    # deliberately, not silently pass for the wrong reason.
-    assert "SUPABASE_URL" in fields
-    assert "OPENAI_API_KEY" in fields
-    assert "SUPABASE_JWT_SECRET" in fields
-    # A field with a default (e.g. redis_url has one) must NOT appear —
-    # proves this filters on is_required(), not just "every field".
-    assert "REDIS_URL" not in fields
+    has once (that's the exact class of bug D146 surfaced one layer up).
+
+    [Review][Patch] rewritten 2026-09-04: the original version only
+    spot-checked 4 hardcoded field names, which would pass unchanged even if
+    required_settings_fields() were replaced with a hand-copied literal set
+    -- the exact drift class AC1/AC5 exist to prevent, and it wouldn't have
+    caught it. This version independently recomputes the expected set from
+    Settings.model_fields (the same source, but a second, independent call
+    site) and asserts full equality against the script's real output."""
+    expected = {
+        name.upper() for name, field in Settings.model_fields.items() if field.is_required()
+    }
+    assert expected, "test precondition failed: Settings has zero required fields"
+    assert required_settings_fields() == expected
 
 
 @pytest.mark.unit
@@ -107,11 +120,29 @@ def test_rate_limit_storage_url_name_still_present_in_the_real_guard_source() ->
     renames RATE_LIMIT_STORAGE_URL inside app.core.rate_limit's guard without
     updating this script's hand-listed _GUARD_ENFORCED_SECRETS entry, this
     must redden — mirrors this repo's established `# SYNC:`-comment
-    discipline for exactly this drift class."""
+    discipline for exactly this drift class.
+
+    [Review][Patch] narrowed 2026-09-04: a whole-file substring check would
+    pass identically whether the name lives in real enforcement code, a
+    stale comment, or a leftover docstring after a rename -- scoped to the
+    actual enforcement region (the guard function's body + the module-level
+    storage-URI constant it and `limiter` both read) instead."""
     rate_limit_source = (
-        pathlib.Path(__file__).resolve().parents[1] / "app" / "core" / "rate_limit.py"
+        pathlib.Path(__file__).resolve().parents[2] / "app" / "core" / "rate_limit.py"
     ).read_text(encoding="utf-8")
-    assert "RATE_LIMIT_STORAGE_URL" in rate_limit_source
+    guard_start = rate_limit_source.index("def assert_rate_limit_storage_configured")
+    guard_region = rate_limit_source[guard_start:]
+    assert "RATE_LIMIT_STORAGE_URL" in guard_region, (
+        "RATE_LIMIT_STORAGE_URL must appear inside assert_rate_limit_storage_configured's own "
+        "body (its docstring/error message), not just somewhere else in the file"
+    )
+    constant_line = next(
+        line for line in rate_limit_source.splitlines() if "_RATE_LIMIT_STORAGE_URI = " in line
+    )
+    assert "RATE_LIMIT_STORAGE_URL" in constant_line, (
+        "the module-level storage-URI constant (read by both `limiter` and the guard) must "
+        "still be sourced from RATE_LIMIT_STORAGE_URL"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +208,46 @@ def test_fetch_configured_secret_names_raises_loud_when_flyctl_binary_is_missing
 
 
 @pytest.mark.unit
+def test_fetch_configured_secret_names_raises_loud_when_flyctl_is_not_executable() -> None:
+    """[Review][Patch]: the fix above only caught FileNotFoundError, not the
+    broader OSError family subprocess.run's launch path can raise -- e.g. a
+    `flyctl` present on PATH but not executable (a PermissionError, a sibling
+    of FileNotFoundError, not a subclass -- the original except clause never
+    caught it). Same 'crash instead of clean RuntimeError' consequence,
+    found by 2 independent review layers (Blind Hunter, Edge Case Hunter)."""
+    with patch("subprocess.run", side_effect=PermissionError("[Errno 13] Permission denied")):
+        with pytest.raises(RuntimeError, match=r"flyctl"):
+            _fetch_configured_secret_names("hie-api")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("label", "stdout"),
+    [
+        ("object instead of array", json.dumps({"error": "app not found"})),
+        ("list of dicts missing Name key", json.dumps([{"Digest": "abc123"}])),
+        ("literal null", "null"),
+        ("list of bare strings, not objects", json.dumps(["SUPABASE_URL", "OPENAI_API_KEY"])),
+    ],
+)
+def test_fetch_configured_secret_names_raises_loud_on_valid_json_wrong_shape(
+    label: str, stdout: str
+) -> None:
+    """[Review][Patch]: `flyctl secrets list --json` returning syntactically
+    VALID but wrongly-shaped JSON (not a list of {"Name": ...} objects) used
+    to raise an uncaught KeyError/TypeError past main()'s `except
+    RuntimeError` entirely -- json.loads succeeds, so the pre-existing
+    JSONDecodeError handler never fires. Reproduced live by the Test Coverage
+    review layer with these exact 3 payloads (plus a 4th here); independently
+    found by Edge Case Hunter and Blind Hunter. Must raise the same clean
+    RuntimeError as every other failure mode, not crash."""
+    fake_result = MagicMock(returncode=0, stdout=stdout, stderr="")
+    with patch("subprocess.run", return_value=fake_result):
+        with pytest.raises(RuntimeError, match=r"unexpected shape"):
+            _fetch_configured_secret_names("hie-api")
+
+
+@pytest.mark.unit
 def test_fetch_configured_secret_names_raises_loud_on_timeout() -> None:
     with patch(
         "subprocess.run",
@@ -222,3 +293,76 @@ def test_main_exits_nonzero_never_zero_when_the_check_itself_cannot_run() -> Non
             side_effect=RuntimeError("flyctl secrets list failed (exit 1): auth error"),
         ):
             assert main() != 0
+
+
+@pytest.mark.unit
+def test_main_prints_a_clear_confirmation_line_on_success(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """[Review][Patch] AC2's printed-output half was previously unasserted --
+    only exit codes were tested. AC2 literally requires 'a clear confirmation
+    line' on success."""
+    all_present = set(required_secrets().keys()) | {"UNRELATED_EXTRA_SECRET"}
+    with patch.object(sys, "argv", ["check_fly_secrets_configured.py", "--app", "hie-api"]):
+        with patch(
+            "check_fly_secrets_configured._fetch_configured_secret_names",
+            return_value=all_present,
+        ):
+            main()
+    captured = capsys.readouterr()
+    assert "OK" in captured.out
+    assert "hie-api" in captured.out
+
+
+@pytest.mark.unit
+def test_main_prints_every_missing_secret_name_and_its_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """[Review][Patch] AC2 literally requires printing 'every missing secret's
+    name plus which guard/field requires it' -- verify the real stdout/stderr
+    content, not just that main() returned non-zero."""
+    with patch.object(sys, "argv", ["check_fly_secrets_configured.py", "--app", "hie-api"]):
+        with patch(
+            "check_fly_secrets_configured._fetch_configured_secret_names",
+            return_value=set(),
+        ):
+            main()
+    captured = capsys.readouterr()
+    for name, reason in required_secrets().items():
+        assert name in captured.err
+        assert reason in captured.err
+
+
+@pytest.mark.unit
+def test_main_exits_nonzero_not_uncaught_when_required_secrets_itself_fails() -> None:
+    """[Review][Patch]: required_secrets() (imports app.config.Settings) was
+    called in main() entirely outside the try/except RuntimeError block --
+    any future failure there (e.g. a config.py import-time error) crashed
+    uncaught instead of producing AC2's mandated clean exit 1. Found by Edge
+    Case Hunter."""
+    with patch.object(sys, "argv", ["check_fly_secrets_configured.py", "--app", "hie-api"]):
+        with patch(
+            "check_fly_secrets_configured.required_secrets",
+            side_effect=ImportError("simulated app.config import failure"),
+        ):
+            assert main() != 0
+
+
+@pytest.mark.unit
+def test_no_required_settings_field_currently_uses_a_pydantic_alias() -> None:
+    """[Review][Patch] required_settings_fields()'s `name.upper()` derivation
+    assumes the attribute name IS the env var name -- true today, but a
+    future Settings field declared with `alias=`/`validation_alias=` would
+    silently break this (the script would check for the wrong name,
+    reporting a correctly-configured secret as missing). No field uses one
+    today; this guard fails loud in CI the day one is added without this
+    script being updated to handle it, rather than silently misreporting."""
+    for name, field in Settings.model_fields.items():
+        if not field.is_required():
+            continue
+        assert field.alias is None, (
+            f"Settings field {name!r} now has alias={field.alias!r} -- "
+            "required_settings_fields()'s name.upper() derivation no longer matches the real "
+            "env var name pydantic-settings reads; update check_fly_secrets_configured.py to "
+            "prefer the alias before this can pass"
+        )

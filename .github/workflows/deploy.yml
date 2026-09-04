@@ -63,12 +63,14 @@ jobs:
       # pull in docling (CLAUDE.md's PDF table-markdown stack), which drags
       # in a heavy ML/torch install path -- disproportionate for a script
       # that only needs Settings.model_fields' shape (no instance, no real
-      # secret values). Pinned to the same floor apps/api/pyproject.toml
-      # itself declares (`pydantic>=2.7.0`, `pydantic-settings>=2.2.0`) so
-      # this can't silently accept a pydantic major version the app itself
-      # doesn't.
+      # secret values). Floor pinned to the same version apps/api/pyproject.toml
+      # itself declares (`pydantic>=2.7.0`, `pydantic-settings>=2.2.0`).
+      # [Review][Patch]: the floor alone had no ceiling, contradicting this
+      # comment's own claim -- capped at the next major version so a future
+      # pydantic 3.x can't silently change model_fields/is_required()
+      # behavior underneath this check without a deliberate version bump here.
       - name: Install minimal deps for the secrets-check script
-        run: pip install "pydantic>=2.7.0" "pydantic-settings>=2.2.0"
+        run: pip install "pydantic>=2.7.0,<3.0.0" "pydantic-settings>=2.2.0,<3.0.0"
 
       - name: Verify required Fly secrets are configured (D150)
         run: python scripts/check_fly_secrets_configured.py --app hie-api

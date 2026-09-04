@@ -1,6 +1,6 @@
 # Story BR-5 — Deploy-time required-secrets verification (closes D146's residual gap)
 
-Status: ready for review (implementation complete; 6-agent `/bmad-code-review` gate not yet run — see CLAUDE.md's BMAD Code Review Gate before merge)
+Status: done — 8-layer `/bmad-code-review` complete 2026-09-04, 11 patches applied, 1 finding deferred (D151), 3 findings independently re-verified and refuted
 
 ## Story
 
@@ -83,9 +83,13 @@ two different, unverified claims currently conflated.
    One unit is one CI-triggered deploy attempt against one Fly app (`hie-api`, `fly.toml`'s only
    declared app — ADR-001 §3 explicitly rejects splitting into multiple Fly apps). Range: exactly
    one app, one secrets list, one check, once per deploy — not a per-user or per-request
-   operation. `flyctl secrets list` for this app currently returns a small, bounded set (the 6
-   pydantic-required fields + 1 guard-enforced var = 7 names today; realistically low tens even
-   after several more stories add required config). This is not a scale-sensitive path.
+   operation. `flyctl secrets list` for this app currently returns a small, bounded set (the 8
+   pydantic-required fields + 1 guard-enforced var = 9 names today, matching the References
+   section below; realistically low tens even after several more stories add required config).
+   This is not a scale-sensitive path. **[Review Finding — corrected 2026-09-04]** An earlier
+   draft miscounted this as "6 + 1 = 7," disagreeing with this story's own References section,
+   which correctly listed all 8 fields — corrected to match the real count in
+   `apps/api/app/config.py`, verified directly by three independent review layers.
 
 2. **Which budgets are FIXED while the input VARIES — and what happens past them?**
    N/A — no fixed-size budget applies here. The required-secrets manifest grows exactly as fast
@@ -112,12 +116,20 @@ two different, unverified claims currently conflated.
    N/A — this is a new mechanism with no prior cap to inherit or re-derive.
 
 6. **Is every check-then-act sequence safe under CONCURRENT requests?**
-   Yes, by inheritance from an existing guarantee, not a new one: `deploy.yml` already declares
-   `concurrency: { group: deploy-hie-api, cancel-in-progress: false }`, which serializes every
-   deploy attempt against this app (documented in the existing workflow file, unrelated to this
-   story). This story's new step runs inside that same serialized job, so there is no new
-   check-then-act race between "verify secrets" and "deploy" — they are two sequential steps in
-   one already-serialized workflow run, not two independent processes that could interleave.
+   Partially — narrower than an earlier draft of this answer claimed. `deploy.yml`'s
+   `concurrency: { group: deploy-hie-api, cancel-in-progress: false }` genuinely serializes
+   overlapping *workflow runs* of this file, so two concurrent deploy attempts can't race each
+   other's verify/deploy steps. **[Review Finding — corrected 2026-09-04]** That guarantee does
+   **not** cover a real, if narrow, race: an external actor (a human operator, a secret-rotation
+   script) unsetting or changing a required secret in the multi-second window between the "Verify
+   required Fly secrets are configured" step finishing and "Deploy to Fly.io" starting, within
+   the *same* already-running job. If that happens, the verify step has already printed `OK` and
+   exited 0 before the mutation, `flyctl deploy` proceeds anyway, D49's own boot guard fires on
+   the freshly-deployed machines, and the app crash-loops — reproducing D146 despite the job
+   having reported the secrets check as passed. **Not fixed here**: Fly's secrets API has no lock
+   primitive to close this with code (registered as part of **D151**, alongside the
+   values-not-checked gap below — same root cause, "the verify step's OK is a point-in-time
+   snapshot, not a guarantee that holds until deploy actually runs").
 
 ## Tasks / Subtasks
 
@@ -168,6 +180,132 @@ two different, unverified claims currently conflated.
     branch namespace another dev is using independently — no collision, confirmed via
     `git ls-remote` before choosing this number), flip to `[Completed]` on close, update the
     Quick Status Dashboard and header date.
+
+### Review Findings
+
+**8-layer `/bmad-code-review` (4 skill-built-in + Story Quality, Test Coverage, AC Completeness,
+Process Integrity per CLAUDE.md's 6-layer gate), 2026-09-04.** Reviewed the isolated diff
+(`git diff f26a3b7..dev4/master-bug-resolution-br-5-secrets-deploy-guard`, 6 files) against
+`main`. Two of Blind Hunter's findings were independently re-verified and refuted before triage
+(direct source read + direct re-execution); everything below survived that check.
+
+**[Review][Patch] — applied 2026-09-04:**
+
+- [x] [Review][Patch] `flyctl secrets list --json` returning syntactically valid but wrongly-shaped
+  JSON (missing `"Name"` key, non-dict elements, non-list/`null` top level) raised an uncaught
+  `KeyError`/`TypeError` past `main()`'s `except RuntimeError` — reproduced live with 3 real
+  payloads by the Test Coverage layer, independently found by Edge Case Hunter (3 sub-cases) and
+  Blind Hunter. **Fixed:** validate shape before use, raise the same clean `RuntimeError` on
+  mismatch. 4 new tests. [`scripts/check_fly_secrets_configured.py:127`] (source: edge+auditor+
+  test-coverage[reproduced live]+blind — 4 independent layers)
+- [x] [Review][Patch] Only `FileNotFoundError`/`TimeoutExpired` were caught around
+  `subprocess.run` — a present-but-not-executable `flyctl` (`PermissionError`, or any other
+  `OSError` subclass) crashed uncaught, the identical failure class the dev had already found and
+  fixed once for the missing-binary case, just not generalized. **Fixed:** broadened to
+  `except OSError` (a superclass of `FileNotFoundError`/`PermissionError`), kept
+  `TimeoutExpired` separate (not an `OSError` subclass). 1 new test. [`scripts/check_fly_secrets_configured.py:94-113`]
+  (source: blind+edge)
+- [x] [Review][Patch] `required_secrets()` (which imports `app.config.Settings`) is called in
+  `main()` entirely outside the `try/except RuntimeError` block — any future import-time failure
+  there would crash uncaught rather than producing AC2's mandated clean exit 1. **Fixed:** wrapped
+  in the same try/except, same clean `RuntimeError` path. 1 new test (patches
+  `check_fly_secrets_configured.required_secrets` to raise, asserts `main()` returns 1, not an
+  uncaught exception). [`scripts/check_fly_secrets_configured.py:135`] (source: edge)
+- [x] [Review][Patch] **`apps/api/tests/test_check_fly_secrets_configured.py` sat at the root of
+  `apps/api/tests/`, never actually gating CI** — `.github/workflows/ci.yml`'s only gating step is
+  `pytest tests/unit tests/integration`; root-level tests only run in the `continue-on-error: true`
+  advisory step (a gap `ci.yml`'s own comments already document as D24, for a different file).
+  Confirmed directly (not just trusted from the review): reproduced the exact gating command
+  locally. **This is not what "14 tests, mutation-checked" in the D150 register entry implied** —
+  Enforcement text overstated CI coverage. **Fixed:** moved to
+  `apps/api/tests/unit/test_check_fly_secrets_configured.py`, `parents[]` indices corrected
+  (`parents[4]` for the script, `parents[2]` for `rate_limit.py`, matching
+  `test_rate_limit_storage_guard.py`'s own established pattern in that same directory). D150's
+  Enforcement text corrected. (source: process-integrity, independently confirmed)
+- [x] [Review][Patch] `pip install "pydantic>=2.7.0" "pydantic-settings>=2.2.0"` in `deploy.yml`
+  had no upper bound, directly contradicting its own adjacent comment's claim ("can't silently
+  accept a pydantic major version the app itself doesn't"). **Fixed:** capped
+  `pydantic>=2.7.0,<3.0.0` / `pydantic-settings>=2.2.0,<3.0.0`, matching the major-version ceiling
+  implied by the comment. [`.github/workflows/deploy.yml`] (source: blind)
+- [x] [Review][Patch] AC5's first anti-drift claim ("comparing to what the script reports") wasn't
+  actually implemented — the test spot-checked 4 hardcoded field names rather than independently
+  computing the full expected set from `Settings.model_fields` and asserting equality; a
+  hand-copied literal replacing the live introspection would have passed unchanged. **Fixed:**
+  rewrote to independently compute `{name.upper() for name, f in Settings.model_fields.items() if
+  f.is_required()}` inside the test and assert full-set equality against
+  `required_settings_fields()`'s real output. (source: ac-completeness+auditor+story-quality — 3
+  independent layers)
+- [x] [Review][Patch] AC2's printed-output requirement ("clear confirmation line" on success,
+  "every missing secret's name plus which guard/field requires it" on failure) was entirely
+  unasserted — only exit codes were tested. **Fixed:** added `capsys`-based tests asserting the
+  real stdout/stderr content on both the success and missing-secret paths. (source:
+  ac-completeness+test-coverage)
+- [x] [Review][Patch] Scale & Load Q1 miscounted required secrets as "6 pydantic-required + 1
+  guard-enforced = 7" — the real count (verified directly against `app.config.Settings`, and
+  already correctly listed in this story's own References section) is 8 + 1 = 9. **Fixed** the Q1
+  count; conclusion ("not scale-sensitive, low tens of names") unaffected substantively. (source:
+  auditor+story-quality+process-integrity — 3 independent layers)
+- [x] [Review][Patch] The `RATE_LIMIT_STORAGE_URL` source-scan anti-drift test only checked
+  substring presence anywhere in `rate_limit.py`'s raw text — would pass identically whether the
+  string is in the live enforcement code, a stale comment, or a leftover docstring after a rename.
+  **Fixed:** narrowed the check to the `_GUARD_ENFORCED_SECRETS`-relevant enforcement region
+  (`assert_rate_limit_storage_configured`'s body + the `_RATE_LIMIT_STORAGE_URI` constant
+  definition), not the whole file. (source: blind)
+- [x] [Review][Patch] Scale & Load Q6 claimed the deploy workflow's `concurrency` group made the
+  verify-then-deploy sequence "safe under concurrent requests" — **that group only serializes
+  overlapping *workflow runs* of this file; it does not lock Fly's secrets API against an external
+  actor** (a human, a rotation script) unsetting a required secret in the multi-second window
+  between the verify step finishing and `flyctl deploy` starting. Real, if narrow: no lock
+  primitive exists on Fly's secrets store to close this with code. **Fixed the story's own
+  wording** to state this accurately rather than overclaim safety; the residual gap itself is
+  registered (see Defer below), not silently left as a corrected-but-unaddressed claim. (source:
+  scale — contract_question 6)
+- [x] [Review][Patch] No guard against a future required `Settings` field using a pydantic
+  `alias`/`validation_alias` — `required_settings_fields()`'s `name.upper()` derivation would
+  silently produce the wrong env var name for such a field, causing a **correctly-configured**
+  deploy to be falsely reported as missing a secret (the inverse failure mode from this story's
+  main concern). No current field uses one (confirmed: zero `alias` references in
+  `app/config.py`), so not an active bug — **added a guard test** asserting this invariant holds,
+  so adding an aliased required field without updating this script fails loud in CI rather than
+  silently misreporting. (source: blind)
+
+**[Review][Defer] — registered, not fixed (Scale & Load, cannot be dismissed per
+`docs/SCALE-CONTRACT.md` §2 — `observed_behaviour: silent-wrong-result`):**
+
+- [x] [Review][Defer] **This script verifies secret NAMES only — never values.** A required secret
+  present on Fly but set to an empty string or a placeholder (`flyctl secrets set
+  OPENAI_API_KEY="" --app hie-api`) is reported `OK`, the deploy proceeds, the app boots
+  successfully (pydantic only enforces presence for a required `str` field, not non-emptiness),
+  and the failure surfaces later as a runtime auth error on the first real API call — reproducing
+  D146's exact shape (a "verified" deploy that silently isn't) one layer deeper. **Not fixable
+  within this script's design**: `flyctl secrets list` deliberately never exposes values (Fly's
+  own security design, and this script's own stated principle — "no secret material touches CI
+  logs" — depends on that), so closing this needs a fundamentally different mechanism (e.g. a
+  live post-deploy health check hitting a real endpoint that exercises each credential), not a
+  bigger version of this script. Registered as **D151**. **Owner: TBD. Trigger: the first
+  observed deploy where a secret was present-but-empty/wrong, or before this mechanism is treated
+  as a complete substitute for post-deploy health verification (W10-2 monitoring, not yet built,
+  is the more natural home for closing this).** — deferred, real, scope boundary of this story's
+  chosen mechanism (source: scale)
+
+**[Review][Dismiss] — refuted by direct verification, not discretionary judgment (3):**
+
+- Module-level `Settings()` instantiation would crash the CI step's minimal-install environment
+  regardless of Fly secrets — **refuted**: read `apps/api/app/config.py` directly;
+  `Settings()` is only ever constructed lazily inside `get_settings()` (`@lru_cache`), never at
+  module import time. `from app.config import Settings` (what this script does) only imports the
+  class definition. (source: blind)
+- Mutation-check claimed "exactly 3 of 14 tests reddened," predicted the real count should be 4
+  — **refuted by direct re-execution**: reran the identical mutation
+  (`list_missing_secrets` → `return []`) against the restored pre-fix code; exactly 3 tests
+  reddened (`test_list_missing_secrets_none_configured_all_missing`,
+  `test_list_missing_secrets_partial_overlap_sorted`,
+  `test_main_exits_nonzero_when_a_required_secret_is_missing` — the last one IS the test Blind
+  Hunter predicted was missing from the count; it was already included). (source: blind)
+- Ad-hoc `pip install` in the deploy step risks contaminating other steps/processes in the same
+  job — **refuted**: GitHub Actions runners are ephemeral, single-job VMs; nothing else in
+  `deploy.yml` invokes Python at all, so there is no other step for this install to collide with.
+  (source: blind)
 
 ## Dev Notes
 
@@ -266,16 +404,27 @@ Claude Sonnet 5 (claude-sonnet-5), 2026-09-04.
   highest allocated id was D148 at write time.
 - `docs/dev4-tracker.md`: added BR-5 under "Bug Resolution — Feature Sprint 2"; dashboard row
   (4→5 tasks, 0→1 Completed) and header (36/48 Completed, last-updated date) reconciled.
-- **Not done in this branch:** the 6-agent `/bmad-code-review` gate CLAUDE.md requires before
-  merge. Implementation, tests, and register/tracker close-out are complete; the adversarial
-  review is the explicit next step, not silently skipped.
+- **8-layer `/bmad-code-review` completed 2026-09-04** (4 skill-built-in — Blind Hunter, Edge
+  Case Hunter, Acceptance Auditor, Scale & Load Hunter — + Story Quality, Test Coverage, AC
+  Completeness, Process Integrity per CLAUDE.md's 6-layer gate). Reviewed the isolated diff
+  (`git diff f26a3b7..dev4/master-bug-resolution-br-5-secrets-deploy-guard`), not the PR's raw
+  146-file GitHub diff (a branch-topology artifact from merging `main` in — the real change is
+  6 files). 11 patches applied (test count 14→23), 1 finding deferred to **D151** (Scale & Load,
+  cannot dismiss per Scale Contract §2), 3 findings independently re-verified and refuted before
+  triage (a module-level `Settings()` instantiation risk, a mutation-count discrepancy, an
+  install-isolation concern). Full detail in this file's own Review Findings subsection above.
+  Full findings text: see this story's `### Review Findings` subsection above.
 
 ### File List
 
-- `scripts/check_fly_secrets_configured.py` — new
-- `apps/api/tests/test_check_fly_secrets_configured.py` — new, 14 tests
-- `.github/workflows/deploy.yml` — 3 new steps (setup-python, minimal pip install, the check)
-- `docs/DEFECT-REGISTER.md` — new D150 entry
+- `scripts/check_fly_secrets_configured.py` — new; patched during review (OSError family, JSON
+  shape validation, `required_secrets()` exception handling)
+- `apps/api/tests/unit/test_check_fly_secrets_configured.py` — new, 23 tests (moved from
+  `apps/api/tests/` during review — see Review Findings)
+- `.github/workflows/deploy.yml` — 3 new steps (setup-python, minimal pip install, the check);
+  pip install version-capped during review
+- `docs/DEFECT-REGISTER.md` — new D150 entry (Enforcement text corrected during review), new
+  D151 entry (deferred finding)
 - `docs/dev4-tracker.md` — new BR-5 task entry
 - `docs/stories/br-5-deploy-secrets-verification.md` — this file
 

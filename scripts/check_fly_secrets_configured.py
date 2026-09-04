@@ -99,14 +99,19 @@ def _fetch_configured_secret_names(app: str) -> set[str]:
             timeout=30,
             check=False,  # non-zero exit is handled explicitly below, not raised
         )
-    except FileNotFoundError as exc:
-        # `flyctl` isn't on PATH at all -- a plain non-zero exit never
-        # happens because the process was never launched. Caught here so
-        # this surfaces as the same clean, actionable RuntimeError as every
-        # other failure mode, not a raw traceback main()'s `except
-        # RuntimeError` wouldn't catch (D150's own AC2: "never a silent
-        # pass," which includes never degrading to an unhandled crash).
-        raise RuntimeError(f"`flyctl` executable not found on PATH: {exc}") from exc
+    except OSError as exc:
+        # Covers `flyctl` missing from PATH entirely (FileNotFoundError) AND
+        # present-but-not-executable (PermissionError) -- both are launch
+        # failures where subprocess.run never produces a returncode, so a
+        # plain `if returncode != 0` check never fires. [Review][Patch]: the
+        # original except clause caught only FileNotFoundError specifically;
+        # broadened to the whole OSError family (2 independent review
+        # layers found the PermissionError gap) so every launch-failure
+        # variant surfaces as the same clean, actionable RuntimeError, not a
+        # raw traceback main()'s `except RuntimeError` wouldn't catch
+        # (D150's own AC2: "never a silent pass," which includes never
+        # degrading to an unhandled crash).
+        raise RuntimeError(f"`flyctl` could not be launched: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             f"`flyctl secrets list --app {app}` timed out after 30s: {exc}"
@@ -124,6 +129,22 @@ def _fetch_configured_secret_names(app: str) -> set[str]:
             f"`flyctl secrets list --app {app} --json` returned unparseable "
             f"output: {exc}. Refusing to report a pass on unparseable output."
         ) from exc
+    # [Review][Patch]: syntactically VALID JSON in an unexpected shape (not a
+    # list of {"Name": ...} objects -- an error object, null, or a list of
+    # bare strings) used to raise an uncaught KeyError/TypeError here, past
+    # main()'s `except RuntimeError` entirely. Reproduced live by the Test
+    # Coverage review layer with real payloads; independently found by Edge
+    # Case Hunter and Blind Hunter. Validate the shape explicitly so every
+    # variant resolves to the same clean RuntimeError as every other
+    # failure mode, never a raw crash.
+    if not isinstance(rows, list) or not all(
+        isinstance(row, dict) and "Name" in row for row in rows
+    ):
+        raise RuntimeError(
+            f"`flyctl secrets list --app {app} --json` returned valid JSON in an "
+            f'unexpected shape (expected a list of objects each with a "Name" key, '
+            f"got: {rows!r}). Refusing to report a pass on unexpected output shape."
+        )
     return {row["Name"] for row in rows}
 
 
@@ -132,7 +153,22 @@ def main() -> int:
     parser.add_argument("--app", required=True, help="Fly app name (e.g. hie-api)")
     args = parser.parse_args()
 
-    required = required_secrets()
+    # [Review][Patch]: required_secrets() (which imports app.config.Settings)
+    # used to be called outside any exception handling -- a future
+    # import-time failure there would crash uncaught instead of producing
+    # AC2's mandated clean exit 1. Now wrapped the same way as the flyctl
+    # call below.
+    try:
+        required = required_secrets()
+    except Exception as exc:  # noqa: BLE001 -- deliberately broad: any failure
+        # building the manifest must degrade to the same clean exit 1, not
+        # an uncaught crash of unknown type.
+        print(
+            f"ERROR: could not build the required-secrets manifest: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         configured = _fetch_configured_secret_names(args.app)
     except RuntimeError as exc:
