@@ -32,6 +32,8 @@ from app.modules.assessment.schemas import (
     QuizAnswer,
     QuizResult,
     TeachbackResult,
+    TutorQuestionResult,
+    TutorQuestionSubmission,
 )
 from app.providers.llm.openai import OpenAILLMProvider
 
@@ -1857,3 +1859,236 @@ async def seed_personalized_ces_threshold(
             user_id,
             exc,
         )
+
+
+# ── Tutor Q&A (Story 4-28, Phase 2 P2-1, closes D149) ───────────────────────────
+#
+# Real backend behind the already-shipped, currently-100%-mocked "Ask Tutor"
+# button (Story 2-57/BR-5). See docs/stories/4-28-tutor-qa-real-backend.md for
+# full ACs/Scale & Load. Deliberately in assessment/, not tutor/ — D149's own
+# proposed ownership, and this endpoint never touches the tutor FSM (the
+# story's Dev Notes explain why no FSM change is needed at all).
+
+
+async def _log_tutor_question_event(
+    *,
+    supabase: Client,
+    session_id: str,
+    payload: TutorQuestionSubmission,
+    answer: str | None,
+    declined: bool,
+    retrieved_chunk_ids: list[str],
+    model: str | None,
+    cost_usd: float,
+    finish_reason: str | None,
+) -> None:
+    """Write one session_events row — every question, answered or declined,
+    is on the record (AC6). Extends D149's originally-proposed payload shape
+    (chunk IDs, model, cost, finish_reason added) rather than replacing it.
+
+    Best-effort: a logging failure must never turn a successfully-computed
+    answer into a 500 for the student (matches this module's existing
+    non-fatal-side-effect convention, e.g. seed_personalized_ces_threshold's
+    own try/except).
+    """
+    try:
+        await asyncio.to_thread(
+            lambda: (
+                supabase.table("session_events")
+                .insert(
+                    {
+                        "session_id": session_id,
+                        "event_type": "tutor_question",
+                        "payload": {
+                            "segment_id": payload.segment_id,
+                            "question_text": payload.question_text,
+                            "audio_position_ms": payload.audio_position_ms,
+                            "answer": answer,
+                            "declined": declined,
+                            "retrieved_chunk_ids": retrieved_chunk_ids,
+                            "model": model,
+                            "cost_usd": cost_usd,
+                            "finish_reason": finish_reason,
+                        },
+                    }
+                )
+                .execute()
+            )
+        )
+    except Exception:
+        logger.exception(
+            "tutor_question session_events insert failed session=%s -- answer/decline "
+            "still returned to the caller, only the audit-log write was lost",
+            session_id,
+        )
+
+
+async def answer_tutor_question(
+    *,
+    session_id: str,
+    payload: TutorQuestionSubmission,
+    user_id: str,
+    supabase: Client,
+    redis: Redis,
+    settings: Settings | None = None,
+) -> TutorQuestionResult:
+    """Answer (or gracefully decline) one tutor question.
+
+    Order: ownership check -> rate-limit check -> retrieval-scope resolve ->
+    embed -> pgvector search -> relevance gate -> LLM_TUTOR call -> log.
+    Every exit writes exactly one session_events row (AC6) except the
+    ownership-check 404, which never reaches a real session to log against.
+
+    Raises:
+        HTTPException 404: session missing or belongs to a different user --
+            SEC-006 pattern (grade_quiz's own convention): both cases return
+            the SAME 404, never a 403, so a caller cannot distinguish "wrong
+            owner" from "doesn't exist" (no enumeration oracle).
+    """
+    if settings is None:
+        settings = get_settings()
+
+    # Step 1 -- session ownership (mirrors grade_quiz's exact SEC-006 pattern)
+    session_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    session_row = single_row(session_resp)
+    if session_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id!r} not found.",
+        )
+    if str(session_row["user_id"]) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
+        )
+    lesson_id = session_row["lesson_id"]
+
+    # Step 2 -- rate limit: INCR is the atomic act itself (Scale & Load Q6) --
+    # the comparison happens on the atomically-returned post-increment value,
+    # never on a stale separate read.
+    count_key = f"session:{session_id}:tutor_question_count"
+    question_number = await redis.incr(count_key)
+    if question_number == 1:
+        await redis.expire(count_key, 86_400)
+    if question_number > settings.tutor_qa_max_questions_per_session:
+        await _log_tutor_question_event(
+            supabase=supabase,
+            session_id=session_id,
+            payload=payload,
+            answer=None,
+            declined=True,
+            retrieved_chunk_ids=[],
+            model=None,
+            cost_usd=0.0,
+            finish_reason="rate_limited",
+        )
+        return TutorQuestionResult(received=True, answer=None, declined=True)
+
+    # Step 3 -- resolve retrieval scope: lessons.chapter_id, fallback book_id
+    lesson_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("lessons")
+            .select("chapter_id, book_id")
+            .eq("lesson_id", lesson_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    lesson_row = single_row(lesson_resp) or {}
+    chapter_id = lesson_row.get("chapter_id")
+    book_id = lesson_row.get("book_id")
+
+    # Step 4 -- embed the question (query-time embedding -- explicitly
+    # permitted, CLAUDE.md's one deliberate exception to "chunk embeddings at
+    # ingestion only, never regenerated").
+    from app.providers.embeddings.openai import OpenAIEmbeddingsProvider
+
+    embeddings_provider = OpenAIEmbeddingsProvider()
+    embeddings, _embed_tokens = await embeddings_provider.embed_texts([payload.question_text])
+    query_embedding = embeddings[0]
+
+    # Step 5 -- retrieval: match_tutor_chunks RPC, scoped (never corpus-wide),
+    # top-K.
+    match_resp = await asyncio.to_thread(
+        lambda: supabase.rpc(
+            "match_tutor_chunks",
+            {
+                "query_embedding": query_embedding,
+                "p_chapter_id": chapter_id,
+                "p_book_id": book_id,
+                "p_match_count": settings.tutor_qa_top_k,
+            },
+        ).execute()
+    )
+    matched_chunks = rows(match_resp)
+    retrieved_chunk_ids = [str(c["chunk_id"]) for c in matched_chunks]
+    best_similarity = matched_chunks[0]["similarity"] if matched_chunks else 0.0
+
+    # Step 6 -- relevance gate (AC4): below threshold, decline WITHOUT calling
+    # LLM_TUTOR -- never answer from the model's general knowledge.
+    if not matched_chunks or best_similarity < settings.tutor_qa_relevance_threshold:
+        await _log_tutor_question_event(
+            supabase=supabase,
+            session_id=session_id,
+            payload=payload,
+            answer=None,
+            declined=True,
+            retrieved_chunk_ids=retrieved_chunk_ids,
+            model=None,
+            cost_usd=0.0,
+            finish_reason="low_relevance",
+        )
+        return TutorQuestionResult(received=True, answer=None, declined=True)
+
+    # Step 7 -- LLM_TUTOR call (deliberate, new exception to "no GPT call at
+    # intervention time" -- that rule was written for pre-generated
+    # interventions specifically, per CLAUDE.md's Tutor State Machine
+    # section, not this). Never a direct provider import at the call site --
+    # goes through the factory (CLAUDE.md's provider-abstraction rule).
+    from app.providers.llm.factory import get_llm_provider
+
+    context_text = "\n\n".join(c["content"] for c in matched_chunks)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a tutor helping a student understand a lesson. Answer ONLY using "
+                "the provided lesson excerpts below. If the excerpts don't actually contain "
+                "the answer, say so honestly rather than guessing or using outside knowledge."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Lesson excerpts:\n{context_text}\n\n"
+                f"Student question: {payload.question_text}"
+            ),
+        },
+    ]
+    provider = get_llm_provider(settings.llm_tutor)
+    answer_text, finish_reason, cost_usd = await provider.complete_with_meta(
+        messages,
+        model=settings.llm_tutor,
+        max_tokens=settings.tutor_qa_max_answer_tokens,
+    )
+
+    await _log_tutor_question_event(
+        supabase=supabase,
+        session_id=session_id,
+        payload=payload,
+        answer=answer_text,
+        declined=False,
+        retrieved_chunk_ids=retrieved_chunk_ids,
+        model=settings.llm_tutor,
+        cost_usd=cost_usd,
+        finish_reason=finish_reason,
+    )
+    return TutorQuestionResult(received=True, answer=answer_text, declined=False)

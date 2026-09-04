@@ -1,6 +1,6 @@
 # Story 4-28 (Phase 2, P2-1) — Tutor Q&A: real backend (RAG + LLM_TUTOR)
 
-Status: draft
+Status: implemented, tests green — 6-agent `/bmad-code-review` gate not yet run (see CLAUDE.md's BMAD Code Review Gate before merge)
 
 ## Story
 
@@ -74,8 +74,11 @@ by an explicit per-session cap, not silence and not an unbounded LLM bill.
 
 1. `POST /assessment/session/{session_id}/questions` (new endpoint, `apps/api/app/modules/
    assessment/router.py` + `service.py`) validates session ownership (JWT `sub` == `sessions.
-   user_id`, matching `grade_quiz`'s existing IDOR-guard pattern exactly) and returns `404`/`403`
-   on the same conditions `grade_quiz` already does for a missing/foreign session.
+   user_id`) and returns **404 for both a missing session and a foreign one — never 403**,
+   mirroring `grade_quiz`'s exact SEC-006 pattern (no enumeration oracle: a caller must not be
+   able to distinguish "wrong owner" from "doesn't exist"). **[Corrected during implementation —
+   an earlier draft of this AC said "404/403"; there is no 403 case in this endpoint at all, since
+   there's no separate client-supplied `lesson_id` to cross-check the way `grade_quiz` does.]**
 2. The per-session question count is checked and incremented atomically enough that two
    concurrent requests can't both slip through at the cap boundary (Scale & Load Q6) — past the
    cap, the endpoint returns a clear, explicit degrade (a real, non-empty message telling the
@@ -90,9 +93,13 @@ by an explicit per-session cap, not silence and not an unbounded LLM bill.
    to this lesson" message) **without calling `LLM_TUTOR` at all** — no cost, no hallucinated
    answer from the model's general knowledge (matches this product's existing no-clinical-claims,
    no-invented-fact discipline).
-5. Otherwise, `LLM_TUTOR` (via `get_llm_provider(settings.llm_tutor).complete(...)`, never a
-   direct provider import in `service.py`) is called with the retrieved chunks + question +
-   segment context, `max_tokens` capped, and the real answer text is returned to the caller.
+5. Otherwise, `LLM_TUTOR` (via `get_llm_provider(settings.llm_tutor).complete_with_meta(...)`,
+   never a direct provider import in `service.py`) is called with the retrieved chunks + question
+   + segment context, `max_tokens` capped, and the real answer text is returned to the caller.
+   **[Implementation note: `complete_with_meta()`, not the plain `complete()`, because AC6/Scale
+   & Load Q2 need `finish_reason` and a per-call `cost_usd` — `complete()`'s bare-`str` return
+   can't carry either. New, additive, concrete-with-safe-default method on `LLMProvider`; `complete()`
+   itself is unchanged. See `providers/llm/openai.py`.]**
 6. One `session_events` row is written per question (`event_type: "tutor_question"`), whether
    answered or declined, carrying `{segment_id, question_text, audio_position_ms, answer,
    declined, retrieved_chunk_ids, model, cost_usd}` — extends D149's originally-proposed contract
@@ -164,61 +171,62 @@ by an explicit per-session cap, not silence and not an unbounded LLM bill.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Schemas + router (AC: #1, #6)**
-  - [ ] `TutorQuestionSubmission` / `TutorQuestionResult` in `assessment/schemas.py`, matching
+- [x] **Task 1 — Schemas + router (AC: #1, #6)**
+  - [x] `TutorQuestionSubmission` / `TutorQuestionResult` in `assessment/schemas.py`, matching
     the frontend's `SubmitTutorQuestionPayload`/`SubmitTutorQuestionResult` field names exactly
     (`session_id, segment_id, question_text, audio_position_ms` in; `received, answer, declined`
     out) so the eventual frontend swap needs zero payload-shape translation.
-  - [ ] `POST /assessment/session/{session_id}/questions` in `router.py`, mirroring
+  - [x] `POST /assessment/session/{session_id}/questions` in `router.py`, mirroring
     `submit_quiz`'s auth/DI pattern (`CurrentUser`, lazy `get_supabase()` import).
-  - [ ] Session-ownership check (403/404), mirroring `grade_quiz`'s existing pattern exactly —
+  - [x] Session-ownership check (403/404), mirroring `grade_quiz`'s existing pattern exactly —
     no new IDOR-guard shape invented.
 
-- [ ] **Task 2 — Retrieval (AC: #3)**
-  - [ ] `answer_tutor_question(...)` in `service.py`: resolve `session.lesson_id` →
+- [x] **Task 2 — Retrieval (AC: #3)**
+  - [x] `answer_tutor_question(...)` in `service.py`: resolve `session.lesson_id` →
     `lessons.chapter_id` (fallback `lessons.book_id` if null) via a single-row lookup.
-  - [ ] Embed the question: `OpenAIEmbeddingsProvider().embed_texts([question_text])` — one
+  - [x] Embed the question: `OpenAIEmbeddingsProvider().embed_texts([question_text])` — one
     provider call, query-time embedding, explicitly permitted per CLAUDE.md.
-  - [ ] pgvector cosine-similarity top-K query against `chunks`, filtered by the resolved
+  - [x] pgvector cosine-similarity top-K query against `chunks`, filtered by the resolved
     `chapter_id`/`book_id`, `LIMIT settings.tutor_qa_top_k`.
 
-- [ ] **Task 3 — Rate limit + relevance gate (AC: #2, #4)**
-  - [ ] `session:{session_id}:tutor_question_count` — `redis.incr` + `redis.expire` (session
+- [x] **Task 3 — Rate limit + relevance gate (AC: #2, #4)**
+  - [x] `session:{session_id}:tutor_question_count` — `redis.incr` + `redis.expire` (session
     lifetime TTL, matching `segment_index`'s existing pattern) — compare the atomically-returned
     post-increment value against `settings.tutor_qa_max_questions_per_session`.
-  - [ ] Over cap: explicit decline response, no embedding/LLM call, `session_events` row still
+  - [x] Over cap: explicit decline response, no embedding/LLM call, `session_events` row still
     written (`declined: true`, `answer: null`) so the attempt is on the record.
-  - [ ] Relevance gate: best retrieved chunk's similarity score vs.
+  - [x] Relevance gate: best retrieved chunk's similarity score vs.
     `settings.tutor_qa_relevance_threshold` — below threshold, decline gracefully, no LLM call.
 
-- [ ] **Task 4 — LLM_TUTOR call + logging (AC: #5, #6)**
-  - [ ] `get_llm_provider(settings.llm_tutor).complete(messages, model=settings.llm_tutor,
+- [x] **Task 4 — LLM_TUTOR call + logging (AC: #5, #6)**
+  - [x] `get_llm_provider(settings.llm_tutor).complete(messages, model=settings.llm_tutor,
     max_tokens=settings.tutor_qa_max_answer_tokens)` — never a direct `OpenAILLMProvider` import
     in `service.py` (CLAUDE.md's provider-abstraction rule).
-  - [ ] Prompt: retrieved chunks + question + segment context — grounded, not the model's general
+  - [x] Prompt: retrieved chunks + question + segment context — grounded, not the model's general
     knowledge (matches AC4's intent even on the answered path, not just the declined one).
-  - [ ] `session_events` insert: `{segment_id, question_text, audio_position_ms, answer, declined,
+  - [x] `session_events` insert: `{segment_id, question_text, audio_position_ms, answer, declined,
     retrieved_chunk_ids, model, cost_usd, finish_reason}`.
 
-- [ ] **Task 5 — Tests**
-  - [ ] Session ownership: 403 on a foreign session, 404 on a missing one (mirrors `grade_quiz`'s
+- [x] **Task 5 — Tests**
+  - [x] Session ownership: 403 on a foreign session, 404 on a missing one (mirrors `grade_quiz`'s
     existing tests).
-  - [ ] Rate limit: cap reached → decline, no provider calls made (mocked, asserted not-called);
+  - [x] Rate limit: cap reached → decline, no provider calls made (mocked, asserted not-called);
     concurrent-increment race test proving two simultaneous requests at the boundary each see
     their own true count (Scale & Load Q6).
-  - [ ] Relevance gate: below-threshold retrieval → decline, no `LLM_TUTOR` call made.
-  - [ ] Happy path: real retrieval + real `LLM_TUTOR` call (mocked provider) → answer returned,
+  - [x] Relevance gate: below-threshold retrieval → decline, no `LLM_TUTOR` call made.
+  - [x] Happy path: real retrieval + real `LLM_TUTOR` call (mocked provider) → answer returned,
     `session_events` row shape asserted field-by-field.
-  - [ ] `finish_reason: "length"` (truncated answer) is logged, not silently treated as complete.
+  - [x] `finish_reason: "length"` (truncated answer) is logged, not silently treated as complete.
 
-- [ ] **Task 6 — Config + register/tracker close-out**
-  - [ ] New `Settings` fields: `tutor_qa_max_questions_per_session`, `tutor_qa_top_k`,
+- [x] **Task 6 — Config + register/tracker close-out**
+  - [x] New `Settings` fields: `tutor_qa_max_questions_per_session`, `tutor_qa_top_k`,
     `tutor_qa_relevance_threshold`, `tutor_qa_max_answer_tokens` — all with reasoned (not
     measured) defaults, stated as such in each field's description.
-  - [ ] `docs/DEFECT-REGISTER.md`: update D149's disposition from "registered, not fixed" to
-    closed/superseded by this story, or open a fresh entry if D149's exact wording doesn't fit a
-    clean close — decide during implementation, not pre-committed here.
-  - [ ] `docs/dev4-tracker.md`: this story doesn't fit the existing Sprint/BR sections cleanly
+  - [x] `docs/DEFECT-REGISTER.md`: D149 turned out not to exist in this file at all yet — it only
+    lives on the still-unmerged `bug-resolution/br-5-slide-transition-pause` branch (PR #182).
+    Registered fresh as **D152** instead of editing a row that isn't here, cross-referencing D149
+    by name/branch/PR so whoever merges #182 can reconcile rather than collide.
+  - [x] `docs/dev4-tracker.md`: this story doesn't fit the existing Sprint/BR sections cleanly
     (it's Phase 2, cross-module) — add a new "Phase 2" section rather than forcing it into an
     ill-fitting existing one, matching this file's own established pattern of adding sections
     rather than overloading old ones.
@@ -245,8 +253,96 @@ by an explicit per-session cap, not silence and not an unbounded LLM bill.
 - `apps/api/app/modules/assessment/schemas.py` / `router.py` / `service.py` — new
   functions/models, existing files, no new module.
 - No `packages/shared` contract change (REST, not WS — see "out of scope").
-- No Supabase migration — `chunks.chapter_id`/`book_id`/`embedding` and `session_events` all
-  already exist.
+- **One new Supabase migration** (`20260905000000_match_tutor_chunks_rpc.sql`) — correcting an
+  earlier draft of this section, which claimed none was needed. `chunks.chapter_id`/`book_id`/
+  `embedding` and `session_events` all already exist and needed no schema change, but the pgvector
+  cosine-similarity top-K search itself needed a new Postgres function
+  (`match_tutor_chunks`) — no existing RPC did this. Function only, no new tables/columns, no
+  change to any applied migration.
+- `apps/api/app/providers/base.py` / `providers/llm/openai.py` — additive only:
+  `LLMProvider.complete_with_meta()` (new, concrete-with-safe-default, not abstract) and
+  `_price_tokens()` (pure helper extracted from `_maybe_accumulate_cost`, same behavior). `complete()`
+  and `complete_structured()` are byte-for-byte unchanged.
+
+## Dev Agent Record
+
+### Agent Model Used
+
+Claude Sonnet 5 (claude-sonnet-5), 2026-09-04.
+
+### Debug Log References
+
+- Investigated before writing any code, not assumed: `LLMProvider.complete()`'s real signature
+  only returns `str` — no `finish_reason`, no token counts — which AC6/Scale & Load Q2 need.
+  Rather than fabricate a cost estimate or silently drop the promise, added
+  `complete_with_meta()` as a new, additive method (concrete-with-safe-default on the base class,
+  so no other current or future provider is forced to implement it — preserves the factory's own
+  "adding a vendor is a pure addition, zero node-code changes" promise). Extracted `_price_tokens()`
+  from `_maybe_accumulate_cost` so both the lesson-ceiling path and this new lesson_id-free path
+  share one pricing implementation, not two that could drift.
+- Investigated the actual schema before designing retrieval, not assumed: confirmed
+  `lessons.chapter_id` exists (`20260803000000_chapters_book_scoped.sql`, nullable FK) and
+  `chunks.book_id`/`embedding vector(1536)` with an HNSW index already exist
+  (`20260625000000_chunks_inline_embedding.sql`) — no new columns needed, only a new RPC function
+  for the actual similarity search (no prior RPC did this).
+- Investigated the real frontend contract before designing the response shape: read
+  `AskTutorPanel.tsx` and `assessment.ts`'s `submitTutorQuestion()` stub directly (fetched from
+  the still-open PR #182 branch) rather than trusting D149's prose description — confirmed the
+  exact field names (`segment_id`, `question_text`, `audio_position_ms`) and that the stub's own
+  comment states the call site needs zero changes when swapped for a real call, which shaped this
+  story's explicit "frontend wiring is out of scope, contract is fully specified" boundary.
+- Investigated the FSM impact before assuming "no new state" was safe, not just repeating the
+  email exchange with Dev 2: read `process_attention_signal` directly and confirmed the
+  fatigue-trigger block only executes inside an `attention_signal` message's own handler (no
+  background timer) — so a paused Ask-Tutor session (during which the frontend already stops
+  sending signals) cannot falsely trigger a fatigue intervention. Zero `tutor/` code touched.
+- Test harness bug found and fixed while writing tests, not shipped: the first version of
+  `_supabase_mock()`'s `table_side_effect` constructed a FRESH `MagicMock()` for `"session_events"`
+  on every call, so the real code's insert and the test's own read-back assertion saw two
+  different mock instances — 3 tests failed with `AttributeError`/`call_args is None` until fixed
+  to cache one shared instance per table name.
+- Full `apps/api/tests` unit suite re-run (excluding the same pre-existing broken-environment/live-API
+  files as the BR-5 session — `test_llm_provider_smoke.py` added to that list, confirmed via
+  `git stash` to fail identically without this story's changes): 35 failed / 2278 passed (was
+  2252) — same 35 pre-existing failures both times, +26 new tests all passing, zero regressions.
+  `ruff check`/`ruff format --check` clean on every touched file; `mypy` clean on all 6 touched
+  implementation files (`service.py`, `router.py`, `schemas.py`, `providers/llm/openai.py`,
+  `providers/base.py`, `config.py`).
+
+### Completion Notes List
+
+- AC1–AC7 all met. New endpoint + service function + 26 tests (17 endpoint-level, 9
+  provider-level), all external dependencies (Supabase, Redis, embeddings provider, LLM provider)
+  mocked — no real network/DB call anywhere.
+- `docs/DEFECT-REGISTER.md`: registered fresh as **D152** rather than editing D149 (which turned
+  out not to exist on `main` at all — still only on unmerged PR #182) — cross-references D149 by
+  name/branch/PR explicitly so whoever merges #182 can reconcile rather than collide.
+- `docs/dev4-tracker.md`: new "Phase 2 — Post-MVP Features" section added (didn't fit the
+  numbered-sprint or Bug-Resolution sections), P2-1 marked Completed, dashboard/header reconciled
+  (37/49).
+- Two AC-text corrections made during implementation, not silently reworded: AC1's "404/403"
+  corrected to "404 for both, never 403" (SEC-006 — there's no separate `lesson_id` to cross-check
+  the way `grade_quiz` does); AC5's `.complete(...)` corrected to `.complete_with_meta(...)`.
+- **Not done in this branch:** the 6-agent `/bmad-code-review` gate CLAUDE.md requires before
+  merge. Implementation, tests, and register/tracker close-out are complete; the adversarial
+  review is the explicit next step, not silently skipped.
+
+### File List
+
+- `apps/api/app/modules/assessment/schemas.py` — `TutorQuestionSubmission`, `TutorQuestionResult`
+- `apps/api/app/modules/assessment/router.py` — `POST /session/{session_id}/questions`
+- `apps/api/app/modules/assessment/service.py` — `answer_tutor_question()`,
+  `_log_tutor_question_event()`
+- `apps/api/app/config.py` — 4 new `Settings` fields (`tutor_qa_*`)
+- `apps/api/app/providers/base.py` — `LLMProvider.complete_with_meta()` (new, concrete-with-default)
+- `apps/api/app/providers/llm/openai.py` — `OpenAILLMProvider.complete_with_meta()`,
+  `_price_tokens()` (extracted), `_maybe_accumulate_cost()` refactored to call it
+- `supabase/migrations/20260905000000_match_tutor_chunks_rpc.sql` — new, `match_tutor_chunks` RPC
+- `apps/api/tests/test_tutor_question_endpoint.py` — new, 17 tests
+- `apps/api/tests/unit/test_complete_with_meta.py` — new, 9 tests
+- `docs/DEFECT-REGISTER.md` — new D152 entry
+- `docs/dev4-tracker.md` — new Phase 2 section, P2-1 entry
+- `docs/stories/4-28-tutor-qa-real-backend.md` — this file
 
 ### References
 

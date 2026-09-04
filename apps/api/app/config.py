@@ -353,6 +353,47 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Tutor Q&A (Story 4-28, Phase 2 P2-1) ────────────────────────────────────
+    # All four defaults below are REASONED, not measured — no real session has
+    # ever asked a question yet (D149 was mocked until this story). Flagged as
+    # candidates for real-data tuning once usage exists (Scale & Load Q2).
+    tutor_qa_max_questions_per_session: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Per-session cap on tutor questions, enforced via Redis INCR/EXPIRE "
+            "(session:{id}:tutor_question_count). Past it: explicit decline, no "
+            "embedding/LLM call made. Reasoned default (bounds worst-case "
+            "per-session Q&A spend at 10x one question's cost), not yet "
+            "calibrated against real session data."
+        ),
+    )
+    tutor_qa_top_k: int = Field(
+        default=5,
+        ge=1,
+        description="Top-K chunks retrieved per question via match_tutor_chunks RPC.",
+    )
+    tutor_qa_relevance_threshold: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum cosine-similarity score (of the best retrieved chunk) required "
+            "to attempt an LLM_TUTOR answer. Below this, the question is declined "
+            "gracefully with no LLM call — never answered from the model's general "
+            "knowledge. Reasoned default, not yet calibrated against real questions."
+        ),
+    )
+    tutor_qa_max_answer_tokens: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "max_tokens cap on the LLM_TUTOR completion — bounds worst-case "
+            "per-question cost directly (this story's substitute for a dedicated "
+            "cost-ceiling subsystem; see Story 4-28 Scale & Load Q2)."
+        ),
+    )
+
     # ── CES weights (PRD §11) ─────────────────────────────────────────────────
     ces_weight_quiz: float = Field(default=0.35, ge=0.0, le=1.0)
     ces_weight_teachback: float = Field(default=0.25, ge=0.0, le=1.0)

@@ -26,6 +26,8 @@ __all__ = [
     "SessionCreate",
     "SessionCreated",
     "SessionCompleted",
+    "TutorQuestionSubmission",
+    "TutorQuestionResult",
 ]
 
 
@@ -200,3 +202,28 @@ class ConsentRecord(BaseModel):
     consent_type: str
     policy_version: str
     consented_at: str | None = None
+
+
+# ── Tutor Q&A schemas (Story 4-28, Phase 2 P2-1, closes D149) ──────────────────
+#
+# Field names match apps/web/src/lib/assessment.ts's SubmitTutorQuestionPayload/
+# SubmitTutorQuestionResult exactly (D149's currently-mocked frontend stub) —
+# so swapping the frontend's stub body for a real api.post(...) call needs no
+# payload-shape translation on either side.
+
+
+class TutorQuestionSubmission(BaseModel):
+    """Request body for POST /assessment/session/{session_id}/questions."""
+
+    segment_id: str
+    question_text: str = Field(min_length=1, max_length=2000)
+    audio_position_ms: int = Field(ge=0)
+
+
+class TutorQuestionResult(BaseModel):
+    """Response — real answer, graceful decline (relevance or rate-cap), or both absent
+    only in the declined case."""
+
+    received: bool = True
+    answer: str | None = None
+    declined: bool = False
