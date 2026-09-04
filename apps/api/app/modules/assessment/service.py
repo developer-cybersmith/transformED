@@ -2068,8 +2068,7 @@ async def answer_tutor_question(
         {
             "role": "user",
             "content": (
-                f"Lesson excerpts:\n{context_text}\n\n"
-                f"Student question: {payload.question_text}"
+                f"Lesson excerpts:\n{context_text}\n\nStudent question: {payload.question_text}"
             ),
         },
     ]
