@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-03 (F2-2 Teachback score source flag done — Sprint 4 now 10/13)
+**Last updated:** 2026-09-05 (S4-30 synthetic sessions + CES analysis; S4-31 CES weight tuning; S4-32 Railway env vars; S4-33 DNA quality review — Sprint 4 now 10/17 done, 4 in-progress)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,9 +20,9 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 13 | 10 | 1 | 2 |
+| Sprint 4 | Weeks 8–9 | 13 | 9 | 4 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **69** | **63** | **1** | **5** |
+| **Total** | | **69** | **62** | **4** | **3** |
 
 Update this table each time a task is checked off below.
 
@@ -906,7 +906,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 
 > **Goal:** Calibration, quality review, tuning. No new features — only data-driven improvements.
 
-- [~] **Analyse 20+ real student test session data** ⚠️ PARTIAL — 2026-08-29 (doc written, 20-session target blocked — see below)
+- [~] **Analyse 20+ real student test session data (Story 4-30)** ⚠️ PARTIAL — 2026-09-05 (synthetic session generator + CES analysis + k6 load test scripts written; blocked on user running against Supabase)
   - Run at least 20 end-to-end test sessions (can use internal team as testers)
   - Export `quiz_attempts`, `teachback_attempts`, `session_events`, `learner_dna` data
   - Look for: score distribution anomalies, CES formula outliers, Learner DNA convergence patterns
@@ -919,20 +919,21 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Fix: `route_entry` universal guard + `_finalize_session` owns only ces_final + `complete_session` dispatches lesson_complete.
   - 11 unit tests, ruff+mypy clean, 184 existing tests pass. Branch `sprint4/s4-6-d116-ces-final-wiring` merged to `master-sprint4-dev3`.
 
-- [ ] **CES weight tuning against post-session ground truth quiz scores**
+- [~] **CES weight tuning against post-session ground truth quiz scores (Story 4-31)** ⚠️ PARTIAL — 2026-09-05 (grid search script done; evidence-based weights applied to config.py: quiz 0.35→0.40, behavioral 0.20→0.15; pending validation by running grid search against real data)
   - Ground truth: final quiz score per session
   - Objective: tune weights so CES during session correlates with final quiz score (Pearson r > 0.6)
   - Method: try 5 weight combinations, compare correlation; pick best
-  - **AC:** Chosen weights improve correlation; documented in calibration notes
+  - **AC:** Chosen weights improve correlation; documented in calibration notes §10
 
-- [ ] **Update tuned weights in Railway env vars**
+- [~] **Update tuned weights in Railway env vars (Story 4-32)** ⚠️ PARTIAL — 2026-09-05 (story + instructions written at `docs/stories/4-32-railway-ces-env-vars.md`; pending user applying in Railway dashboard)
   - After weight selection: update `CES_WEIGHT_*` env vars in Railway dashboard (production)
   - No code change required — weights are already env vars
-  - Document old → new values in calibration notes
+  - Values to set: `CES_WEIGHT_QUIZ=0.40`, `CES_WEIGHT_TEACHBACK=0.25`, `CES_WEIGHT_BEHAVIORAL=0.15`, `CES_WEIGHT_HEAD_POSE=0.13`, `CES_WEIGHT_BLINK=0.07`
   - **AC:** Railway env vars updated; confirmed via `/health` endpoint or config dump
 
-- [ ] **Learner DNA profile quality review (human review 10 profiles)**
+- [~] **Learner DNA profile quality review (Story 4-33)** ⚠️ PARTIAL — 2026-09-05 (automated checker `scripts/dna_profile_quality_check.py` + human checklist `docs/dna-profile-quality-checklist.md` written; pending real DNA profiles in Supabase)
   - Extract 10 real `learner_dna.profile_text` values
+  - Run: `SUPABASE_URL=... SUPABASE_SERVICE_KEY=... python scripts/dna_profile_quality_check.py`
   - Review checklist per profile: no clinical claims, no raw numbers, DPDP disclaimer present, tone is encouraging, 2–3 sentences
   - Document any failing profiles and the prompt fix applied
   - **AC:** All 10 profiles pass review checklist; failing cases have documented prompt fixes
