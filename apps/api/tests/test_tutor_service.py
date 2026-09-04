@@ -16,6 +16,7 @@ All tests are ``@pytest.mark.unit`` — no real Redis / state machine. ``asyncio
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, call
 
@@ -72,11 +73,18 @@ def _setup(
     exists: int = 0,
     threshold: float = 0.5,
     can_dispatch: bool = True,
+    segment_index: str | None = None,
 ):
     """Patch the lazy-imported dependencies and return (mock_redis, mock_dispatch).
 
     can_dispatch controls the return value of the Lua-backed _can_intervene_distraction
     guard (D6). Set False to simulate cooldown / max-reached without a real Redis.
+
+    segment_index (BR-2): present only to prove CES computation and the distraction-
+    trigger decision never read it — the real process_attention_signal code path
+    computing `.ces` and the trigger decision never queries this key at all, so varying
+    it between calls (unlike varying nothing, which no test could ever fail on) is what
+    makes a "duration/segment-framing-independence" test genuinely falsifiable.
     """
     mock_redis = AsyncMock()
     mock_redis.lrange = AsyncMock(return_value=lrange_vals)
@@ -89,6 +97,8 @@ def _setup(
     async def _get(key: str):
         if key == "tutor_state:sess-1":
             return "TEACHING"
+        if key == "session:sess-1:segment_index":
+            return segment_index
         return None
 
     mock_redis.get = AsyncMock(side_effect=_get)
@@ -377,6 +387,104 @@ async def test_cesresult_fields(mocker) -> None:
     assert result.ces == pytest.approx(75.733, abs=0.01)
 
 
+# ── BR-2: CES/intervention timing vs. variable narration length (regression lock) ────
+#
+# Story BR-2's audit found compute_ces / process_attention_signal / the fatigue floor /
+# quizzing_node / advance_tutor_state are all wall-clock- or event-driven, with no
+# dependency on segment/narration duration. These tests lock that property in so a future
+# change can't silently reintroduce a duration assumption without a test catching it.
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "segment_index",
+    ["2", "40"],
+    ids=["few-long-segments-so-far", "many-short-segments-so-far"],
+)
+async def test_ces_computation_identical_regardless_of_segment_length(
+    mocker, segment_index
+) -> None:
+    """AC1: CES value AND the distraction-trigger decision are both unaffected by
+    segment/narration-length framing.
+
+    Review finding (6 independent layers, incl. mutation-tested proof from Test Coverage):
+    the original version of this test called process_attention_signal() twice with BYTE-
+    IDENTICAL setup and asserted the (necessarily identical) results equal — a tautology
+    that cannot fail regardless of whether the underlying code depends on segment length,
+    and additionally never reached the trigger-decision branch at all (`lrange_vals` had
+    only 1 entry; the trigger code requires >= 2 — service.py's `if len(history_raw) >= 2`).
+
+    Fixed to match the ALREADY-PROVEN-SOUND AC2/AC3 pattern (Test Coverage mutation-tested
+    AC3 and confirmed it fails when the code is regressed to depend on segment_index):
+    inject a `segment_index` value the mock CAN return, reach the real trigger-decision
+    code path (2 history entries below threshold), and assert BOTH the CES value and the
+    dispatch outcome are identical across two different segment_index framings — this is
+    falsifiable: if a future change added a real read of segment_index into either
+    computation, one of the two parametrized cases would diverge and fail.
+    """
+    from app.modules.tutor.service import process_attention_signal
+
+    # 2 entries, both below threshold=0.5, legacy bare-float format (t=0 for both -> gap_ok
+    # trivially true, same convention as the existing
+    # test_two_below_threshold_no_cooldown_dispatches) -- reaches the real trigger-decision
+    # branch, unlike the single-entry version this replaces.
+    _, mock_dispatch = _setup(
+        mocker, lrange_vals=["0.1", "0.2"], threshold=0.5, segment_index=segment_index
+    )
+
+    result = await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    # CES value: unaffected by segment_index (compute_ces has no such parameter).
+    assert result.ces == _EXPECTED_CES
+    # Distraction-trigger decision: unaffected by segment_index (the trigger-decision code
+    # path never reads it) -- fires identically for both few-long and many-short framings.
+    mock_dispatch.assert_called_once_with(
+        "sess-1", "distraction_detected", payload={"intervention_messages": {}}
+    )
+    assert result.intervention_dispatched is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "t0,t1,cadence,expect_dispatch",
+    [
+        (1000, 998, 5, True),  # 2s real gap, well within 2*5=10s tolerance -> gap_ok, fires
+        (1000, 100, 5, False),  # 900s real gap, far outside 2*5=10s tolerance -> stale, no fire
+    ],
+    ids=["short-real-gap-within-cadence", "long-real-gap-exceeds-cadence"],
+)
+async def test_gap_check_depends_on_real_timestamps_not_segment_framing(
+    mocker, t0, t1, cadence, expect_dispatch
+) -> None:
+    """AC1 (BR-2): the D4 staleness gap-check (`abs(t0-t1) <= 2*cadence`) reacts to the
+    REAL timestamps embedded in ces_history entries, not to any segment/narration-length
+    concept -- this is the one CES mechanism that genuinely reasons about elapsed real
+    time, and per review (Edge Case Hunter) it was the most plausible place to hide a
+    duration assumption, yet had zero dedicated test before this. Uses the real JSON
+    `{"v": float, "t": int}` history format (not the legacy bare-float shortcut every
+    other test in this file uses, which trivially sets t=0 for both entries and never
+    exercises this branch at all)."""
+    from app.modules.tutor.service import process_attention_signal
+
+    history = [
+        json.dumps({"v": 0.1, "t": t0}),
+        json.dumps({"v": 0.2, "t": t1}),
+    ]
+    _, mock_dispatch = _setup(mocker, lrange_vals=history, threshold=0.5)
+    # Override _setup()'s default cadence=5 with this case's value — the later patch wins.
+    settings_mock = _settings_mock(threshold=0.5)
+    settings_mock.ces_cadence_seconds = cadence
+    mocker.patch("app.config.get_settings", return_value=settings_mock)
+
+    await process_attention_signal("sess-1", _VALID_PAYLOAD)
+
+    if expect_dispatch:
+        mock_dispatch.assert_called_once()
+    else:
+        mock_dispatch.assert_not_called()
+    assert compute_ces(_parse_signal(_VALID_PAYLOAD)) == _EXPECTED_CES
+
+
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────
 
 
@@ -516,6 +624,48 @@ async def test_segment_complete_increments_segment_index(mocker) -> None:
     redis.incr.assert_called_once_with("session:sess-9:segment_index")
     redis.expire.assert_any_call("session:sess-9:segment_index", 86_400)
     mock_dispatch.assert_called_once_with("sess-9", "segment_complete")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "simulated_gap_seconds",
+    [0.05, 900.0],
+    ids=["very-short-gap-between-events", "very-long-gap-between-events"],
+)
+async def test_segment_complete_advances_index_regardless_of_elapsed_time(
+    mocker, simulated_gap_seconds
+) -> None:
+    """AC4 (BR-2): two sequential 'segment_complete' events, with a very-short vs. a
+    very-long REAL elapsed gap between them, each advance the index by exactly 1 — no
+    rate-limiting, merging, or gating on elapsed time.
+
+    Review finding (5 independent layers, incl. mutation/behavior analysis from Test
+    Coverage): the original version of this test parametrized over the mocked *return
+    value* of `redis.incr` (never read by the function, never asserted on) instead of
+    elapsed time, so it tested "not gated by a counter value" — true, but not what AC4's
+    text or this story's own Dev Notes specify. `advance_tutor_state`'s segment_complete
+    branch makes no `time.time()` call at all (confirmed by source read), so mocking that
+    function would be inert; the genuine way to exercise "elapsed time between two real
+    calls" is to actually make two sequential calls with a real `asyncio.sleep` between
+    them, with `asyncio.sleep` itself mocked so the test doesn't actually wait 900s.
+    """
+    redis = AsyncMock()
+    mocker.patch("app.core.redis.get_redis", return_value=redis)
+    mock_dispatch = AsyncMock()
+    mocker.patch("app.modules.tutor.state_machine.graph.dispatch_event", mock_dispatch)
+    mock_sleep = mocker.patch("asyncio.sleep", new=AsyncMock())
+
+    from app.modules.tutor.service import advance_tutor_state
+
+    await advance_tutor_state("sess-9", "segment_complete")
+    await asyncio.sleep(simulated_gap_seconds)  # the "gap" under test — mocked, non-blocking
+    await advance_tutor_state("sess-9", "segment_complete")
+
+    # Two real, sequential events -> two increments, two dispatches, regardless of the
+    # simulated gap between them (0.05s or 900s).
+    assert redis.incr.call_count == 2
+    assert mock_dispatch.call_count == 2
+    mock_sleep.assert_awaited_once_with(simulated_gap_seconds)
 
 
 # ── _segment_intervention_messages helper (direct unit coverage) ──────────────

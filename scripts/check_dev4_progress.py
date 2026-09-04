@@ -335,12 +335,25 @@ def _build_checks() -> dict[str, object]:
             "apps/api/app/**/*.py",
             "caption_cue",
         ),
-        # BR-2: CES/intervention timing verified against variable-length narration —
-        # detected by a dedicated test module, not production code (this is a verification task).
-        "br2_ces_timing_variable_narration": lambda: any_file_contains(
-            "apps/api/tests/**/*.py",
-            "variable_length",
-            "narration",
+        # BR-2: CES/intervention timing verified duration-agnostic — a verification task,
+        # detected by its regression-lock tests (no production code changed; the audit found
+        # the architecture already correct). Checks for the actual new test names, not a
+        # placeholder phrase.
+        "br2_ces_timing_variable_narration": lambda: (
+            any_file_contains(
+                "apps/api/tests/test_tutor_service.py",
+                "test_ces_computation_identical_regardless_of_segment_length",
+                "test_gap_check_depends_on_real_timestamps_not_segment_framing",
+                "test_segment_complete_advances_index_regardless_of_elapsed_time",
+            )
+            and any_file_contains(
+                "apps/api/tests/test_s3_45_fatigue_trigger.py",
+                "test_fatigue_floor_depends_on_wallclock_not_segment_count",
+            )
+            and any_file_contains(
+                "apps/api/tests/test_tutor_graph.py",
+                "test_quizzing_node_deadline_unaffected_by_preceding_segment_count",
+            )
         ),
         # BR-3: WS-side audio-chunk capture/dispatch scaffold for voice teach-back.
         "br3_voice_teachback_stt": lambda: any_file_contains(

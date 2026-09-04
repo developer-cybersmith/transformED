@@ -3,10 +3,10 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-29 (dashboard count corrected — Sprint 4 was showing 4/5, actual per-task labels are 3 Completed/6 Partial; Bug Resolution — Feature Sprint 2 added: BR-1..BR-4)
-**Overall status:** 35/47 Completed · 6 Partial · 6 Not Started
+**Last updated:** 2026-08-31 (BR-2 CES/intervention-timing verification closed — audit found no bug, added regression-lock tests; BR-1's Completed status lives on its own not-yet-merged branch/PR, not reflected in this branch's dashboard row below)
+**Overall status:** 36/47 Completed · 6 Partial · 5 Not Started (this branch — excludes BR-1, pending PR #162)
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
-**Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
+**Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial). **Known gap (raised in BR-2's review):** the script's own printed total (currently 32/43) is narrower than this dashboard's 36/47 because its `CHECKS` dict has no entries for 4 tasks that are genuinely `[Completed]` but only manually tracked in this file's prose (`notifications_endpoint`, `intervention_recovery`, `tutor_router_impl`, `behavioral_score_syncb` — all Sprint 3/4 tasks landed via their own PRs). The dashboard's 36/47 is the correct total (verified: the script's write is a no-op here, confirming every task IT knows how to check is already labeled correctly); "reconcile to the script's number" would undercount real, shipped work rather than fix a drift. Adding `CHECKS` entries for those 4 tasks is a separate, small follow-up, not done here.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
 
@@ -23,8 +23,8 @@
 | Sprint 4 | Weeks 8–9 | 9 | 3 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| Bug Resolution | Feature Sprint 2 | 4 | 0 | 0 | 4 |
-| **Total** | | **47** | **35** | **6** | **6** |
+| Bug Resolution | Feature Sprint 2 | 4 | 1 | 0 | 3 |
+| **Total** | | **47** | **36** | **6** | **5** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -762,11 +762,45 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** TBD in story file — captured before implementation per the Story-First Gate.
 
 <!-- CHECK:br2_ces_timing_variable_narration -->
-- [Not Started] **Verify tutor intervention/CES timing still functions correctly with variable-length human-recorded narration**
-  - Confirm the 5s CES window, cooldown timers, and quiz/Q&A deadline math (Learner Mode tier durations)
-    don't assume a fixed segment length now that narration length varies per human recording.
-  - Story: `docs/stories/br-2-ces-timing-variable-narration.md` (to be created)
-  - **AC:** TBD in story file.
+- [Completed] **Verify tutor intervention/CES timing still functions correctly with variable-length narration** ✅ 2026-08-31
+  - **Audit performed 2026-08-31** (before writing code): every timing mechanism Dev 4 owns — CES
+    window/history, distraction cooldown/cap, fatigue-once floor, intervention timeout, quiz/Q&A
+    deadline, `segment_complete`→`segment_index` advance — is wall-clock- or event-driven, never
+    derived from segment/narration length. Repo-wide grep for any char-count→duration conversion in
+    `apps/api/app/modules/tutor/` or `core/websocket.py`: zero hits. **No timing bug found** on Dev 4's
+    side; real segment length variance (1,351–4,069 chars, ~1.2–3.7 min/segment per Story 3-42/3-45)
+    was already architecturally safe. Story's contribution: close the *verification* gap — add
+    regression-lock tests proving this, so a future change can't silently reintroduce a duration
+    assumption. **Historical note, corrected during review (Story Quality caught the original citation
+    was stale):** a sibling frontend component (`AudioTimeline.tsx`) once had exactly this class of bug
+    — already fixed over a month earlier via **Story 2-33** (PR #106, 2026-07-29), verified directly
+    against `docs/dev2-sprint-tracker.md`. Not a live risk; no action needed on Dev 2's side.
+  - Story: `docs/stories/br-2-ces-timing-variable-narration.md`
+  - **Regression-lock tests added (no production code changed — verification only), rewritten during
+    review after 6 independent agents + mutation-testing proof found the first two were tautological
+    (AC1 called the same function twice with byte-identical setup and never reached the trigger-decision
+    branch; AC4 varied a mocked return value the code never reads instead of real elapsed time):**
+    `test_ces_computation_identical_regardless_of_segment_length` ×2 params (`test_tutor_service.py`),
+    `test_gap_check_depends_on_real_timestamps_not_segment_framing` ×2 params (`test_tutor_service.py`),
+    `test_segment_complete_advances_index_regardless_of_elapsed_time` ×2 params (`test_tutor_service.py`),
+    `test_fatigue_floor_depends_on_wallclock_not_segment_count` ×2 params (`test_s3_45_fatigue_trigger.py`),
+    `test_quizzing_node_deadline_unaffected_by_preceding_segment_count` ×2 params (`test_tutor_graph.py`).
+  - **Found while adding these tests, registered not fixed here:** **D143** — 3 pre-existing
+    `test_tutor_graph.py` fatigue tests fail in isolation with the exact D136 symptom
+    (`get_settings`/`get_supabase` import-order binding), reached via a SECOND call site
+    (`graph.py`'s own direct `get_supabase()`, not just `pubsub.py::_sessions_awaiting`) —
+    confirms D136's root cause is repo-wide, not file-specific. Confirmed via `git stash`
+    unrelated to this story's changes.
+  - **Also found in review, registered not fixed here:** **D144** — the tutor FSM's `MemorySaver`
+    checkpointer (`state_machine/graph.py`) is never evicted per session, unlike the content pipeline's
+    own established `_discard_checkpoint_thread` pattern for the identical risk CLAUDE.md's LangGraph
+    section already calls out. Unbounded per-process growth, out of this verification-only story's
+    scope — see D144 for full detail.
+  - **AC MET:** AC1–AC5 all satisfied — audit table in the story file + 10 new passing test cases
+    across 3 files (2 rewritten + 1 added during review after 6 agents found the original 2 were
+    tautological); full regression (`test_tutor_service.py` + `test_tutor_graph.py` +
+    `test_s3_45_fatigue_trigger.py` + `test_websocket_session.py`): 214 passed, only the 3
+    pre-existing/unrelated D143 failures (byte-identical before/after via `git stash`); `ruff` clean.
 
 <!-- CHECK:br3_voice_teachback_stt -->
 - [Not Started] **Voice teach-back: real-time mic capture integration in live session flow** — Low priority
