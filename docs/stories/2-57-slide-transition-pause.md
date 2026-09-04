@@ -69,6 +69,41 @@ browser-voice overlay (S2-34) — a fix that only covers the primary `<audio>` p
 not work in either fallback mode, the same class of gap this codebase's own binding rules call out
 for silent truncation.
 
+## Addendum — Skip-Pause Checkbox + Ask-Tutor Intervention Button
+
+Added 2026-09-03 after the user flagged a real UX risk in the original design (a segment with
+many short slides pausing at every boundary could read as choppy) and asked for two additions,
+both confirmed with the user before scoping:
+
+**"Skip pause for this segment" checkbox.** A per-segment opt-out — when checked, AC1's
+auto-pause is suppressed for the remainder of the CURRENT segment only; resets to unchecked on
+every new segment (a student who found one segment's pacing fine but another's choppy isn't stuck
+with a lesson-wide setting). Pure client state (`skipTransitionPauseForSegment: boolean` on
+`usePlayerStore`, reset alongside the other per-segment fields `advanceSegment()` already resets).
+No backend involvement.
+
+**Ask-Tutor intervention button.** Confirmed with the user: this is a manually-triggered pause —
+available at any time during playback, not tied to a slide boundary — that lets the student pause
+and submit a free-text question when they don't understand something. **Confirmed scope for v1**
+(the user chose this explicitly, having been told the real gap): there is no live AI Q&A backend
+anywhere in this codebase today — `CLAUDE.md` lists "Tutor Q&A" under Phase 2, not built, and
+every existing intervention message is pre-generated at build time specifically because "no GPT
+call at intervention time" is a hard rule. **v1 is capture-and-log only** — the question is stored
+with segment/timestamp context, the student sees "noted — we'll follow up," and there is no live
+answer. **Confirmed ownership split**: the real backend endpoint belongs in Dev 3's assessment
+module (`session_events` already exists and is exactly shaped for this — `dna_growth.py` already
+writes similarly-typed rows there, so no new migration is needed, just a new `event_type` and one
+new endpoint) — **this story builds the frontend against a documented stub, mirroring the exact
+pattern `payment.service.ts::checkAccess` already established for D136** (Razorpay's missing
+`GET /api/payments/access`): a service function that resolves a mock value with a comment citing
+the register entry, so the call site never changes when the real endpoint lands.
+
+Mechanically, this reuses the same `pauseReason` design as the slide-transition pause
+(`pauseReason: 'intervention'`), with two differences: (1) it has no auto-resume timer — the
+student must explicitly press Play when ready, same as any manual pause; (2) it opens a text-input
+panel (new component, mirrors `TeachBackModal.tsx`'s existing typed-response pattern) for the
+question itself.
+
 ## Acceptance Criteria
 
 - **AC1** — Crossing a within-segment slide boundary during normal forward playback pauses
@@ -98,6 +133,24 @@ for silent truncation.
   boundary as the CURRENT/expected behavior needs updating to reflect the new intended behavior,
   named explicitly in the PR, not silently changed).
 - **AC9** — `tsc --noEmit` and targeted `eslint` clean; full frontend suite green.
+- **AC10** — A "skip pause for this segment" checkbox, when checked, suppresses AC1's auto-pause
+  for every remaining slide boundary in the current segment; resets to unchecked when
+  `currentSegmentIndex` changes. Does not affect the manual Ask-Tutor button (AC11-13) — a student
+  can skip auto-pauses and still manually ask a question at any time.
+- **AC11** — An always-available "Ask Tutor" button pauses playback at any point during `PLAYING`
+  (not gated on a slide boundary), sets `pauseReason: 'intervention'`, and opens a text-input
+  panel. No auto-resume timer — playback stays paused until the student explicitly presses Play.
+- **AC12** — Submitting a question calls a new `tutorQuestionService.submitQuestion()` (mirrors
+  `paymentService.checkAccess()`'s stub pattern exactly): resolves a mock `{ received: true }`
+  with a comment citing this story's new register entry (the real
+  `POST` endpoint does not exist on the backend yet — confirmed by grep, no route registers it in
+  any module). Student sees a "noted — we'll follow up" confirmation on the mocked response; the
+  call site is written so swapping the stub for a real `api.post(...)` call requires no caller
+  changes.
+- **AC13** — The submitted payload shape (`segment_id`, `question_text`, `audio_position_ms`) is
+  documented in this story's References section as the proposed contract for Dev 3's real
+  endpoint — not guessed silently, so the eventual real implementation doesn't have to
+  reverse-engineer the frontend's assumption.
 
 ## Scale & Load
 
@@ -134,6 +187,21 @@ for silent truncation.
   short slides could read as choppy. Flagged for the team to sanity-check against a real
   multi-slide segment before/shortly after this ships — not a reason to hold the story, since the
   mechanism itself (a single named constant) makes tuning or disabling trivial later.
+
+## Proposed Contract for Dev 3 (D149 — not built)
+
+`POST /api/assessment/sessions/{session_id}/questions` (path/module a suggestion, Dev 3's call):
+
+```json
+// Request
+{ "segment_id": "seg_3", "question_text": "string, student-typed", "audio_position_ms": 41200 }
+// Response
+{ "received": true }
+```
+
+Proposed storage: one `session_events` row, `event_type: "tutor_question"`, payload
+`{segment_id, question_text, audio_position_ms}` — matches the existing typed-row convention
+`dna_growth.py` already uses for `dna_update` events, no new migration.
 
 ## References
 
