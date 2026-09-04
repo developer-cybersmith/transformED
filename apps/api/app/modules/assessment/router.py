@@ -21,6 +21,7 @@ from app.dependencies import ApprovedUser, CurrentUser
 from app.modules.assessment.schemas import (
     ConsentCreate,
     ConsentRecord,
+    LearnerContext,
     OnboardingDiagnosticSubmission,
     OnboardingResult,
     QuizAnswer,
@@ -353,6 +354,31 @@ async def submit_onboarding_diagnostic(
         logger.warning("onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc)
 
     return result
+
+
+@router.get(
+    "/session/{session_id}/learner-context",
+    response_model=LearnerContext,
+    summary="Get learner DNA + session signals for tutor prompt injection (Story F2-1)",
+)
+async def get_learner_context_endpoint(
+    session_id: str,
+    current_user: CurrentUser,
+) -> LearnerContext:
+    """Return combined Learner DNA and current session engagement for the tutor state machine.
+
+    Internal endpoint called by Dev 4's tutor module to personalise LLM responses.
+    IDOR-protected: returns 404 if session_id belongs to a different user.
+    Pure data aggregation — no LLM calls, no cost tracking.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import get_learner_context
+
+    return await get_learner_context(
+        session_id=session_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(
