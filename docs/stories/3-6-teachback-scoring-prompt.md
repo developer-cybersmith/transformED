@@ -183,3 +183,11 @@ Key observations:
 4. No banned language: no IQ/EQ/SQ, no clinical/diagnostic terms. Test uses word-boundary regex to avoid false positives on "technique".
 5. Signature: keyword-only args on all public functions — prevents positional argument mistakes.
 6. Sprint boundary: score_teachback() is intentionally not wired into service.py yet — Sprint 1 task per story notes.
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | Single LLM call per invocation via `settings.llm_mini`. Input bounded by `response_text` (no per-call cap enforced here — the `## Scale & Load` section notes this as a future hardening item). `@with_retry(max_attempts=3)` bounds retry. No Supabase reads/writes in `prompts.py` (DB access lives in the calling endpoint, story 3-9). No unbounded operations. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.
