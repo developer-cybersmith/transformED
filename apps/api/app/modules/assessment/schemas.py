@@ -136,7 +136,7 @@ class TeachbackSubmission(BaseModel):
     is_skip: bool = Field(default=False)
 
     @model_validator(mode="after")
-    def _validate_response_or_skip(self) -> "TeachbackSubmission":
+    def _validate_response_or_skip(self) -> TeachbackSubmission:
         # D98 (was D80): a single space is not a valid response. Only enforce when
         # is_skip=False; on skip, response_text is stored as "" (TEXT NOT NULL accepts "").
         if not self.is_skip and not self.response_text.strip():

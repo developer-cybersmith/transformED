@@ -168,8 +168,9 @@ def test_teachback_result_has_score_source_field() -> None:
 @pytest.mark.unit
 def test_teachback_result_score_source_is_literal() -> None:
     """AC2: score_source accepts only 'llm', 'fallback', 'skipped'."""
-    from app.modules.assessment.schemas import TeachbackResult
     import pydantic
+
+    from app.modules.assessment.schemas import TeachbackResult
 
     # valid values
     for val in ("llm", "fallback", "skipped"):
@@ -212,6 +213,7 @@ def test_teachback_submission_has_is_skip_field() -> None:
 def test_teachback_submission_blank_text_raises_without_skip() -> None:
     """AC3: blank response_text still raises 422 when is_skip=False."""
     import pydantic
+
     from app.modules.assessment.schemas import TeachbackSubmission
 
     with pytest.raises((pydantic.ValidationError, ValueError)):
@@ -269,7 +271,11 @@ async def test_llm_path_returns_score_source_llm() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_st.return_value = _LLM_RESULT
         result = await grade_teachback(
@@ -299,7 +305,11 @@ async def test_llm_path_inserts_score_source_llm_to_db() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_st.return_value = _LLM_RESULT
         await grade_teachback(
@@ -335,7 +345,11 @@ async def test_fallback_path_returns_score_source_fallback() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_st.side_effect = Exception("LLM service down")
         result = await grade_teachback(
@@ -365,7 +379,11 @@ async def test_fallback_path_inserts_score_none() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_st.side_effect = Exception("LLM service down")
         await grade_teachback(
@@ -399,7 +417,11 @@ async def test_fallback_path_logs_at_warning_not_error() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.modules.assessment.service.logger") as mock_logger,
     ):
         mock_st.side_effect = Exception("timeout")
@@ -415,8 +437,12 @@ async def test_fallback_path_logs_at_warning_not_error() -> None:
             is_skip=False,
         )
 
-    assert any("fallback" in str(a) for a in warning_calls), "fallback LLM error must log at WARNING"
-    assert not any("fallback" in str(a) for a in error_calls), "fallback LLM error must NOT log at ERROR"
+    assert any("fallback" in str(a) for a in warning_calls), (
+        "fallback LLM error must log at WARNING"
+    )
+    assert not any("fallback" in str(a) for a in error_calls), (
+        "fallback LLM error must NOT log at ERROR"
+    )
 
 
 @pytest.mark.unit
@@ -432,7 +458,11 @@ async def test_fallback_exact_feedback_string() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_st.side_effect = Exception("LLM service down")
         result = await grade_teachback(
@@ -463,7 +493,11 @@ async def test_skip_exact_feedback_string() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         result = await grade_teachback(
             session_id=_SESSION_ID,
@@ -476,7 +510,9 @@ async def test_skip_exact_feedback_string() -> None:
         )
         mock_st.assert_not_called()
 
-    assert result.feedback == "", f"Expected empty string for skip feedback, got: {result.feedback!r}"
+    assert result.feedback == "", (
+        f"Expected empty string for skip feedback, got: {result.feedback!r}"
+    )
 
 
 # ── AC6 — Skip path ───────────────────────────────────────────────────────────
@@ -495,7 +531,11 @@ async def test_skip_path_returns_score_source_skipped() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         result = await grade_teachback(
             session_id=_SESSION_ID,
@@ -525,7 +565,11 @@ async def test_skip_path_inserts_score_none() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock),
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         await grade_teachback(
             session_id=_SESSION_ID,
@@ -556,7 +600,11 @@ async def test_skip_path_no_posthog_event() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock),
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event") as mock_capture,
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         await grade_teachback(
             session_id=_SESSION_ID,
@@ -586,7 +634,11 @@ async def test_attempt_number_correct_for_skip_path() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock),
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         await grade_teachback(
             session_id=_SESSION_ID,
@@ -616,7 +668,11 @@ async def test_attempt_number_correct_for_fallback_path() -> None:
         patch("app.modules.assessment.service.score_teachback", new_callable=AsyncMock) as mock_st,
         patch("app.modules.assessment.service.get_settings", return_value=settings),
         patch("app.modules.assessment.service.capture_event"),
-        patch("app.modules.assessment.service.get_analytics_consent", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.modules.assessment.service.get_analytics_consent",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_st.side_effect = Exception("LLM down")
         await grade_teachback(
@@ -728,10 +784,10 @@ def test_guard_no_hardcoded_weights_in_ces() -> None:
     src = Path(__file__).resolve().parents[2] / "app" / "modules" / "assessment" / "ces.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
-    _KNOWN_WEIGHT_LITERALS = {0.35, 0.25, 0.20, 0.12, 0.08, 0.05, 0.04}
+    _known_weight_literals = {0.35, 0.25, 0.20, 0.12, 0.08, 0.05, 0.04}
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, float):
-            assert node.value not in _KNOWN_WEIGHT_LITERALS, (
+            assert node.value not in _known_weight_literals, (
                 f"Hardcoded CES weight literal {node.value!r} found in ces.py — "
                 "use settings fields instead"
             )

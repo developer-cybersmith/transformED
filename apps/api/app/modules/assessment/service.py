@@ -819,6 +819,9 @@ async def grade_teachback(
             score_source="fallback",
         )
 
+    # Reached only when _llm_failed is False (fallback block above returns early).
+    assert result is not None  # noqa: S101 — mypy type narrowing; runtime unreachable if fallback
+
     # Step 7 — Compute CES contribution
     # CES SCALE CONTRACT (communicate to Dev 4):
     # ces_contribution is on the 0-100 POINT scale where ces_weight_teachback (0.25)
