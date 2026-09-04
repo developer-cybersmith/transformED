@@ -188,6 +188,54 @@ def test_upload_lesson_202_shape(client: TestClient) -> None:
 
 
 @pytest.mark.unit
+def test_upload_lesson_retries_a_transient_storage_write_error(client: TestClient) -> None:
+    """D153: found live on load-test runs #9/#10 -- 100% of large (~19.7MB)
+    book uploads failed with `httpcore.WriteError: EOF occurred in violation
+    of protocol (_ssl.c:2427)` (a dropped TLS connection mid-upload), while
+    every small-file upload succeeded. Root cause: the storage upload call
+    was a bare, undecorated network call -- unlike every other network call
+    in this codebase, it had zero retry protection, so one transient
+    connection drop immediately failed the whole request with a 500.
+    `httpx.WriteError` is already a retryable transient error per
+    `core/retry.py`'s existing classification (`httpx.NetworkError`'s
+    subclass) -- this asserts a request that hits it twice then succeeds on
+    the third attempt still returns 202, not 500."""
+    import httpx
+
+    from app.dependencies import get_arq_redis, get_current_user, get_settings
+    from app.main import app
+
+    sb_mock = _make_supabase_mock()
+    call_count = 0
+
+    def _flaky_upload(**_kwargs: Any) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise httpx.WriteError("EOF occurred in violation of protocol (_ssl.c:2427)")
+        return MagicMock()
+
+    sb_mock.storage.from_.return_value.upload.side_effect = _flaky_upload
+    arq_mock = _make_arq_mock()
+
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_arq_redis] = lambda: arq_mock
+    app.dependency_overrides[get_settings] = _approved_settings
+
+    try:
+        with patch("app.modules.content.router.get_supabase", return_value=sb_mock):
+            resp = client.post(
+                "/api/content/lessons",
+                files={"file": ("chapter1.pdf", io.BytesIO(MINIMAL_PDF), "application/pdf")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 202
+    assert call_count == 3
+
+
+@pytest.mark.unit
 async def test_upload_lesson_concurrent_requests_do_not_serialize_on_blocking_io() -> None:
     """D138: `upload_lesson` calls the SYNCHRONOUS supabase-py client directly
     on the event loop (no `asyncio.to_thread`) -- on a single-process uvicorn,
