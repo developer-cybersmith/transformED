@@ -306,6 +306,40 @@ async def test_sarvam_synthesize_request_includes_configured_pace() -> None:
     assert sent_json["pace"] == 0.85
 
 
+async def test_sarvam_synthesize_request_pins_an_explicit_model() -> None:
+    """D148: the real request body never sent a `model` field, so it silently
+    rode Sarvam's server-side default -- which had drifted to `bulbul:v3`
+    while `sarvam_voice_id`'s configured default was still "anushka" (D67,
+    valid only for `bulbul:v2`), breaking every real narration call. Pinning
+    `model` explicitly means a future server-side default change can never
+    silently re-break this again, regardless of which speaker is configured.
+
+    Pinned to `bulbul:v3`, not `v2`: confirmed via a live call while fixing
+    this (2026-09-04) that Sarvam has since deprecated `bulbul:v2` outright
+    (`400 invalid_request_error: "Model 'bulbul:v2' has been deprecated"`) --
+    even the originally-diagnosed fix would already be wrong today."""
+    from app.providers.tts.sarvam import SarvamTTSProvider
+
+    mock_response = _make_sarvam_json_response(num_clips=1, frames_per_clip=10)
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.return_value.sarvam_api_key = "test-key"
+        mock_settings.return_value.sarvam_narration_pace = 0.85
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = SarvamTTSProvider()
+        await provider.synthesize("Hello world", "priya")
+
+    sent_json = mock_client.post.call_args.kwargs["json"]
+    assert sent_json.get("model") == "bulbul:v3"
+
+
 # ---------------------------------------------------------------------------
 # AzureTTSProvider
 # ---------------------------------------------------------------------------
