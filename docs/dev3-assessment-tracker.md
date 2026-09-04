@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-01 (S4-13 DNA-personalized CES threshold done; S4-12 D137 reassessment EMA blend done — Sprint 4 now 8/11)
+**Last updated:** 2026-09-05 (process debt: Scale & Load sections + 6-agent Hunter rows added to all Sprint 2 & 3 Dev 3 stories; PRs opened on `process-debt/sprint2-scale-load-sections` and `process-debt/sprint3-scale-load-sections`)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
