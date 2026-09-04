@@ -33,7 +33,7 @@ class WhisperProvider:
         self._client = AsyncOpenAI(
             api_key=settings.openai_api_key,
             max_retries=0,
-            timeout=httpx.Timeout(120.0, connect=5.0),  # type: ignore[arg-type]
+            timeout=httpx.Timeout(120.0, connect=5.0),
         )
 
     async def transcribe(self, audio_bytes: bytes, filename: str) -> tuple[str, float]:
