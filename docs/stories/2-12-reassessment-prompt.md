@@ -132,6 +132,26 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`. For `Onboardi
 - [Source: apps/api/app/modules/assessment/router.py] — `LearnerDNA` model, `GET /user/dna`, `POST /onboarding/submit`'s reassessment bypass logic, read via `git show main:...`
 - [Source: apps/web/src/types/assessment.ts, apps/web/src/services/onboarding.service.ts, apps/web/src/components/onboarding/OnboardingFlow.tsx, apps/web/src/app/(dashboard)/dashboard/page.tsx, apps/web/src/components/dashboard/sections/HeroSection.tsx, apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx] — all read in full this session, current state documented above
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `GET /api/assessment/user/dna` call on dashboard mount to check `reassessment_due`. If true, a dismissible banner renders. If the student clicks "Retake", the same onboarding flow runs (story 2-3 — 20 questions, one `POST /api/assessment/onboarding/submit`). Total backend calls: 1 (check) + 0–2 (optional retake). Frequency: once per dashboard page load, ~1–5 loads per session.
+
+**Q2 — Fixed budgets vs variable input**
+No variable budgets on the frontend. The `GET /user/dna` response is bounded (story 3-21 backend). The banner dismissal state is stored in-memory only (React state) — not persisted to DB; it reappears on next page load until the student retakes the diagnostic.
+
+**Q3 — Scope of limits**
+Per user. Dashboard mount triggers one read per page load — not cached between mounts. This is a deferred optimization (noted in Senior Developer Review).
+
+**Q4 — Unbounded reads/writes**
+Frontend only — all DB reads/writes from `GET /user/dna` and `POST /onboarding/submit` are bounded by their respective backend stories (3-31 and 3-18).
+
+**Q5 — Inherited caps**
+N/A — frontend-only story. No new backend caps introduced.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — read-only check on mount plus a write (retake) that is idempotent (409 handled gracefully per story 2-3).
+
 ## Senior Developer Review (AI)
 
 **Date:** 2026-07-23

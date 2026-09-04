@@ -173,6 +173,26 @@ Vitest + `@testing-library/react` + `@testing-library/user-event`, `jsdom` envir
 
 **Dismissed (3):** `/dashboard`/`/library`/`/settings` left ungated (this is exactly AC13 as written, not a defect) · `session_count`/`reassessment_due` fields unused in the UI (not required by any AC) · `answers` state typed `Record<string, number>` instead of the spec's `Record<string,{index:number}>` (auditor-confirmed behaviorally equivalent, no AC impact).
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One onboarding flow per student lifetime (the first time they visit the platform). One HTTP request at the end: `POST /api/assessment/onboarding/submit` with 20 answers. On a 409 (already submitted), one additional `GET /api/assessment/user/dna` call. Total: 1–2 backend requests per student lifetime.
+
+**Q2 — Fixed budgets vs variable input**
+Exactly 20 questions — fixed content, no variable size. The `POST` body always contains exactly 20 `OnboardingAnswer` objects (one per question). The backend submit endpoint is bounded in story 3-18. The frontend shows a loading state during the LLM scoring call (story 3-18 calls GPT-4o-mini). No silent truncation of answers possible — all 20 are collected before submission.
+
+**Q3 — Scope of limits**
+Per user (one onboarding flow per account). The middleware `learner_dna` check is per-request on `/lesson/**` and `/upload/**` — it makes an uncached Supabase round-trip on each of those routes (deferred middleware optimization noted in Senior Developer Review).
+
+**Q4 — Unbounded reads/writes**
+Frontend only — all DB reads/writes are made by the backend (`POST /api/assessment/onboarding/submit`, `GET /api/assessment/user/dna`). Those endpoints are bounded in stories 3-18 and 3-21. The middleware `learner_dna` lookup is a `.maybe_single()` read (bounded).
+
+**Q5 — Inherited caps**
+20-question cap is derived from the PRD §9 Learner DNA three-dimension model. Not inherited from an arbitrary earlier limit.
+
+**Q6 — Concurrent TOCTOU safety**
+409 Conflict on duplicate submission is handled gracefully: the UI fetches existing DNA and renders the results screen. No TOCTOU gap on the frontend — the backend enforces idempotency via the 409 response.
+
 ## Dev Agent Record
 
 ### Agent Model Used

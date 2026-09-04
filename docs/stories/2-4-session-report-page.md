@@ -168,6 +168,26 @@ No conflicts with `packages/shared` frozen contracts (`LessonPackage`/`ws.ts`) �
 - [Source: apps/web/src/__tests__/components/player/TeachBackModal.test.tsx] (score-leak regression-guard test pattern to replicate for CES/teachback labels)
 - [Source: docs/app-audit-2026-07-04.md#finding-5] (known cross-team session-creation blocker, does not block this story)
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One page render per session review. Fetches `GET /api/assessment/session/{session_id}/report` once on mount. Response is a single JSON object (~1–3 KB). No polling, no streaming.
+
+**Q2 — Fixed budgets vs variable input**
+Fixed API contract — `SessionReport` has a bounded field count (10 base fields + tier fields from stories 3-29 and 3-30). No variable-size arrays in the response that the frontend materialises. `ces_breakdown` is a fixed-schema JSONB dict.
+
+**Q3 — Scope of limits**
+Per user, per session. Each session has exactly one report. The frontend makes 1 API call — no batching, no pagination needed at Sprint 2 MVP scale.
+
+**Q4 — Unbounded reads/writes**
+Frontend only — the `GET /api/assessment/session/{session_id}/report` backend endpoint is bounded in story 3-19 (all queries use `.maybe_single()`, `.limit()`).
+
+**Q5 — Inherited caps**
+N/A — this story is purely a frontend page. No backend caps are set or inherited here.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — read-only page. No writes from this frontend component.
+
 ## Dev Agent Record
 
 ### Agent Model Used

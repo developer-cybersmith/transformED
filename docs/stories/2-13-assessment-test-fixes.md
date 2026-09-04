@@ -103,6 +103,26 @@ Vitest. For Tasks 2/3, match `getSessionReport`'s existing mocking pattern in `a
 - [Source: apps/web/src/__tests__/lib/assessment.test.ts] — `getSessionReport`'s existing test, the pattern to extend
 - [Source: docs/stories/2-11-quiz-feedback-field-fix.md] — the precedent this story generalizes (same bug class, Quiz side, fixed then; TeachBack side, fixed now)
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+Test-only story — no new production endpoints or DB queries added. Unit of work is one vitest run per CI invocation. 3 new test files added: `lib/assessment.test.ts` extensions + type-drift fix.
+
+**Q2 — Fixed budgets vs variable input**
+Tests mock `api.post` — no real HTTP calls. No variable input affects test runtime. Tests are deterministic and bounded.
+
+**Q3 — Scope of limits**
+Per CI run. No production budget implications.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries — tests use mocked API clients. No production DB access.
+
+**Q5 — Inherited caps**
+N/A — test-only story. No production caps introduced.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — tests are stateless and idempotent.
+
 ## Senior Developer Review (AI)
 
 **Date:** 2026-07-23

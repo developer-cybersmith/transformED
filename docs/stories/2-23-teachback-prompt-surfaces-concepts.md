@@ -35,6 +35,26 @@ Dev1 owns `package_builder` and the `teachback_prompt` field (an explicitly prov
 |------|--------|--------|
 | 2026-07-22 | Bug story from the Dev1↔Dev2 audit (MED/PLAUSIBLE: shown prompt vs graded concepts drift). | Dev 1 |
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `_build_teachback_prompt()` call per segment in `package_builder_node`. A 15-segment lesson = 15 prompt construction calls. Each call is pure Python (~0.1 ms) — no LLM, no DB. Output: a single-line string, max ~200 chars when jargon list is large.
+
+**Q2 — Fixed budgets vs variable input**
+No explicit cap on the number of jargon terms joined into the prompt. A segment with 20+ jargon terms produces a very long prompt string — potentially confusing to students. The scorer reads all `key_concepts` regardless, so a long list doesn't break scoring. No silent truncation.
+
+**Q3 — Scope of limits**
+Per segment, per lesson generation. Pure computation — no shared state, no per-deployment limits.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries — `_build_teachback_prompt` is a pure function over in-memory `jargon_entries`. Jargon entries come from the LangGraph state (already written by `jargon_extractor_node`).
+
+**Q5 — Inherited caps**
+Jargon count per segment is inherited from `jargon_extractor_node` (no explicit cap documented). If `jargon_extractor_node` returns 50 terms, the prompt lists all 50 — a student-facing UX problem but not a scale failure.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — pure function. No shared mutable state.
+
 ## Dev Agent Record
 **Completed 2026-07-22.** `_build_teachback_prompt(title, jargon_entries)` surfaces the segment's jargon terms (the Dev3 scorer's `key_concepts`) when present; generic form otherwise; single-line via `_single_line`. No Dev3 change. Tests: terms surfaced with-jargon, generic without. 537 passed; mypy 0; ruff clean.
 
