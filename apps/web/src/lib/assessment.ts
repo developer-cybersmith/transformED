@@ -124,6 +124,37 @@ export async function getSessionReport(sessionId: string): Promise<SessionReport
   return data;
 }
 
+// ── Tutor question capture (Story 2-57 / BR-5, D149) ────────────────────────
+
+export interface SubmitTutorQuestionPayload {
+  session_id: string;
+  segment_id: string;
+  question_text: string;
+  audio_position_ms: number;
+}
+
+export interface SubmitTutorQuestionResult {
+  received: boolean;
+}
+
+// D149 (docs/DEFECT-REGISTER.md): POST /api/assessment/sessions/{session_id}/questions
+// does not exist on the backend yet -- confirmed by grep, no route registers it
+// in any module. Mocked here (mirrors paymentService.checkAccess's exact
+// stub-for-a-missing-endpoint pattern, D136) so the Ask-Tutor UI flow (button ->
+// pause -> type -> submit -> "noted" confirmation) is fully buildable and
+// testable now. Capture-and-log ONLY for v1 -- confirmed with the user
+// 2026-09-03 -- there is no live AI Q&A backend anywhere in this codebase
+// (CLAUDE.md lists Tutor Q&A under Phase 2, not built). The call site
+// (AskTutorPanel) never changes when this is swapped for a real
+// `api.post(...)` call -- only this function's body does. Proposed storage:
+// one session_events row, event_type "tutor_question", payload {segment_id,
+// question_text, audio_position_ms} -- see Story 2-57's proposed contract.
+export async function submitTutorQuestion(
+  _payload: SubmitTutorQuestionPayload
+): Promise<SubmitTutorQuestionResult> {
+  return Promise.resolve({ received: true });
+}
+
 // ── DPDP consent (Story 3-32 / D29) ─────────────────────────────────────────
 
 export interface RecordConsentPayload {

@@ -1,6 +1,6 @@
 ---
 title: "Story 2-57 — Slide-Transition Pause + Manual Next Button (BR-5)"
-status: ready-for-dev
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -137,9 +137,13 @@ question itself.
   for every remaining slide boundary in the current segment; resets to unchecked when
   `currentSegmentIndex` changes. Does not affect the manual Ask-Tutor button (AC11-13) — a student
   can skip auto-pauses and still manually ask a question at any time.
-- **AC11** — An always-available "Ask Tutor" button pauses playback at any point during `PLAYING`
-  (not gated on a slide boundary), sets `pauseReason: 'intervention'`, and opens a text-input
-  panel. No auto-resume timer — playback stays paused until the student explicitly presses Play.
+- **AC11** — An "Ask Tutor" button is available while `PLAYING`, or while already `PAUSED` for any
+  OTHER reason (e.g. mid slide-transition auto-pause) — **revised during implementation** (review
+  finding while writing this story's tests): the original "only during PLAYING" scope meant a
+  student auto-paused at a slide transition couldn't ask a question without first resuming just to
+  re-pause. Pressing it sets `pauseReason: 'intervention'` (canceling any in-flight transition
+  auto-resume timer via that reason change) and opens a text-input panel. No auto-resume timer of
+  its own — playback stays paused until the student explicitly presses Play.
 - **AC12** — Submitting a question calls a new `tutorQuestionService.submitQuestion()` (mirrors
   `paymentService.checkAccess()`'s stub pattern exactly): resolves a mock `{ received: true }`
   with a comment citing this story's new register entry (the real
@@ -202,6 +206,59 @@ question itself.
 Proposed storage: one `session_events` row, `event_type: "tutor_question"`, payload
 `{segment_id, question_text, audio_position_ms}` — matches the existing typed-row convention
 `dna_growth.py` already uses for `dna_update` events, no new migration.
+
+## Dev Agent Record
+
+### Completion Notes
+
+- **AC1-AC10 — DONE.** Reused `PlayerStatus.PAUSED` with a new `pauseReason` field, exactly as
+  designed — zero changes needed to the audio-element play/pause effect, the virtual-clock tick
+  effect, or the SpeechSynthesis effect, since all three already key off `status`, not why it's
+  `PAUSED`.
+- **Real review finding caught while implementing, fixed same-pass**: the original design's early
+  `return` after triggering `pauseForSlideTransition()` inside `processTimeUpdate` silently broke
+  the quiz-boundary check whenever a slide boundary and the segment's own end boundary coincided
+  on the same tick (the common case for a segment's last slide) — `enterQuiz()` itself guards on
+  `status === 'PLAYING'`, so if the pause ran first, the quiz call became a silent no-op. Fixed by
+  checking the segment-end/quiz condition BEFORE the slide-transition pause, not after. Caught by
+  running the existing test suite immediately after the first implementation pass, not assumed
+  correct — 5 pre-existing tests failed and pinpointed the exact issue.
+- **Second real finding caught while writing this story's own tests**: `pauseForIntervention()`'s
+  original guard (`status === 'PLAYING'` only) meant a student already auto-paused at a slide
+  transition couldn't ask a question without first resuming just to re-pause. Widened to also
+  accept an existing `PAUSED` state of any other reason — see AC11's revised text.
+- **AC11-13 — DONE.** `AskTutorPanel.tsx` (new), `lib/assessment.ts::submitTutorQuestion()` (new
+  stub, mirrors `payment.service.ts::checkAccess`'s exact D136 pattern), registered as **D149**.
+- Two pre-existing tests needed updating, both named explicitly here per AC8's own requirement
+  (not silently changed): `AudioTimeline.component.test.tsx`'s two virtual-clock ticking tests
+  (`vi.advanceTimersByTime` across the whole segment in one call) now opt out via
+  `skipTransitionPauseForSegment: true` — they test the quiz-firing mechanism specifically, not
+  this story's new pause feature, which has its own dedicated tests.
+- Full suite: 91 files / 1118 tests (was 89/1085 before this story — +2 new test files, +33 new
+  tests), zero regressions. `tsc --noEmit` clean. `eslint` clean (one pre-existing-pattern warning
+  on the new stub's unused `_payload` param, identical to `payment.service.ts::checkAccess`'s own
+  `_lessonId` warning — confirmed, not a new problem).
+
+### File List
+
+- `apps/web/src/stores/player.machine.ts` — `PauseReason` type, `pauseReason`/
+  `skipTransitionPauseForSegment` state, `pauseForSlideTransition()`/`pauseForIntervention()`/
+  `setSkipTransitionPauseForSegment()` actions, `play()`/`pause()`/`advanceSegment()` updated
+- `apps/web/src/components/player/AudioTimeline.tsx` — `processTimeUpdate` pause trigger
+  (reordered around the quiz-boundary check, see review finding above), new auto-resume timer
+  effect, `DEFAULT_SLIDE_TRANSITION_PAUSE_MS` constant
+- `apps/web/src/components/player/PlayerControls.tsx` — Next-button swap, Ask Tutor button,
+  skip-pause checkbox
+- `apps/web/src/components/player/AskTutorPanel.tsx` — new
+- `apps/web/src/components/player/Player.tsx` — mounts `AskTutorPanel`
+- `apps/web/src/lib/assessment.ts` — `submitTutorQuestion()` stub (D149)
+- `apps/web/src/__tests__/stores/player.machine.test.ts` — 10 new tests
+- `apps/web/src/__tests__/components/player/AudioTimeline.test.ts` — 5 new tests
+- `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` — 4 new tests, 2
+  existing tests updated (opt-out, named above)
+- `apps/web/src/__tests__/components/player/PlayerControls.test.tsx` — new file, 9 tests
+- `apps/web/src/__tests__/components/player/AskTutorPanel.test.tsx` — new file, 5 tests
+- `docs/DEFECT-REGISTER.md` — D149 registered
 
 ## References
 
