@@ -3,7 +3,7 @@
 **Sprint:** Bug Resolution (Feature Sprint 2)
 **Priority:** Medium
 **Owner:** Dev 3
-**Status:** ready-for-dev
+**Status:** done
 **Branch:** `feature2/f2-1-dna-api-prompt-injection`
 **Story file committed before any implementation code** (CLAUDE.md Pre-Implementation Checklist)
 
