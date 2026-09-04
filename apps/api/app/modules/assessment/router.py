@@ -265,7 +265,8 @@ async def submit_audio_teachback(
             ),
         )
 
-    filename = audio.filename or "audio.webm"
+    from pathlib import Path as _Path  # noqa: PLC0415
+    filename = _Path(audio.filename or "audio.webm").name  # strip any path components
     return await transcribe_and_score_audio(
         session_id=session_id,
         segment_id=segment_id,

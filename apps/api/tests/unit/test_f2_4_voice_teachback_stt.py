@@ -198,8 +198,8 @@ def test_transcription_failure_returns_200_fallback(monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_cost_accumulated_after_transcription() -> None:
-    """accumulate_cost is called with a positive cost after a successful transcription."""
+def test_cost_formula_correct() -> None:
+    """_calculate_stt_cost returns correct cost for 60 seconds of audio."""
     from app.modules.assessment.service import _calculate_stt_cost
 
     cost = _calculate_stt_cost(duration_seconds=60.0)
@@ -208,35 +208,61 @@ def test_cost_accumulated_after_transcription() -> None:
     assert abs(cost - 0.006) < 1e-9, f"Expected $0.006 for 60s, got {cost}"
 
 
+@pytest.mark.unit
+def test_accumulate_cost_called_with_lesson_id() -> None:
+    """Source scan: transcribe_and_score_audio calls accumulate_cost(lesson_id, ...) not session_id.
+
+    AC6 specifies the first argument must be lesson_id so costs are bucketed per-lesson
+    for the $3.00/lesson ceiling. This scan guards against the session_id/lesson_id swap.
+    """
+    service_path = (
+        Path(__file__).parent.parent.parent
+        / "app"
+        / "modules"
+        / "assessment"
+        / "service.py"
+    )
+    source = service_path.read_text(encoding="utf-8")
+    fn_start = source.index("async def transcribe_and_score_audio(")
+    next_fn_idx = source.find("\nasync def ", fn_start + 1)
+    fn_body = source[fn_start : next_fn_idx] if next_fn_idx != -1 else source[fn_start:]
+    assert "accumulate_cost(lesson_id" in fn_body, (
+        "transcribe_and_score_audio must call accumulate_cost(lesson_id, ...) not session_id. "
+        "Cost tracker keys by lesson_id to enforce the $3.00/lesson ceiling."
+    )
+    assert "accumulate_cost(session_id" not in fn_body, (
+        "Found accumulate_cost(session_id, ...) in transcribe_and_score_audio — "
+        "must use lesson_id so costs hit the per-lesson ceiling."
+    )
+
+
 # ── AC7: raw audio not stored ─────────────────────────────────────────────────
 
 
 @pytest.mark.unit
-def test_raw_audio_not_stored(monkeypatch) -> None:
-    """Raw audio bytes are never uploaded to Supabase Storage."""
-    storage_calls: list = []
+def test_raw_audio_not_stored() -> None:
+    """Source scan: transcribe_and_score_audio must have no Supabase Storage calls.
 
-    async def _fake_transcribe_and_score(**kwargs):
-        return _FAKE_RESULT_LLM
-
-    monkeypatch.setattr(
-        "app.modules.assessment.service.transcribe_and_score_audio",
-        _fake_transcribe_and_score,
+    Tested via source scan (same approach as test_whisper_provider_no_hardcoded_model)
+    because audio bytes are discarded by design — there is no storage call path to exercise
+    via a runtime spy.
+    """
+    service_path = (
+        Path(__file__).parent.parent.parent
+        / "app"
+        / "modules"
+        / "assessment"
+        / "service.py"
     )
-
-    mock_supabase = MagicMock()
-    mock_supabase.storage.from_.return_value.upload = MagicMock(
-        side_effect=lambda *a, **kw: storage_calls.append((a, kw))
+    source = service_path.read_text(encoding="utf-8")
+    fn_start = source.index("async def transcribe_and_score_audio(")
+    # Find the next top-level async def after transcribe_and_score_audio
+    next_fn_idx = source.find("\nasync def ", fn_start + 1)
+    fn_body = source[fn_start : next_fn_idx] if next_fn_idx != -1 else source[fn_start:]
+    assert ".storage" not in fn_body, (
+        "transcribe_and_score_audio references '.storage' — raw audio must never be "
+        "uploaded to Supabase Storage. Audio bytes must be discarded after transcription."
     )
-
-    with patch("app.core.db.get_supabase", return_value=mock_supabase):
-        resp = _client.post(
-            "/api/assessment/teachback/sess-001/seg-001/audio",
-            files={"audio": ("test.wav", io.BytesIO(_AUDIO_BYTES), "audio/wav")},
-        )
-
-    assert resp.status_code == 200
-    assert storage_calls == [], "Raw audio must never be uploaded to Supabase Storage"
 
 
 # ── AC8: guard tests for typed submission still pass ──────────────────────────
@@ -260,22 +286,21 @@ def test_typed_submit_guard_still_passes_no_transcript() -> None:
 
 @pytest.mark.unit
 def test_whisper_provider_no_hardcoded_model() -> None:
-    """The string literal 'whisper-1' must not appear in providers/stt/whisper.py.
+    """The string literal 'whisper-1' must not appear in providers/stt/whisper.py or service.py.
 
     Model name must always come from settings.stt_model.
     """
-    whisper_path = (
-        Path(__file__).parent.parent.parent
-        / "app"
-        / "providers"
-        / "stt"
-        / "whisper.py"
-    )
-    assert whisper_path.exists(), f"Expected whisper.py at {whisper_path}"
-    source = whisper_path.read_text(encoding="utf-8")
-    assert '"whisper-1"' not in source, (
-        "Hardcoded model 'whisper-1' found in whisper.py — use settings.stt_model instead"
-    )
-    assert "'whisper-1'" not in source, (
-        "Hardcoded model 'whisper-1' (single-quoted) found in whisper.py — use settings.stt_model"
-    )
+    base = Path(__file__).parent.parent.parent / "app"
+    files_to_check = [
+        base / "providers" / "stt" / "whisper.py",
+        base / "modules" / "assessment" / "service.py",
+    ]
+    for path in files_to_check:
+        assert path.exists(), f"Expected source file at {path}"
+        source = path.read_text(encoding="utf-8")
+        assert '"whisper-1"' not in source, (
+            f"Hardcoded model 'whisper-1' found in {path.name} — use settings.stt_model instead"
+        )
+        assert "'whisper-1'" not in source, (
+            f"Hardcoded model 'whisper-1' (single-quoted) found in {path.name} — use settings.stt_model"
+        )

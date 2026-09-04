@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 from openai import AsyncOpenAI
 
-from app.core.circuit_breaker import CircuitOpenError, guard_breaker
+from app.core.circuit_breaker import CircuitOpenError, guard_breaker, is_circuit_open
 from app.core.retry import with_retry
 
 logger = logging.getLogger(__name__)
@@ -49,10 +49,9 @@ class WhisperProvider:
         Raises:
             Exception: Any OpenAI API error, timeout, or circuit-breaker open.
         """
-        if is_circuit_open(_PROVIDER_KEY):
-            raise CircuitOpenError(f"Circuit breaker open for {_PROVIDER_KEY!r}")
-
         async def _call() -> tuple[str, float]:
+            if await is_circuit_open(_PROVIDER_KEY):
+                raise CircuitOpenError(f"Circuit breaker open for {_PROVIDER_KEY!r}")
             import io
 
             audio_file = io.BytesIO(audio_bytes)
@@ -66,8 +65,8 @@ class WhisperProvider:
             duration: float = float(getattr(response, "duration", 0.0) or 0.0)
             return text, duration
 
-        return await with_retry(
+        return await guard_breaker(_PROVIDER_KEY, lambda: with_retry(
             _call,
             max_attempts=3,
             provider_key=_PROVIDER_KEY,
-        )
+        ))

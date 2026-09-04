@@ -865,12 +865,7 @@ async def transcribe_and_score_audio(
         )
     )
     session_row = single_row(session_resp)
-    if session_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id!r} not found.",
-        )
-    if str(session_row["user_id"]) != str(user_id):
+    if session_row is None or str(session_row["user_id"]) != str(user_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or access denied.",
@@ -884,7 +879,12 @@ async def transcribe_and_score_audio(
         transcript, duration_seconds = await provider.transcribe(audio_bytes, filename)
         cost = _calculate_stt_cost(duration_seconds)
         if cost > 0:
-            await accumulate_cost(session_id, cost)
+            await accumulate_cost(lesson_id, cost)
+        elif duration_seconds == 0.0:
+            logger.warning(
+                "Voice teach-back: Whisper returned duration=0 for session=%s — STT cost not tracked",
+                session_id,
+            )
 
         result = await grade_teachback(
             session_id=session_id,
