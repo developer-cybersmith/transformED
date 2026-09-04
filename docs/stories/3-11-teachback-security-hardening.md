@@ -215,6 +215,34 @@ For _MOCK_TB_RESULT_HIGH (score=95): `round((95/100.0) * 0.25 * 100, 4) = 23.75`
 4. 5-agent code review (/bmad-code-review)
 5. PR → main after BLOCKER resolution
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one teach-back submission per segment per student. Typical: 1–3 per session (one per teach-back segment). A student who retakes heavily might hit 10–20 per segment over a course. Each call involves: one session ownership DB read, one attempt count query, one LLM call (score_teachback), one DB insert.
+
+**Q2 — Fixed budgets vs variable input**
+- `response_text`: max 4000 chars (AC 1, enforced by Pydantic `max_length=4000`). Past the limit: HTTP 422 returned immediately — no LLM call made. Explicit rejection, not silent truncation.
+- LLM budget: one `gpt-4o-mini` call per submission. Bounded by `$3.00/lesson` cost ceiling in `OpenAILLMProvider`.
+- Retry: `with_retry(max_attempts=3)` on the LLM provider call. Exhausted retries → circuit breaker, returns HTTP 502 (AC 2).
+
+**Q3 — Scope of limits**
+- `max_length=4000`: per-request, per-field. Scoped to the field validator — no per-user accumulation.
+- Cost ceiling: per `lesson_id`, not per user. Multiple users' teach-back calls on the same lesson accumulate toward the same ceiling.
+
+**Q4 — Unbounded reads/writes**
+- Session ownership check: `supabase.table("sessions").select(...).eq("id", session_id).maybe_single()` — always ≤ 1 row. BOUNDED.
+- Attempt count: `supabase.table("teachback_attempts").select("id", count="exact").eq("session_id", ...).eq("segment_id", ...)` — count-only query, no row materialisation. BOUNDED.
+- Insert: single-row insert to `teachback_attempts`. BOUNDED.
+- No unbounded reads.
+
+**Q5 — Inherited caps**
+N/A — no caps inherited from an earlier design. The `max_length=4000` cap is new in this story (prior field had no bound).
+
+**Q6 — Concurrent TOCTOU safety**
+Attempt-count check then insert: if two requests race, both may see count=0 and both insert `attempt_number=1`. The `uq_teachback_attempt UNIQUE (session_id, segment_id, attempt_number)` constraint from Story 3-13 catches this at the DB layer and returns a 409 Conflict. The 409 branch added in Story 3-13 surfaces this explicitly — no silent duplicate.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-01

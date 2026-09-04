@@ -152,6 +152,34 @@ Using `20260702000000` — today's date. Applied migrations use timestamps in th
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+Schema-only migration story — no new application query paths at implementation time. At runtime (when the write endpoint is built in a future story), one unit = one INSERT to `user_consents` per consent grant. Range: 1–2 consents per user lifetime (`attention_tracking`, `learner_dna`). Total rows per deployment: bounded by user count × 2.
+
+**Q2 — Fixed budgets vs variable input**
+- `consent_type CHECK` constraint: limits valid values to `('attention_tracking', 'learner_dna')` — a fixed set. Beyond it: Postgres raises `check_violation`, application receives an error, no silent acceptance.
+- `attention_events` dual-check INSERT policy: adds one EXISTS sub-query per attention event insert against `user_consents` (indexed on `(user_id, consent_type)`). Cost: O(log n) on the index, where n = rows for that user (always ≤ 2). Negligible.
+
+**Q3 — Scope of limits**
+- UNIQUE constraint on `user_consents(user_id)` is per-user per-deployment (Postgres enforces it globally across all instances).
+- The `(user_id, consent_type)` index for the RLS EXISTS check is per-deployment.
+
+**Q4 — Unbounded reads/writes**
+- `user_consents` INSERT: single row. BOUNDED.
+- `user_consents` SELECT (in RLS): uses `(user_id, consent_type)` index — at most 2 rows per user. BOUNDED.
+- No application-layer reads introduced in this story (schema-only).
+
+**Q5 — Inherited caps**
+N/A — this story creates new schema. No inherited caps.
+
+**Q6 — Concurrent TOCTOU safety**
+Two concurrent INSERT requests for the same user/consent_type: both succeed (no UNIQUE constraint on `(user_id, consent_type)` — the table allows multiple grants of the same type for audit purposes). The sync trigger fires AFTER INSERT and does `UPDATE users SET attention_consent = true` — idempotent, so concurrent trigger runs produce the same result. No race condition.
+
+Note (from review I1): `ON DELETE CASCADE` removes consent history when user is deleted. DPDP may require 3-year retention. Deferred to pre-launch compliance review.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-02

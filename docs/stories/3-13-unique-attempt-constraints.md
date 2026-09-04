@@ -128,6 +128,29 @@ if insert_error:
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one migration applied to the database (DDL-only story). The migration adds two UNIQUE constraints. No application query changes. At runtime, each quiz or teach-back insert now incurs one additional constraint check by Postgres — this is O(log n) on the unique index, negligible at any realistic session scale.
+
+**Q2 — Fixed budgets vs variable input**
+- UNIQUE constraint enforcement: O(log n) index lookup per insert. At 500 quiz_attempt rows (the `.limit(500)` cap elsewhere), this is fast. No fixed budget that can be exceeded here — constraints are enforced by Postgres, not the application.
+- 409 handling: no LLM calls, no external budget consumed.
+
+**Q3 — Scope of limits**
+UNIQUE constraints are per-deployment (DB-level). They apply across all instances, all users, all sessions — the constraint is enforced at the single Supabase Postgres database, regardless of replica count. This is the correct scope for data integrity.
+
+**Q4 — Unbounded reads/writes**
+No new reads. Migration creates two indexes (one per constraint). No application queries added. N/A.
+
+**Q5 — Inherited caps**
+N/A — migration story. The UNIQUE constraints are new additions, not inherited caps.
+
+**Q6 — Concurrent TOCTOU safety**
+This story IS the fix for the concurrent TOCTOU identified in Stories 3-12 (quiz) and 3-11 (teachback). Before this migration, concurrent duplicate inserts were both accepted. After: the second concurrent insert fails with a `unique violation` error, which the application catches as HTTP 409. The DB constraint is the safety net — no application-level lock required.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-01

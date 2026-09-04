@@ -412,6 +412,39 @@ def _build_report_supabase(
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one `GET /api/assessment/sessions/{session_id}/report` call. Reads 4 tables: `sessions` (1 row), `quiz_attempts` (count + accuracy aggregation), `teachback_attempts` (AVG score — 0–3 rows per session), `session_events` (intervention count — 0–N per session, bounded by the 3-max-interventions guard in the tutor state machine). Typical range: 1–3 quiz attempts, 0–3 teachback attempts, 0–3 intervention events per session.
+
+**Q2 — Fixed budgets vs variable input**
+- No LLM calls — pure DB aggregation.
+- `sessions` read: `.maybe_single()` — returns at most 1 row. BOUNDED.
+- `quiz_attempts` count: uses `count=` param (no rows materialised). BOUNDED.
+- `teachback_attempts` AVG: uses `count=` and `select("overall_score")` over a naturally bounded set (≤ segment count per session, typically ≤ 30). BOUNDED.
+- `session_events` count: uses `count=` param (no rows materialised). BOUNDED.
+- No explicit upper-bound on session_events if the tutor state machine guard is bypassed — the 3-intervention limit is enforced at write time (Dev 4), not enforced again at read time here. This is noted but accepted: worst case is counting a few hundred rows, which is still O(log n) on the indexed `session_id` column.
+
+**Q3 — Scope of limits**
+- All reads are per `session_id` — per-user, per-session, per-deployment.
+- No global shared resource is accessed.
+
+**Q4 — Unbounded reads/writes**
+- `sessions`: `.maybe_single()` — 1 row. BOUNDED.
+- `quiz_attempts`: `count=` only. BOUNDED.
+- `teachback_attempts`: `count=` + select of `overall_score` — row count bounded by lesson segment count (≤ 30 per CLAUDE.md `structure_max_sections = 15` cap × 2 types). BOUNDED.
+- `session_events`: `count=` only. BOUNDED.
+- No writes introduced by this endpoint.
+
+**Q5 — Inherited caps**
+- `structure_max_sections = 15` (from pipeline) bounds teachback_attempts per session. Re-derived: acceptable for the report aggregation use case.
+- Tutor state machine 3-intervention cap (Dev 4) bounds session_events count at write time. Dependency on Dev 4 rule is noted.
+
+**Q6 — Concurrent TOCTOU safety**
+Pure read endpoint — no check-then-act, no write. Concurrent requests for the same `session_id` return the same aggregated data (commutative reads). No TOCTOU risk.
+
+---
+
 ## Dev Agent Record
 
 ### Debug Log

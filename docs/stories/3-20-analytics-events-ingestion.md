@@ -256,6 +256,36 @@ No new migrations required. No changes to `packages/shared/`. No changes to `sup
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one `POST /api/analytics/events` request containing a batch of 1–100 `AnalyticsEvent` objects. Each batch results in a single bulk INSERT to `session_events`. Typical range: 1–20 events per batch (client flushes on user interaction bursts). Maximum enforced: 100 events per request (Pydantic `max_length=100` → HTTP 422 if exceeded — explicit rejection).
+
+**Q2 — Fixed budgets vs variable input**
+- Batch size: capped at 100 by `EventBatch.events: list[AnalyticsEvent] = Field(..., min_length=1, max_length=100)`. Beyond 100: Pydantic raises `ValidationError` → FastAPI returns HTTP 422. Explicit rejection, not silent truncation.
+- Payload per event: `payload` is a free-form JSONB field — no explicit byte cap enforced at the application layer. Postgres has a row size limit (~8 KB per TOAST threshold), but arbitrarily large payloads are not explicitly rejected. This is the one non-bounded input path: a client could send 100 events each with a 1 MB payload. Noted as a known limitation — a future story should add a `max_bytes` validator on `payload`.
+- Session ownership check: single `SELECT id FROM sessions WHERE id IN (...)` — bounded by the number of unique `session_id` values in the batch (≤ 100). BOUNDED.
+- Bulk INSERT: single statement for the entire batch. BOUNDED at 100 rows.
+
+**Q3 — Scope of limits**
+- `max_length=100` is per-request (per-call). Not per-user or per-session.
+- Rate limiting (if any) is a platform-level concern (Dev 4 / Redis). This endpoint has no per-user rate limit of its own.
+
+**Q4 — Unbounded reads/writes**
+- Session ownership check: `SELECT id FROM sessions WHERE id IN (unique_session_ids)`. The IN list is bounded by batch size (≤ 100 unique session IDs). BOUNDED.
+- INSERT: single bulk insert of ≤ 100 rows. BOUNDED.
+- `client_timestamp_ms` is merged into `payload` JSONB under `"_client_ts_ms"` — no unbounded accumulation.
+
+**Q5 — Inherited caps**
+- 100-event batch limit is new in this story. No inherited cap re-derived; this is the first bounded write for analytics events.
+- `session_events` table has no row limit per session — will grow indefinitely over time. Pruning/archival is a future operational concern (out of scope for MVP).
+
+**Q6 — Concurrent TOCTOU safety**
+- Session ownership check (`SELECT sessions WHERE id IN (...)`) then bulk INSERT: concurrent requests from a different user with the same session IDs would be rejected by the SET comparison (non-owned sessions filtered out before insert). RLS on `session_events` also enforces ownership at the DB layer.
+- Two concurrent requests from the same user with the same events: both inserts succeed (no idempotency key on session_events). Duplicate event rows can accumulate under retry storms. This is accepted for MVP — analytics events are not required to be exactly-once.
+
+---
+
 ## Dev Agent Record
 
 ### Debug Log

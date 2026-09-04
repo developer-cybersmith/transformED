@@ -160,6 +160,28 @@ result.rubric_scores["accuracy"] == "Proficient"
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one call to `_score_to_label(score: float) -> str` per rubric dimension per teach-back submission. Each `grade_teachback()` call invokes it exactly 3 times (accuracy, completeness, clarity). Range: always exactly 3 calls — fixed, not variable.
+
+**Q2 — Fixed budgets vs variable input**
+N/A — `_score_to_label` is a pure synchronous comparison function with no I/O, no memory allocation beyond a string constant, and no external budget. The 5 label tiers are hardcoded constants. No budget can be exceeded.
+
+**Q3 — Scope of limits**
+N/A — pure computation, no DB or network resources consumed.
+
+**Q4 — Unbounded reads/writes**
+None — no Supabase queries or writes introduced by this story. The change is confined to the return value construction in `grade_teachback()`.
+
+**Q5 — Inherited caps**
+N/A — no inherited caps. The score thresholds (90/75/60/40) are new constants introduced in this story. If threshold recalibration is needed in the future, they should become env vars (noted as deferred improvement I2).
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — pure synchronous computation with no shared state. Concurrent calls are independent.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-01

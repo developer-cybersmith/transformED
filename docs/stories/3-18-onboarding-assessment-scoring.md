@@ -462,6 +462,37 @@ This is fine: `OnboardingAnswer.response_time_ms` defaults to `None`. The DB col
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one call to `POST /api/assessment/onboarding/submit`. Fixed input size: exactly 20 answers (enforced by `min_length=20, max_length=20`). Never more, never fewer — the range is exactly 1 unit of constant size. One LLM call (profile text generation), one 20-row bulk insert, one `.upsert()` to `learner_dna`.
+
+**Q2 — Fixed budgets vs variable input**
+- `responses`: `min_length=20, max_length=20` — Pydantic enforces this. Past the limit: HTTP 422 immediately.
+- LLM call: one `gpt-4o-mini` call via `OpenAILLMProvider(lesson_id="onboarding")`. Bounded by `$3.00/lesson` ceiling (ceiling fires at `lesson_id="onboarding"`, shared across all onboarding calls — this is a known approximation). No retry storm: `with_retry(max_attempts=3)` on LLM, circuit breaker at 5 failures/2min.
+- Redis idempotency key `user:{user_id}:onboarding_done`: single atomic `SET nx=True`. Prevents re-scoring (HTTP 409 on duplicate). No accumulation.
+- `learner_dna` upsert: single row per user (`user_id UNIQUE`). O(1).
+
+**Q3 — Scope of limits**
+- `max_length=20` on `responses`: per-request.
+- Redis idempotency key: per-user per-deployment (Redis is shared across instances — a second instance sees the same key correctly).
+- `$3.00/lesson` ceiling: shared per `lesson_id="onboarding"` sentinel — across all users' onboarding calls on the same deployment. Low risk in practice (onboarding is one-time per user), but the ceiling is deployment-wide for this sentinel, not per-user.
+
+**Q4 — Unbounded reads/writes**
+- Bulk insert of 20 `onboarding_responses` rows: fixed count, not variable. BOUNDED.
+- `learner_dna` upsert: single row. BOUNDED.
+- Redis GET + SET: single key reads/writes. BOUNDED.
+- No SELECT queries materialising multiple rows.
+
+**Q5 — Inherited caps**
+N/A — all caps are new in this story. The 20-question fixed size was designed for this endpoint, not inherited.
+
+**Q6 — Concurrent TOCTOU safety**
+Redis idempotency: `SET nx=True` is atomic — concurrent submissions both attempt the atomic SET; only one succeeds. The loser gets `existing = "1"` on a subsequent GET and is rejected. However, if the first request fails after the `SET nx` but before `process_onboarding` completes, the `except HTTPException: redis.delete` cleanup (added in B7 review fix) releases the key so the user can retry. No permanent lockout.
+Duplicate row race: `UNIQUE(user_id, question_id)` migration (Task 1) catches concurrent duplicate inserts at DB layer → 409 Conflict.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used
